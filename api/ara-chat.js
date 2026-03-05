@@ -1,0 +1,108 @@
+// api/ara-chat.js
+// POST /api/ara-chat { messages, bizContext, provider, model, brainMd }
+// Backend proxy ARA — support Claude, OpenAI, Gemini, Groq
+
+import { createClient } from "@supabase/supabase-js";
+
+const sb = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+
+const buildSystem = (biz, brain) => `${brain}
+
+## IDENTITAS
+Kamu adalah ARA (Aclean Robot Assistant). Bantu Owner & Admin kelola bisnis servis AC.
+Jawab Bahasa Indonesia, ringkas, profesional.
+
+## DATA BISNIS LIVE (${new Date().toLocaleString("id-ID")})
+${JSON.stringify(biz, null, 2)}
+
+## INSTRUKSI TOOL — jika user minta update data, balas dengan tag [ACTION]:
+- Update invoice  : [ACTION]{"type":"UPDATE_INVOICE","id":"INV-xxx","field":"dadakan","value":50000}[/ACTION]
+- Lunas           : [ACTION]{"type":"MARK_PAID","id":"INV-xxx"}[/ACTION]
+- Approve invoice : [ACTION]{"type":"APPROVE_INVOICE","id":"INV-xxx"}[/ACTION]
+- Kirim reminder  : [ACTION]{"type":"SEND_REMINDER","invoice_id":"INV-xxx"}[/ACTION]
+- Update order    : [ACTION]{"type":"UPDATE_ORDER_STATUS","id":"JOBxxxxx","status":"COMPLETED"}[/ACTION]`;
+
+async function callClaude(msgs, sys, model) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-api-key":process.env.ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01"},
+    body: JSON.stringify({model: model||"claude-sonnet-4-6", max_tokens:1024, system:sys, messages:msgs})
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error?.message||"Claude error");
+  return d.content?.map(c=>c.text||"").join("")||"";
+}
+
+async function callOpenAI(msgs, sys, model) {
+  const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+process.env.OPENAI_API_KEY},
+    body: JSON.stringify({model:model||"gpt-4o", max_tokens:1024, messages:[{role:"system",content:sys},...msgs]})
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error?.message||"OpenAI error");
+  return d.choices?.[0]?.message?.content||"";
+}
+
+async function callGemini(msgs, sys, model) {
+  const key = process.env.GEMINI_API_KEY;
+  const m   = model||"gemini-2.0-flash";
+  const r   = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`, {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      system_instruction:{parts:[{text:sys}]},
+      contents: msgs.map(m=>({role:m.role==="assistant"?"model":"user", parts:[{text:m.content}]}))
+    })
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error?.message||"Gemini error");
+  return d.candidates?.[0]?.content?.parts?.[0]?.text||"";
+}
+
+async function callGroq(msgs, sys, model) {
+  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+process.env.GROQ_API_KEY},
+    body: JSON.stringify({model:model||"llama-3.3-70b-versatile", max_tokens:1024, messages:[{role:"system",content:sys},...msgs]})
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error?.message||"Groq error");
+  return d.choices?.[0]?.message?.content||"";
+}
+
+export default async function handler(req, res) {
+  res.setHeader("Access-Control-Allow-Origin","*");
+  res.setHeader("Access-Control-Allow-Methods","POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers","Content-Type");
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST")   return res.status(405).json({error:"Method not allowed"});
+
+  const { messages, bizContext={}, provider="claude", model, brainMd="" } = req.body||{};
+  if (!messages?.length) return res.status(400).json({error:"messages wajib diisi"});
+
+  const sys = buildSystem(bizContext, brainMd);
+
+  try {
+    let reply = "";
+    switch(provider) {
+      case "openai": reply = await callOpenAI(messages, sys, model); break;
+      case "gemini": reply = await callGemini(messages, sys, model); break;
+      case "groq":   reply = await callGroq(messages, sys, model);   break;
+      default:       reply = await callClaude(messages, sys, model); break;
+    }
+
+    const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+    await sb.from("agent_logs").insert({
+      time: now, action:"ARA_CHAT",
+      detail:`ARA (${provider}) — "${messages.at(-1)?.content?.slice(0,50)}..."`,
+      status:"SUCCESS"
+    });
+
+    return res.status(200).json({reply, provider});
+  } catch(err) {
+    const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+    await sb.from("agent_logs").insert({time:now,action:"ARA_ERROR",detail:err.message.slice(0,100),status:"ERROR"});
+    return res.status(500).json({error: err.message});
+  }
+}
