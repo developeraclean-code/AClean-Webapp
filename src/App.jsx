@@ -1,4 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
 
 const TEKNISI_DATA = [
   { id:"Tech001", name:"Usaeri",      role:"Teknisi", skills:["Cleaning","Install","Repair"], phone:"6287786870189", jobs_today:2, status:"active"  },
@@ -294,9 +300,10 @@ export default function ACleanWebApp() {
 
   // GAP 7 — Reactive agent logs
   const [agentLogs,        setAgentLogs]        = useState(AGENT_LOGS);
-  const addAgentLog = (action, detail, status="SUCCESS") => {
+  const addAgentLog = async (action, detail, status="SUCCESS") => {
     const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
     setAgentLogs(prev => [{ time:now, action, detail, status }, ...prev].slice(0,50));
+    await supabase.from("agent_logs").insert({ time:now, action, detail, status });
   };
 
   // ── Settings ──
@@ -353,26 +360,41 @@ export default function ACleanWebApp() {
     setLaporanStep(1);
     setLaporanSubmitted(false);
   };
-  const doLogin = (email, pass) => {
-    const user = userAccounts.find(u => u.email === email && u.password === pass && u.active);
-    if (user) {
-      setCurrentUser(user);
+  const doLogin = async (email, pass) => {
+    setLoginError("");
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
+      if (error) { setLoginError("Email atau password salah, atau akun tidak aktif."); return; }
+      const { data: profile } = await supabase
+        .from("user_profiles").select("*").eq("id", data.user.id).single();
+      if (!profile || !profile.active) {
+        setLoginError("Akun tidak aktif. Hubungi Owner.");
+        await supabase.auth.signOut(); return;
+      }
+      const userObj = { ...data.user, ...profile };
+      setCurrentUser(userObj);
       setIsLoggedIn(true);
-      setLoginError("");
-      setActiveRole(user.role.toLowerCase());
+      setActiveRole(profile.role.toLowerCase());
       setActiveMenu("dashboard");
-      showNotif("Selamat datang, " + user.name + "!");
-    } else {
-      setLoginError("Email atau password salah, atau akun tidak aktif.");
+      showNotif("Selamat datang, " + profile.name + "!");
+    } catch (err) {
+      setLoginError("Terjadi kesalahan: " + err.message);
     }
   };
 
-  const doLogout = () => {
+  const doLogout = async () => {
+    await supabase.auth.signOut();
     setIsLoggedIn(false);
     setCurrentUser(null);
     setLoginEmail("");
     setLoginPassword("");
     setActiveMenu("dashboard");
+    setOrdersData([]);
+    setInvoicesData([]);
+    setCustomersData([]);
+    setInventoryData([]);
+    setLaporanReports([]);
+    setAgentLogs([]);
   };
 
   const canAccess = (menu) => {
@@ -387,6 +409,67 @@ export default function ACleanWebApp() {
     if (role === "Teknisi") return menu === "dashboard" || menu === "schedule" || menu === "myreport";
     return false;
   };
+
+  // ── Supabase: Restore session saat refresh ──
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) return;
+      const { data: profile } = await supabase
+        .from("user_profiles").select("*").eq("id", session.user.id).single();
+      if (profile && profile.active) {
+        setCurrentUser({ ...session.user, ...profile });
+        setIsLoggedIn(true);
+        setActiveRole(profile.role.toLowerCase());
+      }
+    });
+  }, []);
+
+  // ── Supabase: Load data + Realtime saat login ──
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const loadAll = async () => {
+      const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes] = await Promise.all([
+        supabase.from("orders").select("*").order("date", { ascending: false }),
+        supabase.from("invoices").select("*").order("created_at", { ascending: false }),
+        supabase.from("customers").select("*").order("name"),
+        supabase.from("inventory").select("*").order("code"),
+        supabase.from("service_reports").select("*, report_units(*), report_materials(*)").order("submitted_at", { ascending: false }),
+        supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(50),
+      ]);
+      if (ordersRes.data)   setOrdersData(ordersRes.data);
+      if (invoicesRes.data) setInvoicesData(invoicesRes.data);
+      if (customersRes.data)setCustomersData(customersRes.data);
+      if (inventoryRes.data)setInventoryData(inventoryRes.data);
+      if (laporanRes.data)  setLaporanReports(laporanRes.data);
+      if (logsRes.data)     setAgentLogs(logsRes.data);
+    };
+
+    loadAll();
+
+    // Realtime — data update otomatis di semua device
+    const ch1 = supabase.channel("rt-orders")
+      .on("postgres_changes", { event:"*", schema:"public", table:"orders" }, () =>
+        supabase.from("orders").select("*").order("date",{ascending:false})
+          .then(({data}) => { if(data) setOrdersData(data); }))
+      .subscribe();
+    const ch2 = supabase.channel("rt-invoices")
+      .on("postgres_changes", { event:"*", schema:"public", table:"invoices" }, () =>
+        supabase.from("invoices").select("*").order("created_at",{ascending:false})
+          .then(({data}) => { if(data) setInvoicesData(data); }))
+      .subscribe();
+    const ch3 = supabase.channel("rt-inventory")
+      .on("postgres_changes", { event:"*", schema:"public", table:"inventory" }, () =>
+        supabase.from("inventory").select("*").order("code")
+          .then(({data}) => { if(data) setInventoryData(data); }))
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch1);
+      supabase.removeChannel(ch2);
+      supabase.removeChannel(ch3);
+    };
+  }, [isLoggedIn]);
 
   // ── Colors ──
   const cs = {
@@ -448,25 +531,27 @@ export default function ACleanWebApp() {
   };
 
   // ── GAP 3: Approve invoice (real state mutation) ──
-  const approveInvoice = (inv) => {
+  const approveInvoice = async (inv) => {
     const today = new Date().toISOString().slice(0,10);
     const due = new Date(Date.now() + 14*24*60*60*1000).toISOString().slice(0,10);
     setInvoicesData(prev => prev.map(i =>
       i.id === inv.id ? {...i, status:"UNPAID", sent:today, due} : i
     ));
-    // Update order punya invoice_id
     setOrdersData(prev => prev.map(o =>
       o.id === inv.job_id ? {...o, invoice_id:inv.id} : o
     ));
+    await supabase.from("invoices").update({ status:"UNPAID", sent:today, due }).eq("id", inv.id);
+    await supabase.from("orders").update({ invoice_id:inv.id }).eq("id", inv.job_id);
     addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} diapprove Owner — dikirim ke ${inv.customer}`, "SUCCESS");
     showNotif(`✅ Invoice ${inv.id} diapprove & dikirim ke ${inv.customer}`);
   };
 
   // ── GAP 3: Mark Paid (real state mutation) ──
-  const markPaid = (inv) => {
+  const markPaid = async (inv) => {
     setInvoicesData(prev => prev.map(i =>
       i.id === inv.id ? {...i, status:"PAID"} : i
     ));
+    await supabase.from("invoices").update({ status:"PAID" }).eq("id", inv.id);
     addAgentLog("PAYMENT_CONFIRMED", `Invoice ${inv.id} — ${inv.customer} LUNAS ${fmt(inv.total)}`, "SUCCESS");
     showNotif(`💰 Invoice ${inv.id} ditandai LUNAS!`);
   };
@@ -486,8 +571,8 @@ export default function ACleanWebApp() {
   };
 
   // ── GAP 9: Create order (real state mutation) ──
-  const createOrder = (form) => {
-    const newId = "JOB" + (10008 + ordersData.length);
+  const createOrder = async (form) => {
+    const newId = "JOB" + String(10008 + ordersData.length).padStart(5,"0");
     const newOrder = {
       id:newId,
       customer: form.customer, phone: form.phone, address: form.address,
@@ -498,6 +583,8 @@ export default function ACleanWebApp() {
       invoice_id:null, dispatch:false, notes:form.notes||""
     };
     setOrdersData(prev => [...prev, newOrder]);
+    const { error } = await supabase.from("orders").insert(newOrder);
+    if (error) { showNotif("❌ Gagal simpan order: " + error.message); return null; }
     addAgentLog("ORDER_CREATED", `Order baru ${newId} — ${form.customer} (${form.service} ${form.units} unit)`, "SUCCESS");
     showNotif(`✅ Order ${newId} berhasil dibuat! ARA siap dispatch ke ${form.teknisi}.`);
     if (form.teknisi) {
