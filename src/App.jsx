@@ -400,13 +400,13 @@ export default function ACleanWebApp() {
   const canAccess = (menu) => {
     if (!currentUser) return false;
     const role = currentUser.role;
-    // Owner: semua akses
-    if (role === "Owner") return menu !== "myreport"; // myreport hanya untuk Teknisi
-    // Admin: semua kecuali settings dan myreport
+    // Owner: semua akses kecuali myreport (itu hanya untuk Teknisi/Helper)
+    if (role === "Owner") return menu !== "myreport";
+    // Admin: semua menu operasional kecuali settings dan myreport
     if (role === "Admin") return menu !== "settings" && menu !== "myreport";
-    // Teknisi/Helper: HANYA dashboard, jadwal, laporan sendiri
-    // TIDAK boleh: orders, invoice, customers, inventory, teknisi (tim), laporantim, ara, reports, agentlog, settings
-    if (role === "Teknisi") return menu === "dashboard" || menu === "schedule" || menu === "myreport";
+    // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
+    if (role === "Teknisi" || role === "Helper")
+      return menu === "dashboard" || menu === "schedule" || menu === "myreport";
     return false;
   };
 
@@ -495,21 +495,43 @@ export default function ACleanWebApp() {
   const fmt = (n) => "Rp " + (n||0).toLocaleString("id-ID");
 
   // ── Helpers ──
-  const openWA = (phone, msg) => {
-    const url = "https://wa.me/" + phone + (msg ? "?text=" + encodeURIComponent(msg) : "");
-    window.open(url, "_blank");
+  // ── WA: kirim via Fonnte backend, fallback wa.me ──
+  const sendWA = async (phone, message) => {
+    if (!phone) return false;
+    try {
+      const r = await fetch("/api/send-wa", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({phone, message})
+      });
+      const d = await r.json();
+      if (r.ok && d.success) return true;
+    } catch(_) {}
+    // Fallback: buka wa.me manual (jika FONNTE_TOKEN belum diset)
+    window.open("https://wa.me/"+phone+"?text="+encodeURIComponent(message),"_blank");
+    return false;
   };
 
-  const dispatchWA = (order) => {
+  const openWA = (phone, msg) => {
+    if (msg) sendWA(phone, msg);
+    else window.open("https://wa.me/"+phone,"_blank");
+  };
+
+  const dispatchWA = async (order) => {
     const tek = TEKNISI_DATA.find(t => t.name === order.teknisi);
     if (!tek) return showNotif("Teknisi tidak ditemukan");
-    const msg = "Halo " + order.teknisi + ", ada job baru: " + order.customer + " - " + order.service + " " + order.units + " unit - " + order.address + " - Jam " + order.time + ". Mohon konfirmasi. - AClean";
-    openWA(tek.phone, msg);
+    const msg = `Halo ${order.teknisi}, ada job baru:\n📍 *${order.customer}*\n🔧 ${order.service} ${order.units} unit\n📮 ${order.address}\n🕐 ${order.date} jam ${order.time}\n\nMohon konfirmasi. — AClean`;
+    const ok = await sendWA(tek.phone, msg);
+    if (ok) {
+      setOrdersData(prev => prev.map(o => o.id===order.id ? {...o, dispatch:true} : o));
+      await supabase.from("orders").update({dispatch:true}).eq("id",order.id);
+      addAgentLog("DISPATCH_SENT", `WA dispatch dikirim ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
+      showNotif(`✅ Dispatch WA terkirim ke ${order.teknisi}`);
+    }
   };
 
   const invoiceReminderWA = (inv) => {
-    const msg = "Halo " + inv.customer + ", mengingatkan tagihan AClean Service senilai " + fmt(inv.total) + " belum dibayar. Transfer ke BCA 8830883011 a.n. Malda Retta. Terima kasih!";
-    openWA(inv.phone, msg);
+    const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
+    sendWA(inv.phone, msg);
   };
 
   // ── GAP 2: Hitung labor dari price list ──
@@ -600,90 +622,93 @@ export default function ACleanWebApp() {
   // ── GAP 8: ARA Chat dengan LLM + Tool Calls ──
   const sendToARA = async (userMsg) => {
     if (!userMsg.trim() || araLoading) return;
-    const newMessages = [...araMessages, { role:"user", content:userMsg }];
+    const newMessages = [...araMessages, {role:"user", content:userMsg}];
     setAraMessages(newMessages);
     setAraInput("");
     setAraLoading(true);
 
-    // Snapshot data bisnis untuk context ARA
     const bizContext = {
-      orders: ordersData.map(o => ({id:o.id,customer:o.customer,service:o.service,units:o.units,status:o.status,date:o.date,teknisi:o.teknisi,invoice_id:o.invoice_id})),
-      invoices: invoicesData.map(i => ({id:i.id,customer:i.customer,total:i.total,status:i.status,due:i.due})),
-      inventory: inventoryData.map(i => ({name:i.name,stock:i.stock,unit:i.unit,status:i.status})),
-      customers: customersData.map(c => ({id:c.id,name:c.name,phone:c.phone,total_orders:c.total_orders})),
+      orders:    ordersData.map(o=>({id:o.id,customer:o.customer,service:o.service,units:o.units,status:o.status,date:o.date,teknisi:o.teknisi,invoice_id:o.invoice_id})),
+      invoices:  invoicesData.map(i=>({id:i.id,customer:i.customer,total:i.total,status:i.status,due:i.due})),
+      inventory: inventoryData.map(i=>({name:i.name,stock:i.stock,unit:i.unit,status:i.status})),
+      customers: customersData.map(c=>({id:c.id,name:c.name,phone:c.phone,total_orders:c.total_orders})),
       laporanPending: laporanReports.filter(r=>r.status==="SUBMITTED").length,
       today: new Date().toISOString().slice(0,10),
     };
 
-    const systemPrompt = brainMd + `\n\n## DATA BISNIS LIVE (${new Date().toLocaleString("id-ID")})
-${JSON.stringify(bizContext, null, 2)}
-
-## INSTRUKSI TOOL
-Jika user minta UPDATE DATA, balas dengan JSON action di dalam tag [ACTION]:
-- Update invoice: [ACTION]{"type":"UPDATE_INVOICE","id":"INV-xxx","field":"dadakan","value":50000}[/ACTION]
-- Mark paid: [ACTION]{"type":"MARK_PAID","id":"INV-xxx"}[/ACTION]  
-- Approve invoice: [ACTION]{"type":"APPROVE_INVOICE","id":"INV-xxx"}[/ACTION]
-- Kirim reminder: [ACTION]{"type":"SEND_REMINDER","invoice_id":"INV-xxx"}[/ACTION]
-Selain itu jawab natural dalam Bahasa Indonesia.`;
-
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json", "x-api-key": llmApiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
-        body:JSON.stringify({
-          model:"claude-sonnet-4-20250514",
-          max_tokens:1000,
-          system: systemPrompt,
-          messages: newMessages.map(m => ({role:m.role, content:m.content})),
+      let fullText = "";
+
+      // ── Coba backend proxy dulu (API key aman di server) ──
+      const backendRes = await fetch("/api/ara-chat", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          messages: newMessages.map(m=>({role:m.role, content:m.content})),
+          bizContext, brainMd, provider:llmProvider, model:llmModel
         })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || "API error");
+      }).catch(()=>null);
 
-      const fullText = data.content?.map(c => c.text||"").join("") || "(Tidak ada respons)";
-
-      // Parse ACTION tags — eksekusi tool calls
-      const actionMatch = fullText.match(/\[ACTION\](.*?)\[\/ACTION\]/s);
-      let actionResult = "";
-      if (actionMatch) {
-        try {
-          const action = JSON.parse(actionMatch[1].trim());
-          if (action.type === "UPDATE_INVOICE") {
-            setInvoicesData(prev => prev.map(i => {
-              if (i.id !== action.id) return i;
-              const updated = {...i, [action.field]: action.value};
-              updated.total = (updated.labor||0) + (updated.material||0) + (updated.dadakan||0);
-              return updated;
-            }));
-            addAgentLog("ARA_ACTION", `ARA update invoice ${action.id}: ${action.field} = ${fmt(action.value)}`, "SUCCESS");
-            actionResult = `\n✅ *Invoice ${action.id} diupdate — ${action.field}: ${fmt(action.value)}*`;
-          } else if (action.type === "MARK_PAID") {
-            markPaid(invoicesData.find(i=>i.id===action.id) || {id:action.id,customer:"",total:0});
-            actionResult = `\n✅ *Invoice ${action.id} ditandai LUNAS*`;
-          } else if (action.type === "APPROVE_INVOICE") {
-            approveInvoice(invoicesData.find(i=>i.id===action.id) || {id:action.id,job_id:"",customer:"",total:0});
-            actionResult = `\n✅ *Invoice ${action.id} diapprove*`;
-          } else if (action.type === "SEND_REMINDER") {
-            const inv = invoicesData.find(i=>i.id===action.invoice_id);
-            if (inv) { invoiceReminderWA(inv); actionResult = `\n✅ *Reminder dikirim ke ${inv.customer} via WA*`; }
-          }
-        } catch(e) { console.warn("Action parse error", e); }
+      if (backendRes?.ok) {
+        const d = await backendRes.json();
+        fullText = d.reply || "";
+      } else if (llmApiKey) {
+        // ── Fallback: direct call jika backend belum punya env key ──
+        const sysP = brainMd+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL: balas [ACTION]{...}[/ACTION] untuk update data`;
+        const fr = await fetch("https://api.anthropic.com/v1/messages", {
+          method:"POST",
+          headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+          body:JSON.stringify({model:llmModel||"claude-sonnet-4-6",max_tokens:1000,system:sysP,messages:newMessages.map(m=>({role:m.role,content:m.content}))})
+        });
+        const fd = await fr.json();
+        if (!fr.ok) throw new Error(fd.error?.message||"API error");
+        fullText = fd.content?.map(c=>c.text||"").join("")||"";
+      } else {
+        throw new Error("Backend belum siap dan API Key belum diset. Buka Pengaturan → ARA Brain.");
       }
 
-      const cleanText = fullText.replace(/\[ACTION\].*?\[\/ACTION\]/s, "").trim() + actionResult;
-      setAraMessages(prev => [...prev, { role:"assistant", content:cleanText }]);
-      addAgentLog("ARA_CHAT", `ARA menjawab query: "${userMsg.slice(0,50)}..."`, "SUCCESS");
+      // ── Parse & eksekusi ACTION tags ──
+      const am = fullText.match(/\[ACTION\](.*?)\[\/ACTION\]/s);
+      let ar = "";
+      if (am) {
+        try {
+          const act = JSON.parse(am[1].trim());
+          if (act.type==="UPDATE_INVOICE") {
+            setInvoicesData(prev=>prev.map(i=>{ if(i.id!==act.id) return i; const u={...i,[act.field]:act.value}; u.total=(u.labor||0)+(u.material||0)+(u.dadakan||0); return u; }));
+            await supabase.from("invoices").update({[act.field]:act.value}).eq("id",act.id);
+            addAgentLog("ARA_ACTION",`ARA update ${act.id}: ${act.field}=${fmt(act.value)}`,"SUCCESS");
+            ar=`\n✅ *Invoice ${act.id} diupdate — ${act.field}: ${fmt(act.value)}*`;
+          } else if (act.type==="MARK_PAID") {
+            markPaid(invoicesData.find(i=>i.id===act.id)||{id:act.id,customer:"",total:0});
+            ar=`\n✅ *Invoice ${act.id} ditandai LUNAS*`;
+          } else if (act.type==="APPROVE_INVOICE") {
+            approveInvoice(invoicesData.find(i=>i.id===act.id)||{id:act.id,job_id:"",customer:"",total:0});
+            ar=`\n✅ *Invoice ${act.id} diapprove*`;
+          } else if (act.type==="SEND_REMINDER") {
+            const inv=invoicesData.find(i=>i.id===act.invoice_id);
+            if(inv){ invoiceReminderWA(inv); ar=`\n✅ *Reminder dikirim ke ${inv.customer}*`; }
+          } else if (act.type==="UPDATE_ORDER_STATUS") {
+            setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,status:act.status}:o));
+            await supabase.from("orders").update({status:act.status}).eq("id",act.id);
+            ar=`\n✅ *Order ${act.id} → ${act.status}*`;
+          }
+        } catch(e){ console.warn("Action parse",e); }
+      }
+
+      const clean = fullText.replace(/\[ACTION\].*?\[\/ACTION\]/s,"").trim()+ar;
+      setAraMessages(prev=>[...prev,{role:"assistant",content:clean}]);
+      addAgentLog("ARA_CHAT",`ARA: "${userMsg.slice(0,50)}..."`,"SUCCESS");
     } catch(err) {
-      const errMsg = err.message.includes("401") || err.message.includes("API key")
-        ? "⚠️ API Key belum diset. Buka Pengaturan → ARA Brain → masukkan API Key Claude."
-        : "⚠️ Koneksi ke ARA gagal: " + err.message;
-      setAraMessages(prev => [...prev, { role:"assistant", content:errMsg }]);
-      addAgentLog("ARA_ERROR", err.message.slice(0,80), "ERROR");
+      const msg = err.message.includes("Backend belum") ? "⚠️ "+err.message
+        : err.message.includes("401")||err.message.includes("API key") ? "⚠️ API Key tidak valid. Buka Pengaturan → ARA Brain."
+        : "⚠️ ARA gagal: "+err.message;
+      setAraMessages(prev=>[...prev,{role:"assistant",content:msg}]);
+      addAgentLog("ARA_ERROR",err.message.slice(0,80),"ERROR");
     } finally {
       setAraLoading(false);
-      setTimeout(() => araBottomRef.current?.scrollIntoView({behavior:"smooth"}), 100);
+      setTimeout(()=>araBottomRef.current?.scrollIntoView({behavior:"smooth"}),100);
     }
   };
+
 
   // ── Menu items (all) ──
   const ALL_MENU = [
@@ -710,8 +735,8 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
   const renderDashboard = () => {
     const role = currentUser?.role || "Admin";
 
-    // ── TEKNISI DASHBOARD ──────────────────────────────────────
-    if (role === "Teknisi") {
+    // ── TEKNISI & HELPER DASHBOARD ─────────────────────────────
+    if (role === "Teknisi" || role === "Helper") {
       const myName = currentUser?.name || "";
       const techColors = { "Mulyadi":"#38bdf8","Usaeri":"#22c55e","Albana Niji":"#a78bfa","Rizky Putra":"#f59e0b","Agung":"#f97316","Rey":"#ec4899" };
       const myColor = techColors[myName] || cs.accent;
@@ -988,12 +1013,12 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
                         <span style={{ fontSize:13, color:cs.text, fontWeight:600 }}>{svc.service}</span>
                         <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:(statusColor[svc.status]||cs.muted)+"22", color:statusColor[svc.status]||cs.muted, border:"1px solid "+(statusColor[svc.status]||cs.muted)+"44" }}>{svc.status.replace("_"," ")}</span>
                       </div>
-                      {currentUser?.role !== "Teknisi" && <span style={{ fontWeight:800, color:cs.text, fontFamily:"monospace" }}>{fmt(svc.total)}</span>}
+                      {currentUser?.role !== "Teknisi" && currentUser?.role !== "Helper" && <span style={{ fontWeight:800, color:cs.text, fontFamily:"monospace" }}>{fmt(svc.total)}</span>}
                     </div>
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"4px 16px", fontSize:12, color:cs.muted }}>
                       <span>📅 {svc.date}</span><span>👷 {svc.teknisi}</span>
                       <span>🔧 {svc.type} x{svc.units}</span>
-                      {svc.invoice && currentUser?.role !== "Teknisi" && <span style={{ fontFamily:"monospace", color:cs.accent }}>{svc.invoice}</span>}
+                      {svc.invoice && currentUser?.role !== "Teknisi" && currentUser?.role !== "Helper" && <span style={{ fontFamily:"monospace", color:cs.accent }}>{svc.invoice}</span>}
                     </div>
                     {svc.recommendation && <div style={{ marginTop:8, fontSize:12, color:"#7dd3fc", background:"#0ea5e910", padding:"6px 10px", borderRadius:7 }}>💡 {svc.recommendation}</div>}
                   </div>
@@ -1223,7 +1248,7 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
     const techColors = { "Mulyadi":"#38bdf8","Usaeri":"#22c55e","Albana Niji":"#a78bfa","Rizky Putra":"#f59e0b","Agung":"#f97316","Rey":"#ec4899" };
 
     // For Teknisi role: force filter to own name; for Owner/Admin: use filterTeknisi state
-    const isTekRole = currentUser?.role === "Teknisi";
+    const isTekRole = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
     const myTekName = currentUser?.name || "";
     const activeTek = isTekRole ? myTekName : filterTeknisi;
 
@@ -1955,7 +1980,7 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
           <FieldList fields={activeWA.fields} />
           <GuideBox guide={activeWA.guide} title={"Setup " + activeWA.label} />
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={() => { setWaStatus("testing"); setTimeout(() => { setWaStatus("connected"); showNotif(activeWA.label + " terkoneksi!"); }, 1500); }}
+            <button onClick={async () => { setWaStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"wa"})}); const d=await r.json(); setWaStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setWaStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {waStatus==="testing" ? "⏳ Testing..." : "🔌 Test & Simpan Koneksi"}
             </button>
@@ -2019,7 +2044,7 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
           </div>
 
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={() => { setLlmStatus("testing"); setTimeout(() => { setLlmStatus("connected"); showNotif(activeLLM.label + " terkoneksi dengan Brain.md!"); }, 1800); }}
+            <button onClick={async () => { setLlmStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"llm",provider:llmProvider})}); const d=await r.json(); setLlmStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setLlmStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.ara+",#7c3aed)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {llmStatus==="testing" ? "⏳ Testing..." : "🔌 Test & Simpan — " + activeLLM.label}
             </button>
@@ -2054,7 +2079,7 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
           <FieldList fields={activeSTO.fields} />
           <GuideBox guide={activeSTO.guide} title={"Setup " + activeSTO.label} />
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={() => { setStorageStatus("testing"); setTimeout(() => { setStorageStatus("connected"); showNotif(activeSTO.label + " terkoneksi!"); }, 1500); }}
+            <button onClick={async () => { setStorageStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"storage"})}); const d=await r.json(); setStorageStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setStorageStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {storageStatus==="testing" ? "⏳ Testing..." : "🔌 Test & Simpan Koneksi"}
             </button>
@@ -2210,9 +2235,10 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
   // ─────────────── LOGIN SCREEN ───────────────
   if (!isLoggedIn) {
     const DEMO_ACCOUNTS = [
-      { role:"Owner",   color:"#f59e0b", icon:"👑", email:"owner@aclean.id",   password:"owner123", name:"Malda Retta",  desc:"Akses penuh semua menu & pengaturan" },
-      { role:"Admin",   color:"#38bdf8", icon:"🛠️", email:"admin@aclean.id",   password:"admin123", name:"Admin AClean", desc:"Semua menu kecuali Pengaturan"       },
-      { role:"Teknisi", color:"#22c55e", icon:"👷", email:"mulyadi@aclean.id", password:"tech123",  name:"Mulyadi",      desc:"Jadwal & Tim Teknisi saja"           },
+      { role:"Owner",   color:"#f59e0b", icon:"👑", email:"owner@aclean.id",   password:"owner123",    name:"Malda Retta",  desc:"Akses penuh semua menu & pengaturan" },
+      { role:"Admin",   color:"#38bdf8", icon:"🛠️", email:"admin@aclean.id",   password:"admin123",    name:"Admin AClean", desc:"Semua menu kecuali Pengaturan"       },
+      { role:"Teknisi", color:"#22c55e", icon:"👷", email:"mulyadi@aclean.id", password:"teknisi123",  name:"Mulyadi",      desc:"Jadwal & Laporan Saya saja"          },
+      { role:"Helper",  color:"#a78bfa", icon:"🤝", email:"boim@aclean.id",    password:"helper123",   name:"Boim",         desc:"Jadwal & Laporan Saya saja"          },
     ];
     return (
       <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
@@ -2280,7 +2306,7 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
     );
   }
 
-  const isTekRoleGlobal = currentUser?.role === "Teknisi";
+  const isTekRoleGlobal = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
 
   return (
     <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:"flex" }}>
@@ -2297,7 +2323,7 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:12, fontWeight:700, color:cs.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{currentUser.name}</div>
                 <div style={{ fontSize:10, color:currentUser.color, fontWeight:600 }}>
-                  {currentUser.role === "Owner" ? "👑 Owner" : currentUser.role === "Admin" ? "🛠️ Admin" : "👷 Teknisi"}
+                  {currentUser.role === "Owner" ? "👑 Owner" : currentUser.role === "Admin" ? "🛠️ Admin" : currentUser.role === "Helper" ? "🤝 Helper" : "👷 Teknisi"}
                 </div>
               </div>
             </div>
@@ -2830,66 +2856,155 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
       )}
 
       {/* ═══════ MODAL TAMBAH/EDIT PENGGUNA ═══════ */}
-      {modalAddUser && (
-        <div style={{ position:"fixed", inset:0, background:"#000c", zIndex:400, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={() => setModalAddUser(false)}>
-          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:20, width:"100%", maxWidth:460, padding:28 }} onClick={e => e.stopPropagation()}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-              <div>
-                <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>{newUserForm.id ? "Edit Pengguna" : "Tambah Pengguna"}</div>
-                <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Hanya Owner yang dapat mengelola akun</div>
+      {modalAddUser && (() => {
+        // Auto-password berdasarkan role
+        const roleConfig = {
+          "Owner":   { color:"#f59e0b", icon:"👑", desc:"Akses semua menu & pengaturan", autoPass: null },
+          "Admin":   { color:"#38bdf8", icon:"🛠️", desc:"Semua menu kecuali Pengaturan",  autoPass: null },
+          "Teknisi": { color:"#22c55e", icon:"👷", desc:"Hanya Jadwal & Laporan",          autoPass: "teknisi123" },
+          "Helper":  { color:"#a78bfa", icon:"🤝", desc:"Hanya Jadwal & Laporan",          autoPass: "helper123" },
+        };
+        const cfg = roleConfig[newUserForm.role] || roleConfig["Admin"];
+        const isAutoPass = ["Teknisi","Helper"].includes(newUserForm.role);
+        const effectivePass = isAutoPass ? cfg.autoPass : newUserForm.password;
+
+        const handleSaveUser = async () => {
+          if (!newUserForm.name || !newUserForm.email) { showNotif("Nama dan email wajib diisi"); return; }
+          if (!isAutoPass && !newUserForm.password) { showNotif("Password wajib diisi"); return; }
+
+          const password = effectivePass;
+          const avatar   = newUserForm.name.charAt(0).toUpperCase();
+          const colorMap = { "Owner":"#f59e0b","Admin":"#38bdf8","Teknisi":"#22c55e","Helper":"#a78bfa" };
+          const color    = colorMap[newUserForm.role] || "#38bdf8";
+
+          if (newUserForm.id) {
+            // ── EDIT user yang sudah ada ──
+            const { error } = await supabase.from("user_profiles").update({
+              name: newUserForm.name,
+              role: newUserForm.role,
+              phone: newUserForm.phone || "",
+              avatar, color,
+              active: true,
+            }).eq("id", newUserForm.id);
+            if (error) { showNotif("❌ Gagal update: " + error.message); return; }
+            setUserAccounts(prev => prev.map(u => u.id===newUserForm.id ? {...u,...newUserForm,avatar,color} : u));
+            showNotif("✅ Akun " + newUserForm.name + " diupdate");
+          } else {
+            // ── BUAT user baru via Supabase Auth ──
+            // Pakai admin API lewat supabase — buat user dengan email+password
+            const { data, error } = await supabase.auth.signUp({
+              email: newUserForm.email,
+              password: password,
+              options: {
+                data: { name: newUserForm.name, role: newUserForm.role }
+              }
+            });
+            if (error) { showNotif("❌ Gagal buat akun: " + error.message); return; }
+
+            // Insert profil ke user_profiles (trigger mungkin sudah handle, tapi kita upsert untuk pastikan)
+            if (data.user) {
+              await supabase.from("user_profiles").upsert({
+                id: data.user.id,
+                name: newUserForm.name,
+                role: newUserForm.role,
+                phone: newUserForm.phone || "",
+                avatar, color,
+                active: true,
+              });
+            }
+
+            setUserAccounts(prev => [...prev, {
+              id: data.user?.id || "USR_NEW",
+              name: newUserForm.name, email: newUserForm.email,
+              role: newUserForm.role, phone: newUserForm.phone||"",
+              avatar, color, active: true, lastLogin: "Belum login"
+            }]);
+            showNotif(`✅ Akun ${newUserForm.name} dibuat sebagai ${newUserForm.role} — password: ${password}`);
+          }
+          setModalAddUser(false);
+        };
+
+        return (
+          <div style={{ position:"fixed", inset:0, background:"#000c", zIndex:400, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={() => setModalAddUser(false)}>
+            <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:20, width:"100%", maxWidth:480, padding:28, maxHeight:"90vh", overflowY:"auto" }} onClick={e => e.stopPropagation()}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+                <div>
+                  <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>{newUserForm.id ? "Edit Pengguna" : "Tambah Anggota Tim"}</div>
+                  <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Hanya Owner yang dapat mengelola akun</div>
+                </div>
+                <button onClick={() => setModalAddUser(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>✕</button>
               </div>
-              <button onClick={() => setModalAddUser(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>x</button>
-            </div>
-            <div style={{ display:"grid", gap:12 }}>
-              <div>
-                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:8 }}>Role / Hak Akses</div>
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
-                  {[["Owner","#f59e0b","Semua akses"],["Admin","#38bdf8","Kecuali Pengaturan"],["Teknisi","#22c55e","Jadwal saja"]].map(([role,col,desc]) => (
-                    <div key={role} onClick={() => setNewUserForm(f=>({...f,role}))}
-                      style={{ background:newUserForm.role===role?col+"18":cs.card, border:"2px solid "+(newUserForm.role===role?col:cs.border), borderRadius:10, padding:"10px 8px", cursor:"pointer", textAlign:"center" }}>
-                      <div style={{ fontSize:11, fontWeight:800, color:newUserForm.role===role?col:cs.text, marginBottom:3 }}>{role}</div>
-                      <div style={{ fontSize:9, color:cs.muted }}>{desc}</div>
+
+              <div style={{ display:"grid", gap:14 }}>
+                {/* Role Selector — 4 role */}
+                <div>
+                  <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:8 }}>Role / Hak Akses</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8 }}>
+                    {Object.entries(roleConfig).map(([role, cfg]) => (
+                      <div key={role}
+                        onClick={() => setNewUserForm(f => ({ ...f, role, password: cfg.autoPass || "" }))}
+                        style={{ background:newUserForm.role===role ? cfg.color+"18" : cs.card, border:"2px solid "+(newUserForm.role===role ? cfg.color : cs.border), borderRadius:10, padding:"12px 10px", cursor:"pointer" }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4 }}>
+                          <span style={{ fontSize:16 }}>{cfg.icon}</span>
+                          <span style={{ fontSize:12, fontWeight:800, color:newUserForm.role===role ? cfg.color : cs.text }}>{role}</span>
+                        </div>
+                        <div style={{ fontSize:10, color:cs.muted }}>{cfg.desc}</div>
+                        {cfg.autoPass && <div style={{ fontSize:10, color:cfg.color, marginTop:4, fontWeight:700 }}>🔑 Password otomatis: {cfg.autoPass}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Form fields */}
+                {[["Nama Lengkap","name","text","Nama lengkap anggota"],["Email Login","email","email","nama@aclean.id"],["Nomor HP","phone","text","628812xxx"]].map(([label,key,type,ph]) => (
+                  <div key={key}>
+                    <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
+                    <input type={type} value={newUserForm[key]||""} onChange={e => setNewUserForm(f=>({...f,[key]:e.target.value}))}
+                      placeholder={ph}
+                      style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                ))}
+
+                {/* Password — auto atau manual */}
+                <div>
+                  <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Password</div>
+                  {isAutoPass ? (
+                    <div style={{ background:cfg.color+"15", border:"1px solid "+cfg.color+"44", borderRadius:8, padding:"10px 14px", display:"flex", alignItems:"center", gap:10 }}>
+                      <span style={{ fontSize:18 }}>🔑</span>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:800, color:cfg.color }}>{cfg.autoPass}</div>
+                        <div style={{ fontSize:10, color:cs.muted }}>Password standar untuk semua {newUserForm.role}. Beritahu anggota password ini.</div>
+                      </div>
                     </div>
-                  ))}
+                  ) : (
+                    <input type="password" value={newUserForm.password||""} onChange={e => setNewUserForm(f=>({...f,password:e.target.value}))}
+                      placeholder="min 8 karakter"
+                      style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  )}
                 </div>
-              </div>
-              {[["Nama Lengkap","name","text","Nama teknisi"],["Email Login","email","email","email@aclean.id"],["Nomor HP","phone","text","628812xxx"],["Password","password","password","min 6 karakter"]].map(([label,key,type,ph]) => (
-                <div key={key}>
-                  <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                  <input type={type} value={newUserForm[key]||""} onChange={e => setNewUserForm(f=>({...f,[key]:e.target.value}))}
-                    placeholder={ph}
-                    style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+
+                {/* Info role */}
+                <div style={{ background:cfg.color+"10", border:"1px solid "+cfg.color+"22", borderRadius:8, padding:"10px 14px", fontSize:11, color:cs.muted }}>
+                  {newUserForm.role === "Owner"   && "👑 Akses penuh: semua menu, pengaturan, manajemen akun, dan data keuangan."}
+                  {newUserForm.role === "Admin"   && "🛠️ Akses operasional: order, invoice, customer, inventory, laporan. Tidak bisa buka Pengaturan."}
+                  {newUserForm.role === "Teknisi" && "👷 Akses terbatas: Dashboard, Jadwal, dan Laporan Sendiri saja. Nominal transaksi disembunyikan."}
+                  {newUserForm.role === "Helper"  && "🤝 Akses terbatas: Dashboard, Jadwal, dan Laporan Sendiri saja. Sama seperti Teknisi."}
                 </div>
-              ))}
-              <div style={{ background:cs.accent+"10", border:"1px solid "+cs.accent+"22", borderRadius:8, padding:"10px 14px", fontSize:11, color:cs.muted }}>
-                {newUserForm.role === "Owner" && "Akses ke SEMUA menu dan pengaturan sistem termasuk manajemen akun."}
-                {newUserForm.role === "Admin" && "Akses ke semua menu operasional kecuali halaman Pengaturan."}
-                {newUserForm.role === "Teknisi" && "Hanya bisa lihat Jadwal dan Tim Teknisi. Nominal transaksi disembunyikan."}
-              </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
-                <button onClick={() => setModalAddUser(false)}
-                  style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:600 }}>Batal</button>
-                <button onClick={() => {
-                  if (!newUserForm.name || !newUserForm.email || !newUserForm.password) { showNotif("Lengkapi semua field"); return; }
-                  if (newUserForm.id) {
-                    setUserAccounts(prev => prev.map(u => u.id===newUserForm.id ? {...u,...newUserForm} : u));
-                    showNotif("Akun " + newUserForm.name + " diupdate");
-                  } else {
-                    const cols = ["#38bdf8","#22c55e","#a78bfa","#f59e0b","#34d399"];
-                    const col = cols[userAccounts.length % cols.length];
-                    setUserAccounts(prev => [...prev, { id:"USR"+(prev.length+1), ...newUserForm, avatar:newUserForm.name.charAt(0).toUpperCase(), color:col, active:true, lastLogin:"Belum login" }]);
-                    showNotif("Akun " + newUserForm.name + " dibuat sebagai " + newUserForm.role);
-                  }
-                  setModalAddUser(false);
-                }}
-                  style={{ background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>
-                  {newUserForm.id ? "Simpan Perubahan" : "Buat Akun"}
-                </button>
+
+                {/* Tombol aksi */}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
+                  <button onClick={() => setModalAddUser(false)}
+                    style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:600 }}>Batal</button>
+                  <button onClick={handleSaveUser}
+                    style={{ background:"linear-gradient(135deg,"+cfg.color+","+cfg.color+"99)", border:"none", color:"#fff", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>
+                    {cfg.icon} {newUserForm.id ? "Simpan Perubahan" : "Buat Akun " + newUserForm.role}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ═══════ MODAL TAMBAH CUSTOMER ═══════ */}
       {modalAddCustomer && (
@@ -3130,7 +3245,24 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
         const handleFotoUpload = async (e) => {
           const files = Array.from(e.target.files||[]).slice(0,10-laporanFotos.length);
           const compressed = await Promise.all(files.map(compressImg));
-          setLaporanFotos(prev=>[...prev,...compressed.map((d,i)=>({id:Date.now()+i,label:`Foto ${prev.length+i+1}`,data_url:d}))]);
+          const reportId = laporanModal?.id || "tmp";
+
+          const uploaded = await Promise.all(compressed.map(async (dataUrl, i) => {
+            const localId = Date.now()+i;
+            const label = `Foto ${laporanFotos.length+i+1}`;
+            try {
+              const r = await fetch("/api/upload-foto",{
+                method:"POST", headers:{"Content-Type":"application/json"},
+                body: JSON.stringify({base64:dataUrl, filename:`foto_${localId}.jpg`, reportId})
+              });
+              const d = await r.json();
+              return { id:localId, label, data_url:dataUrl, url: d.success?d.url:null };
+            } catch(_) {
+              return { id:localId, label, data_url:dataUrl, url:null };
+            }
+          }));
+
+          setLaporanFotos(prev=>[...prev,...uploaded]);
           e.target.value="";
         };
 
@@ -3149,14 +3281,30 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
           };
           setLaporanReports(prev=>[...prev.filter(r=>r.job_id!==laporanModal.id),newReport]);
 
+          // Simpan laporan ke Supabase
+          supabase.from("service_reports").upsert({
+            id: newReport.id, job_id: newReport.job_id, teknisi: newReport.teknisi,
+            helper: newReport.helper, customer: newReport.customer,
+            service: newReport.service, date: newReport.date,
+            status: "SUBMITTED", total_units: newReport.total_units,
+            total_freon: newReport.total_freon, rekomendasi: newReport.rekomendasi,
+            catatan_global: newReport.catatan_global, submitted_at: new Date().toISOString(),
+            foto_urls: laporanFotos.filter(f=>f.url).map(f=>f.url),
+          });
+
           // GAP 2 — Update order status ke COMPLETED
           setOrdersData(prev => prev.map(o =>
             o.id === laporanModal.id ? {...o, status:"COMPLETED"} : o
           ));
+          supabase.from("orders").update({status:"COMPLETED"}).eq("id",laporanModal.id);
 
           // GAP 6 — Auto-deduct inventory dari material yang dipakai
           if (laporanMaterials.length > 0) {
             deductInventory(laporanMaterials);
+            // Deduct di Supabase juga
+            laporanMaterials.forEach(mat => {
+              supabase.rpc("deduct_inventory", {item_name: mat.nama, qty: parseFloat(mat.jumlah)||0}).catch(()=>{});
+            });
             addAgentLog("MATERIAL_DEDUCT", `${laporanMaterials.length} material dipakai di ${laporanModal.id}`, "SUCCESS");
           }
 
@@ -3186,7 +3334,13 @@ Selain itu jawab natural dalam Bahasa Indonesia.`;
             follow_up: 0,
           };
           setInvoicesData(prev => [...prev, newInvoice]);
+          // Simpan invoice ke Supabase
+          supabase.from("invoices").insert(newInvoice).catch(e=>console.warn("Invoice insert:",e));
           addAgentLog("INVOICE_CREATED", `Invoice ${newInvoiceId} dibuat dari laporan ${laporanModal.id} — ${fmt(newInvoice.total)} — menunggu approval Owner`, "SUCCESS");
+
+          // Notif WA ke Owner bahwa laporan + invoice menunggu approval
+          const ownerMsg = `📝 Laporan baru masuk dari ${laporanModal.teknisi}\n\n🔧 ${laporanModal.service} - ${laporanModal.customer}\n💰 Invoice: ${fmt(newInvoice.total)}\n\nMohon approve invoice ${newInvoiceId} di sistem. — ARA`;
+          fetch("/api/send-wa",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:"6281299898937",message:ownerMsg})}).catch(()=>{});
 
           setLaporanSubmitted(true);
           showNotif(`✅ Laporan ${laporanModal.id} (${laporanUnits.length} unit) terkirim! Invoice ${newInvoiceId} dibuat.`);
