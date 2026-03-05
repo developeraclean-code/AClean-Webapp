@@ -346,7 +346,28 @@ export default function ACleanWebApp() {
 
   const mkUnit = (no) => ({ unit_no:no, label:`Unit ${no}`, tipe:"AC Split 0.5-1PK", merk:"", pk:"1PK", kondisi_sebelum:[], kondisi_setelah:[], pekerjaan:[], freon_ditambah:"", ampere_akhir:"", catatan_unit:"" });
   const isUnitDone = (u) => u.pekerjaan.length > 0 && (u.kondisi_sebelum.length > 0 || u.kondisi_setelah.length > 0);
-  const compressImg = (file) => new Promise((res) => { const r=new FileReader(); r.onload=(e)=>{ const img=new Image(); img.onload=()=>{ const c=document.createElement("canvas"); const sc=Math.min(1,800/Math.max(img.width,img.height)); c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc); c.getContext("2d").drawImage(img,0,0,c.width,c.height); res(c.toDataURL("image/jpeg",0.78)); }; img.src=e.target.result; }; r.readAsDataURL(file); });
+  const compressImg = (file) => new Promise((res) => {
+    const r = new FileReader();
+    r.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1280; // max dimension px — cukup detail untuk dokumentasi servis
+        const sc  = Math.min(1, MAX / Math.max(img.width, img.height));
+        const w   = Math.round(img.width  * sc);
+        const h   = Math.round(img.height * sc);
+        const c   = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        // Quality 0.70 = 70% JPEG — sesuai permintaan, hemat ~78% ukuran vs original
+        const dataUrl = c.toDataURL("image/jpeg", 0.70);
+        const sizeKB  = Math.round((dataUrl.length * 3/4) / 1024);
+        console.log(`📸 Compress: ${img.width}x${img.height} → ${w}x${h}px, ~${sizeKB}KB`);
+        res(dataUrl);
+      };
+      img.src = e.target.result;
+    };
+    r.readAsDataURL(file);
+  });
 
   const openLaporanModal = (order) => {
     const count = Math.min(order.units||1, 10);
@@ -3248,25 +3269,52 @@ export default function ACleanWebApp() {
 
         const handleFotoUpload = async (e) => {
           const files = Array.from(e.target.files||[]).slice(0,10-laporanFotos.length);
+          showNotif(`⏳ Mengkompresi ${files.length} foto...`);
           const compressed = await Promise.all(files.map(compressImg));
           const reportId = laporanModal?.id || "tmp";
 
           const uploaded = await Promise.all(compressed.map(async (dataUrl, i) => {
             const localId = Date.now()+i;
             const label = `Foto ${laporanFotos.length+i+1}`;
+            let url = null;
+
+            // ── Coba R2 via backend dulu ──
             try {
-              const r = await fetch("/api/upload-foto",{
+              const r = await fetch("/api/upload-foto", {
                 method:"POST", headers:{"Content-Type":"application/json"},
                 body: JSON.stringify({base64:dataUrl, filename:`foto_${localId}.jpg`, reportId})
               });
               const d = await r.json();
-              return { id:localId, label, data_url:dataUrl, url: d.success?d.url:null };
-            } catch(_) {
-              return { id:localId, label, data_url:dataUrl, url:null };
+              if (d.success && d.url) { url = d.url; }
+            } catch(_) {}
+
+            // ── Fallback: Supabase Storage (jika R2 belum dikonfigurasi) ──
+            if (!url) {
+              try {
+                const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+                const byteStr = atob(base64Data);
+                const arr = new Uint8Array(byteStr.length);
+                for (let j=0; j<byteStr.length; j++) arr[j] = byteStr.charCodeAt(j);
+                const blob = new Blob([arr], {type:"image/jpeg"});
+                const path = `reports/${reportId}/${localId}.jpg`;
+                const { data: upData, error: upErr } = await supabase.storage
+                  .from("laporan-fotos")
+                  .upload(path, blob, {contentType:"image/jpeg", upsert:true});
+                if (!upErr && upData) {
+                  const { data: { publicUrl } } = supabase.storage
+                    .from("laporan-fotos")
+                    .getPublicUrl(path);
+                  url = publicUrl;
+                }
+              } catch(_) {}
             }
+
+            return { id:localId, label, data_url:dataUrl, url };
           }));
 
           setLaporanFotos(prev=>[...prev,...uploaded]);
+          const saved = uploaded.filter(f=>f.url).length;
+          showNotif(`✅ ${files.length} foto dikompresi (70%). ${saved} tersimpan ke cloud.`);
           e.target.value="";
         };
 
