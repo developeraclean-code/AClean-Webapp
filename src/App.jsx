@@ -308,10 +308,11 @@ export default function ACleanWebApp() {
 
   // ── Settings ──
   const [waProvider,      setWaProvider]      = useState("fonnte");
-  const [waStatus,        setWaStatus]        = useState("connected");
+  const [waStatus,        setWaStatus]        = useState("not_connected");
   const [llmProvider,     setLlmProvider]     = useState("claude");
   const [llmApiKey,       setLlmApiKey]       = useState("");
-  const [llmStatus,       setLlmStatus]       = useState("connected");
+  const [llmModel,        setLlmModel]        = useState("claude-sonnet-4-6");
+  const [llmStatus,       setLlmStatus]       = useState("not_connected");
   const [storageProvider, setStorageProvider] = useState("r2");
   const [storageStatus,   setStorageStatus]   = useState("not_connected");
   const [dbProvider,      setDbProvider]      = useState("supabase");
@@ -564,6 +565,9 @@ export default function ACleanWebApp() {
     ));
     await supabase.from("invoices").update({ status:"UNPAID", sent:today, due }).eq("id", inv.id);
     await supabase.from("orders").update({ invoice_id:inv.id }).eq("id", inv.job_id);
+    // Kirim invoice via WA ke customer
+    const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service||"Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
+    sendWA(inv.phone, waMsg);
     addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} diapprove Owner — dikirim ke ${inv.customer}`, "SUCCESS");
     showNotif(`✅ Invoice ${inv.id} diapprove & dikirim ke ${inv.customer}`);
   };
@@ -612,8 +616,8 @@ export default function ACleanWebApp() {
     if (form.teknisi) {
       const tek = TEKNISI_DATA.find(t => t.name === form.teknisi);
       if (tek) {
-        const msg = `Halo ${form.teknisi}, ada job baru: ${form.customer} - ${form.service} ${form.units} unit - ${form.address} - ${form.date} Jam ${form.time}. Mohon konfirmasi. - AClean`;
-        openWA(tek.phone, msg);
+        const msg = `Halo ${form.teknisi}, ada job baru:\n📍 *${form.customer}*\n🔧 ${form.service} ${form.units} unit\n📮 ${form.address}\n🕐 ${form.date} jam ${form.time}\n\nMohon konfirmasi. — AClean`;
+        sendWA(tek.phone, msg);
       }
     }
     return newId;
@@ -1537,7 +1541,7 @@ export default function ACleanWebApp() {
             {araLoading?"⏳":"→"}
           </button>
         </div>
-        {!llmApiKey && <div style={{ fontSize:11, color:cs.yellow, marginTop:8 }}>⚠️ API Key belum diset. Buka menu <b>Pengaturan → ARA Brain</b> dan masukkan API Key Claude untuk mengaktifkan ARA.</div>}
+        {llmStatus !== "connected" && <div style={{ fontSize:11, color:cs.yellow, marginTop:8 }}>⚠️ ARA belum terkoneksi. Buka <b>Pengaturan → ARA Brain</b> → klik <b>Test & Simpan</b> untuk mengaktifkan.</div>}
       </div>
     );
   };
@@ -2014,8 +2018,8 @@ export default function ACleanWebApp() {
           <div style={{ marginBottom:12 }}>
             <div style={{ fontSize:11, color:cs.muted, fontWeight:700, marginBottom:6 }}>Model</div>
             <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-              {activeLLM.models.map((m,i) => (
-                <span key={m} style={{ padding:"5px 10px", borderRadius:7, background:i===0?cs.accent+"22":cs.surface, border:"1px solid "+(i===0?cs.accent:cs.border), fontSize:11, color:i===0?cs.accent:cs.muted, fontFamily:"monospace", cursor:"pointer" }}>{m}</span>
+              {activeLLM.models.map((m) => (
+                <span key={m} onClick={() => setLlmModel(m)} style={{ padding:"5px 10px", borderRadius:7, background:llmModel===m?cs.accent+"22":cs.surface, border:"1px solid "+(llmModel===m?cs.accent:cs.border), fontSize:11, color:llmModel===m?cs.accent:cs.muted, fontFamily:"monospace", cursor:"pointer" }}>{m}</span>
               ))}
             </div>
             {activeLLM.note && <div style={{ marginTop:6, fontSize:11, color:cs.accent }}>💡 {activeLLM.note}</div>}
