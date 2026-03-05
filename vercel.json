@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/payment-reminder",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/daily-report",
+      "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/stock-alert",
+      "schedule": "0 1 * * *"
+    }
+  ]
+}
