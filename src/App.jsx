@@ -125,7 +125,7 @@ const AGENT_LOGS = [
 ];
 
 const BRAIN_MD_DEFAULT = [
-  "# ARA BRAIN v2.0 - AClean Service",
+  "# ARA BRAIN v3.0 - AClean Service",
   "## Identitas",
   "- Nama: ARA (Aclean Response Agent)",
   "- Bahasa: Bahasa Indonesia (santun, ramah, profesional)",
@@ -133,36 +133,59 @@ const BRAIN_MD_DEFAULT = [
   "",
   "## Tentang AClean Service",
   "- Jasa servis AC profesional: Cleaning, Install, Repair",
-  "- Area: Alam Sutera, BSD, Serpong, Tangerang Selatan",
   "- WA: +62812-8989-8937",
   "- Pembayaran: BCA 8830883011 a.n. Malda Retta",
-  "- Jam operasional: Senin-Sabtu 08.00-18.00 WIB",
+  "- Jam operasional: Senin-Sabtu 09.00-17.00 WIB",
+  "",
+  "## Area Pelayanan",
+  "### Area UTAMA (langsung konfirmasi):",
+  "Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang, Tangerang Selatan, Serpong, Serpong Utara, Cipondoh, Pinang, Bitung, Curug",
+  "### Area PERLU KONFIRMASI ADMIN:",
+  "Jakarta Barat (Kebon Jeruk, Palmerah, Taman Sari, Kembangan) — tanya dulu ke Admin/Owner",
+  "### Di luar area di atas: TOLAK dengan sopan, informasikan area layanan.",
   "",
   "## Harga Layanan",
   "- Cleaning AC Split 0.5-1PK: Rp 85.000/unit",
   "- Cleaning AC Split 1.5-2.5PK: Rp 100.000/unit",
-  "- Cleaning AC Cassette: Rp 250.000/unit",
+  "- Cleaning AC Cassette 2-2.5PK: Rp 250.000/unit",
+  "- Cleaning AC Cassette 3PK: Rp 300.000/unit",
+  "- Cleaning AC Cassette 4PK: Rp 350.000/unit",
   "- Install AC 0.5-1PK: Rp 500.000 (termasuk 3m pipa)",
   "- Install AC 1.5-2PK: Rp 600.000",
+  "- Install AC 2.5PK: Rp 700.000",
   "- Tambahan pipa: Rp 35.000/meter",
   "- Pengecekan/Repair: Rp 75.000",
   "- Isi freon R22: Rp 150.000/kg",
   "- Isi freon R410A: Rp 180.000/kg",
   "",
+  "## Logika Durasi Pekerjaan (Jam Kerja 09:00-17:00)",
+  "### Cleaning:",
+  "- 1 unit = 1 jam  |  2 unit = 2 jam  |  3 unit = 3 jam  |  4 unit = 3 jam",
+  "- 5-6 unit = 4 jam  |  7-8 unit = 5 jam  |  9-10 unit = 6 jam",
+  "- >10 unit = 1 hari kerja penuh (09:00-17:00)",
+  "### Install:",
+  "- 1-3 unit = 1 hari kerja (1 tim)  |  4+ unit = 2 hari kerja ATAU 2 tim dalam 1 hari",
+  "### Repair:",
+  "- Estimasi 60-120 menit per unit per customer",
+  "",
   "## Kemampuan ARA",
-  "1. Terima dan proses order dari WhatsApp",
-  "2. Konfirmasi jadwal dan dispatch ke teknisi",
-  "3. Terima laporan teknisi dan generate invoice",
-  "4. Kirim invoice PDF ke customer via WA",
-  "5. Terima bukti transfer dan update pembayaran",
-  "6. Kirim reminder invoice jatuh tempo",
-  "7. Jawab FAQ customer",
-  "8. Eskalasi komplain ke CS jika perlu",
+  "1. Cek ketersediaan jadwal teknisi & slot kosong",
+  "2. Konfirmasi area layanan dan estimasi waktu",
+  "3. Terima dan proses order dari WhatsApp",
+  "4. Konfirmasi jadwal dan dispatch ke teknisi",
+  "5. Terima laporan teknisi dan generate invoice",
+  "6. Kirim invoice PDF ke customer via WA",
+  "7. Terima bukti transfer dan update pembayaran",
+  "8. Kirim reminder invoice jatuh tempo",
+  "9. Jawab FAQ customer",
+  "10. Eskalasi komplain ke Owner",
   "",
   "## Aturan Penting",
   "- JANGAN berikan diskon tanpa persetujuan Owner",
-  "- JANGAN konfirmasi jadwal jika teknisi penuh",
-  "- SELALU tanya nama, alamat lengkap, jumlah unit",
+  "- JANGAN konfirmasi jadwal jika teknisi penuh di slot tsb",
+  "- CEK overlap jadwal sebelum konfirmasi (cek jam mulai & selesai)",
+  "- SELALU tanya nama, alamat lengkap, jumlah unit, tipe AC",
+  "- Jika area Jakarta Barat: bilang 'perlu konfirmasi admin dulu'",
   "- Invoice HARUS diapprove Owner sebelum dikirim",
   "- Foto laporan WAJIB min 2 (before & after)",
   "- Eskalasi komplain serius ke Owner"
@@ -496,7 +519,7 @@ export default function ACleanWebApp() {
         setLaporanReports(normalized);
       }
       // Jika DB kosong (laporanRes.data = []), initial state hardcoded tetap aktif
-      if (logsRes.data)     setAgentLogs(logsRes.data);
+      if (!logsRes.error && logsRes.data && logsRes.data.length > 0) setAgentLogs(logsRes.data);
 
       // Load Teknisi dari Supabase — fallback ke TEKNISI_DATA jika kosong/error
       try {
@@ -680,13 +703,14 @@ export default function ACleanWebApp() {
   // ── GAP 9: Create order (real state mutation) ──
   const createOrder = async (form) => {
     const newId = "JOB" + String(10008 + ordersData.length).padStart(5,"0");
+    const timeEnd = hitungJamSelesai(form.time||"09:00", form.service||"Cleaning", form.units||1);
     const newOrder = {
       id:newId,
       customer: form.customer, phone: form.phone, address: form.address,
       customer_id: customersData.find(c=>c.name===form.customer)?.id || null,
       service: form.service, type: form.type, units: parseInt(form.units)||1,
       teknisi: form.teknisi, helper: form.helper||null,
-      date: form.date, time: form.time, status:"CONFIRMED",
+      date: form.date, time: form.time, time_end: timeEnd, status:"CONFIRMED",
       invoice_id:null, dispatch:false, notes:form.notes||""
     };
     setOrdersData(prev => [...prev, newOrder]);
@@ -721,11 +745,20 @@ export default function ACleanWebApp() {
       laporan: laporanReports.map(r=>({id:r.id,job_id:r.job_id,teknisi:r.teknisi,customer:r.customer,service:r.service,status:r.status,date:r.date,submitted:r.submitted})),
       laporanPending: laporanReports.filter(r=>r.status==="SUBMITTED").length,
       laporanRevisi:  laporanReports.filter(r=>r.status==="REVISION").length,
-      teknisiWorkload: teknisiData.map(t=>({
+      teknisiWorkload: teknisiData.filter(t=>t.role==="Teknisi").map(t=>({
         name:t.name, role:t.role, status:t.status,
         jobsToday: ordersData.filter(o=>o.teknisi===t.name&&o.date===TODAY).length,
         jobsPending: ordersData.filter(o=>o.teknisi===t.name&&["CONFIRMED","IN_PROGRESS"].includes(o.status)).length,
+        // Slot kosong hari ini untuk Cleaning 1 unit (referensi cepat)
+        slotKosongHariIni: cariSlotKosong(t.name, TODAY, "Cleaning", 1),
+        jadwalHariIni: ordersData.filter(o=>o.teknisi===t.name&&o.date===TODAY).map(o=>({id:o.id,time:o.time,time_end:o.time_end||"?",service:o.service,units:o.units,customer:o.customer})),
       })),
+      areaPelayanan: {
+        utama: ["Alam Sutera","BSD","Gading Serpong","Graha Raya","Karawaci","Tangerang","Tangerang Selatan","Serpong"],
+        konfirmasi: ["Jakarta Barat"],
+      },
+      logikaDurasi: "Cleaning: 1u=1j,2u=2j,3u=3j,4u=3j,5-6u=4j,7-8u=5j,9-10u=6j,>10=sehari | Install: 1-3u=1hari,4+u=2hari | Repair: 60-120mnt/unit",
+      jamKerja: "09:00-17:00 WIB",
       revenueStats: {
         bulanIni: invoicesData.filter(i=>i.status==="PAID"&&(i.sent||"").startsWith(bulanIni)).reduce((a,b)=>a+(b.total||0),0),
         totalUnpaid: invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").reduce((a,b)=>a+(b.total||0),0),
@@ -750,7 +783,7 @@ export default function ACleanWebApp() {
         fullText = d.reply || "";
       } else if (llmApiKey) {
         // ── Fallback: direct call jika backend belum punya env key ──
-        const sysP = brainMd+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
+        const sysP = brainMd+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
         const fr = await fetch("https://api.anthropic.com/v1/messages", {
           method:"POST",
           headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
@@ -1528,8 +1561,9 @@ export default function ACleanWebApp() {
               ? <div style={{ background:cs.card, borderRadius:12, padding:32, textAlign:"center", color:cs.muted }}>Tidak ada jadwal untuk {activeTek}</div>
               : filteredOrders.map(o => (
               <div key={o.id} style={{ background:cs.card, border:"1px solid "+(statusColor[o.status]||cs.border)+"44", borderRadius:12, padding:16, display:"flex", gap:14, alignItems:"flex-start" }}>
-                <div style={{ background:(techColors[o.teknisi]||cs.accent)+"22", border:"1px solid "+(techColors[o.teknisi]||cs.accent)+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:50, flexShrink:0 }}>
-                  <div style={{ fontSize:16, fontWeight:800, color:techColors[o.teknisi]||cs.accent }}>{o.time}</div>
+                <div style={{ background:(techColors[o.teknisi]||cs.accent)+"22", border:"1px solid "+(techColors[o.teknisi]||cs.accent)+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:58, flexShrink:0 }}>
+                  <div style={{ fontSize:15, fontWeight:800, color:techColors[o.teknisi]||cs.accent }}>{o.time}</div>
+                  <div style={{ fontSize:9, color:cs.muted }}>–{o.time_end||hitungJamSelesai(o.time,o.service,o.units)}</div>
                   <div style={{ fontSize:9, color:cs.muted }}>{o.date.slice(5)}</div>
                 </div>
                 <div style={{ flex:1 }}>
@@ -1608,6 +1642,17 @@ export default function ACleanWebApp() {
               <div style={{ display:"flex", gap:6 }}>
                 <button onClick={() => { setEditTeknisi(t); setNewTeknisiForm({...t}); setModalTeknisi(true); }} style={{ flex:1, background:cs.accent+"18", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
                 <button onClick={() => openWA(t.phone, "Halo " + t.name + ", ada info dari AClean:")} style={{ flex:1, background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 WA</button>
+                {currentUser?.role === "Owner" && (
+                  <button onClick={async () => {
+                    if (window.confirm && !window.confirm(`Hapus ${t.name} dari tim?`)) return;
+                    setTeknisiData(prev => prev.filter(x => x.id !== t.id));
+                    if (!String(t.id).startsWith("Tech")) {
+                      await supabase.from("user_profiles").delete().eq("id", t.id).catch(()=>{});
+                    }
+                    addAgentLog("TEKNISI_DELETED", t.name + " dihapus dari tim", "WARNING");
+                    showNotif("🗑️ " + t.name + " dihapus");
+                  }} style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"6px 8px", borderRadius:7, cursor:"pointer", fontSize:11 }}>🗑️</button>
+                )}
               </div>
             </div>
           );
@@ -1620,20 +1665,125 @@ export default function ACleanWebApp() {
   // RENDER AGENT LOG
   // ============================================================
   // ARA Scheduling helper: suggest consistent teknisi+helper pairs per day
-  const araSchedulingSuggest = (targetDate) => {
+  // ──────────────────────────────────────────────────────────────
+  // DURASI & JAM SELESAI LOGIC
+  // ──────────────────────────────────────────────────────────────
+  // Hitung durasi (jam) berdasarkan service + jumlah unit
+  const hitungDurasi = (service, units) => {
+    const u = parseInt(units) || 1;
+    if (service === "Install") {
+      // 1-3 unit = 1 hari (09:00-17:00 = 8 jam), 4+ unit = 2 hari
+      if (u <= 3) return 8;
+      return 16; // 2 hari kerja
+    }
+    if (service === "Repair") {
+      // 60-120 menit per unit, pakai 90 menit rata-rata
+      return Math.ceil(u * 1.5);
+    }
+    // Cleaning:
+    if (u === 1) return 1;
+    if (u === 2) return 2;
+    if (u === 3) return 3;
+    if (u === 4) return 3;
+    if (u <= 6)  return 4;
+    if (u <= 8)  return 5;
+    if (u <= 10) return 6;
+    return 8; // >10 unit = 1 hari kerja penuh
+  };
+
+  // Tambahkan jam ke time string "09:00"
+  const addJam = (timeStr, jamTambah) => {
+    const [h, m] = (timeStr || "09:00").split(":").map(Number);
+    const totalMin = h * 60 + m + Math.round(jamTambah * 60);
+    const nh = Math.floor(totalMin / 60);
+    const nm = totalMin % 60;
+    if (nh >= 17) return "17:00"; // max jam selesai
+    return String(nh).padStart(2,"0") + ":" + String(nm).padStart(2,"0");
+  };
+
+  // Hitung jam selesai estimasi
+  const hitungJamSelesai = (timeStart, service, units) => {
+    const dur = hitungDurasi(service, units);
+    return addJam(timeStart, Math.min(dur, 8)); // max 8 jam dalam 1 hari
+  };
+
+  // Cek apakah teknisi AVAILABLE di slot waktu tertentu (tidak overlap)
+  const cekTeknisiAvailable = (teknisiName, date, timeStart, service, units) => {
+    const durBaru = hitungDurasi(service, units);
+    const startBaru = (timeStart || "09:00").split(":").map(Number);
+    const startMinBaru = startBaru[0] * 60 + startBaru[1];
+    const endMinBaru   = startMinBaru + Math.round(durBaru * 60);
+
+    const conflicts = ordersData.filter(o =>
+      o.teknisi === teknisiName &&
+      o.date === date &&
+      ["PENDING","CONFIRMED","IN_PROGRESS"].includes(o.status)
+    );
+
+    for (const o of conflicts) {
+      const durExist = hitungDurasi(o.service || "Cleaning", o.units || 1);
+      const startExist = (o.time || "09:00").split(":").map(Number);
+      const startMinExist = startExist[0] * 60 + startExist[1];
+      const endMinExist   = startMinExist + Math.round(durExist * 60);
+      // Overlap check
+      if (startMinBaru < endMinExist && endMinBaru > startMinExist) return false;
+    }
+    return true;
+  };
+
+  // Cari slot kosong pertama untuk teknisi di tanggal tertentu
+  const cariSlotKosong = (teknisiName, date, service, units) => {
+    const dur = hitungDurasi(service, units);
+    const slots = ["09:00","10:00","11:00","13:00","14:00","15:00","16:00"];
+    for (const slot of slots) {
+      const end = hitungJamSelesai(slot, service, units);
+      if (end <= "17:00" && cekTeknisiAvailable(teknisiName, date, slot, service, units)) {
+        return slot;
+      }
+    }
+    return null; // penuh
+  };
+
+  // AREA PELAYANAN
+  const AREA_PELAYANAN = {
+    utama: ["Alam Sutera","BSD","Gading Serpong","Graha Raya","Karawaci","Tangerang","Tangerang Selatan","Serpong","Serpong Utara","Cipondoh","Pinang","Bitung","Curug"],
+    konfirmasi: ["Jakarta Barat","Kebon Jeruk","Palmerah","Taman Sari","Kembangan"],
+    luar: [], // tidak dilayani
+  };
+
+  const cekAreaPelayanan = (area) => {
+    const a = (area||"").toLowerCase();
+    if (AREA_PELAYANAN.utama.some(x => a.includes(x.toLowerCase()))) return "utama";
+    if (AREA_PELAYANAN.konfirmasi.some(x => a.includes(x.toLowerCase()))) return "konfirmasi";
+    return "luar";
+  };
+
+  // ──────────────────────────────────────────────────────────────
+  // ARA SCHEDULING SUGGEST — lebih cerdas dengan slot kosong
+  // ──────────────────────────────────────────────────────────────
+  const araSchedulingSuggest = (targetDate, service, units) => {
+    // 1. Pair suggestion (helper favorit per teknisi hari itu)
     const dayOrders = ordersData.filter(o => o.date === targetDate && o.teknisi && o.helper);
     const pairs = {};
     dayOrders.forEach(o => {
       if(!pairs[o.teknisi]) pairs[o.teknisi] = {};
       pairs[o.teknisi][o.helper] = (pairs[o.teknisi][o.helper]||0) + 1;
     });
-    // Return preferred helper per teknisi that day
     const pref = {};
     Object.keys(pairs).forEach(tek => {
       const helpers = pairs[tek];
       pref[tek] = Object.keys(helpers).reduce((a,b) => helpers[a]>helpers[b]?a:b);
     });
-    return pref;
+
+    // 2. Availability per teknisi di tanggal itu
+    const availability = {};
+    teknisiData.filter(t => t.role === "Teknisi").forEach(t => {
+      const slot = service ? cariSlotKosong(t.name, targetDate, service || "Cleaning", units || 1) : null;
+      const jobCount = ordersData.filter(o => o.teknisi === t.name && o.date === targetDate).length;
+      availability[t.name] = { slotKosong: slot, jobCount, tersedia: slot !== null };
+    });
+
+    return { pref, availability };
   };
 
   // ============================================================
@@ -2606,7 +2756,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
         <div style={{ padding:"16px 14px", borderBottom:"1px solid "+cs.border }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
             <div style={{ fontWeight:800, fontSize:16, color:cs.accent }}>⬡ AClean</div>
-            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v10</span>
+            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v11</span>
           </div>
           {currentUser && (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -2722,25 +2872,62 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               </div>
-              {/* Jam */}
-              <div>
-                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Jam Mulai</div>
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:6 }}>
-                  {["07:00","08:00","09:00","10:00","11:00","13:00","14:00","15:00"].map(t=>(
-                    <button key={t} onClick={()=>setNewOrderForm(f=>({...f,time:t}))}
-                      style={{ background:newOrderForm.time===t?"linear-gradient(135deg,"+cs.accent+",#3b82f6)":cs.card, border:"1px solid "+(newOrderForm.time===t?cs.accent:cs.border), color:newOrderForm.time===t?"#0a0f1e":cs.text, borderRadius:8, padding:"8px 4px", cursor:"pointer", fontSize:12, fontWeight:newOrderForm.time===t?800:400 }}>
-                      {t}
-                    </button>
-                  ))}
-                </div>
-                <input type="time" value={newOrderForm.time||"09:00"} onChange={e=>setNewOrderForm(f=>({...f,time:e.target.value}))}
-                  style={{ width:"100%", marginTop:6, background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
-              </div>
+              {/* Jam Mulai 09:00-17:00 */}
+              {(() => {
+                const jamSelesai = hitungJamSelesai(newOrderForm.time||"09:00", newOrderForm.service, newOrderForm.units);
+                const dur = hitungDurasi(newOrderForm.service, newOrderForm.units);
+                const avail = newOrderForm.teknisi && newOrderForm.date
+                  ? cekTeknisiAvailable(newOrderForm.teknisi, newOrderForm.date, newOrderForm.time||"09:00", newOrderForm.service, newOrderForm.units)
+                  : true;
+                const slotSaran = newOrderForm.teknisi && newOrderForm.date
+                  ? cariSlotKosong(newOrderForm.teknisi, newOrderForm.date, newOrderForm.service, newOrderForm.units)
+                  : null;
+                return (
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5, display:"flex", alignItems:"center", gap:8 }}>
+                      Jam Mulai
+                      <span style={{ fontSize:10, color:cs.muted, fontWeight:400 }}>09:00 – 17:00 WIB</span>
+                    </div>
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:5, marginBottom:6 }}>
+                      {["09:00","10:00","11:00","12:00","13:00","14:00","15:00","16:00","17:00"].map(t=>{
+                        const endT = hitungJamSelesai(t, newOrderForm.service, newOrderForm.units);
+                        const ok = endT <= "17:00";
+                        const isAvail = newOrderForm.teknisi && newOrderForm.date
+                          ? cekTeknisiAvailable(newOrderForm.teknisi, newOrderForm.date, t, newOrderForm.service, newOrderForm.units)
+                          : true;
+                        const isSelected = newOrderForm.time === t;
+                        return (
+                          <button key={t} onClick={()=>ok&&setNewOrderForm(f=>({...f,time:t}))} disabled={!ok}
+                            style={{ background:isSelected?"linear-gradient(135deg,"+cs.accent+",#3b82f6)":!ok?cs.border+"33":!isAvail?cs.red+"22":cs.card, border:"1px solid "+(isSelected?cs.accent:!ok?"transparent":!isAvail?cs.red+"44":cs.border), color:isSelected?"#0a0f1e":!ok?cs.border:!isAvail?cs.red:cs.text, borderRadius:8, padding:"7px 2px", cursor:ok?"pointer":"not-allowed", fontSize:11, fontWeight:isSelected?800:400, position:"relative" }}>
+                            {t}
+                            {!isAvail && ok && <span style={{fontSize:7,display:"block",color:cs.red}}>⚠ bentrok</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <input type="time" min="09:00" max="17:00" value={newOrderForm.time||"09:00"} onChange={e=>setNewOrderForm(f=>({...f,time:e.target.value}))}
+                      style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                    {/* Estimasi durasi & jam selesai */}
+                    <div style={{ marginTop:8, background:avail?cs.green+"10":cs.red+"10", border:"1px solid "+(avail?cs.green:cs.red)+"22", borderRadius:8, padding:"8px 12px", display:"flex", gap:12, flexWrap:"wrap", fontSize:12 }}>
+                      <span>⏱ Estimasi: <b style={{color:cs.accent}}>{dur >= 8 ? "1 hari kerja" : dur+"jam"}</b></span>
+                      <span>🕐 Selesai ±: <b style={{color:cs.green}}>{jamSelesai} WIB</b></span>
+                      {newOrderForm.teknisi && newOrderForm.date && (
+                        <span>{avail ? <span style={{color:cs.green}}>✓ Teknisi tersedia</span> : <span style={{color:cs.red}}>⚠ Jadwal bentrok!</span>}</span>
+                      )}
+                      {!avail && slotSaran && (
+                        <span style={{color:cs.yellow,cursor:"pointer",textDecoration:"underline"}} onClick={()=>setNewOrderForm(f=>({...f,time:slotSaran}))}>
+                          Slot kosong: {slotSaran} (klik pakai)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
               <div>
                 <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5, display:"flex", alignItems:"center", gap:8 }}>
                   Helper
                   {newOrderForm.teknisi && newOrderForm.date && (() => {
-                    const pref = araSchedulingSuggest(newOrderForm.date);
+                    const { pref } = araSchedulingSuggest(newOrderForm.date, newOrderForm.service, newOrderForm.units);
                     const sug = pref[newOrderForm.teknisi];
                     return sug ? (
                       <span style={{ fontSize:10, color:cs.green, background:cs.green+"18", padding:"2px 8px", borderRadius:99, border:"1px solid "+cs.green+"33", cursor:"pointer" }}
@@ -2754,7 +2941,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
                   <option value="">Tidak ada helper</option>
                   {teknisiData.filter(t=>t.role==="Helper").map(t => {
-                    const pref = araSchedulingSuggest(newOrderForm.date||"");
+                    const { pref } = araSchedulingSuggest(newOrderForm.date||"", newOrderForm.service, newOrderForm.units);
                     const isSug = pref[newOrderForm.teknisi] === t.name;
                     return <option key={t.id} value={t.name}>{isSug?"★ ":""}{t.name}{isSug?" (ARA)":" "}</option>;
                   })}
@@ -2898,8 +3085,36 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 </select>
               </div>
               {editTeknisi && (
-                <button onClick={() => { showNotif(editTeknisi.name + " dinonaktifkan dari roster"); setModalTeknisi(false); setEditTeknisi(null); }}
-                  style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"9px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>⛔ Keluarkan dari Tim</button>
+                <div style={{ display:"grid", gap:6 }}>
+                  <button onClick={async () => {
+                    if (!window.confirm) { /* skip confirm in some envs */ }
+                    else if (!window.confirm(`Hapus ${editTeknisi.name} dari tim dan database?
+
+Perhatian: Tindakan ini tidak bisa dibatalkan.
+Order yang sudah ada tidak terpengaruh.`)) return;
+                    // Hapus dari local state
+                    setTeknisiData(prev => prev.filter(t => t.id !== editTeknisi.id));
+                    // Hapus dari Supabase (jika punya UUID id)
+                    if (editTeknisi.id && !String(editTeknisi.id).startsWith("Tech")) {
+                      const { error } = await supabase.from("user_profiles").delete().eq("id", editTeknisi.id);
+                      if (error) showNotif("⚠️ Hapus lokal berhasil, DB gagal: " + error.message);
+                      else { addAgentLog("TEKNISI_DELETED", "Anggota " + editTeknisi.name + " dihapus dari tim", "WARNING"); showNotif("✅ " + editTeknisi.name + " berhasil dihapus dari tim & database"); }
+                    } else {
+                      showNotif("✅ " + editTeknisi.name + " dihapus dari daftar lokal");
+                    }
+                    setModalTeknisi(false); setEditTeknisi(null);
+                  }}
+                    style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"9px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>🗑️ Hapus dari Tim & DB</button>
+                  <button onClick={async () => {
+                    setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? {...t, status:"standby", active:false} : t));
+                    if (!String(editTeknisi.id).startsWith("Tech")) {
+                      await supabase.from("user_profiles").update({status:"standby", active:false}).eq("id", editTeknisi.id).catch(()=>{});
+                    }
+                    showNotif(editTeknisi.name + " dinonaktifkan (standby). Data tetap tersimpan.");
+                    setModalTeknisi(false); setEditTeknisi(null);
+                  }}
+                    style={{ background:cs.yellow+"18", border:"1px solid "+cs.yellow+"33", color:cs.yellow, padding:"9px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>⏸ Nonaktifkan (Standby)</button>
+                </div>
               )}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
                 <button onClick={() => { setModalTeknisi(false); setEditTeknisi(null); }} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
@@ -3480,7 +3695,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5,display:"flex",alignItems:"center",gap:8}}>
                   Helper
                   {editOrderForm.teknisi && editOrderForm.date && (() => {
-                    const pref = araSchedulingSuggest(editOrderForm.date);
+                    const { pref } = araSchedulingSuggest(editOrderForm.date, editOrderForm.service, editOrderForm.units);
                     const sug = pref[editOrderForm.teknisi];
                     return sug ? (
                       <span style={{fontSize:10,color:cs.green,background:cs.green+"18",padding:"2px 8px",borderRadius:99,border:"1px solid "+cs.green+"33",cursor:"pointer"}}
@@ -3494,7 +3709,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none"}}>
                   <option value="">Tidak ada helper</option>
                   {teknisiData.filter(t=>t.role==="Helper").map(t=>{
-                    const pref = araSchedulingSuggest(editOrderForm.date||"");
+                    const pref = araSchedulingSuggest(editOrderForm.date||"", editOrderForm.service, editOrderForm.units);
                     const isSug = pref[editOrderForm.teknisi]===t.name;
                     return <option key={t.id} value={t.name}>{isSug?"★ ":""}{t.name}</option>;
                   })}
