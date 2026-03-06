@@ -1638,10 +1638,14 @@ export default function ACleanWebApp() {
                       {currentUser?.role === "Owner" && (
                         <button onClick={async () => {
                           if (!window.confirm(`Hapus material "${item.name}"?`)) return;
-                          const { error } = await supabase.from("inventory").delete().eq("code", item.code);
+                          // Delete pakai id (UUID) jika ada, fallback ke code
+                          const delQuery = item.id && !String(item.id).startsWith("INV")
+                            ? supabase.from("inventory").delete().eq("id", item.id)
+                            : supabase.from("inventory").delete().eq("code", item.code);
+                          const { error } = await delQuery;
                           if (!error) {
-                            setInventoryData(prev => prev.filter(i => i.code !== item.code));
-                            showNotif("🗑️ Material " + item.name + " dihapus");
+                            setInventoryData(prev => prev.filter(i => i.id ? i.id !== item.id : i.code !== item.code));
+                            showNotif("🗑️ Material " + item.name + " dihapus dari DB");
                           } else showNotif("❌ Gagal hapus: " + error.message);
                         }} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11 }}>🗑️</button>
                       )}
@@ -1801,7 +1805,27 @@ export default function ACleanWebApp() {
           <div style={{ display:"grid", gap:10 }}>
             {filteredOrders.length === 0
               ? <div style={{ background:cs.card, borderRadius:12, padding:32, textAlign:"center", color:cs.muted }}>Tidak ada jadwal untuk {activeTek}</div>
-              : filteredOrders.map(o => (
+              : (() => {
+                const sorted2 = [...filteredOrders].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+                const grouped2 = sorted2.reduce((acc,o)=>{if(!acc[o.date])acc[o.date]=[];acc[o.date].push(o);return acc;},{});
+                return Object.entries(grouped2).map(([date2,dayOrders])=>{
+                  const d2=new Date(date2+"T00:00:00");
+                  const todayStr2=new Date().toISOString().slice(0,10);
+                  const tomorrowStr2=new Date(Date.now()+86400000).toISOString().slice(0,10);
+                  const isToday2=date2===todayStr2, isTomorrow2=date2===tomorrowStr2;
+                  const dayNames2=["Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"];
+                  const dayLabel2=isToday2?"🔴 Hari Ini":isTomorrow2?"🟡 Besok":dayNames2[d2.getDay()];
+                  const dateStr2=d2.toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"});
+                  return (
+                    <div key={date2} style={{marginBottom:6}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,marginTop:10}}>
+                        <div style={{background:isToday2?cs.red+"22":isTomorrow2?cs.yellow+"22":cs.surface,border:"1px solid "+(isToday2?cs.red:isTomorrow2?cs.yellow:cs.border)+"55",borderRadius:99,padding:"5px 16px",fontSize:12,fontWeight:800,color:isToday2?cs.red:isTomorrow2?cs.yellow:cs.muted}}>
+                          {dayLabel2} &nbsp;·&nbsp; {dateStr2}
+                        </div>
+                        <div style={{flex:1,height:1,background:cs.border+"55"}}/>
+                        <span style={{fontSize:11,color:cs.muted,background:cs.surface,padding:"2px 8px",borderRadius:99,border:"1px solid "+cs.border}}>{dayOrders.length} job</span>
+                      </div>
+                      {dayOrders.map(o=>(
               <div key={o.id} style={{ background:cs.card, border:"1px solid "+(statusColor[o.status]||cs.border)+"44", borderRadius:12, padding:16, display:"flex", gap:14, alignItems:"flex-start" }}>
                 <div style={{ background:(techColors[o.teknisi]||cs.accent)+"22", border:"1px solid "+(techColors[o.teknisi]||cs.accent)+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:58, flexShrink:0 }}>
                   <div style={{ fontSize:15, fontWeight:800, color:techColors[o.teknisi]||cs.accent }}>{o.time}</div>
@@ -1845,10 +1869,13 @@ export default function ACleanWebApp() {
                   <button onClick={() => openLaporanModal(o)} style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📝 Laporan</button>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          );
+        });
+      })()
+            </div>
+          )}
     );
   };
 
@@ -2379,14 +2406,25 @@ export default function ACleanWebApp() {
   const renderLaporanTim = () => {
     const sMap = { SUBMITTED:[cs.accent,"Submitted"], VERIFIED:[cs.green,"Terverifikasi"], REVISION:[cs.yellow,"Perlu Revisi"], REJECTED:[cs.red,"Ditolak"] };
     const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,border:"1px solid "+col+"44",fontWeight:700}}>{lbl}</span>; };
-    const filtered = laporanReports.filter(r =>
-      !searchLaporan ||
-      (r.customer||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
-      (r.teknisi||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
-      (r.job_id||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
-      (r.helper||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
-      (r.service||"").toLowerCase().includes(searchLaporan.toLowerCase())
-    );
+    // Sort by date desc + status (SUBMITTED first)
+    const statusOrder = { SUBMITTED:0, REVISION:1, VERIFIED:2, REJECTED:3 };
+    const filtered = laporanReports
+      .filter(r =>
+        !searchLaporan ||
+        (r.customer||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
+        (r.teknisi||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
+        (r.job_id||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
+        (r.helper||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
+        (r.service||"").toLowerCase().includes(searchLaporan.toLowerCase())
+      )
+      .sort((a,b) => {
+        // Primary: date desc (terbaru di atas)
+        const dateA = a.submitted_at || a.submitted || a.date || "";
+        const dateB = b.submitted_at || b.submitted || b.date || "";
+        if (dateB !== dateA) return dateB.localeCompare(dateA);
+        // Secondary: status (SUBMITTED paling atas)
+        return (statusOrder[a.status]||9) - (statusOrder[b.status]||9);
+      });
     return (
       <div style={{display:"grid",gap:16}}>
         {/* Header */}
