@@ -525,7 +525,7 @@ export default function ACleanWebApp() {
               ...u,
               role: (u.role||"").charAt(0).toUpperCase() + (u.role||"").slice(1).toLowerCase(),
               skills: u.skills || [],
-              jobs_today: u.jobs_today || 0,
+              jobs_today: 0, // dihitung dari ordersData saat render
               status: u.status || "active",
             }));
             setTeknisiData(normalized);
@@ -1631,11 +1631,24 @@ export default function ACleanWebApp() {
                     <span style={{ fontSize:10, padding:"2px 8px", borderRadius:99, background:stC+"22", color:stC, border:"1px solid "+stC+"44", fontWeight:700 }}>{item.status}</span>
                   </td>
                   <td style={{ padding:"9px 12px" }}>
-                    {currentUser?.role === "Owner" ? (
-                      <button onClick={() => { setEditStokItem({...item}); setNewStokForm({name:item.name,unit:item.unit,price:item.price,stock:item.stock,reorder:item.reorder,min_alert:item.min_alert}); setModalEditStok(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
-                    ) : (
-                      <span style={{ fontSize:10, color:cs.muted, fontStyle:"italic" }}>—</span>
-                    )}
+                    <div style={{ display:"flex", gap:4 }}>
+                      {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                        <button onClick={() => { setEditStokItem({...item}); setNewStokForm({name:item.name,unit:item.unit,price:item.price,stock:item.stock,reorder:item.reorder,min_alert:item.min_alert}); setModalEditStok(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
+                      )}
+                      {currentUser?.role === "Owner" && (
+                        <button onClick={async () => {
+                          if (!window.confirm(`Hapus material "${item.name}"?`)) return;
+                          const { error } = await supabase.from("inventory").delete().eq("code", item.code);
+                          if (!error) {
+                            setInventoryData(prev => prev.filter(i => i.code !== item.code));
+                            showNotif("🗑️ Material " + item.name + " dihapus");
+                          } else showNotif("❌ Gagal hapus: " + error.message);
+                        }} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11 }}>🗑️</button>
+                      )}
+                      {currentUser?.role !== "Owner" && currentUser?.role !== "Admin" && (
+                        <span style={{ fontSize:10, color:cs.muted, fontStyle:"italic" }}>—</span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -1673,7 +1686,7 @@ export default function ACleanWebApp() {
     const myTekName = currentUser?.name || "";
     const activeTek = isTekRole ? myTekName : filterTeknisi;
 
-    const allTekNames = [...new Set(ordersData.map(o => o.teknisi))];
+    const allTekNames = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
     const filteredOrders = activeTek === "Semua" ? ordersData : ordersData.filter(o => o.teknisi === activeTek);
     const teknisiList = activeTek === "Semua" ? allTekNames : [activeTek];
 
@@ -1715,7 +1728,7 @@ export default function ACleanWebApp() {
                   {name === "Semua" ? "👥 Semua" : (
                     <span style={{ display:"flex", alignItems:"center", gap:4 }}>
                       <span style={{ width:8, height:8, borderRadius:"50%", background:col, display:"inline-block" }}></span>
-                      {name.split(" ")[0]}
+                      {(name||"").split(" ")[0]}
                     </span>
                   )}
                 </button>
@@ -1763,7 +1776,7 @@ export default function ACleanWebApp() {
               {teknisiList.map(tek => (
                 <div key={tek} style={{ display:"grid", gridTemplateColumns:"70px repeat(7,1fr)", gap:2, marginBottom:2 }}>
                   <div style={{ background:cs.card, border:"1px solid "+(techColors[tek]||cs.border), borderRadius:7, padding:"6px 4px", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    <span style={{ fontSize:9, fontWeight:800, color:techColors[tek]||cs.muted, textAlign:"center", lineHeight:1.3 }}>{tek.split(" ")[0]}</span>
+                    <span style={{ fontSize:9, fontWeight:800, color:techColors[tek]||cs.muted, textAlign:"center", lineHeight:1.3 }}>{(tek||"").split(" ")[0]}</span>
                   </div>
                   {weekDays.map(d => {
                     const jobs = ordersData.filter(o => o.teknisi===tek && o.date===d.date);
@@ -1772,7 +1785,7 @@ export default function ACleanWebApp() {
                         {jobs.map(j => (
                           <div key={j.id} style={{ background:(techColors[tek]||cs.accent)+"22", border:"1px solid "+(techColors[tek]||cs.accent)+"44", borderRadius:4, padding:"2px 4px", marginBottom:2 }}>
                             <div style={{ fontSize:9, fontWeight:800, color:techColors[tek]||cs.accent }}>{j.time}</div>
-                            <div style={{ fontSize:9, color:cs.text }}>{j.customer.split(" ")[0]}</div>
+                            <div style={{ fontSize:9, color:cs.text }}>{(j.customer||"").split(" ")[0]}</div>
                             <div style={{ fontSize:8, color:cs.muted }}>{j.service}</div>
                           </div>
                         ))}
@@ -1863,7 +1876,7 @@ export default function ACleanWebApp() {
               </div>
               <div style={{ fontSize:11, color:cs.muted, marginBottom:10 }}>
                 <div>📱 {t.phone}</div>
-                <div>🔧 {t.jobs_today} job hari ini</div>
+                <div>🔧 {ordersData.filter(o=>o.teknisi===t.name&&o.date===TODAY).length} job hari ini</div>
                 <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginTop:6 }}>
                   {t.skills.map(s => <span key={s} style={{ background:cs.accent+"18", color:cs.accent, fontSize:9, padding:"2px 6px", borderRadius:4, fontWeight:600 }}>{s}</span>)}
                 </div>
@@ -2368,11 +2381,11 @@ export default function ACleanWebApp() {
     const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,border:"1px solid "+col+"44",fontWeight:700}}>{lbl}</span>; };
     const filtered = laporanReports.filter(r =>
       !searchLaporan ||
-      r.customer.toLowerCase().includes(searchLaporan.toLowerCase()) ||
-      r.teknisi.toLowerCase().includes(searchLaporan.toLowerCase()) ||
-      r.job_id.toLowerCase().includes(searchLaporan.toLowerCase()) ||
+      (r.customer||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
+      (r.teknisi||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
+      (r.job_id||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
       (r.helper||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
-      r.service.toLowerCase().includes(searchLaporan.toLowerCase())
+      (r.service||"").toLowerCase().includes(searchLaporan.toLowerCase())
     );
     return (
       <div style={{display:"grid",gap:16}}>
@@ -2848,7 +2861,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               {brainMd.slice(0,500)}{brainMd.length>500?"...":""}
             </div>
             <div style={{ display:"flex", gap:14, marginTop:8, fontSize:11, color:cs.muted }}>
-              <span>📝 {brainMd.split("\n").length} baris</span>
+              <span>📝 {(brainMd||"").split("\n").length} baris</span>
               <span>🔤 {brainMd.length} karakter</span>
               <span style={{ color:cs.green }}>✅ Dikirim sebagai system prompt ke {activeLLM.label}</span>
             </div>
@@ -3535,17 +3548,28 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                     setModalTeknisi(false); setEditTeknisi(null);
                   }}
                     style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"9px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>🗑️ Hapus dari Tim & DB</button>
-                  <button onClick={async () => {
-                    setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? {...t, status:"standby", active:false} : t));
-                    if (!String(editTeknisi.id).startsWith("Tech")) {
-                      // GAP 5: status kolom mungkin belum ada — update dengan catch
-                      await supabase.from("user_profiles").update({active:false}).eq("id", editTeknisi.id);
-                      await supabase.from("user_profiles").update({status:"standby"}).eq("id", editTeknisi.id);
-                    }
-                    showNotif(editTeknisi.name + " dinonaktifkan (standby). Data tetap tersimpan.");
-                    setModalTeknisi(false); setEditTeknisi(null);
-                  }}
-                    style={{ background:cs.yellow+"18", border:"1px solid "+cs.yellow+"33", color:cs.yellow, padding:"9px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>⏸ Nonaktifkan (Standby)</button>
+                  {editTeknisi?.status === "standby" ? (
+                    <button onClick={async () => {
+                      setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? {...t, status:"active", active:true} : t));
+                      if (!String(editTeknisi.id).startsWith("Tech")) {
+                        await supabase.from("user_profiles").update({active:true, status:"active"}).eq("id", editTeknisi.id);
+                      }
+                      showNotif(editTeknisi.name + " diaktifkan kembali ✅");
+                      setModalTeknisi(false); setEditTeknisi(null);
+                    }}
+                      style={{ background:cs.green+"18", border:"1px solid "+cs.green+"33", color:cs.green, padding:"9px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>▶ Aktifkan Kembali</button>
+                  ) : (
+                    <button onClick={async () => {
+                      setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? {...t, status:"standby", active:false} : t));
+                      if (!String(editTeknisi.id).startsWith("Tech")) {
+                        await supabase.from("user_profiles").update({active:false}).eq("id", editTeknisi.id);
+                        await supabase.from("user_profiles").update({status:"standby"}).eq("id", editTeknisi.id);
+                      }
+                      showNotif(editTeknisi.name + " dinonaktifkan (standby). Data tetap tersimpan.");
+                      setModalTeknisi(false); setEditTeknisi(null);
+                    }}
+                      style={{ background:cs.yellow+"18", border:"1px solid "+cs.yellow+"33", color:cs.yellow, padding:"9px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>⏸ Nonaktifkan (Standby)</button>
+                  )}
                 </div>
               )}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
@@ -3565,7 +3589,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                     const {error:tErr,data:tData} = await supabase.from("user_profiles").insert(newTek).select().single();
                     if(tErr) {
                       showNotif("⚠️ Tersimpan lokal, DB gagal: "+tErr.message);
-                      setTeknisiData(prev=>[...prev,{...newTek,id:"TMP_"+Date.now()}]);
+                      setTeknisiData(prev=>[...prev,{...newTek,id:"TMP_"+Date.now()}]); // Reload dari DB saat refresh (normal)
                     } else {
                       setTeknisiData(prev=>[...prev,tData||newTek]);
                       addAgentLog("TEKNISI_ADDED","Anggota baru: "+newTeknisiForm.name+" ("+newTeknisiForm.role+")","SUCCESS");
@@ -3597,7 +3621,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               <button onClick={() => setModalBrainEdit(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:24, cursor:"pointer" }}>×</button>
             </div>
             <div style={{ background:cs.ara+"08", borderBottom:"1px solid "+cs.border, padding:"8px 22px", display:"flex", gap:20, fontSize:11, flexShrink:0 }}>
-              <span style={{ color:cs.muted }}>📝 Baris: <strong style={{color:cs.text}}>{brainMd.split("\n").length}</strong></span>
+              <span style={{ color:cs.muted }}>📝 Baris: <strong style={{color:cs.text}}>{(brainMd||"").split("\n").length}</strong></span>
               <span style={{ color:cs.muted }}>🔤 Karakter: <strong style={{color:cs.text}}>{brainMd.length}</strong></span>
               <span style={{ color:cs.muted }}>💡 Gunakan # untuk heading</span>
             </div>
@@ -4504,6 +4528,20 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
             catatan_global: newReport.catatan_global, submitted_at: new Date().toISOString(),
             foto_urls: laporanFotos.filter(f=>f.url).map(f=>f.url),
           });
+
+          // Reload laporan untuk Owner/Admin setelah teknisi submit
+          setTimeout(() => {
+            supabase.from("service_reports").select("*").order("submitted_at",{ascending:false})
+              .then(({data}) => {
+                if (data && data.length > 0) {
+                  setLaporanReports(data.map(r=>({
+                    ...r, units:r.units||[], materials:r.materials||[],
+                    fotos:r.fotos||(r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
+                    editLog:r.edit_log||[]
+                  })));
+                }
+              });
+          }, 1500);
 
           // GAP 2 — Update order status ke COMPLETED
           setOrdersData(prev => prev.map(o =>
