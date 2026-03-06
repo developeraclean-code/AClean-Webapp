@@ -186,6 +186,9 @@ export default function ACleanWebApp() {
     { id:"USR005", name:"Albana Niji",  email:"albana@aclean.id", role:"Teknisi", phone:"6287815496845", avatar:"B", color:"#34d399", active:false, password:"abn2026",   lastLogin:"2026-02-28 12:10" },
   ]);
 
+  // ── Tim Teknisi state (reactive) ──
+  const [teknisiData, setTeknisiData] = useState(TEKNISI_DATA);
+
   // ── Core navigation ──
   const [activeMenu,    setActiveMenu]    = useState("dashboard");
   const [activeRole,    setActiveRole]    = useState("owner");
@@ -430,6 +433,7 @@ export default function ACleanWebApp() {
     setInventoryData([]);
     setLaporanReports([]);
     setAgentLogs([]);
+    setTeknisiData(TEKNISI_DATA);
   };
 
   const canAccess = (menu) => {
@@ -478,6 +482,10 @@ export default function ACleanWebApp() {
       if (inventoryRes.data)setInventoryData(inventoryRes.data);
       if (laporanRes.data)  setLaporanReports(laporanRes.data);
       if (logsRes.data)     setAgentLogs(logsRes.data);
+
+      // Load Teknisi dari Supabase
+      const tekRes = await supabase.from("user_profiles").select("*").in("role",["Teknisi","Helper"]).order("name");
+      if (tekRes.data && tekRes.data.length > 0) setTeknisiData(tekRes.data);
 
       // Load WA conversations dari Supabase
       const waRes = await supabase.from("wa_conversations").select("*, wa_messages(*)").order("updated_at", { ascending: false }).limit(50);
@@ -556,7 +564,7 @@ export default function ACleanWebApp() {
   };
 
   const dispatchWA = async (order) => {
-    const tek = TEKNISI_DATA.find(t => t.name === order.teknisi);
+    const tek = teknisiData.find(t => t.name === order.teknisi);
     if (!tek) return showNotif("Teknisi tidak ditemukan");
     const msg = `Halo ${order.teknisi}, ada job baru:\n📍 *${order.customer}*\n🔧 ${order.service} ${order.units} unit\n📮 ${order.address}\n🕐 ${order.date} jam ${order.time}\n\nMohon konfirmasi. — AClean`;
     const ok = await sendWA(tek.phone, msg);
@@ -652,7 +660,7 @@ export default function ACleanWebApp() {
     addAgentLog("ORDER_CREATED", `Order baru ${newId} — ${form.customer} (${form.service} ${form.units} unit)`, "SUCCESS");
     showNotif(`✅ Order ${newId} berhasil dibuat! ARA siap dispatch ke ${form.teknisi}.`);
     if (form.teknisi) {
-      const tek = TEKNISI_DATA.find(t => t.name === form.teknisi);
+      const tek = teknisiData.find(t => t.name === form.teknisi);
       if (tek) {
         const msg = `Halo ${form.teknisi}, ada job baru:\n📍 *${form.customer}*\n🔧 ${form.service} ${form.units} unit\n📮 ${form.address}\n🕐 ${form.date} jam ${form.time}\n\nMohon konfirmasi. — AClean`;
         sendWA(tek.phone, msg);
@@ -678,7 +686,7 @@ export default function ACleanWebApp() {
       laporan: laporanReports.map(r=>({id:r.id,job_id:r.job_id,teknisi:r.teknisi,customer:r.customer,service:r.service,status:r.status,date:r.date,submitted:r.submitted})),
       laporanPending: laporanReports.filter(r=>r.status==="SUBMITTED").length,
       laporanRevisi:  laporanReports.filter(r=>r.status==="REVISION").length,
-      teknisiWorkload: TEKNISI_DATA.map(t=>({
+      teknisiWorkload: teknisiData.map(t=>({
         name:t.name, role:t.role, status:t.status,
         jobsToday: ordersData.filter(o=>o.teknisi===t.name&&o.date===TODAY).length,
         jobsPending: ordersData.filter(o=>o.teknisi===t.name&&["CONFIRMED","IN_PROGRESS"].includes(o.status)).length,
@@ -940,7 +948,7 @@ export default function ACleanWebApp() {
         {/* KPI Cards */}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
           {[
-            { label:"Order Hari Ini",      value:todayOrders.length,          sub:"3 aktif · 1 selesai", color:cs.accent, icon:"📋" },
+            { label:"Order Hari Ini",      value:todayOrders.length,          sub:`${todayOrders.filter(o=>o.status==="IN_PROGRESS").length} aktif · ${todayOrders.filter(o=>o.status==="COMPLETED").length} selesai`, color:cs.accent, icon:"📋" },
             { label:"Invoice Unpaid",       value:unpaidCount,                 sub:"Perlu follow-up",     color:cs.yellow, icon:"🧾" },
             { label:"Pendapatan Bln Ini",   value:fmt(totalRevBulanIni),        sub:"Invoice terbayar",    color:cs.green,  icon:"💰" },
             { label:"Stok Kritis",          value:lowStock,                    sub:"Perlu restock",       color:cs.red,    icon:"📦" },
@@ -1543,7 +1551,7 @@ export default function ACleanWebApp() {
         <button onClick={() => { setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[]}); setModalTeknisi(true); }} style={{ background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Tambah Anggota</button>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
-        {TEKNISI_DATA.map(t => {
+        {teknisiData.map(t => {
           const stC = t.status==="on-job"?cs.green:t.status==="active"?cs.accent:cs.muted;
           return (
             <div key={t.id} style={{ background:cs.card, border:"1px solid "+stC+"33", borderRadius:14, padding:16 }}>
@@ -2088,14 +2096,14 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   )}
                   {canEdit && (
                     <button onClick={()=>{
-                      setEditLaporanForm({kondisi_sebelum:r.kondisi_sebelum,kondisi_setelah:r.kondisi_setelah,rekomendasi:r.rekomendasi||"",catatan:r.catatan||""});
+                      setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||""});
                       setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                     }}
                       style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
                       Edit Laporan
                     </button>
                   )}
-                  {!isPending && (
+                {!isPending && (
                     <button onClick={()=>{setSelectedLaporan(r);setEditLaporanMode(false);setModalLaporanDetail(true);}}
                       style={{background:cs.surface,border:"1px solid "+cs.border,color:cs.muted,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12}}>
                       Lihat Detail
@@ -2482,10 +2490,10 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
   // ─────────────── LOGIN SCREEN ───────────────
   if (!isLoggedIn) {
     const DEMO_ACCOUNTS = [
-      { role:"Owner",   color:"#f59e0b", icon:"👑", email:"owner@aclean.id",   password:"owner123",    name:"Malda Retta",  desc:"Akses penuh semua menu & pengaturan" },
-      { role:"Admin",   color:"#38bdf8", icon:"🛠️", email:"admin@aclean.id",   password:"admin123",    name:"Admin AClean", desc:"Semua menu kecuali Pengaturan"       },
-      { role:"Teknisi", color:"#22c55e", icon:"👷", email:"mulyadi@aclean.id", password:"teknisi123",  name:"Mulyadi",      desc:"Jadwal & Laporan Saya saja"          },
-      { role:"Helper",  color:"#a78bfa", icon:"🤝", email:"boim@aclean.id",    password:"helper123",   name:"Boim",         desc:"Jadwal & Laporan Saya saja"          },
+      { role:"Owner",   color:"#f59e0b", icon:"👑", email:"owner@aclean.id",   password:"owner123",  name:"Malda Retta",  desc:"Akses penuh semua menu & pengaturan" },
+      { role:"Admin",   color:"#38bdf8", icon:"🛠️", email:"admin@aclean.id",   password:"admin123",  name:"Admin AClean", desc:"Semua menu kecuali Pengaturan"       },
+      { role:"Teknisi", color:"#22c55e", icon:"👷", email:"mulyadi@aclean.id", password:"mly2026",   name:"Mulyadi",      desc:"Jadwal & Laporan Saya saja"          },
+      { role:"Helper",  color:"#a78bfa", icon:"🤝", email:"albana@aclean.id",  password:"abn2026",   name:"Albana Niji",  desc:"Jadwal & Laporan Saya saja"          },
     ];
     return (
       <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
@@ -2563,7 +2571,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
         <div style={{ padding:"16px 14px", borderBottom:"1px solid "+cs.border }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
             <div style={{ fontWeight:800, fontSize:16, color:cs.accent }}>⬡ AClean</div>
-            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v8</span>
+            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v9</span>
           </div>
           {currentUser && (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -2660,7 +2668,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   <select value={newOrderForm.teknisi} onChange={e => setNewOrderForm(f=>({...f,teknisi:e.target.value,helper:""}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
                     <option value="">Pilih teknisi...</option>
-                    {TEKNISI_DATA.filter(t=>t.role==="Teknisi").map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                    {teknisiData.filter(t=>t.role==="Teknisi").map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -2686,7 +2694,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 <select value={newOrderForm.helper} onChange={e => setNewOrderForm(f=>({...f,helper:e.target.value}))}
                   style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
                   <option value="">Tidak ada helper</option>
-                  {TEKNISI_DATA.filter(t=>t.role==="Helper").map(t => {
+                  {teknisiData.filter(t=>t.role==="Helper").map(t => {
                     const pref = araSchedulingSuggest(newOrderForm.date||"");
                     const isSug = pref[newOrderForm.teknisi] === t.name;
                     return <option key={t.id} value={t.name}>{isSug?"★ ":""}{t.name}{isSug?" (ARA)":" "}</option>;
@@ -2723,7 +2731,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               ))}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:6 }}>
                 <button onClick={() => setModalStok(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
-                <button onClick={() => {
+                <button onClick={async () => {
                   if (!newStokForm.name) { showNotif("Nama material wajib diisi"); return; }
                   const stokAwal = parseInt(newStokForm.stock)||0;
                   const reorderPt = parseInt(newStokForm.reorder)||5;
@@ -2840,16 +2848,23 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   if(!newTeknisiForm.name||!newTeknisiForm.phone){showNotif("Nama dan nomor HP wajib diisi");return;}
                   if(editTeknisi){
                     // Update existing
-                    const upd = {name:newTeknisiForm.name,phone:newTeknisiForm.phone,role:newTeknisiForm.role,skills:newTeknisiForm.skills};
+                    const upd = {name:newTeknisiForm.name,phone:newTeknisiForm.phone,role:newTeknisiForm.role,skills:newTeknisiForm.skills||[]};
+                    setTeknisiData(prev=>prev.map(t=>t.id===editTeknisi.id?{...t,...upd}:t));
                     const {error:tErr} = await supabase.from("user_profiles").update(upd).eq("id",editTeknisi.id);
                     if(tErr) showNotif("⚠️ Update lokal saja, DB gagal");
                     else { addAgentLog("TEKNISI_UPDATED","Data "+newTeknisiForm.name+" diupdate","SUCCESS"); showNotif("✅ "+newTeknisiForm.name+" berhasil diupdate"); }
                   } else {
                     // Add new
-                    const newTek = {name:newTeknisiForm.name,phone:newTeknisiForm.phone,role:newTeknisiForm.role,skills:newTeknisiForm.skills,status:"active",jobs_today:0};
-                    const {error:tErr} = await supabase.from("user_profiles").insert(newTek);
-                    if(tErr) showNotif("⚠️ Tersimpan lokal, DB gagal: "+tErr.message);
-                    else { addAgentLog("TEKNISI_ADDED","Anggota baru: "+newTeknisiForm.name+" ("+newTeknisiForm.role+")","SUCCESS"); showNotif("✅ "+newTeknisiForm.name+" berhasil ditambahkan"); }
+                    const newTek = {name:newTeknisiForm.name,phone:newTeknisiForm.phone,role:newTeknisiForm.role,skills:newTeknisiForm.skills||[],status:"active",jobs_today:0};
+                    const {error:tErr,data:tData} = await supabase.from("user_profiles").insert(newTek).select().single();
+                    if(tErr) {
+                      showNotif("⚠️ Tersimpan lokal, DB gagal: "+tErr.message);
+                      setTeknisiData(prev=>[...prev,{...newTek,id:"TMP_"+Date.now()}]);
+                    } else {
+                      setTeknisiData(prev=>[...prev,tData||newTek]);
+                      addAgentLog("TEKNISI_ADDED","Anggota baru: "+newTeknisiForm.name+" ("+newTeknisiForm.role+")","SUCCESS");
+                      showNotif("✅ "+newTeknisiForm.name+" berhasil ditambahkan");
+                    }
                   }
                   setModalTeknisi(false); setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[]});
                 }}
@@ -3340,7 +3355,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10,marginTop:6}}>
                 <button onClick={()=>setModalAddCustomer(false)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
-                <button onClick={()=>{
+                <button onClick={async ()=>{
                   if(!newCustomerForm.name||!newCustomerForm.phone){showNotif("Nama dan nomor HP wajib diisi");return;}
                   if(selectedCustomer && selectedCustomer.id){
                     // UPDATE existing customer
@@ -3396,7 +3411,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>Teknisi</div>
                 <select value={editOrderForm.teknisi||""} onChange={e=>setEditOrderForm(f=>({...f,teknisi:e.target.value,helper:""}))}
                   style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none"}}>
-                  {TEKNISI_DATA.filter(t=>t.role==="Teknisi").map(t=><option key={t.id} value={t.name}>{t.name}</option>)}
+                  {teknisiData.filter(t=>t.role==="Teknisi").map(t=><option key={t.id} value={t.name}>{t.name}</option>)}
                 </select>
               </div>
               <div>
@@ -3416,7 +3431,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 <select value={editOrderForm.helper||""} onChange={e=>setEditOrderForm(f=>({...f,helper:e.target.value}))}
                   style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none"}}>
                   <option value="">Tidak ada helper</option>
-                  {TEKNISI_DATA.filter(t=>t.role==="Helper").map(t=>{
+                  {teknisiData.filter(t=>t.role==="Helper").map(t=>{
                     const pref = araSchedulingSuggest(editOrderForm.date||"");
                     const isSug = pref[editOrderForm.teknisi]===t.name;
                     return <option key={t.id} value={t.name}>{isSug?"★ ":""}{t.name}</option>;
@@ -3448,7 +3463,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   else {
                     addAgentLog("ORDER_UPDATED",`Jadwal ${editOrderItem.id} diupdate — teknisi: ${editOrderForm.teknisi}, tgl: ${editOrderForm.date} ${editOrderForm.time}`,"SUCCESS");
                     // Kirim WA notif ke teknisi jika ada perubahan teknisi/tanggal/waktu
-                    const tek = TEKNISI_DATA.find(t=>t.name===editOrderForm.teknisi);
+                    const tek = teknisiData.find(t=>t.name===editOrderForm.teknisi);
                     if(tek && (editOrderForm.teknisi!==editOrderItem.teknisi || editOrderForm.date!==editOrderItem.date || editOrderForm.time!==editOrderItem.time)){
                       const waMsg = `Halo ${editOrderForm.teknisi}, ada perubahan jadwal:\n📋 ${editOrderItem.id} — ${editOrderItem.customer}\n🔧 ${editOrderItem.service} ${editOrderItem.units} unit\n📅 ${editOrderForm.date} jam ${editOrderForm.time}\n📍 ${editOrderItem.address}\n${editOrderForm.notes?"📝 "+editOrderForm.notes+""+"\n":""}Mohon konfirmasi. — AClean`;
                       sendWA(tek.phone, waMsg);
@@ -3486,32 +3501,37 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 <div style={{background:cs.yellow+"10",border:"1px solid "+cs.yellow+"33",borderRadius:10,padding:"10px 14px",fontSize:12,color:cs.yellow}}>
                   Perubahan akan dicatat otomatis — nama kamu, waktu edit, dan field yang diubah akan tersimpan di log.
                 </div>
-                {[["Kondisi Sebelum","kondisi_sebelum"],["Kondisi Sesudah","kondisi_setelah"],["Rekomendasi","rekomendasi"],["Catatan Tambahan","catatan"]].map(([lbl,key])=>(
+                {[["Rekomendasi","rekomendasi"],["Catatan Tambahan","catatan_global"]].map(([lbl,key])=>(
                   <div key={key}>
                     <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>{lbl}</div>
-                    <textarea value={editLaporanForm[key]||""} onChange={e=>setEditLaporanForm(f=>({...f,[key]:e.target.value}))} rows={2}
+                    <textarea value={editLaporanForm[key]||""} onChange={e=>setEditLaporanForm(f=>({...f,[key]:e.target.value}))} rows={3}
                       style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",fontFamily:"inherit"}} />
                   </div>
                 ))}
+                <div style={{background:cs.accent+"10",border:"1px solid "+cs.accent+"22",borderRadius:8,padding:"8px 12px",fontSize:11,color:cs.muted}}>
+                  💡 Edit rekomendasi & catatan global. Untuk perbaikan detail unit, gunakan tombol Laporan baru.
+                </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10,marginTop:4}}>
                   <button onClick={()=>{setEditLaporanMode(false);}} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
                   <button onClick={async()=>{
                     const now = new Date().toLocaleString("id-ID",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).replace(/\//g,"-");
-                    const fields = ["kondisi_sebelum","kondisi_setelah","rekomendasi","catatan"];
+                    const fields = ["rekomendasi","catatan_global"];
                     const newLogs = [];
                     fields.forEach(f=>{
-                      const oldVal = selectedLaporan[f]||"";
+                      const oldVal = (f==="catatan_global"?selectedLaporan.catatan_global||selectedLaporan.catatan:selectedLaporan[f])||"";
                       const newVal = editLaporanForm[f]||"";
-                      if(oldVal!==newVal) newLogs.push({by:currentUser?.name||"?",at:now,field:f,old:oldVal,new:newVal});
+                      if(oldVal!==newVal) newLogs.push({by:currentUser?.name||"?",at:now,field:f,old:String(oldVal).slice(0,80),new:String(newVal).slice(0,80)});
                     });
                     if(newLogs.length===0){showNotif("Tidak ada perubahan");return;}
                     const allLogs = [...(selectedLaporan.editLog||[]),...newLogs];
                     const newStatus = selectedLaporan.status==="REVISION"?"SUBMITTED":selectedLaporan.status;
                     setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id
-                      ?{...r,...editLaporanForm,status:newStatus,editLog:allLogs}:r));
+                      ?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,status:newStatus,editLog:allLogs}:r));
                     // Save ke Supabase
                     const {error:elErr} = await supabase.from("service_reports").update({
-                      ...editLaporanForm, status:newStatus,
+                      rekomendasi:editLaporanForm.rekomendasi,
+                      catatan_global:editLaporanForm.catatan_global,
+                      status:newStatus,
                       edit_log: allLogs, updated_at: new Date().toISOString()
                     }).eq("id",selectedLaporan.id);
                     if(elErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
@@ -3525,7 +3545,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 </div>
               </div>
             ) : (
-              /* VIEW MODE */
+              /* VIEW MODE — support multi-unit (baru) & legacy (lama) */
               <div style={{display:"grid",gap:12}}>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px 20px",fontSize:12}}>
                   <div><span style={{color:cs.muted}}>Job ID: </span><span style={{fontFamily:"monospace",color:cs.accent,fontWeight:700}}>{selectedLaporan.job_id}</span></div>
@@ -3534,32 +3554,73 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   <div><span style={{color:cs.muted}}>Layanan: </span><span style={{color:cs.text}}>{selectedLaporan.service}</span></div>
                   <div><span style={{color:cs.muted}}>Teknisi: </span><span style={{color:cs.accent,fontWeight:700}}>{selectedLaporan.teknisi}</span></div>
                   {selectedLaporan.helper && <div><span style={{color:cs.muted}}>Helper: </span><span style={{color:cs.text}}>{selectedLaporan.helper}</span></div>}
-                  {selectedLaporan.ampere && <div><span style={{color:cs.muted}}>Ampere: </span><span style={{color:cs.text}}>{selectedLaporan.ampere} A</span></div>}
-                  {selectedLaporan.freon!=="0" && <div><span style={{color:cs.muted}}>Freon: </span><span style={{color:cs.text}}>{selectedLaporan.freon} kg</span></div>}
                 </div>
-                <div style={{background:cs.card,borderRadius:10,padding:14,fontSize:12}}>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:10}}>
-                    <div><div style={{color:cs.muted,fontSize:11,marginBottom:4}}>Kondisi Sebelum</div><div style={{color:cs.yellow,fontWeight:600}}>{selectedLaporan.kondisi_sebelum}</div></div>
-                    <div><div style={{color:cs.muted,fontSize:11,marginBottom:4}}>Kondisi Sesudah</div><div style={{color:cs.green,fontWeight:600}}>{selectedLaporan.kondisi_setelah}</div></div>
+
+                {/* Multi-unit display (struktur baru) */}
+                {(selectedLaporan.units||[]).length > 0 ? (
+                  <div style={{display:"grid",gap:8}}>
+                    {(selectedLaporan.units||[]).map((u,ui)=>(
+                      <div key={ui} style={{background:cs.card,borderRadius:10,padding:14,fontSize:12}}>
+                        <div style={{fontWeight:700,color:cs.accent,marginBottom:8}}>Unit {u.unit_no} — {u.label} {u.merk?`(${u.merk})`:""}</div>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
+                          {(u.kondisi_sebelum||[]).map((k,ki)=><span key={ki} style={{background:cs.yellow+"18",color:cs.yellow,fontSize:10,padding:"2px 8px",borderRadius:99}}>{k}</span>)}
+                        </div>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
+                          {(u.pekerjaan||[]).map((p,pi)=><span key={pi} style={{background:cs.accent+"18",color:cs.accent,fontSize:10,padding:"2px 8px",borderRadius:99}}>{p}</span>)}
+                        </div>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
+                          {(u.kondisi_setelah||[]).map((k,ki)=><span key={ki} style={{background:cs.green+"18",color:cs.green,fontSize:10,padding:"2px 8px",borderRadius:99}}>{k}</span>)}
+                        </div>
+                        {(u.ampere_akhir||parseFloat(u.freon_ditambah)>0) && (
+                          <div style={{fontSize:11,color:cs.muted}}>
+                            {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}
+                            {u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
+                            {parseFloat(u.freon_ditambah)>0?`Freon +${u.freon_ditambah}kg`:""}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                  <div style={{marginBottom:8}}><span style={{color:cs.muted,fontSize:11}}>Pekerjaan: </span>{selectedLaporan.pekerjaan.map((p,pi)=><span key={pi} style={{background:cs.accent+"18",color:cs.accent,fontSize:10,padding:"2px 8px",borderRadius:99,marginRight:4}}>{p}</span>)}</div>
-                  {selectedLaporan.rekomendasi && <div style={{fontSize:11,marginBottom:4}}><span style={{color:cs.muted}}>Rekomendasi: </span><span style={{color:cs.text}}>{selectedLaporan.rekomendasi}</span></div>}
-                  {selectedLaporan.catatan && <div style={{fontSize:11}}><span style={{color:cs.muted}}>Catatan: </span><span style={{color:cs.text}}>{selectedLaporan.catatan}</span></div>}
-                </div>
-                {selectedLaporan.editLog.length>0 && (
+                ) : (
+                  /* Legacy struktur lama (flat) */
+                  <div style={{background:cs.card,borderRadius:10,padding:14,fontSize:12}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:10}}>
+                      <div><div style={{color:cs.muted,fontSize:11,marginBottom:4}}>Kondisi Sebelum</div><div style={{color:cs.yellow,fontWeight:600}}>{typeof selectedLaporan.kondisi_sebelum==="string"?selectedLaporan.kondisi_sebelum:(selectedLaporan.kondisi_sebelum||[]).join(", ")}</div></div>
+                      <div><div style={{color:cs.muted,fontSize:11,marginBottom:4}}>Kondisi Sesudah</div><div style={{color:cs.green,fontWeight:600}}>{typeof selectedLaporan.kondisi_setelah==="string"?selectedLaporan.kondisi_setelah:(selectedLaporan.kondisi_setelah||[]).join(", ")}</div></div>
+                    </div>
+                    {(selectedLaporan.pekerjaan||[]).length > 0 && (
+                      <div style={{marginBottom:8}}><span style={{color:cs.muted,fontSize:11}}>Pekerjaan: </span>{(selectedLaporan.pekerjaan||[]).map((p,pi)=><span key={pi} style={{background:cs.accent+"18",color:cs.accent,fontSize:10,padding:"2px 8px",borderRadius:99,marginRight:4}}>{p}</span>)}</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Material terpakai */}
+                {(selectedLaporan.materials||[]).length > 0 && (
+                  <div style={{background:cs.card,borderRadius:10,padding:"10px 14px",fontSize:12}}>
+                    <div style={{fontWeight:700,color:cs.muted,marginBottom:6}}>🔧 Material</div>
+                    {(selectedLaporan.materials||[]).map((m,mi)=>(
+                      <div key={mi} style={{color:cs.muted,marginBottom:2}}>• {m.nama}: {m.jumlah} {m.satuan}</div>
+                    ))}
+                  </div>
+                )}
+
+                {selectedLaporan.rekomendasi && <div style={{fontSize:11,marginBottom:4}}><span style={{color:cs.muted}}>Rekomendasi: </span><span style={{color:cs.text}}>{selectedLaporan.rekomendasi}</span></div>}
+                {(selectedLaporan.catatan_global||selectedLaporan.catatan) && <div style={{fontSize:11}}><span style={{color:cs.muted}}>Catatan: </span><span style={{color:cs.text}}>{selectedLaporan.catatan_global||selectedLaporan.catatan}</span></div>}
+
+                {(selectedLaporan.editLog||[]).length>0 && (
                   <div style={{background:cs.yellow+"08",border:"1px solid "+cs.yellow+"22",borderRadius:10,padding:"10px 14px"}}>
-                    <div style={{fontSize:11,fontWeight:700,color:cs.yellow,marginBottom:8}}>Riwayat Edit ({selectedLaporan.editLog.length}x)</div>
-                    {selectedLaporan.editLog.map((log,li)=>(
-                      <div key={li} style={{fontSize:11,color:cs.muted,marginBottom:5,paddingBottom:5,borderBottom:li<selectedLaporan.editLog.length-1?"1px solid "+cs.border:"none"}}>
+                    <div style={{fontSize:11,fontWeight:700,color:cs.yellow,marginBottom:8}}>Riwayat Edit ({(selectedLaporan.editLog||[]).length}x)</div>
+                    {(selectedLaporan.editLog||[]).map((log,li)=>(
+                      <div key={li} style={{fontSize:11,color:cs.muted,marginBottom:5,paddingBottom:5,borderBottom:li<(selectedLaporan.editLog||[]).length-1?"1px solid "+cs.border:"none"}}>
                         <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:3}}>
                           <span style={{background:cs.accent+"18",color:cs.accent,fontWeight:700,padding:"1px 8px",borderRadius:99,fontSize:10}}>{log.by}</span>
                           <span style={{color:cs.muted}}>{log.at}</span>
                           <span>ubah field <b style={{color:cs.text}}>{log.field}</b></span>
                         </div>
                         <div style={{display:"flex",gap:8,fontSize:11}}>
-                          <span style={{color:cs.red,textDecoration:"line-through"}}>{log.old}</span>
+                          <span style={{color:cs.red,textDecoration:"line-through"}}>{String(log.old).slice(0,60)}</span>
                           <span style={{color:cs.muted}}>→</span>
-                          <span style={{color:cs.green,fontWeight:600}}>{log.new}</span>
+                          <span style={{color:cs.green,fontWeight:600}}>{String(log.new).slice(0,60)}</span>
                         </div>
                       </div>
                     ))}
