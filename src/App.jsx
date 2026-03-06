@@ -196,6 +196,8 @@ export default function ACleanWebApp() {
   const [isLoggedIn,    setIsLoggedIn]    = useState(false);
   const [currentUser,   setCurrentUser]   = useState(null);
   const [dataLoading,   setDataLoading]   = useState(false);
+  const [paymentsData,  setPaymentsData]  = useState([]);
+  const [dispatchLogs,  setDispatchLogs]  = useState([]);
   const [loginScreen,   setLoginScreen]   = useState("login"); // "login" | "select_account"
   const [loginError,    setLoginError]    = useState("");
   const [loginEmail,    setLoginEmail]    = useState("");
@@ -504,6 +506,9 @@ export default function ACleanWebApp() {
   };
 
   // ── Supabase: Restore session saat refresh ──
+  // Helper: cek apakah ID adalah Supabase UUID yang valid (GAP 7)
+  const isRealUUID = (id) => !!id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
+
   // ── Auto-save settings ke localStorage saat berubah ──
   useEffect(() => { _lsSave("llmProvider", llmProvider); }, [llmProvider]);
   useEffect(() => { _lsSave("llmApiKey",   llmApiKey);   }, [llmApiKey]);
@@ -576,6 +581,16 @@ export default function ACleanWebApp() {
       }
       // Jika DB kosong (laporanRes.data = []), initial state hardcoded tetap aktif
       if (!logsRes.error && logsRes.data && logsRes.data.length > 0) setAgentLogs(logsRes.data);
+
+      // GAP 3: Load payments summary & dispatch recent (untuk dashboard)
+      try {
+        const [payRes, dispRes] = await Promise.all([
+          supabase.from("payments").select("invoice_id,amount,method,paid_at").order("paid_at",{ascending:false}).limit(20),
+          supabase.from("dispatch_logs").select("order_id,teknisi,status,sent_at").order("sent_at",{ascending:false}).limit(30),
+        ]);
+        if (!payRes.error && payRes.data) setPaymentsData(payRes.data);
+        if (!dispRes.error && dispRes.data) setDispatchLogs(dispRes.data);
+      } catch(e) { /* tabel belum ada, skip */ }
 
       // Load app_settings dari Supabase DB (backup dari localStorage)
       try {
@@ -848,7 +863,8 @@ export default function ACleanWebApp() {
 
   // ── GAP 9: Create order (real state mutation) ──
   const createOrder = async (form) => {
-    const newId = "JOB" + String(10008 + ordersData.length).padStart(5,"0");
+    // GAP 4: ID aman — timestamp ms + random 3 digit, tidak bergantung array.length
+    const newId = "JOB" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
     const timeEnd = hitungJamSelesai(form.time||"09:00", form.service||"Cleaning", form.units||1);
     const newOrder = {
       id:newId,
@@ -1111,12 +1127,33 @@ export default function ACleanWebApp() {
           } else if (act.type==="UPDATE_STOCK") {
             const item = inventoryData.find(i=>i.code===act.code||i.name.toLowerCase().includes((act.name||"").toLowerCase()));
             if(item){
-              const newStock = act.delta ? Math.max(0,item.stock+act.delta) : Math.max(0,act.stock||0);
-              const ns = newStock===0?"OUT":newStock<=item.min_alert?"CRITICAL":newStock<=item.reorder?"WARNING":"OK";
-              setInventoryData(prev=>prev.map(i=>i.code===item.code?{...i,stock:newStock,status:ns}:i));
-              await supabase.from("inventory").update({stock:newStock,status:ns}).eq("code",item.code);
-              addAgentLog("ARA_STOCK",`ARA update stok ${item.name}: ${item.stock}→${newStock}`,"SUCCESS");
-              ar=`\n✅ *Stok ${item.name} diupdate → ${newStock} ${item.unit} (${ns})*`;
+              const delta = act.delta || (act.stock != null ? act.stock - item.stock : 0);
+              const txType = delta >= 0 ? "restock" : "usage";
+              // GAP 1: lewat inventory_transactions → trigger DB update stock otomatis
+              const {error:txErr} = await supabase.from("inventory_transactions").insert({
+                inventory_code: item.code,
+                inventory_name: item.name,
+                qty: delta,
+                type: txType,
+                notes: `ARA ${txType}: ${act.reason||""}`,
+                created_by: currentUser?.id||null,
+                created_by_name: currentUser?.name||"ARA",
+              });
+              if (txErr) {
+                // Fallback: update langsung jika trigger belum jalan
+                const newStock = Math.max(0, item.stock + delta);
+                const ns = newStock===0?"OUT":newStock<=item.min_alert?"CRITICAL":newStock<=item.reorder?"WARNING":"OK";
+                setInventoryData(prev=>prev.map(i=>i.code===item.code?{...i,stock:newStock,status:ns}:i));
+                await supabase.from("inventory").update({stock:newStock,status:ns}).eq("code",item.code);
+                ar=`\n✅ *Stok ${item.name} diupdate → ${newStock} ${item.unit}*`;
+              } else {
+                // Reload inventory dari DB setelah trigger update
+                const {data:freshInv} = await supabase.from("inventory").select("*").order("code");
+                if(freshInv) setInventoryData(freshInv);
+                const newStock = item.stock + delta;
+                ar=`\n✅ *Stok ${item.name} ${delta>=0?"ditambah +"+delta:"dikurangi "+delta} → ${newStock} ${item.unit}*`;
+              }
+              addAgentLog("ARA_STOCK",`ARA ${txType} ${item.name}: delta ${delta}`,"SUCCESS");
             } else ar=`\n⚠️ *Material tidak ditemukan*`;
           } else if (act.type==="CANCEL_ORDER") {
             setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,status:"CANCELLED"}:o));
@@ -2543,9 +2580,11 @@ export default function ACleanWebApp() {
               {r.status==="SUBMITTED" && (<>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
+                  // GAP 7: update status saja jika currentUser adalah local account (bukan Supabase Auth UUID)
+                  const isRealUUID = currentUser?.id && /^[0-9a-f-]{36}$/.test(currentUser.id);
                   await supabase.from("service_reports").update({
                     status:"VERIFIED",
-                    verified_by: currentUser?.id||null,
+                    verified_by: isRealUUID ? currentUser.id : null,
                     verified_at: new Date().toISOString()
                   }).eq("id",r.id);
                   addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi — invoice menunggu approval Owner`,"SUCCESS");
@@ -3226,7 +3265,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
         <div style={{ padding:"16px 14px", borderBottom:"1px solid "+cs.border }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
             <div style={{ fontWeight:800, fontSize:16, color:cs.accent }}>⬡ AClean</div>
-            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v17</span>
+            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v18</span>
           </div>
           {currentUser && (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -3517,6 +3556,19 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   <button onClick={async () => {
                     const updated = {...editStokItem, stock:stokFinal, price:hargaBaru, reorder:reorderBaru, status:statusBaru};
                     setInventoryData(prev=>prev.map(i=>i.code===editStokItem.code?updated:i));
+                    // GAP 2: catat perubahan stok ke inventory_transactions
+                    const deltaStok = stokFinal - editStokItem.stock;
+                    if (deltaStok !== 0) {
+                      await supabase.from("inventory_transactions").insert({
+                        inventory_code: editStokItem.code,
+                        inventory_name: editStokItem.name,
+                        qty: deltaStok,
+                        type: deltaStok > 0 ? "restock" : "correction",
+                        notes: `Update manual oleh ${currentUser?.name||"Admin"}`,
+                        created_by: currentUser?.id||null,
+                        created_by_name: currentUser?.name||"",
+                      }).catch(()=>{});
+                    }
                     const {error:eErr} = await supabase.from("inventory").update({stock:stokFinal,price:hargaBaru,reorder:reorderBaru,status:statusBaru}).eq("code",editStokItem.code);
                     if(eErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
                     else { addAgentLog("STOCK_UPDATED",`Stok ${editStokItem.name}: ${editStokItem.stock}→${stokFinal} ${editStokItem.unit} (${statusBaru})`,"SUCCESS"); showNotif("✅ Stok "+editStokItem.name+" diupdate → "+stokFinal+" "+editStokItem.unit); }
@@ -3578,7 +3630,9 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                   <button onClick={async () => {
                     setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? {...t, status:"standby", active:false} : t));
                     if (!String(editTeknisi.id).startsWith("Tech")) {
-                      await supabase.from("user_profiles").update({status:"standby", active:false}).eq("id", editTeknisi.id).catch(()=>{});
+                      // GAP 5: status kolom mungkin belum ada — update dengan catch
+                      await supabase.from("user_profiles").update({active:false}).eq("id", editTeknisi.id).catch(()=>{});
+                      await supabase.from("user_profiles").update({status:"standby"}).eq("id", editTeknisi.id).catch(()=>{});
                     }
                     showNotif(editTeknisi.name + " dinonaktifkan (standby). Data tetap tersimpan.");
                     setModalTeknisi(false); setEditTeknisi(null);
@@ -4126,6 +4180,9 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 <button onClick={()=>setModalAddCustomer(false)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
                 <button onClick={async ()=>{
                   if(!newCustomerForm.name||!newCustomerForm.phone){showNotif("Nama dan nomor HP wajib diisi");return;}
+                  // GAP 6: cek duplikat phone sebelum submit
+                  const existPhone = customersData.find(cu => cu.phone === newCustomerForm.phone && cu.id !== (selectedCustomer?.id||""));
+                  if(existPhone){showNotif(`⚠️ Nomor HP sudah terdaftar atas nama "${existPhone.name}". Tidak bisa duplikat.`);return;}
                   if(selectedCustomer && selectedCustomer.id){
                     // UPDATE existing customer
                     setCustomersData(prev=>prev.map(cu=>cu.id===selectedCustomer.id?{...cu,...newCustomerForm}:cu));
