@@ -782,16 +782,53 @@ export default function ACleanWebApp() {
         const d = await backendRes.json();
         fullText = d.reply || "";
       } else if (llmApiKey) {
-        // ── Fallback: direct call jika backend belum punya env key ──
+        // ── Fallback: direct call sesuai provider yang dipilih ──
         const sysP = brainMd+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
-        const fr = await fetch("https://api.anthropic.com/v1/messages", {
-          method:"POST",
-          headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-          body:JSON.stringify({model:llmModel||"claude-sonnet-4-6",max_tokens:1000,system:sysP,messages:newMessages.map(m=>({role:m.role,content:m.content}))})
-        });
-        const fd = await fr.json();
-        if (!fr.ok) throw new Error(fd.error?.message||"API error");
-        fullText = fd.content?.map(c=>c.text||"").join("")||"";
+
+        if (llmProvider === "openai") {
+          // ── OpenAI / ChatGPT API ──
+          const fr = await fetch("https://api.openai.com/v1/chat/completions", {
+            method:"POST",
+            headers:{"Content-Type":"application/json","Authorization":"Bearer "+llmApiKey},
+            body:JSON.stringify({
+              model: llmModel || "gpt-4o-mini",
+              max_tokens: 1000,
+              messages: [
+                {role:"system", content:sysP},
+                ...newMessages.map(m=>({role:m.role, content:m.content}))
+              ]
+            })
+          });
+          const fd = await fr.json();
+          if (!fr.ok) throw new Error(fd.error?.message || "OpenAI API error " + fr.status);
+          fullText = fd.choices?.[0]?.message?.content || "";
+
+        } else if (llmProvider === "gemini") {
+          // ── Google Gemini API ──
+          const model = llmModel || "gemini-1.5-flash";
+          const fr = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${llmApiKey}`, {
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({
+              system_instruction:{parts:[{text:sysP}]},
+              contents: newMessages.map(m=>({role:m.role==="assistant"?"model":"user", parts:[{text:m.content}]}))
+            })
+          });
+          const fd = await fr.json();
+          if (!fr.ok) throw new Error(fd.error?.message || "Gemini API error");
+          fullText = fd.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+        } else {
+          // ── Anthropic Claude API (default) ──
+          const fr = await fetch("https://api.anthropic.com/v1/messages", {
+            method:"POST",
+            headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+            body:JSON.stringify({model:llmModel||"claude-sonnet-4-6",max_tokens:1000,system:sysP,messages:newMessages.map(m=>({role:m.role,content:m.content}))})
+          });
+          const fd = await fr.json();
+          if (!fr.ok) throw new Error(fd.error?.message || "Claude API error");
+          fullText = fd.content?.map(c=>c.text||"").join("")||"";
+        }
       } else {
         throw new Error("Backend belum siap dan API Key belum diset. Buka Pengaturan → ARA Brain.");
       }
@@ -1263,9 +1300,13 @@ export default function ACleanWebApp() {
                     <span style={{ fontSize:10, padding:"3px 8px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", fontWeight:700 }}>{o.status.replace("_"," ")}</span>
                   </td>
                   <td style={{ padding:"10px 14px" }}>
-                    <div style={{ display:"flex", gap:6 }}>
+                    <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                       <button onClick={() => { const c=customersData.find(c=>c.phone===o.phone); if(c){setSelectedCustomer(c);setCustomerTab("history");setActiveMenu("customers");} }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11 }}>History</button>
                       {!o.dispatch && <button onClick={() => dispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11 }}>WA</button>}
+                      {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+                        <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,type:o.type||"",units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }}
+                          style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1587,7 +1628,7 @@ export default function ACleanWebApp() {
                     <button onClick={() => dispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 Dispatch</button>
                   )}
                   {!isTekRole && (
-                    <button onClick={() => { setEditOrderItem(o); setEditOrderForm({teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time,status:o.status,notes:o.notes||"",address:o.address}); setModalEditOrder(true); }}
+                    <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }}
                       style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
                   )}
                   {/* Teknisi buttons */}
@@ -1887,36 +1928,66 @@ export default function ACleanWebApp() {
   // ============================================================
   const renderReports = () => {
     const techColors = { "Mulyadi":"#38bdf8","Usaeri":"#22c55e","Albana Niji":"#a78bfa","Rizky Putra":"#f59e0b","Agung":"#f97316","Rey":"#ec4899" };
-    // Filter berdasarkan periode
     const filterByPeriod = (inv) => {
-      if(statsPeriod==="hari") return (inv.sent||"").startsWith(TODAY);
+      if(statsPeriod==="hari")  return (inv.sent||"").startsWith(TODAY);
       if(statsPeriod==="bulan") return (inv.sent||"").startsWith(bulanIni);
       return (inv.sent||"").startsWith(TODAY.slice(0,4));
     };
-    const paidInv    = invoicesData.filter(i=>i.status==="PAID"&&filterByPeriod(i));
-    const totalRev   = paidInv.reduce((a,b)=>a+(b.total||0),0);
-    const ordersDone = ordersData.filter(o=>o.status==="COMPLETED").length;
-    const ordersTotal= ordersData.length;
-    const custAktif  = customersData.length;
-    const custVip    = customersData.filter(c=>c.is_vip).length;
-    // Performa teknisi — hitungan dari ordersData
-    const tekNames   = [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))];
-    const tekPerf    = tekNames.map(name=>({
-      name, jobs: ordersData.filter(o=>o.teknisi===name&&o.status==="COMPLETED").length,
-      total: ordersData.filter(o=>o.teknisi===name).length,
-    })).sort((a,b)=>b.jobs-a.jobs);
-    const maxJobs    = Math.max(...tekPerf.map(t=>t.jobs), 1);
-    // Revenue per layanan
-    const revCleaning = paidInv.filter(i=>(i.service||"").includes("Cleaning")).reduce((a,b)=>a+(b.labor||0),0);
-    const revInstall  = paidInv.filter(i=>(i.service||"").includes("Install")).reduce((a,b)=>a+(b.labor||0),0);
-    const revRepair   = paidInv.filter(i=>(i.service||"").includes("Repair")).reduce((a,b)=>a+(b.labor||0),0);
     const periodLabel = statsPeriod==="hari"?"Hari Ini":statsPeriod==="bulan"?"Bulan Ini ("+bulanIni+")":"Tahun "+TODAY.slice(0,4);
 
+    // ── Revenue & Invoice ──
+    const allInv        = invoicesData;
+    const paidInv       = allInv.filter(i=>i.status==="PAID"&&filterByPeriod(i));
+    const unpaidInv     = allInv.filter(i=>i.status==="UNPAID");
+    const overdueInv    = allInv.filter(i=>i.status==="OVERDUE");
+    const pendingInv    = allInv.filter(i=>i.status==="PENDING_APPROVAL");
+    const totalRevenue  = paidInv.reduce((a,b)=>a+(b.total||0),0);
+    const totalLabor    = paidInv.reduce((a,b)=>a+(b.labor||0),0);
+    const totalMaterial = paidInv.reduce((a,b)=>a+(b.material||0),0);
+    const totalDadakan  = paidInv.reduce((a,b)=>a+(b.dadakan||0),0);
+    const totalAR       = unpaidInv.reduce((a,b)=>a+(b.total||0),0) + overdueInv.reduce((a,b)=>a+(b.total||0),0);
+    const totalPending  = pendingInv.reduce((a,b)=>a+(b.total||0),0);
+    // AR Overdue
+    const totalOverdue  = overdueInv.reduce((a,b)=>a+(b.total||0),0);
+
+    // ── Orders ──
+    const ordersDone    = ordersData.filter(o=>o.status==="COMPLETED").length;
+    const ordersAll     = ordersData.length;
+    const ordersMonth   = ordersData.filter(o=>(o.date||"").startsWith(bulanIni)).length;
+    const completionRate= ordersAll > 0 ? Math.round(ordersDone/ordersAll*100) : 0;
+    const avgOrderVal   = ordersDone > 0 ? Math.round(totalRevenue/Math.max(paidInv.length,1)) : 0;
+
+    // ── Revenue per layanan ──
+    const revBreakdown = [
+      ["Cleaning", paidInv.filter(i=>(i.service||"").includes("Cleaning")).reduce((a,b)=>a+(b.total||0),0), cs.accent],
+      ["Install",  paidInv.filter(i=>(i.service||"").includes("Install")).reduce((a,b)=>a+(b.total||0),0), cs.green],
+      ["Repair",   paidInv.filter(i=>(i.service||"").includes("Repair")).reduce((a,b)=>a+(b.total||0),0), cs.yellow],
+    ];
+
+    // ── Teknisi performance ──
+    const tekPerf = [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(name=>({
+      name,
+      done:  ordersData.filter(o=>o.teknisi===name&&o.status==="COMPLETED").length,
+      total: ordersData.filter(o=>o.teknisi===name).length,
+      rev:   paidInv.filter(i=>(i.service||"")&&ordersData.find(o=>o.teknisi===name&&o.id===i.job_id)).reduce((a,b)=>a+(b.total||0),0),
+    })).sort((a,b)=>b.done-a.done);
+    const maxDone = Math.max(...tekPerf.map(t=>t.done), 1);
+
+    // ── Customer metrics ──
+    const custTotal = customersData.length;
+    const custVip   = customersData.filter(c=>c.is_vip).length;
+    const custBaru  = customersData.filter(c=>(c.joined||"").startsWith(bulanIni)).length;
+
+    const fmtPct = (n,d) => d>0 ? (n/d*100).toFixed(1)+"%" : "—";
+
     return (
-      <div style={{ display:"grid", gap:20 }}>
-        {/* Header + Filter Periode */}
+      <div style={{ display:"grid", gap:18 }}>
+        {/* Header + Filter */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
-          <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>📊 Statistik & Laporan</div>
+          <div>
+            <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>📊 Laporan Keuangan & Operasional</div>
+            <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Profit & Loss · Accounts Receivable · Performa Tim</div>
+          </div>
           <div style={{ display:"flex", gap:6 }}>
             {[["hari","Hari Ini"],["bulan","Bulan Ini"],["tahun","Tahun Ini"]].map(([v,l])=>(
               <button key={v} onClick={()=>setStatsPeriod(v)}
@@ -1925,89 +1996,156 @@ export default function ACleanWebApp() {
           </div>
         </div>
 
-        {/* KPI Cards — data real */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14 }}>
+        {/* ── SECTION 1: P&L Summary ── */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <div style={{ fontWeight:800, color:cs.text, fontSize:14, marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <span>💰 Profit & Loss — {periodLabel}</span>
+            <span style={{ fontSize:11, color:cs.muted, fontWeight:400 }}>Berdasarkan {paidInv.length} invoice PAID</span>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+            {[
+              {label:"Total Pendapatan",val:fmt(totalRevenue),sub:"Gross Revenue",color:cs.green,icon:"📈"},
+              {label:"Pendapatan Jasa",val:fmt(totalLabor),sub:fmtPct(totalLabor,totalRevenue)+" dari revenue",color:cs.accent,icon:"🔧"},
+              {label:"Pendapatan Material",val:fmt(totalMaterial),sub:fmtPct(totalMaterial,totalRevenue)+" dari revenue",color:cs.yellow,icon:"📦"},
+              {label:"Biaya Mendadak/Bonus",val:fmt(totalDadakan),sub:fmtPct(totalDadakan,totalRevenue)+" dari revenue",color:cs.ara,icon:"⚡"},
+            ].map(k=>(
+              <div key={k.label} style={{ background:cs.surface, borderRadius:10, padding:"14px 16px", border:"1px solid "+k.color+"22" }}>
+                <div style={{ fontSize:20, marginBottom:6 }}>{k.icon}</div>
+                <div style={{ fontSize:18, fontWeight:800, color:k.color, fontFamily:"monospace" }}>{k.val}</div>
+                <div style={{ fontSize:12, color:cs.text, fontWeight:600, marginTop:3 }}>{k.label}</div>
+                <div style={{ fontSize:10, color:cs.muted, marginTop:1 }}>{k.sub}</div>
+              </div>
+            ))}
+          </div>
+          {/* Revenue bar per layanan */}
+          <div style={{ borderTop:"1px solid "+cs.border, paddingTop:14 }}>
+            <div style={{ fontSize:12, color:cs.muted, marginBottom:10, fontWeight:600 }}>Komposisi Revenue per Layanan</div>
+            {revBreakdown.map(([svc,rev,col])=>(
+              <div key={svc} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                <span style={{ fontSize:12, color:cs.text, fontWeight:600, minWidth:70 }}>{svc}</span>
+                <div style={{ flex:1, background:cs.border, borderRadius:99, height:8, overflow:"hidden" }}>
+                  <div style={{ height:"100%", background:col, width:totalRevenue>0?(rev/totalRevenue*100)+"%":"0%", borderRadius:99, transition:"width 0.4s" }} />
+                </div>
+                <span style={{ color:col, fontWeight:700, fontFamily:"monospace", minWidth:100, textAlign:"right", fontSize:12 }}>{fmt(rev)}</span>
+                <span style={{ color:cs.muted, fontSize:10, minWidth:36, textAlign:"right" }}>{fmtPct(rev,totalRevenue)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── SECTION 2: KPI Operasional ── */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
           {[
-            { label:"Total Revenue", value:fmt(totalRev), sub:periodLabel, color:cs.green, icon:"💰" },
-            { label:"Order Selesai", value:`${ordersDone}/${ordersTotal}`, sub:"dari total order", color:cs.accent, icon:"✅" },
-            { label:"Customer Aktif", value:custAktif, sub:`${custVip} VIP`, color:cs.yellow, icon:"👥" },
-          ].map(kpi=>(
-            <div key={kpi.label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18, textAlign:"center" }}>
-              <div style={{ fontSize:22, marginBottom:8 }}>{kpi.icon}</div>
-              <div style={{ fontSize:22, fontWeight:800, color:kpi.color, marginBottom:4 }}>{kpi.value}</div>
-              <div style={{ fontSize:12, fontWeight:700, color:cs.text, marginBottom:3 }}>{kpi.label}</div>
-              <div style={{ fontSize:11, color:cs.muted }}>{kpi.sub}</div>
+            {label:"Completion Rate",val:completionRate+"%",sub:ordersDone+"/"+ordersAll+" order",color:cs.green,icon:"✅"},
+            {label:"Avg. Order Value",val:fmt(avgOrderVal),sub:"per transaksi PAID",color:cs.accent,icon:"📋"},
+            {label:"Order Bulan Ini",val:ordersMonth,sub:custBaru+" customer baru",color:cs.yellow,icon:"🗂️"},
+          ].map(k=>(
+            <div key={k.label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:12, padding:16, textAlign:"center" }}>
+              <div style={{ fontSize:22, marginBottom:6 }}>{k.icon}</div>
+              <div style={{ fontSize:20, fontWeight:800, color:k.color, fontFamily:"monospace" }}>{k.val}</div>
+              <div style={{ fontSize:11, fontWeight:700, color:cs.text, marginTop:4 }}>{k.label}</div>
+              <div style={{ fontSize:10, color:cs.muted, marginTop:2 }}>{k.sub}</div>
             </div>
           ))}
         </div>
 
-        {/* Revenue breakdown per layanan */}
+        {/* ── SECTION 3: Accounts Receivable ── */}
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
-          <div style={{ fontWeight:700, color:cs.text, marginBottom:14 }}>💰 Revenue per Layanan — {periodLabel}</div>
-          {totalRev===0
-            ? <div style={{color:cs.muted,fontSize:13,textAlign:"center",padding:"20px 0"}}>Belum ada invoice PAID untuk periode ini</div>
-            : [["Cleaning",revCleaning,cs.accent],["Install",revInstall,cs.green],["Repair",revRepair,cs.yellow]].map(([svc,rev,col])=>(
-              <div key={svc} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-                <span style={{ color:cs.text, fontSize:13, fontWeight:600, minWidth:80 }}>{svc}</span>
-                <div style={{ flex:1, background:cs.border, borderRadius:99, height:8, overflow:"hidden" }}>
-                  <div style={{ height:"100%", background:col, width:totalRev>0?(rev/totalRev*100)+"%":"0%", borderRadius:99, transition:"width 0.4s" }} />
-                </div>
-                <span style={{ color:col, fontWeight:700, fontFamily:"monospace", minWidth:90, textAlign:"right" }}>{fmt(rev)}</span>
+          <div style={{ fontWeight:800, color:cs.text, fontSize:14, marginBottom:14 }}>📥 Accounts Receivable (Piutang)</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:14 }}>
+            {[
+              {label:"Piutang Aktif",val:fmt(totalAR),cnt:unpaidInv.length+overdueInv.length,color:cs.yellow},
+              {label:"Overdue 🚨",val:fmt(totalOverdue),cnt:overdueInv.length,color:cs.red},
+              {label:"Menunggu Approval",val:fmt(totalPending),cnt:pendingInv.length,color:cs.ara},
+              {label:"Customer Aktif",val:custTotal,cnt:custVip+" VIP",color:cs.accent},
+            ].map(k=>(
+              <div key={k.label} style={{ background:cs.surface, borderRadius:10, padding:"12px 14px", border:"1px solid "+k.color+"22" }}>
+                <div style={{ fontSize:15, fontWeight:800, color:k.color, fontFamily:"monospace" }}>{k.val}</div>
+                <div style={{ fontSize:11, color:cs.text, fontWeight:600, marginTop:3 }}>{k.label}</div>
+                <div style={{ fontSize:10, color:cs.muted, marginTop:1 }}>{k.cnt} invoice/akun</div>
               </div>
-            ))
-          }
-        </div>
-
-        {/* Performa Teknisi — data real */}
-        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
-          <div style={{ fontWeight:700, color:cs.text, marginBottom:14 }}>👷 Performa Teknisi — Job Completed</div>
-          {tekPerf.length===0
-            ? <div style={{color:cs.muted,fontSize:13,textAlign:"center",padding:"20px 0"}}>Belum ada data order</div>
-            : tekPerf.map(t=>{
-              const col = techColors[t.name]||cs.muted;
-              return (
-                <div key={t.name} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-                  <span style={{ color:cs.text, fontSize:13, fontWeight:600, minWidth:110 }}>{t.name}</span>
-                  <div style={{ flex:1, background:cs.border, borderRadius:99, height:8, overflow:"hidden" }}>
-                    <div style={{ height:"100%", background:col, width:(t.jobs/maxJobs*100)+"%", borderRadius:99, transition:"width 0.4s" }} />
+            ))}
+          </div>
+          {/* Daftar invoice OVERDUE */}
+          {overdueInv.length > 0 && (
+            <div style={{ background:cs.red+"10", border:"1px solid "+cs.red+"22", borderRadius:8, padding:"10px 12px" }}>
+              <div style={{ fontSize:11, fontWeight:700, color:cs.red, marginBottom:8 }}>⚠️ Invoice Overdue — Perlu Tindakan</div>
+              {overdueInv.map(inv=>(
+                <div key={inv.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingBottom:6, borderBottom:"1px solid "+cs.red+"15", marginBottom:6 }}>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:700, color:cs.text }}>{inv.customer}</div>
+                    <div style={{ fontSize:10, color:cs.muted }}>{inv.id} · Due: {inv.due||"—"}</div>
                   </div>
-                  <span style={{ color:col, fontWeight:700, fontFamily:"monospace", minWidth:40, textAlign:"right" }}>{t.jobs}<span style={{color:cs.muted,fontWeight:400}}>/{t.total}</span></span>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:13, fontWeight:800, color:cs.red, fontFamily:"monospace" }}>{fmt(inv.total)}</div>
+                    <button onClick={()=>invoiceReminderWA(inv)} style={{ fontSize:10, color:"#25D366", background:"#25D36618", border:"1px solid #25D36633", borderRadius:4, padding:"2px 7px", cursor:"pointer", marginTop:2 }}>WA Reminder</button>
+                  </div>
                 </div>
-              );
-            })
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── SECTION 4: Performa Teknisi ── */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <div style={{ fontWeight:800, color:cs.text, fontSize:14, marginBottom:4 }}>👷 Performa Tim Teknisi</div>
+          <div style={{ fontSize:11, color:cs.muted, marginBottom:14 }}>Berdasarkan order COMPLETED keseluruhan</div>
+          {tekPerf.length === 0
+            ? <div style={{color:cs.muted,fontSize:13,textAlign:"center",padding:"20px 0"}}>Belum ada data</div>
+            : <div style={{ display:"grid", gap:8 }}>
+              {tekPerf.map(t=>{
+                const col = techColors[t.name]||cs.muted;
+                const rate = t.total > 0 ? Math.round(t.done/t.total*100) : 0;
+                return (
+                  <div key={t.name} style={{ display:"grid", gridTemplateColumns:"120px 1fr 60px 80px", alignItems:"center", gap:10 }}>
+                    <span style={{ fontSize:13, fontWeight:700, color:cs.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.name}</span>
+                    <div style={{ background:cs.border, borderRadius:99, height:8, overflow:"hidden" }}>
+                      <div style={{ height:"100%", background:col, width:(t.done/maxDone*100)+"%", borderRadius:99, transition:"width 0.4s" }} />
+                    </div>
+                    <span style={{ fontSize:11, fontWeight:700, color:col, fontFamily:"monospace", textAlign:"right" }}>{t.done}/{t.total}</span>
+                    <span style={{ fontSize:10, color:rate>=80?cs.green:rate>=50?cs.yellow:cs.red, fontWeight:700, textAlign:"right" }}>{rate}%</span>
+                  </div>
+                );
+              })}
+            </div>
           }
         </div>
 
-        {/* Invoice summary */}
+        {/* ── SECTION 5: Status Invoice & Laporan ── */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
           <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18 }}>
-            <div style={{ fontWeight:700, color:cs.text, marginBottom:12 }}>🧾 Status Invoice</div>
-            {[["PAID",cs.green],["UNPAID",cs.yellow],["OVERDUE",cs.red],["PENDING_APPROVAL",cs.ara]].map(([s,col])=>{
-              const cnt = invoicesData.filter(i=>i.status===s).length;
-              return cnt>0?(
-                <div key={s} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-                  <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:col+"22", color:col, border:"1px solid "+col+"44", fontWeight:700 }}>{s.replace("_"," ")}</span>
-                  <span style={{ fontWeight:800, color:col, fontFamily:"monospace" }}>{cnt}</span>
+            <div style={{ fontWeight:700, color:cs.text, marginBottom:12, fontSize:13 }}>🧾 Status Invoice (Semua)</div>
+            {[["PAID",cs.green,"Lunas"],["UNPAID",cs.yellow,"Belum Bayar"],["OVERDUE",cs.red,"Terlambat"],["PENDING_APPROVAL",cs.ara,"Menunggu Approve"]].map(([s,col,lbl])=>{
+              const items = allInv.filter(i=>i.status===s);
+              const total = items.reduce((a,b)=>a+(b.total||0),0);
+              return items.length > 0 ? (
+                <div key={s} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, paddingBottom:8, borderBottom:"1px solid "+cs.border }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:col+"22", color:col, border:"1px solid "+col+"44", fontWeight:700 }}>{lbl}</span>
+                    <span style={{ fontSize:11, color:cs.muted }}>{items.length}×</span>
+                  </div>
+                  <span style={{ fontWeight:800, color:col, fontFamily:"monospace", fontSize:12 }}>{fmt(total)}</span>
                 </div>
-              ):null;
+              ) : null;
             })}
           </div>
           <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18 }}>
-            <div style={{ fontWeight:700, color:cs.text, marginBottom:12 }}>📝 Status Laporan</div>
-            {[["SUBMITTED",cs.accent,"Baru"],["VERIFIED",cs.green,"Verified"],["REVISION",cs.yellow,"Revisi"],["REJECTED",cs.red,"Ditolak"]].map(([s,col,lbl])=>{
+            <div style={{ fontWeight:700, color:cs.text, marginBottom:12, fontSize:13 }}>📝 Status Laporan Teknisi</div>
+            {[["SUBMITTED",cs.accent,"Baru"],["VERIFIED",cs.green,"Terverifikasi"],["REVISION",cs.yellow,"Perlu Revisi"],["REJECTED",cs.red,"Ditolak"]].map(([s,col,lbl])=>{
               const cnt = laporanReports.filter(r=>r.status===s).length;
-              return cnt>0?(
-                <div key={s} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-                  <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:col+"22", color:col, border:"1px solid "+col+"44", fontWeight:700 }}>{lbl}</span>
+              return cnt > 0 ? (
+                <div key={s} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, paddingBottom:8, borderBottom:"1px solid "+cs.border }}>
+                  <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:col+"22", color:col, border:"1px solid "+col+"44", fontWeight:700 }}>{lbl}</span>
                   <span style={{ fontWeight:800, color:col, fontFamily:"monospace" }}>{cnt}</span>
                 </div>
-              ):null;
+              ) : null;
             })}
           </div>
         </div>
       </div>
     );
   };
+
 
   // ============================================================
   // RENDER LAPORAN TIM  (Owner & Admin)
@@ -2484,7 +2622,34 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
           </div>
 
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={async () => { setLlmStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"llm",provider:llmProvider})}); const d=await r.json(); setLlmStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setLlmStatus("not_connected"); showNotif("❌ "+e.message); } }}
+            <button onClick={async () => {
+              if (!llmApiKey) { showNotif("❌ Masukkan API Key dulu"); return; }
+              setLlmStatus("testing");
+              try {
+                let ok = false;
+                if (llmProvider === "openai") {
+                  const r = await fetch("https://api.openai.com/v1/chat/completions", {
+                    method:"POST", headers:{"Content-Type":"application/json","Authorization":"Bearer "+llmApiKey},
+                    body:JSON.stringify({model:llmModel||"gpt-4o-mini",max_tokens:10,messages:[{role:"user",content:"Hi"}]})
+                  });
+                  ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"OpenAI error "+r.status);}
+                } else if (llmProvider === "gemini") {
+                  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${llmModel||"gemini-1.5-flash"}:generateContent?key=${llmApiKey}`, {
+                    method:"POST", headers:{"Content-Type":"application/json"},
+                    body:JSON.stringify({contents:[{role:"user",parts:[{text:"Hi"}]}]})
+                  });
+                  ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"Gemini error");}
+                } else {
+                  const r = await fetch("https://api.anthropic.com/v1/messages", {
+                    method:"POST", headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+                    body:JSON.stringify({model:llmModel||"claude-sonnet-4-6",max_tokens:10,messages:[{role:"user",content:"Hi"}]})
+                  });
+                  ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"Claude error");}
+                }
+                setLlmStatus("connected");
+                showNotif("✅ Koneksi " + activeLLM.label + " berhasil! ARA Chat siap digunakan.");
+              } catch(e) { setLlmStatus("not_connected"); showNotif("❌ Koneksi gagal: " + e.message); }
+            }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.ara+",#7c3aed)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {llmStatus==="testing" ? "⏳ Testing..." : "🔌 Test & Simpan — " + activeLLM.label}
             </button>
@@ -2718,22 +2883,9 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               Masuk →
             </button>
 
-            {/* Demo login quick buttons */}
-            <div style={{ borderTop:"1px solid "+cs.border, paddingTop:16 }}>
-              <div style={{ fontSize:11, color:cs.muted, marginBottom:10, textAlign:"center" }}>— Demo Cepat —</div>
-              <div style={{ display:"grid", gap:8 }}>
-                {DEMO_ACCOUNTS.map(acc => (
-                  <button key={acc.role} onClick={() => doLogin(acc.email, acc.password)}
-                    style={{ background:acc.color+"12", border:"1px solid "+acc.color+"33", borderRadius:10, padding:"10px 14px", cursor:"pointer", display:"flex", alignItems:"center", gap:12, textAlign:"left" }}>
-                    <span style={{ fontSize:20 }}>{acc.icon}</span>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontWeight:700, fontSize:12, color:acc.color }}>{acc.role} — {acc.name}</div>
-                      <div style={{ fontSize:10, color:cs.muted }}>{acc.desc}</div>
-                    </div>
-                    <span style={{ fontSize:10, color:cs.muted, fontFamily:"monospace" }}>{acc.password}</span>
-                  </button>
-                ))}
-              </div>
+            {/* Info akun */}
+            <div style={{ borderTop:"1px solid "+cs.border, paddingTop:14, textAlign:"center" }}>
+              <div style={{ fontSize:11, color:cs.muted }}>Tidak punya akun? Hubungi Owner untuk mendapatkan akses.</div>
             </div>
           </div>
 
@@ -2756,7 +2908,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
         <div style={{ padding:"16px 14px", borderBottom:"1px solid "+cs.border }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
             <div style={{ fontWeight:800, fontSize:16, color:cs.accent }}>⬡ AClean</div>
-            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v11</span>
+            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v12</span>
           </div>
           {currentUser && (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -3473,51 +3625,70 @@ Order yang sudah ada tidak terpengaruh.`)) return;
           const colorMap = { "Owner":"#f59e0b","Admin":"#38bdf8","Teknisi":"#22c55e","Helper":"#a78bfa" };
           const color    = colorMap[newUserForm.role] || "#38bdf8";
 
-          if (newUserForm.id) {
-            // ── EDIT user yang sudah ada ──
-            const { error } = await supabase.from("user_profiles").update({
-              name: newUserForm.name,
-              role: newUserForm.role,
-              phone: newUserForm.phone || "",
-              avatar, color,
-              active: true,
-            }).eq("id", newUserForm.id);
-            if (error) { showNotif("❌ Gagal update: " + error.message); return; }
+          // Cek apakah ID adalah UUID Supabase (bukan "USR001" hardcode)
+          const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
+
+          if (newUserForm.id && isUUID(newUserForm.id)) {
+            // ── EDIT user yang ada di Supabase (UUID valid) ──
+            const upd = { name:newUserForm.name, role:newUserForm.role, phone:newUserForm.phone||"", avatar, color, active:true };
+            const { error } = await supabase.from("user_profiles").update(upd).eq("id", newUserForm.id);
+            if (error) showNotif("⚠️ DB error: " + error.message + " (disimpan lokal)");
+            else addAgentLog("USER_UPDATED", "Akun " + newUserForm.name + " diupdate", "SUCCESS");
+            // Selalu update local state
             setUserAccounts(prev => prev.map(u => u.id===newUserForm.id ? {...u,...newUserForm,avatar,color} : u));
-            showNotif("✅ Akun " + newUserForm.name + " diupdate");
+            showNotif("✅ Akun " + newUserForm.name + " berhasil diupdate");
+
+          } else if (newUserForm.id && !isUUID(newUserForm.id)) {
+            // ── EDIT local user (USR001 dll - belum punya UUID Supabase) ──
+            // Hanya update local state, tidak bisa ke DB tanpa UUID
+            setUserAccounts(prev => prev.map(u => u.id===newUserForm.id ? {...u,...newUserForm,avatar,color} : u));
+            showNotif("✅ " + newUserForm.name + " diupdate (lokal). Buat ulang akun di Supabase untuk sinkronisasi penuh.");
+
           } else {
             // ── BUAT user baru via Supabase Auth ──
-            // Pakai admin API lewat supabase — buat user dengan email+password
             const { data, error } = await supabase.auth.signUp({
               email: newUserForm.email,
               password: password,
-              options: {
-                data: { name: newUserForm.name, role: newUserForm.role }
-              }
+              options: { data: { name: newUserForm.name, role: newUserForm.role } }
             });
             if (error) { showNotif("❌ Gagal buat akun: " + error.message); return; }
 
-            // Insert profil ke user_profiles (trigger mungkin sudah handle, tapi kita upsert untuk pastikan)
             if (data.user) {
               await supabase.from("user_profiles").upsert({
                 id: data.user.id,
-                name: newUserForm.name,
-                role: newUserForm.role,
-                phone: newUserForm.phone || "",
-                avatar, color,
-                active: true,
-              });
+                name: newUserForm.name, role: newUserForm.role,
+                phone: newUserForm.phone||"", avatar, color, active: true,
+              }).catch(()=>{});
             }
 
-            setUserAccounts(prev => [...prev, {
-              id: data.user?.id || "USR_NEW",
+            const newAcc = {
+              id: data.user?.id || ("USR_"+Date.now()),
               name: newUserForm.name, email: newUserForm.email,
               role: newUserForm.role, phone: newUserForm.phone||"",
-              avatar, color, active: true, lastLogin: "Belum login"
-            }]);
-            showNotif(`✅ Akun ${newUserForm.name} dibuat sebagai ${newUserForm.role} — password: ${password}`);
+              avatar, color, active: true, lastLogin: "Belum login", password
+            };
+            setUserAccounts(prev => [...prev, newAcc]);
+            addAgentLog("USER_CREATED", "Akun baru: " + newUserForm.name + " (" + newUserForm.role + ")", "SUCCESS");
+            showNotif(`✅ Akun ${newUserForm.name} dibuat — role: ${newUserForm.role} — password: ${password}`);
           }
-          setModalAddUser(false);
+          setModalAddUser(false); setNewUserForm({name:"",email:"",role:"Admin",password:"",phone:""});
+        };
+
+        // Handle delete user
+        const handleDeleteUser = async () => {
+          if (!newUserForm.id || newUserForm.role === "Owner") return;
+          if (window.confirm && !window.confirm(`Hapus akun ${newUserForm.name}?
+
+Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
+          const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
+          if (isUUID(newUserForm.id)) {
+            // Nonaktifkan di DB (tidak hapus permanen — jaga data historis)
+            await supabase.from("user_profiles").update({active:false}).eq("id", newUserForm.id).catch(()=>{});
+          }
+          setUserAccounts(prev => prev.filter(u => u.id !== newUserForm.id));
+          addAgentLog("USER_DELETED", "Akun " + newUserForm.name + " dihapus/dinonaktifkan", "WARNING");
+          showNotif("🗑️ Akun " + newUserForm.name + " dihapus");
+          setModalAddUser(false); setNewUserForm({name:"",email:"",role:"Admin",password:"",phone:""});
         };
 
         return (
@@ -3588,6 +3759,12 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 </div>
 
                 {/* Tombol aksi */}
+                {newUserForm.id && newUserForm.role !== "Owner" && (
+                  <button onClick={handleDeleteUser}
+                    style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"10px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:12, width:"100%" }}>
+                    🗑️ Hapus / Nonaktifkan Akun {newUserForm.name}
+                  </button>
+                )}
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
                   <button onClick={() => setModalAddUser(false)}
                     style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:600 }}>Batal</button>
@@ -3662,95 +3839,136 @@ Order yang sudah ada tidak terpengaruh.`)) return;
         </div>
       )}
 
-      {/* ═══════ MODAL EDIT ORDER / JADWAL ═══════ */}
+      {/* ═══════ MODAL EDIT ORDER / JADWAL (Owner & Admin) ═══════ */}
       {modalEditOrder && editOrderItem && (
         <div style={{position:"fixed",inset:0,background:"#000c",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>{setModalEditOrder(false);setEditOrderItem(null);}}>
-          <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:20,width:"100%",maxWidth:480,padding:28}} onClick={e=>e.stopPropagation()}>
+          <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:20,width:"100%",maxWidth:520,maxHeight:"90vh",overflowY:"auto",padding:28}} onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-              <div style={{fontWeight:800,fontSize:16,color:cs.text}}>✏️ Edit Jadwal — {editOrderItem.id}</div>
+              <div>
+                <div style={{fontWeight:800,fontSize:16,color:cs.text}}>✏️ Edit Order — {editOrderItem.id}</div>
+                <div style={{fontSize:11,color:cs.yellow,marginTop:2}}>Hanya Owner & Admin · Perubahan dicatat otomatis</div>
+              </div>
               <button onClick={()=>{setModalEditOrder(false);setEditOrderItem(null);}} style={{background:"none",border:"none",color:cs.muted,fontSize:24,cursor:"pointer",lineHeight:1}}>×</button>
             </div>
-            <div style={{fontSize:12,color:cs.muted,marginBottom:20}}>{editOrderItem.customer} — {editOrderItem.service}</div>
-            <div style={{display:"grid",gap:12}}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+
+            <div style={{display:"grid",gap:12,marginTop:16}}>
+              {/* Section: Data Customer */}
+              <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"12px 14px"}}>
+                <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.5px"}}>Data Customer</div>
+                <div style={{display:"grid",gap:8}}>
+                  {[["Nama Customer","customer","text"],["No. HP","phone","text"],["Alamat Lengkap","address","text"]].map(([lbl,key,type])=>(
+                    <div key={key}>
+                      <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>{lbl}</div>
+                      <input type={type} value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
+                        style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Section: Detail Pekerjaan */}
+              <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"12px 14px"}}>
+                <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.5px"}}>Detail Pekerjaan</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Layanan</div>
+                    <select value={editOrderForm.service||"Cleaning"} onChange={e=>setEditOrderForm(f=>({...f,service:e.target.value}))}
+                      style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none"}}>
+                      {["Cleaning","Install","Repair"].map(s=><option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Jumlah Unit</div>
+                    <input type="number" min="1" max="20" value={editOrderForm.units||1} onChange={e=>setEditOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
+                      style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Section: Jadwal & Tim */}
+              <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"12px 14px"}}>
+                <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.5px"}}>Jadwal & Tim</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Tanggal</div>
+                    <input type="date" value={editOrderForm.date||""} onChange={e=>setEditOrderForm(f=>({...f,date:e.target.value}))}
+                      style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Jam Mulai</div>
+                    <input type="time" min="09:00" max="17:00" value={editOrderForm.time||"09:00"} onChange={e=>setEditOrderForm(f=>({...f,time:e.target.value}))}
+                      style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
+                  </div>
+                </div>
+                {editOrderForm.date && editOrderForm.time && (
+                  <div style={{background:cs.accent+"10",border:"1px solid "+cs.accent+"22",borderRadius:7,padding:"6px 10px",fontSize:11,color:cs.accent,marginBottom:8}}>
+                    ⏱ Estimasi selesai: <b>{hitungJamSelesai(editOrderForm.time, editOrderForm.service||"Cleaning", editOrderForm.units||1)}</b> WIB
+                    {" · "}{hitungDurasi(editOrderForm.service||"Cleaning", editOrderForm.units||1)}j
+                  </div>
+                )}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Teknisi</div>
+                    <select value={editOrderForm.teknisi||""} onChange={e=>setEditOrderForm(f=>({...f,teknisi:e.target.value,helper:""}))}
+                      style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none"}}>
+                      <option value="">Pilih Teknisi...</option>
+                      {teknisiData.filter(t=>t.role==="Teknisi").map(t=>
+                        <option key={t.id} value={t.name}>{t.name}{cekTeknisiAvailable(t.name,editOrderForm.date||"",editOrderForm.time||"09:00",editOrderForm.service||"Cleaning",editOrderForm.units||1)?"":" (penuh)"}</option>
+                      )}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Helper</div>
+                    <select value={editOrderForm.helper||""} onChange={e=>setEditOrderForm(f=>({...f,helper:e.target.value}))}
+                      style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none"}}>
+                      <option value="">Tidak ada</option>
+                      {teknisiData.filter(t=>t.role==="Helper").map(t=>{
+                        const {pref} = araSchedulingSuggest(editOrderForm.date||"",editOrderForm.service,editOrderForm.units);
+                        return <option key={t.id} value={t.name}>{pref[editOrderForm.teknisi]===t.name?"★ ":""}{t.name}</option>;
+                      })}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section: Status & Catatan */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                 <div>
-                  <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>Tanggal</div>
-                  <input type="date" value={editOrderForm.date||""} onChange={e=>setEditOrderForm(f=>({...f,date:e.target.value}))}
-                    style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
+                  <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Status</div>
+                  <select value={editOrderForm.status||"CONFIRMED"} onChange={e=>setEditOrderForm(f=>({...f,status:e.target.value}))}
+                    style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none"}}>
+                    {["PENDING","CONFIRMED","IN_PROGRESS","COMPLETED","CANCELLED"].map(s=>(
+                      <option key={s} value={s} style={{color:statusColor[s]||"inherit"}}>{s.replace("_"," ")}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
-                  <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>Jam</div>
-                  <input type="time" value={editOrderForm.time||""} onChange={e=>setEditOrderForm(f=>({...f,time:e.target.value}))}
-                    style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
+                  <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Catatan Perubahan</div>
+                  <input value={editOrderForm.notes||""} onChange={e=>setEditOrderForm(f=>({...f,notes:e.target.value}))}
+                    placeholder="Alasan perubahan..." style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                 </div>
               </div>
-              <div>
-                <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>Teknisi</div>
-                <select value={editOrderForm.teknisi||""} onChange={e=>setEditOrderForm(f=>({...f,teknisi:e.target.value,helper:""}))}
-                  style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none"}}>
-                  {teknisiData.filter(t=>t.role==="Teknisi").map(t=><option key={t.id} value={t.name}>{t.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5,display:"flex",alignItems:"center",gap:8}}>
-                  Helper
-                  {editOrderForm.teknisi && editOrderForm.date && (() => {
-                    const { pref } = araSchedulingSuggest(editOrderForm.date, editOrderForm.service, editOrderForm.units);
-                    const sug = pref[editOrderForm.teknisi];
-                    return sug ? (
-                      <span style={{fontSize:10,color:cs.green,background:cs.green+"18",padding:"2px 8px",borderRadius:99,border:"1px solid "+cs.green+"33",cursor:"pointer"}}
-                        onClick={()=>setEditOrderForm(f=>({...f,helper:sug}))}>
-                        ARA: {sug} (klik pakai)
-                      </span>
-                    ) : null;
-                  })()}
-                </div>
-                <select value={editOrderForm.helper||""} onChange={e=>setEditOrderForm(f=>({...f,helper:e.target.value}))}
-                  style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none"}}>
-                  <option value="">Tidak ada helper</option>
-                  {teknisiData.filter(t=>t.role==="Helper").map(t=>{
-                    const pref = araSchedulingSuggest(editOrderForm.date||"", editOrderForm.service, editOrderForm.units);
-                    const isSug = pref[editOrderForm.teknisi]===t.name;
-                    return <option key={t.id} value={t.name}>{isSug?"★ ":""}{t.name}</option>;
-                  })}
-                </select>
-              </div>
-              <div>
-                <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>Status</div>
-                <select value={editOrderForm.status||""} onChange={e=>setEditOrderForm(f=>({...f,status:e.target.value}))}
-                  style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none"}}>
-                  {["PENDING","CONFIRMED","IN_PROGRESS","COMPLETED","CANCELLED"].map(s=><option key={s} value={s}>{s.replace("_"," ")}</option>)}
-                </select>
-              </div>
-              <div>
-                <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>Catatan Perubahan</div>
-                <input value={editOrderForm.notes||""} onChange={e=>setEditOrderForm(f=>({...f,notes:e.target.value}))}
-                  placeholder="Alasan perubahan jadwal..." style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
-              </div>
-              <div style={{background:cs.yellow+"10",border:"1px solid "+cs.yellow+"22",borderRadius:8,padding:"8px 12px",fontSize:11,color:cs.yellow}}>
-                Perubahan jadwal akan dicatat dan notifikasi dikirim ke teknisi via WA.
-              </div>
+
               <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
                 <button onClick={()=>{setModalEditOrder(false);setEditOrderItem(null);}} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
                 <button onClick={async()=>{
-                  const updated = {...editOrderItem,...editOrderForm};
+                  const timeEnd = hitungJamSelesai(editOrderForm.time||"09:00", editOrderForm.service||"Cleaning", editOrderForm.units||1);
+                  const updated = {...editOrderItem,...editOrderForm,time_end:timeEnd};
                   setOrdersData(prev=>prev.map(o=>o.id===editOrderItem.id?updated:o));
-                  const {error:eoErr} = await supabase.from("orders").update(editOrderForm).eq("id",editOrderItem.id);
-                  if(eoErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
+                  const dbUpd = {customer:editOrderForm.customer,phone:editOrderForm.phone,address:editOrderForm.address,service:editOrderForm.service,units:editOrderForm.units,teknisi:editOrderForm.teknisi,helper:editOrderForm.helper||null,date:editOrderForm.date,time:editOrderForm.time,time_end:timeEnd,status:editOrderForm.status,notes:editOrderForm.notes||""};
+                  const {error:eoErr} = await supabase.from("orders").update(dbUpd).eq("id",editOrderItem.id);
+                  if(eoErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+eoErr.message);
                   else {
-                    addAgentLog("ORDER_UPDATED",`Jadwal ${editOrderItem.id} diupdate — teknisi: ${editOrderForm.teknisi}, tgl: ${editOrderForm.date} ${editOrderForm.time}`,"SUCCESS");
-                    // Kirim WA notif ke teknisi jika ada perubahan teknisi/tanggal/waktu
+                    addAgentLog("ORDER_UPDATED",`Order ${editOrderItem.id} diedit — ${editOrderForm.teknisi} ${editOrderForm.date} ${editOrderForm.time}`,"SUCCESS");
                     const tek = teknisiData.find(t=>t.name===editOrderForm.teknisi);
-                    if(tek && (editOrderForm.teknisi!==editOrderItem.teknisi || editOrderForm.date!==editOrderItem.date || editOrderForm.time!==editOrderItem.time)){
-                      const waMsg = `Halo ${editOrderForm.teknisi}, ada perubahan jadwal:\n📋 ${editOrderItem.id} — ${editOrderItem.customer}\n🔧 ${editOrderItem.service} ${editOrderItem.units} unit\n📅 ${editOrderForm.date} jam ${editOrderForm.time}\n📍 ${editOrderItem.address}\n${editOrderForm.notes?"📝 "+editOrderForm.notes+""+"\n":""}Mohon konfirmasi. — AClean`;
-                      sendWA(tek.phone, waMsg);
+                    if(tek && (editOrderForm.teknisi!==editOrderItem.teknisi||editOrderForm.date!==editOrderItem.date||editOrderForm.time!==editOrderItem.time)){
+                      sendWA(tek.phone,`Halo ${editOrderForm.teknisi}, ada *perubahan jadwal*:\n📋 ${editOrderItem.id} — ${editOrderForm.customer||editOrderItem.customer}\n🔧 ${editOrderForm.service} ${editOrderForm.units} unit\n📅 ${editOrderForm.date} jam ${editOrderForm.time}–${timeEnd}\n📍 ${editOrderForm.address||editOrderItem.address}\n${editOrderForm.notes?"📝 "+editOrderForm.notes+"\n":""}Mohon konfirmasi. — AClean`);
                     }
-                    showNotif("✅ Jadwal "+editOrderItem.id+" berhasil diupdate");
+                    showNotif("✅ Order "+editOrderItem.id+" berhasil diupdate");
                   }
                   setModalEditOrder(false); setEditOrderItem(null);
-                }}
-                  style={{background:"linear-gradient(135deg,"+cs.yellow+",#d97706)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
-                  ✓ Simpan Perubahan Jadwal
+                }} style={{background:"linear-gradient(135deg,"+cs.yellow+",#d97706)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
+                  ✓ Simpan Semua Perubahan
                 </button>
               </div>
             </div>
