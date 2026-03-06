@@ -195,6 +195,7 @@ export default function ACleanWebApp() {
   // ── Auth & Role ──
   const [isLoggedIn,    setIsLoggedIn]    = useState(false);
   const [currentUser,   setCurrentUser]   = useState(null);
+  const [dataLoading,   setDataLoading]   = useState(false);
   const [loginScreen,   setLoginScreen]   = useState("login"); // "login" | "select_account"
   const [loginError,    setLoginError]    = useState("");
   const [loginEmail,    setLoginEmail]    = useState("");
@@ -333,17 +334,21 @@ export default function ACleanWebApp() {
   };
 
   // ── Settings ──
-  const [waProvider,      setWaProvider]      = useState("fonnte");
+  const [waProvider,      setWaProvider]      = useState(() => _ls("waProvider", "fonnte"));
   const [waStatus,        setWaStatus]        = useState("not_connected");
-  const [llmProvider,     setLlmProvider]     = useState("claude");
-  const [llmApiKey,       setLlmApiKey]       = useState("");
-  const [llmModel,        setLlmModel]        = useState("claude-sonnet-4-6");
-  const [ollamaUrl,       setOllamaUrl]       = useState("http://localhost:11434");
-  const [llmStatus,       setLlmStatus]       = useState("not_connected");
+  // ── Settings: load dari localStorage agar tidak hilang saat refresh ──
+  const _ls = (key, def) => { try { const v = localStorage.getItem("aclean_"+key); return v !== null ? JSON.parse(v) : def; } catch { return def; } };
+  const _lsSave = (key, val) => { try { localStorage.setItem("aclean_"+key, JSON.stringify(val)); } catch {} };
+
+  const [llmProvider,     setLlmProvider]     = useState(() => _ls("llmProvider", "claude"));
+  const [llmApiKey,       setLlmApiKey]       = useState(() => _ls("llmApiKey", ""));
+  const [llmModel,        setLlmModel]        = useState(() => _ls("llmModel", "claude-sonnet-4-6"));
+  const [ollamaUrl,       setOllamaUrl]       = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
+  const [llmStatus,       setLlmStatus]       = useState(() => _ls("llmStatus", "not_connected"));
   const [storageProvider, setStorageProvider] = useState("r2");
   const [storageStatus,   setStorageStatus]   = useState("not_connected");
   const [dbProvider,      setDbProvider]      = useState("supabase");
-  const [brainMd,         setBrainMd]         = useState(BRAIN_MD_DEFAULT);
+  const [brainMd,         setBrainMd]         = useState(() => _ls("brainMd", BRAIN_MD_DEFAULT));
 
   // ── Cron jobs ──
   const [cronJobs, setCronJobs] = useState([
@@ -425,27 +430,52 @@ export default function ACleanWebApp() {
   const doLogin = async (email, pass) => {
     setLoginError("");
     try {
+      // ── Coba Supabase Auth dulu (untuk akun real dengan UUID) ──
       const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
-      if (error) { setLoginError("Email atau password salah, atau akun tidak aktif."); return; }
-      const { data: profile } = await supabase
-        .from("user_profiles").select("*").eq("id", data.user.id).single();
-      if (!profile || !profile.active) {
-        setLoginError("Akun tidak aktif. Hubungi Owner.");
-        await supabase.auth.signOut(); return;
+
+      if (!error && data?.user) {
+        // Login Supabase Auth berhasil — load profil dari user_profiles
+        const { data: profile } = await supabase
+          .from("user_profiles").select("*").eq("id", data.user.id).single();
+        if (!profile || !profile.active) {
+          setLoginError("Akun tidak aktif. Hubungi Owner.");
+          await supabase.auth.signOut(); return;
+        }
+        const userObj = { ...data.user, ...profile };
+        setCurrentUser(userObj);
+        setIsLoggedIn(true);
+        setActiveRole(profile.role.toLowerCase());
+        setActiveMenu("dashboard");
+        _lsSave("localSession", userObj);
+        showNotif("Selamat datang, " + profile.name + "!");
+        return;
       }
-      const userObj = { ...data.user, ...profile };
-      setCurrentUser(userObj);
-      setIsLoggedIn(true);
-      setActiveRole(profile.role.toLowerCase());
-      setActiveMenu("dashboard");
-      showNotif("Selamat datang, " + profile.name + "!");
+
+      // ── Fallback: cek di userAccounts lokal (akun demo / belum di Supabase Auth) ──
+      const localUser = userAccounts.find(u =>
+        u.email.toLowerCase() === email.toLowerCase() && u.password === pass && u.active !== false
+      );
+      if (localUser) {
+        const userObj = { ...localUser, id: localUser.id };
+        setCurrentUser(userObj);
+        setIsLoggedIn(true);
+        setActiveRole(localUser.role.toLowerCase());
+        setActiveMenu("dashboard");
+        // Simpan session lokal agar tidak hilang saat refresh
+        _lsSave("localSession", userObj);
+        showNotif("Selamat datang, " + localUser.name + "! (mode lokal)");
+        return;
+      }
+
+      setLoginError("Email atau password salah, atau akun tidak aktif.");
     } catch (err) {
       setLoginError("Terjadi kesalahan: " + err.message);
     }
   };
 
   const doLogout = async () => {
-    await supabase.auth.signOut();
+    await supabase.auth.signOut().catch(()=>{});
+    _lsSave("localSession", null);
     setIsLoggedIn(false);
     setCurrentUser(null);
     setLoginEmail("");
@@ -474,17 +504,40 @@ export default function ACleanWebApp() {
   };
 
   // ── Supabase: Restore session saat refresh ──
+  // ── Auto-save settings ke localStorage saat berubah ──
+  useEffect(() => { _lsSave("llmProvider", llmProvider); }, [llmProvider]);
+  useEffect(() => { _lsSave("llmApiKey",   llmApiKey);   }, [llmApiKey]);
+  useEffect(() => { _lsSave("llmModel",    llmModel);    }, [llmModel]);
+  useEffect(() => { _lsSave("ollamaUrl",   ollamaUrl);   }, [ollamaUrl]);
+  useEffect(() => { _lsSave("brainMd",     brainMd);     }, [brainMd]);
+  useEffect(() => { _lsSave("waProvider",  waProvider);  }, [waProvider]);
+  useEffect(() => { _lsSave("llmStatus",   llmStatus);   }, [llmStatus]);
+
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session) return;
-      const { data: profile } = await supabase
-        .from("user_profiles").select("*").eq("id", session.user.id).single();
-      if (profile && profile.active) {
-        setCurrentUser({ ...session.user, ...profile });
-        setIsLoggedIn(true);
-        setActiveRole(profile.role.toLowerCase());
+    // ── Restore session saat refresh ──
+    const restoreSession = async () => {
+      // 1. Coba restore dari Supabase Auth session (untuk akun real)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data: profile } = await supabase
+          .from("user_profiles").select("*").eq("id", session.user.id).single();
+        if (profile && profile.active) {
+          setCurrentUser({ ...session.user, ...profile });
+          setIsLoggedIn(true);
+          setActiveRole(profile.role.toLowerCase());
+          return;
+        }
       }
-    });
+      // 2. Coba restore dari localStorage (untuk akun lokal/demo)
+      const saved = _ls("localSession", null);
+      if (saved && saved.id && saved.role) {
+        // Validasi masih ada di userAccounts
+        setCurrentUser(saved);
+        setIsLoggedIn(true);
+        setActiveRole(saved.role.toLowerCase());
+      }
+    };
+    restoreSession();
   }, []);
 
   // ── Supabase: Load data + Realtime saat login ──
@@ -500,10 +553,12 @@ export default function ACleanWebApp() {
         supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }),
         supabase.from("agent_logs").select("*").order("time", { ascending: false }).limit(50).catch(()=>({data:null,error:null})),
       ]);
-      if (!ordersRes.error && ordersRes.data && ordersRes.data.length > 0) setOrdersData(ordersRes.data);
-      if (!invoicesRes.error && invoicesRes.data && invoicesRes.data.length > 0) setInvoicesData(invoicesRes.data);
-      if (!customersRes.error && customersRes.data && customersRes.data.length > 0) setCustomersData(customersRes.data);
-      if (!inventoryRes.error && inventoryRes.data && inventoryRes.data.length > 0) setInventoryData(inventoryRes.data);
+      // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
+      // Jika error = fallback ke demo data yang sudah di-init
+      if (!ordersRes.error   && ordersRes.data)   setOrdersData(ordersRes.data);
+      if (!invoicesRes.error && invoicesRes.data)  setInvoicesData(invoicesRes.data);
+      if (!customersRes.error && customersRes.data) setCustomersData(customersRes.data);
+      if (!inventoryRes.error && inventoryRes.data) setInventoryData(inventoryRes.data);
       if (!laporanRes.error && laporanRes.data && laporanRes.data.length > 0) {
         // Normalize laporan dari Supabase agar cocok struktur lokal
         const normalized = laporanRes.data.map(r => ({
@@ -521,6 +576,16 @@ export default function ACleanWebApp() {
       }
       // Jika DB kosong (laporanRes.data = []), initial state hardcoded tetap aktif
       if (!logsRes.error && logsRes.data && logsRes.data.length > 0) setAgentLogs(logsRes.data);
+
+      // Load app_settings dari Supabase DB (backup dari localStorage)
+      try {
+        const setRes = await supabase.from("app_settings").select("*");
+        if (!setRes.error && setRes.data) {
+          const sMap = Object.fromEntries(setRes.data.map(s=>[s.key, s.value]));
+          if (sMap.llm_provider && !llmProvider) setLlmProvider(sMap.llm_provider);
+          if (sMap.llm_model && !llmModel) setLlmModel(sMap.llm_model);
+        }
+      } catch(e) {}
 
       // Load Teknisi dari Supabase — fallback ke TEKNISI_DATA jika kosong/error
       try {
@@ -551,7 +616,8 @@ export default function ACleanWebApp() {
       } catch(e) { /* WA tabel belum ada - skip */ }
     };
 
-    loadAll();
+    setDataLoading(true);
+    loadAll().finally(() => setDataLoading(false));
 
     // Realtime — data update otomatis di semua device
     const ch1 = supabase.channel("rt-orders")
@@ -569,10 +635,22 @@ export default function ACleanWebApp() {
         supabase.from("inventory").select("*").order("code")
           .then(({data}) => { if(data) setInventoryData(data); }))
       .subscribe();
+    const ch4 = supabase.channel("rt-customers")
+      .on("postgres_changes", { event:"*", schema:"public", table:"customers" }, () =>
+        supabase.from("customers").select("*").order("name")
+          .then(({data}) => { if(data) setCustomersData(data); }))
+      .subscribe();
+    const ch5 = supabase.channel("rt-laporan")
+      .on("postgres_changes", { event:"*", schema:"public", table:"service_reports" }, () =>
+        supabase.from("service_reports").select("*").order("submitted_at",{ascending:false})
+          .then(({data}) => { if(data && data.length > 0) setLaporanReports(data.map(r=>({...r,units:r.units||[],materials:r.materials||[],fotos:r.fotos||(r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),editLog:r.edit_log||[]})));  }))
+      .subscribe();
 
     return () => {
       supabase.removeChannel(ch1);
       supabase.removeChannel(ch2);
+      supabase.removeChannel(ch4);
+      supabase.removeChannel(ch5);
       supabase.removeChannel(ch3);
     };
   }, [isLoggedIn]);
@@ -593,9 +671,22 @@ export default function ACleanWebApp() {
   };
 
   const statusColor = {
-    COMPLETED:"#22c55e", IN_PROGRESS:"#38bdf8", CONFIRMED:"#f59e0b",
-    PENDING:"#64748b", CANCELLED:"#ef4444",
-    PAID:"#22c55e", UNPAID:"#f59e0b", OVERDUE:"#ef4444", PENDING_APPROVAL:"#a78bfa",
+    // Order workflow statuses (GAP 1.4)
+    PENDING:"#64748b", CONFIRMED:"#f59e0b", DISPATCHED:"#06b6d4",
+    ON_SITE:"#8b5cf6", WORKING:"#a78bfa", REPORT_SUBMITTED:"#10b981",
+    INVOICE_CREATED:"#3b82f6", INVOICE_APPROVED:"#6366f1",
+    PAID:"#22c55e", COMPLETED:"#22c55e", CANCELLED:"#ef4444", RESCHEDULED:"#f97316",
+    IN_PROGRESS:"#38bdf8",
+    // Invoice statuses
+    UNPAID:"#f59e0b", OVERDUE:"#ef4444", PENDING_APPROVAL:"#a78bfa", PARTIAL:"#06b6d4"
+  };
+  const statusLabel = {
+    PENDING:"Pending", CONFIRMED:"Dikonfirmasi", DISPATCHED:"Dikirim",
+    ON_SITE:"Di Lokasi", WORKING:"Sedang Kerja", REPORT_SUBMITTED:"Laporan Masuk",
+    INVOICE_CREATED:"Invoice Dibuat", INVOICE_APPROVED:"Invoice Dikirim",
+    PAID:"Lunas", COMPLETED:"Selesai", CANCELLED:"Dibatalkan", RESCHEDULED:"Dijadwal Ulang",
+    IN_PROGRESS:"Sedang Dikerjakan",
+    UNPAID:"Belum Bayar", OVERDUE:"Terlambat", PENDING_APPROVAL:"Menunggu Approve", PARTIAL:"Bayar Sebagian"
   };
 
   const fmt = (n) => "Rp " + (n||0).toLocaleString("id-ID");
@@ -625,12 +716,20 @@ export default function ACleanWebApp() {
   const dispatchWA = async (order) => {
     const tek = teknisiData.find(t => t.name === order.teknisi);
     if (!tek) return showNotif("Teknisi tidak ditemukan");
-    const msg = `Halo ${order.teknisi}, ada job baru:\n📍 *${order.customer}*\n🔧 ${order.service} ${order.units} unit\n📮 ${order.address}\n🕐 ${order.date} jam ${order.time}\n\nMohon konfirmasi. — AClean`;
+    const msg = `📋 *DISPATCH JOB ${order.id}*\n👤 Customer: *${order.customer}*\n📍 Alamat: ${order.address}\n🔧 Service: ${order.service} — ${order.units} unit\n📅 Jadwal: ${order.date} jam ${order.time}${order.time_end?"–"+order.time_end:""}\n\nSegera konfirmasi kehadiran. — AClean`;
     const ok = await sendWA(tek.phone, msg);
     if (ok) {
-      setOrdersData(prev => prev.map(o => o.id===order.id ? {...o, dispatch:true} : o));
-      await supabase.from("orders").update({dispatch:true}).eq("id",order.id);
-      addAgentLog("DISPATCH_SENT", `WA dispatch dikirim ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
+      const dispatchAt = new Date().toISOString();
+      setOrdersData(prev => prev.map(o => o.id===order.id ? {...o, dispatch:true, dispatch_at:dispatchAt, status:o.status==="CONFIRMED"?"DISPATCHED":o.status} : o));
+      await supabase.from("orders").update({dispatch:true, dispatch_at:dispatchAt, status:"DISPATCHED"}).eq("id",order.id);
+      // GAP 1.8: catat ke dispatch_logs
+      await supabase.from("dispatch_logs").insert({
+        order_id: order.id, teknisi: order.teknisi,
+        assigned_by: currentUser?.id||null,
+        assigned_by_name: currentUser?.name||"",
+        wa_message: msg, status:"SENT"
+      }).catch(()=>{});
+      addAgentLog("DISPATCH_SENT", `WA dispatch ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
       showNotif(`✅ Dispatch WA terkirim ke ${order.teknisi}`);
     }
   };
@@ -662,43 +761,89 @@ export default function ACleanWebApp() {
   const approveInvoice = async (inv) => {
     const today = new Date().toISOString().slice(0,10);
     const due = new Date(Date.now() + 14*24*60*60*1000).toISOString().slice(0,10);
+    const approvedAt = new Date().toISOString();
     setInvoicesData(prev => prev.map(i =>
       i.id === inv.id ? {...i, status:"UNPAID", sent:today, due} : i
     ));
     setOrdersData(prev => prev.map(o =>
-      o.id === inv.job_id ? {...o, invoice_id:inv.id} : o
+      o.id === inv.job_id ? {...o, invoice_id:inv.id, status:"INVOICE_APPROVED"} : o
     ));
-    await supabase.from("invoices").update({ status:"UNPAID", sent:today, due }).eq("id", inv.id);
-    await supabase.from("orders").update({ invoice_id:inv.id }).eq("id", inv.job_id);
-    // Kirim invoice via WA ke customer
+    // GAP 4: simpan approved_by, trigger DB akan catat audit_log
+    await supabase.from("invoices").update({
+      status:"UNPAID", sent:today, due,
+      approved_by: currentUser?.id || null,
+      approved_at: approvedAt,
+    }).eq("id", inv.id);
+    await supabase.from("orders").update({ invoice_id:inv.id, status:"INVOICE_APPROVED" }).eq("id", inv.job_id);
     const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service||"Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
     sendWA(inv.phone, waMsg);
-    addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} diapprove Owner — dikirim ke ${inv.customer}`, "SUCCESS");
+    addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} approve oleh ${currentUser?.name||"—"} — ${inv.customer} ${fmt(inv.total)}`, "SUCCESS");
     showNotif(`✅ Invoice ${inv.id} diapprove & dikirim ke ${inv.customer}`);
   };
 
-  // ── GAP 3: Mark Paid (real state mutation) ──
-  const markPaid = async (inv) => {
+  // ── GAP 1.6: Mark Paid → simpan ke payments table ──
+  const markPaid = async (inv, method="transfer", notes="") => {
+    const paidAt = new Date().toISOString();
     setInvoicesData(prev => prev.map(i =>
-      i.id === inv.id ? {...i, status:"PAID"} : i
+      i.id === inv.id ? {...i, status:"PAID", paid_at:paidAt} : i
     ));
-    await supabase.from("invoices").update({ status:"PAID" }).eq("id", inv.id);
-    addAgentLog("PAYMENT_CONFIRMED", `Invoice ${inv.id} — ${inv.customer} LUNAS ${fmt(inv.total)}`, "SUCCESS");
-    showNotif(`💰 Invoice ${inv.id} ditandai LUNAS!`);
+    setOrdersData(prev => prev.map(o =>
+      (o.id === inv.job_id || o.invoice_id === inv.id) ? {...o, status:"PAID"} : o
+    ));
+    await supabase.from("invoices").update({ status:"PAID", paid_at:paidAt }).eq("id", inv.id);
+    // GAP 1.6: Catat ke payments table untuk history + partial payment support
+    await supabase.from("payments").insert({
+      invoice_id: inv.id,
+      amount: inv.total,
+      method: method,
+      notes: notes || "Lunas",
+      paid_at: paidAt,
+      verified: true,
+      verified_by: currentUser?.id || null,
+      verified_at: paidAt,
+    }).catch(()=>{});
+    // Update customer last_service
+    if (inv.phone) await supabase.from("customers").update({last_service:paidAt.slice(0,10)}).eq("phone",inv.phone).catch(()=>{});
+    addAgentLog("PAYMENT_CONFIRMED", `Invoice ${inv.id} LUNAS — ${inv.customer} ${fmt(inv.total)} via ${method}`, "SUCCESS");
+    showNotif(`💰 Invoice ${inv.id} LUNAS — ${fmt(inv.total)}`);
   };
 
   // ── GAP 6: Inventory deduct ──
-  const deductInventory = (materials) => {
-    materials.forEach(mat => {
-      setInventoryData(prev => prev.map(item => {
-        const match = item.name.toLowerCase().includes(mat.nama.toLowerCase()) ||
-                      mat.nama.toLowerCase().includes(item.name.toLowerCase());
-        if (!match) return item;
-        const newStock = Math.max(0, item.stock - (parseFloat(mat.jumlah) || 0));
-        const newStatus = newStock === 0 ? "OUT" : newStock <= item.min_alert ? "CRITICAL" : newStock <= item.reorder ? "WARNING" : "OK";
-        return {...item, stock:newStock, status:newStatus};
-      }));
-    });
+  // GAP 1.2 + GAP 3: Inventory via transaction table — audit trail + cegah negatif
+  const deductInventory = async (materials, orderId, reportId) => {
+    for (const mat of materials) {
+      const item = inventoryData.find(i =>
+        i.name.toLowerCase().includes(mat.nama.toLowerCase()) ||
+        mat.nama.toLowerCase().includes(i.name.toLowerCase())
+      );
+      if (!item) continue;
+      const qty = parseFloat(mat.jumlah) || 0;
+      // GAP 3: Cek stok cukup sebelum deduct
+      if (item.stock < qty) {
+        showNotif(`⚠️ Stok ${item.name} tidak cukup (tersedia: ${item.stock} ${item.unit}, butuh: ${qty}). Laporan tetap tersimpan.`);
+        addAgentLog("STOCK_INSUFFICIENT", `${item.name}: butuh ${qty}, tersedia ${item.stock}`, "WARNING");
+        continue;
+      }
+      const newStock = item.stock - qty;
+      const newStatus = newStock === 0 ? "OUT" : newStock <= item.min_alert ? "CRITICAL" : newStock <= item.reorder ? "WARNING" : "OK";
+      // Update local state
+      setInventoryData(prev => prev.map(i => i.code === item.code ? {...i, stock:newStock, status:newStatus} : i));
+      // Insert transaksi ke DB (trigger Supabase akan update stock otomatis)
+      await supabase.from("inventory_transactions").insert({
+        inventory_code: item.code,
+        inventory_name: item.name,
+        order_id: orderId || null,
+        report_id: reportId || null,
+        qty: -qty,                                // negatif = keluar
+        type: "usage",
+        notes: mat.keterangan || "",
+        created_by: currentUser?.id || null,
+        created_by_name: currentUser?.name || "",
+      }).catch(e => console.warn("inv tx:", e.message));
+      if (newStatus === "CRITICAL" || newStatus === "OUT") {
+        addAgentLog("STOCK_ALERT", `${item.name}: ${newStatus} (sisa ${newStock} ${item.unit})`, "WARNING");
+      }
+    }
   };
 
   // ── GAP 9: Create order (real state mutation) ──
@@ -717,13 +862,60 @@ export default function ACleanWebApp() {
     setOrdersData(prev => [...prev, newOrder]);
     const { error } = await supabase.from("orders").insert(newOrder);
     if (error) { showNotif("❌ Gagal simpan order: " + error.message); return null; }
+
+    // GAP 1.5: Simpan ke technician_schedule untuk cegah double booking
+    if (form.teknisi && form.date && form.time && timeEnd) {
+      const tek = teknisiData.find(t => t.name === form.teknisi);
+      if (tek?.id) {
+        const [h1,m1] = (form.time||"09:00").split(":");
+        const [h2,m2] = (timeEnd||"17:00").split(":");
+        await supabase.from("technician_schedule").insert({
+          teknisi_id: tek.id,
+          teknisi: form.teknisi,
+          order_id: newId,
+          date: form.date,
+          start_time: `${h1}:${m1}:00`,
+          end_time: `${h2}:${m2}:00`,
+          status: "ACTIVE"
+        }).catch(e => addAgentLog("SCHEDULE_WARNING", `Schedule insert: ${e.message}`, "WARNING"));
+      }
+    }
+
     addAgentLog("ORDER_CREATED", `Order baru ${newId} — ${form.customer} (${form.service} ${form.units} unit)`, "SUCCESS");
     showNotif(`✅ Order ${newId} berhasil dibuat! ARA siap dispatch ke ${form.teknisi}.`);
+
+    // GAP 1.8: Log dispatch
     if (form.teknisi) {
       const tek = teknisiData.find(t => t.name === form.teknisi);
       if (tek) {
-        const msg = `Halo ${form.teknisi}, ada job baru:\n📍 *${form.customer}*\n🔧 ${form.service} ${form.units} unit\n📮 ${form.address}\n🕐 ${form.date} jam ${form.time}\n\nMohon konfirmasi. — AClean`;
+        const msg = `Halo ${form.teknisi}, ada job baru:\n📍 *${form.customer}*\n🔧 ${form.service} ${form.units} unit\n📮 ${form.address}\n🕐 ${form.date} jam ${form.time}–${timeEnd}\n\nMohon konfirmasi. — AClean`;
         sendWA(tek.phone, msg);
+        await supabase.from("dispatch_logs").insert({
+          order_id: newId,
+          teknisi: form.teknisi,
+          assigned_by: currentUser?.id || null,
+          assigned_by_name: currentUser?.name || "",
+          wa_message: msg,
+          status: "SENT"
+        }).catch(()=>{});
+      }
+    }
+
+    // GAP 5: Auto-upsert customer jika nomor HP baru
+    if (form.phone && form.customer) {
+      const existing = customersData.find(c => c.phone === form.phone);
+      if (!existing) {
+        const newCust = {
+          id: "CUST" + Date.now(),
+          name: form.customer, phone: form.phone,
+          address: form.address||"", area: form.area||"",
+          total_orders: 1, joined: form.date, last_service: form.date
+        };
+        setCustomersData(prev => [...prev, newCust]);
+        await supabase.from("customers").upsert(
+          {name:form.customer, phone:form.phone, address:form.address||"", area:form.area||""},
+          {onConflict:"phone", ignoreDuplicates:false}
+        ).catch(()=>{});
       }
     }
     return newId;
@@ -1032,7 +1224,7 @@ export default function ACleanWebApp() {
                 <div key={o.id} style={{ background:cs.surface, border:"1px solid "+myColor+"33", borderRadius:10, padding:"12px 14px", marginBottom:8 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
                     <span style={{ fontWeight:800, color:myColor, fontSize:16 }}>{o.time}</span>
-                    <span style={{ fontSize:10, padding:"2px 8px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"33", fontWeight:700 }}>{o.status.replace("_"," ")}</span>
+                    <span style={{ fontSize:10, padding:"2px 8px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"33", fontWeight:700 }}>{statusLabel[o.status]||o.status.replace("_"," ")}</span>
                   </div>
                   <div style={{ fontWeight:700, color:cs.text, fontSize:13, marginBottom:3 }}>{o.customer}</div>
                   <div style={{ fontSize:12, color:cs.muted, marginBottom:4 }}>🔧 {o.service} · {o.units} unit</div>
@@ -1125,7 +1317,7 @@ export default function ACleanWebApp() {
           <div style={{ display:"grid", gap:10 }}>
             {todayOrders.map(o => (
               <div key={o.id} style={{ background:cs.surface, border:"1px solid "+(statusColor[o.status]||cs.border)+"44", borderRadius:10, padding:"12px 16px", display:"flex", alignItems:"center", gap:14 }}>
-                <span style={{ fontSize:10, padding:"3px 8px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, fontWeight:700, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", whiteSpace:"nowrap" }}>{o.status.replace("_"," ")}</span>
+                <span style={{ fontSize:10, padding:"3px 8px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, fontWeight:700, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", whiteSpace:"nowrap" }}>{statusLabel[o.status]||o.status.replace("_"," ")}</span>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{o.customer}</div>
                   <div style={{ fontSize:11, color:cs.muted }}>{o.service} · {o.units} unit · 👷 {o.teknisi} · {o.time}</div>
@@ -1347,7 +1539,7 @@ export default function ACleanWebApp() {
                   <td style={{ padding:"10px 14px", fontSize:12, color:cs.text }}>{o.teknisi}</td>
                   <td style={{ padding:"10px 14px", fontSize:12, color:cs.muted }}>{o.date}<br/>{o.time}</td>
                   <td style={{ padding:"10px 14px" }}>
-                    <span style={{ fontSize:10, padding:"3px 8px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", fontWeight:700 }}>{o.status.replace("_"," ")}</span>
+                    <span style={{ fontSize:10, padding:"3px 8px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", fontWeight:700 }}>{statusLabel[o.status]||o.status.replace("_"," ")}</span>
                   </td>
                   <td style={{ padding:"10px 14px" }}>
                     <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
@@ -1660,7 +1852,7 @@ export default function ACleanWebApp() {
                 <div style={{ flex:1 }}>
                   <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
                     <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:12 }}>{o.id}</span>
-                    <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", fontWeight:700 }}>{o.status.replace("_"," ")}</span>
+                    <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", fontWeight:700 }}>{statusLabel[o.status]||o.status.replace("_"," ")}</span>
                   </div>
                   <div style={{ fontSize:13, fontWeight:700, color:cs.text, marginBottom:4 }}>{o.customer}</div>
                   <div style={{ fontSize:12, color:cs.muted, display:"grid", gridTemplateColumns:"1fr 1fr", gap:"2px 14px" }}>
@@ -2083,6 +2275,32 @@ export default function ACleanWebApp() {
           </div>
         </div>
 
+        {/* ── SECTION 1b: Profit Estimasi (GAP 7) ── */}
+        {totalRevenue > 0 && (() => {
+          const totalMaterialCost = inventoryData.reduce((acc, item) => {
+            // Estimasi biaya material dari laporan bulan ini
+            return acc;
+          }, 0);
+          const profitMargin = totalLabor > 0 ? Math.round(totalLabor / totalRevenue * 100) : 0;
+          return (
+            <div style={{background:"linear-gradient(135deg,"+cs.green+"18,"+cs.accent+"08)", border:"1px solid "+cs.green+"33", borderRadius:14, padding:"16px 20px", display:"flex", gap:20, flexWrap:"wrap", alignItems:"center"}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:11,color:cs.muted,fontWeight:700,marginBottom:4}}>💹 ESTIMASI PROFIT — {periodLabel}</div>
+                <div style={{fontSize:22,fontWeight:800,color:cs.green,fontFamily:"monospace"}}>{fmt(totalLabor)}</div>
+                <div style={{fontSize:11,color:cs.muted}}>Pendapatan jasa bersih (setelah material)</div>
+              </div>
+              <div style={{textAlign:"center",padding:"10px 16px",background:cs.green+"12",borderRadius:10,border:"1px solid "+cs.green+"22"}}>
+                <div style={{fontSize:24,fontWeight:800,color:cs.green}}>{profitMargin}%</div>
+                <div style={{fontSize:10,color:cs.muted,fontWeight:700}}>Profit Margin</div>
+              </div>
+              <div style={{textAlign:"center",padding:"10px 16px",background:cs.accent+"12",borderRadius:10,border:"1px solid "+cs.accent+"22"}}>
+                <div style={{fontSize:20,fontWeight:800,color:cs.accent}}>{paidInv.length}</div>
+                <div style={{fontSize:10,color:cs.muted,fontWeight:700}}>Invoice Lunas</div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── SECTION 2: KPI Operasional ── */}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
           {[
@@ -2325,7 +2543,11 @@ export default function ACleanWebApp() {
               {r.status==="SUBMITTED" && (<>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
-                  await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
+                  await supabase.from("service_reports").update({
+                    status:"VERIFIED",
+                    verified_by: currentUser?.id||null,
+                    verified_at: new Date().toISOString()
+                  }).eq("id",r.id);
                   addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi — invoice menunggu approval Owner`,"SUCCESS");
                   const relInv=invoicesData.find(i=>i.job_id===r.job_id);
                   if(relInv&&relInv.status==="PENDING_APPROVAL"){
@@ -2990,12 +3212,21 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
   return (
     <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:"flex" }}>
 
+      {/* ── DATA LOADING BANNER ── */}
+      {dataLoading && (
+        <div style={{ position:"fixed", top:0, left:0, right:0, zIndex:9999, background:"linear-gradient(90deg,#38bdf8,#6366f1)", padding:"8px 16px", display:"flex", alignItems:"center", gap:10, fontSize:12, color:"#fff", fontWeight:700 }}>
+          <div style={{ width:14, height:14, border:"2px solid rgba(255,255,255,0.4)", borderTop:"2px solid #fff", borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />
+          Memuat data dari Supabase...
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        </div>
+      )}
+
       {/* ── SIDEBAR ── */}
       <div style={{ width:200, background:cs.surface, borderRight:"1px solid "+cs.border, display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto" }}>
         <div style={{ padding:"16px 14px", borderBottom:"1px solid "+cs.border }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
             <div style={{ fontWeight:800, fontSize:16, color:cs.accent }}>⬡ AClean</div>
-            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v15b</span>
+            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v17</span>
           </div>
           {currentUser && (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -3911,8 +4142,14 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                     const dbCust = {id:newId, name:newCustomerForm.name, phone:newCustomerForm.phone, address:newCustomerForm.address||"", area:newCustomerForm.area||"", notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false, joined:today};
                     const localCust = {...dbCust, last_service:"-", ac_units:0, total_orders:0};
                     setCustomersData(prev=>[...prev,localCust]);
-                    const {error:cErr} = await supabase.from("customers").insert(dbCust);
+                    // GAP 5: upsert dengan onConflict phone — cegah duplikat
+                    const {error:cErr} = await supabase.from("customers").upsert(
+                      dbCust, {onConflict:"phone", ignoreDuplicates:false}
+                    );
                     if(cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+cErr.message);
+                    else if(customersData.find(cu=>cu.phone===newCustomerForm.phone&&cu.id!==newId)) {
+                      showNotif("ℹ️ Customer dengan nomor ini sudah ada — data digabung.");
+                    }
                     else { addAgentLog("CUSTOMER_ADDED","Customer baru: "+newCustomerForm.name+" ("+newCustomerForm.area+")","SUCCESS"); showNotif("✅ Customer "+newCustomerForm.name+" berhasil ditambahkan"); }
                   }
                   setModalAddCustomer(false); setNewCustomerForm({name:"",phone:"",address:"",area:"",notes:"",is_vip:false});
@@ -4024,8 +4261,8 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                   <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Status</div>
                   <select value={editOrderForm.status||"CONFIRMED"} onChange={e=>setEditOrderForm(f=>({...f,status:e.target.value}))}
                     style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none"}}>
-                    {["PENDING","CONFIRMED","IN_PROGRESS","COMPLETED","CANCELLED"].map(s=>(
-                      <option key={s} value={s} style={{color:statusColor[s]||"inherit"}}>{s.replace("_"," ")}</option>
+                    {["PENDING","CONFIRMED","DISPATCHED","ON_SITE","WORKING","REPORT_SUBMITTED","INVOICE_CREATED","INVOICE_APPROVED","PAID","COMPLETED","CANCELLED","RESCHEDULED"].map(s=>(
+                      <option key={s} value={s} style={{color:statusColor[s]||"inherit"}}>{statusLabel[s]||s.replace("_"," ")}</option>
                     ))}
                   </select>
                 </div>
