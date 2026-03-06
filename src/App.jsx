@@ -2580,11 +2580,11 @@ export default function ACleanWebApp() {
               {r.status==="SUBMITTED" && (<>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
-                  // GAP 7: update status saja jika currentUser adalah local account (bukan Supabase Auth UUID)
-                  const isRealUUID = currentUser?.id && /^[0-9a-f-]{36}$/.test(currentUser.id);
+                  // GAP 7: gunakan helper isRealUUID (sudah dideklarasi di atas)
+                  const verifiedById = isRealUUID(currentUser?.id) ? currentUser.id : null;
                   await supabase.from("service_reports").update({
                     status:"VERIFIED",
-                    verified_by: isRealUUID ? currentUser.id : null,
+                    verified_by: verifiedById,
                     verified_at: new Date().toISOString()
                   }).eq("id",r.id);
                   addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi — invoice menunggu approval Owner`,"SUCCESS");
