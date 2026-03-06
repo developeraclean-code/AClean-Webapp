@@ -828,7 +828,7 @@ export default function ACleanWebApp() {
 
         } else if (llmProvider === "gemini") {
           // ── Google Gemini API ──
-          const model = llmModel || "gemini-2.0-flash";
+          const model = llmModel || "gemini-2.5-flash";
           // Gemini requires alternating user/model turns — fix duplicates
           const rawMsgs = newMessages.map(m => ({
             role: m.role === "assistant" ? "model" : "user",
@@ -2516,10 +2516,10 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
         fields:[{k:"key",label:"API Key",ph:"sk-proj-...",t:"password"}],
         guide:["Buka platform.openai.com","Settings → API Keys → Create","Copy key, paste di sini"],
         note:"GPT-4o-mini: lebih hemat, cocok volume tinggi" },
-      { id:"gemini",  label:"Gemini (Google)",    icon:"🔵", rec:false, models:["gemini-2.0-flash","gemini-2.0-flash-lite","gemini-1.5-flash","gemini-1.5-pro"],
+      { id:"gemini",  label:"Gemini (Google)",    icon:"🔵", rec:false, models:["gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.5-pro","gemini-1.5-flash"],
         fields:[{k:"key",label:"API Key",ph:"AIzaSy...",t:"password"}],
         guide:["Buka aistudio.google.com","Klik Get API Key → Create API key","Copy key, paste di sini — GRATIS"],
-        note:"gemini-2.0-flash: model terbaru gratis ✅" },
+        note:"✅ Rekomendasi: gemini-2.5-flash (gratis ~15 RPM, 1500 RPD)" },
       { id:"ollama",  label:"Ollama (Lokal/Free)", icon:"🦙", rec:false, models:["llama3","llama3.1","llama3.2","mistral","gemma2","qwen2.5","deepseek-r1"],
         fields:[{k:"url",label:"URL Server Ollama",ph:"http://localhost:11434 atau https://xxxx.ngrok-free.app"}],
         guide:["Install: curl -fsSL https://ollama.com/install.sh | sh","Pull model: ollama pull llama3","Jalankan: OLLAMA_ORIGINS='*' ollama serve","Expose publik: ngrok http 11434","Copy URL ngrok ke kolom URL di atas"],
@@ -2709,7 +2709,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   });
                   ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"OpenAI error "+r.status);}
                 } else if (llmProvider === "gemini") {
-                  const testModel = llmModel || "gemini-2.0-flash";
+                  const testModel = llmModel || "gemini-2.5-flash";
                   const r = await fetch(
                     `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent?key=${llmApiKey}`,
                     { method:"POST", headers:{"Content-Type":"application/json"},
@@ -2720,7 +2720,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   if (!r.ok) {
                     const errMsg = rd.error?.message || ("Gemini error " + r.status);
                     // Common errors:
-                    if (r.status === 400) throw new Error("API Key tidak valid atau model '"+testModel+"' tidak ditemukan. Coba model: gemini-2.0-flash atau gemini-1.5-flash");
+                    if (r.status === 400) throw new Error("API Key tidak valid atau model '"+testModel+"' tidak ditemukan. Coba: gemini-2.5-flash atau gemini-1.5-flash");
                     if (r.status === 403) throw new Error("API Key tidak punya akses. Aktifkan Generative Language API di Google Cloud Console.");
                     throw new Error(errMsg);
                   }
@@ -2995,7 +2995,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
         <div style={{ padding:"16px 14px", borderBottom:"1px solid "+cs.border }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
             <div style={{ fontWeight:800, fontSize:16, color:cs.accent }}>⬡ AClean</div>
-            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v15</span>
+            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v15b</span>
           </div>
           {currentUser && (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
