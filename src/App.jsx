@@ -181,9 +181,9 @@ export default function ACleanWebApp() {
   const [userAccounts,  setUserAccounts]  = useState([
     { id:"USR001", name:"Malda Retta",  email:"owner@aclean.id",  role:"Owner",   phone:"6281299898937", avatar:"M", color:"#f59e0b", active:true,  password:"owner123",  lastLogin:"2026-03-03 08:15" },
     { id:"USR002", name:"Admin AClean", email:"admin@aclean.id",  role:"Admin",   phone:"6281200000001", avatar:"A", color:"#38bdf8", active:true,  password:"admin123",  lastLogin:"2026-03-03 07:30" },
-    { id:"USR003", name:"Mulyadi",      email:"mulyadi@aclean.id",role:"Teknisi", phone:"6288225633768", avatar:"Y", color:"#22c55e", active:true,  password:"tech123",   lastLogin:"2026-03-02 17:45" },
-    { id:"USR004", name:"Usaeri",       email:"usaeri@aclean.id", role:"Teknisi", phone:"6287786870189", avatar:"U", color:"#a78bfa", active:true,  password:"tech123",   lastLogin:"2026-03-01 16:20" },
-    { id:"USR005", name:"Albana Niji",  email:"albana@aclean.id", role:"Teknisi", phone:"6287815496845", avatar:"B", color:"#34d399", active:false, password:"tech123",   lastLogin:"2026-02-28 12:10" },
+    { id:"USR003", name:"Mulyadi",      email:"mulyadi@aclean.id",role:"Teknisi", phone:"6288225633768", avatar:"Y", color:"#22c55e", active:true,  password:"mly2026",   lastLogin:"2026-03-02 17:45" },
+    { id:"USR004", name:"Usaeri",       email:"usaeri@aclean.id", role:"Teknisi", phone:"6287786870189", avatar:"U", color:"#a78bfa", active:true,  password:"usr2026",   lastLogin:"2026-03-01 16:20" },
+    { id:"USR005", name:"Albana Niji",  email:"albana@aclean.id", role:"Teknisi", phone:"6287815496845", avatar:"B", color:"#34d399", active:false, password:"abn2026",   lastLogin:"2026-02-28 12:10" },
   ]);
 
   // ── Core navigation ──
@@ -327,6 +327,19 @@ export default function ACleanWebApp() {
     { id:5, name:"Stok Alert",         time:"08:00", days:"Setiap Hari",  active:false, task:"Cek stok kritis dan notif Owner" },
   ]);
 
+  // ── Tanggal dinamis ──
+  const TODAY = new Date().toISOString().slice(0,10);
+  const todayDate = new Date();
+  const hariIni = todayDate.toLocaleDateString("id-ID", { weekday:"long", day:"numeric", month:"long", year:"numeric" });
+  const bulanIni = todayDate.toISOString().slice(0,7); // "2026-03"
+  const [weekOffset, setWeekOffset] = useState(0); // 0=minggu ini, -1=minggu lalu, +1=minggu depan
+
+  // ── WA Conversations reaktif ──
+  const [waConversations, setWaConversations] = useState(WA_CONVERSATIONS);
+
+  // ── Statistik periode filter ──
+  const [statsPeriod, setStatsPeriod] = useState("bulan"); // "hari"|"bulan"|"tahun"
+
   // ── Notification ──
   const [notification, setNotification] = useState(null);
   const notifTimer = useRef(null);
@@ -465,6 +478,10 @@ export default function ACleanWebApp() {
       if (inventoryRes.data)setInventoryData(inventoryRes.data);
       if (laporanRes.data)  setLaporanReports(laporanRes.data);
       if (logsRes.data)     setAgentLogs(logsRes.data);
+
+      // Load WA conversations dari Supabase
+      const waRes = await supabase.from("wa_conversations").select("*, wa_messages(*)").order("updated_at", { ascending: false }).limit(50);
+      if (waRes.data && waRes.data.length > 0) setWaConversations(waRes.data);
     };
 
     loadAll();
@@ -653,12 +670,24 @@ export default function ACleanWebApp() {
     setAraLoading(true);
 
     const bizContext = {
-      orders:    ordersData.map(o=>({id:o.id,customer:o.customer,service:o.service,units:o.units,status:o.status,date:o.date,teknisi:o.teknisi,invoice_id:o.invoice_id})),
-      invoices:  invoicesData.map(i=>({id:i.id,customer:i.customer,total:i.total,status:i.status,due:i.due})),
-      inventory: inventoryData.map(i=>({name:i.name,stock:i.stock,unit:i.unit,status:i.status})),
-      customers: customersData.map(c=>({id:c.id,name:c.name,phone:c.phone,total_orders:c.total_orders})),
+      today: TODAY,
+      orders:    ordersData.map(o=>({id:o.id,customer:o.customer,service:o.service,type:o.type,units:o.units,status:o.status,date:o.date,time:o.time,teknisi:o.teknisi,helper:o.helper,dispatch:o.dispatch,invoice_id:o.invoice_id})),
+      invoices:  invoicesData.map(i=>({id:i.id,customer:i.customer,phone:i.phone,total:i.total,status:i.status,due:i.due,labor:i.labor,material:i.material,dadakan:i.dadakan})),
+      inventory: inventoryData.map(i=>({code:i.code,name:i.name,stock:i.stock,unit:i.unit,status:i.status,price:i.price,reorder:i.reorder})),
+      customers: customersData.map(c=>({id:c.id,name:c.name,phone:c.phone,area:c.area,total_orders:c.total_orders,is_vip:c.is_vip})),
+      laporan: laporanReports.map(r=>({id:r.id,job_id:r.job_id,teknisi:r.teknisi,customer:r.customer,service:r.service,status:r.status,date:r.date,submitted:r.submitted})),
       laporanPending: laporanReports.filter(r=>r.status==="SUBMITTED").length,
-      today: new Date().toISOString().slice(0,10),
+      laporanRevisi:  laporanReports.filter(r=>r.status==="REVISION").length,
+      teknisiWorkload: TEKNISI_DATA.map(t=>({
+        name:t.name, role:t.role, status:t.status,
+        jobsToday: ordersData.filter(o=>o.teknisi===t.name&&o.date===TODAY).length,
+        jobsPending: ordersData.filter(o=>o.teknisi===t.name&&["CONFIRMED","IN_PROGRESS"].includes(o.status)).length,
+      })),
+      revenueStats: {
+        bulanIni: invoicesData.filter(i=>i.status==="PAID"&&(i.sent||"").startsWith(bulanIni)).reduce((a,b)=>a+(b.total||0),0),
+        totalUnpaid: invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").reduce((a,b)=>a+(b.total||0),0),
+        stokKritis: inventoryData.filter(i=>i.status==="OUT"||i.status==="CRITICAL").map(i=>i.name),
+      },
     };
 
     try {
@@ -678,7 +707,7 @@ export default function ACleanWebApp() {
         fullText = d.reply || "";
       } else if (llmApiKey) {
         // ── Fallback: direct call jika backend belum punya env key ──
-        const sysP = brainMd+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL: balas [ACTION]{...}[/ACTION] untuk update data`;
+        const sysP = brainMd+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
         const fr = await fetch("https://api.anthropic.com/v1/messages", {
           method:"POST",
           headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
@@ -714,7 +743,42 @@ export default function ACleanWebApp() {
           } else if (act.type==="UPDATE_ORDER_STATUS") {
             setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,status:act.status}:o));
             await supabase.from("orders").update({status:act.status}).eq("id",act.id);
+            addAgentLog("ARA_ACTION",`ARA update status ${act.id} → ${act.status}`,"SUCCESS");
             ar=`\n✅ *Order ${act.id} → ${act.status}*`;
+          } else if (act.type==="DISPATCH_WA") {
+            const orderD = ordersData.find(o=>o.id===act.order_id);
+            if(orderD){ await dispatchWA(orderD); ar=`\n✅ *Dispatch WA dikirim untuk ${act.order_id}*`; }
+            else ar=`\n⚠️ *Order ${act.order_id} tidak ditemukan*`;
+          } else if (act.type==="SEND_WA") {
+            const sent = await sendWA(act.phone, act.message);
+            addAgentLog("ARA_WA_SENT",`ARA kirim WA ke ${act.phone}`,sent?"SUCCESS":"WARNING");
+            ar=`\n✅ *WA dikirim ke ${act.phone}*`;
+          } else if (act.type==="UPDATE_STOCK") {
+            const item = inventoryData.find(i=>i.code===act.code||i.name.toLowerCase().includes((act.name||"").toLowerCase()));
+            if(item){
+              const newStock = act.delta ? Math.max(0,item.stock+act.delta) : Math.max(0,act.stock||0);
+              const ns = newStock===0?"OUT":newStock<=item.min_alert?"CRITICAL":newStock<=item.reorder?"WARNING":"OK";
+              setInventoryData(prev=>prev.map(i=>i.code===item.code?{...i,stock:newStock,status:ns}:i));
+              await supabase.from("inventory").update({stock:newStock,status:ns}).eq("code",item.code);
+              addAgentLog("ARA_STOCK",`ARA update stok ${item.name}: ${item.stock}→${newStock}`,"SUCCESS");
+              ar=`\n✅ *Stok ${item.name} diupdate → ${newStock} ${item.unit} (${ns})*`;
+            } else ar=`\n⚠️ *Material tidak ditemukan*`;
+          } else if (act.type==="CANCEL_ORDER") {
+            setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,status:"CANCELLED"}:o));
+            await supabase.from("orders").update({status:"CANCELLED"}).eq("id",act.id);
+            addAgentLog("ARA_CANCEL",`ARA cancel order ${act.id}: ${act.reason||""}`,"WARNING");
+            ar=`\n✅ *Order ${act.id} dibatalkan*${act.reason?" — "+act.reason:""}`;
+          } else if (act.type==="RESCHEDULE_ORDER") {
+            const upd = {date:act.date,time:act.time||"09:00",...(act.teknisi?{teknisi:act.teknisi}:{})};
+            setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,...upd}:o));
+            await supabase.from("orders").update(upd).eq("id",act.id);
+            addAgentLog("ARA_RESCHEDULE",`ARA reschedule ${act.id} → ${act.date} ${act.time||"09:00"}`,"SUCCESS");
+            ar=`\n✅ *Order ${act.id} dijadwal ulang → ${act.date} jam ${act.time||"09:00"}*`;
+          } else if (act.type==="MARK_INVOICE_OVERDUE") {
+            setInvoicesData(prev=>prev.map(i=>i.status==="UNPAID"&&i.due&&i.due<TODAY?{...i,status:"OVERDUE"}:i));
+            const cnt = invoicesData.filter(i=>i.status==="UNPAID"&&i.due&&i.due<TODAY).length;
+            await supabase.from("invoices").update({status:"OVERDUE"}).eq("status","UNPAID").lt("due",TODAY);
+            ar=`\n✅ *${cnt} invoice ditandai OVERDUE*`;
           }
         } catch(e){ console.warn("Action parse",e); }
       }
@@ -766,8 +830,8 @@ export default function ACleanWebApp() {
       const techColors = { "Mulyadi":"#38bdf8","Usaeri":"#22c55e","Albana Niji":"#a78bfa","Rizky Putra":"#f59e0b","Agung":"#f97316","Rey":"#ec4899" };
       const myColor = techColors[myName] || cs.accent;
       const myJobs = ordersData.filter(o => o.teknisi === myName);
-      const todayJobs = myJobs.filter(o => o.date === "2026-03-03");
-      const upcomingJobs = myJobs.filter(o => o.date > "2026-03-03").slice(0,3);
+      const todayJobs = myJobs.filter(o => o.date === TODAY);
+      const upcomingJobs = myJobs.filter(o => o.date > TODAY).slice(0,3);
       const doneCount = myJobs.filter(o => o.status === "COMPLETED").length;
 
       return (
@@ -777,7 +841,7 @@ export default function ACleanWebApp() {
             <div style={{ width:52, height:52, borderRadius:14, background:"linear-gradient(135deg,"+myColor+","+myColor+"88)", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:900, fontSize:22, color:"#fff" }}>{currentUser?.avatar}</div>
             <div>
               <div style={{ fontWeight:800, fontSize:20, color:cs.text }}>Halo, {myName} 👋</div>
-              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Selasa, 3 Maret 2026 · Teknisi AClean</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>{hariIni} · Teknisi AClean</div>
             </div>
           </div>
 
@@ -847,9 +911,9 @@ export default function ACleanWebApp() {
     }
 
     // ── OWNER / ADMIN DASHBOARD ────────────────────────────────
-    const todayOrders   = ordersData.filter(o => o.date === "2026-03-01");
+    const todayOrders   = ordersData.filter(o => o.date === TODAY);
     const unpaidCount   = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
-    const totalRevToday = invoicesData.filter(i => i.status === "PAID").reduce((a,b) => a+b.total, 0);
+    const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && (i.sent||"").startsWith(bulanIni)).reduce((a,b) => a+b.total, 0);
     const lowStock      = inventoryData.filter(i => i.status === "CRITICAL" || i.status === "OUT").length;
     const greeting      = role === "Owner" ? "Owner" : "Admin";
 
@@ -858,15 +922,15 @@ export default function ACleanWebApp() {
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div>
             <div style={{ fontWeight:800, fontSize:22, color:cs.text }}>Selamat pagi, {greeting} 👋</div>
-            <div style={{ fontSize:13, color:cs.muted }}>Selasa, 3 Maret 2026 · ARA aktif memantau</div>
+            <div style={{ fontSize:13, color:cs.muted }}>{hariIni} · ARA aktif memantau</div>
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"10px 20px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
             <button onClick={() => setWaPanel(true)} style={{ position:"relative", background:cs.card, border:"1px solid #25D36644", color:"#25D366", padding:"10px 16px", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:13 }}>
               📱 WhatsApp
-              {WA_CONVERSATIONS.filter(wc => wc.unread > 0).length > 0 && (
+              {waConversations.filter(wc => wc.unread > 0).length > 0 && (
                 <span style={{ position:"absolute", top:-6, right:-6, background:cs.red, color:"#fff", fontSize:9, fontWeight:800, borderRadius:"50%", width:16, height:16, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  {WA_CONVERSATIONS.filter(wc => wc.unread > 0).reduce((a,b) => a+b.unread, 0)}
+                  {waConversations.filter(wc => wc.unread > 0).reduce((a,b) => a+b.unread, 0)}
                 </span>
               )}
             </button>
@@ -878,7 +942,7 @@ export default function ACleanWebApp() {
           {[
             { label:"Order Hari Ini",      value:todayOrders.length,          sub:"3 aktif · 1 selesai", color:cs.accent, icon:"📋" },
             { label:"Invoice Unpaid",       value:unpaidCount,                 sub:"Perlu follow-up",     color:cs.yellow, icon:"🧾" },
-            { label:"Pendapatan Bln Ini",   value:fmt(totalRevToday+850000),   sub:"Terkonfirmasi",       color:cs.green,  icon:"💰" },
+            { label:"Pendapatan Bln Ini",   value:fmt(totalRevBulanIni),        sub:"Invoice terbayar",    color:cs.green,  icon:"💰" },
             { label:"Stok Kritis",          value:lowStock,                    sub:"Perlu restock",       color:cs.red,    icon:"📦" },
           ].map(kpi => (
             <div key={kpi.label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18 }}>
@@ -894,7 +958,7 @@ export default function ACleanWebApp() {
 
         {/* Today orders */}
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
-          <div style={{ fontWeight:700, color:cs.text, fontSize:15, marginBottom:14 }}>📋 Order Hari Ini — 1 Mar 2026</div>
+          <div style={{ fontWeight:700, color:cs.text, fontSize:15, marginBottom:14 }}>📋 Order Hari Ini — {todayDate.toLocaleDateString("id-ID", {day:"numeric", month:"short", year:"numeric"})}</div>
           <div style={{ display:"grid", gap:10 }}>
             {todayOrders.map(o => (
               <div key={o.id} style={{ background:cs.surface, border:"1px solid "+(statusColor[o.status]||cs.border)+"44", borderRadius:10, padding:"12px 16px", display:"flex", alignItems:"center", gap:14 }}>
@@ -1057,6 +1121,21 @@ export default function ACleanWebApp() {
                     <span style={{ fontSize:13, color:cs.text }}>{v}</span>
                   </div>
                 ))}
+                {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+                  <div style={{ display:"flex", gap:8, paddingTop:4 }}>
+                    <button onClick={()=>{ setNewCustomerForm({name:selectedCustomer.name,phone:selectedCustomer.phone,address:selectedCustomer.address,area:selectedCustomer.area,notes:selectedCustomer.notes||"",is_vip:selectedCustomer.is_vip}); setModalAddCustomer(true); }}
+                      style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Data Customer</button>
+                    <button onClick={()=>{ openWA(selectedCustomer.phone, ""); }}
+                      style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 Hubungi WA</button>
+                    <button onClick={()=>{ if(window.confirm&&window.confirm("Tandai "+selectedCustomer.name+" sebagai "+(selectedCustomer.is_vip?"Regular":"VIP")+"?")){
+                      setCustomersData(prev=>prev.map(cu=>cu.id===selectedCustomer.id?{...cu,is_vip:!cu.is_vip}:cu));
+                      setSelectedCustomer(prev=>({...prev,is_vip:!prev.is_vip}));
+                      supabase.from("customers").update({is_vip:!selectedCustomer.is_vip}).eq("id",selectedCustomer.id);
+                      showNotif(selectedCustomer.name+(selectedCustomer.is_vip?" diturunkan ke Regular":" dijadikan VIP ⭐"));
+                    }}}
+                      style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"8px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>{selectedCustomer.is_vip?"⭐ Hapus VIP":"⭐ Jadikan VIP"}</button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1069,7 +1148,7 @@ export default function ACleanWebApp() {
   // RENDER ORDERS
   // ============================================================
   const renderOrders = () => {
-    const filtered = orderFilter === "Semua" ? ORDERS_DATA : ORDERS_DATA.filter(o => {
+    const filtered = orderFilter === "Semua" ? ordersData : ordersData.filter(o => {
       const map = { "Pending":"PENDING", "Confirmed":"CONFIRMED", "In Progress":"IN_PROGRESS", "Completed":"COMPLETED" };
       return o.status === map[orderFilter];
     });
@@ -1184,7 +1263,7 @@ export default function ACleanWebApp() {
               )}
               {inv.status === "UNPAID" && (
                 <>
-                  <button onClick={() => markPaid(inv)} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✓ Mark Paid</button>
+                  <button onClick={() => { if(!window.confirm||window.confirm(`Tandai invoice ${inv.id} (${fmt(inv.total)}) sebagai LUNAS?`)) markPaid(inv); }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✓ Mark Paid</button>
                   <button onClick={() => invoiceReminderWA(inv)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 WA Reminder</button>
                 </>
               )}
@@ -1267,9 +1346,21 @@ export default function ACleanWebApp() {
   // RENDER SCHEDULE
   // ============================================================
   const renderSchedule = () => {
-    const weeks = ["2026-03-01","2026-03-02","2026-03-03","2026-03-04","2026-03-05","2026-03-06","2026-03-07"];
-    const labels = ["Min 1","Sen 2","Sel 3","Rab 4","Kam 5","Jum 6","Sab 7"];
-    const weekDays = weeks.map((d,i) => ({ date:d, label:labels[i] }));
+    // Hitung minggu dinamis berdasarkan weekOffset
+    const dayNames = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
+    const baseDate = new Date();
+    // Cari Minggu (hari pertama minggu ini)
+    const dayOfWeek = baseDate.getDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const weekStart = new Date(baseDate);
+    weekStart.setDate(baseDate.getDate() + mondayOffset + (weekOffset * 7));
+    const weekDays = Array.from({length:7}, (_,i) => {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      const iso = d.toISOString().slice(0,10);
+      return { date:iso, label:`${dayNames[d.getDay()]} ${d.getDate()}` };
+    });
+    const weekLabel = `${weekDays[0].date.slice(5).replace("-","/")} – ${weekDays[6].date.slice(5).replace("-","/")}`;
     const techColors = { "Mulyadi":"#38bdf8","Usaeri":"#22c55e","Albana Niji":"#a78bfa","Rizky Putra":"#f59e0b","Agung":"#f97316","Rey":"#ec4899" };
 
     // For Teknisi role: force filter to own name; for Owner/Admin: use filterTeknisi state
@@ -1287,6 +1378,13 @@ export default function ACleanWebApp() {
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
           <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>📅 Jadwal Pengerjaan</div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {/* Week navigation */}
+            <div style={{ display:"flex", alignItems:"center", gap:6, background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"4px 6px" }}>
+              <button onClick={() => setWeekOffset(w=>w-1)} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, padding:"0 4px", lineHeight:1 }}>‹</button>
+              <span style={{ fontSize:11, color:cs.muted, fontWeight:600, minWidth:80, textAlign:"center" }}>{weekLabel}</span>
+              <button onClick={() => setWeekOffset(w=>w+1)} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, padding:"0 4px", lineHeight:1 }}>›</button>
+              {weekOffset !== 0 && <button onClick={() => setWeekOffset(0)} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, cursor:"pointer", fontSize:10, padding:"2px 7px", borderRadius:5, fontWeight:700 }}>Hari ini</button>}
+            </div>
             {/* View toggle */}
             <div style={{ display:"flex", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, overflow:"hidden" }}>
               {[["week","Minggu"],["list","Daftar"]].map(([v,l]) => (
@@ -1330,15 +1428,20 @@ export default function ACleanWebApp() {
             <div style={{ flex:1 }}>
               <div style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{activeTek}</div>
               <div style={{ fontSize:11, color:cs.muted }}>
-                {filteredOrders.filter(o=>o.date==="2026-03-03").length} job hari ini ·{" "}
-                {filteredOrders.filter(o=>o.date>"2026-03-03").length} mendatang ·{" "}
+                {filteredOrders.filter(o=>o.date===TODAY).length} job hari ini ·{" "}
+                {filteredOrders.filter(o=>o.date>TODAY).length} mendatang ·{" "}
                 {filteredOrders.filter(o=>o.status==="COMPLETED").length} selesai
               </div>
             </div>
-            {!isTekRole && (
-              <button onClick={() => dispatchWA(filteredOrders.find(o=>!o.dispatch)||filteredOrders[0])}
-                style={{ background:"#25D36618", border:"1px solid #25D36633", color:"#25D366", padding:"7px 12px", borderRadius:8, cursor:"pointer", fontSize:11 }}>📱 WA Teknisi</button>
-            )}
+            {!isTekRole && (() => {
+              const undisp = filteredOrders.filter(o=>!o.dispatch);
+              return undisp.length > 0 ? (
+                <button onClick={() => { undisp.forEach(o=>dispatchWA(o)); }}
+                  style={{ background:"#25D36618", border:"1px solid #25D36633", color:"#25D366", padding:"7px 12px", borderRadius:8, cursor:"pointer", fontSize:11 }}>📱 WA Teknisi ({undisp.length})</button>
+              ) : (
+                <span style={{ fontSize:10, color:cs.green, background:cs.green+"15", padding:"5px 10px", borderRadius:8, border:"1px solid "+cs.green+"33" }}>✅ Ter-dispatch</span>
+              );
+            })()}
           </div>
         )}
 
@@ -1349,7 +1452,7 @@ export default function ACleanWebApp() {
               <div style={{ display:"grid", gridTemplateColumns:"70px repeat(7,1fr)", gap:2, marginBottom:2 }}>
                 <div />
                 {weekDays.map(d => (
-                  <div key={d.date} style={{ background:d.date==="2026-03-03"?cs.accent+"22":cs.surface, border:"1px solid "+(d.date==="2026-03-03"?cs.accent:cs.border), borderRadius:7, padding:"7px 4px", textAlign:"center", fontSize:11, fontWeight:700, color:d.date==="2026-03-03"?cs.accent:cs.muted }}>{d.label}</div>
+                  <div key={d.date} style={{ background:d.date===TODAY?cs.accent+"22":cs.surface, border:"1px solid "+(d.date===TODAY?cs.accent:cs.border), borderRadius:7, padding:"7px 4px", textAlign:"center", fontSize:11, fontWeight:700, color:d.date===TODAY?cs.accent:cs.muted }}>{d.label}</div>
                 ))}
               </div>
               {teknisiList.map(tek => (
@@ -1589,32 +1692,129 @@ export default function ACleanWebApp() {
   // ============================================================
   // RENDER REPORTS
   // ============================================================
-  const renderReports = () => (
-    <div style={{ display:"grid", gap:20 }}>
-      <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>📊 Laporan</div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14 }}>
-        {[["Total Revenue Maret","Rp 1.890.000",cs.green,"↑ 12% vs Feb"],["Order Selesai","18",cs.accent,"Dari 22 total"],["Customer Aktif","7",cs.yellow,"2 VIP"]].map(([label,val,color,sub]) => (
-          <div key={label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18, textAlign:"center" }}>
-            <div style={{ fontSize:24, fontWeight:800, color, marginBottom:6 }}>{val}</div>
-            <div style={{ fontSize:12, fontWeight:700, color:cs.text, marginBottom:4 }}>{label}</div>
-            <div style={{ fontSize:11, color:cs.muted }}>{sub}</div>
+  const renderReports = () => {
+    const techColors = { "Mulyadi":"#38bdf8","Usaeri":"#22c55e","Albana Niji":"#a78bfa","Rizky Putra":"#f59e0b","Agung":"#f97316","Rey":"#ec4899" };
+    // Filter berdasarkan periode
+    const filterByPeriod = (inv) => {
+      if(statsPeriod==="hari") return (inv.sent||"").startsWith(TODAY);
+      if(statsPeriod==="bulan") return (inv.sent||"").startsWith(bulanIni);
+      return (inv.sent||"").startsWith(TODAY.slice(0,4));
+    };
+    const paidInv    = invoicesData.filter(i=>i.status==="PAID"&&filterByPeriod(i));
+    const totalRev   = paidInv.reduce((a,b)=>a+(b.total||0),0);
+    const ordersDone = ordersData.filter(o=>o.status==="COMPLETED").length;
+    const ordersTotal= ordersData.length;
+    const custAktif  = customersData.length;
+    const custVip    = customersData.filter(c=>c.is_vip).length;
+    // Performa teknisi — hitungan dari ordersData
+    const tekNames   = [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))];
+    const tekPerf    = tekNames.map(name=>({
+      name, jobs: ordersData.filter(o=>o.teknisi===name&&o.status==="COMPLETED").length,
+      total: ordersData.filter(o=>o.teknisi===name).length,
+    })).sort((a,b)=>b.jobs-a.jobs);
+    const maxJobs    = Math.max(...tekPerf.map(t=>t.jobs), 1);
+    // Revenue per layanan
+    const revCleaning = paidInv.filter(i=>(i.service||"").includes("Cleaning")).reduce((a,b)=>a+(b.labor||0),0);
+    const revInstall  = paidInv.filter(i=>(i.service||"").includes("Install")).reduce((a,b)=>a+(b.labor||0),0);
+    const revRepair   = paidInv.filter(i=>(i.service||"").includes("Repair")).reduce((a,b)=>a+(b.labor||0),0);
+    const periodLabel = statsPeriod==="hari"?"Hari Ini":statsPeriod==="bulan"?"Bulan Ini ("+bulanIni+")":"Tahun "+TODAY.slice(0,4);
+
+    return (
+      <div style={{ display:"grid", gap:20 }}>
+        {/* Header + Filter Periode */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
+          <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>📊 Statistik & Laporan</div>
+          <div style={{ display:"flex", gap:6 }}>
+            {[["hari","Hari Ini"],["bulan","Bulan Ini"],["tahun","Tahun Ini"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setStatsPeriod(v)}
+                style={{ background:statsPeriod===v?cs.accent:cs.card, border:"1px solid "+(statsPeriod===v?cs.accent:cs.border), color:statsPeriod===v?"#0a0f1e":cs.muted, padding:"6px 14px", borderRadius:99, cursor:"pointer", fontSize:12, fontWeight:600 }}>{l}</button>
+            ))}
           </div>
-        ))}
-      </div>
-      <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
-        <div style={{ fontWeight:700, color:cs.text, marginBottom:14 }}>Performa Teknisi — Maret 2026</div>
-        {[["Mulyadi",12,cs.green],["Usaeri",10,cs.accent],["Albana Niji",9,cs.ara],["Rizky Putra",8,cs.yellow],["Rey",5,cs.muted]].map(([name,jobs,color]) => (
-          <div key={name} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-            <span style={{ color:cs.text, fontSize:13, fontWeight:600, minWidth:100 }}>{name}</span>
-            <div style={{ flex:1, background:cs.border, borderRadius:99, height:8, overflow:"hidden" }}>
-              <div style={{ height:"100%", background:color, width:(jobs/12*100)+"%", borderRadius:99 }} />
+        </div>
+
+        {/* KPI Cards — data real */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14 }}>
+          {[
+            { label:"Total Revenue", value:fmt(totalRev), sub:periodLabel, color:cs.green, icon:"💰" },
+            { label:"Order Selesai", value:`${ordersDone}/${ordersTotal}`, sub:"dari total order", color:cs.accent, icon:"✅" },
+            { label:"Customer Aktif", value:custAktif, sub:`${custVip} VIP`, color:cs.yellow, icon:"👥" },
+          ].map(kpi=>(
+            <div key={kpi.label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18, textAlign:"center" }}>
+              <div style={{ fontSize:22, marginBottom:8 }}>{kpi.icon}</div>
+              <div style={{ fontSize:22, fontWeight:800, color:kpi.color, marginBottom:4 }}>{kpi.value}</div>
+              <div style={{ fontSize:12, fontWeight:700, color:cs.text, marginBottom:3 }}>{kpi.label}</div>
+              <div style={{ fontSize:11, color:cs.muted }}>{kpi.sub}</div>
             </div>
-            <span style={{ color, fontWeight:700, fontFamily:"monospace", minWidth:20 }}>{jobs}</span>
+          ))}
+        </div>
+
+        {/* Revenue breakdown per layanan */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <div style={{ fontWeight:700, color:cs.text, marginBottom:14 }}>💰 Revenue per Layanan — {periodLabel}</div>
+          {totalRev===0
+            ? <div style={{color:cs.muted,fontSize:13,textAlign:"center",padding:"20px 0"}}>Belum ada invoice PAID untuk periode ini</div>
+            : [["Cleaning",revCleaning,cs.accent],["Install",revInstall,cs.green],["Repair",revRepair,cs.yellow]].map(([svc,rev,col])=>(
+              <div key={svc} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+                <span style={{ color:cs.text, fontSize:13, fontWeight:600, minWidth:80 }}>{svc}</span>
+                <div style={{ flex:1, background:cs.border, borderRadius:99, height:8, overflow:"hidden" }}>
+                  <div style={{ height:"100%", background:col, width:totalRev>0?(rev/totalRev*100)+"%":"0%", borderRadius:99, transition:"width 0.4s" }} />
+                </div>
+                <span style={{ color:col, fontWeight:700, fontFamily:"monospace", minWidth:90, textAlign:"right" }}>{fmt(rev)}</span>
+              </div>
+            ))
+          }
+        </div>
+
+        {/* Performa Teknisi — data real */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <div style={{ fontWeight:700, color:cs.text, marginBottom:14 }}>👷 Performa Teknisi — Job Completed</div>
+          {tekPerf.length===0
+            ? <div style={{color:cs.muted,fontSize:13,textAlign:"center",padding:"20px 0"}}>Belum ada data order</div>
+            : tekPerf.map(t=>{
+              const col = techColors[t.name]||cs.muted;
+              return (
+                <div key={t.name} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+                  <span style={{ color:cs.text, fontSize:13, fontWeight:600, minWidth:110 }}>{t.name}</span>
+                  <div style={{ flex:1, background:cs.border, borderRadius:99, height:8, overflow:"hidden" }}>
+                    <div style={{ height:"100%", background:col, width:(t.jobs/maxJobs*100)+"%", borderRadius:99, transition:"width 0.4s" }} />
+                  </div>
+                  <span style={{ color:col, fontWeight:700, fontFamily:"monospace", minWidth:40, textAlign:"right" }}>{t.jobs}<span style={{color:cs.muted,fontWeight:400}}>/{t.total}</span></span>
+                </div>
+              );
+            })
+          }
+        </div>
+
+        {/* Invoice summary */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+          <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18 }}>
+            <div style={{ fontWeight:700, color:cs.text, marginBottom:12 }}>🧾 Status Invoice</div>
+            {[["PAID",cs.green],["UNPAID",cs.yellow],["OVERDUE",cs.red],["PENDING_APPROVAL",cs.ara]].map(([s,col])=>{
+              const cnt = invoicesData.filter(i=>i.status===s).length;
+              return cnt>0?(
+                <div key={s} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                  <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:col+"22", color:col, border:"1px solid "+col+"44", fontWeight:700 }}>{s.replace("_"," ")}</span>
+                  <span style={{ fontWeight:800, color:col, fontFamily:"monospace" }}>{cnt}</span>
+                </div>
+              ):null;
+            })}
           </div>
-        ))}
+          <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18 }}>
+            <div style={{ fontWeight:700, color:cs.text, marginBottom:12 }}>📝 Status Laporan</div>
+            {[["SUBMITTED",cs.accent,"Baru"],["VERIFIED",cs.green,"Verified"],["REVISION",cs.yellow,"Revisi"],["REJECTED",cs.red,"Ditolak"]].map(([s,col,lbl])=>{
+              const cnt = laporanReports.filter(r=>r.status===s).length;
+              return cnt>0?(
+                <div key={s} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                  <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:col+"22", color:col, border:"1px solid "+col+"44", fontWeight:700 }}>{lbl}</span>
+                  <span style={{ fontWeight:800, color:col, fontFamily:"monospace" }}>{cnt}</span>
+                </div>
+              ):null;
+            })}
+          </div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // ============================================================
   // RENDER LAPORAN TIM  (Owner & Admin)
@@ -1742,12 +1942,34 @@ export default function ACleanWebApp() {
             {/* Actions */}
             <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
               {r.status==="SUBMITTED" && (<>
-                <button onClick={()=>{setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x)); addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi Admin — invoice perlu approval Owner`,"SUCCESS"); const relInv=invoicesData.find(i=>i.job_id===r.job_id); if(relInv&&relInv.status==="PENDING_APPROVAL"){ showNotif(`✅ Laporan verified! Invoice ${relInv.id} siap untuk approval Owner.`); } else { showNotif(`Laporan ${r.job_id} diverifikasi`); } }}
-                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>Verifikasi OK</button>
-                <button onClick={()=>{setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));showNotif("Minta revisi: "+r.job_id);}}
-                  style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>Minta Revisi</button>
-                <button onClick={()=>{setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REJECTED"}:x));showNotif("Laporan "+r.job_id+" ditolak");}}
-                  style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",color:cs.red,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>Tolak</button>
+                <button onClick={async()=>{
+                  setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
+                  await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
+                  addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi — invoice menunggu approval Owner`,"SUCCESS");
+                  const relInv=invoicesData.find(i=>i.job_id===r.job_id);
+                  if(relInv&&relInv.status==="PENDING_APPROVAL"){
+                    showNotif(`✅ Laporan verified! Invoice ${relInv.id} siap approval Owner.`);
+                    // Notif Owner via WA
+                    fetch("/api/send-wa",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:"6281299898937",message:`✅ Laporan ${r.job_id} sudah diverifikasi Admin.
+
+🔧 ${r.customer} — ${r.service}
+💰 Invoice ${relInv.id}: ${fmt(relInv.total)}
+
+Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
+                  } else { showNotif(`✅ Laporan ${r.job_id} diverifikasi`); }
+                }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>Verifikasi OK</button>
+                <button onClick={async()=>{
+                  setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));
+                  await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
+                  addAgentLog("LAPORAN_REVISION",`Laporan ${r.job_id} diminta revisi oleh ${currentUser?.name}`,"WARNING");
+                  showNotif("⚠️ Revisi diminta untuk laporan "+r.job_id);
+                }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>Minta Revisi</button>
+                <button onClick={async()=>{
+                  setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REJECTED"}:x));
+                  await supabase.from("service_reports").update({status:"REJECTED"}).eq("id",r.id);
+                  addAgentLog("LAPORAN_REJECTED",`Laporan ${r.job_id} ditolak oleh ${currentUser?.name}`,"ERROR");
+                  showNotif("❌ Laporan "+r.job_id+" ditolak");
+                }} style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",color:cs.red,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>Tolak</button>
               </>)}
               {r.status==="REVISION" && <span style={{fontSize:12,color:cs.yellow}}>Menunggu revisi dari {r.teknisi}</span>}
               {r.status==="VERIFIED" && <span style={{fontSize:12,color:cs.green}}>Laporan sudah terverifikasi</span>}
@@ -2339,7 +2561,10 @@ export default function ACleanWebApp() {
       {/* ── SIDEBAR ── */}
       <div style={{ width:200, background:cs.surface, borderRight:"1px solid "+cs.border, display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto" }}>
         <div style={{ padding:"16px 14px", borderBottom:"1px solid "+cs.border }}>
-          <div style={{ fontWeight:800, fontSize:16, color:cs.accent, marginBottom:10 }}>⬡ AClean</div>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+            <div style={{ fontWeight:800, fontSize:16, color:cs.accent }}>⬡ AClean</div>
+            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v8</span>
+          </div>
           {currentUser && (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
               <div style={{ width:32, height:32, borderRadius:8, background:"linear-gradient(135deg,"+currentUser.color+","+currentUser.color+"88)", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:14, color:"#fff", flexShrink:0 }}>
@@ -2366,9 +2591,9 @@ export default function ACleanWebApp() {
           {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
             <button onClick={() => setWaPanel(true)} style={{ width:"100%", background:"#25D36618", border:"1px solid #25D36644", color:"#25D366", padding:"8px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12, position:"relative" }}>
               📱 WhatsApp
-              {WA_CONVERSATIONS.filter(c => c.unread>0).length > 0 && (
+              {waConversations.filter(c => c.unread>0).length > 0 && (
                 <span style={{ position:"absolute", top:-4, right:-4, background:cs.red, color:"#fff", fontSize:9, borderRadius:"50%", width:16, height:16, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  {WA_CONVERSATIONS.filter(c=>c.unread>0).reduce((a,b)=>a+b.unread,0)}
+                  {waConversations.filter(c=>c.unread>0).reduce((a,b)=>a+b.unread,0)}
                 </span>
               )}
             </button>
@@ -2500,10 +2725,17 @@ export default function ACleanWebApp() {
                 <button onClick={() => setModalStok(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
                 <button onClick={() => {
                   if (!newStokForm.name) { showNotif("Nama material wajib diisi"); return; }
-                  const newItem = { code:"MAT"+String(inventoryData.length+1).padStart(3,"0"), name:newStokForm.name, unit:newStokForm.unit||"pcs", price:parseInt(newStokForm.price)||0, stock:parseInt(newStokForm.stock)||0, reorder:parseInt(newStokForm.reorder)||5, min_alert:parseInt(newStokForm.min_alert)||2, status:"OK" };
+                  const stokAwal = parseInt(newStokForm.stock)||0;
+                  const reorderPt = parseInt(newStokForm.reorder)||5;
+                  const minAlert  = parseInt(newStokForm.min_alert)||2;
+                  const newCode   = "MAT"+String(inventoryData.length+1).padStart(3,"0");
+                  const stokStatus= stokAwal===0?"OUT":stokAwal<=minAlert?"CRITICAL":stokAwal<=reorderPt?"WARNING":"OK";
+                  const newItem   = { code:newCode, name:newStokForm.name, unit:newStokForm.unit||"pcs", price:parseInt(newStokForm.price)||0, stock:stokAwal, reorder:reorderPt, min_alert:minAlert, status:stokStatus };
                   setInventoryData(prev=>[...prev,newItem]);
-                  addAgentLog("STOCK_ADDED",`Material baru: ${newStokForm.name} (stok: ${newStokForm.stock} ${newStokForm.unit||"pcs"})`,"SUCCESS");
-                  showNotif("Material " + (newStokForm.name||"baru") + " berhasil ditambah"); setModalStok(false); setNewStokForm({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
+                  const {error:invErr} = await supabase.from("inventory").insert(newItem);
+                  if(invErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+invErr.message);
+                  else { addAgentLog("STOCK_ADDED",`Material baru: ${newStokForm.name} (stok: ${newStokForm.stock} ${newStokForm.unit||"pcs"})`,"SUCCESS"); showNotif("✅ Material " + (newStokForm.name||"baru") + " berhasil ditambah"); }
+                  setModalStok(false); setNewStokForm({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
                 }} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>✓ Simpan Material</button>
               </div>
             </div>
@@ -2514,46 +2746,64 @@ export default function ACleanWebApp() {
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — EDIT STOK */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalEditStok && editStokItem && (
-        <div style={{ position:"fixed", inset:0, background:"#000b", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={() => { setModalEditStok(false); setEditStokItem(null); }}>
-          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:20, width:"100%", maxWidth:420, padding:28 }} onClick={e => e.stopPropagation()}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-              <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>✏️ Edit Stok — {editStokItem.name}</div>
-              <button onClick={() => { setModalEditStok(false); setEditStokItem(null); }} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
-            </div>
-            <div style={{ display:"grid", gap:10 }}>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                <div>
-                  <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Stok Saat Ini</div>
-                  <input type="number" defaultValue={editStokItem.stock} style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
-                </div>
-                <div>
-                  <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Tambah (+)</div>
-                  <input type="number" min="0" placeholder="0" style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
-                </div>
+      {modalEditStok && editStokItem && (() => {
+        const tambah = parseInt(newStokForm.tambah)||0;
+        const stokBaru = parseInt(newStokForm.stock ?? editStokItem.stock)||0;
+        const hargaBaru = parseInt(newStokForm.price ?? editStokItem.price)||0;
+        const reorderBaru = parseInt(newStokForm.reorder ?? editStokItem.reorder)||5;
+        const stokFinal = stokBaru + tambah;
+        const statusBaru = stokFinal===0?"OUT":stokFinal<=editStokItem.min_alert?"CRITICAL":stokFinal<=reorderBaru?"WARNING":"OK";
+        return (
+          <div style={{ position:"fixed", inset:0, background:"#000b", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={() => { setModalEditStok(false); setEditStokItem(null); setNewStokForm({name:"",unit:"pcs",price:"",stock:"",reorder:"",min_alert:"",tambah:""}); }}>
+            <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:20, width:"100%", maxWidth:420, padding:28 }} onClick={e => e.stopPropagation()}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+                <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>✏️ Edit Stok — {editStokItem.name}</div>
+                <button onClick={() => { setModalEditStok(false); setEditStokItem(null); setNewStokForm({name:"",unit:"pcs",price:"",stock:"",reorder:"",min_alert:"",tambah:""}); }} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
               </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                <div>
-                  <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Harga/Unit</div>
-                  <input type="number" defaultValue={editStokItem.price} style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
+              <div style={{ display:"grid", gap:10 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Stok Saat Ini</div>
+                    <input type="number" value={newStokForm.stock ?? editStokItem.stock} onChange={e=>setNewStokForm(f=>({...f,stock:e.target.value}))}
+                      style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Tambah (+)</div>
+                    <input type="number" min="0" placeholder="0" value={newStokForm.tambah||""} onChange={e=>setNewStokForm(f=>({...f,tambah:e.target.value}))}
+                      style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Reorder Point</div>
-                  <input type="number" defaultValue={editStokItem.reorder} style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Harga/Unit</div>
+                    <input type="number" value={newStokForm.price ?? editStokItem.price} onChange={e=>setNewStokForm(f=>({...f,price:e.target.value}))}
+                      style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Reorder Point</div>
+                    <input type="number" value={newStokForm.reorder ?? editStokItem.reorder} onChange={e=>setNewStokForm(f=>({...f,reorder:e.target.value}))}
+                      style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
                 </div>
-              </div>
-              <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", fontSize:12, color:cs.muted }}>
-                Stok sekarang: <strong style={{color:cs.text}}>{editStokItem.stock} {editStokItem.unit}</strong> · Status: <strong style={{color:editStokItem.status==="OK"?cs.green:editStokItem.status==="OUT"?cs.red:cs.yellow}}>{editStokItem.status}</strong>
-              </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
-                <button onClick={() => { setModalEditStok(false); setEditStokItem(null); }} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
-                <button onClick={() => { showNotif("Stok " + editStokItem.name + " berhasil diupdate"); setModalEditStok(false); setEditStokItem(null); }}
-                  style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>✓ Simpan Perubahan</button>
+                <div style={{ background:stokFinal<=editStokItem.min_alert?cs.red+"12":cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", fontSize:12, color:cs.muted }}>
+                  Stok setelah update: <strong style={{color:statusBaru==="OK"?cs.green:statusBaru==="OUT"?cs.red:cs.yellow}}>{stokFinal} {editStokItem.unit}</strong> · Status: <strong style={{color:statusBaru==="OK"?cs.green:statusBaru==="OUT"?cs.red:cs.yellow}}>{statusBaru}</strong>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
+                  <button onClick={() => { setModalEditStok(false); setEditStokItem(null); setNewStokForm({name:"",unit:"pcs",price:"",stock:"",reorder:"",min_alert:"",tambah:""}); }} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
+                  <button onClick={async () => {
+                    const updated = {...editStokItem, stock:stokFinal, price:hargaBaru, reorder:reorderBaru, status:statusBaru};
+                    setInventoryData(prev=>prev.map(i=>i.code===editStokItem.code?updated:i));
+                    const {error:eErr} = await supabase.from("inventory").update({stock:stokFinal,price:hargaBaru,reorder:reorderBaru,status:statusBaru}).eq("code",editStokItem.code);
+                    if(eErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
+                    else { addAgentLog("STOCK_UPDATED",`Stok ${editStokItem.name}: ${editStokItem.stock}→${stokFinal} ${editStokItem.unit} (${statusBaru})`,"SUCCESS"); showNotif("✅ Stok "+editStokItem.name+" diupdate → "+stokFinal+" "+editStokItem.unit); }
+                    setModalEditStok(false); setEditStokItem(null); setNewStokForm({name:"",unit:"pcs",price:"",stock:"",reorder:"",min_alert:"",tambah:""});
+                  }} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>✓ Simpan Perubahan</button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — TAMBAH/EDIT TEKNISI */}
@@ -2586,7 +2836,23 @@ export default function ACleanWebApp() {
               )}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
                 <button onClick={() => { setModalTeknisi(false); setEditTeknisi(null); }} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
-                <button onClick={() => { showNotif((newTeknisiForm.name||"Anggota") + (editTeknisi?" diupdate":" ditambahkan")); setModalTeknisi(false); setEditTeknisi(null); }}
+                <button onClick={async () => {
+                  if(!newTeknisiForm.name||!newTeknisiForm.phone){showNotif("Nama dan nomor HP wajib diisi");return;}
+                  if(editTeknisi){
+                    // Update existing
+                    const upd = {name:newTeknisiForm.name,phone:newTeknisiForm.phone,role:newTeknisiForm.role,skills:newTeknisiForm.skills};
+                    const {error:tErr} = await supabase.from("user_profiles").update(upd).eq("id",editTeknisi.id);
+                    if(tErr) showNotif("⚠️ Update lokal saja, DB gagal");
+                    else { addAgentLog("TEKNISI_UPDATED","Data "+newTeknisiForm.name+" diupdate","SUCCESS"); showNotif("✅ "+newTeknisiForm.name+" berhasil diupdate"); }
+                  } else {
+                    // Add new
+                    const newTek = {name:newTeknisiForm.name,phone:newTeknisiForm.phone,role:newTeknisiForm.role,skills:newTeknisiForm.skills,status:"active",jobs_today:0};
+                    const {error:tErr} = await supabase.from("user_profiles").insert(newTek);
+                    if(tErr) showNotif("⚠️ Tersimpan lokal, DB gagal: "+tErr.message);
+                    else { addAgentLog("TEKNISI_ADDED","Anggota baru: "+newTeknisiForm.name+" ("+newTeknisiForm.role+")","SUCCESS"); showNotif("✅ "+newTeknisiForm.name+" berhasil ditambahkan"); }
+                  }
+                  setModalTeknisi(false); setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[]});
+                }}
                   style={{ background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>
                   ✓ {editTeknisi?"Update":"Tambah"} Anggota
                 </button>
@@ -2677,12 +2943,18 @@ export default function ACleanWebApp() {
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
                 <button onClick={()=>setModalEditInvoice(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
-                <button onClick={()=>{
-                  const newTotal = (editInvoiceForm.labor||0)+(editInvoiceForm.material||0)+(editInvoiceForm.dadakan||0);
-                  setInvoicesData(prev=>prev.map(i=>i.id===editInvoiceData.id?{...i,labor:editInvoiceForm.labor||0,material:editInvoiceForm.material||0,dadakan:editInvoiceForm.dadakan||0,total:newTotal}:i));
-                  addAgentLog("INVOICE_EDITED",`Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotal)}${editInvoiceForm.notes?" ("+editInvoiceForm.notes+")":""}`, "SUCCESS");
+                <button onClick={async()=>{
+                  const labor = Math.max(0, parseInt(editInvoiceForm.labor)||0);
+                  const material = Math.max(0, parseInt(editInvoiceForm.material)||0);
+                  const dadakan = Math.max(0, parseInt(editInvoiceForm.dadakan)||0);
+                  const newTotal = labor + material + dadakan;
+                  if(newTotal <= 0){ showNotif("⚠️ Total invoice tidak boleh 0 atau negatif"); return; }
+                  setInvoicesData(prev=>prev.map(i=>i.id===editInvoiceData.id?{...i,labor,material,dadakan,total:newTotal}:i));
+                  const {error:eiErr} = await supabase.from("invoices").update({labor,material,dadakan,total:newTotal}).eq("id",editInvoiceData.id);
+                  if(eiErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
+                  else { addAgentLog("INVOICE_EDITED",`Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotal)}${editInvoiceForm.notes?" ("+editInvoiceForm.notes+")":""}`, "SUCCESS"); }
                   showNotif(`✅ Invoice ${editInvoiceData.id} berhasil diupdate → ${fmt(newTotal)}`);
-                  setModalEditInvoice(false);
+                  setModalEditInvoice(false); setEditInvoiceData(null);
                 }} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>💾 Simpan Perubahan</button>
               </div>
             </div>
@@ -2840,8 +3112,8 @@ export default function ACleanWebApp() {
             </div>
             <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
               <div style={{ width:160, borderRight:"1px solid "+cs.border, overflowY:"auto" }}>
-                {WA_CONVERSATIONS.map(conv => (
-                  <div key={conv.id} onClick={() => setSelectedConv(conv)}
+                {waConversations.map(conv => (
+                  <div key={conv.id} onClick={() => { setSelectedConv(conv); setWaConversations(prev=>prev.map(cv=>cv.id===conv.id?{...cv,unread:0}:cv)); }}
                     style={{ padding:"10px 12px", borderBottom:"1px solid "+cs.border, cursor:"pointer", background:selectedConv?.id===conv.id?cs.accent+"12":"transparent" }}>
                     <div style={{ fontWeight:700, color:cs.text, fontSize:12, marginBottom:2 }}>{conv.name}</div>
                     <div style={{ fontSize:10, color:cs.muted, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{conv.last}</div>
@@ -2865,9 +3137,19 @@ export default function ACleanWebApp() {
                     </div>
                     <div style={{ padding:"10px 14px", borderTop:"1px solid "+cs.border, display:"flex", gap:8, flexShrink:0 }}>
                       <input value={waInput} onChange={e => setWaInput(e.target.value)}
-                        onKeyDown={e => { if(e.key==="Enter" && waInput.trim()){ showNotif("Pesan terkirim"); setWaInput(""); } }}
+                        onKeyDown={async e => { if(e.key==="Enter" && waInput.trim() && selectedConv){
+                          const ok = await sendWA(selectedConv.phone, waInput);
+                          addAgentLog("WA_SENT_MANUAL",`Manual reply ke ${selectedConv.name}: "${waInput.slice(0,40)}"`,"SUCCESS");
+                          setWaConversations(prev=>prev.map(cv=>cv.id===selectedConv.id?{...cv,last:waInput,unread:0}:cv));
+                          setWaInput(""); showNotif(ok?"✅ Pesan terkirim via Fonnte":"📱 WA dibuka manual");
+                        }}}
                         placeholder="Balas manual..." style={{ flex:1, background:cs.bg, border:"1px solid "+cs.border, borderRadius:10, padding:"8px 12px", color:cs.text, fontSize:12, outline:"none" }} />
-                      <button onClick={() => { if(waInput.trim()){ showNotif("Pesan terkirim"); setWaInput(""); } }}
+                      <button onClick={async () => { if(waInput.trim() && selectedConv){
+                        const ok = await sendWA(selectedConv.phone, waInput);
+                        addAgentLog("WA_SENT_MANUAL",`Manual reply ke ${selectedConv.name}: "${waInput.slice(0,40)}"`,"SUCCESS");
+                        setWaConversations(prev=>prev.map(cv=>cv.id===selectedConv.id?{...cv,last:waInput,unread:0}:cv));
+                        setWaInput(""); showNotif(ok?"✅ Pesan terkirim via Fonnte":"📱 WA dibuka manual");
+                      }}}
                         style={{ background:"#25D366", border:"none", color:"#fff", padding:"8px 14px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Kirim</button>
                     </div>
                   </>
@@ -3060,11 +3342,24 @@ export default function ACleanWebApp() {
                 <button onClick={()=>setModalAddCustomer(false)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
                 <button onClick={()=>{
                   if(!newCustomerForm.name||!newCustomerForm.phone){showNotif("Nama dan nomor HP wajib diisi");return;}
-                  const newId = "CUST" + String(customersData.length+1).padStart(3,"0");
-                  const today = new Date().toISOString().slice(0,10);
-                  setCustomersData(prev=>[...prev,{id:newId,...newCustomerForm,joined:today,last_service:"-",ac_units:0}]);
-                  showNotif("Customer "+newCustomerForm.name+" berhasil ditambahkan");
-                  setModalAddCustomer(false);
+                  if(selectedCustomer && selectedCustomer.id){
+                    // UPDATE existing customer
+                    setCustomersData(prev=>prev.map(cu=>cu.id===selectedCustomer.id?{...cu,...newCustomerForm}:cu));
+                    setSelectedCustomer(prev=>({...prev,...newCustomerForm}));
+                    const {error:cErr} = await supabase.from("customers").update(newCustomerForm).eq("id",selectedCustomer.id);
+                    if(cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
+                    else { addAgentLog("CUSTOMER_UPDATED","Customer "+newCustomerForm.name+" diupdate","SUCCESS"); showNotif("✅ Data "+newCustomerForm.name+" berhasil diupdate"); }
+                  } else {
+                    // INSERT new customer
+                    const newId = "CUST" + String(Date.now()).slice(-6);
+                    const today = new Date().toISOString().slice(0,10);
+                    const newCust = {id:newId,...newCustomerForm,joined:today,last_service:"-",ac_units:0,total_orders:0};
+                    setCustomersData(prev=>[...prev,newCust]);
+                    const {error:cErr} = await supabase.from("customers").insert(newCust);
+                    if(cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+cErr.message);
+                    else { addAgentLog("CUSTOMER_ADDED","Customer baru: "+newCustomerForm.name+" ("+newCustomerForm.area+")","SUCCESS"); showNotif("✅ Customer "+newCustomerForm.name+" berhasil ditambahkan"); }
+                  }
+                  setModalAddCustomer(false); setNewCustomerForm({name:"",phone:"",address:"",area:"",notes:"",is_vip:false});
                 }}
                   style={{background:"linear-gradient(135deg,"+cs.green+",#059669)",border:"none",color:"#fff",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
                   ✓ Simpan Customer
@@ -3145,9 +3440,21 @@ export default function ACleanWebApp() {
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
                 <button onClick={()=>{setModalEditOrder(false);setEditOrderItem(null);}} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
-                <button onClick={()=>{
-                  setOrdersData(prev=>prev.map(o=>o.id===editOrderItem.id?{...o,...editOrderForm}:o));
-                  showNotif("Jadwal "+editOrderItem.id+" berhasil diupdate");
+                <button onClick={async()=>{
+                  const updated = {...editOrderItem,...editOrderForm};
+                  setOrdersData(prev=>prev.map(o=>o.id===editOrderItem.id?updated:o));
+                  const {error:eoErr} = await supabase.from("orders").update(editOrderForm).eq("id",editOrderItem.id);
+                  if(eoErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
+                  else {
+                    addAgentLog("ORDER_UPDATED",`Jadwal ${editOrderItem.id} diupdate — teknisi: ${editOrderForm.teknisi}, tgl: ${editOrderForm.date} ${editOrderForm.time}`,"SUCCESS");
+                    // Kirim WA notif ke teknisi jika ada perubahan teknisi/tanggal/waktu
+                    const tek = TEKNISI_DATA.find(t=>t.name===editOrderForm.teknisi);
+                    if(tek && (editOrderForm.teknisi!==editOrderItem.teknisi || editOrderForm.date!==editOrderItem.date || editOrderForm.time!==editOrderItem.time)){
+                      const waMsg = `Halo ${editOrderForm.teknisi}, ada perubahan jadwal:\n📋 ${editOrderItem.id} — ${editOrderItem.customer}\n🔧 ${editOrderItem.service} ${editOrderItem.units} unit\n📅 ${editOrderForm.date} jam ${editOrderForm.time}\n📍 ${editOrderItem.address}\n${editOrderForm.notes?"📝 "+editOrderForm.notes+""+"\n":""}Mohon konfirmasi. — AClean`;
+                      sendWA(tek.phone, waMsg);
+                    }
+                    showNotif("✅ Jadwal "+editOrderItem.id+" berhasil diupdate");
+                  }
                   setModalEditOrder(false); setEditOrderItem(null);
                 }}
                   style={{background:"linear-gradient(135deg,"+cs.yellow+",#d97706)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
@@ -3188,7 +3495,7 @@ export default function ACleanWebApp() {
                 ))}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10,marginTop:4}}>
                   <button onClick={()=>{setEditLaporanMode(false);}} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
-                  <button onClick={()=>{
+                  <button onClick={async()=>{
                     const now = new Date().toLocaleString("id-ID",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).replace(/\//g,"-");
                     const fields = ["kondisi_sebelum","kondisi_setelah","rekomendasi","catatan"];
                     const newLogs = [];
@@ -3198,9 +3505,18 @@ export default function ACleanWebApp() {
                       if(oldVal!==newVal) newLogs.push({by:currentUser?.name||"?",at:now,field:f,old:oldVal,new:newVal});
                     });
                     if(newLogs.length===0){showNotif("Tidak ada perubahan");return;}
+                    const allLogs = [...(selectedLaporan.editLog||[]),...newLogs];
+                    const newStatus = selectedLaporan.status==="REVISION"?"SUBMITTED":selectedLaporan.status;
                     setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id
-                      ?{...r,...editLaporanForm,status:r.status==="REVISION"?"SUBMITTED":r.status,editLog:[...r.editLog,...newLogs]}:r));
-                    showNotif("Laporan "+selectedLaporan.job_id+" berhasil diupdate ("+newLogs.length+" perubahan dicatat)");
+                      ?{...r,...editLaporanForm,status:newStatus,editLog:allLogs}:r));
+                    // Save ke Supabase
+                    const {error:elErr} = await supabase.from("service_reports").update({
+                      ...editLaporanForm, status:newStatus,
+                      edit_log: allLogs, updated_at: new Date().toISOString()
+                    }).eq("id",selectedLaporan.id);
+                    if(elErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
+                    else { addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name} (${newLogs.length} perubahan)`,"SUCCESS"); }
+                    showNotif("✅ Laporan "+selectedLaporan.job_id+" diupdate ("+newLogs.length+" perubahan dicatat)");
                     setModalLaporanDetail(false); setEditLaporanMode(false);
                   }}
                     style={{background:"linear-gradient(135deg,"+cs.green+",#059669)",border:"none",color:"#fff",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
