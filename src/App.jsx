@@ -306,7 +306,7 @@ export default function ACleanWebApp() {
   const addAgentLog = async (action, detail, status="SUCCESS") => {
     const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
     setAgentLogs(prev => [{ time:now, action, detail, status }, ...prev].slice(0,50));
-    await supabase.from("agent_logs").insert({ time:now, action, detail, status });
+    try { await supabase.from("agent_logs").insert({ time:now, action, detail, status }); } catch(e) {}
   };
 
   // ── Settings ──
@@ -473,23 +473,58 @@ export default function ACleanWebApp() {
         supabase.from("invoices").select("*").order("created_at", { ascending: false }),
         supabase.from("customers").select("*").order("name"),
         supabase.from("inventory").select("*").order("code"),
-        supabase.from("service_reports").select("*, report_units(*), report_materials(*)").order("submitted_at", { ascending: false }),
-        supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(50),
+        supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }),
+        supabase.from("agent_logs").select("*").order("time", { ascending: false }).limit(50).catch(()=>({data:null,error:null})),
       ]);
-      if (ordersRes.data)   setOrdersData(ordersRes.data);
-      if (invoicesRes.data) setInvoicesData(invoicesRes.data);
-      if (customersRes.data)setCustomersData(customersRes.data);
-      if (inventoryRes.data)setInventoryData(inventoryRes.data);
-      if (laporanRes.data)  setLaporanReports(laporanRes.data);
+      if (!ordersRes.error && ordersRes.data && ordersRes.data.length > 0) setOrdersData(ordersRes.data);
+      if (!invoicesRes.error && invoicesRes.data && invoicesRes.data.length > 0) setInvoicesData(invoicesRes.data);
+      if (!customersRes.error && customersRes.data && customersRes.data.length > 0) setCustomersData(customersRes.data);
+      if (!inventoryRes.error && inventoryRes.data && inventoryRes.data.length > 0) setInventoryData(inventoryRes.data);
+      if (!laporanRes.error && laporanRes.data && laporanRes.data.length > 0) {
+        // Normalize laporan dari Supabase agar cocok struktur lokal
+        const normalized = laporanRes.data.map(r => ({
+          ...r,
+          units: r.units || [],
+          materials: r.materials || [],
+          fotos: r.fotos || (r.foto_urls||[]).map((url,i) => ({id:i,label:`Foto ${i+1}`,url})),
+          editLog: r.edit_log || r.editLog || [],
+          rekomendasi: r.rekomendasi || "",
+          catatan_global: r.catatan_global || r.catatan || "",
+          submitted: r.submitted || (r.submitted_at||"").slice(0,16).replace("T"," "),
+          status: r.status || "SUBMITTED",
+        }));
+        setLaporanReports(normalized);
+      }
+      // Jika DB kosong (laporanRes.data = []), initial state hardcoded tetap aktif
       if (logsRes.data)     setAgentLogs(logsRes.data);
 
-      // Load Teknisi dari Supabase
-      const tekRes = await supabase.from("user_profiles").select("*").in("role",["Teknisi","Helper"]).order("name");
-      if (tekRes.data && tekRes.data.length > 0) setTeknisiData(tekRes.data);
+      // Load Teknisi dari Supabase — fallback ke TEKNISI_DATA jika kosong/error
+      try {
+        const tekRes = await supabase.from("user_profiles").select("*").order("name");
+        if (!tekRes.error && tekRes.data && tekRes.data.length > 0) {
+          const tekList = tekRes.data.filter(u => {
+            const r = (u.role||"").toLowerCase();
+            return r === "teknisi" || r === "helper";
+          });
+          if (tekList.length > 0) {
+            const normalized = tekList.map(u => ({
+              ...u,
+              role: (u.role||"").charAt(0).toUpperCase() + (u.role||"").slice(1).toLowerCase(),
+              skills: u.skills || [],
+              jobs_today: u.jobs_today || 0,
+              status: u.status || "active",
+            }));
+            setTeknisiData(normalized);
+          }
+          // Jika tidak ada Teknisi/Helper di DB → tetap pakai TEKNISI_DATA default (sudah di useState awal)
+        }
+      } catch(e) { console.warn("Load teknisi failed:", e); }
 
-      // Load WA conversations dari Supabase
-      const waRes = await supabase.from("wa_conversations").select("*, wa_messages(*)").order("updated_at", { ascending: false }).limit(50);
-      if (waRes.data && waRes.data.length > 0) setWaConversations(waRes.data);
+      // Load WA conversations dari Supabase (tabel opsional)
+      try {
+        const waRes = await supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false }).limit(50);
+        if (!waRes.error && waRes.data && waRes.data.length > 0) setWaConversations(waRes.data);
+      } catch(e) { /* WA tabel belum ada - skip */ }
     };
 
     loadAll();
@@ -1261,9 +1296,9 @@ export default function ACleanWebApp() {
             </div>
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
               <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>👁 Preview</button>
-              {/* GAP 3 — Edit invoice button */}
-              {(inv.status === "PENDING_APPROVAL" || inv.status === "UNPAID") && currentUser?.role === "Owner" && (
-                <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan,notes:""}); setModalEditInvoice(true); }}
+              {/* Edit invoice — Owner bisa edit semua status kecuali PAID */}
+              {inv.status !== "PAID" && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); setModalEditInvoice(true); }}
                   style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
               {inv.status === "PENDING_APPROVAL" && (
@@ -2571,7 +2606,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
         <div style={{ padding:"16px 14px", borderBottom:"1px solid "+cs.border }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
             <div style={{ fontWeight:800, fontSize:16, color:cs.accent }}>⬡ AClean</div>
-            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v9</span>
+            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v10</span>
           </div>
           {currentUser && (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -2662,6 +2697,16 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               </div>
+              {/* Tipe AC */}
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Tipe AC</div>
+                <select value={newOrderForm.type||"AC Split 0.5-1PK"} onChange={e => setNewOrderForm(f=>({...f,type:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
+                  {newOrderForm.service==="Cleaning" && ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Install"  && ["Pasang AC 0.5-1PK","Pasang AC 1PK","Pasang AC 1.5-2PK","Pasang AC 2.5PK"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Repair"   && ["Pengecekan AC","Pengecekan AC Panas/Bocor","Ganti Freon","Ganti Kompressor","Ganti Kapasitor","Bocor Refrigerant"].map(t=><option key={t}>{t}</option>)}
+                </select>
+              </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Teknisi</div>
@@ -2676,6 +2721,20 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   <input type="date" value={newOrderForm.date} onChange={e => setNewOrderForm(f=>({...f,date:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
+              </div>
+              {/* Jam */}
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Jam Mulai</div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:6 }}>
+                  {["07:00","08:00","09:00","10:00","11:00","13:00","14:00","15:00"].map(t=>(
+                    <button key={t} onClick={()=>setNewOrderForm(f=>({...f,time:t}))}
+                      style={{ background:newOrderForm.time===t?"linear-gradient(135deg,"+cs.accent+",#3b82f6)":cs.card, border:"1px solid "+(newOrderForm.time===t?cs.accent:cs.border), color:newOrderForm.time===t?"#0a0f1e":cs.text, borderRadius:8, padding:"8px 4px", cursor:"pointer", fontSize:12, fontWeight:newOrderForm.time===t?800:400 }}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                <input type="time" value={newOrderForm.time||"09:00"} onChange={e=>setNewOrderForm(f=>({...f,time:e.target.value}))}
+                  style={{ width:"100%", marginTop:6, background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
               </div>
               <div>
                 <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5, display:"flex", alignItems:"center", gap:8 }}>
@@ -2703,7 +2762,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:6 }}>
                 <button onClick={() => setModalOrder(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
-                <button onClick={() => { createOrder(newOrderForm); setModalOrder(false); setNewOrderForm({ customer:"", phone:"", address:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" }); }}
+                <button onClick={() => { if(!newOrderForm.customer){showNotif("Nama customer wajib diisi");return;} if(!newOrderForm.teknisi){showNotif("Pilih teknisi dulu");return;} if(!newOrderForm.date){showNotif("Pilih tanggal dulu");return;} createOrder(newOrderForm); setModalOrder(false); setNewOrderForm({ customer:"", phone:"", address:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" }); }}
                   style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>✓ Buat Order & Dispatch WA</button>
               </div>
             </div>
@@ -3361,16 +3420,19 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                     // UPDATE existing customer
                     setCustomersData(prev=>prev.map(cu=>cu.id===selectedCustomer.id?{...cu,...newCustomerForm}:cu));
                     setSelectedCustomer(prev=>({...prev,...newCustomerForm}));
-                    const {error:cErr} = await supabase.from("customers").update(newCustomerForm).eq("id",selectedCustomer.id);
+                    // Hanya kolom yang ada di DB schema
+                    const dbUpdate = {name:newCustomerForm.name, phone:newCustomerForm.phone, address:newCustomerForm.address, area:newCustomerForm.area, notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false};
+                    const {error:cErr} = await supabase.from("customers").update(dbUpdate).eq("id",selectedCustomer.id);
                     if(cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
                     else { addAgentLog("CUSTOMER_UPDATED","Customer "+newCustomerForm.name+" diupdate","SUCCESS"); showNotif("✅ Data "+newCustomerForm.name+" berhasil diupdate"); }
                   } else {
                     // INSERT new customer
                     const newId = "CUST" + String(Date.now()).slice(-6);
                     const today = new Date().toISOString().slice(0,10);
-                    const newCust = {id:newId,...newCustomerForm,joined:today,last_service:"-",ac_units:0,total_orders:0};
-                    setCustomersData(prev=>[...prev,newCust]);
-                    const {error:cErr} = await supabase.from("customers").insert(newCust);
+                    const dbCust = {id:newId, name:newCustomerForm.name, phone:newCustomerForm.phone, address:newCustomerForm.address||"", area:newCustomerForm.area||"", notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false, joined:today};
+                    const localCust = {...dbCust, last_service:"-", ac_units:0, total_orders:0};
+                    setCustomersData(prev=>[...prev,localCust]);
+                    const {error:cErr} = await supabase.from("customers").insert(dbCust);
                     if(cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+cErr.message);
                     else { addAgentLog("CUSTOMER_ADDED","Customer baru: "+newCustomerForm.name+" ("+newCustomerForm.area+")","SUCCESS"); showNotif("✅ Customer "+newCustomerForm.name+" berhasil ditambahkan"); }
                   }
