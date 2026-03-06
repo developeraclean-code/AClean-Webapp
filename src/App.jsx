@@ -338,6 +338,7 @@ export default function ACleanWebApp() {
   const [llmProvider,     setLlmProvider]     = useState("claude");
   const [llmApiKey,       setLlmApiKey]       = useState("");
   const [llmModel,        setLlmModel]        = useState("claude-sonnet-4-6");
+  const [ollamaUrl,       setOllamaUrl]       = useState("http://localhost:11434");
   const [llmStatus,       setLlmStatus]       = useState("not_connected");
   const [storageProvider, setStorageProvider] = useState("r2");
   const [storageStatus,   setStorageStatus]   = useState("not_connected");
@@ -774,18 +775,40 @@ export default function ACleanWebApp() {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
           messages: newMessages.map(m=>({role:m.role, content:m.content})),
-          bizContext, brainMd, provider:llmProvider, model:llmModel
+          bizContext, brainMd, provider:llmProvider, model:llmModel, ollamaUrl
         })
       }).catch(()=>null);
 
       if (backendRes?.ok) {
         const d = await backendRes.json();
         fullText = d.reply || "";
-      } else if (llmApiKey) {
+      } else if (llmApiKey || llmProvider === "ollama") {
         // ── Fallback: direct call sesuai provider yang dipilih ──
         const sysP = brainMd+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
 
-        if (llmProvider === "openai") {
+        if (llmProvider === "ollama") {
+          // ── Ollama Local / ngrok ──
+          const baseUrl = (ollamaUrl||"http://localhost:11434").replace(/\/+$/, "");
+          const fr = await fetch(baseUrl + "/api/chat", {
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({
+              model: llmModel || "llama3",
+              stream: false,
+              messages: [
+                {role:"system", content:sysP},
+                ...newMessages.map(m=>({role:m.role, content:m.content}))
+              ]
+            })
+          });
+          if (!fr.ok) {
+            const txt = await fr.text().catch(()=>"");
+            throw new Error("Ollama error " + fr.status + (txt ? ": " + txt.slice(0,100) : ""));
+          }
+          const fd = await fr.json();
+          fullText = fd.message?.content || fd.response || "";
+
+        } else if (llmProvider === "openai") {
           // ── OpenAI / ChatGPT API ──
           const fr = await fetch("https://api.openai.com/v1/chat/completions", {
             method:"POST",
@@ -805,18 +828,40 @@ export default function ACleanWebApp() {
 
         } else if (llmProvider === "gemini") {
           // ── Google Gemini API ──
-          const model = llmModel || "gemini-1.5-flash";
-          const fr = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${llmApiKey}`, {
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({
-              system_instruction:{parts:[{text:sysP}]},
-              contents: newMessages.map(m=>({role:m.role==="assistant"?"model":"user", parts:[{text:m.content}]}))
-            })
-          });
+          const model = llmModel || "gemini-2.0-flash-exp";
+          // Gemini requires alternating user/model turns — fix duplicates
+          const rawMsgs = newMessages.map(m => ({
+            role: m.role === "assistant" ? "model" : "user",
+            parts: [{ text: m.content }]
+          }));
+          // Ensure first message is always user
+          const geminiContents = rawMsgs.reduce((acc, msg) => {
+            if (acc.length === 0 && msg.role !== "user") return acc;
+            const prev = acc[acc.length - 1];
+            if (prev && prev.role === msg.role) {
+              // Merge consecutive same-role messages
+              return [...acc.slice(0,-1), { role: prev.role, parts: [...prev.parts, ...msg.parts] }];
+            }
+            return [...acc, msg];
+          }, []);
+          const fr = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${llmApiKey}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                system_instruction: { parts: [{ text: sysP }] },
+                contents: geminiContents,
+                generationConfig: { maxOutputTokens: 1000 }
+              })
+            }
+          );
           const fd = await fr.json();
-          if (!fr.ok) throw new Error(fd.error?.message || "Gemini API error");
-          fullText = fd.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          if (!fr.ok) {
+            const msg = fd.error?.message || "Gemini API error " + fr.status;
+            throw new Error(msg);
+          }
+          fullText = fd.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("") || "";
 
         } else {
           // ── Anthropic Claude API (default) ──
@@ -830,7 +875,12 @@ export default function ACleanWebApp() {
           fullText = fd.content?.map(c=>c.text||"").join("")||"";
         }
       } else {
-        throw new Error("Backend belum siap dan API Key belum diset. Buka Pengaturan → ARA Brain.");
+        const needKey = llmProvider !== "ollama";
+        const hasKey  = llmProvider === "ollama" ? !!ollamaUrl : !!llmApiKey;
+        if (!hasKey) throw new Error(llmProvider==="ollama"
+          ? "URL Ollama belum diset. Buka Pengaturan → ARA Brain → masukkan URL Ollama."
+          : "API Key belum diset. Buka Pengaturan → ARA Brain.");
+        // fallthrough tidak akan terjadi karena sudah ada routing di atas
       }
 
       // ── Parse & eksekusi ACTION tags ──
@@ -2458,22 +2508,22 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
     ];
 
     const LLM_PROVIDERS = [
-      { id:"claude",  label:"Claude (Anthropic)", icon:"🟣", rec:true,  models:["claude-sonnet-4-6","claude-opus-4-6","claude-haiku-4-5"],
+      { id:"claude",  label:"Anthropic Claude",   icon:"🟣", rec:true,  models:["claude-sonnet-4-6","claude-haiku-4-5","claude-opus-4-6"],
         fields:[{k:"key",label:"API Key",ph:"sk-ant-api03-...",t:"password"}],
-        guide:["Buka console.anthropic.com","Settings > API Keys > Create Key","Pilih model: Sonnet (balance) / Opus (terbaik) / Haiku (cepat)"],
-        note:"Rekomendasi: claude-sonnet-4-6 untuk produksi" },
-      { id:"openai",  label:"OpenAI / GPT-4o",    icon:"🟢", rec:false, models:["gpt-4o","gpt-4o-mini","gpt-4-turbo"],
-        fields:[{k:"key",label:"API Key",ph:"sk-proj-...",t:"password"},{k:"org",label:"Org ID (opsional)",ph:"org-..."}],
-        guide:["Buka platform.openai.com","Settings > API Keys > Create","Pilih model GPT-4o untuk performa terbaik"],
+        guide:["Buka console.anthropic.com","API Keys → Create Key","Copy key, paste di sini"],
+        note:"Rekomendasi: claude-sonnet-4-6 — cerdas & cepat" },
+      { id:"openai",  label:"ChatGPT (OpenAI)",   icon:"🟢", rec:false, models:["gpt-4o","gpt-4o-mini","gpt-4-turbo"],
+        fields:[{k:"key",label:"API Key",ph:"sk-proj-...",t:"password"}],
+        guide:["Buka platform.openai.com","Settings → API Keys → Create","Copy key, paste di sini"],
         note:"GPT-4o-mini: lebih hemat, cocok volume tinggi" },
-      { id:"gemini",  label:"Gemini (Google)",    icon:"🔵", rec:false, models:["gemini-2.0-flash","gemini-1.5-pro","gemini-1.5-flash"],
-        fields:[{k:"key",label:"API Key",ph:"AIza...",t:"password"}],
-        guide:["Buka aistudio.google.com","Get API Key (free tier tersedia)","Pilih model di Google AI Studio"],
-        note:"Gemini 2.0 Flash: gratis 1500 req/hari" },
-      { id:"groq",    label:"Groq / LLaMA",       icon:"🟡", rec:false, models:["llama-3.3-70b-versatile","llama-3.1-8b-instant"],
-        fields:[{k:"key",label:"API Key",ph:"gsk_...",t:"password"}],
-        guide:["Buka console.groq.com","Create API Key (gratis)","Pilih model LLaMA terbaru"],
-        note:"Gratis 6000 token/menit — cocok untuk testing" },
+      { id:"gemini",  label:"Gemini (Google)",    icon:"🔵", rec:false, models:["gemini-2.0-flash-exp","gemini-1.5-flash","gemini-1.5-pro"],
+        fields:[{k:"key",label:"API Key",ph:"AIzaSy...",t:"password"}],
+        guide:["Buka aistudio.google.com","Klik Get API Key → Create API key","Copy key, paste di sini — GRATIS"],
+        note:"gemini-2.0-flash-exp: gratis & cepat ✅" },
+      { id:"ollama",  label:"Ollama (Lokal/Free)", icon:"🦙", rec:false, models:["llama3","llama3.1","llama3.2","mistral","gemma2","qwen2.5","deepseek-r1"],
+        fields:[{k:"url",label:"URL Server Ollama",ph:"http://localhost:11434 atau https://xxxx.ngrok-free.app"}],
+        guide:["Install: curl -fsSL https://ollama.com/install.sh | sh","Pull model: ollama pull llama3","Jalankan: OLLAMA_ORIGINS='*' ollama serve","Expose publik: ngrok http 11434","Copy URL ngrok ke kolom URL di atas"],
+        note:"✅ 100% gratis & lokal. Butuh ngrok agar bisa diakses dari Vercel." },
     ];
 
     const STORAGE_PROVIDERS = [
@@ -2497,16 +2547,23 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
 
     const FieldList = ({ fields, isLLM }) => (
       <div style={{ display:"grid", gap:8, marginBottom:12 }}>
-        {fields.map(f => (
-          <div key={f.k}>
-            <div style={{ fontSize:11, color:cs.muted, marginBottom:3 }}>{f.label}</div>
-            <input type={f.t||"text"} placeholder={f.ph}
-              value={isLLM && f.k==="key" ? llmApiKey : undefined}
-              onChange={isLLM && f.k==="key" ? (e=>setLlmApiKey(e.target.value)) : undefined}
-              style={{ width:"100%", background:cs.surface, border:"1px solid "+(isLLM&&f.k==="key"&&llmApiKey?cs.green:cs.border), borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
-            {isLLM && f.k==="key" && llmApiKey && <div style={{ fontSize:10, color:cs.green, marginTop:3 }}>✓ API Key tersimpan — ARA Chat siap digunakan</div>}
-          </div>
-        ))}
+        {fields.map(f => {
+          const isUrlField   = isLLM && f.k === "url";
+          const isKeyField   = isLLM && f.k === "key";
+          const val   = isUrlField ? ollamaUrl : isKeyField ? llmApiKey : "";
+          const setter = isUrlField ? (e=>setOllamaUrl(e.target.value)) : isKeyField ? (e=>setLlmApiKey(e.target.value)) : undefined;
+          const isSet = isUrlField ? !!ollamaUrl : isKeyField ? !!llmApiKey : false;
+          return (
+            <div key={f.k}>
+              <div style={{ fontSize:11, color:cs.muted, marginBottom:3 }}>{f.label}</div>
+              <input type={f.t||"text"} placeholder={f.ph}
+                value={isLLM ? val : undefined}
+                onChange={isLLM ? setter : undefined}
+                style={{ width:"100%", background:cs.surface, border:"1px solid "+(isSet?cs.green:cs.border), borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+              {isSet && <div style={{ fontSize:10, color:cs.green, marginTop:3 }}>✓ {isUrlField?"URL tersimpan — siap test koneksi":"API Key tersimpan"}</div>}
+            </div>
+          );
+        })}
       </div>
     );
 
@@ -2596,9 +2653,16 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 <span key={m} onClick={() => setLlmModel(m)} style={{ padding:"5px 10px", borderRadius:7, background:llmModel===m?cs.accent+"22":cs.surface, border:"1px solid "+(llmModel===m?cs.accent:cs.border), fontSize:11, color:llmModel===m?cs.accent:cs.muted, fontFamily:"monospace", cursor:"pointer" }}>{m}</span>
               ))}
             </div>
+            {llmProvider === "ollama" && (
+              <div style={{ marginTop:8 }}>
+                <div style={{ fontSize:11, color:cs.muted, marginBottom:4 }}>Atau ketik nama model custom (harus sama dengan <code style={{background:cs.surface,padding:"1px 5px",borderRadius:3}}>ollama list</code>):</div>
+                <input value={llmModel} onChange={e=>setLlmModel(e.target.value)} placeholder="contoh: llama3, mistral, qwen2.5:7b ..."
+                  style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.accent+"44", borderRadius:7, padding:"8px 11px", color:cs.text, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }} />
+              </div>
+            )}
             {activeLLM.note && <div style={{ marginTop:6, fontSize:11, color:cs.accent }}>💡 {activeLLM.note}</div>}
           </div>
-          <div style={{ fontSize:12, fontWeight:700, color:cs.text, marginBottom:8 }}>🔑 Kredensial {activeLLM.label}</div>
+          <div style={{ fontSize:12, fontWeight:700, color:cs.text, marginBottom:8 }}>{llmProvider==="ollama"?"🦙 Konfigurasi Ollama":"🔑 Kredensial "+activeLLM.label}</div>
           <FieldList fields={activeLLM.fields} isLLM={true} />
           <GuideBox guide={activeLLM.guide} title={"Cara dapat API Key — " + activeLLM.label} />
 
@@ -2623,22 +2687,44 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
 
           <div style={{ display:"flex", gap:8 }}>
             <button onClick={async () => {
-              if (!llmApiKey) { showNotif("❌ Masukkan API Key dulu"); return; }
+              if (llmProvider !== "ollama" && !llmApiKey) { showNotif("❌ Masukkan API Key dulu"); return; }
+              if (llmProvider === "ollama" && !ollamaUrl) { showNotif("❌ Masukkan URL Ollama dulu (contoh: http://localhost:11434)"); return; }
               setLlmStatus("testing");
               try {
                 let ok = false;
-                if (llmProvider === "openai") {
+                if (llmProvider === "ollama") {
+                  const baseUrl = (ollamaUrl||"http://localhost:11434").replace(/\/+$/, "");
+                  // Test: GET /api/tags untuk list model yang tersedia
+                  const r = await fetch(baseUrl + "/api/tags", { method:"GET" }).catch(e=>{throw new Error("Tidak bisa koneksi ke "+baseUrl+" — pastikan Ollama berjalan & URL benar. Error: "+e.message);});
+                  const d = await r.json().catch(()=>({}));
+                  if (!r.ok) throw new Error("Ollama server error " + r.status);
+                  const models = (d.models||[]).map(m=>m.name||m.model||m).join(", ");
+                  setLlmStatus("connected");
+                  showNotif("✅ Ollama terkoneksi! Model tersedia: " + (models||"(kosong — jalankan: ollama pull llama3)"));
+                  return; // done for ollama
+                } else if (llmProvider === "openai") {
                   const r = await fetch("https://api.openai.com/v1/chat/completions", {
                     method:"POST", headers:{"Content-Type":"application/json","Authorization":"Bearer "+llmApiKey},
                     body:JSON.stringify({model:llmModel||"gpt-4o-mini",max_tokens:10,messages:[{role:"user",content:"Hi"}]})
                   });
                   ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"OpenAI error "+r.status);}
                 } else if (llmProvider === "gemini") {
-                  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${llmModel||"gemini-1.5-flash"}:generateContent?key=${llmApiKey}`, {
-                    method:"POST", headers:{"Content-Type":"application/json"},
-                    body:JSON.stringify({contents:[{role:"user",parts:[{text:"Hi"}]}]})
-                  });
-                  ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"Gemini error");}
+                  const testModel = llmModel || "gemini-2.0-flash-exp";
+                  const r = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent?key=${llmApiKey}`,
+                    { method:"POST", headers:{"Content-Type":"application/json"},
+                      body:JSON.stringify({ contents:[{role:"user",parts:[{text:"Hi, reply with just OK"}]}], generationConfig:{maxOutputTokens:5} })
+                    }
+                  );
+                  const rd = await r.json();
+                  if (!r.ok) {
+                    const errMsg = rd.error?.message || ("Gemini error " + r.status);
+                    // Common errors:
+                    if (r.status === 400) throw new Error("API Key tidak valid atau model '"+testModel+"' tidak ditemukan. Coba model: gemini-1.5-flash");
+                    if (r.status === 403) throw new Error("API Key tidak punya akses. Aktifkan Generative Language API di Google Cloud Console.");
+                    throw new Error(errMsg);
+                  }
+                  ok = true;
                 } else {
                   const r = await fetch("https://api.anthropic.com/v1/messages", {
                     method:"POST", headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
@@ -2647,7 +2733,8 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"Claude error");}
                 }
                 setLlmStatus("connected");
-                showNotif("✅ Koneksi " + activeLLM.label + " berhasil! ARA Chat siap digunakan.");
+                const modelInfo = llmModel ? " ("+llmModel+")" : "";
+                showNotif("✅ Koneksi " + activeLLM.label + modelInfo + " berhasil! ARA Chat siap digunakan.");
               } catch(e) { setLlmStatus("not_connected"); showNotif("❌ Koneksi gagal: " + e.message); }
             }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.ara+",#7c3aed)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
@@ -2908,7 +2995,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
         <div style={{ padding:"16px 14px", borderBottom:"1px solid "+cs.border }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
             <div style={{ fontWeight:800, fontSize:16, color:cs.accent }}>⬡ AClean</div>
-            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v12</span>
+            <span style={{ fontSize:9, color:cs.accent, fontWeight:700, background:cs.accent+"18", padding:"2px 6px", borderRadius:4, border:"1px solid "+cs.accent+"33" }}>v14</span>
           </div>
           {currentUser && (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
