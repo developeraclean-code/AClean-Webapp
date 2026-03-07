@@ -245,7 +245,17 @@ export default function ACleanWebApp() {
   };
 
   // ── Settings: _ls HARUS dideklarasi SEBELUM useState yang memakainya ──
-  const _ls = (key, def) => { try { const v = localStorage.getItem("aclean_"+key); return v !== null ? JSON.parse(v) : def; } catch { return def; } };
+  const _ls = (key, def) => {
+  try {
+    const v = localStorage.getItem("aclean_"+key);
+    if (v === null) return def;
+    const parsed = JSON.parse(v);
+    // Jika default adalah string tapi tersimpan sebagai array (versi lama), convert
+    if (typeof def === "string" && Array.isArray(parsed)) return parsed.join("\n");
+    if (typeof def === "string" && typeof parsed !== "string") return def;
+    return parsed;
+  } catch { return def; }
+};
   const _lsSave = (key, val) => { try { localStorage.setItem("aclean_"+key, JSON.stringify(val)); } catch {} };
 
   // ── Settings state ──
@@ -260,7 +270,13 @@ export default function ACleanWebApp() {
   const [storageProvider, setStorageProvider] = useState("r2");
   const [storageStatus,   setStorageStatus]   = useState("not_connected");
   const [dbProvider,      setDbProvider]      = useState("supabase");
-  const [brainMd,         setBrainMd]         = useState(() => _ls("brainMd", BRAIN_MD_DEFAULT));
+  const [brainMd,         setBrainMd]         = useState(() => {
+    const val = _ls("brainMd", BRAIN_MD_DEFAULT);
+    // Sanitize: jika tersimpan sebagai array dari versi lama, convert ke string
+    if (Array.isArray(val)) return val.join("\n");
+    if (typeof val !== "string") return BRAIN_MD_DEFAULT;
+    return val;
+  });
 
   // ── Cron jobs ──
   const [cronJobs, setCronJobs] = useState([
@@ -420,6 +436,24 @@ export default function ACleanWebApp() {
   const isRealUUID = (id) => !!id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
 
   // ── Auto-save settings ke localStorage saat berubah ──
+  // ── Startup cleanup: fix nilai lama yang tersimpan sebagai array ──
+  useEffect(() => {
+    const stringKeys = ["brainMd","waProvider","llmProvider","llmApiKey","llmModel","ollamaUrl","llmStatus","fonnteKey","wapiToken","wapiUrl"];
+    stringKeys.forEach(key => {
+      try {
+        const raw = localStorage.getItem("aclean_"+key);
+        if (raw !== null) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            localStorage.setItem("aclean_"+key, JSON.stringify(parsed.join("\n")));
+          } else if (typeof parsed !== "string" && parsed !== null && typeof parsed !== "boolean" && typeof parsed !== "number") {
+            localStorage.removeItem("aclean_"+key);
+          }
+        }
+      } catch(e) { try { localStorage.removeItem("aclean_"+key); } catch(_) {} }
+    });
+  }, []);
+
   useEffect(() => { _lsSave("llmProvider", llmProvider); }, [llmProvider]);
   useEffect(() => { _lsSave("llmApiKey",   llmApiKey);   }, [llmApiKey]);
   useEffect(() => { _lsSave("llmModel",    llmModel);    }, [llmModel]);
@@ -902,7 +936,7 @@ export default function ACleanWebApp() {
         fullText = d.reply || "";
       } else if (llmApiKey || llmProvider === "ollama") {
         // ── Fallback: direct call sesuai provider yang dipilih ──
-        const sysP = brainMd+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
+        const sysP = (typeof brainMd==="string"?brainMd:BRAIN_MD_DEFAULT)+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
 
         if (llmProvider === "ollama") {
           // ── Ollama Local / ngrok ──
@@ -2896,11 +2930,11 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               <button onClick={() => setModalBrainEdit(true)} style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:700 }}>✏️ Edit Brain</button>
             </div>
             <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", fontSize:11, color:cs.muted, maxHeight:130, overflow:"auto", fontFamily:"monospace", lineHeight:1.6, whiteSpace:"pre-wrap" }}>
-              {brainMd.slice(0,500)}{brainMd.length>500?"...":""}
+              {(typeof brainMd==="string"?brainMd:"").slice(0,500)}{(typeof brainMd==="string"?brainMd:"").length>500?"...":""}
             </div>
             <div style={{ display:"flex", gap:14, marginTop:8, fontSize:11, color:cs.muted }}>
-              <span>📝 {(brainMd||"").split("\n").length} baris</span>
-              <span>🔤 {brainMd.length} karakter</span>
+              <span>📝 {(typeof brainMd==="string"?brainMd:"").split("\n").length} baris</span>
+              <span>🔤 {typeof brainMd==="string"?brainMd.length:0} karakter</span>
               <span style={{ color:cs.green }}>✅ Dikirim sebagai system prompt ke {activeLLM.label}</span>
             </div>
           </div>
@@ -3659,8 +3693,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               <button onClick={() => setModalBrainEdit(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:24, cursor:"pointer" }}>×</button>
             </div>
             <div style={{ background:cs.ara+"08", borderBottom:"1px solid "+cs.border, padding:"8px 22px", display:"flex", gap:20, fontSize:11, flexShrink:0 }}>
-              <span style={{ color:cs.muted }}>📝 Baris: <strong style={{color:cs.text}}>{(brainMd||"").split("\n").length}</strong></span>
-              <span style={{ color:cs.muted }}>🔤 Karakter: <strong style={{color:cs.text}}>{brainMd.length}</strong></span>
+              <span style={{ color:cs.muted }}>📝 Baris: <strong style={{color:cs.text}}>{(typeof brainMd==="string"?brainMd:"").split("\n").length}</strong></span>
+              <span style={{ color:cs.muted }}>🔤 Karakter: <strong style={{color:cs.text}}>{typeof brainMd==="string"?brainMd.length:0}</strong></span>
               <span style={{ color:cs.muted }}>💡 Gunakan # untuk heading</span>
             </div>
             <textarea value={brainMd} onChange={e => setBrainMd(e.target.value)}
