@@ -1,31 +1,48 @@
 // api/send-wa.js
-// POST /api/send-wa  { phone, message }
-// Proxy ke Fonnte — token aman di server
+// Vercel Serverless Function — kirim pesan WA via Fonnte
+// Dipanggil dari App.jsx frontend (sendWA function)
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin","*");
-  res.setHeader("Access-Control-Allow-Methods","POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers","Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST")   return res.status(405).json({error:"Method not allowed"});
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
   const { phone, message } = req.body || {};
-  if (!phone || !message) return res.status(400).json({error:"phone dan message wajib diisi"});
+
+  if (!phone || !message) {
+    return res.status(400).json({ success: false, error: "phone and message required" });
+  }
 
   const token = process.env.FONNTE_TOKEN;
-  if (!token) return res.status(500).json({error:"FONNTE_TOKEN belum diset di Vercel Environment Variables"});
+  if (!token) {
+    return res.status(503).json({ success: false, error: "FONNTE_TOKEN not configured" });
+  }
 
   try {
-    const r = await fetch("https://api.fonnte.com/send", {
-      method:"POST",
-      headers:{ "Authorization": token, "Content-Type":"application/json" },
-      body: JSON.stringify({ target: phone, message, countryCode:"62", typing:true, delay:1 }),
+    const formData = new URLSearchParams({
+      target:      phone.replace(/\D/g, ""),
+      message,
+      countryCode: "62"
     });
-    const data = await r.json();
-    if (!r.ok || data.status === false)
-      return res.status(500).json({error: data.reason || "Gagal kirim WA", detail: data});
-    return res.status(200).json({success:true, data});
-  } catch(err) {
-    return res.status(500).json({error: err.message});
+
+    const fonRes = await fetch("https://api.fonnte.com/send", {
+      method:  "POST",
+      headers: { "Authorization": token },
+      body:    formData
+    });
+
+    const data = await fonRes.json();
+
+    if (!fonRes.ok || data.status === false) {
+      return res.status(200).json({
+        success: false,
+        error:   data.reason || data.message || "Fonnte error"
+      });
+    }
+
+    return res.status(200).json({ success: true, data });
+
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 }
