@@ -997,9 +997,11 @@ export default function ACleanWebApp() {
       if (backendRes?.ok) {
         const d = await backendRes.json();
         fullText = d.reply || "";
-      } else if (llmApiKey || llmProvider === "ollama") {
-        // ── Fallback: direct call sesuai provider yang dipilih ──
-        const sysP = (typeof brainMd==="string"?brainMd:BRAIN_MD_DEFAULT)+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
+      } else if (!backendRes && (llmApiKey || llmProvider === "ollama")) {
+        // ── Fallback HANYA jika /api/ara-chat tidak tersedia (localhost dev) ──
+        // Di production Vercel: proxy selalu ada, API key AMAN di server
+        const sysP = (typeof brainMd==="string"?brainMd:BRAIN_MD_DEFAULT)+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}
+- {"type":"CREATE_INVOICE","order_id":"ORD-xxx"}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
 
         if (llmProvider === "ollama") {
           // ── Ollama Local / ngrok ──
@@ -1071,6 +1073,9 @@ export default function ACleanWebApp() {
                 parameters:{ type:"OBJECT", properties:{
                   id:{type:"STRING"}, reason:{type:"STRING"}
                 }, required:["id"]}
+              },
+              { name:"create_invoice", description:"Buat invoice dari order yang sudah selesai",
+                parameters:{ type:"OBJECT", properties:{ order_id:{type:"STRING"} }, required:["order_id"]}
               },
               { name:"mark_invoice_paid", description:"Tandai invoice lunas",
                 parameters:{ type:"OBJECT", properties:{ id:{type:"STRING"} }, required:["id"]}
@@ -1156,6 +1161,7 @@ export default function ACleanWebApp() {
               update_order_status:  { type:"UPDATE_ORDER_STATUS",   ...args },
               reschedule_order:     { type:"RESCHEDULE_ORDER",      ...args },
               cancel_order:         { type:"CANCEL_ORDER",          ...args },
+              create_invoice:       { type:"CREATE_INVOICE",        ...args },
               mark_invoice_paid:    { type:"MARK_PAID",             ...args },
               approve_invoice:      { type:"APPROVE_INVOICE",       ...args },
               update_stock:         { type:"UPDATE_STOCK",          ...args },
@@ -1284,6 +1290,36 @@ export default function ACleanWebApp() {
             if (oErr) console.warn("Create order DB:", oErr.message);
             addAgentLog("ARA_CREATE_ORDER", "ARA buat order " + newId + " untuk " + newOrd.customer, "SUCCESS");
             ar = "\n✅ *Order " + newId + " dibuat untuk " + newOrd.customer + " — " + newOrd.service + " " + newOrd.units + " unit, " + newOrd.date + " jam " + newOrd.time + "*";
+          } else if (act.type==="CREATE_INVOICE") {
+            // Buat invoice dari order yang sudah COMPLETED
+            const ord = ordersData.find(o => o.id === act.order_id);
+            if (!ord) { ar = "\n⚠️ *Order " + act.order_id + " tidak ditemukan*"; }
+            else {
+              const today = new Date().toISOString().slice(0,10);
+              const seq2  = (invoicesData.length + 1).toString().padStart(3,"0");
+              const invId = "INV-" + today.replace(/-/g,"").slice(2,8) + "-" + seq2;
+              const labor = PRICE_LIST[ord.service]?.[ord.type || "default"] || PRICE_LIST[ord.service]?.["default"] || 80000;
+              const newInv = {
+                id: invId, job_id: ord.id,
+                customer: ord.customer, phone: ord.phone || "",
+                service: ord.service + (ord.type ? " - " + ord.type : ""),
+                units: ord.units || 1,
+                labor: labor * (ord.units || 1),
+                material: 0, dadakan: 0, discount: 0,
+                total: labor * (ord.units || 1),
+                status: "PENDING",
+                due: new Date(Date.now() + 3*86400000).toISOString().slice(0,10),
+                sent: false, created_at: new Date().toISOString()
+              };
+              setInvoicesData(prev => [...prev, newInv]);
+              const {error:invErr} = await supabase.from("invoices").insert(newInv);
+              if (invErr) console.warn("Create invoice DB:", invErr.message);
+              // Link invoice ke order
+              setOrdersData(prev => prev.map(o => o.id===ord.id ? {...o, invoice_id:invId} : o));
+              await supabase.from("orders").update({invoice_id:invId}).eq("id",ord.id);
+              addAgentLog("ARA_CREATE_INVOICE","ARA buat invoice "+invId+" dari "+ord.id+" — "+newInv.customer,"SUCCESS");
+              ar = "\n✅ *Invoice " + invId + " dibuat untuk " + newInv.customer + " — Total: " + newInv.total.toLocaleString("id-ID") + "*";
+            }
           } else if (act.type==="CANCEL_ORDER") {
             setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,status:"CANCELLED"}:o));
             await supabase.from("orders").update({status:"CANCELLED"}).eq("id",act.id);
