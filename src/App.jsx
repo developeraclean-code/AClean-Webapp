@@ -143,16 +143,16 @@ const BRAIN_MD_DEFAULT = `# ARA BRAIN v4.0 — AClean Service
 > Data tim diambil LIVE dari bizContext.teknisiWorkload dan bizContext.helperList
 > SELALU gunakan data live ini — jangan mengarang nama teknisi/helper
 
-**Cara baca data:**
-- `bizContext.teknisiWorkload` = list teknisi aktif beserta skills, phone, jobsToday
-- `bizContext.helperList` = list helper aktif beserta skills, phone, jobsToday
+Cara baca data:
+- bizContext.teknisiWorkload = list teknisi aktif beserta nama, skills, phone, jobsToday
+- bizContext.helperList = list helper aktif beserta nama, skills, phone, jobsToday
 - Jika list kosong = belum ada di database, minta Owner input via menu Tim Teknisi
 
-**Rules assign teknisi:**
-1. Cek `skills` teknisi — cocokkan dengan jenis layanan
-2. Cek `jobsToday` — pilih yang paling sedikit job hari ini
-3. Helper wajib untuk order ≥3 unit atau Pasang AC Baru
-4. Jika teknisi tidak ada di list = tolak dan tampilkan list yang tersedia
+Rules assign teknisi:
+1. Cek field skills teknisi — cocokkan dengan jenis layanan yang diminta
+2. Cek field jobsToday — pilih yang paling sedikit job hari ini
+3. Helper wajib untuk order 3+ unit atau Pasang AC Baru
+4. Jika nama teknisi tidak ada di list = tolak dan tampilkan daftar yang tersedia
 
 ## RULES EKSEKUSI
 - Selalu konfirmasi ke user setelah eksekusi aksi
