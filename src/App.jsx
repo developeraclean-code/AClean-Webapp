@@ -330,6 +330,8 @@ export default function ACleanWebApp() {
 
   // ── Settings state ──
   const [waProvider,      setWaProvider]      = useState(() => _ls("waProvider", "fonnte"));
+  const [waToken,         setWaToken]         = useState(() => _ls("waToken",    ""));
+  const [waDevice,        setWaDevice]        = useState(() => _ls("waDevice",   ""));
   const [waStatus,        setWaStatus]        = useState("not_connected");
 
   const [llmProvider,     setLlmProvider]     = useState(() => _ls("llmProvider", "claude"));
@@ -539,6 +541,8 @@ export default function ACleanWebApp() {
   useEffect(() => { _lsSave("brainMd",        brainMd);           }, [brainMd]);
   useEffect(() => { _lsSave("brainMdCustomer", brainMdCustomer); }, [brainMdCustomer]);
   useEffect(() => { _lsSave("waProvider",  waProvider);  }, [waProvider]);
+  useEffect(() => { _lsSave("waToken",     waToken);     }, [waToken]);
+  useEffect(() => { _lsSave("waDevice",    waDevice);    }, [waDevice]);
   useEffect(() => { _lsSave("llmStatus",   llmStatus);   }, [llmStatus]);
 
   useEffect(() => {
@@ -3104,22 +3108,31 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
     const llmSC = llmStatus==="connected"?cs.green:llmStatus==="testing"?cs.yellow:cs.muted;
     const stoSC = storageStatus==="connected"?cs.green:storageStatus==="testing"?cs.yellow:cs.muted;
 
+    // WA field getter/setter map — token & device tersimpan di state + localStorage
+    const waFieldMap = {
+      token:  { val: waToken,  set: e => setWaToken(e.target.value)  },
+      device: { val: waDevice, set: e => setWaDevice(e.target.value) },
+    };
     const FieldList = ({ fields, isLLM }) => (
       <div style={{ display:"grid", gap:8, marginBottom:12 }}>
         {fields.map(f => {
-          const isUrlField   = isLLM && f.k === "url";
-          const isKeyField   = isLLM && f.k === "key";
-          const val   = isUrlField ? ollamaUrl : isKeyField ? llmApiKey : "";
-          const setter = isUrlField ? (e=>setOllamaUrl(e.target.value)) : isKeyField ? (e=>setLlmApiKey(e.target.value)) : undefined;
-          const isSet = isUrlField ? !!ollamaUrl : isKeyField ? !!llmApiKey : false;
+          const isUrlField  = isLLM && f.k === "url";
+          const isKeyField  = isLLM && f.k === "key";
+          const isWAField   = !isLLM && waFieldMap[f.k];
+          const val    = isUrlField ? ollamaUrl : isKeyField ? llmApiKey : isWAField ? waFieldMap[f.k].val : "";
+          const setter = isUrlField ? (e=>setOllamaUrl(e.target.value))
+                       : isKeyField ? (e=>setLlmApiKey(e.target.value))
+                       : isWAField  ? waFieldMap[f.k].set
+                       : undefined;
+          const isSet  = !!val;
           return (
             <div key={f.k}>
               <div style={{ fontSize:11, color:cs.muted, marginBottom:3 }}>{f.label}</div>
               <input type={f.t||"text"} placeholder={f.ph}
-                value={isLLM ? val : undefined}
-                onChange={isLLM ? setter : undefined}
+                value={val}
+                onChange={setter}
                 style={{ width:"100%", background:cs.surface, border:"1px solid "+(isSet?cs.green:cs.border), borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
-              {isSet && <div style={{ fontSize:10, color:cs.green, marginTop:3 }}>✓ {isUrlField?"URL tersimpan — siap test koneksi":"API Key tersimpan"}</div>}
+              {isSet && <div style={{ fontSize:10, color:cs.green, marginTop:3 }}>✓ {f.label} tersimpan</div>}
             </div>
           );
         })}
@@ -3174,7 +3187,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
           <FieldList fields={activeWA.fields} />
           <GuideBox guide={activeWA.guide} title={"Setup " + activeWA.label} />
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={async () => { setWaStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"wa"})}); const d=await r.json(); setWaStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setWaStatus("not_connected"); showNotif("❌ "+e.message); } }}
+            <button onClick={async () => { setWaStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"wa",provider:waProvider,token:waToken,device:waDevice})}); const d=await r.json(); setWaStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setWaStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {waStatus==="testing" ? "⏳ Testing..." : "🔌 Test & Simpan Koneksi"}
             </button>
@@ -3262,7 +3275,14 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
             <div style={{ display:"flex", gap:14, marginTop:8, fontSize:11, color:cs.muted }}>
               <span>📝 {brainMdCustomer.split("\n").length} baris</span>
               <span>🔤 {brainMdCustomer.length} karakter</span>
-              <span style={{ color:"#22c55e" }}>✅ Dipakai webhook /api/fonnte-webhook</span>
+              <span style={{ color: waToken ? "#22c55e" : cs.yellow }}>
+                    {waToken ? "✅ Token tersimpan — kirim WA aktif" : "⚠️ Masukkan token Fonnte di atas"}
+                  </span>
+                  <div style={{ fontSize:10, color:cs.muted, marginTop:4 }}>
+                    📤 Kirim WA (dispatch, reminder): free tier ✅<br/>
+                    📥 Terima WA customer (bot ARA): butuh upgrade Fonnte + webhook URL:<br/>
+                    <span style={{ color:cs.accent, fontFamily:"monospace" }}>https://a-clean-webapp.vercel.app/api/fonnte-webhook</span>
+                  </div>
             </div>
           </div>
 
