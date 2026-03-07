@@ -13,9 +13,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: "phone and message required" });
   }
 
-  const token = process.env.FONNTE_TOKEN;
+  // Token bisa dari env var (production) atau dari request body (testing/fallback)
+  const token = process.env.FONNTE_TOKEN || req.body.token;
   if (!token) {
-    return res.status(503).json({ success: false, error: "FONNTE_TOKEN not configured" });
+    return res.status(503).json({ success: false, error: "FONNTE_TOKEN belum dikonfigurasi di Vercel env vars" });
   }
 
   try {
