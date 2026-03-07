@@ -373,6 +373,7 @@ export default function ACleanWebApp() {
 
   // ── WA Conversations reaktif ──
   const [waConversations, setWaConversations] = useState(WA_CONVERSATIONS);
+  const [waMessages,     setWaMessages]     = useState([]);  // chat history conv aktif
 
   // ── Statistik periode filter ──
   const [statsPeriod, setStatsPeriod] = useState("bulan"); // "hari"|"bulan"|"tahun"
@@ -683,12 +684,41 @@ export default function ACleanWebApp() {
           .then(({data}) => { if(data && data.length > 0) setLaporanReports(data.map(r=>({...r,units:r.units||[],materials:r.materials||[],fotos:r.fotos||(r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),editLog:r.edit_log||[]})));  }))
       .subscribe();
 
+    // WA Conversations realtime
+    const ch6 = supabase.channel("rt-wa-conv")
+      .on("postgres_changes", { event:"*", schema:"public", table:"wa_conversations" }, () =>
+        supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
+          .then(({data}) => { if(data) setWaConversations(data); }))
+      .subscribe();
+
+    // WA Messages realtime — reload history saat ada pesan baru
+    const ch7 = supabase.channel("rt-wa-msg")
+      .on("postgres_changes", { event:"INSERT", schema:"public", table:"wa_messages" }, (payload) => {
+        // Reload messages jika phone = selectedConv yang sedang dibuka
+        setWaMessages(prev => {
+          if (prev.length === 0) return prev; // tidak ada conv aktif
+          const phone = payload.new?.phone;
+          if (!phone) return prev;
+          // Append message baru jika milik conv yang sedang dibuka
+          if (prev[0]?.phone === phone || (prev.length > 0 && prev[0].phone === phone)) {
+            return [...prev, payload.new];
+          }
+          return prev;
+        });
+        // Juga reload wa_conversations untuk update last_message
+        supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
+          .then(({data}) => { if(data) setWaConversations(data); });
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(ch1);
       supabase.removeChannel(ch2);
+      supabase.removeChannel(ch3);
       supabase.removeChannel(ch4);
       supabase.removeChannel(ch5);
-      supabase.removeChannel(ch3);
+      supabase.removeChannel(ch6);
+      supabase.removeChannel(ch7);
     };
   }, [isLoggedIn]);
 
@@ -767,7 +797,15 @@ export default function ACleanWebApp() {
         wa_message: msg, status:"SENT"
       }).catch(()=>{});
       addAgentLog("DISPATCH_SENT", `WA dispatch ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
-      showNotif(`✅ Dispatch WA terkirim ke ${order.teknisi}`);
+      // Tandai teknisi sedang on-job saat dispatch
+          const dispTek = teknisiData.find(t => t.name === order.teknisi);
+          if (dispTek?.id) {
+            setTeknisiData(prev => prev.map(t =>
+              t.name === order.teknisi ? {...t, status:"on-job"} : t
+            ));
+            supabase.from("user_profiles").update({status:"on-job"}).eq("id", dispTek.id);
+          }
+          showNotif(`✅ Dispatch WA terkirim ke ${order.teknisi}`);
     }
   };
 
@@ -1290,7 +1328,7 @@ export default function ACleanWebApp() {
             } else ar=`\n⚠️ *Material tidak ditemukan*`;
           } else if (act.type==="CREATE_ORDER") {
             const today = new Date().toISOString().slice(0,10);
-            const seq = (ordersData.length + 1).toString().padStart(3,"0");
+            const seq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
             const newId = "ORD-" + (act.date||today).replace(/-/g,"").slice(2,8) + "-" + seq;
             const newOrd = {
               id: newId,
@@ -1319,7 +1357,7 @@ export default function ACleanWebApp() {
             if (!ord) { ar = "\n⚠️ *Order " + act.order_id + " tidak ditemukan*"; }
             else {
               const today = new Date().toISOString().slice(0,10);
-              const seq2  = (invoicesData.length + 1).toString().padStart(3,"0");
+              const seq2  = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
               const invId = "INV-" + today.replace(/-/g,"").slice(2,8) + "-" + seq2;
               const labor = PRICE_LIST[ord.service]?.[ord.type || "default"] || PRICE_LIST[ord.service]?.["default"] || 80000;
               const newInv = {
@@ -1352,6 +1390,24 @@ export default function ACleanWebApp() {
             const upd = {date:act.date,time:act.time||"09:00",...(act.teknisi?{teknisi:act.teknisi}:{})};
             setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,...upd}:o));
             await supabase.from("orders").update(upd).eq("id",act.id);
+            // Auto-kirim WA notifikasi reschedule ke teknisi
+            const rOrd = ordersData.find(o=>o.id===act.id);
+            if (rOrd) {
+              const tekData = teknisiData.find(t=>t.name===(act.teknisi||rOrd.teknisi));
+              if (tekData?.phone) {
+                const rMsg = `📅 *Jadwal Diubah*
+
+Halo ${tekData.name}, jadwal order *${act.id}* telah diubah:
+👤 Customer: ${rOrd.customer}
+📍 Alamat: ${rOrd.address||"-"}
+🔧 Layanan: ${rOrd.service}
+📅 Tanggal baru: ${act.date}
+⏰ Jam: ${act.time||"09:00"}
+
+Mohon sesuaikan jadwal Anda. Terima kasih!`;
+                sendWA(tekData.phone, rMsg);
+              }
+            }
             addAgentLog("ARA_RESCHEDULE",`ARA reschedule ${act.id} → ${act.date} ${act.time||"09:00"}`,"SUCCESS");
             ar=`\n✅ *Order ${act.id} dijadwal ulang → ${act.date} jam ${act.time||"09:00"}*`;
           } else if (act.type==="MARK_INVOICE_OVERDUE") {
@@ -1969,7 +2025,13 @@ export default function ACleanWebApp() {
     const activeTek = isTekRole ? myTekName : filterTeknisi;
 
     const allTekNames = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
-    const filteredOrders = activeTek === "Semua" ? ordersData : ordersData.filter(o => o.teknisi === activeTek);
+    // Helper: lihat jadwal via field o.helper, bukan o.teknisi
+    const isHelperRole = currentUser?.role === "Helper";
+    const filteredOrders = activeTek === "Semua" 
+      ? ordersData 
+      : ordersData.filter(o => isHelperRole 
+          ? (o.helper === activeTek || o.teknisi === activeTek)
+          : o.teknisi === activeTek);
     const teknisiList = activeTek === "Semua" ? allTekNames : [activeTek];
 
     return (
@@ -2216,9 +2278,9 @@ export default function ACleanWebApp() {
   const hitungDurasi = (service, units) => {
     const u = parseInt(units) || 1;
     if (service === "Install") {
-      // 1-3 unit = 1 hari (09:00-17:00 = 8 jam), 4+ unit = 2 hari
-      if (u <= 3) return 8;
-      return 16; // 2 hari kerja
+      // Per unit ±2.5 jam (termasuk leveling, test run, briefing customer)
+      // Max 1 hari = 8 jam → mulai blok hari berikutnya jika >8
+      return Math.min(u * 2.5, 8);
     }
     if (service === "Repair") {
       // 60-120 menit per unit, pakai 90 menit rata-rata
@@ -2252,15 +2314,17 @@ export default function ACleanWebApp() {
   };
 
   // Cek apakah teknisi AVAILABLE di slot waktu tertentu (tidak overlap)
-  const cekTeknisiAvailable = (teknisiName, date, timeStart, service, units) => {
+  const cekTeknisiAvailable = (teknisiName, date, timeStart, service, units, checkAsHelper = false) => {
     const durBaru = hitungDurasi(service, units);
     const startBaru = (timeStart || "09:00").split(":").map(Number);
     const startMinBaru = startBaru[0] * 60 + startBaru[1];
     const endMinBaru   = startMinBaru + Math.round(durBaru * 60);
 
+    // Cek konflik sebagai teknisi ATAU sebagai helper
     const conflicts = ordersData.filter(o =>
-      o.teknisi === teknisiName &&
+      (checkAsHelper ? o.helper === teknisiName : (o.teknisi === teknisiName || o.helper === teknisiName)) &&
       o.date === date &&
+      // COMPLETED & SUBMITTED (laporan masuk) = pekerjaan sudah selesai → tidak block slot baru
       ["PENDING","CONFIRMED","IN_PROGRESS"].includes(o.status)
     );
 
@@ -3748,7 +3812,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   const stokAwal = parseInt(newStokForm.stock)||0;
                   const reorderPt = parseInt(newStokForm.reorder)||5;
                   const minAlert  = parseInt(newStokForm.min_alert)||2;
-                  const newCode   = "MAT"+String(inventoryData.length+1).padStart(3,"0");
+                  const newCode   = "MAT"+Date.now().toString(36).slice(-4).toUpperCase();
                   const stokStatus= stokAwal===0?"OUT":stokAwal<=minAlert?"CRITICAL":stokAwal<=reorderPt?"WARNING":"OK";
                   const newItem   = { code:newCode, name:newStokForm.name, unit:newStokForm.unit||"pcs", price:parseInt(newStokForm.price)||0, stock:stokAwal, reorder:reorderPt, min_alert:minAlert, status:stokStatus };
                   setInventoryData(prev=>[...prev,newItem]);
@@ -4234,7 +4298,15 @@ Order yang sudah ada tidak terpengaruh.`)) return;
             <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
               <div style={{ width:160, borderRight:"1px solid "+cs.border, overflowY:"auto" }}>
                 {waConversations.map(conv => (
-                  <div key={conv.id} onClick={() => { setSelectedConv(conv); setWaConversations(prev=>prev.map(cv=>cv.id===conv.id?{...cv,unread:0}:cv)); }}
+                  <div key={conv.id} onClick={() => {
+                      setSelectedConv(conv);
+                      // Load chat history dari wa_messages
+                      supabase.from("wa_messages").select("*")
+                        .eq("phone", conv.phone)
+                        .order("created_at", { ascending: true })
+                        .limit(50)
+                        .then(({data}) => { if(data) setWaMessages(data); });
+                      setWaConversations(prev=>prev.map(cv=>cv.id===conv.id?{...cv,unread:0}:cv)); }}
                     style={{ padding:"10px 12px", borderBottom:"1px solid "+cs.border, cursor:"pointer", background:selectedConv?.id===conv.id?cs.accent+"12":"transparent" }}>
                     <div style={{ fontWeight:700, color:cs.text, fontSize:12, marginBottom:2 }}>{conv.name}</div>
                     <div style={{ fontSize:10, color:cs.muted, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{conv.last}</div>
@@ -4252,9 +4324,18 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                       <div style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{selectedConv.name}</div>
                       <div style={{ fontSize:10, color:cs.muted }}>{selectedConv.phone} · {selectedConv.intent}</div>
                     </div>
-                    <div style={{ flex:1, padding:"12px 14px", overflowY:"auto" }}>
-                      <div style={{ background:cs.card, borderRadius:10, padding:"10px 12px", marginBottom:8, maxWidth:"85%", fontSize:12, color:cs.text }}>{selectedConv.last}</div>
-                      <div style={{ background:cs.accent+"22", borderRadius:10, padding:"10px 12px", marginLeft:"auto", maxWidth:"85%", fontSize:12, color:cs.text }}>Halo {selectedConv.name}! Ada yang bisa ARA bantu?</div>
+                    <div style={{ flex:1, padding:"12px 14px", overflowY:"auto", display:"flex", flexDirection:"column", gap:8 }}>
+                      {waMessages.length === 0 ? (
+                        <div style={{ textAlign:"center", color:cs.muted, fontSize:12, paddingTop:30 }}>Memuat riwayat pesan...</div>
+                      ) : waMessages.map((msg, mi) => (
+                        <div key={msg.id||mi} style={{ display:"flex", justifyContent:msg.role==="ara"||msg.role==="admin"?"flex-end":"flex-start" }}>
+                          <div style={{ maxWidth:"80%", background:msg.role==="customer"?cs.card:cs.accent+"22", borderRadius:10, padding:"8px 12px", fontSize:12 }}>
+                            {msg.role!=="customer" && <div style={{ fontSize:10, color:cs.accent, fontWeight:700, marginBottom:3 }}>{msg.role==="ara"?"🤖 ARA":"👤 Admin"}</div>}
+                            <div style={{ color:cs.text, lineHeight:1.5, whiteSpace:"pre-wrap" }}>{msg.content}</div>
+                            <div style={{ fontSize:9, color:cs.muted, marginTop:3, textAlign:"right" }}>{msg.created_at ? new Date(msg.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}) : ""}</div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                     <div style={{ padding:"10px 14px", borderTop:"1px solid "+cs.border, display:"flex", gap:8, flexShrink:0 }}>
                       <input value={waInput} onChange={e => setWaInput(e.target.value)}
@@ -4881,6 +4962,17 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
 
         const submitLaporan = () => {
           if(incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);return;}
+          // Cek foto gagal upload — warn tapi tidak block (sesuai keputusan: teknisi bisa reupload manual)
+          const fotoGagal = laporanFotos.filter(f=>!f.url).length;
+          if(fotoGagal > 0) {
+            const lanjut = window.confirm(`⚠️ ${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).
+
+Lanjutkan submit laporan tanpa foto tersebut?
+
+• OK = lanjut submit
+• Batal = kembali & hapus foto gagal lalu upload ulang`);
+            if(!lanjut) return;
+          }
           const now = new Date().toLocaleString("id-ID",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).replace(/\//g,"-");
           const newReport = {
             id:"LPR_"+laporanModal.id+"_"+Date.now().toString(36).slice(-4).toUpperCase(),
@@ -4919,11 +5011,31 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
               });
           }, 1500);
 
-          // GAP 2 — Update order status ke COMPLETED
+          // Update order status ke COMPLETED
           setOrdersData(prev => prev.map(o =>
             o.id === laporanModal.id ? {...o, status:"COMPLETED"} : o
           ));
           supabase.from("orders").update({status:"COMPLETED"}).eq("id",laporanModal.id);
+
+          // ── Teknisi SELESAI → status kembali "active" (siap terima job baru) ──
+          // Patokan: laporan disubmit = pekerjaan selesai secara aktual
+          const finTeknisi = teknisiData.find(t => t.name === laporanModal.teknisi);
+          if (finTeknisi?.id) {
+            setTeknisiData(prev => prev.map(t =>
+              t.name === laporanModal.teknisi ? {...t, status:"active"} : t
+            ));
+            supabase.from("user_profiles").update({status:"active"}).eq("id", finTeknisi.id);
+          }
+          // Helper juga kembali active
+          if (laporanModal.helper) {
+            const finHelper = teknisiData.find(t => t.name === laporanModal.helper);
+            if (finHelper?.id) {
+              setTeknisiData(prev => prev.map(t =>
+                t.name === laporanModal.helper ? {...t, status:"active"} : t
+              ));
+              supabase.from("user_profiles").update({status:"active"}).eq("id", finHelper.id);
+            }
+          }
 
           // GAP 6 — Auto-deduct inventory dari material yang dipakai
           if (laporanMaterials.length > 0) {
@@ -4942,7 +5054,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
           const freonValue = freonTotal2 * (PRICE_LIST[freonType]||150000);
           const matTotal = hitungMaterialTotal(laporanMaterials) + freonValue;
           const today2 = new Date().toISOString().slice(0,10);
-          const invSeq = (invoicesData.length + 1).toString().padStart(3,"0");
+          const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
           const newInvoiceId = "INV-" + today2.replace(/-/g,"").slice(0,8) + "-" + invSeq;
           const newInvoice = {
             id: newInvoiceId,
@@ -5208,7 +5320,17 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                   {/* Foto */}
                   <div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>📸 Foto Dokumentasi ({laporanFotos.length}/10)</div>
+                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>
+                        📸 Foto Dokumentasi ({laporanFotos.length}/10)
+                        {laporanFotos.length > 0 && (
+                          <span style={{marginLeft:8,fontSize:11}}>
+                            <span style={{color:cs.green}}>☁️ {laporanFotos.filter(f=>f.url).length} tersimpan</span>
+                            {laporanFotos.filter(f=>!f.url).length > 0 && (
+                              <span style={{color:cs.yellow,marginLeft:6}}>⚠️ {laporanFotos.filter(f=>!f.url).length} gagal upload — hapus & upload ulang</span>
+                            )}
+                          </span>
+                        )}
+                      </div>
                       {laporanFotos.length<10&&(
                         <button onClick={()=>fotoInputRef.current?.click()}
                           style={{fontSize:11,background:cs.yellow+"15",border:"1px solid "+cs.yellow+"33",color:cs.yellow,borderRadius:6,padding:"5px 11px",cursor:"pointer",fontWeight:600}}>+ Upload</button>
@@ -5224,7 +5346,11 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
                         {laporanFotos.map(f=>(
                           <div key={f.id} style={{position:"relative"}}>
-                            <img src={f.data_url} alt={f.label} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:8,border:"1px solid "+cs.border}}/>
+                            <img src={f.data_url} alt={f.label} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:8,border:"1px solid "+(f.url?cs.green:cs.yellow),opacity:f.url?1:0.75}}/>
+                            {/* Status badge: cloud = uploaded, clock = pending */}
+                            <div style={{position:"absolute",top:4,left:4,background:f.url?"#22c55ecc":"#f59e0bcc",borderRadius:4,padding:"1px 5px",fontSize:9,color:"#fff",fontWeight:700}}>
+                              {f.url ? "☁️ OK" : "⏳"}
+                            </div>
                             <button onClick={()=>setLaporanFotos(p=>p.filter(x=>x.id!==f.id))}
                               style={{position:"absolute",top:4,right:4,background:"#000a",border:"none",color:"#fff",borderRadius:"50%",width:20,height:20,cursor:"pointer",fontSize:12,lineHeight:"20px",padding:0,textAlign:"center"}}>×</button>
                             <input value={f.label} onChange={e=>setLaporanFotos(p=>p.map(x=>x.id===f.id?{...x,label:e.target.value}:x))}
