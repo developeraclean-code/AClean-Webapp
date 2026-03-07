@@ -249,10 +249,19 @@ export default async function handler(req, res) {
   try {
     const body    = req.body || {};
     const phone   = (body.sender || body.phone || "").replace(/\D/g, "");
-    const message = (body.message || body.text  || "").trim();
+    const msgType = body.type || "text";   // "text" | "image" | "document" | "audio"
+    const mediaUrl= body.url  || body.media_url || null;
+    const rawMsg  = (body.message || body.text || "").trim();
+
+    // Jika customer kirim foto/gambar → deteksi konteks (mungkin bukti bayar)
+    const isMedia  = ["image","document"].includes(msgType) || !!mediaUrl;
+    const message  = isMedia
+      ? (rawMsg ? rawMsg : "[customer mengirim foto/dokumen]")
+      : rawMsg;
+
     const name    = body.name || body.pushname || phone;
 
-    if (!phone || !message) {
+    if (!phone || (!message && !isMedia)) {
       return res.status(200).json({ ok: true, skip: "no phone or message" });
     }
 
@@ -270,6 +279,10 @@ export default async function handler(req, res) {
 
     // Bangun system prompt dengan data order customer
     let systemPrompt = brainMd.replace(/\[PHONE\]/g, phone);
+    // Jika customer kirim foto → beri tahu ARA
+    if (isMedia) {
+      systemPrompt += `\n\n## INFO TAMBAHAN\nCustomer baru mengirim ${msgType === "image" ? "foto/gambar" : "dokumen"}. Kemungkinan: bukti transfer pembayaran, foto AC bermasalah, atau dokumen lain. Minta customer konfirmasi konteks foto jika belum jelas.`;
+    }
     if (orders.length > 0) {
       const orderList = orders.map(o =>
         `- ${o.id}: ${o.service} ${o.units}x | ${o.date} ${o.time} | ${o.status}${o.teknisi ? " | Teknisi: " + o.teknisi : ""}`
@@ -287,6 +300,78 @@ export default async function handler(req, res) {
 
     // Tambah pesan baru ke history
     const messages = [...history, { role: "user", content: message }];
+
+    // ── Deteksi pesan pembayaran SEBELUM LLM (fast path) ──────────────────
+    const msgLower = message.toLowerCase().replace(/[^a-z0-9\s]/g,'');
+    const isPaymentKeyword = /(lunas|sudah transfer|sudah bayar|transfer sudah|bukti bayar|bukti tf|udah bayar|dibayar)/.test(msgLower);
+    const invoiceInMsg    = message.match(/INV[-_]?\w+/i)?.[0] || null;
+
+    if (isPaymentKeyword || isMedia) {
+      // Cari invoice UNPAID milik customer ini dari orders
+      const { data: custOrders } = await supabase
+        .from("orders")
+        .select("id,customer,invoice_id")
+        .eq("phone", phone)
+        .in("status", ["DISPATCHED","COMPLETED","ON_SITE","WORKING","REPORT_SUBMITTED","INVOICE_APPROVED"])
+        .order("created_at", { ascending: false })
+        .limit(3);
+
+      const { data: pendingInvs } = await supabase
+        .from("invoices")
+        .select("id,customer,total,due")
+        .eq("phone", phone)
+        .in("status", ["UNPAID","OVERDUE"])
+        .order("created_at", { ascending: false })
+        .limit(3);
+
+      // Notif ke admin/owner untuk manual verifikasi
+      const OWNER_PHONE = process.env.OWNER_PHONE;
+      if (OWNER_PHONE && (pendingInvs?.length > 0 || invoiceInMsg)) {
+        const targetInv = invoiceInMsg
+          ? pendingInvs?.find(i => i.id.toUpperCase() === invoiceInMsg.toUpperCase())
+          : pendingInvs?.[0];
+
+        const adminMsg = isMedia
+          ? `📸 *Bukti Bayar Masuk!*
+
+` +
+            `Customer: *${name}* (${phone})
+` +
+            (targetInv ? `Invoice: *${targetInv.id}* — Rp ${(targetInv.total||0).toLocaleString("id-ID")}` : `Invoice belum teridentifikasi`) + `
+
+` +
+            `Customer mengirim ${msgType === "image" ? "foto bukti transfer" : "dokumen"}.
+` +
+            `${targetInv ? `Ketik di ARA Chat: *"MARK_PAID ${targetInv.id}"* setelah verifikasi manual ✅` : "Cek manual dan tandai lunas jika sudah diterima."}`
+          : `💬 *Konfirmasi Bayar dari Customer*
+
+` +
+            `Customer: *${name}* (${phone})
+` +
+            `Pesan: "${message}"
+` +
+            (targetInv ? `Invoice: *${targetInv.id}* — Rp ${(targetInv.total||0).toLocaleString("id-ID")}
+
+Ketik di ARA Chat: *"MARK_PAID ${targetInv.id}"* setelah verifikasi manual ✅` : "Cek invoice manual.");
+
+        await sendWA(OWNER_PHONE, adminMsg);
+
+        // Balas customer dengan konfirmasi pending
+        const custReply = `✅ Terima kasih ${name}! ${isMedia ? "Bukti bayar" : "Konfirmasi pembayaran"} Anda sudah kami terima.
+
+` +
+          `Tim kami sedang memverifikasi. Anda akan mendapat konfirmasi setelah pembayaran terverifikasi.
+
+` +
+          `📋 ${targetInv ? "Invoice: " + targetInv.id : "Info invoice akan dikirimkan segera"}
+
+` +
+          `Terima kasih telah menggunakan layanan *AClean* 🙏`;
+        await sendWA(phone, custReply);
+        return res.status(200).json({ ok: true, payment_pending: true, invoice: targetInv?.id });
+      }
+    }
+    // ── End deteksi pembayaran ─────────────────────────────────────────────
 
     // Panggil LLM
     let reply = await callLLM(messages, systemPrompt);
