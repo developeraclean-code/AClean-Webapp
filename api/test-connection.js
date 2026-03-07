@@ -1,124 +1,166 @@
 // api/test-connection.js
-// POST /api/test-connection { type: "wa"|"llm"|"storage"|"db", provider? }
-// Test koneksi nyata semua provider dari halaman Settings
-
-import { createClient } from "@supabase/supabase-js";
-
-const sb = () => createClient(
-  process.env.VITE_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+// Vercel Serverless Function — test koneksi WA (Fonnte) dan LLM
+// Dipanggil dari Settings → "Test & Simpan Koneksi"
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin","*");
-  res.setHeader("Access-Control-Allow-Methods","POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers","Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST")   return res.status(405).json({error:"Method not allowed"});
+  if (req.method !== "POST") {
+    return res.status(405).json({ success: false, message: "Method not allowed" });
+  }
 
-  const { type, provider } = req.body || {};
+  const { type, provider, token, device } = req.body || {};
 
-  try {
-    // ──────────── WA ────────────
-    if (type === "wa") {
-      const token = process.env.FONNTE_TOKEN;
-      if (!token) return res.json({success:false, message:"❌ FONNTE_TOKEN belum diset di Vercel"});
-      const r = await fetch("https://api.fonnte.com/validate", {
-        method:"POST", headers:{"Authorization": token}
+  // ════════════════════════════════════════════════════════
+  // TEST WA — Fonnte
+  // ════════════════════════════════════════════════════════
+  if (type === "wa") {
+    // Token bisa dari request body (diisi di Settings) atau env var
+    const fonnteToken = token || process.env.FONNTE_TOKEN;
+
+    if (!fonnteToken) {
+      return res.status(200).json({
+        success: false,
+        message: "❌ Token Fonnte belum diisi. Masukkan token di kolom API Token."
       });
-      const d = await r.json();
-      if (d.status === true)
-        return res.json({success:true, message:`✅ WhatsApp terhubung — ${d.target||"nomor aktif"}`});
-      return res.json({success:false, message:"❌ Token tidak valid: " + (d.reason||"Unknown")});
     }
 
-    // ──────────── LLM ────────────
-    if (type === "llm") {
-      const prov = provider || "claude";
+    try {
+      // Endpoint Fonnte untuk cek status device / validasi token
+      const r = await fetch("https://api.fonnte.com/get-devices", {
+        method: "POST",
+        headers: { "Authorization": fonnteToken }
+      });
 
-      if (prov === "claude") {
-        if (!process.env.ANTHROPIC_API_KEY)
-          return res.json({success:false, message:"❌ ANTHROPIC_API_KEY belum diset di Vercel"});
+      const data = await r.json();
+
+      // Fonnte mengembalikan status: true jika token valid
+      if (data.status === true) {
+        const devices = data.data || [];
+        const deviceInfo = devices.length > 0
+          ? devices.map(d => `${d.name || d.device} (${d.status || "unknown"})`).join(", ")
+          : "device terhubung";
+
+        // Jika token valid, simpan ke env (hanya berlaku di runtime ini — untuk server pake Vercel env)
+        return res.status(200).json({
+          success: true,
+          message: `✅ Fonnte terhubung! Device: ${deviceInfo}`,
+          devices
+        });
+
+      } else {
+        return res.status(200).json({
+          success: false,
+          message: `❌ Token tidak valid: ${data.reason || data.message || "cek token di dashboard Fonnte"}`
+        });
+      }
+
+    } catch (err) {
+      return res.status(200).json({
+        success: false,
+        message: `❌ Gagal koneksi ke Fonnte: ${err.message}`
+      });
+    }
+  }
+
+  // ════════════════════════════════════════════════════════
+  // TEST LLM
+  // ════════════════════════════════════════════════════════
+  if (type === "llm") {
+    const llmProvider = provider || process.env.LLM_PROVIDER || "gemini";
+    const llmApiKey   = token    || process.env.LLM_API_KEY;
+    const llmModel    = req.body.model || process.env.LLM_MODEL;
+
+    if (!llmApiKey) {
+      return res.status(200).json({
+        success: false,
+        message: "❌ API Key LLM belum diisi."
+      });
+    }
+
+    try {
+      let ok = false;
+      let modelUsed = llmModel;
+
+      if (llmProvider === "gemini") {
+        const model = llmModel || "gemini-2.5-flash";
+        const r = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${llmApiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: "Balas hanya: OK" }] }],
+              generationConfig: { maxOutputTokens: 10 }
+            })
+          }
+        );
+        const d = await r.json();
+        ok = !!d.candidates?.[0]?.content;
+        modelUsed = model;
+
+      } else if (llmProvider === "claude") {
+        const model = llmModel || "claude-sonnet-4-6";
         const r = await fetch("https://api.anthropic.com/v1/messages", {
-          method:"POST",
-          headers:{"Content-Type":"application/json","x-api-key":process.env.ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01"},
-          body: JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:5,messages:[{role:"user",content:"hi"}]})
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": llmApiKey,
+            "anthropic-version": "2023-06-01"
+          },
+          body: JSON.stringify({
+            model, max_tokens: 10,
+            messages: [{ role: "user", content: "Balas hanya: OK" }]
+          })
         });
         const d = await r.json();
-        if (r.ok) return res.json({success:true, message:"✅ Claude (Anthropic) terhubung"});
-        return res.json({success:false, message:"❌ Claude error: " + d.error?.message});
-      }
+        ok = !!d.content?.[0]?.text;
+        modelUsed = model;
 
-      if (prov === "openai") {
-        if (!process.env.OPENAI_API_KEY)
-          return res.json({success:false, message:"❌ OPENAI_API_KEY belum diset di Vercel"});
-        const r = await fetch("https://api.openai.com/v1/models", {
-          headers:{"Authorization":"Bearer "+process.env.OPENAI_API_KEY}
+      } else if (llmProvider === "openai") {
+        const model = llmModel || "gpt-4o-mini";
+        const r = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmApiKey}` },
+          body: JSON.stringify({
+            model, max_tokens: 10,
+            messages: [{ role: "user", content: "Balas hanya: OK" }]
+          })
         });
-        if (r.ok) return res.json({success:true, message:"✅ OpenAI terhubung"});
-        return res.json({success:false, message:"❌ OpenAI API key tidak valid"});
-      }
+        const d = await r.json();
+        ok = !!d.choices?.[0]?.message;
+        modelUsed = model;
 
-      if (prov === "gemini") {
-        if (!process.env.GEMINI_API_KEY)
-          return res.json({success:false, message:"❌ GEMINI_API_KEY belum diset di Vercel"});
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`);
-        if (r.ok) return res.json({success:true, message:"✅ Google Gemini terhubung"});
-        return res.json({success:false, message:"❌ Gemini API key tidak valid"});
-      }
-
-      if (prov === "groq") {
-        if (!process.env.GROQ_API_KEY)
-          return res.json({success:false, message:"❌ GROQ_API_KEY belum diset di Vercel"});
-        const r = await fetch("https://api.groq.com/openai/v1/models", {
-          headers:{"Authorization":"Bearer "+process.env.GROQ_API_KEY}
+      } else if (llmProvider === "ollama") {
+        const baseUrl = req.body.ollamaUrl || "http://localhost:11434";
+        const model   = llmModel || "llama3";
+        const r = await fetch(`${baseUrl}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model, prompt: "OK", stream: false })
         });
-        if (r.ok) return res.json({success:true, message:"✅ Groq / LLaMA terhubung"});
-        return res.json({success:false, message:"❌ Groq API key tidak valid"});
+        const d = await r.json();
+        ok = !!d.response;
+        modelUsed = model;
       }
 
-      return res.json({success:false, message:"Provider tidak dikenal: " + prov});
-    }
+      if (ok) {
+        return res.status(200).json({
+          success: true,
+          message: `✅ ${llmProvider.charAt(0).toUpperCase()+llmProvider.slice(1)} terhubung! Model: ${modelUsed}`
+        });
+      } else {
+        return res.status(200).json({
+          success: false,
+          message: `❌ API Key valid tapi model tidak merespons — cek model: ${modelUsed}`
+        });
+      }
 
-    // ──────────── STORAGE ────────────
-    if (type === "storage") {
-      const id  = process.env.R2_ACCOUNT_ID;
-      const key = process.env.R2_ACCESS_KEY;
-      const sec = process.env.R2_SECRET_KEY;
-      const bkt = process.env.R2_BUCKET_NAME || "aclean-files";
-      if (!id || !key || !sec)
-        return res.json({success:false, message:"❌ R2 credentials belum diset (R2_ACCOUNT_ID, R2_ACCESS_KEY, R2_SECRET_KEY)"});
-
-      // Test dengan HEAD request ke bucket
-      const { createHmac, createHash } = await import("crypto");
-      const now   = new Date();
-      const dts   = now.toISOString().replace(/[:\-]|\.\d{3}/g,"").slice(0,15)+"Z";
-      const dshrt = dts.slice(0,8);
-      const ph    = createHash("sha256").update("").digest("hex");
-      const ch    = ["GET",`/${bkt}`,"",`host:${id}.r2.cloudflarestorage.com\nx-amz-content-sha256:${ph}\nx-amz-date:${dts}\n`,"host;x-amz-content-sha256;x-amz-date",ph].join("\n");
-      const sc    = `${dshrt}/auto/s3/aws4_request`;
-      const sts   = ["AWS4-HMAC-SHA256",dts,sc,createHash("sha256").update(ch).digest("hex")].join("\n");
-      const sk    = [dshrt,"auto","s3","aws4_request"].reduce((k,d)=>createHmac("sha256",k).update(d).digest(),`AWS4${sec}`);
-      const sig   = createHmac("sha256",sk).update(sts).digest("hex");
-      const auth  = `AWS4-HMAC-SHA256 Credential=${key}/${sc}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=${sig}`;
-
-      const r = await fetch(`https://${id}.r2.cloudflarestorage.com/${bkt}`, {
-        headers:{"Host":`${id}.r2.cloudflarestorage.com`,"x-amz-content-sha256":ph,"x-amz-date":dts,"Authorization":auth}
+    } catch (err) {
+      return res.status(200).json({
+        success: false,
+        message: `❌ Gagal koneksi ke ${llmProvider}: ${err.message}`
       });
-      if (r.ok || r.status === 200)
-        return res.json({success:true, message:`✅ Cloudflare R2 terhubung — bucket: ${bkt}`});
-      return res.json({success:false, message:`❌ R2 error ${r.status} — cek credentials`});
     }
-
-    // ──────────── DB ────────────
-    if (type === "db") {
-      const { count, error } = await sb().from("orders").select("*",{count:"exact",head:true});
-      if (error) return res.json({success:false, message:"❌ Supabase: "+error.message});
-      return res.json({success:true, message:`✅ Supabase terhubung — ${count} orders`});
-    }
-
-    return res.status(400).json({error:"type tidak valid"});
-  } catch(err) {
-    return res.status(500).json({success:false, message:"Server error: "+err.message});
   }
+
+  return res.status(400).json({ success: false, message: "type harus 'wa' atau 'llm'" });
 }
