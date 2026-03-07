@@ -5,7 +5,8 @@
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { messages, bizContext, brainMd, provider, model, ollamaUrl } = req.body || {};
+  const { messages, bizContext, brainMd, provider, model, ollamaUrl, imageData, imageType } = req.body || {};
+  // imageData = base64 string (no prefix), imageType = "image/jpeg" etc.
   if (!messages?.length) return res.status(400).json({ error: "messages required" });
 
   // Ambil API key dari environment (aman di server)
@@ -85,10 +86,15 @@ export default async function handler(req, res) {
         ]
       }];
 
-      const rawMsgs = messages.map(m => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }]
-      }));
+      const rawMsgs = messages.map((m, idx) => {
+        const isLastUser = m.role === "user" && idx === messages.length - 1;
+        const parts = [{ text: m.content || "" }];
+        // Inject image into last user message if provided
+        if (isLastUser && imageData && imageType) {
+          parts.push({ inline_data: { mime_type: imageType, data: imageData } });
+        }
+        return { role: m.role === "assistant" ? "model" : "user", parts };
+      });
       const contents = rawMsgs.reduce((acc, msg) => {
         if (acc.length === 0 && msg.role !== "user") return acc;
         const prev = acc[acc.length-1];
@@ -171,7 +177,21 @@ export default async function handler(req, res) {
         headers:{"Content-Type":"application/json","x-api-key":apiKey,
                  "anthropic-version":"2023-06-01","anthropic-beta":"messages-2023-06-01"},
         body: JSON.stringify({ model: llmModel || "claude-sonnet-4-6",
-          max_tokens:1500, system:sysP, messages })
+          max_tokens:1500, system:sysP,
+          messages: messages.map((m, idx) => {
+            const isLastUser = m.role === "user" && idx === messages.length - 1;
+            if (isLastUser && imageData && imageType) {
+              return {
+                role: m.role,
+                content: [
+                  { type: "image", source: { type: "base64", media_type: imageType, data: imageData } },
+                  { type: "text",  text: m.content || "" }
+                ]
+              };
+            }
+            return { role: m.role, content: m.content };
+          })
+        })
       });
       const fd = await fr.json();
       if (!fr.ok) throw new Error(fd.error?.message || "Claude error " + fr.status);
