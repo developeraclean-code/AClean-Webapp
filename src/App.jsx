@@ -3061,7 +3061,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
     const WA_PROVIDERS = [
       { id:"fonnte",   label:"Fonnte",       icon:"🟢", active:true,  tagline:"WA Gateway lokal Indonesia",
         fields:[{k:"token",label:"API Token",ph:"fnt_••••••••",t:"password"},{k:"device",label:"Device / No WA",ph:"6281299898937",t:"text"}],
-        guide:["Buka fonnte.com Dashboard","Create Device, scan QR WA","Copy API Token dari Profile","Masukkan token + nomor di sini","Set Webhook URL ke endpoint backend"] },
+        guide:["Login fonnte.com → menu Device","Klik tombol + Add Device, scan QR WA HP kamu","Klik nama device → salin TOKEN di halaman detail device (bukan dari Profile!)","Paste token di kolom API Token di sini → klik Test & Simpan","Webhook (untuk bot balas otomatis): butuh paket berbayar Fonnte"] },
       { id:"wa_cloud", label:"WA Cloud API", icon:"🔵", active:false, tagline:"Resmi Meta, butuh verifikasi bisnis",
         fields:[{k:"phone_id",label:"Phone Number ID",ph:"123456789"},{k:"token",label:"Access Token",ph:"EAAx...",t:"password"},{k:"waba_id",label:"WABA ID",ph:"123456789"},{k:"verify",label:"Webhook Verify Token",ph:"aclean_secret"}],
         guide:["Daftar di developers.facebook.com","Buat App + tambah produk WhatsApp","Verifikasi Business (Meta Business Suite)","Generate Permanent Access Token","Set webhook URL di App Settings"] },
