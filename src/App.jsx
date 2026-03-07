@@ -97,7 +97,62 @@ const WA_CONVERSATIONS = [
 const AGENT_LOGS = [
 ];
 
-const BRAIN_MD_DEFAULT = "# ARA BRAIN v3.0 - AClean Service\n## Identitas\n- Nama: ARA (Aclean Response Agent)\n- Bisnis: AClean Service - AC Cleaning, Install & Repair\n- Area: Alam Sutera, BSD, Gading Serpong, Serpong, Karawaci\n- Peran: Asisten AI untuk Owner/Admin mengelola order, invoice, jadwal, stok";
+const BRAIN_MD_DEFAULT = `# ARA BRAIN v4.0 — AClean Service
+
+## IDENTITAS
+- Nama: ARA (Aclean Response Agent)
+- Bisnis: AClean Service — AC Cleaning, Install & Repair
+- Area Utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan
+- Area Perlu Konfirmasi: Jakarta Barat, Jakarta Selatan (ongkir tambah)
+- Peran: Asisten AI eksekutif untuk Owner/Admin
+
+## LAYANAN & HARGA STANDAR
+| Layanan | Harga/unit |
+|---------|-----------|
+| Cuci AC | 80.000 |
+| Freon AC (R22) | 150.000 |
+| Freon AC (R32) | 200.000 |
+| Perbaikan AC | 100.000–500.000 (estimasi) |
+| Pasang AC Baru | 300.000 |
+| Bongkar AC | 150.000 |
+| Service AC | 120.000 |
+- Biaya dadakan (booking H-0): +50.000
+- Minimal 1 unit per order
+
+## SOP ORDER
+1. Cek jadwal teknisi sebelum assign (gunakan teknisiWorkload dari data live)
+2. Jam operasional: 08:00–17:00, kecuali ada konfirmasi khusus
+3. Prioritas assign: teknisi dengan slot kosong terbanyak hari ini
+4. Helper wajib untuk order 3+ unit atau Pasang AC Baru
+5. Dispatch WA otomatis setelah order CONFIRMED
+6. Status flow: PENDING → CONFIRMED → IN_PROGRESS → COMPLETED
+
+## SOP INVOICE
+1. Invoice dibuat otomatis saat order COMPLETED
+2. Due date: H+3 dari tanggal selesai
+3. Kirim reminder WA jika H-1 due dan belum PAID
+4. OVERDUE: tandai otomatis jika lewat due date
+5. Hanya Owner yang bisa APPROVE invoice
+
+## SOP STOK
+1. Alert jika stok <= reorder point
+2. Freon R22 & R32: reorder jika < 5 kg
+3. Catat penggunaan setiap selesai service (UPDATE_STOCK dengan delta negatif)
+
+## RULES EKSEKUSI
+- Selalu konfirmasi ke user setelah eksekusi aksi
+- Jangan eksekusi CANCEL atau hapus data tanpa alasan jelas dari user
+- Jika ada konflik jadwal: tanyakan ke user, jangan auto-assign
+- Maksimal 1 ACTION per response
+- Gunakan data live (bizContext) untuk semua keputusan, bukan asumsi
+- Jika data tidak lengkap: tanya user, jangan mengarang
+
+## FORMAT JAWABAN
+- Gunakan Bahasa Indonesia
+- Ringkas dan to the point
+- Sertakan data aktual (nama, tanggal, jumlah) dalam konfirmasi
+- Gunakan emoji secukupnya untuk keterbacaan
+`.trim();
 
 export { ErrorBoundary };
 export default function ACleanWebApp() {
@@ -979,23 +1034,87 @@ export default function ACleanWebApp() {
           fullText = fd.choices?.[0]?.message?.content || "";
 
         } else if (llmProvider === "gemini") {
-          // ── Google Gemini API ──
+          // ── Google Gemini API dengan Function Calling ──
           const model = llmModel || "gemini-2.5-flash";
-          // Gemini requires alternating user/model turns — fix duplicates
+
+          // Definisi tools untuk Gemini function calling
+          const geminiTools = [{
+            functionDeclarations: [
+              { name:"create_order", description:"Buat order baru",
+                parameters:{ type:"OBJECT", properties:{
+                  customer:{type:"STRING"}, phone:{type:"STRING"}, address:{type:"STRING"},
+                  service:{type:"STRING",enum:["Cuci AC","Freon AC","Perbaikan AC","Pasang AC Baru","Bongkar AC","Service AC"]},
+                  units:{type:"NUMBER"}, teknisi:{type:"STRING"}, helper:{type:"STRING"},
+                  date:{type:"STRING",description:"YYYY-MM-DD"}, time:{type:"STRING",description:"HH:MM"},
+                  notes:{type:"STRING"}
+                }, required:["customer","service","date"]}
+              },
+              { name:"update_order_status", description:"Update status order",
+                parameters:{ type:"OBJECT", properties:{
+                  id:{type:"STRING"}, status:{type:"STRING",enum:["PENDING","CONFIRMED","IN_PROGRESS","COMPLETED","CANCELLED"]}
+                }, required:["id","status"]}
+              },
+              { name:"reschedule_order", description:"Jadwal ulang order",
+                parameters:{ type:"OBJECT", properties:{
+                  id:{type:"STRING"}, date:{type:"STRING"}, time:{type:"STRING"}, teknisi:{type:"STRING"}
+                }, required:["id","date"]}
+              },
+              { name:"cancel_order", description:"Batalkan order",
+                parameters:{ type:"OBJECT", properties:{
+                  id:{type:"STRING"}, reason:{type:"STRING"}
+                }, required:["id"]}
+              },
+              { name:"mark_invoice_paid", description:"Tandai invoice lunas",
+                parameters:{ type:"OBJECT", properties:{ id:{type:"STRING"} }, required:["id"]}
+              },
+              { name:"approve_invoice", description:"Approve invoice",
+                parameters:{ type:"OBJECT", properties:{ id:{type:"STRING"} }, required:["id"]}
+              },
+              { name:"update_stock", description:"Update stok material",
+                parameters:{ type:"OBJECT", properties:{
+                  code:{type:"STRING"}, name:{type:"STRING"},
+                  delta:{type:"NUMBER",description:"positif=tambah, negatif=kurangi"},
+                  reason:{type:"STRING"}
+                }, required:["delta"]}
+              },
+              { name:"dispatch_wa", description:"Kirim dispatch WA ke teknisi",
+                parameters:{ type:"OBJECT", properties:{ order_id:{type:"STRING"} }, required:["order_id"]}
+              },
+              { name:"send_wa", description:"Kirim pesan WhatsApp ke nomor tertentu",
+                parameters:{ type:"OBJECT", properties:{
+                  phone:{type:"STRING"}, message:{type:"STRING"}
+                }, required:["phone","message"]}
+              },
+              { name:"send_reminder", description:"Kirim reminder WA untuk invoice belum lunas",
+                parameters:{ type:"OBJECT", properties:{ invoice_id:{type:"STRING"} }, required:["invoice_id"]}
+              },
+              { name:"update_invoice", description:"Edit field invoice (labor/material/dadakan/discount/notes)",
+                parameters:{ type:"OBJECT", properties:{
+                  id:{type:"STRING"},
+                  field:{type:"STRING", enum:["labor","material","dadakan","discount","notes","due"]},
+                  value:{type:"STRING"}
+                }, required:["id","field","value"]}
+              },
+              { name:"mark_invoice_overdue", description:"Tandai semua invoice UNPAID yang melewati due date menjadi OVERDUE",
+                parameters:{ type:"OBJECT", properties:{} }
+              },
+            ]
+          }];
+
+          // Normalize pesan untuk Gemini (harus alternating user/model)
           const rawMsgs = newMessages.map(m => ({
             role: m.role === "assistant" ? "model" : "user",
             parts: [{ text: m.content }]
           }));
-          // Ensure first message is always user
           const geminiContents = rawMsgs.reduce((acc, msg) => {
             if (acc.length === 0 && msg.role !== "user") return acc;
             const prev = acc[acc.length - 1];
             if (prev && prev.role === msg.role) {
-              // Merge consecutive same-role messages
               return [...acc.slice(0,-1), { role: prev.role, parts: [...prev.parts, ...msg.parts] }];
             }
             return [...acc, msg];
           }, []);
+
           const fr = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${llmApiKey}`,
             {
@@ -1004,16 +1123,49 @@ export default function ACleanWebApp() {
               body: JSON.stringify({
                 system_instruction: { parts: [{ text: sysP }] },
                 contents: geminiContents,
-                generationConfig: { maxOutputTokens: 1000 }
+                tools: geminiTools,
+                generationConfig: { maxOutputTokens: 1500 }
               })
             }
           );
           const fd = await fr.json();
-          if (!fr.ok) {
-            const msg = fd.error?.message || "Gemini API error " + fr.status;
-            throw new Error(msg);
+          if (!fr.ok) throw new Error(fd.error?.message || "Gemini API error " + fr.status);
+
+          // Handle function call response dari Gemini
+          const candidate = fd.candidates?.[0];
+          const parts = candidate?.content?.parts || [];
+          const funcCall = parts.find(p => p.functionCall);
+
+          if (funcCall) {
+            // Gemini ingin eksekusi function — konversi ke ACTION format
+            const fn = funcCall.functionCall;
+            const args = fn.args || {};
+            const textPart = parts.find(p => p.text)?.text || "";
+
+            // Map Gemini function call → ACTION object
+            const actionMap = {
+              create_order:         { type:"CREATE_ORDER",          ...args },
+              update_order_status:  { type:"UPDATE_ORDER_STATUS",   ...args },
+              reschedule_order:     { type:"RESCHEDULE_ORDER",      ...args },
+              cancel_order:         { type:"CANCEL_ORDER",          ...args },
+              mark_invoice_paid:    { type:"MARK_PAID",             ...args },
+              approve_invoice:      { type:"APPROVE_INVOICE",       ...args },
+              update_stock:         { type:"UPDATE_STOCK",          ...args },
+              dispatch_wa:          { type:"DISPATCH_WA",           ...args },
+              send_wa:              { type:"SEND_WA",               ...args },
+              send_reminder:        { type:"SEND_REMINDER",         ...args },
+              update_invoice:       { type:"UPDATE_INVOICE",        ...args },
+              mark_invoice_overdue: { type:"MARK_INVOICE_OVERDUE"           },
+            };
+            const action = actionMap[fn.name];
+            if (action) {
+              fullText = (textPart ? textPart + "\n" : "") + "[ACTION]" + JSON.stringify(action) + "[/ACTION]";
+            } else {
+              fullText = textPart || "Aksi tidak dikenali: " + fn.name;
+            }
+          } else {
+            fullText = parts.map(p => p.text || "").join("") || "";
           }
-          fullText = fd.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("") || "";
 
         } else {
           // ── Anthropic Claude API (default) ──
@@ -1099,6 +1251,31 @@ export default function ACleanWebApp() {
               }
               addAgentLog("ARA_STOCK",`ARA ${txType} ${item.name}: delta ${delta}`,"SUCCESS");
             } else ar=`\n⚠️ *Material tidak ditemukan*`;
+          } else if (act.type==="CREATE_ORDER") {
+            const today = new Date().toISOString().slice(0,10);
+            const seq = (ordersData.length + 1).toString().padStart(3,"0");
+            const newId = "ORD-" + (act.date||today).replace(/-/g,"").slice(2,8) + "-" + seq;
+            const newOrd = {
+              id: newId,
+              customer: act.customer || "?",
+              phone: act.phone || "",
+              address: act.address || "",
+              service: act.service || "Cuci AC",
+              units: parseInt(act.units)||1,
+              teknisi: act.teknisi || "",
+              helper: act.helper || "",
+              date: act.date || today,
+              time: act.time || "09:00",
+              status: "PENDING",
+              notes: act.notes || "",
+              dispatch: false,
+              created_at: new Date().toISOString(),
+            };
+            setOrdersData(prev => [...prev, newOrd]);
+            const {error:oErr} = await supabase.from("orders").insert(newOrd);
+            if (oErr) console.warn("Create order DB:", oErr.message);
+            addAgentLog("ARA_CREATE_ORDER", "ARA buat order " + newId + " untuk " + newOrd.customer, "SUCCESS");
+            ar = "\n✅ *Order " + newId + " dibuat untuk " + newOrd.customer + " — " + newOrd.service + " " + newOrd.units + " unit, " + newOrd.date + " jam " + newOrd.time + "*";
           } else if (act.type==="CANCEL_ORDER") {
             setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,status:"CANCELLED"}:o));
             await supabase.from("orders").update({status:"CANCELLED"}).eq("id",act.id);
