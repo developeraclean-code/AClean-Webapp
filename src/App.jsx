@@ -1840,76 +1840,77 @@ export default function ACleanWebApp() {
             {filteredOrders.length === 0
               ? <div style={{ background:cs.card, borderRadius:12, padding:32, textAlign:"center", color:cs.muted }}>Tidak ada jadwal untuk {activeTek}</div>
               : (() => {
-                const sorted2 = [...filteredOrders].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
-                const grouped2 = sorted2.reduce((acc,o)=>{if(!acc[o.date])acc[o.date]=[];acc[o.date].push(o);return acc;},{});
-                return Object.entries(grouped2).map(([date2,dayOrders])=>{
-                  const d2=new Date(date2+"T00:00:00");
-                  const todayStr2=new Date().toISOString().slice(0,10);
-                  const tomorrowStr2=new Date(Date.now()+86400000).toISOString().slice(0,10);
-                  const isToday2=date2===todayStr2, isTomorrow2=date2===tomorrowStr2;
-                  const dayNames2=["Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"];
-                  const dayLabel2=isToday2?"🔴 Hari Ini":isTomorrow2?"🟡 Besok":dayNames2[d2.getDay()];
-                  const dateStr2=d2.toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"});
-                  return (
-                    <div key={date2} style={{marginBottom:6}}>
-                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,marginTop:10}}>
-                        <div style={{background:isToday2?cs.red+"22":isTomorrow2?cs.yellow+"22":cs.surface,border:"1px solid "+(isToday2?cs.red:isTomorrow2?cs.yellow:cs.border)+"55",borderRadius:99,padding:"5px 16px",fontSize:12,fontWeight:800,color:isToday2?cs.red:isTomorrow2?cs.yellow:cs.muted}}>
-                          {dayLabel2} &nbsp;·&nbsp; {dateStr2}
+                  const sorted2 = [...filteredOrders].sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
+                  const grouped2 = sorted2.reduce((acc, o) => {
+                    if (!acc[o.date]) acc[o.date] = [];
+                    acc[o.date].push(o);
+                    return acc;
+                  }, {});
+                  const dayNames2 = ["Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"];
+                  return Object.entries(grouped2).map(([date2, dayOrders]) => {
+                    const d2 = new Date(date2 + "T00:00:00");
+                    const todayStr2 = new Date().toISOString().slice(0,10);
+                    const tomorrowStr2 = new Date(Date.now()+86400000).toISOString().slice(0,10);
+                    const isToday2 = date2 === todayStr2;
+                    const isTomorrow2 = date2 === tomorrowStr2;
+                    const dayLabel2 = isToday2 ? "🔴 Hari Ini" : isTomorrow2 ? "🟡 Besok" : dayNames2[d2.getDay()];
+                    const dateStr2 = d2.toLocaleDateString("id-ID", {day:"numeric", month:"long", year:"numeric"});
+                    return (
+                      <div key={date2} style={{marginBottom:6}}>
+                        <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:10, marginTop:10}}>
+                          <div style={{background:isToday2?cs.red+"22":isTomorrow2?cs.yellow+"22":cs.surface, border:"1px solid "+(isToday2?cs.red:isTomorrow2?cs.yellow:cs.border)+"55", borderRadius:99, padding:"5px 16px", fontSize:12, fontWeight:800, color:isToday2?cs.red:isTomorrow2?cs.yellow:cs.muted}}>
+                            {dayLabel2}&nbsp;·&nbsp;{dateStr2}
+                          </div>
+                          <div style={{flex:1, height:1, background:cs.border+"55"}} />
+                          <span style={{fontSize:11, color:cs.muted, background:cs.surface, padding:"2px 8px", borderRadius:99, border:"1px solid "+cs.border}}>{dayOrders.length} job</span>
                         </div>
-                        <div style={{flex:1,height:1,background:cs.border+"55"}}/>
-                        <span style={{fontSize:11,color:cs.muted,background:cs.surface,padding:"2px 8px",borderRadius:99,border:"1px solid "+cs.border}}>{dayOrders.length} job</span>
+                        {dayOrders.map(o => (
+                          <div key={o.id} style={{ background:cs.card, border:"1px solid "+(statusColor[o.status]||cs.border)+"44", borderRadius:12, padding:14, display:"flex", gap:12, alignItems:"flex-start", marginBottom:8 }}>
+                            <div style={{ background:(techColors[o.teknisi]||cs.accent)+"22", border:"1px solid "+(techColors[o.teknisi]||cs.accent)+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:54, flexShrink:0 }}>
+                              <div style={{ fontSize:15, fontWeight:800, color:techColors[o.teknisi]||cs.accent }}>{o.time}</div>
+                              <div style={{ fontSize:9, color:cs.muted }}>–{o.time_end||hitungJamSelesai(o.time,o.service,o.units)}</div>
+                              <div style={{ fontSize:9, color:cs.muted }}>{o.date.slice(5)}</div>
+                            </div>
+                            <div style={{ flex:1 }}>
+                              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+                                <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:12 }}>{o.id}</span>
+                                <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", fontWeight:700 }}>{statusLabel[o.status]||o.status}</span>
+                              </div>
+                              <div style={{ fontSize:13, fontWeight:700, color:cs.text, marginBottom:4 }}>{o.customer}</div>
+                              <div style={{ fontSize:12, color:cs.muted, display:"grid", gridTemplateColumns:"1fr 1fr", gap:"2px 14px" }}>
+                                <span>🔧 {o.service} · {o.units} unit</span>
+                                <span style={{ color:techColors[o.teknisi]||cs.muted }}>👷 {o.teknisi}{o.helper?" + "+o.helper:""}</span>
+                                <span>📍 {o.address.slice(0,32)}...</span>
+                              </div>
+                            </div>
+                            <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+                              {!isTekRole && (
+                                <button onClick={() => { const cu=customersData.find(c=>c.phone===o.phone); if(cu){setSelectedCustomer(cu);setCustomerTab("history");setActiveMenu("customers");} }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📋 History</button>
+                              )}
+                              {!o.dispatch && !isTekRole && (
+                                <button onClick={() => dispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 Dispatch</button>
+                              )}
+                              {!isTekRole && (
+                                <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
+                              )}
+                              {isTekRole && (
+                                <button onClick={() => { window.open("https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(o.address),"_blank"); }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>🗺 Maps</button>
+                              )}
+                              {isTekRole && (
+                                <button onClick={() => openWA(o.phone, "Halo "+o.customer+", saya "+myTekName+" dari AClean. Saya akan tiba pkl "+o.time+" untuk "+o.service+". Mohon pastikan AC bisa diakses. Terima kasih!")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>💬 Chat WA</button>
+                              )}
+                              <button onClick={() => openLaporanModal(o)} style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📝 Laporan</button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      {dayOrders.map(o=>(
-              <div key={o.id} style={{ background:cs.card, border:"1px solid "+(statusColor[o.status]||cs.border)+"44", borderRadius:12, padding:16, display:"flex", gap:14, alignItems:"flex-start" }}>
-                <div style={{ background:(techColors[o.teknisi]||cs.accent)+"22", border:"1px solid "+(techColors[o.teknisi]||cs.accent)+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:58, flexShrink:0 }}>
-                  <div style={{ fontSize:15, fontWeight:800, color:techColors[o.teknisi]||cs.accent }}>{o.time}</div>
-                  <div style={{ fontSize:9, color:cs.muted }}>–{o.time_end||hitungJamSelesai(o.time,o.service,o.units)}</div>
-                  <div style={{ fontSize:9, color:cs.muted }}>{o.date.slice(5)}</div>
-                </div>
-                <div style={{ flex:1 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
-                    <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:12 }}>{o.id}</span>
-                    <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", fontWeight:700 }}>{statusLabel[o.status]||o.status.replace("_"," ")}</span>
-                  </div>
-                  <div style={{ fontSize:13, fontWeight:700, color:cs.text, marginBottom:4 }}>{o.customer}</div>
-                  <div style={{ fontSize:12, color:cs.muted, display:"grid", gridTemplateColumns:"1fr 1fr", gap:"2px 14px" }}>
-                    <span>🔧 {o.service} · {o.units} unit</span>
-                    <span style={{ color:techColors[o.teknisi]||cs.muted }}>👷 {o.teknisi}{o.helper?" + "+o.helper:""}</span>
-                    <span>📍 {o.address.slice(0,32)}...</span>
-                  </div>
-                </div>
-                <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
-                  {/* Owner/Admin buttons */}
-                  {!isTekRole && (
-                    <button onClick={() => { const cu=customersData.find(cu=>cu.phone===o.phone); if(cu){setSelectedCustomer(cu);setCustomerTab("history");setActiveMenu("customers");} }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📋 History</button>
-                  )}
-                  {!o.dispatch && !isTekRole && (
-                    <button onClick={() => dispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 Dispatch</button>
-                  )}
-                  {!isTekRole && (
-                    <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }}
-                      style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
-                  )}
-                  {/* Teknisi buttons */}
-                  {isTekRole && (
-                    <button onClick={() => { const mapsUrl="https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(o.address); window.open(mapsUrl,"_blank"); }}
-                      style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>🗺 Maps</button>
-                  )}
-                  {isTekRole && (
-                    <button onClick={() => openWA(o.phone, "Halo "+o.customer+", saya "+myTekName+" dari AClean. Saya akan tiba pkl "+o.time+" untuk "+o.service+". Mohon pastikan AC bisa diakses. Terima kasih!")}
-                      style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>💬 Chat WA</button>
-                  )}
-                  {/* Laporan — semua role */}
-                  <button onClick={() => openLaporanModal(o)} style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📝 Laporan</button>
-                </div>
-              </div>
-              ))}
-            </div>
-          );
-        });
-      })()
-            </div>
-          )}
+                    );
+                  });
+                })()
+            }
+          </div>
+        )}
+      </div>
     );
   };
 
