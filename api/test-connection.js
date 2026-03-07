@@ -85,8 +85,16 @@ export default async function handler(req, res) {
   // ════════════════════════════════════════════════════════
   if (type === "llm") {
     const llmProvider = provider || process.env.LLM_PROVIDER || "gemini";
-    const llmApiKey   = (token || "").trim() || (process.env.LLM_API_KEY || "").trim();
     const llmModel    = model || process.env.LLM_MODEL;
+    // Baca API key: dari request (Settings app) → env per-provider → env generik
+    const llmApiKey = (() => {
+      if (token) return token.trim();
+      if (process.env.LLM_API_KEY)       return process.env.LLM_API_KEY.trim();
+      if (llmProvider === "gemini")  return (process.env.GEMINI_API_KEY    || "").trim();
+      if (llmProvider === "claude")  return (process.env.ANTHROPIC_API_KEY || "").trim();
+      if (llmProvider === "openai")  return (process.env.OPENAI_API_KEY    || "").trim();
+      return "";
+    })();
 
     if (!llmApiKey && llmProvider !== "ollama") {
       return res.status(200).json({
