@@ -139,6 +139,21 @@ const BRAIN_MD_DEFAULT = `# ARA BRAIN v4.0 — AClean Service
 2. Freon R22 & R32: reorder jika < 5 kg
 3. Catat penggunaan setiap selesai service (UPDATE_STOCK dengan delta negatif)
 
+## TIM TEKNISI & HELPER
+> Data tim diambil LIVE dari bizContext.teknisiWorkload dan bizContext.helperList
+> SELALU gunakan data live ini — jangan mengarang nama teknisi/helper
+
+**Cara baca data:**
+- `bizContext.teknisiWorkload` = list teknisi aktif beserta skills, phone, jobsToday
+- `bizContext.helperList` = list helper aktif beserta skills, phone, jobsToday
+- Jika list kosong = belum ada di database, minta Owner input via menu Tim Teknisi
+
+**Rules assign teknisi:**
+1. Cek `skills` teknisi — cocokkan dengan jenis layanan
+2. Cek `jobsToday` — pilih yang paling sedikit job hari ini
+3. Helper wajib untuk order ≥3 unit atau Pasang AC Baru
+4. Jika teknisi tidak ada di list = tolak dan tampilkan list yang tersedia
+
 ## RULES EKSEKUSI
 - Selalu konfirmasi ke user setelah eksekusi aksi
 - Jangan eksekusi CANCEL atau hapus data tanpa alasan jelas dari user
@@ -961,13 +976,21 @@ export default function ACleanWebApp() {
       laporan: laporanReports.map(r=>({id:r.id,job_id:r.job_id,teknisi:r.teknisi,customer:r.customer,service:r.service,status:r.status,date:r.date,submitted:r.submitted})),
       laporanPending: laporanReports.filter(r=>r.status==="SUBMITTED").length,
       laporanRevisi:  laporanReports.filter(r=>r.status==="REVISION").length,
-      teknisiWorkload: teknisiData.filter(t=>t.role==="Teknisi").map(t=>({
+      teknisiWorkload: teknisiData.filter(t=>t.role==="Teknisi"||t.role==="teknisi").map(t=>({
         name:t.name, role:t.role, status:t.status,
+        phone: t.phone || "",
+        skills: Array.isArray(t.skills) ? t.skills : [],
+        area: t.area || "",
         jobsToday: ordersData.filter(o=>o.teknisi===t.name&&o.date===TODAY).length,
         jobsPending: ordersData.filter(o=>o.teknisi===t.name&&["CONFIRMED","IN_PROGRESS"].includes(o.status)).length,
-        // Slot kosong hari ini untuk Cleaning 1 unit (referensi cepat)
         slotKosongHariIni: cariSlotKosong(t.name, TODAY, "Cleaning", 1),
         jadwalHariIni: ordersData.filter(o=>o.teknisi===t.name&&o.date===TODAY).map(o=>({id:o.id,time:o.time,time_end:o.time_end||"?",service:o.service,units:o.units,customer:o.customer})),
+      })),
+      helperList: teknisiData.filter(t=>t.role==="Helper"||t.role==="helper").map(t=>({
+        name:t.name, role:t.role, status:t.status,
+        phone: t.phone || "",
+        skills: Array.isArray(t.skills) ? t.skills : [],
+        jobsToday: ordersData.filter(o=>o.helper===t.name&&o.date===TODAY).length,
       })),
       areaPelayanan: {
         utama: ["Alam Sutera","BSD","Gading Serpong","Graha Raya","Karawaci","Tangerang","Tangerang Selatan","Serpong"],
