@@ -325,6 +325,13 @@ export default function ACleanWebApp() {
   const [storageProvider, setStorageProvider] = useState("r2");
   const [storageStatus,   setStorageStatus]   = useState("not_connected");
   const [dbProvider,      setDbProvider]      = useState("supabase");
+  const [brainMdCustomer, setBrainMdCustomer] = useState(() => {
+    const val = _ls("brainMdCustomer", "");
+    if (Array.isArray(val)) return val.join("\n");
+    if (typeof val !== "string") return "";
+    return val;
+  });
+  const [modalBrainCustomerEdit, setModalBrainCustomerEdit] = useState(false);
   const [brainMd,         setBrainMd]         = useState(() => {
     const val = _ls("brainMd", BRAIN_MD_DEFAULT);
     // Sanitize: jika tersimpan sebagai array dari versi lama, convert ke string
@@ -513,7 +520,8 @@ export default function ACleanWebApp() {
   useEffect(() => { _lsSave("llmApiKey",   llmApiKey);   }, [llmApiKey]);
   useEffect(() => { _lsSave("llmModel",    llmModel);    }, [llmModel]);
   useEffect(() => { _lsSave("ollamaUrl",   ollamaUrl);   }, [ollamaUrl]);
-  useEffect(() => { _lsSave("brainMd",     brainMd);     }, [brainMd]);
+  useEffect(() => { _lsSave("brainMd",        brainMd);           }, [brainMd]);
+  useEffect(() => { _lsSave("brainMdCustomer", brainMdCustomer); }, [brainMdCustomer]);
   useEffect(() => { _lsSave("waProvider",  waProvider);  }, [waProvider]);
   useEffect(() => { _lsSave("llmStatus",   llmStatus);   }, [llmStatus]);
 
@@ -3113,6 +3121,29 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
             </div>
           </div>
 
+          {/* ── BRAIN CUSTOMER — ARA WA Bot ── */}
+          <div style={{ background:"#22c55e08", border:"1px solid #22c55e33", borderRadius:11, padding:14, marginTop:12 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <div>
+                <div style={{ fontWeight:800, color:"#22c55e", fontSize:13 }}>💬 Brain Customer — ARA WA Bot</div>
+                <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>System prompt khusus customer via WhatsApp — TERPISAH dari Brain internal Owner/Admin.</div>
+              </div>
+              <button onClick={() => setModalBrainCustomerEdit(true)} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", padding:"6px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:700 }}>✏️ Edit</button>
+            </div>
+            <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", fontSize:12, color:cs.muted, fontFamily:"monospace", maxHeight:80, overflow:"hidden", lineHeight:1.6 }}>
+              {brainMdCustomer
+                ? brainMdCustomer.slice(0,300) + (brainMdCustomer.length > 300 ? "..." : "")
+                : <span style={{color:cs.yellow}}>⚠️ Belum diisi — klik Edit untuk mengisi Brain Customer Bot</span>
+              }
+            </div>
+            <div style={{ display:"flex", gap:14, marginTop:8, fontSize:11, color:cs.muted }}>
+              <span>📝 {brainMdCustomer.split("\n").length} baris</span>
+              <span>🔤 {brainMdCustomer.length} karakter</span>
+              <span style={{ color:"#22c55e" }}>✅ Dipakai webhook /api/fonnte-webhook</span>
+            </div>
+          </div>
+
+
           <div style={{ display:"flex", gap:8 }}>
             <button onClick={async () => {
               if (llmProvider !== "ollama" && !llmApiKey) { showNotif("❌ Masukkan API Key dulu"); return; }
@@ -3892,6 +3923,46 @@ Order yang sudah ada tidak terpengaruh.`)) return;
           </div>
         </div>
       )}
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* MODAL — EDIT BRAIN CUSTOMER */}
+      {/* ══════════════════════════════════════════════════════ */}
+      {modalBrainCustomerEdit && (
+        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:cs.surface, border:"1px solid #22c55e44", borderRadius:20, width:"100%", maxWidth:700, maxHeight:"90vh", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+            <div style={{ background:"#22c55e12", borderBottom:"1px solid #22c55e33", padding:"16px 22px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div>
+                <div style={{ fontWeight:800, fontSize:16, color:"#22c55e" }}>💬 Edit Brain Customer Bot</div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>System prompt khusus untuk customer via WhatsApp — TERPISAH dari Brain Owner/Admin</div>
+              </div>
+              <button onClick={() => setModalBrainCustomerEdit(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>✕</button>
+            </div>
+            <div style={{ background:"#22c55e08", borderBottom:"1px solid "+cs.border, padding:"8px 22px", display:"flex", gap:16, fontSize:11 }}>
+              <span style={{ color:cs.muted }}>📝 Baris: <strong style={{color:cs.text}}>{brainMdCustomer.split("\n").length}</strong></span>
+              <span style={{ color:cs.muted }}>🔤 Karakter: <strong style={{color:cs.text}}>{brainMdCustomer.length}</strong></span>
+              <span style={{ color:"#22c55e" }}>💡 Hanya aksi terbatas: booking, cek status, feedback</span>
+            </div>
+            <textarea value={brainMdCustomer} onChange={e => setBrainMdCustomer(e.target.value)}
+              style={{ flex:1, background:cs.bg, border:"none", padding:"18px 22px", color:cs.text, fontSize:13, fontFamily:"monospace", resize:"none", outline:"none", lineHeight:1.7 }}
+              placeholder="Isi Brain Customer Bot di sini...&#10;&#10;Panduan: tentukan identitas, layanan & harga, SOP booking, batasan yang boleh/tidak boleh dilakukan ARA saat chat dengan customer via WA."
+            />
+            <div style={{ background:cs.surface, borderTop:"1px solid "+cs.border, padding:"14px 22px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <button onClick={() => { setBrainMdCustomer('# ARA CUSTOMER BRAIN v1.0 — AClean Service\n\n## IDENTITAS\nNama: ARA, asisten virtual AClean Service — Jasa Cuci, Servis & Pasang AC.\nArea: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan.\nJam operasional: Senin–Sabtu 08:00–17:00 WIB.\n\n## TUGASMU\n1. Jawab pertanyaan layanan, harga, area AClean\n2. Bantu booking order baru\n3. Bantu cek status order customer (by nomor HP)\n4. Terima & catat komplain/feedback\n\n## BATASAN KERAS\n- JANGAN tampilkan data customer lain\n- JANGAN lakukan aksi admin (cancel, approve, update invoice, dll)\n- Jika tidak yakin: arahkan ke admin\n\n## LAYANAN & HARGA\n- Cuci AC: Rp 80.000/unit\n- Freon R22: Rp 150.000/unit | Freon R32: Rp 200.000/unit\n- Perbaikan AC: mulai Rp 100.000 (tergantung kerusakan)\n- Pasang AC Baru: Rp 300.000/unit | Bongkar AC: Rp 150.000/unit\n- Service AC: Rp 120.000/unit | Booking H-0: +Rp 50.000\n\n## FORMAT JAWABAN\n- Bahasa Indonesia ramah, maks 5 kalimat per respons\n- Gunakan emoji: 😊 ✅ 🔧 📱\n- Jika tidak bisa jawab: arahkan ke admin'); showNotif("Brain Customer direset ke default"); }}
+                style={{ background:"#ef444418", border:"1px solid #ef444433", color:"#ef4444", padding:"9px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:700 }}>
+                🔄 Reset Default
+              </button>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={() => setModalBrainCustomerEdit(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"9px 18px", borderRadius:8, cursor:"pointer", fontSize:13 }}>Batal</button>
+                <button onClick={() => { showNotif("Brain Customer tersimpan ✅"); setModalBrainCustomerEdit(false); }}
+                  style={{ background:"linear-gradient(135deg,#22c55e,#16a34a)", border:"none", color:"#fff", padding:"9px 22px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
+                  💾 Simpan Brain Customer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — EDIT INVOICE (GAP 3) */}
