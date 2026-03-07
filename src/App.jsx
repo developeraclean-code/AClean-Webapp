@@ -335,7 +335,11 @@ export default function ACleanWebApp() {
   const [waStatus,        setWaStatus]        = useState("not_connected");
 
   const [llmProvider,     setLlmProvider]     = useState(() => _ls("llmProvider", "claude"));
-  const [llmApiKey,       setLlmApiKey]       = useState(() => _ls("llmApiKey", ""));
+  const [llmApiKey,       setLlmApiKey]       = useState(() => {
+    // Load key per-provider yang aktif
+    const prov = _ls("llmProvider", "gemini");
+    return _ls("llmApiKey_" + prov, "") || _ls("llmApiKey", "");
+  });
   const [llmModel,        setLlmModel]        = useState(() => _ls("llmModel", "claude-sonnet-4-6"));
   const [ollamaUrl,       setOllamaUrl]       = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
   const [llmStatus,       setLlmStatus]       = useState(() => _ls("llmStatus", "not_connected"));
@@ -535,7 +539,10 @@ export default function ACleanWebApp() {
   }, []);
 
   useEffect(() => { _lsSave("llmProvider", llmProvider); }, [llmProvider]);
-  useEffect(() => { _lsSave("llmApiKey",   llmApiKey);   }, [llmApiKey]);
+  useEffect(() => {
+    _lsSave("llmApiKey",              llmApiKey);            // generik (backward compat)
+    _lsSave("llmApiKey_" + llmProvider, llmApiKey);          // per-provider
+  }, [llmApiKey, llmProvider]);
   useEffect(() => { _lsSave("llmModel",    llmModel);    }, [llmModel]);
   useEffect(() => { _lsSave("ollamaUrl",   ollamaUrl);   }, [ollamaUrl]);
   useEffect(() => { _lsSave("brainMd",        brainMd);           }, [brainMd]);
@@ -1062,6 +1069,17 @@ export default function ACleanWebApp() {
       if (backendRes?.ok) {
         const d = await backendRes.json();
         fullText = d.reply || "";
+        // Jika backendRes ok tapi reply kosong — tangkap error dari server
+        if (!fullText && d.error) throw new Error(d.error);
+        if (!fullText) throw new Error("ARA tidak memberikan respons. Cek Vercel logs: kemungkinan LLM_API_KEY belum diset di Vercel Environment Variables.");
+      } else if (backendRes && !backendRes.ok) {
+        // ara-chat.js error (400/500) — ambil pesan error dari body
+        try {
+          const errData = await backendRes.json();
+          throw new Error(errData.error || "Server error " + backendRes.status);
+        } catch(je) {
+          throw new Error(je.message || "ara-chat server error " + backendRes.status);
+        }
       } else if (!backendRes && (llmApiKey || llmProvider === "ollama")) {
         // ── Fallback HANYA jika /api/ara-chat tidak tersedia (localhost dev) ──
         // Di production Vercel: proxy selalu ada, API key AMAN di server
@@ -3210,7 +3228,13 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:14 }}>
             {LLM_PROVIDERS.map(p => (
-              <div key={p.id} onClick={() => { setLlmProvider(p.id); setLlmStatus("not_connected"); }}
+              <div key={p.id} onClick={() => {
+                      setLlmProvider(p.id);
+                      setLlmStatus("not_connected");
+                      // Load API key milik provider ini (jika sudah pernah diisi)
+                      const savedKey = _ls("llmApiKey_" + p.id, "") || (p.id === "ollama" ? "" : _ls("llmApiKey", ""));
+                      setLlmApiKey(savedKey);
+                    }}
                 style={{ background:llmProvider===p.id?cs.accent+"12":cs.surface, border:"2px solid "+(llmProvider===p.id?cs.accent:cs.border), borderRadius:11, padding:"12px 8px", cursor:"pointer", textAlign:"center", position:"relative" }}>
                 {p.rec && <div style={{ position:"absolute", top:-8, left:"50%", transform:"translateX(-50%)", background:cs.green, color:"#fff", fontSize:8, fontWeight:800, padding:"2px 6px", borderRadius:99, whiteSpace:"nowrap" }}>REKOMENDASI</div>}
                 <div style={{ fontSize:22, marginBottom:4 }}>{p.icon}</div>
