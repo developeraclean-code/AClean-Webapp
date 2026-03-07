@@ -16,6 +16,11 @@ const supabase = createClient(
 );
 
 const FONNTE_TOKEN  = process.env.FONNTE_TOKEN;
+const LLM_API_KEY   = process.env.LLM_API_KEY
+                   || process.env.GEMINI_API_KEY
+                   || process.env.ANTHROPIC_API_KEY
+                   || process.env.OPENAI_API_KEY
+                   || "";
 const OWNER_PHONE   = process.env.OWNER_PHONE;  // format: 628xxxxxxxxxx
 
 // ── Kirim WA via Fonnte ──────────────────────────────────────────────────────
@@ -186,6 +191,83 @@ export default async function handler(req, res) {
     } catch (e) {
       tasks.push({ task: "weekly_report", error: e.message });
     }
+  }
+
+  // ════════════════════════════════════════════════════════
+  // TASK 5: Reminder laporan ke teknisi — setiap 60 menit
+  // Cek order IN_PROGRESS/ON_SITE tanpa laporan submitted,
+  // sudah lebih dari 60 menit sejak dispatch
+  // ════════════════════════════════════════════════════════
+  try {
+    const { data: activeOrders } = await supabase
+      .from("orders")
+      .select("id,customer,teknisi,helper,service,units,date,dispatch_at")
+      .in("status", ["DISPATCHED","ON_SITE","WORKING","IN_PROGRESS"])
+      .not("teknisi", "is", null);
+
+    const { data: submittedReports } = await supabase
+      .from("service_reports")
+      .select("job_id")
+      .eq("status", "SUBMITTED");
+
+    const reportedIds = new Set((submittedReports || []).map(r => r.job_id));
+    const cutoff60min = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const needReminder = (activeOrders || []).filter(o =>
+      !reportedIds.has(o.id) &&
+      o.dispatch_at && o.dispatch_at < cutoff60min &&
+      o.date <= today
+    );
+
+    let laporanReminderSent = 0;
+    for (const ord of needReminder) {
+      // Cari nomor HP teknisi dari user_profiles
+      const { data: tekUser } = await supabase
+        .from("user_profiles")
+        .select("phone")
+        .eq("name", ord.teknisi)
+        .single();
+
+      if (tekUser?.phone) {
+        const reminderMsg =
+          `⏰ *Reminder: Laporan Belum Disubmit*
+
+` +
+          `Halo ${ord.teknisi}, Job *${ord.id}* (${ord.customer} — ${ord.service} ${ord.units} unit)
+` +
+          `sudah lebih dari 60 menit berjalan tapi laporan belum masuk.
+
+` +
+          `Jika pekerjaan sudah selesai, segera submit laporan via app. 🙏
+*AClean*`;
+        await sendWA(tekUser.phone, reminderMsg);
+        laporanReminderSent++;
+      }
+
+      // Reminder ke helper juga
+      if (ord.helper) {
+        const { data: helpUser } = await supabase
+          .from("user_profiles")
+          .select("phone")
+          .eq("name", ord.helper)
+          .single();
+        if (helpUser?.phone) {
+          await sendWA(helpUser.phone,
+            `⏰ *Reminder Laporan*
+Job ${ord.id} (${ord.customer}) belum ada laporannya. Mohon cek dengan teknisi ${ord.teknisi}. — AClean`);
+        }
+      }
+    }
+
+    if (laporanReminderSent > 0) {
+      tasks.push({ task: "laporan_reminder", sent: laporanReminderSent, orders: needReminder.map(o=>o.id) });
+      await supabase.from("agent_logs").insert({
+        action: "CRON_LAPORAN_REMINDER",
+        detail: `${laporanReminderSent} reminder laporan terkirim: ${needReminder.map(o=>o.id).join(", ")}`,
+        status: "INFO"
+      });
+    }
+  } catch (e) {
+    tasks.push({ task: "laporan_reminder", error: e.message });
   }
 
   return res.status(200).json({ ok: true, date: today, hour, tasks });
