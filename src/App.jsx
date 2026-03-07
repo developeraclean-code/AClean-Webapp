@@ -633,33 +633,24 @@ export default function ACleanWebApp() {
       if (!ordersRes.error   && ordersRes.data)   setOrdersData(ordersRes.data);
       if (!invoicesRes.error && invoicesRes.data)  setInvoicesData(invoicesRes.data);
       if (!customersRes.error && customersRes.data) setCustomersData(customersRes.data);
-      // Parse JSON fields dari laporan agar materials+units tersedia
-      if (reportsRes && !reportsRes.error && reportsRes.data) {
-        setLaporanReports(reportsRes.data.map(r => ({
-          ...r,
-          units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json); } catch(_){return r.units||[];} })()    : (r.units    || []),
-          materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })(): (r.materials|| []),
-          fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i, label:`Foto ${i+1}`, url:u})),
-          editLog:   r.edit_log || [],
-        })));
-      }
       if (!inventoryRes.error && inventoryRes.data) setInventoryData(inventoryRes.data);
-      if (!laporanRes.error && laporanRes.data && laporanRes.data.length > 0) {
-        // Normalize laporan dari Supabase agar cocok struktur lokal
-        const normalized = laporanRes.data.map(r => ({
+      // Load laporan — satu titik parse, tidak double-overwrite
+      // Selalu pakai DB (kosong = hapus demo data), parse JSON columns jika ada
+      if (!laporanRes.error && laporanRes.data) {
+        const parseLaporan = r => ({
           ...r,
-          units: r.units || [],
-          materials: r.materials || [],
-          fotos: r.fotos || (r.foto_urls||[]).map((url,i) => ({id:i,label:`Foto ${i+1}`,url})),
-          editLog: r.edit_log || r.editLog || [],
-          rekomendasi: r.rekomendasi || "",
+          units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units    ||[]; } })() : (r.units    ||[]),
+          materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials||[]; } })() : (r.materials||[]),
+          fotos:     r.fotos || (r.foto_urls||[]).map((url,i) => ({id:i, label:`Foto ${i+1}`, url})),
+          editLog:   r.edit_log || r.editLog || [],
+          rekomendasi:    r.rekomendasi    || "",
           catatan_global: r.catatan_global || r.catatan || "",
           submitted: r.submitted || (r.submitted_at||"").slice(0,16).replace("T"," "),
-          status: r.status || "SUBMITTED",
-        }));
-        setLaporanReports(normalized);
+          status:    r.status || "SUBMITTED",
+        });
+        setLaporanReports(laporanRes.data.map(parseLaporan));
       }
-      // Jika DB kosong (laporanRes.data = []), initial state hardcoded tetap aktif
+      // Jika DB error total, keep demo data (already in useState init)
       if (!logsRes.error && logsRes.data && logsRes.data.length > 0) setAgentLogs(logsRes.data);
 
       // GAP 3: Load payments summary & dispatch recent (untuk dashboard)
@@ -738,7 +729,17 @@ export default function ACleanWebApp() {
     const ch5 = supabase.channel("rt-laporan")
       .on("postgres_changes", { event:"*", schema:"public", table:"service_reports" }, () =>
         supabase.from("service_reports").select("*").order("submitted_at",{ascending:false})
-          .then(({data}) => { if(data && data.length > 0) setLaporanReports(data.map(r=>({...r,units:r.units||[],materials:r.materials||[],fotos:r.fotos||(r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),editLog:r.edit_log||[]})));  }))
+          .then(({data}) => {
+            if (data && data.length > 0) {
+              setLaporanReports(data.map(r => ({
+                ...r,
+                units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){return r.units    ||[];} })() : (r.units    ||[]),
+                materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })() : (r.materials||[]),
+                fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
+                editLog:   r.edit_log || [],
+              })));
+            }
+          }))
       .subscribe();
 
     // WA Conversations realtime
@@ -5259,7 +5260,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
           e.target.value="";
         };
 
-        const submitLaporan = () => {
+        const submitLaporan = async () => {
           if(incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);return;}
           // Cek foto gagal upload — warn tapi tidak block (sesuai keputusan: teknisi bisa reupload manual)
           const fotoGagal = laporanFotos.filter(f=>!f.url).length;
@@ -5300,45 +5301,74 @@ Silakan buat invoice dari ARA Chat 👆`;
           adminUsers.forEach(u => { if(u.phone) sendWA(u.phone, notifMsg); });
 
           // Simpan laporan ke Supabase — AWAIT agar tidak race condition
-          const upsertPayload = {
+          // Payload dasar — kolom yang PASTI ada di semua versi schema
+          const basePayload = {
             id: newReport.id, job_id: newReport.job_id, teknisi: newReport.teknisi,
-            helper: newReport.helper, customer: newReport.customer,
+            helper: newReport.helper || null, customer: newReport.customer,
             service: newReport.service, date: newReport.date,
             status: "SUBMITTED", total_units: newReport.total_units,
             total_freon: newReport.total_freon, rekomendasi: newReport.rekomendasi,
-            catatan_global: newReport.catatan_global, submitted_at: new Date().toISOString(),
+            catatan_global: newReport.catatan_global,
+            submitted_at: new Date().toISOString(),
             foto_urls: laporanFotos.filter(f=>f.url).map(f=>f.url),
-            // Simpan material + units sebagai JSON agar invoice bisa baca nilai harga
+          };
+
+          // Coba simpan dengan kolom JSON extended (untuk invoice otomatis)
+          let savedOk = false;
+          const { error: errWithJson } = await supabase.from("service_reports").upsert({
+            ...basePayload,
             materials_json: JSON.stringify(laporanMaterials),
             units_json:     JSON.stringify(laporanUnits),
-          };
-          const { error: rptErr } = await supabase.from("service_reports").upsert(upsertPayload);
-          if (rptErr) {
-            console.error("Laporan upsert error:", rptErr.message);
-            showNotif("⚠️ Laporan tersimpan lokal tapi gagal ke server: " + rptErr.message);
+          });
+
+          if (!errWithJson) {
+            savedOk = true;
+            console.log("✅ Laporan saved (with JSON cols):", newReport.id);
+          } else {
+            // Kolom materials_json/units_json belum ada — fallback ke payload dasar
+            console.warn("JSON cols not available, fallback:", errWithJson.message);
+            const { error: errBase } = await supabase.from("service_reports").upsert(basePayload);
+            if (!errBase) {
+              savedOk = true;
+              console.log("✅ Laporan saved (base cols):", newReport.id);
+            } else {
+              console.error("❌ Laporan upsert FAILED:", errBase.message);
+              showNotif("❌ Gagal simpan laporan: " + errBase.message);
+            }
           }
 
-          // Reload laporan untuk Owner/Admin setelah teknisi submit
-          setTimeout(() => {
-            supabase.from("service_reports").select("*").order("submitted_at",{ascending:false})
-              .then(({data}) => {
-                if (data && data.length > 0) {
-                  setLaporanReports(data.map(r=>({
-                    ...r,
-                    units:    r.units_json    ? JSON.parse(r.units_json)    : (r.units    || []),
-                    materials:r.materials_json? JSON.parse(r.materials_json): (r.materials|| []),
-                    fotos:    r.fotos||(r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
-                    editLog:  r.edit_log||[]
-                  })));
-                }
-              });
-          }, 1500);
+          if (!savedOk) return; // jangan lanjut jika gagal simpan
 
-          // Update order status ke COMPLETED
+          // Reload laporan — 2 kali (800ms + 4000ms) sebagai backup selain realtime
+          const reloadAllLaporan = async () => {
+            const { data, error } = await supabase
+              .from("service_reports")
+              .select("*")
+              .order("submitted_at", { ascending: false });
+            if (error) { console.warn("reload laporan:", error.message); return; }
+            if (data && data.length > 0) {
+              setLaporanReports(data.map(r => ({
+                ...r,
+                units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return r.units    ||[];} })() : (r.units    ||[]),
+                materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return r.materials||[];} })() : (r.materials||[]),
+                fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
+                editLog:   r.edit_log || [],
+              })));
+            }
+          };
+          setTimeout(reloadAllLaporan, 800);
+          setTimeout(reloadAllLaporan, 4000);
+
+          // Update order status ke REPORT_SUBMITTED (laporan masuk, menunggu approval invoice)
+          const newOrderStatus = "REPORT_SUBMITTED";
           setOrdersData(prev => prev.map(o =>
-            o.id === laporanModal.id ? {...o, status:"COMPLETED"} : o
+            o.id === laporanModal.id ? {...o, status: newOrderStatus} : o
           ));
-          supabase.from("orders").update({status:"COMPLETED"}).eq("id",laporanModal.id);
+          const { error: ordErr } = await supabase
+            .from("orders")
+            .update({ status: newOrderStatus })
+            .eq("id", laporanModal.id);
+          if (ordErr) console.warn("Order status update:", ordErr.message);
 
           // ── Teknisi SELESAI → status kembali "active" (siap terima job baru) ──
           // Patokan: laporan disubmit = pekerjaan selesai secara aktual
@@ -5405,6 +5435,8 @@ Silakan buat invoice dari ARA Chat 👆`;
           fetch("/api/send-wa",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:"6281299898937",message:ownerMsg})}).catch(()=>{});
 
           setLaporanSubmitted(true);
+          // Force reload setelah modal ditutup (backup jika realtime tidak aktif)
+          setTimeout(reloadAllLaporan, 500);
           showNotif(`✅ Laporan ${laporanModal.id} (${laporanUnits.length} unit) terkirim! Invoice ${newInvoiceId} dibuat.`);
         };
 
