@@ -9,9 +9,21 @@ export default async function handler(req, res) {
   if (!messages?.length) return res.status(400).json({ error: "messages required" });
 
   // Ambil API key dari environment (aman di server)
-  const apiKey   = process.env.LLM_API_KEY;
+  // Provider dari request (dipilih user di Settings) atau env LLM_PROVIDER
   const llmProv  = provider  || process.env.LLM_PROVIDER || "gemini";
   const llmModel = model     || process.env.LLM_MODEL    || "gemini-2.5-flash";
+
+  // API key: baca per-provider dari env (sesuai nama var yang dipakai di Vercel)
+  // Urutan prioritas: LLM_API_KEY (generik) → per-provider key → dari request body
+  const apiKey = (() => {
+    if (process.env.LLM_API_KEY) return process.env.LLM_API_KEY.trim();
+    if (llmProv === "gemini")  return (process.env.GEMINI_API_KEY  || "").trim();
+    if (llmProv === "claude")  return (process.env.ANTHROPIC_API_KEY || "").trim();
+    if (llmProv === "openai")  return (process.env.OPENAI_API_KEY  || "").trim();
+    return "";
+  })();
+
+  console.log("[ara-chat] provider:", llmProv, "model:", llmModel, "hasKey:", !!apiKey);
 
   // Build system prompt dari brainMd + bizContext
   const sysP = (typeof brainMd === "string" ? brainMd : "") +
@@ -36,7 +48,7 @@ export default async function handler(req, res) {
     let reply = "";
 
     if (llmProv === "gemini") {
-      if (!apiKey) return res.status(503).json({ error: "LLM_API_KEY not configured" });
+      if (!apiKey) return res.status(503).json({ error: "LLM_API_KEY belum dikonfigurasi di Vercel Environment Variables. Buka Vercel Dashboard → Project → Settings → Environment Variables → tambahkan LLM_API_KEY." });
 
       const geminiTools = [{
         functionDeclarations: [
@@ -140,7 +152,7 @@ export default async function handler(req, res) {
       reply = fd.message?.content || fd.response || "";
 
     } else if (llmProv === "openai") {
-      if (!apiKey) return res.status(503).json({ error: "LLM_API_KEY not configured" });
+      if (!apiKey) return res.status(503).json({ error: "LLM_API_KEY belum dikonfigurasi di Vercel Environment Variables. Buka Vercel Dashboard → Project → Settings → Environment Variables → tambahkan LLM_API_KEY." });
       const fr = await fetch("https://api.openai.com/v1/chat/completions", {
         method:"POST",
         headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
@@ -153,7 +165,7 @@ export default async function handler(req, res) {
 
     } else {
       // Claude / Anthropic (default)
-      if (!apiKey) return res.status(503).json({ error: "LLM_API_KEY not configured" });
+      if (!apiKey) return res.status(503).json({ error: "LLM_API_KEY belum dikonfigurasi di Vercel Environment Variables. Buka Vercel Dashboard → Project → Settings → Environment Variables → tambahkan LLM_API_KEY." });
       const fr = await fetch("https://api.anthropic.com/v1/messages", {
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":apiKey,
