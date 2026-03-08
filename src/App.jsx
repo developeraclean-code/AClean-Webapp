@@ -3886,8 +3886,9 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
   const isTekRoleGlobal = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
 
   // ── Mobile detection ──
-  const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
-  React.useEffect(() => {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  useEffect(() => {
     const fn = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", fn);
     return () => window.removeEventListener("resize", fn);
@@ -4010,9 +4011,49 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
 
       {/* ── BOTTOM NAV (mobile only) ── */}
       {isMobile && (
+        <>
+        {/* Drawer menu — tampil saat More diklik */}
+        {mobileDrawerOpen && (
+          <div style={{ position:"fixed", inset:0, zIndex:550, background:"#000a" }} onClick={() => setMobileDrawerOpen(false)}>
+            <div style={{ position:"absolute", bottom:64, left:0, right:0, background:cs.surface, borderRadius:"20px 20px 0 0", padding:"16px 12px 8px", border:"1px solid "+cs.border }}
+              onClick={e => e.stopPropagation()}>
+              <div style={{ textAlign:"center", marginBottom:12 }}>
+                <div style={{ width:36, height:4, background:cs.border, borderRadius:2, margin:"0 auto" }} />
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+                {menuItems.filter(m => !["dashboard","orders","schedule","laporantim","ara"].includes(m.id)).map(item => (
+                  <button key={item.id} onClick={() => { setActiveMenu(item.id); setMobileDrawerOpen(false); }}
+                    style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:5, padding:"12px 4px", background: activeMenu===item.id ? cs.accent+"18" : cs.card, border:"1px solid "+(activeMenu===item.id ? cs.accent : cs.border), borderRadius:12, cursor:"pointer", color: activeMenu===item.id ? cs.accent : cs.text }}>
+                    <span style={{ fontSize:22 }}>{item.icon}</span>
+                    <span style={{ fontSize:9, fontWeight:600, textAlign:"center" }}>{item.label}</span>
+                  </button>
+                ))}
+                {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+                  <button onClick={() => { setWaPanel(true); setMobileDrawerOpen(false); }}
+                    style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:5, padding:"12px 4px", background:"#25D36618", border:"1px solid #25D36644", borderRadius:12, cursor:"pointer", color:"#25D366", position:"relative" }}>
+                    <span style={{ fontSize:22 }}>💬</span>
+                    <span style={{ fontSize:9, fontWeight:600 }}>WhatsApp</span>
+                    {waConversations.filter(c=>c.unread>0).length > 0 && (
+                      <span style={{ position:"absolute", top:6, right:8, background:cs.red, color:"#fff", fontSize:8, fontWeight:800, borderRadius:99, padding:"1px 5px" }}>
+                        {waConversations.filter(c=>c.unread>0).reduce((a,b)=>a+b.unread,0)}
+                      </span>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Bottom tab bar */}
         <div style={{ position:"fixed", bottom:0, left:0, right:0, zIndex:500, background:cs.surface, borderTop:"1px solid "+cs.border, display:"flex", alignItems:"stretch", paddingBottom:"env(safe-area-inset-bottom,0px)" }}>
-          {menuItems.slice(0,5).map(item => (
-            <button key={item.id} onClick={() => setActiveMenu(item.id)}
+          {[
+            { id:"dashboard",  icon:"⬡",  label:"Home"    },
+            { id:"orders",     icon:"📋",  label:"Order"   },
+            { id:"schedule",   icon:"📅",  label:"Jadwal"  },
+            { id:"laporantim", icon:"📝",  label:"Laporan" },
+            { id:"ara",        icon:"🤖",  label:"ARA"     },
+          ].filter(item => menuItems.some(m => m.id === item.id)).map(item => (
+            <button key={item.id} onClick={() => { setActiveMenu(item.id); setMobileDrawerOpen(false); }}
               style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"8px 4px 10px", background:"none", border:"none", cursor:"pointer",
                 color: activeMenu===item.id ? cs.accent : cs.muted,
                 borderTop: activeMenu===item.id ? "2px solid "+cs.accent : "2px solid transparent",
@@ -4021,19 +4062,16 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               <span style={{ fontSize:9, fontWeight:600 }}>{item.label}</span>
             </button>
           ))}
-          {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
-            <button onClick={() => setWaPanel(true)}
-              style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"8px 4px 10px", background:"none", border:"none", cursor:"pointer", color:cs.muted, borderTop:"2px solid transparent", position:"relative" }}>
-              <span style={{ fontSize:18 }}>💬</span>
-              <span style={{ fontSize:9, fontWeight:600 }}>WA</span>
-              {waConversations.filter(c=>c.unread>0).length > 0 && (
-                <span style={{ position:"absolute", top:6, right:"calc(50% - 16px)", background:cs.red, color:"#fff", fontSize:8, fontWeight:800, borderRadius:99, padding:"1px 4px", minWidth:14, textAlign:"center" }}>
-                  {waConversations.filter(c=>c.unread>0).reduce((a,b)=>a+b.unread,0)}
-                </span>
-              )}
-            </button>
-          )}
+          <button onClick={() => setMobileDrawerOpen(o => !o)}
+            style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"8px 4px 10px", background:"none", border:"none", cursor:"pointer",
+              color: mobileDrawerOpen ? cs.accent : cs.muted,
+              borderTop: mobileDrawerOpen ? "2px solid "+cs.accent : "2px solid transparent",
+            }}>
+            <span style={{ fontSize:18 }}>☰</span>
+            <span style={{ fontSize:9, fontWeight:600 }}>Menu</span>
+          </button>
         </div>
+        </>
       )}
 
       {/* ══════════════════════════════════════════════════════ */}
