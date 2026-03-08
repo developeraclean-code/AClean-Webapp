@@ -423,10 +423,25 @@ export default function ACleanWebApp() {
   // ── Notification ──
   const [notification, setNotification] = useState(null);
   const notifTimer = useRef(null);
-  const showNotif = (msg) => {
+  // G8 FIX: Browser push notification support
+  const requestPushPermission = async () => {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+  };
+  const pushNotif = (title, body, icon = "⬡") => {
+    if ("Notification" in window && Notification.permission === "granted") {
+      try {
+        new Notification(title, { body, icon: "/favicon.ico", tag: "aclean-" + Date.now() });
+      } catch(e) {}
+    }
+  };
+  const showNotif = (msg, push = false) => {
     setNotification(msg);
     clearTimeout(notifTimer.current);
     notifTimer.current = setTimeout(() => setNotification(null), 3000);
+    if (push) pushNotif("AClean", msg.replace(/[🔔📋✅❌⚠️💰]/g, "").trim());
   };
 
   // ── Laporan Helper Constants ──
@@ -496,6 +511,7 @@ export default function ACleanWebApp() {
         setActiveMenu("dashboard");
         _lsSave("localSession", userObj);
         showNotif("Selamat datang, " + profile.name + "!");
+        requestPushPermission();
         return;
       }
 
@@ -512,6 +528,7 @@ export default function ACleanWebApp() {
         // Simpan session lokal agar tidak hilang saat refresh
         _lsSave("localSession", userObj);
         showNotif("Selamat datang, " + localUser.name + "! (mode lokal)");
+        requestPushPermission();
         return;
       }
 
@@ -633,33 +650,24 @@ export default function ACleanWebApp() {
       if (!ordersRes.error   && ordersRes.data)   setOrdersData(ordersRes.data);
       if (!invoicesRes.error && invoicesRes.data)  setInvoicesData(invoicesRes.data);
       if (!customersRes.error && customersRes.data) setCustomersData(customersRes.data);
-      // Parse JSON fields dari laporan agar materials+units tersedia
-      if (reportsRes && !reportsRes.error && reportsRes.data) {
-        setLaporanReports(reportsRes.data.map(r => ({
-          ...r,
-          units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json); } catch(_){return r.units||[];} })()    : (r.units    || []),
-          materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })(): (r.materials|| []),
-          fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i, label:`Foto ${i+1}`, url:u})),
-          editLog:   r.edit_log || [],
-        })));
-      }
+      // [G1 FIXED] laporan load handled below by parseLaporan block
       if (!inventoryRes.error && inventoryRes.data) setInventoryData(inventoryRes.data);
-      if (!laporanRes.error && laporanRes.data && laporanRes.data.length > 0) {
-        // Normalize laporan dari Supabase agar cocok struktur lokal
-        const normalized = laporanRes.data.map(r => ({
+      // Load laporan — single clean parse, always run (even empty = clear demo data)
+      if (!laporanRes.error && laporanRes.data) {
+        const parseLaporan = r => ({
           ...r,
-          units: r.units || [],
-          materials: r.materials || [],
-          fotos: r.fotos || (r.foto_urls||[]).map((url,i) => ({id:i,label:`Foto ${i+1}`,url})),
-          editLog: r.edit_log || r.editLog || [],
-          rekomendasi: r.rekomendasi || "",
+          units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return r.units    ||[];} })() : (r.units    ||[]),
+          materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return r.materials||[];} })() : (r.materials||[]),
+          fotos:     r.fotos || (r.foto_urls||[]).map((url,i) => ({id:i, label:`Foto ${i+1}`, url})),
+          editLog:   r.edit_log || r.editLog || [],
+          rekomendasi:    r.rekomendasi    || "",
           catatan_global: r.catatan_global || r.catatan || "",
-          submitted: r.submitted || (r.submitted_at||"").slice(0,16).replace("T"," "),
-          status: r.status || "SUBMITTED",
-        }));
-        setLaporanReports(normalized);
+          submitted:      r.submitted || (r.submitted_at||"").slice(0,16).replace("T"," "),
+          status:         r.status || "SUBMITTED",
+        });
+        setLaporanReports(laporanRes.data.map(parseLaporan));
       }
-      // Jika DB kosong (laporanRes.data = []), initial state hardcoded tetap aktif
+      // Jika DB error total, keep demo data (already in useState init)
       if (!logsRes.error && logsRes.data && logsRes.data.length > 0) setAgentLogs(logsRes.data);
 
       // GAP 3: Load payments summary & dispatch recent (untuk dashboard)
@@ -718,7 +726,13 @@ export default function ACleanWebApp() {
     const ch1 = supabase.channel("rt-orders")
       .on("postgres_changes", { event:"*", schema:"public", table:"orders" }, () =>
         supabase.from("orders").select("*").order("date",{ascending:false})
-          .then(({data}) => { if(data) setOrdersData(data); }))
+          .then(({data}) => {
+            if(data) {
+              setOrdersData(data);
+              // G8: push notif for new/updated order
+              pushNotif("AClean — Order Update", "Ada perubahan status order");
+            }
+          }))
       .subscribe();
     const ch2 = supabase.channel("rt-invoices")
       .on("postgres_changes", { event:"*", schema:"public", table:"invoices" }, () =>
@@ -740,6 +754,7 @@ export default function ACleanWebApp() {
         supabase.from("service_reports").select("*").order("submitted_at",{ascending:false})
           .then(({data}) => {
             if (data && data.length > 0) {
+              pushNotif("AClean — Laporan Masuk", "Teknisi baru submit laporan");
               setLaporanReports(data.map(r => ({
                 ...r,
                 units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){return r.units    ||[];} })() : (r.units    ||[]),
@@ -1021,6 +1036,14 @@ _Simpan pesan ini sebagai bukti pelunasan._`
 
   // ── GAP 9: Create order (real state mutation) ──
   const createOrder = async (form) => {
+    // G3 FIX: Hard conflict check — block overbooking even if 2 admin input simultaneously
+    if (form.teknisi && form.date && form.time) {
+      const isAvail = cekTeknisiAvailable(form.teknisi, form.date, form.time, form.service, form.units);
+      if (!isAvail) {
+        showNotif("⚠️ " + form.teknisi + " sudah ada job di jam " + form.time + " tanggal " + form.date + ". Pilih jam lain.");
+        return null;
+      }
+    }
     // GAP 4: ID aman — timestamp ms + random 3 digit, tidak bergantung array.length
     const newId = "JOB" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
     const timeEnd = hitungJamSelesai(form.time||"09:00", form.service||"Cleaning", form.units||1);
@@ -1695,7 +1718,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           </div>
 
           {/* My stats */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
+          <div style={{ display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(3,1fr)", gap:isMobile?10:12 }}>
             {[
               { icon:"📋", label:"Job Hari Ini",   value:todayJobs.length,   color:cs.accent },
               { icon:"✅", label:"Total Selesai",   value:doneCount,          color:cs.green  },
@@ -1787,7 +1810,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         </div>
 
         {/* KPI Cards */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
+        <div style={{ display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:14 }}>
           {[
             { label:"Order Hari Ini",      value:todayOrders.length,          sub:`${todayOrders.filter(o=>o.status==="IN_PROGRESS").length} aktif · ${todayOrders.filter(o=>o.status==="COMPLETED").length} selesai`, color:cs.accent, icon:"📋" },
             { label:"Invoice Unpaid",       value:unpaidCount,                 sub:"Perlu follow-up",     color:cs.yellow, icon:"🧾" },
@@ -1827,7 +1850,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         </div>
 
         {/* Invoice + Stok alerts */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+        <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:14 }}>
           <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
             <div style={{ fontWeight:700, color:cs.text, marginBottom:14 }}>🧾 Invoice Perlu Tindakan</div>
             {invoicesData.filter(i => i.status !== "PAID").map(inv => (
@@ -1912,7 +1935,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       {cu.is_vip && <span style={{ background:cs.yellow+"22", color:cs.yellow, fontSize:10, fontWeight:800, padding:"2px 7px", borderRadius:99, border:"1px solid "+cs.yellow+"44" }}>⭐ VIP</span>}
                       <span style={{ fontSize:10, color:cs.muted, fontFamily:"monospace" }}>{cu.id}</span>
                     </div>
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"3px 20px", fontSize:12, color:cs.muted, marginBottom:8 }}>
+                    <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:"3px 20px", fontSize:12, color:cs.muted, marginBottom:8 }}>
                       <span>📱 {cu.phone}</span><span>📍 {cu.area}</span>
                       <span>🏠 {cu.address.slice(0,32)}...</span><span>📅 {cu.joined}</span>
                     </div>
@@ -1929,7 +1952,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           </div>
         ) : (
           <div style={{ display:"grid", gap:14 }}>
-            <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18, display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, textAlign:"center" }}>
+            <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18, display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:14, textAlign:"center" }}>
               {[["Total Order", history.length, cs.accent], ["Total Spend", currentUser?.role==="Teknisi"?"—":fmt(history.filter(s=>s.status==="COMPLETED").reduce((a,b)=>a+b.total,0)), cs.green], ["Terakhir Servis", selectedCustomer.last_service, cs.yellow], ["Area", selectedCustomer.area, cs.muted]].map(([label, val, color]) => (
                 <div key={label}><div style={{ fontSize:11, color:cs.muted, fontWeight:600, marginBottom:4 }}>{label}</div><div style={{ fontWeight:800, color, fontSize:15 }}>{val}</div></div>
               ))}
@@ -1953,7 +1976,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       </div>
                       {currentUser?.role !== "Teknisi" && currentUser?.role !== "Helper" && <span style={{ fontWeight:800, color:cs.text, fontFamily:"monospace" }}>{fmt(svc.total)}</span>}
                     </div>
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"4px 16px", fontSize:12, color:cs.muted }}>
+                    <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:"4px 16px", fontSize:12, color:cs.muted }}>
                       <span>📅 {svc.date}</span><span>👷 {svc.teknisi}</span>
                       <span>🔧 {svc.type} x{svc.units}</span>
                       {svc.invoice && currentUser?.role !== "Teknisi" && currentUser?.role !== "Helper" && <span style={{ fontFamily:"monospace", color:cs.accent }}>{svc.invoice}</span>}
@@ -1997,7 +2020,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // RENDER ORDERS
   // ============================================================
   const renderOrders = () => {
-    const filtered = orderFilter === "Semua" ? ordersData : ordersData.filter(o => {
+    const filtered = orderFilter === "Semua" ? ordersData :
+      orderFilter === "Hari Ini" ? ordersData.filter(o => o.date === TODAY) :
+      ordersData.filter(o => {
       const map = { "Pending":"PENDING", "Confirmed":"CONFIRMED", "In Progress":"IN_PROGRESS", "Completed":"COMPLETED" };
       return o.status === map[orderFilter];
     });
@@ -2008,7 +2033,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
         </div>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-          {["Semua","Pending","Confirmed","In Progress","Completed"].map(f => (
+          {["Semua","Hari Ini","Pending","Confirmed","In Progress","Completed"].map(f => (
             <button key={f} onClick={() => setOrderFilter(f)} style={{ background:orderFilter===f?cs.accent:cs.card, border:"1px solid "+(orderFilter===f?cs.accent:cs.border), color:orderFilter===f?"#0a0f1e":cs.muted, padding:"6px 14px", borderRadius:99, cursor:"pointer", fontSize:12, fontWeight:600 }}>{f}</button>
           ))}
         </div>
@@ -2099,7 +2124,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div style={{ background:cs.surface, borderRadius:6, padding:"6px 10px" }}><div style={{color:cs.muted}}>Material</div><div style={{color:cs.text,fontWeight:700}}>{fmt(inv.material)}</div></div>
               <div style={{ background:inv.dadakan>0?cs.yellow+"18":cs.surface, borderRadius:6, padding:"6px 10px", border:inv.dadakan>0?"1px solid "+cs.yellow+"44":"none" }}><div style={{color:cs.muted}}>Tambahan</div><div style={{color:inv.dadakan>0?cs.yellow:cs.text,fontWeight:700}}>{fmt(inv.dadakan)}</div></div>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"4px 20px", fontSize:12, color:cs.muted, marginBottom:12 }}>
+            <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:"4px 20px", fontSize:12, color:cs.muted, marginBottom:12 }}>
               <span>👤 {inv.customer}</span><span>📱 {inv.phone}</span>
               <span>🔧 {inv.service} · {inv.units} unit</span>
               {inv.due && <span>⏰ Jatuh tempo: {inv.due}</span>}
@@ -2896,7 +2921,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         )} {/* end P&L — Owner only */}
 
         {/* ── SECTION 2: KPI Operasional ── */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
+        <div style={{ display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(3,1fr)", gap:isMobile?10:12 }}>
           {[
             {label:"Completion Rate",val:completionRate+"%",sub:ordersDone+"/"+ordersAll+" order",color:cs.green,icon:"✅"},
             {label:"Avg. Order Value",val:fmt(avgOrderVal),sub:"per transaksi PAID",color:cs.accent,icon:"📋"},
@@ -2914,7 +2939,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         {/* ── SECTION 3: Accounts Receivable ── */}
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
           <div style={{ fontWeight:800, color:cs.text, fontSize:14, marginBottom:14 }}>📥 Accounts Receivable (Piutang)</div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:14 }}>
+          <div style={{ display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:10, marginBottom:14 }}>
             {[
               {label:"Piutang Aktif",val:fmt(totalAR),cnt:unpaidInv.length+overdueInv.length,color:cs.yellow},
               {label:"Overdue 🚨",val:fmt(totalOverdue),cnt:overdueInv.length,color:cs.red},
@@ -2959,7 +2984,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 const col = techColors[t.name]||cs.muted;
                 const rate = t.total > 0 ? Math.round(t.done/t.total*100) : 0;
                 return (
-                  <div key={t.name} style={{ display:"grid", gridTemplateColumns:"120px 1fr 60px 80px", alignItems:"center", gap:10 }}>
+                  <div key={t.name} style={{ display:"grid", gridTemplateColumns:isMobile?"80px 1fr 50px":"120px 1fr 60px 80px", alignItems:"center", gap:10 }}>
                     <span style={{ fontSize:13, fontWeight:700, color:cs.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.name}</span>
                     <div style={{ background:cs.border, borderRadius:99, height:8, overflow:"hidden" }}>
                       <div style={{ height:"100%", background:col, width:(t.done/maxDone*100)+"%", borderRadius:99, transition:"width 0.4s" }} />
@@ -2974,7 +2999,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         </div>
 
         {/* ── SECTION 5: Status Invoice & Laporan ── */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+        <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:14 }}>
           <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18 }}>
             <div style={{ fontWeight:700, color:cs.text, marginBottom:12, fontSize:13 }}>🧾 Status Invoice (Semua)</div>
             {[["PAID",cs.green,"Lunas"],["UNPAID",cs.yellow,"Belum Bayar"],["OVERDUE",cs.red,"Terlambat"],["PENDING_APPROVAL",cs.ara,"Menunggu Approve"]].map(([s,col,lbl])=>{
@@ -3473,7 +3498,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               {llmStatus==="connected"?"● Connected":llmStatus==="testing"?"● Testing...":"● Not Connected"}
             </span>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:14 }}>
+          <div style={{ display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:8, marginBottom:14 }}>
             {LLM_PROVIDERS.map(p => (
               <div key={p.id} onClick={() => {
                       setLlmProvider(p.id);
@@ -3663,7 +3688,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
             </div>
             <span style={{ fontSize:12, padding:"4px 10px", borderRadius:99, background:cs.green+"22", color:cs.green, border:"1px solid "+cs.green+"44", fontWeight:700 }}>● Connected</span>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:14 }}>
+          <div style={{ display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:8, marginBottom:14 }}>
             {[{id:"supabase",label:"Supabase",icon:"⚡",rec:true,desc:"PostgreSQL managed, real-time"},{id:"postgresql",label:"PostgreSQL",icon:"🐘",rec:false,desc:"Self-hosted, full control"},{id:"mysql",label:"MySQL",icon:"🐬",rec:false,desc:"Populer, banyak hosting"},{id:"mongodb",label:"MongoDB",icon:"🍃",rec:false,desc:"NoSQL flexible"}].map(db => (
               <div key={db.id} onClick={() => setDbProvider(db.id)}
                 style={{ background:dbProvider===db.id?cs.accent+"12":cs.surface, border:"2px solid "+(dbProvider===db.id?cs.accent:cs.border), borderRadius:11, padding:"12px 8px", cursor:"pointer", textAlign:"center", position:"relative" }}>
@@ -3860,8 +3885,35 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
 
   const isTekRoleGlobal = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
 
+  // ── Mobile detection ──
+  const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
+  React.useEffect(() => {
+    const fn = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
+
   return (
-    <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:"flex" }}>
+    <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:isMobile?"block":"flex" }}>
+
+      {/* ── GLOBAL MOBILE STYLES ── */}
+      <style>{`
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        input, textarea, select { font-size: 16px !important; } /* prevent iOS zoom */
+        button { touch-action: manipulation; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #1e2d4a; border-radius: 2px; }
+        table { border-collapse: collapse; }
+        @media (max-width: 768px) {
+          .hide-mobile { display: none !important; }
+          .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        @keyframes slideUp { from{transform:translateY(20px);opacity:0} to{transform:none;opacity:1} }
+        @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+      `}</style>
 
       {/* ── DATA LOADING BANNER ── */}
       {dataLoading && (
@@ -3872,8 +3924,8 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
         </div>
       )}
 
-      {/* ── SIDEBAR ── */}
-      <div style={{ width:200, background:cs.surface, borderRight:"1px solid "+cs.border, display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto" }}>
+      {/* ── SIDEBAR (desktop only) ── */}
+      {!isMobile && <div style={{ width:200, background:cs.surface, borderRight:"1px solid "+cs.border, display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto" }}>
         <div style={{ padding:"16px 14px", borderBottom:"1px solid "+cs.border }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
             <div style={{ fontWeight:800, fontSize:16, color:cs.accent }}>⬡ AClean</div>
@@ -3916,11 +3968,30 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
             Keluar →
           </button>
         </div>
-      </div>
+      </div>}
 
       {/* ── MAIN CONTENT ── */}
-      <div style={{ flex:1, overflowY:"auto" }}>
-        <div style={{ padding:"20px 24px", maxWidth:1200 }}>
+      <div style={{ flex:1, overflowY:"auto", paddingBottom:isMobile?"70px":0 }}>
+        <div style={{ padding:isMobile?"12px":"20px 24px", maxWidth:1200 }}>
+          {/* Mobile top bar */}
+          {isMobile && (
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14, paddingBottom:12, borderBottom:"1px solid "+cs.border }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:18 }}>{ALL_MENU.find(m=>m.id===activeMenu)?.icon}</span>
+                <div style={{ fontWeight:800, fontSize:15, color:cs.text }}>{ALL_MENU.find(m=>m.id===activeMenu)?.label}</div>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                {currentUser && (
+                  <div style={{ width:28, height:28, borderRadius:7, background:"linear-gradient(135deg,"+currentUser.color+","+currentUser.color+"99)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, color:"#fff" }}>
+                    {currentUser.avatar}
+                  </div>
+                )}
+                <button onClick={doLogout} style={{ background:"none", border:"none", color:cs.muted, fontSize:12, cursor:"pointer", padding:"4px 6px" }}>⏻</button>
+              </div>
+            </div>
+          )}
+          {/* Desktop page header */}
+          {!isMobile && (
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20, paddingBottom:16, borderBottom:"1px solid "+cs.border }}>
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <span style={{ fontSize:20 }}>{ALL_MENU.find(m=>m.id===activeMenu)?.icon}</span>
@@ -3932,9 +4003,38 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               </div>
             )}
           </div>
+          )}
           {renderContent()}
         </div>
       </div>
+
+      {/* ── BOTTOM NAV (mobile only) ── */}
+      {isMobile && (
+        <div style={{ position:"fixed", bottom:0, left:0, right:0, zIndex:500, background:cs.surface, borderTop:"1px solid "+cs.border, display:"flex", alignItems:"stretch", paddingBottom:"env(safe-area-inset-bottom,0px)" }}>
+          {menuItems.slice(0,5).map(item => (
+            <button key={item.id} onClick={() => setActiveMenu(item.id)}
+              style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"8px 4px 10px", background:"none", border:"none", cursor:"pointer",
+                color: activeMenu===item.id ? cs.accent : cs.muted,
+                borderTop: activeMenu===item.id ? "2px solid "+cs.accent : "2px solid transparent",
+              }}>
+              <span style={{ fontSize:18 }}>{item.icon}</span>
+              <span style={{ fontSize:9, fontWeight:600 }}>{item.label}</span>
+            </button>
+          ))}
+          {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+            <button onClick={() => setWaPanel(true)}
+              style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"8px 4px 10px", background:"none", border:"none", cursor:"pointer", color:cs.muted, borderTop:"2px solid transparent", position:"relative" }}>
+              <span style={{ fontSize:18 }}>💬</span>
+              <span style={{ fontSize:9, fontWeight:600 }}>WA</span>
+              {waConversations.filter(c=>c.unread>0).length > 0 && (
+                <span style={{ position:"absolute", top:6, right:"calc(50% - 16px)", background:cs.red, color:"#fff", fontSize:8, fontWeight:800, borderRadius:99, padding:"1px 4px", minWidth:14, textAlign:"center" }}>
+                  {waConversations.filter(c=>c.unread>0).reduce((a,b)=>a+b.unread,0)}
+                </span>
+              )}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — BUAT ORDER */}
@@ -4322,8 +4422,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
       {/* MODAL — BRAIN.MD EDITOR */}
       {/* ══════════════════════════════════════════════════════ */}
       {modalBrainEdit && (
-        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={() => setModalBrainEdit(false)}>
-          <div style={{ background:cs.surface, border:"1px solid "+cs.ara+"44", borderRadius:20, width:"100%", maxWidth:780, maxHeight:"92vh", display:"flex", flexDirection:"column", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
+        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:500, display:"flex", alignItems:isMobile?"flex-end":"center", justifyContent:"center", padding:16 }} onClick={() => setModalBrainEdit(false)}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.ara+"44", borderRadius:isMobile?"16px 16px 0 0":20, width:"100%", maxWidth:isMobile?"100%":780, maxHeight:"92vh", display:"flex", flexDirection:"column", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
             <div style={{ background:cs.ara+"15", borderBottom:"1px solid "+cs.ara+"33", padding:"16px 22px", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
               <div>
                 <div style={{ fontWeight:800, color:cs.ara, fontSize:16 }}>🧠 Edit Brain.md — Memori Permanen ARA</div>
@@ -4362,8 +4462,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
       {/* MODAL — EDIT BRAIN CUSTOMER */}
       {/* ══════════════════════════════════════════════════════ */}
       {modalBrainCustomerEdit && (
-        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:cs.surface, border:"1px solid #22c55e44", borderRadius:20, width:"100%", maxWidth:700, maxHeight:"90vh", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:500, display:"flex", alignItems:isMobile?"flex-end":"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:cs.surface, border:"1px solid #22c55e44", borderRadius:isMobile?"16px 16px 0 0":20, width:"100%", maxWidth:isMobile?"100%":700, maxHeight:"90vh", display:"flex", flexDirection:"column", overflow:"hidden" }}>
             <div style={{ background:"#22c55e12", borderBottom:"1px solid #22c55e33", padding:"16px 22px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <div>
                 <div style={{ fontWeight:800, fontSize:16, color:"#22c55e" }}>💬 Edit Brain Customer Bot</div>
@@ -4598,7 +4698,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
       {/* ══════════════════════════════════════════════════════ */}
       {waPanel && (
         <div style={{ position:"fixed", inset:0, background:"#000b", zIndex:300, display:"flex", justifyContent:"flex-end" }} onClick={() => setWaPanel(false)}>
-          <div style={{ width:420, background:cs.surface, borderLeft:"1px solid "+cs.border, display:"flex", flexDirection:"column", height:"100vh" }} onClick={e => e.stopPropagation()}>
+          <div style={{ width:isMobile?"100%":420, background:cs.surface, borderLeft:isMobile?"none":"1px solid "+cs.border, display:"flex", flexDirection:"column", height:"100vh" }} onClick={e => e.stopPropagation()}>
             <div style={{ background:cs.card, padding:"16px 20px", borderBottom:"1px solid "+cs.border, display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
               <div>
                 <div style={{ fontWeight:800, color:"#25D366", fontSize:14 }}>📱 WhatsApp Monitor</div>
@@ -5060,7 +5160,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
       {/* ═══════ MODAL EDIT / DETAIL LAPORAN ═══════ */}
       {modalLaporanDetail && selectedLaporan && (
         <div style={{position:"fixed",inset:0,background:"#000d",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>{setModalLaporanDetail(false);setEditLaporanMode(false);}}>
-          <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:20,width:"100%",maxWidth:540,maxHeight:"90vh",overflowY:"auto",padding:28}} onClick={e=>e.stopPropagation()}>
+          <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:isMobile?"16px 16px 0 0":20,width:"100%",maxWidth:isMobile?"100%":540,maxHeight:"90vh",overflowY:"auto",padding:28}} onClick={e=>e.stopPropagation()}>
 
             {/* Header */}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -5368,11 +5468,11 @@ Silakan buat invoice dari ARA Chat 👆`;
           setTimeout(reloadLaporan, 800);
           setTimeout(reloadLaporan, 3000); // double-check setelah 3 detik
 
-          // Update order status ke COMPLETED
+          // Update order status ke REPORT_SUBMITTED — menunggu Admin/Owner buat & approve invoice
           setOrdersData(prev => prev.map(o =>
-            o.id === laporanModal.id ? {...o, status:"COMPLETED"} : o
+            o.id === laporanModal.id ? {...o, status:"REPORT_SUBMITTED"} : o
           ));
-          supabase.from("orders").update({status:"COMPLETED"}).eq("id",laporanModal.id);
+          await supabase.from("orders").update({status:"REPORT_SUBMITTED"}).eq("id",laporanModal.id);
 
           // ── Teknisi SELESAI → status kembali "active" (siap terima job baru) ──
           // Patokan: laporan disubmit = pekerjaan selesai secara aktual
@@ -5439,6 +5539,7 @@ Silakan buat invoice dari ARA Chat 👆`;
           fetch("/api/send-wa",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:"6281299898937",message:ownerMsg})}).catch(()=>{});
 
           setLaporanSubmitted(true);
+          pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
           showNotif(`✅ Laporan ${laporanModal.id} (${laporanUnits.length} unit) terkirim! Invoice ${newInvoiceId} dibuat.`);
         };
 
@@ -5810,7 +5911,7 @@ Silakan buat invoice dari ARA Chat 👆`;
 
       {/* ── Laporan Submitted Confirmation ── */}
       {laporanModal && laporanSubmitted && (
-        <div style={{position:"fixed",inset:0,background:"#000d",zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{position:"fixed",inset:0,background:"#000d",zIndex:600,display:"flex",alignItems:isMobile?"flex-end":"center",justifyContent:"center",padding:24}}>
           <div style={{background:cs.surface,border:"1px solid "+cs.green+"44",borderRadius:20,padding:32,textAlign:"center",maxWidth:360,width:"100%"}}>
             <div style={{fontSize:48,marginBottom:12}}>✅</div>
             <div style={{fontWeight:800,fontSize:18,color:cs.text,marginBottom:8}}>Laporan Terkirim!</div>
