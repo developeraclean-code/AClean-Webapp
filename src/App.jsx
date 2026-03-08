@@ -487,6 +487,21 @@ export default function ACleanWebApp() {
   });
 
   const openLaporanModal = (order) => {
+    // ANTI-DUPLIKAT: cek apakah sudah ada laporan untuk job ini
+    const existingReport = laporanReports.find(r => r.job_id === (order._rewriteId ? order.id : order.id) && r.status !== "PENDING");
+    if (existingReport && !order._rewriteId) {
+      const isOwner = existingReport.teknisi === currentUser?.name;
+      const isHelper = existingReport.helper === currentUser?.name;
+      if (!isOwner && !isHelper) {
+        showNotif("⚠️ Laporan untuk job ini sudah dibuat oleh tim lain");
+        return;
+      }
+      if (!isOwner) {
+        // Helper mencoba buat laporan padahal teknisi sudah isi
+        showNotif(`⚠️ Laporan sudah dibuat oleh ${existingReport.teknisi}. Kamu bisa lihat di menu Laporan Saya.`);
+        return;
+      }
+    }
     const count = Math.min(order.units||1, 10);
     setLaporanUnits(Array.from({length:count},(_,i)=>mkUnit(i+1)));
     setLaporanMaterials([]);
@@ -882,43 +897,63 @@ export default function ACleanWebApp() {
     else window.open("https://wa.me/"+phone,"_blank");
   };
 
-  const dispatchWA = async (order) => {
-    const tek = teknisiData.find(t => t.name === order.teknisi);
-    if (!tek) return showNotif("Teknisi tidak ditemukan");
-    const msg = `📋 *DISPATCH JOB ${order.id}*\n👤 Customer: *${order.customer}*\n📍 Alamat: ${order.address}\n🔧 Service: ${order.service} — ${order.units} unit\n📅 Jadwal: ${order.date} jam ${order.time}${order.time_end?"–"+order.time_end:""}\n\nSegera konfirmasi kehadiran. — AClean`;
-    const ok = await sendWA(tek.phone, msg);
+  // ── Dispatch: update status saja (tanpa WA) ──
+  const dispatchStatus = async (order) => {
+    const dispatchAt = new Date().toISOString();
+    setOrdersData(prev => prev.map(o => o.id===order.id ? {...o, dispatch:true, dispatch_at:dispatchAt, status:"DISPATCHED"} : o));
+    await supabase.from("orders").update({dispatch:true, dispatch_at:dispatchAt, status:"DISPATCHED"}).eq("id",order.id);
+    const dispTek = teknisiData.find(t => t.name === order.teknisi);
+    if (dispTek?.id) {
+      setTeknisiData(prev => prev.map(t => t.name===order.teknisi ? {...t,status:"on-job"} : t));
+      supabase.from("user_profiles").update({status:"on-job"}).eq("id", dispTek.id);
+    }
+    addAgentLog("DISPATCH_STATUS", `Status ${order.id} → DISPATCHED`, "SUCCESS");
+    showNotif(`✅ Status job ${order.id} → Dispatched`);
+  };
 
-    // ── Dispatch WA ke Helper juga ──
+  // ── Kirim WA Dispatch ke Teknisi & Helper (tanpa ubah status) ──
+  const sendDispatchWA = async (order) => {
+    const tek = teknisiData.find(t => t.name === order.teknisi);
+    if (!tek?.phone) return showNotif("⚠️ No. HP teknisi tidak ditemukan");
+    const msg = `📋 *DISPATCH JOB ${order.id}*
+👤 Customer: *${order.customer}*
+📍 Alamat: ${order.address}
+🔧 Service: ${order.service} — ${order.units} unit
+📅 Jadwal: ${order.date} jam ${order.time}${order.time_end?"–"+order.time_end:""}
+
+Segera konfirmasi kehadiran. — AClean`;
+    const ok = await sendWA(tek.phone, msg);
     if (order.helper) {
       const helperData = teknisiData.find(t => t.name === order.helper);
       if (helperData?.phone) {
-        const helperMsg = `📋 *ASSIST JOB ${order.id}*\n👤 Customer: *${order.customer}*\n📍 Alamat: ${order.address}\n🔧 Service: ${order.service} — ${order.units} unit\n📅 Jadwal: ${order.date} jam ${order.time}\n👷 Teknisi: ${order.teknisi}\n\nKamu ditugaskan sebagai Helper. Hadir tepat waktu. — AClean`;
+        const helperMsg = `📋 *ASSIST JOB ${order.id}*
+👤 Customer: *${order.customer}*
+📍 Alamat: ${order.address}
+🔧 Service: ${order.service} — ${order.units} unit
+📅 Jadwal: ${order.date} jam ${order.time}
+👷 Teknisi: ${order.teknisi}
+
+Kamu ditugaskan sebagai Helper. — AClean`;
         await sendWA(helperData.phone, helperMsg);
       }
     }
-
     if (ok) {
-      const dispatchAt = new Date().toISOString();
-      setOrdersData(prev => prev.map(o => o.id===order.id ? {...o, dispatch:true, dispatch_at:dispatchAt, status:o.status==="CONFIRMED"?"DISPATCHED":o.status} : o));
-      await supabase.from("orders").update({dispatch:true, dispatch_at:dispatchAt, status:"DISPATCHED"}).eq("id",order.id);
-      // GAP 1.8: catat ke dispatch_logs
       await supabase.from("dispatch_logs").insert({
         order_id: order.id, teknisi: order.teknisi,
-        assigned_by: currentUser?.id||null,
         assigned_by_name: currentUser?.name||"",
         wa_message: msg, status:"SENT"
       }).catch(()=>{});
-      addAgentLog("DISPATCH_SENT", `WA dispatch ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
-      // Tandai teknisi sedang on-job saat dispatch
-          const dispTek = teknisiData.find(t => t.name === order.teknisi);
-          if (dispTek?.id) {
-            setTeknisiData(prev => prev.map(t =>
-              t.name === order.teknisi ? {...t, status:"on-job"} : t
-            ));
-            supabase.from("user_profiles").update({status:"on-job"}).eq("id", dispTek.id);
-          }
-          showNotif(`✅ Dispatch WA terkirim ke ${order.teknisi}`);
+      addAgentLog("DISPATCH_WA_SENT", `WA dispatch ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
+      showNotif(`✅ WA Dispatch terkirim ke ${order.teknisi}${order.helper?" + "+order.helper:""}`);
+    } else {
+      showNotif("📱 WA dibuka manual di browser");
     }
+  };
+
+  // ── dispatchWA: full (status + WA) — untuk backward compat ──
+  const dispatchWA = async (order) => {
+    await dispatchStatus(order);
+    await sendDispatchWA(order);
   };
 
   const invoiceReminderWA = (inv) => {
@@ -2473,7 +2508,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             <button onClick={() => { const cu=customersData.find(c=>c.phone===o.phone); if(cu){setSelectedCustomer(cu);setCustomerTab("history");setActiveMenu("customers");} }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📋 History</button>
                           )}
                           {(!o.dispatch && !isTekRole) && (
-                            <button onClick={() => dispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 Dispatch</button>
+                            <button onClick={() => dispatchStatus(o)} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                              ✅ Set Dispatch
+                            </button>
+                          )}
+                          {(!isTekRole) && (
+                            <button onClick={() => sendDispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 Dispatch</button>
                           )}
                           {!isTekRole && (
                             <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
@@ -2484,24 +2524,37 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           {isTekRole && (
                             <button onClick={() => openWA(o.phone,"Halo "+o.customer+", saya "+myTekName+" dari AClean. Saya akan tiba pkl "+o.time+" untuk "+o.service+". Terima kasih!")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>💬 Chat WA</button>
                           )}
-                          {isTekRole && o.dispatch && !["COMPLETED","CANCELLED","PAID"].includes(o.status) && (
-                            <button onClick={async () => {
-                              // Konfirmasi kehadiran — update status + WA ke admin
-                              await supabase.from("orders").update({status:"ON_SITE", confirmed_at: new Date().toISOString()}).eq("id",o.id);
-                              setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
+                          {isTekRole && o.dispatch && !["COMPLETED","CANCELLED","PAID"].includes(o.status) && (<>
+                            {/* Konfirmasi Hadir — update status SAJA */}
+                            {o.status !== "ON_SITE" && (
+                              <button onClick={async () => {
+                                await supabase.from("orders").update({status:"ON_SITE", confirmed_at: new Date().toISOString()}).eq("id",o.id);
+                                setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
+                                showNotif("✅ Status → On Site. Kirim notif WA ke Admin jika perlu.");
+                              }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", borderRadius:8, padding:"7px 12px", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
+                              ✅ Konfirmasi Hadir
+                            </button>
+                            )}
+                            {/* WA Notif ke Admin — terpisah */}
+                            <button onClick={() => {
                               const adm = userAccounts.find(u=>u.role==="Admin"||u.role==="Owner");
-                              if(adm?.phone) sendWA(adm.phone, `✅ *Konfirmasi Kehadiran*
-
+                              if(adm?.phone) sendWA(adm.phone,
+                                `✅ *Konfirmasi Kehadiran*
 👷 ${currentUser?.name} sudah tiba di lokasi
 📋 Job: ${o.id}
 👤 Customer: ${o.customer}
 📍 ${o.address}
-🔧 ${o.service} ${o.units} unit`);
-                              showNotif("✅ Kehadiran dikonfirmasi! Admin sudah dinotif.");
-                            }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", borderRadius:8, padding:"7px 12px", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
-                              ✅ Konfirmasi Hadir
+🔧 ${o.service} ${o.units} unit`
+                              );
+                            }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                              📱 Notif Admin
                             </button>
-                          )}
+                            {/* WA ke Customer */}
+                            <button onClick={() => openWA(o.phone, `Halo ${o.customer}, saya ${currentUser?.name} dari AClean. Sudah tiba di lokasi, siap mulai pengerjaan. 🔧`)}
+                              style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                              📱 WA Customer
+                            </button>
+                          </>)}
                           <button onClick={() => openLaporanModal(o)} style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📝 Laporan</button>
                         </div>
                       </div>
@@ -3325,7 +3378,8 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
             </div>
           : filtReps.map(r=>{
             const isPending = r.status==="PENDING";
-            const canEdit = r.status==="SUBMITTED" || r.status==="REVISION";
+            const canEdit = (r.status==="SUBMITTED" || r.status==="REVISION") && r.teknisi === myName;
+            const isReadOnly = (r.status==="SUBMITTED" || r.status==="REVISION") && r.teknisi !== myName && r.helper === myName;
             const isHelper = r.helper===myName;
             return (
               <div key={r.id} style={{background:cs.card,border:"1px solid "+(r.status==="REVISION"?cs.yellow:r.status==="VERIFIED"?cs.green:cs.border)+"44",borderRadius:14,padding:18}}>
@@ -3365,11 +3419,28 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 )}
 
                 <div style={{display:"flex",gap:8}}>
-                  {isPending && (
-                    <button onClick={() => openLaporanModal(ordersData.find(o=>o.id===r.job_id)||{id:r.job_id,customer:r.customer,service:r.service,date:r.date,teknisi:r.teknisi,helper:r.helper,units:1})}
-                      style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
-                      + Buat Laporan
-                    </button>
+                  {isPending && (() => {
+                    // Cek apakah teknisi lain sudah mengisi laporan untuk job ini
+                    const jobReport = laporanReports.find(lr => lr.job_id === r.job_id && lr.status !== "PENDING");
+                    if (jobReport && jobReport.teknisi !== myName) {
+                      return (
+                        <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 14px",fontSize:12,color:cs.muted}}>
+                          🔒 Laporan sudah diisi oleh <b style={{color:cs.accent}}>{jobReport.teknisi}</b>
+                        </div>
+                      );
+                    }
+                    return (
+                      <button onClick={() => openLaporanModal(ordersData.find(o=>o.id===r.job_id)||{id:r.job_id,customer:r.customer,service:r.service,date:r.date,teknisi:r.teknisi,helper:r.helper,units:1})}
+                        style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                        + Buat Laporan
+                      </button>
+                    );
+                  })()}
+                  {isReadOnly && (
+                    <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 14px",fontSize:12,color:cs.muted,display:"flex",alignItems:"center",gap:6}}>
+                      🔒 Dibuat oleh <b style={{color:cs.accent,marginLeft:4}}>{r.teknisi}</b>
+                      <span style={{color:cs.muted,marginLeft:4}}>— kamu sebagai helper</span>
+                    </div>
                   )}
                   {canEdit && (
                     <>
