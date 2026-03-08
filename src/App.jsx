@@ -61,7 +61,8 @@ const INVOICES_DATA = [
 ];
 
 // GAP 13 — Price list untuk auto-hitung invoice dari laporan
-const PRICE_LIST = {
+// ── PRICE_LIST: default fallback (akan di-override oleh DB price_list tabel) ──
+const PRICE_LIST_DEFAULT = {
   "Cleaning": {
     "AC Split 0.5-1PK":   85000,
     "AC Split 1.5-2.5PK": 100000,
@@ -82,11 +83,27 @@ const PRICE_LIST = {
   "Repair": {
     "Pengecekan AC":       75000,
     "Pengecekan AC Panas/Bocor": 75000,
-    "default":             75000,
+    "Perbaikan Freon Bocor": 150000,
+    "Perbaikan Kompresor":  250000,
+    "Perbaikan PCB/Elektrik": 175000,
+    "Ganti Kapasitor":     125000,
+    "Ganti Freon":         150000,
+    "default":              75000,
+  },
+  "Complain": {
+    "Komplain AC Tidak Dingin": 50000,
+    "Komplain Bising/Berisik":  50000,
+    "Komplain Setelah Service":      0,
+    "Komplain Garansi":              0,
+    "Pengecekan Ulang":         50000,
+    "default":                       0,
   },
   "freon_R22":   150000,
   "freon_R410A": 180000,
+  "freon_R32":   160000,
 };
+// PRICE_LIST akan di-replace oleh data DB setelah loadAll() — jangan edit langsung
+let PRICE_LIST = { ...PRICE_LIST_DEFAULT };
 
 const INVENTORY_DATA = [
 ];
@@ -755,10 +772,37 @@ export default function ACleanWebApp() {
         const waRes = await supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false }).limit(50);
         if (!waRes.error && waRes.data && waRes.data.length > 0) setWaConversations(waRes.data);
       } catch(e) { /* WA tabel belum ada - skip */ }
+
+      // ── GAP-03 FIX: Load price_list dari DB → override PRICE_LIST global ──
+      try {
+        const plRes = await supabase.from("price_list").select("*").eq("is_active", true);
+        if (!plRes.error && plRes.data && plRes.data.length > 0) {
+          const newPL = { ...PRICE_LIST_DEFAULT };
+          plRes.data.forEach(row => {
+            if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
+            if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
+            if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
+            if (!newPL[row.service]) newPL[row.service] = {};
+            newPL[row.service][row.type] = Number(row.price) || 0;
+          });
+          PRICE_LIST = newPL;
+          console.log("✅ PRICE_LIST loaded from DB:", plRes.data.length, "rows");
+        }
+      } catch(e) { console.warn("price_list DB fallback to default:", e?.message); }
     };
 
     setDataLoading(true);
     loadAll().finally(() => setDataLoading(false));
+
+    // ── GAP-08 FIX: Auto-refresh data setiap 30 menit ──
+    const _statsTimer = setInterval(() => {
+      loadAll().catch(e => console.warn("Auto-refresh skip:", e?.message));
+    }, 30 * 60 * 1000);
+
+    // ── GAP-08 FIX: Auto-refresh statistik setiap 30 menit ──
+    const statsRefreshInterval = setInterval(() => {
+      loadAll().catch(e => console.warn("Auto-refresh error:", e));
+    }, 30 * 60 * 1000); // 30 menit
 
     // Realtime — data update otomatis di semua device
     const ch1 = supabase.channel("rt-orders")
@@ -832,6 +876,7 @@ export default function ACleanWebApp() {
       .subscribe();
 
     return () => {
+      clearInterval(_statsTimer);
       supabase.removeChannel(ch1);
       supabase.removeChannel(ch2);
       supabase.removeChannel(ch3);
@@ -956,6 +1001,23 @@ Kamu ditugaskan sebagai Helper. — AClean`;
       }).catch(()=>{});
       addAgentLog("DISPATCH_WA_SENT", `WA dispatch ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
       showNotif(`✅ WA Dispatch terkirim ke ${order.teknisi}${order.helper?" + "+order.helper:""}`);
+      // ── GAP-12 FIX: Auto WA ke Customer — teknisi sedang dalam perjalanan ──
+      if (order.phone) {
+        const custDispatchMsg = `Halo ${order.customer} 👋
+
+Teknisi *${order.teknisi}* dari AClean sedang dalam perjalanan menuju lokasi Anda.
+
+📋 Job: ${order.id}
+🔧 Service: ${order.service} — ${order.units} unit
+📅 Jadwal: ${order.date} jam ${order.time}
+
+Estimasi tiba ±30 menit. Mohon pastikan ada di lokasi ya! 🙏
+
+_AClean Service_`;
+        sendWA(order.phone, custDispatchMsg).then(custOk => {
+          if(custOk) addAgentLog("CUST_NOTIF_DISPATCH", `WA on-the-way ke customer ${order.customer}`, "SUCCESS");
+        });
+      }
     } else {
       showNotif("📱 WA dibuka manual di browser");
     }
@@ -1148,6 +1210,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
     };
     setOrdersData(prev => [...prev, newOrder]);
     const { error } = await supabase.from("orders").insert(newOrder);
+  // ── GAP-06: parent_job_id tersimpan di newOrder jika diisi di form ──
     if (error) { showNotif("❌ Gagal simpan order: " + error.message); return null; }
 
     // GAP 1.5: Simpan ke technician_schedule untuk cegah double booking
@@ -2543,7 +2606,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               <button onClick={async () => {
                                 await supabase.from("orders").update({status:"ON_SITE", confirmed_at: new Date().toISOString()}).eq("id",o.id);
                                 setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
-                                showNotif("✅ Status → On Site. Kirim notif WA ke Admin jika perlu.");
+                                showNotif("✅ Status → On Site! Notif otomatis ke Admin...");
+                                // ── GAP-04 FIX: Auto WA ke semua Admin saat ON_SITE ──
+                                const admins04 = userAccounts.filter(u => u.role==="Admin"||u.role==="Owner");
+                                const msg04 = `✅ *Teknisi Sudah di Lokasi*
+
+📋 Job: *${o.id}*
+👤 Customer: ${o.customer}
+📍 Alamat: ${o.address}
+👷 Teknisi: ${currentUser?.name||o.teknisi}
+🕐 Tiba: ${new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"})} WIB
+
+_Laporan masuk setelah pekerjaan selesai._`;
+                                admins04.forEach(adm => { if(adm?.phone) sendWA(adm.phone, msg04); });
+                                addAgentLog("ON_SITE_AUTO_NOTIF", `Auto notif ke ${admins04.length} Admin — ${o.id}`, "SUCCESS");
                               }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", borderRadius:8, padding:"7px 12px", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
                               ✅ Konfirmasi Hadir
                             </button>
@@ -3251,6 +3327,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               </div>
             )}
 
+            {/* ── GAP-11 FIX: Foto grid untuk Admin/Owner ── */}
+            {safeArr(r.fotos).filter(f=>f.url).length>0&&(
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:11,fontWeight:700,color:cs.green,marginBottom:6}}>📸 Foto Laporan ({safeArr(r.fotos).filter(f=>f.url).length})</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:6}}>
+                  {safeArr(r.fotos).filter(f=>f.url).map((f,fi)=>(
+                    <div key={fi} style={{position:"relative",cursor:"pointer"}} onClick={()=>window.open(f.url,"_blank")}>
+                      <img src={f.url} alt={f.label||`Foto ${fi+1}`} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:7,border:"1px solid "+cs.border}} />
+                      <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#000a",borderRadius:"0 0 7px 7px",padding:"2px 4px",fontSize:9,color:"#fff",textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{f.label||`Foto ${fi+1}`}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {r.rekomendasi&&<div style={{fontSize:11,marginBottom:6}}><span style={{color:cs.muted}}>Rekomendasi: </span><span style={{color:cs.text}}>{r.rekomendasi}</span></div>}
             {r.catatan_global&&<div style={{fontSize:11,marginBottom:8}}><span style={{color:cs.muted}}>Catatan: </span><span style={{color:cs.text}}>{r.catatan_global}</span></div>}
 
@@ -5323,6 +5413,23 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                   setOrdersData(prev=>prev.map(o=>o.id===editOrderItem.id?updated:o));
                   const dbUpd = {customer:editOrderForm.customer,phone:editOrderForm.phone,address:editOrderForm.address,service:editOrderForm.service,units:editOrderForm.units,teknisi:editOrderForm.teknisi,helper:editOrderForm.helper||null,date:editOrderForm.date,time:editOrderForm.time,time_end:timeEnd,status:editOrderForm.status,notes:editOrderForm.notes||""};
                   const {error:eoErr} = await supabase.from("orders").update(dbUpd).eq("id",editOrderItem.id);
+          // ── GAP-10 FIX: Hapus schedule lama & insert baru setelah edit order ──
+          if (!eoErr) {
+            await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id).catch(()=>{});
+            if (editOrderForm.teknisi && editOrderForm.date) {
+              const dur = editOrderForm.service==="Install" ? 240 : editOrderForm.service==="Repair" ? 120 : 60;
+              await supabase.from("technician_schedule").insert({
+                order_id: editOrderItem.id,
+                teknisi: editOrderForm.teknisi,
+                date: editOrderForm.date,
+                time_start: editOrderForm.time||"09:00",
+                time_end: editOrderForm.time_end||(editOrderForm.time||"09:00"),
+                duration_min: dur * (parseInt(editOrderForm.units)||1),
+                status: "ACTIVE",
+              }).catch(()=>{});
+              addAgentLog("SCHEDULE_SYNCED", `Schedule diupdate untuk ${editOrderItem.id} setelah edit`, "SUCCESS");
+            }
+          }
                   if(eoErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+eoErr.message);
                   else {
                     addAgentLog("ORDER_UPDATED",`Order ${editOrderItem.id} diedit — ${editOrderForm.teknisi} ${editOrderForm.date} ${editOrderForm.time}`,"SUCCESS");
@@ -5582,6 +5689,8 @@ Lanjutkan submit laporan tanpa foto tersebut?
             // If rewriting existing report, reuse same ID (upsert overwrites)
             id: laporanModal._rewriteId || ("LPR_"+laporanModal.id+"_"+Date.now().toString(36).slice(-4).toUpperCase()),
             job_id:laporanModal.id, teknisi:laporanModal.teknisi, helper:laporanModal.helper||null,
+            // ── GAP-07 FIX: is_substitute = true jika helper lapor sebagai pengganti teknisi utama ──
+            is_substitute: (currentUser?.role==="Helper" && currentUser?.name===laporanModal.helper && !teknisiData.find(t=>t.name===laporanModal.teknisi&&t.status!=="standby")) || false,
             customer:laporanModal.customer, service:laporanModal.service, date:laporanModal.date,
             submitted:now, status:"SUBMITTED", total_units:laporanUnits.length,
             units:laporanUnits, materials:laporanMaterials,
@@ -5732,9 +5841,24 @@ Silakan buat invoice dari ARA Chat 👆`;
             deductInventory(laporanMaterials);
             // Deduct di Supabase juga
             laporanMaterials.forEach(mat => {
-              // deduct_inventory RPC — skip silently if not set up yet in Supabase
+              // ── GAP-02 FIX: deduct_inventory RPC + manual fallback jika RPC belum ada ──
             supabase.rpc("deduct_inventory", {item_name: mat.nama, qty: parseFloat(mat.jumlah)||0})
-              .then(({error:e}) => { if(e) console.warn("deduct_inventory skip:", e.message); });
+              .then(({error:rpcErr}) => {
+                if (rpcErr) {
+                  // RPC belum dibuat di Supabase — fallback ke update manual
+                  supabase.from("inventory").select("id,code,stock,min_alert,reorder")
+                    .ilike("name", mat.nama).limit(1)
+                    .then(({data:items}) => {
+                      if (items && items.length > 0) {
+                        const itm = items[0];
+                        const newStk = Math.max(0, (itm.stock||0) - (parseFloat(mat.jumlah)||0));
+                        const newSts = newStk===0?"OUT":newStk<=(itm.min_alert||1)?"CRITICAL":newStk<=(itm.reorder||3)?"WARNING":"OK";
+                        supabase.from("inventory").update({stock:newStk, status:newSts}).eq("id", itm.id)
+                          .then(()=>{ addAgentLog("STOCK_DEDUCTED", `${mat.nama}: -${mat.jumlah} (manual fallback, sisa ${newStk})`, "SUCCESS"); });
+                      }
+                    });
+                }
+              });
             });
             addAgentLog("MATERIAL_DEDUCT", `${laporanMaterials.length} material dipakai di ${laporanModal.id}`, "SUCCESS");
           }
@@ -5761,6 +5885,15 @@ Silakan buat invoice dari ARA Chat 👆`;
             total: laborTotal + matTotal,
             status: "PENDING_APPROVAL",
           };
+          // ── GAP-13 FIX: Auto-approve invoice Rp 0 (Complain garansi) ──
+          if (newInvoice.total === 0 && laporanModal?.service === "Complain") {
+            newInvoice.status = "UNPAID"; // skip PENDING_APPROVAL — langsung UNPAID (atau PAID jika Rp0)
+            newInvoice.status = "PAID";   // Complain garansi = langsung PAID karena Rp 0
+            newInvoice.paid_at = new Date().toISOString();
+            // Update order juga
+            supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id).catch(()=>{});
+            addAgentLog("GARANSI_AUTO_APPROVE", `Invoice ${newInvoice.id} Rp 0 (Complain garansi) auto-approved`, "SUCCESS");
+          }
           setInvoicesData(prev => [...prev, newInvoice]);
           // Simpan invoice ke Supabase
           // Insert invoice — try full object, fallback to minimal columns if schema mismatch
@@ -6149,6 +6282,43 @@ Silakan buat invoice dari ARA Chat 👆`;
                   <div style={{background:cs.green+"10",border:"1px solid "+cs.green+"22",borderRadius:10,padding:"10px 14px",fontSize:12,color:cs.green}}>
                     Setelah submit, laporan dikirim ke Owner/Admin untuk verifikasi dan pembuatan invoice.
                   </div>
+                  {/* ── GAP-05 FIX: Upgrade Complain → Repair jika butuh perbaikan ── */}
+                  {laporanModal?.service==="Complain" && (
+                    <div style={{background:cs.yellow+"0d",border:"1px solid "+cs.yellow+"33",borderRadius:10,padding:"12px 14px"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:cs.yellow,marginBottom:5}}>⚠️ Perlu Perbaikan Tambahan?</div>
+                      <div style={{fontSize:11,color:cs.muted,marginBottom:8}}>Jika AC ternyata butuh repair (bukan sekadar komplain garansi), buat job Repair terpisah agar ada invoice perbaikan.</div>
+                      <button onClick={async()=>{
+                        const rId="JOB"+Date.now().toString(36).slice(-5).toUpperCase();
+                        const rJob={
+                          id:rId,customer:laporanModal.customer,
+                          phone:laporanModal.phone||customersData.find(c=>c.name===laporanModal.customer)?.phone||"",
+                          address:laporanModal.address||"",service:"Repair",type:"Pengecekan AC",
+                          units:laporanModal.units||1,teknisi:laporanModal.teknisi,helper:laporanModal.helper||null,
+                          date:laporanModal.date,time:laporanModal.time||"09:00",status:"CONFIRMED",
+                          parent_job_id:laporanModal.id,dispatch:true,
+                          notes:"Upgrade dari Complain "+laporanModal.id
+                        };
+                        setOrdersData(prev=>[...prev,rJob]);
+                        const {error:rErr}=await supabase.from("orders").insert(rJob);
+                        if(!rErr){
+                          addAgentLog("COMPLAIN_UPGRADED",`Complain ${laporanModal.id} → Repair ${rId}`,"SUCCESS");
+                          showNotif(`✅ Job Repair ${rId} dibuat! Admin dinotifikasi.`);
+                          const admR=userAccounts.filter(u=>u.role==="Admin"||u.role==="Owner");
+                          admR.forEach(a=>{if(a?.phone)sendWA(a.phone,`🔧 *Upgrade Complain → Repair*
+
+Complain: ${laporanModal.id}
+Repair Baru: *${rId}*
+Customer: ${laporanModal.customer}
+Teknisi: ${laporanModal.teknisi}
+
+Silakan approve & buat invoice. — ARA`);});
+                        } else showNotif("❌ Gagal buat Repair: "+rErr.message);
+                      }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,
+                        padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",width:"100%"}}>
+                        🔧 Upgrade ke Job Repair (Buat Invoice Perbaikan Terpisah)
+                      </button>
+                    </div>
+                  )}
                   <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
                     <button onClick={()=>setLaporanStep(3)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
                     <button onClick={submitLaporan} style={{background:"linear-gradient(135deg,"+cs.green+",#059669)",border:"none",color:"#fff",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>✓ Submit Laporan</button>
