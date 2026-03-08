@@ -101,7 +101,7 @@ const BRAIN_MD_DEFAULT = `# ARA BRAIN v4.0 — AClean Service
 
 ## IDENTITAS
 - Nama: ARA (Aclean Response Agent)
-- Bisnis: AClean Service — AC Cleaning, Install & Repair
+- Bisnis: AClean Service — AC Cleaning, Install, Repair & Complain/Garansi
 - Area Utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan
 - Area Perlu Konfirmasi: Jakarta Barat, Jakarta Selatan (ongkir tambah)
 - Peran: Asisten AI eksekutif untuk Owner/Admin
@@ -456,8 +456,19 @@ export default function ACleanWebApp() {
   // ── Laporan Helper Constants ──
   const KONDISI_SBL = ["AC tidak dingin","Bau tidak sedap","Bocor air","Bunyi berisik","AC tidak menyala","Freon habis","Kapasitor rusak","Kompresor lemah","Remote rusak","Tetes air lebihan"];
   const KONDISI_SDH = ["Normal, dingin optimal","Filter bersih","Tidak ada bocor","Suara normal","Freon terisi","Semua fungsi normal","Dingin merata","Tidak ada bau"];
-  const PEKERJAAN_OPT = ["Deep cleaning","Cuci filter","Semprot evaporator","Isi freon","Ganti kapasitor","Ganti relay","Ganti thermostat","Perbaiki pipa","Pasang bracket","Pasang unit baru","Cek instalasi","Vacuuming","Bersihkan kondensor","Cek kelistrikan"];
-  const MATERIAL_PRESET = { Cleaning:["Freon R22","Freon R410A","Filter Udara","Kompressor Oil"], Install:["Pipa AC Hoda 1/4 3/8","Kabel Listrik 3x1.5","Kabel Listrik 3x2.5","Bracket Outdoor","Duct Tape","Stop Kontak","Paralon Pembuangan AC"], Repair:["Kapasitor","Thermostat","Sensor Indoor","Freon R22","Freon R410A","Relay"] };
+  const PEKERJAAN_BY_SERVICE = {
+    Cleaning: ["Deep cleaning","Cuci filter","Semprot evaporator","Bersihkan kondensor","Vacuuming","Isi freon","Bersihkan drain pan","Cek kelistrikan"],
+    Install:  ["Pasang unit indoor","Pasang unit outdoor","Pasang bracket","Instalasi pipa","Instalasi kabel","Pasang stop kontak","Uji coba unit","Cek instalasi"],
+    Repair:   ["Ganti kapasitor","Ganti relay","Ganti thermostat","Ganti sensor","Isi freon","Perbaiki pipa bocor","Perbaiki kelistrikan","Ganti PCB","Ganti motor fan","Cek dan bersihkan"],
+    Complain: ["Pengecekan ulang","Cek freon","Cek kelistrikan","Cek instalasi pipa","Cek kondensor","Cek evaporator","Follow up komplain","Garansi service"],
+  };
+  const PEKERJAAN_OPT = (svc) => PEKERJAAN_BY_SERVICE[svc] || PEKERJAAN_BY_SERVICE["Cleaning"];
+  const MATERIAL_PRESET = {
+    Cleaning:  ["Freon R22","Freon R410A","Filter Udara","Kompressor Oil","Pembersih Evaporator","Plastik Cuci AC"],
+    Install:   ["Pipa AC Hoda 1/4 3/8","Kabel Listrik 3x1.5","Kabel Listrik 3x2.5","Bracket Outdoor","Duct Tape","Stop Kontak","Paralon Pembuangan AC"],
+    Repair:    ["Kapasitor","Thermostat","Sensor Indoor","Freon R22","Freon R410A","Relay","PCB Module","Kipas Motor"],
+    Complain:  [],
+  };
   const TIPE_AC_OPT = ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"];
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
 
@@ -1158,24 +1169,9 @@ _Simpan pesan ini sebagai bukti pelunasan._`
     }
 
     addAgentLog("ORDER_CREATED", `Order baru ${newId} — ${form.customer} (${form.service} ${form.units} unit)`, "SUCCESS");
-    showNotif(`✅ Order ${newId} berhasil dibuat! ARA siap dispatch ke ${form.teknisi}.`);
+    showNotif(`✅ Order ${newId} berhasil dibuat! Klik 📤 di daftar order untuk kirim WA ke teknisi.`);
 
-    // GAP 1.8: Log dispatch
-    if (form.teknisi) {
-      const tek = teknisiData.find(t => t.name === form.teknisi);
-      if (tek) {
-        const msg = `Halo ${form.teknisi}, ada job baru:\n📍 *${form.customer}*\n🔧 ${form.service} ${form.units} unit\n📮 ${form.address}\n🕐 ${form.date} jam ${form.time}–${timeEnd}\n\nMohon konfirmasi. — AClean`;
-        sendWA(tek.phone, msg);
-        await supabase.from("dispatch_logs").insert({
-          order_id: newId,
-          teknisi: form.teknisi,
-          assigned_by: currentUser?.id || null,
-          assigned_by_name: currentUser?.name || "",
-          wa_message: msg,
-          status: "SENT"
-        }).catch(()=>{});
-      }
-    }
+    // Dispatch WA tidak lagi otomatis — gunakan tombol 📤 di daftar order
 
     // GAP 5: Auto-upsert customer jika nomor HP baru
     if (form.phone && form.customer) {
@@ -1252,7 +1248,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
           };
         } catch(_) { return { teknisiDisarankan: [], pasanganFavorit: {} }; }
       })(),
-      logikaDurasi: "Cleaning: 1u=1j,2u=2j,3u=3j,4u=3j,5-6u=4j,7-8u=5j,9-10u=6j,>10=sehari | Install: 1-3u=1hari,4+u=2hari | Repair: 60-120mnt/unit",
+      logikaDurasi: "Cleaning: 1u=1j,2u=2j,3u=3j,4u=3j,5-6u=4j,7-8u=5j,9-10u=6j,>10=sehari | Install: 1-3u=1hari,4+u=2hari | Repair: 60-120mnt/unit | Complain: 1u=30mnt,setiap tambahan unit +15mnt",
       jamKerja: "09:00-17:00 WIB",
       revenueStats: {
         bulanIni: invoicesData.filter(i=>i.status==="PAID"&&(i.sent||"").startsWith(bulanIni)).reduce((a,b)=>a+(b.total||0),0),
@@ -2133,7 +2129,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <div style={{ fontSize:13, fontWeight:600, color:cs.text }}>{o.customer}</div>
                     <div style={{ fontSize:11, color:cs.muted }}>{o.address.slice(0,28)}...</div>
                   </td>
-                  <td style={{ padding:"10px 14px", fontSize:12, color:cs.muted }}>{o.service} · {o.units} unit</td>
+                  <td style={{ padding:"10px 14px" }}>
+                    {(() => { const sCol={Cleaning:"#22c55e",Install:"#3b82f6",Repair:"#f59e0b",Complain:"#ef4444"}[o.service]||cs.muted; return (
+                      <><span style={{fontSize:10,padding:"2px 8px",borderRadius:99,fontWeight:700,background:sCol+"22",color:sCol,border:"1px solid "+sCol+"44"}}>{o.service}</span>
+                      <span style={{fontSize:11,color:cs.muted,marginLeft:5}}>{o.units}u</span></>
+                    ); })()}
+                  </td>
                   <td style={{ padding:"10px 14px", fontSize:12, color:cs.text }}>{o.teknisi}</td>
                   <td style={{ padding:"10px 14px", fontSize:12, color:cs.muted }}>{o.date}<br/>{o.time}</td>
                   <td style={{ padding:"10px 14px" }}>
@@ -2142,7 +2143,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <td style={{ padding:"10px 14px" }}>
                     <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                       <button onClick={() => { const c=customersData.find(c=>c.phone===o.phone); if(c){setSelectedCustomer(c);setCustomerTab("history");setActiveMenu("customers");} }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11 }}>History</button>
-                      {!o.dispatch && <button onClick={() => dispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11 }}>WA</button>}
+                      {/* Dispatch buttons — terpisah agar tidak campur aduk */}
+                      <button
+                        onClick={() => dispatchStatus(o)}
+                        title={o.dispatch ? "Sudah dispatched" : "Set status DISPATCHED"}
+                        style={{ background:o.dispatch?"#22c55e22":cs.accent+"22", border:"1px solid "+(o.dispatch?"#22c55e44":cs.accent+"44"), color:o.dispatch?"#22c55e":cs.accent, padding:"4px 8px", borderRadius:6, cursor:"pointer", fontSize:10, fontWeight:700 }}>
+                        {o.dispatch ? "✅" : "🔄"}
+                      </button>
+                      <button
+                        onClick={() => sendDispatchWA(o)}
+                        title="Kirim WA ke Teknisi & Helper"
+                        style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"4px 8px", borderRadius:6, cursor:"pointer", fontSize:10, fontWeight:700 }}>
+                        📤
+                      </button>
                       {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
                         <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,type:o.type||"",units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }}
                           style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
@@ -2631,15 +2644,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // Hitung durasi (jam) berdasarkan service + jumlah unit
   const hitungDurasi = (service, units) => {
     const u = parseInt(units) || 1;
-    if (service === "Install") {
-      // Per unit ±2.5 jam (termasuk leveling, test run, briefing customer)
-      // Max 1 hari = 8 jam → mulai blok hari berikutnya jika >8
-      return Math.min(u * 2.5, 8);
-    }
-    if (service === "Repair") {
-      // 60-120 menit per unit, pakai 90 menit rata-rata
-      return Math.ceil(u * 1.5);
-    }
+    if (service === "Install") return Math.min(u * 2.5, 8);
+    if (service === "Repair")  return Math.ceil(u * 1.5);
+    if (service === "Complain") return Math.max(0.5, u * 0.5); // 30 mnt/unit min 30 mnt
     // Cleaning:
     if (u === 1) return 1;
     if (u === 2) return 2;
@@ -2648,7 +2655,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     if (u <= 6)  return 4;
     if (u <= 8)  return 5;
     if (u <= 10) return 6;
-    return 8; // >10 unit = 1 hari kerja penuh
+    return 8;
   };
 
   // Tambahkan jam ke time string "09:00"
@@ -3709,7 +3716,9 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               <span>📝 {brainMdCustomer.split("\n").length} baris</span>
               <span>🔤 {brainMdCustomer.length} karakter</span>
               <span style={{ color: waToken ? "#22c55e" : cs.yellow }}>
-                    {waToken ? "✅ Token tersimpan — kirim WA aktif" : "⚠️ Masukkan token Fonnte di atas"}
+                    {waToken 
+                    ? <span>✅ Token tersimpan otomatis — tidak perlu isi ulang setelah logout</span>
+                    : "⚠️ Masukkan token Fonnte di atas"}
                   </span>
                   <div style={{ fontSize:10, color:cs.muted, marginTop:4 }}>
                     📤 Kirim WA (dispatch, reminder): free tier ✅<br/>
@@ -3878,9 +3887,9 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <div>
               <div style={{ fontWeight:800, color:cs.text, fontSize:14 }}>👥 Manajemen Akun Pengguna</div>
-              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Kelola akun dan hak akses per role — hanya Owner yang bisa menambah/nonaktifkan</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Kelola akun Owner & Admin saja. Teknisi & Helper dikelola di menu <b style={{color:cs.accent}}>Tim Teknisi</b>.</anya Owner yang bisa menambah/nonaktifkan</div>
             </div>
-            <button onClick={() => { setNewUserForm({ name:"", email:"", role:"Admin", password:"", phone:"" }); setModalAddUser(true); }}
+            <button onClick={() => { setNewUserForm({ name:"", email:"", role:"Admin", password:"", phone:"", _adminOnly: true }); setModalAddUser(true); }}
               style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
               + Tambah Pengguna
             </button>
@@ -3894,9 +3903,9 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               </div>
             ))}
           </div>
-          {/* User list */}
+          {/* User list — hanya Owner & Admin (Teknisi/Helper dikelola di Tim Teknisi) */}
           <div style={{ display:"grid", gap:8 }}>
-            {userAccounts.map(u => (
+            {userAccounts.filter(u => u.role === "Owner" || u.role === "Admin").map(u => (
               <div key={u.id} style={{ background:cs.surface, border:"1px solid "+(u.active?cs.border:cs.red+"33"), borderRadius:10, padding:"12px 16px", display:"flex", alignItems:"center", gap:12 }}>
                 <div style={{ width:38, height:38, borderRadius:10, background:"linear-gradient(135deg,"+u.color+","+u.color+"66)", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:16, color:"#fff", flexShrink:0 }}>
                   {u.avatar}
@@ -4245,7 +4254,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Jenis Layanan</div>
                   <select value={newOrderForm.service} onChange={e => setNewOrderForm(f=>({...f,service:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
-                    {["Cleaning","Install","Repair"].map(s => <option key={s}>{s}</option>)}
+                    {["Cleaning","Install","Repair","Complain"].map(s => <option key={s}>{s}</option>)}
                   </select>
                 </div>
                 <div>
@@ -4261,7 +4270,8 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                   style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
                   {newOrderForm.service==="Cleaning" && ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"].map(t=><option key={t}>{t}</option>)}
                   {newOrderForm.service==="Install"  && ["Pasang AC 0.5-1PK","Pasang AC 1PK","Pasang AC 1.5-2PK","Pasang AC 2.5PK"].map(t=><option key={t}>{t}</option>)}
-                  {newOrderForm.service==="Repair"   && ["Pengecekan AC","Pengecekan AC Panas/Bocor","Ganti Freon","Ganti Kompressor","Ganti Kapasitor","Bocor Refrigerant"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Repair"   && ["Pengecekan AC","Pengecekan AC Panas/Bocor","Ganti Freon","Ganti Kompressor","Ganti Kapasitor","Bocor Refrigerant","Perbaikan PCB","Perbaikan Motor Fan"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Complain" && ["Komplain AC Tidak Dingin","Komplain Bising/Berisik","Komplain Setelah Service","Komplain Garansi","Pengecekan Ulang"].map(t=><option key={t}>{t}</option>)}
                 </select>
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
@@ -4357,7 +4367,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:6 }}>
                 <button onClick={() => setModalOrder(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
                 <button onClick={() => { if(!newOrderForm.customer){showNotif("Nama customer wajib diisi");return;} if(!newOrderForm.teknisi){showNotif("Pilih teknisi dulu");return;} if(!newOrderForm.date){showNotif("Pilih tanggal dulu");return;} createOrder(newOrderForm); setModalOrder(false); setNewOrderForm({ customer:"", phone:"", address:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" }); }}
-                  style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>✓ Buat Order & Dispatch WA</button>
+                  style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>✓ Buat Order</button>
               </div>
             </div>
           </div>
@@ -5230,7 +5240,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Layanan</div>
                     <select value={editOrderForm.service||"Cleaning"} onChange={e=>setEditOrderForm(f=>({...f,service:e.target.value}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none"}}>
-                      {["Cleaning","Install","Repair"].map(s=><option key={s}>{s}</option>)}
+                      {["Cleaning","Install","Repair","Complain"].map(s=><option key={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>
@@ -5910,7 +5920,7 @@ Silakan buat invoice dari ARA Chat 👆`;
                         <div>
                           <div style={{fontSize:11,fontWeight:700,color:cs.accent,marginBottom:6}}>🔧 Pekerjaan Dilakukan</div>
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
-                            {PEKERJAAN_OPT.map(k=>(
+                            {PEKERJAAN_OPT(laporanModal?.service||"Cleaning").map(k=>(
                               <label key={k} style={tagStyle(u.pekerjaan.includes(k),cs.accent)}>
                                 <input type="checkbox" checked={u.pekerjaan.includes(k)} onChange={()=>upd({pekerjaan:toggleArr(u.pekerjaan,k)})} style={{accentColor:cs.accent}}/>{k}
                               </label>
