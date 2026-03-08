@@ -668,7 +668,7 @@ export default function ACleanWebApp() {
           units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return r.units    ||[];} })() : (r.units    ||[]),
           materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return r.materials||[];} })() : (r.materials||[]),
           fotos:     r.fotos || (r.foto_urls||[]).map((url,i) => ({id:i, label:`Foto ${i+1}`, url})),
-          editLog:   r.edit_log || r.editLog || [],
+          editLog:   safeArr(r.edit_log ?? r.editLog),
           rekomendasi:    r.rekomendasi    || "",
           catatan_global: r.catatan_global || r.catatan || "",
           submitted:      r.submitted || (r.submitted_at||"").slice(0,16).replace("T"," "),
@@ -769,7 +769,7 @@ export default function ACleanWebApp() {
                 units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){return r.units    ||[];} })() : (r.units    ||[]),
                 materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })() : (r.materials||[]),
                 fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
-                editLog:   r.edit_log||[],
+                editLog:   safeArr(r.edit_log ?? r.editLog),
               })));
             }
           }))
@@ -848,6 +848,14 @@ export default function ACleanWebApp() {
   };
 
   const fmt = (n) => "Rp " + (n||0).toLocaleString("id-ID");
+  // safeArr: handle Supabase returning JSON arrays as strings
+  const safeArr = (v) => {
+    if (Array.isArray(v)) return v;
+    if (typeof v === "string" && v.trim().startsWith("[")) {
+      try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch(_) { return []; }
+    }
+    return [];
+  };
 
   // ── Helpers ──
   // ── WA: kirim via Fonnte backend, fallback wa.me ──
@@ -3104,9 +3112,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                 <span style={{fontFamily:"monospace",fontWeight:800,color:cs.accent,fontSize:14}}>{r.job_id}</span>
                 {badge(r.status)}
-                {(r.editLog||[]).length>0 && (
+                {safeArr(r.editLog).length>0 && (
                   <span style={{fontSize:10,color:cs.yellow,background:cs.yellow+"15",padding:"2px 8px",borderRadius:99,border:"1px solid "+cs.yellow+"33"}}>
-                    Diedit {(r.editLog||[]).length}x
+                    Diedit {safeArr(r.editLog).length}x
                   </span>
                 )}
               </div>
@@ -3120,7 +3128,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div><span style={{color:cs.muted}}>Layanan: </span><span style={{color:cs.text}}>{r.service}</span></div>
               <div><span style={{color:cs.muted}}>Tanggal: </span><span style={{color:cs.text}}>{r.date}</span></div>
               <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit AC</span></div>
-              {r.materials&&r.materials.length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
+              {safeArr(r.materials).length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
               {r.fotos&&r.fotos.length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
               {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon Total: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
             </div>
@@ -3147,10 +3155,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             ))}
 
             {/* Material summary */}
-            {r.materials&&r.materials.length>0&&(
+            {safeArr(r.materials).length>0&&(
               <div style={{background:cs.surface,borderRadius:9,padding:"10px 13px",marginBottom:8,fontSize:12}}>
                 <div style={{fontWeight:700,color:cs.text,marginBottom:6}}>🔧 Material Terpakai</div>
-                {r.materials.map((m,mi)=>(
+                {safeArr(r.materials).map((m,mi)=>(
                   <div key={mi} style={{color:cs.muted,marginBottom:2}}>• {m.nama}: {m.jumlah} {m.satuan}{m.keterangan?` — ${m.keterangan}`:""}</div>
                 ))}
               </div>
@@ -3160,10 +3168,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             {r.catatan_global&&<div style={{fontSize:11,marginBottom:8}}><span style={{color:cs.muted}}>Catatan: </span><span style={{color:cs.text}}>{r.catatan_global}</span></div>}
 
             {/* Edit log */}
-            {(r.editLog||[]).length>0 && (
+            {safeArr(r.editLog).length>0 && (
               <div style={{background:cs.yellow+"08",border:"1px solid "+cs.yellow+"22",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
                 <div style={{fontSize:11,fontWeight:700,color:cs.yellow,marginBottom:8}}>Riwayat Edit</div>
-                {(r.editLog||[]).map((log,li)=>(
+                {safeArr(r.editLog).map((log,li)=>(
                   <div key={li} style={{fontSize:11,color:cs.muted,marginBottom:5,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                     <span style={{background:cs.accent+"18",color:cs.accent,fontWeight:700,padding:"1px 8px",borderRadius:99,fontSize:10}}>{log.by}</span>
                     <span style={{color:cs.muted}}>{log.at}</span>
@@ -3292,7 +3300,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                     <span style={{fontFamily:"monospace",fontWeight:800,color:cs.accent}}>{r.job_id}</span>
                     {badge(r.status)}
                     {isHelper && <span style={{fontSize:10,color:cs.muted,background:cs.surface,padding:"1px 7px",borderRadius:99}}>Helper</span>}
-                    {(r.editLog||[]).length>0 && <span style={{fontSize:10,color:cs.muted}}>Diedit {(r.editLog||[]).length}x</span>}
+                    {safeArr(r.editLog).length>0 && <span style={{fontSize:10,color:cs.muted}}>Diedit {safeArr(r.editLog).length}x</span>}
                   </div>
                   <span style={{fontSize:11,color:cs.muted}}>{r.submitted}</span>
                 </div>
@@ -3306,10 +3314,10 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 )}
 
                 {/* Edit log visible to teknisi */}
-                {(r.editLog||[]).length>0 && (
+                {safeArr(r.editLog).length>0 && (
                   <div style={{background:cs.surface,borderRadius:8,padding:"10px 12px",marginBottom:12}}>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:6}}>Riwayat Perubahan</div>
-                    {(r.editLog||[]).map((log,li)=>(
+                    {safeArr(r.editLog).map((log,li)=>(
                       <div key={li} style={{fontSize:10,color:cs.muted,marginBottom:4,display:"flex",gap:6,flexWrap:"wrap"}}>
                         <span style={{color:cs.accent,fontWeight:600}}>{log.by}</span>
                         <span>{log.at}</span>
@@ -5252,7 +5260,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                       if(oldVal!==newVal) newLogs.push({by:currentUser?.name||"?",at:now,field:f,old:String(oldVal).slice(0,80),new:String(newVal).slice(0,80)});
                     });
                     if(newLogs.length===0){showNotif("Tidak ada perubahan");return;}
-                    const allLogs = [...(selectedLaporan.editLog||[]),...newLogs];
+                    const allLogs = [...safeArr(selectedLaporan.editLog),...newLogs];
                     const newStatus = selectedLaporan.status==="REVISION"?"SUBMITTED":selectedLaporan.status;
                     setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id
                       ?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,status:newStatus,editLog:allLogs}:r));
@@ -5336,11 +5344,11 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 {selectedLaporan.rekomendasi && <div style={{fontSize:11,marginBottom:4}}><span style={{color:cs.muted}}>Rekomendasi: </span><span style={{color:cs.text}}>{selectedLaporan.rekomendasi}</span></div>}
                 {(selectedLaporan.catatan_global||selectedLaporan.catatan) && <div style={{fontSize:11}}><span style={{color:cs.muted}}>Catatan: </span><span style={{color:cs.text}}>{selectedLaporan.catatan_global||selectedLaporan.catatan}</span></div>}
 
-                {(selectedLaporan.editLog||[]).length>0 && (
+                {safeArr(selectedLaporan.editLog).length>0 && (
                   <div style={{background:cs.yellow+"08",border:"1px solid "+cs.yellow+"22",borderRadius:10,padding:"10px 14px"}}>
-                    <div style={{fontSize:11,fontWeight:700,color:cs.yellow,marginBottom:8}}>Riwayat Edit ({(selectedLaporan.editLog||[]).length}x)</div>
-                    {(selectedLaporan.editLog||[]).map((log,li)=>(
-                      <div key={li} style={{fontSize:11,color:cs.muted,marginBottom:5,paddingBottom:5,borderBottom:li<(selectedLaporan.editLog||[]).length-1?"1px solid "+cs.border:"none"}}>
+                    <div style={{fontSize:11,fontWeight:700,color:cs.yellow,marginBottom:8}}>Riwayat Edit ({safeArr(selectedLaporan.editLog).length}x)</div>
+                    {safeArr(selectedLaporan.editLog).map((log,li)=>(
+                      <div key={li} style={{fontSize:11,color:cs.muted,marginBottom:5,paddingBottom:5,borderBottom:li<safeArr(selectedLaporan.editLog).length-1?"1px solid "+cs.border:"none"}}>
                         <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:3}}>
                           <span style={{background:cs.accent+"18",color:cs.accent,fontWeight:700,padding:"1px 8px",borderRadius:99,fontSize:10}}>{log.by}</span>
                           <span style={{color:cs.muted}}>{log.at}</span>
@@ -5519,7 +5527,7 @@ Silakan buat invoice dari ARA Chat 👆`;
                 units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){return r.units    ||[];} })() : (r.units    ||[]),
                 materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })() : (r.materials||[]),
                 fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
-                editLog:   r.edit_log || [],
+                editLog:   safeArr(r.edit_log ?? r.editLog),
               })));
             }
           };
