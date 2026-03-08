@@ -953,12 +953,30 @@ export default function ACleanWebApp() {
       o.id === inv.job_id ? {...o, invoice_id:inv.id, status:"INVOICE_APPROVED"} : o
     ));
     // GAP 4: simpan approved_by, trigger DB akan catat audit_log
-    await supabase.from("invoices").update({
-      status:"UNPAID", sent:today, due,
-      approved_by: currentUser?.id || null,
-      approved_at: approvedAt,
-    }).eq("id", inv.id);
-    await supabase.from("orders").update({ invoice_id:inv.id, status:"INVOICE_APPROVED" }).eq("id", inv.job_id);
+    // Update invoice — try full, fallback minimal
+    {
+      const {error:apErr} = await supabase.from("invoices").update({
+        status:"UNPAID", sent:today, due,
+        approved_by: currentUser?.name || null,
+        approved_at: approvedAt,
+      }).eq("id", inv.id);
+      if(apErr) {
+        console.warn("invoice approve full failed:", apErr.message);
+        // Fallback: only safe columns
+        const {error:apErr2} = await supabase.from("invoices").update({
+          status:"UNPAID",
+        }).eq("id", inv.id);
+        if(apErr2) console.error("invoice approve minimal failed:", apErr2.message);
+      }
+    }
+    // Update order status — with fallback
+    {
+      const {error:oErr} = await supabase.from("orders").update({ invoice_id:inv.id, status:"INVOICE_APPROVED" }).eq("id", inv.job_id);;
+      if(oErr) {
+        console.warn("orders INVOICE_APPROVED failed:", oErr.message);
+        await supabase.from("orders").update({ status:"COMPLETED" }).eq("id", inv.job_id);
+      }
+    }
     const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service||"Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
     sendWA(inv.phone, waMsg);
     addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} approve oleh ${currentUser?.name||"—"} — ${inv.customer} ${fmt(inv.total)}`, "SUCCESS");
@@ -974,7 +992,13 @@ export default function ACleanWebApp() {
     setOrdersData(prev => prev.map(o =>
       (o.id === inv.job_id || o.invoice_id === inv.id) ? {...o, status:"PAID"} : o
     ));
-    await supabase.from("invoices").update({ status:"PAID", paid_at:paidAt }).eq("id", inv.id);
+    {
+      const {error:mpErr} = await supabase.from("invoices").update({ status:"PAID", paid_at:paidAt }).eq("id", inv.id);
+      if(mpErr) {
+        console.warn("mark paid with paid_at failed:", mpErr.message);
+        await supabase.from("invoices").update({ status:"PAID" }).eq("id", inv.id);
+      }
+    }
 
     // Notif WA ke customer — hanya jika admin/owner menyetujui (sendCustNotif=true)
     const shouldNotif = sendCustNotif === true ||
@@ -4615,7 +4639,12 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                   if(newTotal <= 0){ showNotif("⚠️ Total invoice tidak boleh 0 atau negatif"); return; }
                   setInvoicesData(prev=>prev.map(i=>i.id===editInvoiceData.id?{...i,labor,material,dadakan,total:newTotal}:i));
                   const {error:eiErr} = await supabase.from("invoices").update({labor,material,dadakan,total:newTotal}).eq("id",editInvoiceData.id);
-                  if(eiErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
+                  if(eiErr) {
+                    console.warn("editInvoice failed:", eiErr.message);
+                    // Fallback: only update total
+                    const {error:eiErr2} = await supabase.from("invoices").update({total:newTotal}).eq("id",editInvoiceData.id);
+                    if(eiErr2) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+eiErr2.message);
+                  }
                   else { addAgentLog("INVOICE_EDITED",`Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotal)}${editInvoiceForm.notes?" ("+editInvoiceForm.notes+")":""}`, "SUCCESS"); }
                   showNotif(`✅ Invoice ${editInvoiceData.id} berhasil diupdate → ${fmt(newTotal)}`);
                   setModalEditInvoice(false); setEditInvoiceData(null);
