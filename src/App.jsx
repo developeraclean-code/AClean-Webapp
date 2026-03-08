@@ -2229,7 +2229,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
               {inv.status === "PENDING_APPROVAL" && (
-                <button onClick={() => approveInvoice(inv)} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✓ Approve & Kirim PDF</button>
+                <button onClick={() => approveInvoice(inv)} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✓ Approve &amp; Kirim PDF</button>
               )}
               {inv.status === "UNPAID" && (
                 <>
@@ -2859,7 +2859,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             {araLoading?"⏳":"→"}
           </button>
         </div>
-        {llmStatus !== "connected" && <div style={{ fontSize:11, color:cs.yellow, marginTop:8 }}>⚠️ ARA belum terkoneksi. Buka <b>Pengaturan → ARA Brain</b> → klik <b>Test & Simpan</b> untuk mengaktifkan.</div>}
+        {llmStatus !== "connected" && <div style={{ fontSize:11, color:cs.yellow, marginTop:8 }}>⚠️ ARA belum terkoneksi. Buka <b>Pengaturan → ARA Brain</b> → klik <b>Test &amp; Simpan</b> untuk mengaktifkan.</div>}
       </div>
     );
   };
@@ -2945,8 +2945,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         {/* Header + Filter */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
           <div>
-            <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>📊 Laporan Keuangan & Operasional</div>
-            <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Profit & Loss · Accounts Receivable · Performa Tim</div>
+            <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>📊 Laporan Keuangan &amp; Operasional</div>
+            <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Profit &amp; Loss · Accounts Receivable · Performa Tim</div>
           </div>
           <div style={{ display:"flex", gap:6 }}>
             {[["hari","Hari Ini"],["bulan","Bulan Ini"],["tahun","Tahun Ini"]].map(([v,l])=>(
@@ -3495,7 +3495,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
     const WA_PROVIDERS = [
       { id:"fonnte",   label:"Fonnte",       icon:"🟢", active:true,  tagline:"WA Gateway lokal Indonesia",
         fields:[{k:"token",label:"API Token",ph:"fnt_••••••••",t:"password"},{k:"device",label:"Device / No WA",ph:"6281299898937",t:"text"}],
-        guide:["Login fonnte.com → menu Device","Klik tombol + Add Device, scan QR WA HP kamu","Klik nama device → salin TOKEN di halaman detail device (bukan dari Profile!)","Paste token di kolom API Token di sini → klik Test & Simpan","Webhook (untuk bot balas otomatis): butuh paket berbayar Fonnte"] },
+        guide:["Login fonnte.com → menu Device","Klik tombol + Add Device, scan QR WA HP kamu","Klik nama device → salin TOKEN di halaman detail device (bukan dari Profile!)","Paste token di kolom API Token di sini → klik Test &amp; Simpan","Webhook (untuk bot balas otomatis): butuh paket berbayar Fonnte"] },
       { id:"wa_cloud", label:"WA Cloud API", icon:"🔵", active:false, tagline:"Resmi Meta, butuh verifikasi bisnis",
         fields:[{k:"phone_id",label:"Phone Number ID",ph:"123456789"},{k:"token",label:"Access Token",ph:"EAAx...",t:"password"},{k:"waba_id",label:"WABA ID",ph:"123456789"},{k:"verify",label:"Webhook Verify Token",ph:"aclean_secret"}],
         guide:["Daftar di developers.facebook.com","Buat App + tambah produk WhatsApp","Verifikasi Business (Meta Business Suite)","Generate Permanent Access Token","Set webhook URL di App Settings"] },
@@ -3623,7 +3623,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
           <div style={{ display:"flex", gap:8 }}>
             <button onClick={async () => { setWaStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"wa",provider:waProvider,token:waToken,device:waDevice})}); const d=await r.json(); setWaStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setWaStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
-              {waStatus==="testing" ? "⏳ Testing..." : "🔌 Test & Simpan Koneksi"}
+              {waStatus==="testing" ? "⏳ Testing..." : "🔌 Test &amp; Simpan Koneksi"}
             </button>
             <button onClick={() => { setWaStatus("not_connected"); showNotif("Koneksi WA direset"); }}
               style={{ flex:1, background:cs.surface, border:"1px solid "+cs.border, color:cs.muted, padding:"10px", borderRadius:8, cursor:"pointer", fontSize:12 }}>Reset</button>
@@ -3782,7 +3782,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
               } catch(e) { setLlmStatus("not_connected"); showNotif("❌ Koneksi gagal: " + e.message); }
             }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.ara+",#7c3aed)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
-              {llmStatus==="testing" ? "⏳ Testing..." : "🔌 Test & Simpan — " + activeLLM.label}
+              {llmStatus==="testing" ? "⏳ Testing..." : "🔌 Test &amp; Simpan — " + activeLLM.label}
             </button>
             <button onClick={() => { setLlmStatus("not_connected"); showNotif("Koneksi LLM direset"); }}
               style={{ flex:1, background:cs.surface, border:"1px solid "+cs.border, color:cs.muted, padding:"10px", borderRadius:8, cursor:"pointer", fontSize:12 }}>Reset</button>
@@ -3817,7 +3817,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
           <div style={{ display:"flex", gap:8 }}>
             <button onClick={async () => { setStorageStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"storage"})}); const d=await r.json(); setStorageStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setStorageStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
-              {storageStatus==="testing" ? "⏳ Testing..." : "🔌 Test & Simpan Koneksi"}
+              {storageStatus==="testing" ? "⏳ Testing..." : "🔌 Test &amp; Simpan Koneksi"}
             </button>
             <button onClick={() => { setStorageStatus("not_connected"); showNotif("Storage direset"); }}
               style={{ flex:1, background:cs.surface, border:"1px solid "+cs.border, color:cs.muted, padding:"10px", borderRadius:8, cursor:"pointer", fontSize:12 }}>Reset</button>
@@ -3887,7 +3887,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <div>
               <div style={{ fontWeight:800, color:cs.text, fontSize:14 }}>👥 Manajemen Akun Pengguna</div>
-              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Kelola akun Owner & Admin saja. Teknisi & Helper dikelola di menu <b style={{color:cs.accent}}>Tim Teknisi</b>.</anya Owner yang bisa menambah/nonaktifkan</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Kelola akun Owner &amp; Admin saja. Teknisi &amp; Helper dikelola di menu <b style={{color:cs.accent}}>Tim Teknisi</b>. Hanya Owner yang bisa menambah/nonaktifkan.</div>
             </div>
             <button onClick={() => { setNewUserForm({ name:"", email:"", role:"Admin", password:"", phone:"", _adminOnly: true }); setModalAddUser(true); }}
               style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
@@ -3896,7 +3896,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
           </div>
           {/* Role legend */}
           <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
-            {[["👑 Owner","Semua akses + Pengaturan","#f59e0b"],["🛠️ Admin","Semua menu kecuali Pengaturan","#38bdf8"],["👷 Teknisi","Jadwal & Tim Teknisi saja","#22c55e"]].map(([role,desc,col]) => (
+            {[["👑 Owner","Semua akses + Pengaturan","#f59e0b"],["🛠️ Admin","Semua menu kecuali Pengaturan","#38bdf8"],["👷 Teknisi","Jadwal &amp; Tim Teknisi saja","#22c55e"]].map(([role,desc,col]) => (
               <div key={role} style={{ background:col+"12", border:"1px solid "+col+"33", borderRadius:8, padding:"6px 12px", fontSize:11 }}>
                 <span style={{ color:col, fontWeight:700 }}>{role}</span>
                 <span style={{ color:cs.muted, marginLeft:6 }}>{desc}</span>
@@ -4534,7 +4534,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                     }
                     setModalTeknisi(false); setEditTeknisi(null);
                   }}
-                    style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"9px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>🗑️ Hapus dari Tim & DB</button>
+                    style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"9px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>🗑️ Hapus dari Tim &amp; DB</button>
                   {editTeknisi?.status === "standby" ? (
                     <button onClick={async () => {
                       setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? {...t, status:"active", active:true} : t));
@@ -4761,7 +4761,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               <div style={{ display:"flex", gap:8 }}>
                 {liveInv.status === "PENDING_APPROVAL" && (
                   <button onClick={() => { approveInvoice(liveInv); setModalPDF(false); }}
-                    style={{ background:"#22c55e", border:"none", color:"#fff", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>✓ Approve & Kirim PDF</button>
+                    style={{ background:"#22c55e", border:"none", color:"#fff", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>✓ Approve &amp; Kirim PDF</button>
                 )}
                 <button onClick={() => setModalPDF(false)} style={{ background:"none", border:"1px solid #ffffff44", color:"#fff", padding:"6px 14px", borderRadius:8, cursor:"pointer", fontSize:13 }}>× Tutup</button>
               </div>
@@ -4823,7 +4823,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                   </tr>
                   {liveInv.material > 0 && (
                     <tr style={{ background:"#f0f9ff" }}>
-                      <td style={{ padding:"8px 10px", color:"#1e293b" }}>Material & Spare Part</td>
+                      <td style={{ padding:"8px 10px", color:"#1e293b" }}>Material &amp; Spare Part</td>
                       <td style={{ padding:"8px 10px", textAlign:"center" }}>—</td>
                       <td style={{ padding:"8px 10px" }}>—</td>
                       <td style={{ padding:"8px 10px", color:"#1e293b", fontFamily:"monospace", fontWeight:600 }}>{liveInv.material.toLocaleString("id-ID")}</td>
@@ -5212,7 +5212,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
               <div>
                 <div style={{fontWeight:800,fontSize:16,color:cs.text}}>✏️ Edit Order — {editOrderItem.id}</div>
-                <div style={{fontSize:11,color:cs.yellow,marginTop:2}}>Hanya Owner & Admin · Perubahan dicatat otomatis</div>
+                <div style={{fontSize:11,color:cs.yellow,marginTop:2}}>Hanya Owner &amp; Admin · Perubahan dicatat otomatis</div>
               </div>
               <button onClick={()=>{setModalEditOrder(false);setEditOrderItem(null);}} style={{background:"none",border:"none",color:cs.muted,fontSize:24,cursor:"pointer",lineHeight:1}}>×</button>
             </div>
@@ -5251,9 +5251,9 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 </div>
               </div>
 
-              {/* Section: Jadwal & Tim */}
+              {/* Section: Jadwal &amp; Tim */}
               <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"12px 14px"}}>
-                <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.5px"}}>Jadwal & Tim</div>
+                <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.5px"}}>Jadwal &amp; Tim</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Tanggal</div>
@@ -6039,7 +6039,7 @@ Silakan buat invoice dari ARA Chat 👆`;
                           <span style={{marginLeft:8,fontSize:11}}>
                             <span style={{color:cs.green}}>☁️ {laporanFotos.filter(f=>f.url).length} tersimpan</span>
                             {laporanFotos.filter(f=>!f.url).length > 0 && (
-                              <span style={{color:cs.yellow,marginLeft:6}}>⚠️ {laporanFotos.filter(f=>!f.url).length} gagal upload — hapus & upload ulang</span>
+                              <span style={{color:cs.yellow,marginLeft:6}}>⚠️ {laporanFotos.filter(f=>!f.url).length} gagal upload — hapus &amp; upload ulang</span>
                             )}
                           </span>
                         )}
