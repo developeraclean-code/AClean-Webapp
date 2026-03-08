@@ -5538,13 +5538,14 @@ Silakan buat invoice dari ARA Chat 👆`;
           setOrdersData(prev => prev.map(o =>
             o.id === laporanModal.id ? {...o, status:"REPORT_SUBMITTED"} : o
           ));
-          // Update order status — try REPORT_SUBMITTED first, fallback to IN_PROGRESS if schema rejects
+          // Update order status — after schema migration REPORT_SUBMITTED works
+          // Fallback chain: REPORT_SUBMITTED → COMPLETED (always in schema)
           {
             const { error: ordErr } = await supabase.from("orders")
               .update({status:"REPORT_SUBMITTED"}).eq("id", laporanModal.id);
             if (ordErr) {
-              console.warn("REPORT_SUBMITTED rejected:", ordErr.message, "— trying IN_PROGRESS");
-              await supabase.from("orders").update({status:"IN_PROGRESS"}).eq("id", laporanModal.id);
+              console.warn("REPORT_SUBMITTED rejected:", ordErr.message, "— using COMPLETED");
+              await supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id);
             }
           }
 
@@ -5606,9 +5607,6 @@ Silakan buat invoice dari ARA Chat 👆`;
             dadakan: 0,
             total: laborTotal + matTotal,
             status: "PENDING_APPROVAL",
-            sent: null,
-            due: null,
-            follow_up: 0,
           };
           setInvoicesData(prev => [...prev, newInvoice]);
           // Simpan invoice ke Supabase
@@ -5617,15 +5615,20 @@ Silakan buat invoice dari ARA Chat 👆`;
             const { error: invErr } = await supabase.from("invoices").insert(newInvoice);
             if (invErr) {
               console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
-              const minimalInv = {
-                id: newInvoice.id, job_id: newInvoice.job_id,
-                customer: newInvoice.customer, service: newInvoice.service,
-                units: newInvoice.units, labor: newInvoice.labor,
-                material: newInvoice.material, total: newInvoice.total,
-                status: newInvoice.status,
-              };
-              const { error: invErr2 } = await supabase.from("invoices").insert(minimalInv);
-              if (invErr2) console.error("Invoice minimal insert failed:", invErr2.message);
+              // status fallback: try PENDING_APPROVAL → UNPAID (schema constraint)
+              const tryStatuses = ["PENDING_APPROVAL", "UNPAID"];
+              for (const st of tryStatuses) {
+                const minimalInv = {
+                  id: newInvoice.id, job_id: newInvoice.job_id,
+                  customer: newInvoice.customer, service: newInvoice.service,
+                  units: newInvoice.units, labor: newInvoice.labor,
+                  material: newInvoice.material, total: newInvoice.total,
+                  status: st,
+                };
+                const { error: invErr2 } = await supabase.from("invoices").insert(minimalInv);
+                if (!invErr2) { console.log("✅ Invoice inserted with status:", st); break; }
+                console.warn("Invoice status", st, "rejected:", invErr2.message);
+              }
             }
           }
           addAgentLog("INVOICE_CREATED", `Invoice ${newInvoiceId} dibuat dari laporan ${laporanModal.id} — ${fmt(newInvoice.total)} — menunggu approval Owner`, "SUCCESS");
