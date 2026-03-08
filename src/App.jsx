@@ -5538,7 +5538,15 @@ Silakan buat invoice dari ARA Chat 👆`;
           setOrdersData(prev => prev.map(o =>
             o.id === laporanModal.id ? {...o, status:"REPORT_SUBMITTED"} : o
           ));
-          await supabase.from("orders").update({status:"REPORT_SUBMITTED"}).eq("id",laporanModal.id);
+          // Update order status — try REPORT_SUBMITTED first, fallback to IN_PROGRESS if schema rejects
+          {
+            const { error: ordErr } = await supabase.from("orders")
+              .update({status:"REPORT_SUBMITTED"}).eq("id", laporanModal.id);
+            if (ordErr) {
+              console.warn("REPORT_SUBMITTED rejected:", ordErr.message, "— trying IN_PROGRESS");
+              await supabase.from("orders").update({status:"IN_PROGRESS"}).eq("id", laporanModal.id);
+            }
+          }
 
           // ── Teknisi SELESAI → status kembali "active" (siap terima job baru) ──
           // Patokan: laporan disubmit = pekerjaan selesai secara aktual
@@ -5547,7 +5555,10 @@ Silakan buat invoice dari ARA Chat 👆`;
             setTeknisiData(prev => prev.map(t =>
               t.name === laporanModal.teknisi ? {...t, status:"active"} : t
             ));
-            supabase.from("user_profiles").update({status:"active"}).eq("id", finTeknisi.id);
+            // Only update if ID is a real Supabase UUID (not local demo ID like USR001)
+            if (finTeknisi.id && /^[0-9a-f-]{36}$/.test(finTeknisi.id)) {
+              supabase.from("user_profiles").update({status:"active"}).eq("id", finTeknisi.id);
+            }
           }
           // Helper juga kembali active
           if (laporanModal.helper) {
@@ -5556,7 +5567,9 @@ Silakan buat invoice dari ARA Chat 👆`;
               setTeknisiData(prev => prev.map(t =>
                 t.name === laporanModal.helper ? {...t, status:"active"} : t
               ));
-              supabase.from("user_profiles").update({status:"active"}).eq("id", finHelper.id);
+              if (finHelper.id && /^[0-9a-f-]{36}$/.test(finHelper.id)) {
+                supabase.from("user_profiles").update({status:"active"}).eq("id", finHelper.id);
+              }
             }
           }
 
@@ -5565,7 +5578,9 @@ Silakan buat invoice dari ARA Chat 👆`;
             deductInventory(laporanMaterials);
             // Deduct di Supabase juga
             laporanMaterials.forEach(mat => {
-              supabase.rpc("deduct_inventory", {item_name: mat.nama, qty: parseFloat(mat.jumlah)||0});
+              // deduct_inventory RPC — skip silently if not set up yet in Supabase
+            supabase.rpc("deduct_inventory", {item_name: mat.nama, qty: parseFloat(mat.jumlah)||0})
+              .then(({error:e}) => { if(e) console.warn("deduct_inventory skip:", e.message); });
             });
             addAgentLog("MATERIAL_DEDUCT", `${laporanMaterials.length} material dipakai di ${laporanModal.id}`, "SUCCESS");
           }
@@ -5597,7 +5612,22 @@ Silakan buat invoice dari ARA Chat 👆`;
           };
           setInvoicesData(prev => [...prev, newInvoice]);
           // Simpan invoice ke Supabase
-          supabase.from("invoices").insert(newInvoice);
+          // Insert invoice — try full object, fallback to minimal columns if schema mismatch
+          {
+            const { error: invErr } = await supabase.from("invoices").insert(newInvoice);
+            if (invErr) {
+              console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
+              const minimalInv = {
+                id: newInvoice.id, job_id: newInvoice.job_id,
+                customer: newInvoice.customer, service: newInvoice.service,
+                units: newInvoice.units, labor: newInvoice.labor,
+                material: newInvoice.material, total: newInvoice.total,
+                status: newInvoice.status,
+              };
+              const { error: invErr2 } = await supabase.from("invoices").insert(minimalInv);
+              if (invErr2) console.error("Invoice minimal insert failed:", invErr2.message);
+            }
+          }
           addAgentLog("INVOICE_CREATED", `Invoice ${newInvoiceId} dibuat dari laporan ${laporanModal.id} — ${fmt(newInvoice.total)} — menunggu approval Owner`, "SUCCESS");
 
           // Notif WA ke Owner bahwa laporan + invoice menunggu approval
