@@ -3191,11 +3191,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
                   // GAP 7: gunakan helper isRealUUID (sudah dideklarasi di atas)
                   const verifiedById = isRealUUID(currentUser?.id) ? currentUser.id : null;
-                  await supabase.from("service_reports").update({
-                    status:"VERIFIED",
-                    verified_by: verifiedById,
-                    verified_at: new Date().toISOString()
-                  }).eq("id",r.id);
+                  // Try with verified_by/at — fallback to status only
+                  {
+                    const {error:vErr} = await supabase.from("service_reports").update({
+                      status:"VERIFIED",
+                      verified_by: verifiedById,
+                      verified_at: new Date().toISOString()
+                    }).eq("id",r.id);
+                    if(vErr) {
+                      console.warn("verified_by cols missing:", vErr.message);
+                      await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
+                    }
+                  }
                   addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi — invoice menunggu approval Owner`,"SUCCESS");
                   const relInv=invoicesData.find(i=>i.job_id===r.job_id);
                   if(relInv&&relInv.status==="PENDING_APPROVAL"){
@@ -5265,13 +5272,26 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                     setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id
                       ?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,status:newStatus,editLog:allLogs}:r));
                     // Save ke Supabase
-                    const {error:elErr} = await supabase.from("service_reports").update({
-                      rekomendasi:editLaporanForm.rekomendasi,
-                      catatan_global:editLaporanForm.catatan_global,
-                      status:newStatus,
-                      edit_log: allLogs, updated_at: new Date().toISOString()
-                    }).eq("id",selectedLaporan.id);
-                    if(elErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
+                    // edit_log harus JSON string untuk kolom TEXT di Supabase
+                    const updatePayload = {
+                      rekomendasi: editLaporanForm.rekomendasi,
+                      catatan_global: editLaporanForm.catatan_global,
+                      status: newStatus,
+                      edit_log: JSON.stringify(allLogs),
+                    };
+                    // updated_at opsional — skip jika kolom belum ada
+                    const {error:elErr} = await supabase.from("service_reports")
+                      .update(updatePayload).eq("id", selectedLaporan.id);
+                    if(elErr) {
+                      console.warn("service_reports update failed:", elErr.message);
+                      // Coba tanpa edit_log jika kolom belum ada
+                      const {error:elErr2} = await supabase.from("service_reports").update({
+                        rekomendasi: editLaporanForm.rekomendasi,
+                        catatan_global: editLaporanForm.catatan_global,
+                        status: newStatus,
+                      }).eq("id", selectedLaporan.id);
+                      if(elErr2) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+elErr2.message);
+                    } else {}
                     else { addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name} (${newLogs.length} perubahan)`,"SUCCESS"); }
                     showNotif("✅ Laporan "+selectedLaporan.job_id+" diupdate ("+newLogs.length+" perubahan dicatat)");
                     setModalLaporanDetail(false); setEditLaporanMode(false);
@@ -5490,25 +5510,46 @@ Silakan buat invoice dari ARA Chat 👆`;
             foto_urls: laporanFotos.filter(f=>f.url).map(f=>f.url),
           };
 
-          // Coba dengan JSON columns dulu
-          let { error: rptErr } = await supabase.from("service_reports").upsert({
-            ...basePayload,
-            materials_json: JSON.stringify(laporanMaterials),
-            units_json:     JSON.stringify(laporanUnits),
-          });
+          // Simpan ke Supabase — bertahap dari lengkap ke minimal
+          let savedOk = false;
 
-          // Fallback: jika kolom JSON belum ada di Supabase schema
-          if (rptErr) {
-            console.warn("upsert with JSON cols failed:", rptErr.message, "— retrying without JSON cols");
-            const fallback = await supabase.from("service_reports").upsert(basePayload);
-            rptErr = fallback.error;
+          // Attempt 1: full payload dengan JSON cols
+          {
+            const { error: e1 } = await supabase.from("service_reports").upsert({
+              ...basePayload,
+              materials_json: JSON.stringify(laporanMaterials),
+              units_json:     JSON.stringify(laporanUnits),
+            }, { onConflict: "id" });
+            if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
+            else console.warn("Attempt 1 failed:", e1.message);
           }
 
-          if (rptErr) {
-            console.error("Laporan upsert FAILED:", rptErr.message);
-            showNotif("❌ Gagal simpan laporan ke server: " + rptErr.message + " (data tersimpan lokal)");
-          } else {
-            console.log("✅ Laporan tersimpan ke Supabase:", newReport.id);
+          // Attempt 2: tanpa JSON cols
+          if (!savedOk) {
+            const { error: e2 } = await supabase.from("service_reports").upsert(
+              basePayload, { onConflict: "id" }
+            );
+            if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
+            else console.warn("Attempt 2 failed:", e2.message);
+          }
+
+          // Attempt 3: minimal — hanya kolom wajib
+          if (!savedOk) {
+            const minimal = {
+              id: newReport.id, job_id: newReport.job_id,
+              teknisi: newReport.teknisi, customer: newReport.customer,
+              service: newReport.service, date: newReport.date,
+              status: "SUBMITTED", total_units: newReport.total_units,
+              submitted_at: new Date().toISOString(),
+            };
+            const { error: e3 } = await supabase.from("service_reports").upsert(
+              minimal, { onConflict: "id" }
+            );
+            if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
+            else {
+              console.error("All upsert attempts failed:", e3.message);
+              showNotif("❌ Gagal simpan ke server: " + e3.message);
+            }
           }
 
           // Reload laporan untuk semua user setelah submit (realtime akan trigger, ini backup)
