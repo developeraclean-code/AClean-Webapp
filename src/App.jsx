@@ -617,26 +617,29 @@ export default function ACleanWebApp() {
   useEffect(() => {
     // ── Restore session saat refresh ──
     const restoreSession = async () => {
-      // 1. Coba restore dari Supabase Auth session (untuk akun real)
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const { data: profile } = await supabase
-          .from("user_profiles").select("*").eq("id", session.user.id).single();
-        if (profile && profile.active) {
-          setCurrentUser({ ...session.user, ...profile });
-          setIsLoggedIn(true);
-          setActiveRole(profile.role.toLowerCase());
-          return;
-        }
-      }
-      // 2. Coba restore dari localStorage (untuk akun lokal/demo)
+      // 1. Coba restore dari localStorage dulu (akun lokal/demo) — tidak butuh auth
       const saved = _ls("localSession", null);
       if (saved && saved.id && saved.role) {
-        // Validasi masih ada di userAccounts
         setCurrentUser(saved);
         setIsLoggedIn(true);
         setActiveRole(saved.role.toLowerCase());
+        return; // sudah restore, skip Supabase auth check
       }
+      // 2. Fallback: Supabase Auth session (akun real) — wrapped try/catch agar tidak spam 400
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) { console.warn("Auth session check:", error.message); return; }
+        const session = data?.session;
+        if (session?.user) {
+          const { data: profile } = await supabase
+            .from("user_profiles").select("*").eq("id", session.user.id).single();
+          if (profile && profile.active) {
+            setCurrentUser({ ...session.user, ...profile });
+            setIsLoggedIn(true);
+            setActiveRole(profile.role.toLowerCase());
+          }
+        }
+      } catch(e) { console.warn("Auth restore skip:", e.message); }
     };
     restoreSession();
   }, []);
@@ -4638,13 +4641,17 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                   const newTotal = labor + material + dadakan;
                   if(newTotal <= 0){ showNotif("⚠️ Total invoice tidak boleh 0 atau negatif"); return; }
                   setInvoicesData(prev=>prev.map(i=>i.id===editInvoiceData.id?{...i,labor,material,dadakan,total:newTotal}:i));
-                  const {error:eiErr} = await supabase.from("invoices").update({labor,material,dadakan,total:newTotal}).eq("id",editInvoiceData.id);
-                  if(eiErr) {
-                    console.warn("editInvoice failed:", eiErr.message);
-                    // Fallback: only update total
-                    const {error:eiErr2} = await supabase.from("invoices").update({total:newTotal}).eq("id",editInvoiceData.id);
-                    if(eiErr2) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+eiErr2.message);
-                  }
+                  // Try update with all cols → fallback to known-safe cols
+                  let editSaved = false;
+                  // Attempt 1: full cols
+                  { const {error:e1} = await supabase.from("invoices").update({labor,material,dadakan,total:newTotal}).eq("id",editInvoiceData.id);
+                    if(!e1){ editSaved=true; } else console.warn("editInv attempt1:", e1.message); }
+                  // Attempt 2: without dadakan  
+                  if(!editSaved){ const {error:e2} = await supabase.from("invoices").update({labor,material,total:newTotal}).eq("id",editInvoiceData.id);
+                    if(!e2){ editSaved=true; } else console.warn("editInv attempt2:", e2.message); }
+                  // Attempt 3: total only
+                  if(!editSaved){ const {error:e3} = await supabase.from("invoices").update({total:newTotal}).eq("id",editInvoiceData.id);
+                    if(!e3){ editSaved=true; } else showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+e3.message); }
                   else { addAgentLog("INVOICE_EDITED",`Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotal)}${editInvoiceForm.notes?" ("+editInvoiceForm.notes+")":""}`, "SUCCESS"); }
                   showNotif(`✅ Invoice ${editInvoiceData.id} berhasil diupdate → ${fmt(newTotal)}`);
                   setModalEditInvoice(false); setEditInvoiceData(null);
