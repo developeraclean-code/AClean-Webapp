@@ -420,6 +420,15 @@ export default function ACleanWebApp() {
   // ── Statistik periode filter ──
   const [statsPeriod, setStatsPeriod] = useState("bulan"); // "hari"|"bulan"|"tahun"
 
+  // ── Mobile detection (MUST be before any conditional returns) ──
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  useEffect(() => {
+    const fn = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
+
   // ── Notification ──
   const [notification, setNotification] = useState(null);
   const notifTimer = useRef(null);
@@ -3884,15 +3893,6 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
   }
 
   const isTekRoleGlobal = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
-
-  // ── Mobile detection ──
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
-  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
-  useEffect(() => {
-    const fn = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener("resize", fn);
-    return () => window.removeEventListener("resize", fn);
-  }, []);
 
   return (
     <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:isMobile?"block":"flex" }}>
