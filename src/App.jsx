@@ -2818,9 +2818,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           </div>
         </div>
 
-        {/* ── SECTION 1: P&L Summary — Owner only ── */}
+        {/* ── SECTION 1 + 1b: P&L Summary — Owner only ── */}
         {currentUser?.role === "Owner" && (
-        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <>
+          <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
           <div style={{ fontWeight:800, color:cs.text, fontSize:14, marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
             <span>💰 Profit & Loss — {periodLabel}</span>
             <span style={{ fontSize:11, color:cs.muted, fontWeight:400 }}>Berdasarkan {paidInv.length} invoice PAID</span>
@@ -2882,6 +2883,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           );
         })()}
 
+          </>
         )} {/* end P&L — Owner only */}
 
         {/* ── SECTION 2: KPI Operasional ── */}
