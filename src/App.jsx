@@ -5291,8 +5291,9 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                         status: newStatus,
                       }).eq("id", selectedLaporan.id);
                       if(elErr2) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+elErr2.message);
-                    } else {}
-                    else { addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name} (${newLogs.length} perubahan)`,"SUCCESS"); }
+                    } else {
+                      addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name} (${newLogs.length} perubahan)`,"SUCCESS");
+                    }
                     showNotif("✅ Laporan "+selectedLaporan.job_id+" diupdate ("+newLogs.length+" perubahan dicatat)");
                     setModalLaporanDetail(false); setEditLaporanMode(false);
                   }}
