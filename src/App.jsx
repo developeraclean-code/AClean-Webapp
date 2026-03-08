@@ -5272,28 +5272,22 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                     setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id
                       ?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,status:newStatus,editLog:allLogs}:r));
                     // Save ke Supabase
-                    // edit_log harus JSON string untuk kolom TEXT di Supabase
-                    const updatePayload = {
+                    // Simpan edit ke Supabase
+                    const {error:elErr} = await supabase.from("service_reports").update({
                       rekomendasi: editLaporanForm.rekomendasi,
                       catatan_global: editLaporanForm.catatan_global,
                       status: newStatus,
                       edit_log: JSON.stringify(allLogs),
-                    };
-                    // updated_at opsional — skip jika kolom belum ada
-                    const {error:elErr} = await supabase.from("service_reports")
-                      .update(updatePayload).eq("id", selectedLaporan.id);
+                    }).eq("id", selectedLaporan.id);
                     if(elErr) {
-                      console.warn("service_reports update failed:", elErr.message);
-                      // Coba tanpa edit_log jika kolom belum ada
-                      const {error:elErr2} = await supabase.from("service_reports").update({
+                      console.warn("update with edit_log failed:", elErr.message);
+                      await supabase.from("service_reports").update({
                         rekomendasi: editLaporanForm.rekomendasi,
                         catatan_global: editLaporanForm.catatan_global,
                         status: newStatus,
                       }).eq("id", selectedLaporan.id);
-                      if(elErr2) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+elErr2.message);
-                    } else {
-                      addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name} (${newLogs.length} perubahan)`,"SUCCESS");
                     }
+                    addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name} (${newLogs.length} perubahan)`,"SUCCESS");
                     showNotif("✅ Laporan "+selectedLaporan.job_id+" diupdate ("+newLogs.length+" perubahan dicatat)");
                     setModalLaporanDetail(false); setEditLaporanMode(false);
                   }}
