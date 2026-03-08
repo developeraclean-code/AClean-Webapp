@@ -3104,9 +3104,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                 <span style={{fontFamily:"monospace",fontWeight:800,color:cs.accent,fontSize:14}}>{r.job_id}</span>
                 {badge(r.status)}
-                {r.editLog.length>0 && (
+                {(r.editLog||[]).length>0 && (
                   <span style={{fontSize:10,color:cs.yellow,background:cs.yellow+"15",padding:"2px 8px",borderRadius:99,border:"1px solid "+cs.yellow+"33"}}>
-                    Diedit {r.editLog.length}x
+                    Diedit {(r.editLog||[]).length}x
                   </span>
                 )}
               </div>
@@ -3160,10 +3160,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             {r.catatan_global&&<div style={{fontSize:11,marginBottom:8}}><span style={{color:cs.muted}}>Catatan: </span><span style={{color:cs.text}}>{r.catatan_global}</span></div>}
 
             {/* Edit log */}
-            {r.editLog.length>0 && (
+            {(r.editLog||[]).length>0 && (
               <div style={{background:cs.yellow+"08",border:"1px solid "+cs.yellow+"22",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
                 <div style={{fontSize:11,fontWeight:700,color:cs.yellow,marginBottom:8}}>Riwayat Edit</div>
-                {r.editLog.map((log,li)=>(
+                {(r.editLog||[]).map((log,li)=>(
                   <div key={li} style={{fontSize:11,color:cs.muted,marginBottom:5,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                     <span style={{background:cs.accent+"18",color:cs.accent,fontWeight:700,padding:"1px 8px",borderRadius:99,fontSize:10}}>{log.by}</span>
                     <span style={{color:cs.muted}}>{log.at}</span>
@@ -3292,7 +3292,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                     <span style={{fontFamily:"monospace",fontWeight:800,color:cs.accent}}>{r.job_id}</span>
                     {badge(r.status)}
                     {isHelper && <span style={{fontSize:10,color:cs.muted,background:cs.surface,padding:"1px 7px",borderRadius:99}}>Helper</span>}
-                    {r.editLog.length>0 && <span style={{fontSize:10,color:cs.muted}}>Diedit {r.editLog.length}x</span>}
+                    {(r.editLog||[]).length>0 && <span style={{fontSize:10,color:cs.muted}}>Diedit {(r.editLog||[]).length}x</span>}
                   </div>
                   <span style={{fontSize:11,color:cs.muted}}>{r.submitted}</span>
                 </div>
@@ -3306,10 +3306,10 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                 )}
 
                 {/* Edit log visible to teknisi */}
-                {r.editLog.length>0 && (
+                {(r.editLog||[]).length>0 && (
                   <div style={{background:cs.surface,borderRadius:8,padding:"10px 12px",marginBottom:12}}>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:6}}>Riwayat Perubahan</div>
-                    {r.editLog.map((log,li)=>(
+                    {(r.editLog||[]).map((log,li)=>(
                       <div key={li} style={{fontSize:10,color:cs.muted,marginBottom:4,display:"flex",gap:6,flexWrap:"wrap"}}>
                         <span style={{color:cs.accent,fontWeight:600}}>{log.by}</span>
                         <span>{log.at}</span>
@@ -3330,13 +3330,28 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
                     </button>
                   )}
                   {canEdit && (
+                    <>
+                    {/* Tulis Ulang — buka form laporan dari awal, hapus data lama */}
+                    <button onClick={()=>{
+                      const srcOrder = ordersData.find(o=>o.id===r.job_id) || {
+                        id:r.job_id, customer:r.customer, service:r.service,
+                        type:r.type||"AC Split 0.5-1PK", units:r.total_units||(r.units||[]).length||1,
+                        teknisi:r.teknisi, helper:r.helper, date:r.date, time:r.time||"09:00"
+                      };
+                      openLaporanModal({...srcOrder, _rewriteId: r.id});
+                    }}
+                      style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                      🔄 Tulis Ulang
+                    </button>
+                    {/* Edit biasa — edit catatan/rekomendasi saja */}
                     <button onClick={()=>{
                       setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||""});
                       setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                     }}
-                      style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
-                      Edit Laporan
+                      style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                      ✏️ Edit
                     </button>
+                    </>
                   )}
                 {!isPending && (
                     <button onClick={()=>{setSelectedLaporan(r);setEditLaporanMode(false);setModalLaporanDetail(true);}}
@@ -5424,14 +5439,19 @@ Lanjutkan submit laporan tanpa foto tersebut?
           }
           const now = new Date().toLocaleString("id-ID",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).replace(/\//g,"-");
           const newReport = {
-            id:"LPR_"+laporanModal.id+"_"+Date.now().toString(36).slice(-4).toUpperCase(),
+            // If rewriting existing report, reuse same ID (upsert overwrites)
+            id: laporanModal._rewriteId || ("LPR_"+laporanModal.id+"_"+Date.now().toString(36).slice(-4).toUpperCase()),
             job_id:laporanModal.id, teknisi:laporanModal.teknisi, helper:laporanModal.helper||null,
             customer:laporanModal.customer, service:laporanModal.service, date:laporanModal.date,
             submitted:now, status:"SUBMITTED", total_units:laporanUnits.length,
             units:laporanUnits, materials:laporanMaterials,
             fotos:laporanFotos.map(f=>({id:f.id,label:f.label})),
             total_freon:totalFreon, rekomendasi:laporanRekomendasi, catatan_global:laporanCatatan,
-            unit_mismatch: laporanUnits.length!==(laporanModal.units||1), editLog:[]
+            unit_mismatch: laporanUnits.length!==(laporanModal.units||1),
+            editLog: laporanModal._rewriteId ? [{
+              by: currentUser?.name||"Teknisi", at: new Date().toLocaleString("id-ID"),
+              field:"full_rewrite", old:"(laporan lama)", new:"Laporan ditulis ulang dari awal"
+            }] : []
           };
           setLaporanReports(prev=>[...prev.filter(r=>r.job_id!==laporanModal.id),newReport]);
 
