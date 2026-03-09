@@ -387,10 +387,10 @@ export default function ACleanWebApp() {
   const [waDevice,        setWaDevice]        = useState(() => _ls("waDevice",   ""));
   const [waStatus,        setWaStatus]        = useState("not_connected");
 
-  const [llmProvider,     setLlmProvider]     = useState(() => _ls("llmProvider", "claude"));
+  const [llmProvider,     setLlmProvider]     = useState(() => _ls("llmProvider", "gemini")); // default gemini (free tier)
   const [llmApiKey,       setLlmApiKey]       = useState(() => {
-    // Load key per-provider yang aktif
-    const prov = _ls("llmProvider", "gemini");
+    // Load key per-provider yang aktif — selalu sync dengan llmProvider
+    const prov = _ls("llmProvider", "gemini"); // sama dengan default llmProvider
     return _ls("llmApiKey_" + prov, "") || _ls("llmApiKey", "");
   });
   const [llmModel,        setLlmModel]        = useState(() => _ls("llmModel", "claude-sonnet-4-6"));
@@ -740,8 +740,15 @@ export default function ACleanWebApp() {
         const setRes = await supabase.from("app_settings").select("*");
         if (!setRes.error && setRes.data) {
           const sMap = Object.fromEntries(setRes.data.map(s=>[s.key, s.value]));
-          if (sMap.llm_provider && !llmProvider) setLlmProvider(sMap.llm_provider);
-          if (sMap.llm_model && !llmModel) setLlmModel(sMap.llm_model);
+          // ── FIXED: selalu sync dari DB (override localStorage jika DB punya nilai) ──
+          if (sMap.llm_provider) setLlmProvider(sMap.llm_provider);
+          if (sMap.llm_model)    setLlmModel(sMap.llm_model);
+          // Sync apiKey sesuai provider dari DB
+          if (sMap.llm_provider) {
+            const dbProv = sMap.llm_provider;
+            const savedKey = _ls("llmApiKey_" + dbProv, "") || _ls("llmApiKey", "");
+            if (savedKey) setLlmApiKey(savedKey);
+          }
         }
       } catch(e) {}
 
