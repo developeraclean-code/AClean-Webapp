@@ -143,6 +143,21 @@ const PRICE_LIST_DEFAULT = {
 // PRICE_LIST akan di-replace oleh data DB setelah loadAll() — jangan edit langsung
 let PRICE_LIST = { ...PRICE_LIST_DEFAULT };
 
+// ── Dynamic tech color — deterministik berdasarkan hash nama ──
+const TECH_PALETTE = [
+  "#38bdf8","#22c55e","#a78bfa","#f59e0b","#f97316",
+  "#ec4899","#14b8a6","#ef4444","#84cc16","#06b6d4",
+  "#8b5cf6","#d946ef","#fb923c","#4ade80","#60a5fa",
+];
+const getTechColor = (name, teknisiDataArr) => {
+  if (!name) return "#64748b";
+  const tekFromDB = (teknisiDataArr||[]).find(t => t.name === name);
+  if (tekFromDB?.color) return tekFromDB.color;
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff;
+  return TECH_PALETTE[Math.abs(h) % TECH_PALETTE.length];
+};
+
 const INVENTORY_DATA = [
 ];
 
@@ -291,10 +306,17 @@ export default function ACleanWebApp() {
   const [customerTab,      setCustomerTab]      = useState("list");
 
   // ── Orders ──
-  const [orderFilter, setOrderFilter] = useState("Semua");
+  const [orderFilter,    setOrderFilter]    = useState("Semua");
+  const [searchOrder,    setSearchOrder]    = useState("");
+  const [orderTekFilter, setOrderTekFilter] = useState("Semua");
+  const [orderPage,      setOrderPage]      = useState(1);
+  const ORDER_PAGE_SIZE = 20;
 
   // ── Invoice ──
   const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [invoiceFilter,   setInvoiceFilter]   = useState("Semua");
+  const [invoicePage,     setInvoicePage]     = useState(1);
+  const INV_PAGE_SIZE = 15;
   const [modalPDF,        setModalPDF]        = useState(false);
 
   // ── Schedule ──
@@ -306,7 +328,17 @@ export default function ACleanWebApp() {
   const [searchCustomer,  setSearchCustomer]  = useState("");
   const [searchInvoice,   setSearchInvoice]   = useState("");
   const [searchInventory, setSearchInventory] = useState("");
+  const [searchPriceList,  setSearchPriceList]  = useState("");
+  const [priceListSvcTab, setPriceListSvcTab]  = useState("Semua");
+  const [priceListData,   setPriceListData]    = useState([]);
+  const [plEditItem,      setPlEditItem]       = useState(null);
+  const [plEditForm,      setPlEditForm]       = useState({});
   const [searchLaporan,   setSearchLaporan]   = useState("");
+  const [laporanSvcFilter, setLaporanSvcFilter] = useState("Semua");
+  const [laporanStatusFilter, setLaporanStatusFilter] = useState("Semua");
+  const [laporanDateFilter, setLaporanDateFilter] = useState("Semua"); // Semua/Minggu Ini/Bulan Ini
+  const [laporanPage,     setLaporanPage]     = useState(1);
+  const LAP_PAGE_SIZE = 10;
 
   // ── Laporan Tim ──
   const [laporanReports,  setLaporanReports]  = useState([
@@ -508,16 +540,74 @@ export default function ACleanWebApp() {
     if (push) pushNotif("AClean", msg.replace(/[🔔📋✅❌⚠️💰]/g, "").trim());
   };
 
-  // ── Laporan Helper Constants ──
-  const KONDISI_SBL = ["AC tidak dingin","Bau tidak sedap","Bocor air","Bunyi berisik","AC tidak menyala","Freon habis","Kapasitor rusak","Kompresor lemah","Remote rusak","Tetes air lebihan"];
-  const KONDISI_SDH = ["Normal, dingin optimal","Filter bersih","Tidak ada bocor","Suara normal","Freon terisi","Semua fungsi normal","Dingin merata","Tidak ada bau"];
+  // ── Laporan Helper Constants — sesuai standar AClean ──
+  const KONDISI_SBL = [
+    "AC Normal",
+    "AC Tidak Dingin",
+    "AC Bau Tidak Sedap",
+    "AC Bocor Air",
+    "AC Bunyi Berisik",
+    "AC Tidak Menyala",
+    "Freon Habis/Kurang",
+    "Kompresor Bermasalah",
+  ];
+  const KONDISI_SDH = [
+    "AC Dingin Kembali",
+    "AC Masih Terkendala",
+    "Perlu Pergantian Sparepart",
+    "AC Rusak Perlu Pergantian Unit",
+    "Semua Fungsi Normal",
+    "Filter Bersih",
+    "Tidak Ada Bocor",
+  ];
   const PEKERJAAN_BY_SERVICE = {
-    Cleaning: ["Deep cleaning","Cuci filter","Semprot evaporator","Bersihkan kondensor","Vacuuming","Isi freon","Bersihkan drain pan","Cek kelistrikan"],
-    Install:  ["Pasang unit indoor","Pasang unit outdoor","Pasang bracket","Instalasi pipa","Instalasi kabel","Pasang stop kontak","Uji coba unit","Cek instalasi"],
-    Repair:   ["Ganti kapasitor","Ganti relay","Ganti thermostat","Ganti sensor","Isi freon","Perbaiki pipa bocor","Perbaiki kelistrikan","Ganti PCB","Ganti motor fan","Cek dan bersihkan"],
-    Complain: ["Pengecekan ulang","Cek freon","Cek kelistrikan","Cek instalasi pipa","Cek kondensor","Cek evaporator","Follow up komplain","Garansi service"],
+    Cleaning: [
+      "Service Cleaning",
+      "Deep Cleaning (Service Besar)",
+      "Cleaning Indoor dan Outdoor",
+      "Kuras Vacum Freon",
+      "Penambahan Freon",
+      "Bersihkan Drain / Talang",
+      "Pemasangan Sparepart",
+      "Pekerjaan Lainnya",
+    ],
+    Install: [
+      "Pemasangan Unit",
+      "Bongkar Pasang Unit",
+      "Pasang Unit Indoor",
+      "Pasang Unit Outdoor",
+      "Pasang Bracket",
+      "Instalasi Pipa",
+      "Instalasi Kabel",
+      "Uji Coba Unit",
+      "Pekerjaan Lainnya",
+    ],
+    Repair: [
+      "Service Cleaning",
+      "Kuras Vacum Freon",
+      "Penambahan Freon",
+      "Bersihkan Drain / Talang",
+      "Pemasangan Sparepart",
+      "Ganti Kapasitor",
+      "Ganti Relay / Thermostat",
+      "Ganti PCB / Modul",
+      "Perbaiki Pipa Bocor",
+      "Pekerjaan Lainnya",
+    ],
+    Complain: [
+      "Service Cleaning",
+      "Penambahan Freon",
+      "Bersihkan Drain / Talang",
+      "Pemasangan Sparepart",
+      "Pengecekan Ulang",
+      "Cek Instalasi Pipa",
+      "Cek Kelistrikan",
+      "Follow Up Komplain",
+      "Garansi Servis",
+      "Pekerjaan Lainnya",
+    ],
   };
-  const PEKERJAAN_OPT = (svc) => PEKERJAAN_BY_SERVICE[svc] || PEKERJAAN_BY_SERVICE["Cleaning"];
+    const PEKERJAAN_OPT = (svc) => PEKERJAAN_BY_SERVICE[svc] || PEKERJAAN_BY_SERVICE["Cleaning"];
   const MATERIAL_PRESET = {
     Cleaning:  ["Freon R22","Freon R410A","Filter Udara","Kompressor Oil","Pembersih Evaporator","Plastik Cuci AC"],
     Install:   ["Pipa AC Hoda 1/4 3/8","Kabel Listrik 3x1.5","Kabel Listrik 3x2.5","Bracket Outdoor","Duct Tape","Stop Kontak","Paralon Pembuangan AC"],
@@ -818,12 +908,16 @@ export default function ACleanWebApp() {
         if (!waRes.error && waRes.data && waRes.data.length > 0) setWaConversations(waRes.data);
       } catch(e) { /* WA tabel belum ada - skip */ }
 
-      // ── GAP-03 FIX: Load price_list dari DB → override PRICE_LIST global ──
+      // ── GAP-03 FIX + PriceList state: Load price_list dari DB ──
       try {
-        const plRes = await supabase.from("price_list").select("*").eq("is_active", true);
+        const plRes = await supabase.from("price_list").select("*").order("service").order("type");
         if (!plRes.error && plRes.data && plRes.data.length > 0) {
+          // Set state untuk renderPriceList UI
+          setPriceListData(plRes.data);
+          // Build PRICE_LIST map untuk kalkulasi invoice
+          const activePL = plRes.data.filter(r => r.is_active !== false);
           const newPL = { ...PRICE_LIST_DEFAULT };
-          plRes.data.forEach(row => {
+          activePL.forEach(row => {
             if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
             if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
             if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
@@ -850,21 +944,31 @@ export default function ACleanWebApp() {
     }, 30 * 60 * 1000); // 30 menit
 
     // Realtime — data update otomatis di semua device
+    // ── SIM-7 FIX: debounce timer agar realtime tidak flood query ──
+    const _rtDebounce = {};
+    const rtDebounced = (key, fn, delay=600) => {
+      clearTimeout(_rtDebounce[key]);
+      _rtDebounce[key] = setTimeout(fn, delay);
+    };
+
     const ch1 = supabase.channel("rt-orders")
       .on("postgres_changes", { event:"*", schema:"public", table:"orders" }, () =>
-        supabase.from("orders").select("*").order("date",{ascending:false})
-          .then(({data}) => {
-            if(data) {
-              setOrdersData(data);
-              // G8: push notif for new/updated order
-              pushNotif("AClean — Order Update", "Ada perubahan status order");
-            }
-          }))
+        rtDebounced("orders", () =>
+          supabase.from("orders").select("*").order("date",{ascending:false}).limit(500)
+            .then(({data}) => {
+              if(data) {
+                setOrdersData(data);
+                pushNotif("AClean — Order Update", "Ada perubahan status order");
+              }
+            })
+        ))
       .subscribe();
     const ch2 = supabase.channel("rt-invoices")
       .on("postgres_changes", { event:"*", schema:"public", table:"invoices" }, () =>
-        supabase.from("invoices").select("*").order("created_at",{ascending:false})
-          .then(({data}) => { if(data) setInvoicesData(data); }))
+        rtDebounced("invoices", () =>
+          supabase.from("invoices").select("*").order("created_at",{ascending:false}).limit(300)
+            .then(({data}) => { if(data) setInvoicesData(data); })
+        ))
       .subscribe();
     const ch3 = supabase.channel("rt-inventory")
       .on("postgres_changes", { event:"*", schema:"public", table:"inventory" }, () =>
@@ -878,7 +982,8 @@ export default function ACleanWebApp() {
       .subscribe();
     const ch5 = supabase.channel("rt-laporan")
       .on("postgres_changes", { event:"*", schema:"public", table:"service_reports" }, () =>
-        supabase.from("service_reports").select("*").order("submitted_at",{ascending:false})
+        rtDebounced("laporan", () =>
+        supabase.from("service_reports").select("*").order("submitted_at",{ascending:false}).limit(200)
           .then(({data}) => {
             if (data && data.length > 0) {
               pushNotif("AClean — Laporan Masuk", "Teknisi baru submit laporan");
@@ -890,7 +995,7 @@ export default function ACleanWebApp() {
                 editLog:   safeArr(r.edit_log ?? r.editLog),
               })));
             }
-          }))
+          })))
       .subscribe();
 
     // WA Conversations realtime
@@ -921,6 +1026,14 @@ export default function ACleanWebApp() {
       .subscribe();
 
     return () => {
+    const ch8 = supabase.channel("rt-pricelist")
+      .on("postgres_changes", { event:"*", schema:"public", table:"price_list" }, () =>
+        rtDebounced("pricelist", () =>
+          supabase.from("price_list").select("*").order("service").order("type")
+            .then(({data}) => { if(data) setPriceListData(data); })
+        ))
+      .subscribe();
+
       clearInterval(_statsTimer);
       supabase.removeChannel(ch1);
       supabase.removeChannel(ch2);
@@ -929,9 +1042,9 @@ export default function ACleanWebApp() {
       supabase.removeChannel(ch5);
       supabase.removeChannel(ch6);
       supabase.removeChannel(ch7);
+      supabase.removeChannel(ch8);
     };
   }, [isLoggedIn]);
-
   // ── Colors ──
   const cs = {
     bg:      "#0a0f1e",
@@ -1862,6 +1975,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id:"invoice",    icon:"🧾",  label:"Invoice"      },
     { id:"customers",  icon:"👥",  label:"Customer"     },
     { id:"inventory",  icon:"📦",  label:"Inventori"    },
+    { id:"pricelist",  icon:"💰",  label:"Price List"   },
     { id:"teknisi",    icon:"👷",  label:"Tim Teknisi"  },
     { id:"laporantim", icon:"📝",  label:"Laporan Tim"  },
     { id:"ara",        icon:"🤖",  label:"ARA Chat"     },
@@ -1882,7 +1996,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // ── TEKNISI & HELPER DASHBOARD ─────────────────────────────
     if (role === "Teknisi" || role === "Helper") {
       const myName = currentUser?.name || "";
-      const techColors = { "Mulyadi":"#38bdf8","Usaeri":"#22c55e","Albana Niji":"#a78bfa","Rizky Putra":"#f59e0b","Agung":"#f97316","Rey":"#ec4899" };
+      const techColors = Object.fromEntries([...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(n=>[n, getTechColor(n, teknisiData)]))
       const myColor = techColors[myName] || cs.accent;
       const myJobs = ordersData.filter(o => o.teknisi === myName);
       const todayJobs = myJobs.filter(o => o.date === TODAY);
@@ -2060,6 +2174,54 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             ))}
           </div>
         </div>
+        {/* ── SIM-9: Performa Tim per Teknisi ── */}
+        {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (() => {
+          const allTekNames2 = [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))];
+          if (allTekNames2.length === 0) return null;
+          const bulanIniPfx = new Date().toISOString().slice(0,7);
+          return (
+            <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+              <div style={{ fontWeight:700, color:cs.text, fontSize:15, marginBottom:14 }}>
+                👥 Performa Tim — {bulanIniPfx.slice(5).padStart(2,"0")}/{bulanIniPfx.slice(0,4)}
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr 1fr":"repeat(3,1fr)", gap:12 }}>
+                {allTekNames2.map(tek => {
+                  const col       = getTechColor(tek, teknisiData);
+                  const jobsBulan = ordersData.filter(o=>o.teknisi===tek && (o.date||"").startsWith(bulanIniPfx));
+                  const selesai   = jobsBulan.filter(o=>["COMPLETED","PAID"].includes(o.status)).length;
+                  const pending   = jobsBulan.filter(o=>["PENDING","CONFIRMED","IN_PROGRESS","ON_SITE"].includes(o.status)).length;
+                  const revInvTek = invoicesData.filter(i=>i.teknisi===tek && i.status==="PAID" && (i.created_at||"").startsWith(bulanIniPfx)).reduce((a,b)=>a+(b.total||0),0);
+                  const lapVerif  = laporanReports.filter(r=>r.teknisi===tek && r.status==="VERIFIED").length;
+                  const lapRevisi = laporanReports.filter(r=>r.teknisi===tek && r.status==="REVISION").length;
+                  return (
+                    <div key={tek} style={{ background:cs.surface, border:"1px solid "+col+"33", borderRadius:12, padding:"14px 16px" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+                        <div style={{ width:36, height:36, borderRadius:10, background:col+"22", border:"1px solid "+col+"44", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, color:col, fontSize:15 }}>
+                          {tek.charAt(0)}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{tek.split(" ")[0]}</div>
+                          <div style={{ fontSize:10, color:cs.muted }}>{teknisiData.find(t=>t.name===tek)?.role||"Teknisi"}</div>
+                        </div>
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px 12px", fontSize:11 }}>
+                        <div><span style={{color:cs.muted}}>Job bln ini</span><div style={{fontWeight:800,color:cs.text,fontSize:16}}>{jobsBulan.length}</div></div>
+                        <div><span style={{color:cs.muted}}>Selesai</span><div style={{fontWeight:800,color:cs.green,fontSize:16}}>{selesai}</div></div>
+                        <div><span style={{color:cs.muted}}>Laporan ✓</span><div style={{fontWeight:700,color:col}}>{lapVerif}</div></div>
+                        <div><span style={{color:cs.muted}}>Revisi</span><div style={{fontWeight:700,color:lapRevisi>0?cs.yellow:cs.muted}}>{lapRevisi}</div></div>
+                      </div>
+                      {revInvTek > 0 && (
+                        <div style={{ marginTop:8, fontSize:11, background:cs.green+"12", border:"1px solid "+cs.green+"22", borderRadius:7, padding:"4px 8px", color:cs.green, fontWeight:700 }}>
+                          💰 Revenue: {fmt(revInvTek)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   };
@@ -2242,7 +2404,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               )}
                               {parseFloat(u.freon_ditambah) > 0 && (
                                 <span style={{ fontSize:10, background:cs.yellow+"15", color:cs.yellow,
-                                  padding:"1px 7px", borderRadius:99 }}>🧊 +{u.freon_ditambah}kg</span>
+                                  padding:"1px 7px", borderRadius:99 }}>🧊 {u.freon_ditambah} psi</span>
                               )}
                             </div>
                             {/* Kondisi sebelum — array dari mkUnit */}
@@ -2394,34 +2556,65 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // RENDER ORDERS
   // ============================================================
   const renderOrders = () => {
-    const filtered = orderFilter === "Semua" ? ordersData :
-      orderFilter === "Hari Ini" ? ordersData.filter(o => o.date === TODAY) :
-      ordersData.filter(o => {
-      const map = { "Pending":"PENDING", "Confirmed":"CONFIRMED", "In Progress":"IN_PROGRESS", "Completed":"COMPLETED" };
-      return o.status === map[orderFilter];
-    });
+    // ── SIM-1+2: search + teknisi filter + pagination ──
+    const allTekOrd = ["Semua", ...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))];
+    const sMap2 = { "Pending":"PENDING","Confirmed":"CONFIRMED","In Progress":"IN_PROGRESS","Completed":"COMPLETED","Cancelled":"CANCELLED" };
+    let filtered = [...ordersData];
+    if (orderFilter === "Hari Ini") filtered = filtered.filter(o => o.date === TODAY);
+    else if (orderFilter !== "Semua") filtered = filtered.filter(o => o.status === (sMap2[orderFilter]||orderFilter));
+    if (orderTekFilter !== "Semua") filtered = filtered.filter(o => o.teknisi === orderTekFilter || o.helper === orderTekFilter);
+    if (searchOrder.trim()) {
+      const q = searchOrder.trim().toLowerCase();
+      filtered = filtered.filter(o =>
+        (o.customer||"").toLowerCase().includes(q) || (o.id||"").toLowerCase().includes(q) ||
+        (o.phone||"").includes(searchOrder.trim()) || (o.teknisi||"").toLowerCase().includes(q) ||
+        (o.address||"").toLowerCase().includes(q)
+      );
+    }
+    filtered.sort((a,b) => (b.date+(b.time||"")).localeCompare(a.date+(a.time||"")));
+    const totPgO = Math.ceil(filtered.length / ORDER_PAGE_SIZE) || 1;
+    const curPgO = Math.min(orderPage, totPgO);
+    const pageData = filtered.slice((curPgO-1)*ORDER_PAGE_SIZE, curPgO*ORDER_PAGE_SIZE);
     return (
-      <div style={{ display:"grid", gap:16 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>📋 Order Masuk</div>
+      <div style={{ display:"grid", gap:14 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+          <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>
+            📋 Order Masuk <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filtered.length})</span>
+          </div>
           <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
         </div>
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+        {/* Search bar */}
+        <div style={{ position:"relative" }}>
+          <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:14, pointerEvents:"none" }}>🔍</span>
+          <input value={searchOrder} onChange={e=>{setSearchOrder(e.target.value);setOrderPage(1);}}
+            placeholder="Cari nama customer, Job ID, telepon, atau teknisi..."
+            style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
+          {searchOrder && <button onClick={()=>{setSearchOrder("");setOrderPage(1);}} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
+        </div>
+        {/* Filter pills + teknisi dropdown */}
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" }}>
           {["Semua","Hari Ini","Pending","Confirmed","In Progress","Completed"].map(f => (
-            <button key={f} onClick={() => setOrderFilter(f)} style={{ background:orderFilter===f?cs.accent:cs.card, border:"1px solid "+(orderFilter===f?cs.accent:cs.border), color:orderFilter===f?"#0a0f1e":cs.muted, padding:"6px 14px", borderRadius:99, cursor:"pointer", fontSize:12, fontWeight:600 }}>{f}</button>
+            <button key={f} onClick={() => {setOrderFilter(f);setOrderPage(1);}}
+              style={{ background:orderFilter===f?cs.accent:cs.card, border:"1px solid "+(orderFilter===f?cs.accent:cs.border),
+                color:orderFilter===f?"#0a0f1e":cs.muted, padding:"6px 14px", borderRadius:99, cursor:"pointer", fontSize:12, fontWeight:600 }}>{f}</button>
           ))}
+          <span style={{width:1,height:16,background:cs.border,display:"inline-block",marginLeft:4}} />
+          <select value={orderTekFilter} onChange={e=>{setOrderTekFilter(e.target.value);setOrderPage(1);}}
+            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"6px 10px", fontSize:12, cursor:"pointer" }}>
+            {allTekOrd.map(t=><option key={t} value={t}>👷 {t}</option>)}
+          </select>
         </div>
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
           <table style={{ width:"100%", borderCollapse:"collapse" }}>
             <thead>
               <tr style={{ background:cs.surface, borderBottom:"1px solid "+cs.border }}>
                 {["Job ID","Customer","Service","Teknisi","Tgl/Jam","Status","Aksi"].map(h => (
-                  <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, color:cs.muted, textTransform:"uppercase", letterSpacing:"0.5px" }}>{h}</th>
+                  <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, color:cs.muted }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((o,i) => (
+              {pageData.map((o,i) => (
                 <tr key={o.id} style={{ borderTop:"1px solid "+cs.border, background:i%2===0?"transparent":cs.surface+"80" }}>
                   <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:12, color:cs.accent, fontWeight:700 }}>{o.id}</td>
                   <td style={{ padding:"10px 14px" }}>
@@ -2465,6 +2658,35 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               ))}
             </tbody>
           </table>
+        {/* Pagination Orders */}
+        {totPgO > 1 && (
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"12px 0" }}>
+            <button onClick={()=>setOrderPage(p=>Math.max(1,p-1))} disabled={curPgO===1}
+              style={{ padding:"6px 14px", borderRadius:8, border:"1px solid "+cs.border, background:curPgO===1?cs.surface:cs.card, color:curPgO===1?cs.muted:cs.text, cursor:curPgO===1?"not-allowed":"pointer", fontSize:12 }}>
+              ← Prev
+            </button>
+            {Array.from({length:Math.min(totPgO,7)},(_,i)=>{
+              let pg = i+1;
+              if (totPgO > 7) {
+                if (curPgO <= 4) pg = i+1;
+                else if (curPgO >= totPgO-3) pg = totPgO-6+i;
+                else pg = curPgO-3+i;
+              }
+              return (
+                <button key={pg} onClick={()=>setOrderPage(pg)}
+                  style={{ padding:"6px 12px", borderRadius:8, border:"1px solid "+(curPgO===pg?cs.accent:cs.border),
+                    background:curPgO===pg?cs.accent:cs.card, color:curPgO===pg?"#0a0f1e":cs.text, cursor:"pointer", fontSize:12, fontWeight:curPgO===pg?700:400 }}>
+                  {pg}
+                </button>
+              );
+            })}
+            <button onClick={()=>setOrderPage(p=>Math.min(totPgO,p+1))} disabled={curPgO===totPgO}
+              style={{ padding:"6px 14px", borderRadius:8, border:"1px solid "+cs.border, background:curPgO===totPgO?cs.surface:cs.card, color:curPgO===totPgO?cs.muted:cs.text, cursor:curPgO===totPgO?"not-allowed":"pointer", fontSize:12 }}>
+              Next →
+            </button>
+            <span style={{fontSize:11,color:cs.muted}}>hal {curPgO}/{totPgO} · {filtered.length} order</span>
+          </div>
+        )}
         </div>
       </div>
     );
@@ -2474,32 +2696,61 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // RENDER INVOICE
   // ============================================================
   const renderInvoice = () => {
-    const filteredInv = invoicesData.filter(inv =>
-      !searchInvoice ||
-      inv.customer.toLowerCase().includes(searchInvoice.toLowerCase()) ||
-      inv.phone.includes(searchInvoice) ||
-      inv.id.toLowerCase().includes(searchInvoice.toLowerCase())
-    );
+    // ── SIM-3+2: status filter + search + pagination ──
+    let filteredInv = [...invoicesData];
+    if (invoiceFilter !== "Semua") filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
+    if (searchInvoice.trim()) {
+      const q = searchInvoice.trim().toLowerCase();
+      filteredInv = filteredInv.filter(inv =>
+        (inv.customer||"").toLowerCase().includes(q) ||
+        (inv.phone||"").includes(searchInvoice.trim()) ||
+        (inv.id||"").toLowerCase().includes(q)
+      );
+    }
+    filteredInv.sort((a,b) => (b.created_at||b.sent||"").localeCompare(a.created_at||a.sent||""));
+    const totPgI = Math.ceil(filteredInv.length / INV_PAGE_SIZE) || 1;
+    const curPgI = Math.min(invoicePage, totPgI);
+    const pageInv = filteredInv.slice((curPgI-1)*INV_PAGE_SIZE, curPgI*INV_PAGE_SIZE);
+    const unpaidCnt = invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").length;
     return (
-    <div style={{ display:"grid", gap:16 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>🧾 Invoice</div>
-        <button onClick={() => { const cnt=invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").length; invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").forEach(i=>invoiceReminderWA(i)); showNotif("Reminder terkirim ke " + cnt + " customer via WA"); }}
-          style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>
-          🔔 Kirim Reminder ({invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").length})
+    <div style={{ display:"grid", gap:14 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+        <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>🧾 Invoice <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filteredInv.length})</span></div>
+        <button onClick={() => { const cnt=invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").length; invoiceReminderBulk && invoiceReminderBulk(); showNotif(`📨 Reminder dikirim ke ${cnt} customer`); }}
+          style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"8px 14px", borderRadius:9, cursor:"pointer", fontWeight:600, fontSize:12 }}>
+          🔔 Kirim Reminder ({unpaidCnt})
         </button>
       </div>
-      {/* Search bar */}
+      {/* Search */}
       <div style={{ position:"relative" }}>
         <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-        <input value={searchInvoice} onChange={e=>setSearchInvoice(e.target.value)}
+        <input value={searchInvoice} onChange={e=>{setSearchInvoice(e.target.value);setInvoicePage(1);}}
           placeholder="Cari nama customer, no. telepon, atau ID invoice..."
-          style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
-        {searchInvoice && <button onClick={()=>setSearchInvoice("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
+          style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
+        {searchInvoice && <button onClick={()=>{setSearchInvoice("");setInvoicePage(1);}} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
       </div>
-      {searchInvoice && <div style={{ fontSize:12, color:cs.muted }}>Ditemukan <b style={{ color:cs.accent }}>{filteredInv.length}</b> invoice</div>}
+      {/* Status filter pills — SIM-3 */}
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+        {[
+          ["Semua", cs.muted],
+          ["UNPAID", cs.yellow],
+          ["OVERDUE", cs.red],
+          ["PAID", cs.green],
+          ["PENDING_APPROVAL", cs.accent],
+        ].map(([s, col]) => {
+          const cnt = s==="Semua" ? invoicesData.length : invoicesData.filter(i=>i.status===s).length;
+          return (
+            <button key={s} onClick={()=>{setInvoiceFilter(s);setInvoicePage(1);}}
+              style={{ padding:"6px 14px", borderRadius:99, border:"1px solid "+(invoiceFilter===s?col:cs.border),
+                background:invoiceFilter===s?col+"22":cs.card, color:invoiceFilter===s?col:cs.muted,
+                cursor:"pointer", fontSize:12, fontWeight:invoiceFilter===s?700:500 }}>
+              {s==="Semua"?"Semua":s==="PENDING_APPROVAL"?"Approval":s} ({cnt})
+            </button>
+          );
+        })}
+      </div>
       <div style={{ display:"grid", gap:12 }}>
-        {filteredInv.map(inv => (
+        {pageInv.map(inv => (
           <div key={inv.id} style={{ background:cs.card, border:"1px solid "+(statusColor[inv.status]||cs.border)+"44", borderRadius:14, padding:18 }}>
             <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:10, marginBottom:12 }}>
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
@@ -2528,21 +2779,40 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
               {inv.status === "PENDING_APPROVAL" && (
-                <button onClick={() => approveInvoice(inv)} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✓ Approve &amp; Kirim PDF</button>
+                <>
+                  <button onClick={() => approveInvoice(inv)} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>✅ Approve</button>
+                  <span style={{fontSize:11,color:cs.accent,alignSelf:"center"}}>Belum dikirim ke customer</span>
+                </>
               )}
+              {/* Kirim Invoice PDF ke Customer — hanya setelah UNPAID (sudah approved) */}
               {inv.status === "UNPAID" && (
                 <>
-                  <button onClick={() => { if(!window.confirm||window.confirm(`Tandai invoice ${inv.id} (${fmt(inv.total)}) sebagai LUNAS?`)) markPaid(inv); }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✓ Mark Paid</button>
-                  <button onClick={() => invoiceReminderWA(inv)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 WA Reminder</button>
+                  <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>📤 Kirim ke Customer</button>
+                  <button onClick={() => { if(!window.confirm||window.confirm(`Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`)) { const pp = invoicesData.find(i=>i.id===inv.id); markPaid(pp||inv); }}} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12 }}>💰 Tandai Lunas</button>
+                  <button onClick={() => invoiceReminderWA(inv)} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>🔔 Reminder</button>
                 </>
               )}
               {inv.status === "OVERDUE" && (
-                <button onClick={() => invoiceReminderWA(inv)} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 WA Overdue</button>
+                <>
+                  <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>📤 Kirim ke Customer</button>
+                  <button onClick={() => invoiceReminderWA(inv)} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>⚠️ Reminder OVERDUE</button>
+                </>
               )}
             </div>
           </div>
         ))}
       </div>
+      {/* Pagination Invoice */}
+      {totPgI > 1 && (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"10px 0" }}>
+          <button onClick={()=>setInvoicePage(p=>Math.max(1,p-1))} disabled={curPgI===1}
+            style={{ padding:"6px 14px", borderRadius:8, border:"1px solid "+cs.border, background:curPgI===1?cs.surface:cs.card, color:curPgI===1?cs.muted:cs.text, cursor:curPgI===1?"not-allowed":"pointer", fontSize:12 }}>← Prev</button>
+          <span style={{fontSize:12,color:cs.text}}>Hal {curPgI}/{totPgI}</span>
+          <button onClick={()=>setInvoicePage(p=>Math.min(totPgI,p+1))} disabled={curPgI===totPgI}
+            style={{ padding:"6px 14px", borderRadius:8, border:"1px solid "+cs.border, background:curPgI===totPgI?cs.surface:cs.card, color:curPgI===totPgI?cs.muted:cs.text, cursor:curPgI===totPgI?"not-allowed":"pointer", fontSize:12 }}>Next →</button>
+          <span style={{fontSize:11,color:cs.muted}}>{filteredInv.length} invoice</span>
+        </div>
+      )}
     </div>
     );
   };
@@ -2629,6 +2899,206 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   };
 
   // ============================================================
+  // RENDER PRICE LIST (submenu — dari Supabase price_list table)
+  // ============================================================
+  const renderPriceList = () => {
+    const SVC_TABS = ["Semua","Cleaning","Install","Repair","Complain"];
+    const svcColors = { Cleaning:"#22c55e", Install:"#3b82f6", Repair:"#f59e0b", Complain:"#ef4444" };
+    
+    let filtered = [...priceListData];
+    if (priceListSvcTab !== "Semua") filtered = filtered.filter(r => r.service === priceListSvcTab);
+    if (searchPriceList.trim()) {
+      const q = searchPriceList.trim().toLowerCase();
+      filtered = filtered.filter(r =>
+        (r.type||"").toLowerCase().includes(q) ||
+        (r.service||"").toLowerCase().includes(q) ||
+        (r.code||"").toLowerCase().includes(q) ||
+        (r.notes||"").toLowerCase().includes(q)
+      );
+    }
+
+    const handleSavePrice = async () => {
+      if (!plEditItem) return;
+      const updated = { ...plEditItem, ...plEditForm, price: Number(plEditForm.price||plEditItem.price) };
+      const { error } = await supabase.from("price_list").update({
+        price:       updated.price,
+        type:        updated.type,
+        service:     updated.service,
+        notes:       updated.notes||null,
+        is_active:   updated.is_active !== false,
+      }).eq("id", updated.id);
+      if (error) { showNotif("❌ Gagal update: "+error.message); return; }
+      // Update local state
+      setPriceListData(prev => prev.map(r => r.id===updated.id ? {...r,...updated} : r));
+      // Rebuild PRICE_LIST map
+      const newPL = { ...PRICE_LIST_DEFAULT };
+      priceListData.filter(r=>r.is_active!==false).forEach(row => {
+        if (row.id===updated.id) row = {...row,...updated};
+        if (!newPL[row.service]) newPL[row.service] = {};
+        newPL[row.service][row.type] = Number(row.price)||0;
+      });
+      PRICE_LIST = newPL;
+      setPlEditItem(null);
+      showNotif("✅ Harga diperbarui di DB — ARA & Invoice otomatis pakai harga baru");
+      addAgentLog("PRICELIST_UPDATE", `Harga "${updated.type}" diupdate → Rp${fmt(updated.price)}`, "SUCCESS");
+    };
+
+    return (
+      <div style={{ display:"grid", gap:16 }}>
+        {/* Header */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
+          <div>
+            <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>💰 Price List</div>
+            <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>
+              Harga dari Supabase — ARA & Invoice otomatis pakai harga ini
+              <span style={{ marginLeft:8, background:cs.accent+"22", color:cs.accent, fontSize:10, padding:"2px 8px", borderRadius:99, fontWeight:700 }}>
+                {priceListData.filter(r=>r.is_active!==false).length} item aktif
+              </span>
+            </div>
+          </div>
+          {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+            <button onClick={async()=>{
+              // Reload fresh dari DB
+              const { data } = await supabase.from("price_list").select("*").order("service").order("type");
+              if (data) { setPriceListData(data); showNotif("✅ Price list di-refresh dari DB"); }
+            }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"8px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
+              🔄 Refresh dari DB
+            </button>
+          )}
+        </div>
+
+        {/* Search */}
+        <div style={{ position:"relative" }}>
+          <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:14, pointerEvents:"none" }}>🔍</span>
+          <input value={searchPriceList} onChange={e=>setSearchPriceList(e.target.value)}
+            placeholder="Cari nama layanan, tipe AC, kode..."
+            style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
+          {searchPriceList && <button onClick={()=>setSearchPriceList("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
+        </div>
+
+        {/* Service tabs */}
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+          {SVC_TABS.map(t => {
+            const col = svcColors[t] || cs.accent;
+            const cnt = t==="Semua" ? priceListData.length : priceListData.filter(r=>r.service===t).length;
+            return (
+              <button key={t} onClick={()=>setPriceListSvcTab(t)}
+                style={{ padding:"6px 14px", borderRadius:99, border:"1px solid "+(priceListSvcTab===t?col:cs.border),
+                  background:priceListSvcTab===t?col+"22":cs.card, color:priceListSvcTab===t?col:cs.muted,
+                  cursor:"pointer", fontSize:12, fontWeight:priceListSvcTab===t?700:500 }}>
+                {t} ({cnt})
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Table */}
+        {filtered.length === 0 ? (
+          <div style={{ background:cs.card, borderRadius:14, padding:40, textAlign:"center", color:cs.muted }}>
+            {priceListData.length === 0
+              ? "Price list belum dimuat. Pastikan tabel price_list sudah ada di Supabase."
+              : "Tidak ada item ditemukan"}
+          </div>
+        ) : (
+          <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse" }}>
+              <thead>
+                <tr style={{ background:cs.surface, borderBottom:"1px solid "+cs.border }}>
+                  {["Layanan","Tipe / Keterangan","Harga","Status","Aksi"].map(h => (
+                    <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, color:cs.muted }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r,idx) => {
+                  const col = svcColors[r.service] || cs.accent;
+                  const isEdit = plEditItem?.id === r.id;
+                  return (
+                    <tr key={r.id||idx} style={{ borderTop:"1px solid "+cs.border, background:idx%2===0?"transparent":cs.surface+"88" }}>
+                      <td style={{ padding:"10px 14px" }}>
+                        <span style={{ fontSize:11, padding:"2px 9px", borderRadius:99, background:col+"22", color:col, fontWeight:700 }}>{r.service}</span>
+                      </td>
+                      <td style={{ padding:"10px 14px" }}>
+                        {isEdit ? (
+                          <input value={plEditForm.type||""} onChange={e=>setPlEditForm(f=>({...f,type:e.target.value}))}
+                            style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"6px 10px", color:cs.text, fontSize:12, width:"100%" }} />
+                        ) : (
+                          <div>
+                            <div style={{ fontSize:13, fontWeight:600, color:cs.text }}>{r.type}</div>
+                            {r.notes && <div style={{ fontSize:11, color:cs.muted }}>{r.notes}</div>}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding:"10px 14px" }}>
+                        {isEdit ? (
+                          <input type="number" value={plEditForm.price||""} onChange={e=>setPlEditForm(f=>({...f,price:e.target.value}))}
+                            style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"6px 10px", color:cs.text, fontSize:13, fontWeight:700, width:110 }} />
+                        ) : (
+                          <div style={{ fontWeight:700, fontSize:13, color:cs.text, fontFamily:"monospace" }}>{fmt(r.price)}</div>
+                        )}
+                      </td>
+                      <td style={{ padding:"10px 14px" }}>
+                        {isEdit ? (
+                          <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, cursor:"pointer" }}>
+                            <input type="checkbox" checked={plEditForm.is_active!==false} onChange={e=>setPlEditForm(f=>({...f,is_active:e.target.checked}))} />
+                            Aktif
+                          </label>
+                        ) : (
+                          <span style={{ fontSize:10, padding:"2px 8px", borderRadius:99, background:r.is_active!==false?cs.green+"22":cs.red+"22", color:r.is_active!==false?cs.green:cs.red, fontWeight:700 }}>
+                            {r.is_active!==false?"Aktif":"Non-aktif"}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding:"10px 14px" }}>
+                        {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+                          <div style={{ display:"flex", gap:6 }}>
+                            {isEdit ? (
+                              <>
+                                <button onClick={handleSavePrice}
+                                  style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                                  💾 Simpan
+                                </button>
+                                <button onClick={()=>setPlEditItem(null)}
+                                  style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>
+                                  Batal
+                                </button>
+                              </>
+                            ) : (
+                              <button onClick={()=>{ setPlEditItem(r); setPlEditForm({type:r.type,price:r.price,service:r.service,notes:r.notes||"",is_active:r.is_active!==false}); }}
+                                style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                                ✏️ Edit
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Info box: ARA connection */}
+        <div style={{ background:cs.accent+"10", border:"1px solid "+cs.accent+"33", borderRadius:12, padding:"14px 18px", fontSize:12, color:cs.muted }}>
+          <div style={{ fontWeight:700, color:cs.accent, marginBottom:6 }}>🤖 Cara ARA Membaca Price List</div>
+          <div>ARA membaca price list <b style={{color:cs.text}}>langsung dari tabel Supabase</b> setiap kali app di-load. Tidak perlu update brain.md atau brain_customer.md manual.</div>
+          <div style={{ marginTop:6 }}>Saat ARA membuat invoice, kalkulasi otomatis pakai harga dari tabel ini. Update harga di sini → langsung berlaku di seluruh sistem.</div>
+          <div style={{ marginTop:8, display:"flex", gap:8, flexWrap:"wrap" }}>
+            {["Cleaning","Install","Repair","Complain"].map(svc => (
+              <span key={svc} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"4px 10px", fontSize:11 }}>
+                {svc}: {priceListData.filter(r=>r.service===svc&&r.is_active!==false).length} item
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+
+  // ============================================================
   // RENDER SCHEDULE
   // ============================================================
   const renderSchedule = () => {
@@ -2647,7 +3117,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       return { date:iso, label:`${dayNames[d.getDay()]} ${d.getDate()}` };
     });
     const weekLabel = `${weekDays[0].date.slice(5).replace("-","/")} – ${weekDays[6].date.slice(5).replace("-","/")}`;
-    const techColors = { "Mulyadi":"#38bdf8","Usaeri":"#22c55e","Albana Niji":"#a78bfa","Rizky Putra":"#f59e0b","Agung":"#f97316","Rey":"#ec4899" };
+    const techColors = Object.fromEntries([...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(n=>[n, getTechColor(n, teknisiData)]))
 
     // For Teknisi role: force filter to own name; for Owner/Admin: use filterTeknisi state
     const isTekRole = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
@@ -2753,20 +3223,24 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <span style={{ fontSize:9, fontWeight:800, color:techColors[tek]||cs.muted, textAlign:"center", lineHeight:1.3 }}>{(tek||"").split(" ")[0]}</span>
                   </div>
                   {weekDays.map(d => {
-                    const jobs = ordersData.filter(o => o.teknisi===tek && o.date===d.date);
+                    // SIM-6: tampilkan job dimana tek adalah teknisi ATAU helper
+                    const jobs = ordersData.filter(o => (o.teknisi===tek || o.helper===tek) && o.date===d.date);
                     return (
-                      <div key={d.date} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:7, padding:3, minHeight:52 }}>
-                        {jobs.map(j => (
-                          <div key={j.id} style={{ background:(techColors[tek]||cs.accent)+"22", border:"1px solid "+(techColors[tek]||cs.accent)+"44", borderRadius:4, padding:"2px 4px", marginBottom:2 }}>
-                            <div style={{ fontSize:9, fontWeight:800, color:techColors[tek]||cs.accent }}>{j.time}</div>
-                            <div style={{ fontSize:9, color:cs.text }}>{(j.customer||"").split(" ")[0]}</div>
-                            <div style={{ fontSize:8, color:cs.muted }}>{j.service}</div>
-                          </div>
-                        ))}
+                      <div key={d.date} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:7, padding:4, minHeight:60 }}>
+                        {jobs.map(j => {
+                          const isHelper = j.teknisi !== tek && j.helper === tek;
+                          const col = techColors[tek] || cs.accent;
+                          return (
+                            <div key={j.id} style={{ background:col+(isHelper?"10":"22"), border:"1px solid "+col+(isHelper?"33":"44"), borderRadius:5, padding:"3px 5px", marginBottom:2, opacity:isHelper?0.85:1 }}>
+                              <div style={{ fontSize:9, fontWeight:800, color:col }}>{j.time} {isHelper?"🤝":""}</div>
+                              <div style={{ fontSize:9, color:cs.text }}>{(j.customer||"").split(" ")[0]}</div>
+                              <div style={{ fontSize:8, color:cs.muted }}>{j.service}</div>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
-                  })}
-                </div>
+                  })}                </div>
               ))}
             </div>
           </div>
@@ -2998,7 +3472,7 @@ _Laporan masuk setelah pekerjaan selesai._`;
       (checkAsHelper ? o.helper === teknisiName : (o.teknisi === teknisiName || o.helper === teknisiName)) &&
       o.date === date &&
       // COMPLETED & SUBMITTED (laporan masuk) = pekerjaan sudah selesai → tidak block slot baru
-      ["PENDING","CONFIRMED","IN_PROGRESS"].includes(o.status)
+      ["PENDING","CONFIRMED","IN_PROGRESS","ON_SITE"].includes(o.status)
     );
 
     for (const o of conflicts) {
@@ -3199,7 +3673,7 @@ _Laporan masuk setelah pekerjaan selesai._`;
   // RENDER REPORTS
   // ============================================================
   const renderReports = () => {
-    const techColors = { "Mulyadi":"#38bdf8","Usaeri":"#22c55e","Albana Niji":"#a78bfa","Rizky Putra":"#f59e0b","Agung":"#f97316","Rey":"#ec4899" };
+    const techColors = Object.fromEntries([...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(n=>[n, getTechColor(n, teknisiData)]))
     const filterByPeriod = (inv) => {
       if(statsPeriod==="hari")  return (inv.sent||"").startsWith(TODAY);
       if(statsPeriod==="bulan") return (inv.sent||"").startsWith(bulanIni);
@@ -3454,33 +3928,31 @@ _Laporan masuk setelah pekerjaan selesai._`;
   // ============================================================
   const renderLaporanTim = () => {
     const sMap = { SUBMITTED:[cs.accent,"Submitted"], VERIFIED:[cs.green,"Terverifikasi"], REVISION:[cs.yellow,"Perlu Revisi"], REJECTED:[cs.red,"Ditolak"] };
-    const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,border:"1px solid "+col+"44",fontWeight:700}}>{lbl}</span>; };
-    // Sort by date desc + status (SUBMITTED first)
+    const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,fontWeight:700}}>{lbl}</span>; };
     const statusOrder = { SUBMITTED:0, REVISION:1, VERIFIED:2, REJECTED:3 };
-    const filtered = laporanReports
-      .filter(r =>
-        !searchLaporan ||
-        (r.customer||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
-        (r.teknisi||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
-        (r.job_id||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
-        (r.helper||"").toLowerCase().includes(searchLaporan.toLowerCase()) ||
-        (r.service||"").toLowerCase().includes(searchLaporan.toLowerCase())
-      )
-      .sort((a,b) => {
-        // Primary: date desc (terbaru di atas)
-        const dateA = a.submitted_at || a.submitted || a.date || "";
-        const dateB = b.submitted_at || b.submitted || b.date || "";
-        if (dateB !== dateA) return dateB.localeCompare(dateA);
-        // Secondary: status (SUBMITTED paling atas)
-        return (statusOrder[a.status]||9) - (statusOrder[b.status]||9);
-      });
+    // ── SIM-8: date + service + status filters + pagination ──
+    const weekAgo  = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
+    const monthAgo = new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+    let filtered = [...laporanReports];
+    if (laporanDateFilter==="Minggu Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=weekAgo);
+    else if (laporanDateFilter==="Bulan Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=monthAgo);
+    if (laporanSvcFilter!=="Semua") filtered=filtered.filter(r=>(r.service||"")===laporanSvcFilter);
+    if (laporanStatusFilter!=="Semua") filtered=filtered.filter(r=>r.status===laporanStatusFilter);
+    if (searchLaporan.trim()) {
+      const q=searchLaporan.trim().toLowerCase();
+      filtered=filtered.filter(r=>(r.customer||"").toLowerCase().includes(q)||(r.teknisi||"").toLowerCase().includes(q)||(r.job_id||"").toLowerCase().includes(q)||(r.helper||"").toLowerCase().includes(q)||(r.service||"").toLowerCase().includes(q));
+    }
+    filtered.sort((a,b)=>{const dA=a.submitted_at||a.date||"",dB=b.submitted_at||b.date||"";if(dB!==dA)return dB.localeCompare(dA);return (statusOrder[a.status]||9)-(statusOrder[b.status]||9);});
+    const totPgL=Math.ceil(filtered.length/LAP_PAGE_SIZE)||1;
+    const curPgL=Math.min(laporanPage,totPgL);
+    const pageLap=filtered.slice((curPgL-1)*LAP_PAGE_SIZE,curPgL*LAP_PAGE_SIZE);
     return (
       <div style={{display:"grid",gap:16}}>
         {/* Header */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
           <div>
-            <div style={{fontWeight:800,fontSize:18,color:cs.text}}>Laporan Tim Teknisi</div>
-            <div style={{fontSize:12,color:cs.muted,marginTop:2}}>Verifikasi laporan, cek riwayat edit, tandai sesuai atau perlu revisi</div>
+            <div style={{fontWeight:800,fontSize:18,color:cs.text}}>Laporan Tim Teknisi <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filtered.length})</span></div>
+            <div style={{fontSize:12,color:cs.muted,marginTop:2}}>Verifikasi laporan, cek riwayat edit, tandai sesuai atau minta revisi</div>
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {[["SUBMITTED",cs.accent,"Baru"],["VERIFIED",cs.green,"Verified"],["REVISION",cs.yellow,"Revisi"],["REJECTED",cs.red,"Ditolak"]].map(([s,col,lbl])=>(
@@ -3490,21 +3962,41 @@ _Laporan masuk setelah pekerjaan selesai._`;
             ))}
           </div>
         </div>
-
+        {/* Filters: date + service + status */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          {["Semua","Minggu Ini","Bulan Ini"].map(f=>(
+            <button key={f} onClick={()=>{setLaporanDateFilter(f);setLaporanPage(1);}}
+              style={{padding:"5px 12px",borderRadius:99,border:"1px solid "+(laporanDateFilter===f?cs.accent:cs.border),background:laporanDateFilter===f?cs.accent+"22":cs.card,color:laporanDateFilter===f?cs.accent:cs.muted,cursor:"pointer",fontSize:11,fontWeight:laporanDateFilter===f?700:500}}>
+              📅 {f}
+            </button>
+          ))}
+          <span style={{width:1,height:16,background:cs.border}}/>
+          {["Semua","Cleaning","Install","Repair","Complain"].map(f=>(
+            <button key={f} onClick={()=>{setLaporanSvcFilter(f);setLaporanPage(1);}}
+              style={{padding:"5px 12px",borderRadius:99,border:"1px solid "+(laporanSvcFilter===f?cs.accent:cs.border),background:laporanSvcFilter===f?cs.accent+"22":cs.card,color:laporanSvcFilter===f?cs.accent:cs.muted,cursor:"pointer",fontSize:11,fontWeight:laporanSvcFilter===f?700:500}}>
+              {f}
+            </button>
+          ))}
+          <span style={{width:1,height:16,background:cs.border}}/>
+          {["Semua","SUBMITTED","VERIFIED","REVISION","REJECTED"].map(f=>(
+            <button key={f} onClick={()=>{setLaporanStatusFilter(f);setLaporanPage(1);}}
+              style={{padding:"5px 12px",borderRadius:99,border:"1px solid "+(laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]:cs.border),background:laporanStatusFilter===f?((sMap[f]||[cs.accent])[0])+"22":cs.card,color:laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]:cs.muted,cursor:"pointer",fontSize:11,fontWeight:laporanStatusFilter===f?700:500}}>
+              {f==="Semua"?"Semua":f==="SUBMITTED"?"Baru":f==="VERIFIED"?"Verified":f==="REVISION"?"Revisi":"Ditolak"}
+            </button>
+          ))}
+        </div>
         {/* Search */}
         <div style={{position:"relative"}}>
-          <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:cs.muted,fontSize:14,pointerEvents:"none"}}>&#128269;</span>
-          <input value={searchLaporan} onChange={e=>setSearchLaporan(e.target.value)}
+          <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:cs.muted,fontSize:14,pointerEvents:"none"}}>🔍</span>
+          <input value={searchLaporan} onChange={e=>{setSearchLaporan(e.target.value);setLaporanPage(1);}}
             placeholder="Cari nama teknisi, customer, ID job, atau layanan..."
-            style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px 10px 38px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
-          {searchLaporan && <button onClick={()=>setSearchLaporan("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:20,lineHeight:1}}>x</button>}
+            style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px 10px 38px",color:cs.text,fontSize:13,boxSizing:"border-box"}} />
+          {searchLaporan && <button onClick={()=>{setSearchLaporan("");setLaporanPage(1);}} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:16}}>✕</button>}
         </div>
-        {searchLaporan && <div style={{fontSize:12,color:cs.muted}}>Menampilkan <b style={{color:cs.accent}}>{filtered.length}</b> dari {laporanReports.length} laporan</div>}
-
         {/* List */}
         {filtered.length===0
-          ? <div style={{background:cs.card,borderRadius:14,padding:40,textAlign:"center",color:cs.muted}}>Tidak ada laporan ditemukan</div>
-          : filtered.map(r=>(
+          ? <div style={{background:cs.card,borderRadius:14,padding:40,textAlign:"center",color:cs.muted}}>Tidak ada laporan</div>
+          : pageLap.map(r=>(
           <div key={r.id} style={{background:cs.card,border:"1px solid "+(sMap[r.status]?sMap[r.status][0]:cs.border)+"33",borderRadius:16,padding:20}}>
             {/* Card header */}
             <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:14}}>
@@ -3601,39 +4093,68 @@ _Laporan masuk setelah pekerjaan selesai._`;
             <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
               {r.status==="SUBMITTED" && (<>
                 <button onClick={async()=>{
+                  // ── SIM-10: Verify laporan + AUTO-CREATE invoice ──
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
-                  // GAP 7: gunakan helper isRealUUID (sudah dideklarasi di atas)
                   const verifiedById = isRealUUID(currentUser?.id) ? currentUser.id : null;
-                  // Try with verified_by/at — fallback to status only
-                  {
-                    const {error:vErr} = await supabase.from("service_reports").update({
-                      status:"VERIFIED",
-                      verified_by: verifiedById,
-                      verified_at: new Date().toISOString()
-                    }).eq("id",r.id);
-                    if(vErr) {
-                      console.warn("verified_by cols missing:", vErr.message);
-                      await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
+                  const {error:vErr} = await supabase.from("service_reports").update({
+                    status:"VERIFIED", verified_by:verifiedById, verified_at:new Date().toISOString()
+                  }).eq("id",r.id);
+                  if(vErr) await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
+                  addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi`,"SUCCESS");
+
+                  // Cek apakah invoice sudah ada
+                  const existInv = invoicesData.find(i => i.job_id === r.job_id);
+                  if (existInv) {
+                    showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
+                  } else {
+                    // AUTO-CREATE invoice PENDING_APPROVAL (tidak langsung kirim ke customer)
+                    const ord = ordersData.find(o => o.id === r.job_id);
+                    const invId = "INV" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
+                    const labor = PRICE_LIST[r.service]?.[ord?.type||"default"] || PRICE_LIST[r.service]?.["default"] || 85000;
+                    const laborTotal = labor * (r.units || ord?.units || 1);
+                    const matCost = safeArr(r.materials).reduce((s,m) => s + ((m.harga||m.price||0)*parseFloat(m.jumlah||m.qty||1)), 0);
+                    const freonCost = (r.total_freon||0) > 0 ? Math.round((r.total_freon||0) * (PRICE_LIST["freon_R32"]||200000)) : 0;
+                    const dadakan = ord?.date === new Date().toISOString().slice(0,10) ? 50000 : 0;
+                    const totalInv = laborTotal + matCost + freonCost + dadakan;
+                    const newInv = {
+                      id:invId, job_id:r.job_id, laporan_id:r.id,
+                      customer:r.customer, phone:r.phone||ord?.phone||"",
+                      service:r.service+(ord?.type?" - "+ord.type:""), units:r.units||ord?.units||1,
+                      teknisi:r.teknisi||"",
+                      labor:laborTotal, material:matCost+freonCost, dadakan, discount:0,
+                      total:totalInv,
+                      status:"PENDING_APPROVAL",  // ⚠ harus approve dulu sebelum dikirim
+                      due: new Date(Date.now()+3*86400000).toISOString().slice(0,10),
+                      sent:false, created_at:new Date().toISOString()
+                    };
+                    setInvoicesData(prev => [...prev, newInv]);
+                    const {error:iErr} = await supabase.from("invoices").insert(newInv);
+                    if(iErr) showNotif("⚠️ Invoice gagal simpan: "+iErr.message);
+                    else {
+                      await supabase.from("orders").update({invoice_id:invId}).eq("id",r.job_id);
+                      setOrdersData(prev=>prev.map(o=>o.id===r.job_id?{...o,invoice_id:invId}:o));
+                      addAgentLog("AUTO_INVOICE",`Invoice ${invId} auto-dibuat dari laporan ${r.job_id}`,"SUCCESS");
+                      showNotif(`✅ Invoice ${invId} dibuat (${fmt(totalInv)}) — tunggu approval Owner/Admin`);
+                      // Notif Owner
+                      const owners = userAccounts.filter(u=>u.role==="Owner"||u.role==="Admin");
+                      owners.forEach(o => { if(o?.phone) sendWA(o.phone, `⚡ *Invoice Auto-Generated*\n\nJob: *${r.job_id}*\nCustomer: ${r.customer}\nService: ${r.service}\nTotal: *${fmt(totalInv)}*\n\nMohon cek dan approve invoice di menu Invoice. — AClean`); });
                     }
                   }
-                  addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi — invoice menunggu approval Owner`,"SUCCESS");
-                  const relInv=invoicesData.find(i=>i.job_id===r.job_id);
-                  if(relInv&&relInv.status==="PENDING_APPROVAL"){
-                    showNotif(`✅ Laporan verified! Invoice ${relInv.id} siap approval Owner.`);
-                    // Notif Owner via WA
-                    fetch("/api/send-wa",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:"6281299898937",message:`✅ Laporan ${r.job_id} sudah diverifikasi Admin.
-
-🔧 ${r.customer} — ${r.service}
-💰 Invoice ${relInv.id}: ${fmt(relInv.total)}
-
-Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
-                  } else { showNotif(`✅ Laporan ${r.job_id} diverifikasi`); }
-                }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>Verifikasi OK</button>
+                }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>✅ Verifikasi + Buat Invoice</button>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));
                   await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
                   addAgentLog("LAPORAN_REVISION",`Laporan ${r.job_id} diminta revisi oleh ${currentUser?.name}`,"WARNING");
                   showNotif("⚠️ Revisi diminta untuk laporan "+r.job_id);
+                  // SIM-11: WA notif ke teknisi saat laporan REVISION
+                  const tekAccRev = userAccounts.find(u=>u.name===r.teknisi&&u.phone);
+                  if(tekAccRev?.phone) sendWA(tekAccRev.phone, `⚠️ *Laporan Perlu Direvisi*
+
+Job: *${r.job_id}*
+Customer: ${r.customer}
+Service: ${r.service}
+
+Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
                 }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>Minta Revisi</button>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REJECTED"}:x));
@@ -3648,6 +4169,17 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
             </div>
           </div>
         ))}
+        {/* Pagination Laporan */}
+        {totPgL > 1 && (
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"10px 0"}}>
+            <button onClick={()=>setLaporanPage(p=>Math.max(1,p-1))} disabled={curPgL===1}
+              style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+cs.border,background:curPgL===1?cs.surface:cs.card,color:curPgL===1?cs.muted:cs.text,cursor:curPgL===1?"not-allowed":"pointer",fontSize:12}}>← Prev</button>
+            <span style={{fontSize:12,color:cs.text}}>Hal {curPgL}/{totPgL}</span>
+            <button onClick={()=>setLaporanPage(p=>Math.min(totPgL,p+1))} disabled={curPgL===totPgL}
+              style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+cs.border,background:curPgL===totPgL?cs.surface:cs.card,color:curPgL===totPgL?cs.muted:cs.text,cursor:curPgL===totPgL?"not-allowed":"pointer",fontSize:12}}>Next →</button>
+            <span style={{fontSize:11,color:cs.muted}}>{filtered.length} laporan</span>
+          </div>
+        )}
       </div>
     );
   };
@@ -4280,6 +4812,7 @@ Mohon approve invoice di sistem. — ARA`})}).catch(()=>{});
       case "invoice":    return renderInvoice();
       case "customers":  return renderCustomers();
       case "inventory":  return renderInventory();
+      case "pricelist":  return renderPriceList();
       case "teknisi":    return renderTeknisiAdmin();
       case "laporantim": return renderLaporanTim();
       case "myreport":   return renderMyReport();
@@ -6234,7 +6767,7 @@ Silakan buat invoice dari ARA Chat 👆`;
                                 {u.merk&&<span style={{color:cs.muted,fontSize:11}}>{u.merk}</span>}
                                 {u.pk&&<span style={{fontSize:10,background:cs.accent+"12",color:cs.accent,padding:"1px 6px",borderRadius:99}}>{u.pk}</span>}
                                 {parseFloat(u.freon_ditambah)>0&&(
-                                  <span style={{fontSize:10,background:cs.yellow+"12",color:cs.yellow,padding:"1px 6px",borderRadius:99}}>🧊 +{u.freon_ditambah}kg freon</span>
+                                  <span style={{fontSize:10,background:cs.yellow+"12",color:cs.yellow,padding:"1px 6px",borderRadius:99}}>🧊 {u.freon_ditambah} psi freon</span>
                                 )}
                                 {u.ampere_akhir&&(
                                   <span style={{fontSize:10,background:cs.green+"12",color:cs.green,padding:"1px 6px",borderRadius:99}}>⚡ {u.ampere_akhir}A</span>
@@ -6432,7 +6965,7 @@ Silakan buat invoice dari ARA Chat 👆`;
                         {/* Freon & Ampere */}
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                           <div>
-                            <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Freon Ditambah (kg)</div>
+                            <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Tekanan Freon (psi)</div>
                             <input type="number" value={u.freon_ditambah} onChange={e=>upd({freon_ditambah:e.target.value})} placeholder="0" min="0" step="0.1"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
                           </div>
