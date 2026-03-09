@@ -738,10 +738,14 @@ export default function ACleanWebApp() {
   const canAccess = (menu) => {
     if (!currentUser) return false;
     const role = currentUser.role;
-    // Owner: semua akses kecuali myreport (itu hanya untuk Teknisi/Helper)
+    // Owner: semua akses kecuali myreport
     if (role === "Owner") return menu !== "myreport";
-    // Admin: semua menu operasional kecuali settings dan myreport
-    if (role === "Admin") return menu !== "settings" && menu !== "myreport";
+    // Admin: semua operasional + pricelist (kecuali settings & myreport)
+    // Rule: Admin = input & edit only (NO delete)
+    if (role === "Admin") {
+      const adminBlocked = ["settings","myreport"];
+      return !adminBlocked.includes(menu);
+    }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
     if (role === "Teknisi" || role === "Helper")
       return menu === "dashboard" || menu === "schedule" || menu === "myreport";
@@ -3050,9 +3054,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         )}
                       </td>
                       <td style={{ padding:"10px 14px" }}>
-                        {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
-                          <div style={{ display:"flex", gap:6 }}>
-                            {isEdit ? (
+                        <div style={{ display:"flex", gap:6 }}>
+                          {/* Edit: Admin & Owner */}
+                          {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+                            isEdit ? (
                               <>
                                 <button onClick={handleSavePrice}
                                   style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
@@ -3068,9 +3073,48 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                 style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                                 ✏️ Edit
                               </button>
-                            )}
-                          </div>
-                        )}
+                              {/* Delete — Owner ONLY */}
+                              {currentUser?.role==="Owner" && (
+                                <button onClick={async()=>{
+                                  if(!(window.confirm||((m)=>true))(`Hapus "${r.type}" dari price list?`)) return;
+                                  const {error:delErr} = await supabase.from("price_list").delete().eq("id",r.id);
+                                  if(delErr) { showNotif("❌ Gagal hapus: "+delErr.message); return; }
+                                  setPriceListData(prev => prev.filter(x => x.id !== r.id));
+                                  addAgentLog("PRICELIST_DELETE",`Item "${r.type}" (${r.service}) dihapus oleh Owner`,"WARNING");
+                                  showNotif("🗑️ Item dihapus dari price list");
+                                }}
+                                style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                                🗑️
+                              </button>
+                              )}
+                            )
+                          )}
+                          {/* Delete: Owner ONLY — terhubung ke Supabase */}
+                          {currentUser?.role==="Owner" && !isEdit && (
+                            <button onClick={async()=>{
+                              if (!window.confirm || window.confirm(`Hapus harga "${r.type}" (${r.service})? Tidak bisa dibatalkan.`)) {
+                                const { error: delErr } = await supabase.from("price_list").delete().eq("id", r.id);
+                                if (delErr) {
+                                  showNotif("❌ Gagal hapus: "+delErr.message);
+                                } else {
+                                  setPriceListData(prev => prev.filter(p => p.id !== r.id));
+                                  // Rebuild PRICE_LIST global
+                                  const remaining = priceListData.filter(p => p.id !== r.id && p.is_active !== false);
+                                  const newPL = { ...PRICE_LIST_DEFAULT };
+                                  remaining.forEach(row => {
+                                    if (!newPL[row.service]) newPL[row.service] = {};
+                                    newPL[row.service][row.type] = Number(row.price)||0;
+                                  });
+                                  PRICE_LIST = newPL;
+                                  addAgentLog("PRICELIST_DELETE", `Hapus "${r.type}" (${r.service})`, "WARNING");
+                                  showNotif("✅ Item harga dihapus dari database");
+                                }
+                              }
+                            }} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                              🗑️ Hapus
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -3133,28 +3177,43 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           ? (o.helper === activeTek || o.teknisi === activeTek)
           : o.teknisi === activeTek);
     const teknisiList = activeTek === "Semua" ? allTekNames : [activeTek];
+    // Untuk teknisi/helper: filter hanya hari ini
+    const todayOrdersTek = isTekRole ? filteredOrders.filter(o => o.date === TODAY) : filteredOrders;
 
     return (
       <div style={{ display:"grid", gap:14 }}>
-        {/* Header */}
+        {/* Header — kondisional per role */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
-          <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>📅 Jadwal Pengerjaan</div>
+          <div>
+            <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>
+              {isTekRole ? "📋 Jadwal Hari Ini" : "📅 Jadwal Pengerjaan"}
+            </div>
+            {isTekRole && (
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>
+                {new Date().toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
+              </div>
+            )}
+          </div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            {/* Week navigation */}
-            <div style={{ display:"flex", alignItems:"center", gap:6, background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"4px 6px" }}>
-              <button onClick={() => setWeekOffset(w=>w-1)} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, padding:"0 4px", lineHeight:1 }}>‹</button>
-              <span style={{ fontSize:11, color:cs.muted, fontWeight:600, minWidth:80, textAlign:"center" }}>{weekLabel}</span>
-              <button onClick={() => setWeekOffset(w=>w+1)} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, padding:"0 4px", lineHeight:1 }}>›</button>
-              {weekOffset !== 0 && <button onClick={() => setWeekOffset(0)} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, cursor:"pointer", fontSize:10, padding:"2px 7px", borderRadius:5, fontWeight:700 }}>Hari ini</button>}
-            </div>
-            {/* View toggle */}
-            <div style={{ display:"flex", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, overflow:"hidden" }}>
-              {[["week","Minggu"],["list","Daftar"]].map(([v,l]) => (
-                <button key={v} onClick={() => setScheduleView(v)} style={{ padding:"7px 14px", border:"none", background:scheduleView===v?cs.accent:"transparent", color:scheduleView===v?"#0a0f1e":cs.muted, cursor:"pointer", fontSize:12, fontWeight:700 }}>{l}</button>
-              ))}
-            </div>
+            {/* Week navigation — hanya untuk Owner/Admin */}
             {!isTekRole && (
-              <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"8px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>+ Order</button>
+              <div style={{ display:"flex", alignItems:"center", gap:6, background:cs.card, border:"1px solid "+cs.border, borderRadius:9, padding:"4px 10px" }}>
+                <button onClick={() => setWeekOffset(w=>w-1)} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>‹</button>
+                <span style={{ fontSize:11, color:cs.muted, fontWeight:600, minWidth:80, textAlign:"center" }}>{weekLabel}</span>
+                <button onClick={() => setWeekOffset(w=>w+1)} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>›</button>
+                {weekOffset !== 0 && <button onClick={() => setWeekOffset(0)} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, borderRadius:6, padding:"2px 8px", cursor:"pointer", fontSize:10, fontWeight:700 }}>Hari ini</button>}
+              </div>
+            )}
+            {/* View toggle — hanya untuk Owner/Admin */}
+            {!isTekRole && (
+              <div style={{ display:"flex", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, overflow:"hidden" }}>
+                {[["week","📅 Kalender"],["list","📋 List Pekerjaan"]].map(([v,lbl]) => (
+                  <button key={v} onClick={() => setScheduleView(v)} style={{ padding:"7px 14px", border:"none", background:scheduleView===v?cs.accent:"transparent", color:scheduleView===v?"#0a0f1e":cs.muted, cursor:"pointer", fontSize:12, fontWeight:scheduleView===v?700:500 }}>{lbl}</button>
+                ))}
+              </div>
+            )}
+            {!isTekRole && (
+              <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>+ Order</button>
             )}
           </div>
         </div>
@@ -3207,8 +3266,115 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           </div>
         )}
 
-        {/* WEEK CALENDAR VIEW */}
-        {scheduleView === "week" ? (
+        {/* ════════════════════════════════════════════════
+            TAMPILAN JADWAL HARI INI — khusus Teknisi & Helper
+            Tidak ada tab Minggu, hanya list pekerjaan hari ini
+            ════════════════════════════════════════════════ */}
+        {isTekRole && (() => {
+          const myJobs = todayOrdersTek.sort((a,b) => (a.time||"").localeCompare(b.time||""));
+          if (myJobs.length === 0) return (
+            <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:40, textAlign:"center" }}>
+              <div style={{ fontSize:32, marginBottom:10 }}>✅</div>
+              <div style={{ fontWeight:700, color:cs.text, fontSize:15 }}>Tidak ada jadwal hari ini</div>
+              <div style={{ color:cs.muted, fontSize:12, marginTop:6 }}>Hubungi Admin jika ada penugasan baru</div>
+            </div>
+          );
+          return (
+            <div style={{ display:"grid", gap:10 }}>
+              {/* Summary bar */}
+              <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+                {[
+                  { label:"Total Job", value:myJobs.length, color:cs.accent },
+                  { label:"Pending", value:myJobs.filter(o=>o.status==="PENDING"||o.status==="CONFIRMED").length, color:cs.yellow },
+                  { label:"On Site", value:myJobs.filter(o=>o.status==="ON_SITE"||o.status==="IN_PROGRESS").length, color:cs.green },
+                  { label:"Selesai", value:myJobs.filter(o=>o.status==="COMPLETED").length, color:cs.muted },
+                ].map(k => (
+                  <div key={k.label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 16px", flex:1, minWidth:70 }}>
+                    <div style={{ fontWeight:800, fontSize:20, color:k.color }}>{k.value}</div>
+                    <div style={{ fontSize:10, color:cs.muted, marginTop:2 }}>{k.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* List Pekerjaan Hari Ini */}
+              <div style={{ fontWeight:700, color:cs.text, fontSize:14, marginTop:4 }}>
+                📋 List Pekerjaan — {new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long"})}
+              </div>
+              {myJobs.map((o, idx) => {
+                const myColor = techColors[o.teknisi] || cs.accent;
+                const sCol = statusColor[o.status] || cs.border;
+                const isMe = o.teknisi === myTekName;
+                return (
+                  <div key={o.id} style={{ background:cs.card, border:"1px solid "+sCol+"55", borderRadius:12, padding:"14px 16px", display:"flex", gap:12, alignItems:"flex-start" }}>
+                    {/* Urutan + jam */}
+                    <div style={{ background:myColor+"22", border:"1px solid "+myColor+"44", borderRadius:10, padding:"8px 10px", textAlign:"center", minWidth:46, flexShrink:0 }}>
+                      <div style={{ fontSize:11, fontWeight:800, color:myColor }}>{String(idx+1).padStart(2,"0")}</div>
+                      <div style={{ fontSize:13, fontWeight:800, color:myColor }}>{o.time||"--:--"}</div>
+                    </div>
+
+                    {/* Info job */}
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:5, flexWrap:"wrap" }}>
+                        <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:12 }}>{o.id}</span>
+                        <span style={{ fontSize:10, padding:"2px 8px", borderRadius:99, background:sCol+"22", color:sCol, fontWeight:700 }}>{o.status}</span>
+                        {!isMe && <span style={{ fontSize:10, background:cs.yellow+"22", color:cs.yellow, padding:"2px 8px", borderRadius:99 }}>🤝 Helper</span>}
+                      </div>
+                      <div style={{ fontWeight:700, color:cs.text, fontSize:14, marginBottom:4 }}>{o.customer}</div>
+                      <div style={{ fontSize:12, color:cs.muted, display:"grid", gap:"3px 0" }}>
+                        <span>🔧 {o.service} · {o.units} unit{o.type?" ("+o.type+")":""}</span>
+                        <span>📍 {o.address}</span>
+                        {o.helper && <span>🤝 Helper: {o.helper}</span>}
+                      </div>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+                      <button onClick={() => window.open("https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(o.address),"_blank")}
+                        style={{ background:"#3b82f622", border:"1px solid #3b82f644", color:"#3b82f6", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                        🗺️ Maps
+                      </button>
+                      <button onClick={() => openWA(o.phone,"Halo "+o.customer+", saya "+myTekName+" dari AClean, sedang menuju lokasi Anda.")}
+                        style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                        📱 WA
+                      </button>
+                      {o.dispatch && !["COMPLETED","CANCELLED","PAID"].includes(o.status) && (
+                        <>
+                          {o.status !== "ON_SITE" && (
+                            <button onClick={async () => {
+                              await supabase.from("orders").update({status:"ON_SITE", confirmed_at: new Date().toISOString()}).eq("id",o.id);
+                              setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
+                              showNotif("✅ Status → On Site!");
+                              const admins = userAccounts.filter(u=>u.role==="Admin"||u.role==="Owner");
+                              const msg = `✅ *Teknisi di Lokasi*
+📋 ${o.id} — ${o.customer}
+👷 ${myTekName}`;
+                              admins.forEach(adm=>{if(adm?.phone) sendWA(adm.phone,msg);});
+                            }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                              ✅ On Site
+                            </button>
+                          )}
+                          <button onClick={() => openLaporanModal(o)}
+                            style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                            📝 Laporan
+                          </button>
+                        </>
+                      )}
+                      {!o.dispatch && (
+                        <span style={{ fontSize:10, color:cs.muted, textAlign:"center", padding:"4px 8px" }}>Menunggu dispatch</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
+        {/* WEEK CALENDAR & LIST VIEW — hanya untuk Owner / Admin */}
+        {!isTekRole && (
+          <>
+            {/* WEEK CALENDAR VIEW */}
+            {scheduleView === "week" ? (
           <div style={{ overflowX:"auto" }}>
             <div style={{ minWidth:600 }}>
               <div style={{ display:"grid", gridTemplateColumns:"70px repeat(7,1fr)", gap:2, marginBottom:2 }}>
@@ -3364,8 +3530,8 @@ _Laporan masuk setelah pekerjaan selesai._`;
             })()}
           </div>
         )}
-      </div>
-    );
+          </>
+        )}
   };
 
 
