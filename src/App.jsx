@@ -40,20 +40,58 @@ const TEKNISI_DATA = [
 const CUSTOMERS_DATA = [
 ];
 
-const SERVICE_HISTORY = [
-  { id:"SVC001", customer_id:"CUST001", job_id:"JOB10001", date:"2026-03-01", service:"Cleaning",  type:"AC Split 0.5-1PK",         units:2, teknisi:"Mulyadi",     status:"IN_PROGRESS", invoice:null,               total:170000, materials:[],                        notes:"Sedang dikerjakan",          recommendation:"Filter kotor, sarankan 2 bulan sekali" },
-  { id:"SVC002", customer_id:"CUST001", job_id:"JOB09801", date:"2025-12-10", service:"Cleaning",  type:"AC Split 0.5-1PK",         units:2, teknisi:"Mulyadi",     status:"COMPLETED",   invoice:"INV-20251210-001",  total:170000, materials:[],                        notes:"Selesai, AC bersih",          recommendation:"Jadwalkan Maret 2026" },
-  { id:"SVC003", customer_id:"CUST001", job_id:"JOB09620", date:"2025-09-15", service:"Repair",    type:"Pengecekan AC Panas/Bocor", units:1, teknisi:"Usaeri",      status:"COMPLETED",   invoice:"INV-20250915-002",  total:285000, materials:["Freon R22 0.5kg"],       notes:"Freon habis, isi ulang",      recommendation:"Cek freon 6 bulan" },
-  { id:"SVC004", customer_id:"CUST001", job_id:"JOB09450", date:"2025-06-20", service:"Cleaning",  type:"AC Split 0.5-1PK",         units:2, teknisi:"Albana Niji", status:"COMPLETED",   invoice:"INV-20250620-003",  total:170000, materials:[],                        notes:"Bersih semua",               recommendation:"" },
-  { id:"SVC005", customer_id:"CUST002", job_id:"JOB10002", date:"2026-03-01", service:"Repair",    type:"Pengecekan AC Panas/Bocor", units:1, teknisi:"Usaeri",      status:"COMPLETED",   invoice:"INV-20260301-001",  total:135000, materials:["Kapasitor 1pcs"],        notes:"Kapasitor diganti",          recommendation:"Cek ulang 6 bulan" },
-  { id:"SVC006", customer_id:"CUST002", job_id:"JOB09850", date:"2025-12-20", service:"Cleaning",  type:"AC Split 0.5-1PK",         units:3, teknisi:"Mulyadi",     status:"COMPLETED",   invoice:"INV-20251220-001",  total:255000, materials:[],                        notes:"Cleaning rutin 3 unit",      recommendation:"AC prima" },
-  { id:"SVC007", customer_id:"CUST002", job_id:"JOB09500", date:"2025-07-12", service:"Install",   type:"Pasang AC 0.5-1PK",        units:1, teknisi:"Usaeri",      status:"COMPLETED",   invoice:"INV-20250712-002",  total:830000, materials:["Pipa 3/8 3m","Bracket"], notes:"Install unit baru",          recommendation:"Cleaning 1 bulan" },
-  { id:"SVC008", customer_id:"CUST003", job_id:"JOB10003", date:"2026-03-01", service:"Cleaning",  type:"AC Split 1.5-2.5PK",       units:3, teknisi:"Albana Niji", status:"CONFIRMED",   invoice:null,               total:270000, materials:[],                        notes:"Terjadwal siang ini",        recommendation:"" },
-  { id:"SVC009", customer_id:"CUST003", job_id:"JOB09700", date:"2025-11-05", service:"Cleaning",  type:"AC Split 1.5-2.5PK",       units:3, teknisi:"Rey",         status:"COMPLETED",   invoice:"INV-20251105-001",  total:270000, materials:[],                        notes:"Filter sangat kotor",        recommendation:"2 bulan sekali" },
-  { id:"SVC010", customer_id:"CUST005", job_id:"JOB09991", date:"2026-02-25", service:"Cleaning",  type:"AC Split 0.5-1PK",         units:3, teknisi:"Rizky Putra", status:"COMPLETED",   invoice:"INV-20260225-001",  total:255000, materials:["Filter 2pcs"],          notes:"Filter diganti, bau hilang", recommendation:"Anti-bakteri filter" },
-  { id:"SVC011", customer_id:"CUST007", job_id:"JOB09970", date:"2026-02-20", service:"Cleaning",  type:"Cassette 2-2.5PK",         units:1, teknisi:"Agung",       status:"COMPLETED",   invoice:"INV-20260220-001",  total:250000, materials:[],                        notes:"Cleaning cassette kantor",   recommendation:"Maintenance bulanan" },
-];
+// ── buildCustomerHistory: LIVE dari ordersData + laporanReports + invoicesData
+// Dipanggil di: renderCustomers(), laporan step-1, order detail
+const buildCustomerHistory = (customer, ordersData, laporanReports, invoicesData) => {
+  if (!customer) return [];
+  const nm = (s) => (s||"").trim().toLowerCase();
+  const matchName  = (o) => nm(o.customer) === nm(customer.name);
+  const matchPhone = (o) => customer.phone && o.phone && o.phone === customer.phone;
 
+  return ordersData
+    .filter(o => matchName(o) || matchPhone(o))
+    .map(o => {
+      // Cari laporan teknisi untuk job ini
+      const lap = laporanReports.find(r => r.job_id === o.id);
+      // Cari invoice untuk job ini (by job_id atau order_id)
+      const inv = invoicesData
+        ? invoicesData.find(i => i.job_id === o.id || i.order_id === o.id)
+        : null;
+      // unit_detail: array unit AC dari laporan — field dari mkUnit()
+      // { unit_no, label, tipe, merk, pk, kondisi_sebelum[], kondisi_setelah[], pekerjaan[], freon_ditambah, ampere_akhir, catatan_unit }
+      const unitDetail = lap?.units || [];
+      return {
+        // ── data dari orders ──
+        id:          o.id,
+        job_id:      o.id,
+        date:        o.date,
+        service:     o.service,
+        type:        o.type   || "",
+        units:       o.units  || 1,
+        teknisi:     o.teknisi || "",
+        helper:      o.helper  || "",
+        status:      o.status  || "PENDING",
+        notes:       o.notes  || "",
+        area:        o.area   || "",
+        // ── data dari invoice ──
+        invoice_id:    inv?.id    || o.invoice_id || null,
+        invoice_total: inv?.total || 0,
+        invoice_status:inv?.status || null,
+        // ── data dari laporan teknisi ──
+        laporan_id:     lap?.id     || null,
+        laporan_status: lap?.status || null,
+        unit_detail:    unitDetail,
+        materials:      lap?.materials || [],
+        rekomendasi:    lap?.rekomendasi    || "",
+        catatan:        lap?.catatan_global || "",
+        foto_urls:      lap?.foto_urls
+                          || (lap?.fotos||[]).filter(f=>f.url).map(f=>f.url)
+                          || [],
+        total_freon:    lap?.total_freon || 0,
+      };
+    })
+    .sort((a, b) => (b.date||"").localeCompare(a.date||"")); // terbaru dulu
+};
 const ORDERS_DATA = [
 ];
 
@@ -2030,7 +2068,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // RENDER CUSTOMERS
   // ============================================================
   const renderCustomers = () => {
-    const history = selectedCustomer ? SERVICE_HISTORY.filter(s => s.customer_id === selectedCustomer.id) : [];
+    // ── LIVE history: ordersData + laporanReports + invoicesData ──
+    const history = selectedCustomer
+      ? buildCustomerHistory(selectedCustomer, ordersData, laporanReports, invoicesData)
+      : [];
     const filteredCusts = customersData.filter(cu =>
       !searchCustomer ||
       cu.name.toLowerCase().includes(searchCustomer.toLowerCase()) ||
@@ -2070,7 +2111,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div style={{ fontSize:12, color:cs.muted }}>Menampilkan <b style={{ color:cs.accent }}>{filteredCusts.length}</b> dari {customersData.length} customer</div>
             )}
             {filteredCusts.map(cu => {
-              const cHist = SERVICE_HISTORY.filter(s => s.customer_id === cu.id);
+              const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
+              const lastSvc = cHist[0]; // sudah sorted by date desc
               return (
                 <div key={cu.id} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20, display:"flex", gap:16, alignItems:"flex-start" }}>
                   <div style={{ width:48, height:48, borderRadius:12, background:"linear-gradient(135deg,"+(cu.is_vip?cs.yellow:cs.accent)+",#3b82f6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>{cu.name.charAt(0)}</div>
@@ -2084,6 +2126,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <span>📱 {cu.phone}</span><span>📍 {cu.area}</span>
                       <span>🏠 {cu.address.slice(0,32)}...</span><span>📅 {cu.joined}</span>
                     </div>
+                    {/* ── BONUS: Last service summary di customer card ── */}
+                    {lastSvc ? (
+                      <div style={{ fontSize:11, background:cs.surface, borderRadius:7, padding:"6px 10px", marginBottom:6, display:"flex", gap:10, flexWrap:"wrap" }}>
+                        <span style={{ color:cs.muted }}>🕐 Terakhir:</span>
+                        <span style={{ color:cs.text, fontWeight:600 }}>{lastSvc.date}</span>
+                        <span style={{ color:cs.accent }}>{lastSvc.service}</span>
+                        <span style={{ color:cs.muted }}>{lastSvc.units} unit · {lastSvc.teknisi}</span>
+                        {lastSvc.rekomendasi&&(
+                          <span style={{ color:"#7dd3fc", fontStyle:"italic" }}>💡 {lastSvc.rekomendasi.slice(0,50)}{lastSvc.rekomendasi.length>50?"...":""}</span>
+                        )}
+                        <span style={{ color:cHist.length>1?cs.green:cs.muted, fontWeight:700 }}>({cHist.length}x servis)</span>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize:11, color:cs.muted, marginBottom:6 }}>Belum ada riwayat servis</div>
+                    )}
                     {cu.notes && <div style={{ fontSize:12, color:"#7dd3fc", background:"#0ea5e910", padding:"6px 10px", borderRadius:7, border:"1px solid #0ea5e922" }}>💡 {cu.notes}</div>}
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:8, flexShrink:0 }}>
@@ -2098,7 +2155,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         ) : (
           <div style={{ display:"grid", gap:14 }}>
             <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18, display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:14, textAlign:"center" }}>
-              {[["Total Order", history.length, cs.accent], ["Total Spend", currentUser?.role==="Teknisi"?"—":fmt(history.filter(s=>s.status==="COMPLETED").reduce((a,b)=>a+b.total,0)), cs.green], ["Terakhir Servis", selectedCustomer.last_service, cs.yellow], ["Area", selectedCustomer.area, cs.muted]].map(([label, val, color]) => (
+              {[
+                  ["Total Order",    history.length, cs.accent],
+                  ["Total Spend",    currentUser?.role==="Teknisi"||currentUser?.role==="Helper"
+                                       ? "—"
+                                       : fmt(history.reduce((a,b)=>a+(b.invoice_total||0),0)), cs.green],
+                  ["Terakhir Servis",history[0]?.date || selectedCustomer.last_service || "—", cs.yellow],
+                  ["Area",           selectedCustomer.area, cs.muted],
+                ].map(([label, val, color]) => (
                 <div key={label}><div style={{ fontSize:11, color:cs.muted, fontWeight:600, marginBottom:4 }}>{label}</div><div style={{ fontWeight:800, color, fontSize:15 }}>{val}</div></div>
               ))}
             </div>
@@ -2111,24 +2175,189 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             {customerTab === "history" ? (
               <div style={{ display:"grid", gap:10 }}>
                 {history.length === 0 ? <div style={{ background:cs.card, borderRadius:14, padding:32, textAlign:"center", color:cs.muted }}>Belum ada riwayat</div>
-                : history.map(svc => (
-                  <div key={svc.id} style={{ background:cs.card, border:"1px solid "+(statusColor[svc.status]||cs.border)+"33", borderRadius:12, padding:16 }}>
+                : history.map(svc => {
+                  // Cek apakah ada laporan teknisi untuk job ini
+                  const hasLaporan = !!svc.laporan_id;
+                  const unitDetails = svc.unit_detail || [];
+                  const svcColor = statusColor[svc.status] || cs.border;
+                  return (
+                  <div key={svc.id} style={{ background:cs.card, border:"1px solid "+svcColor+"44", borderRadius:12, padding:"14px 16px", position:"relative" }}>
+
+                    {/* Header — job ID, layanan, status, tanggal */}
                     <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:10 }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                        <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent }}>{svc.job_id}</span>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                        <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:13 }}>{svc.job_id}</span>
                         <span style={{ fontSize:13, color:cs.text, fontWeight:600 }}>{svc.service}</span>
-                        <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:(statusColor[svc.status]||cs.muted)+"22", color:statusColor[svc.status]||cs.muted, border:"1px solid "+(statusColor[svc.status]||cs.muted)+"44" }}>{svc.status.replace("_"," ")}</span>
+                        <span style={{ fontSize:10, padding:"2px 8px", borderRadius:99,
+                          background:(svcColor)+"18", color:svcColor, fontWeight:700 }}>
+                          {svc.status}
+                        </span>
+                        {hasLaporan && (
+                          <span style={{ fontSize:10, padding:"2px 8px", borderRadius:99,
+                            background:cs.green+"15", color:cs.green, fontWeight:700 }}>
+                            ✅ Laporan Ada
+                          </span>
+                        )}
+                        {svc.total_freon > 0 && (
+                          <span style={{ fontSize:10, padding:"2px 8px", borderRadius:99,
+                            background:cs.yellow+"15", color:cs.yellow, fontWeight:700 }}>
+                            🧊 Freon +{svc.total_freon}kg
+                          </span>
+                        )}
                       </div>
-                      {currentUser?.role !== "Teknisi" && currentUser?.role !== "Helper" && <span style={{ fontWeight:800, color:cs.text, fontFamily:"monospace" }}>{fmt(svc.total)}</span>}
+                      <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+                        <span style={{ fontSize:11, color:cs.muted }}>📅 {svc.date}</span>
+                        {currentUser?.role !== "Teknisi" && currentUser?.role !== "Helper" && svc.invoice_id && (
+                          <span style={{ fontSize:11, color:cs.green, fontWeight:700 }}>🧾 {svc.invoice_id}</span>
+                        )}
+                      </div>
                     </div>
-                    <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:"4px 16px", fontSize:12, color:cs.muted }}>
-                      <span>📅 {svc.date}</span><span>👷 {svc.teknisi}</span>
-                      <span>🔧 {svc.type} x{svc.units}</span>
-                      {svc.invoice && currentUser?.role !== "Teknisi" && currentUser?.role !== "Helper" && <span style={{ fontFamily:"monospace", color:cs.accent }}>{svc.invoice}</span>}
+
+                    {/* Info dasar */}
+                    <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:"4px 16px", fontSize:12, color:cs.muted, marginBottom:10 }}>
+                      <span>🔧 {svc.type || svc.service} × {svc.units} unit</span>
+                      <span>👷 {svc.teknisi}{svc.helper?" + "+svc.helper:""}</span>
+                      {svc.notes && <span style={{ gridColumn:"1/-1", color:"#7dd3fc" }}>📝 {svc.notes}</span>}
                     </div>
-                    {svc.recommendation && <div style={{ marginTop:8, fontSize:12, color:"#7dd3fc", background:"#0ea5e910", padding:"6px 10px", borderRadius:7 }}>💡 {svc.recommendation}</div>}
+
+                    {/* ── Detail Unit AC dari laporan teknisi ── */}
+                    {unitDetails.length > 0 && (
+                      <div style={{ background:cs.surface, borderRadius:9, padding:"10px 12px", marginBottom:8 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:cs.accent, marginBottom:7 }}>
+                          🌡️ Detail Unit AC (dari Laporan Teknisi)
+                        </div>
+                        {unitDetails.map((u, ui) => (
+                          <div key={ui} style={{ marginBottom:ui<unitDetails.length-1?10:0, paddingBottom:ui<unitDetails.length-1?10:0,
+                            borderBottom:ui<unitDetails.length-1?"1px solid "+cs.border:"none" }}>
+                            <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:4 }}>
+                              <span style={{ fontWeight:700, color:cs.text, fontSize:12 }}>
+                                Unit {u.unit_no} — {u.label}
+                              </span>
+                              {u.merk && <span style={{ fontSize:11, color:cs.muted }}>{u.merk}</span>}
+                              {u.pk   && <span style={{ fontSize:10, background:cs.accent+"12", color:cs.accent, padding:"1px 7px", borderRadius:99 }}>{u.pk}</span>}
+                              {u.tipe && <span style={{ fontSize:10, color:cs.muted }}>{u.tipe}</span>}
+                              {u.ampere_akhir && (
+                                <span style={{ fontSize:10, background:cs.green+"15", color:cs.green,
+                                  padding:"1px 7px", borderRadius:99 }}>⚡ {u.ampere_akhir}A</span>
+                              )}
+                              {parseFloat(u.freon_ditambah) > 0 && (
+                                <span style={{ fontSize:10, background:cs.yellow+"15", color:cs.yellow,
+                                  padding:"1px 7px", borderRadius:99 }}>🧊 +{u.freon_ditambah}kg</span>
+                              )}
+                            </div>
+                            {/* Kondisi sebelum — array dari mkUnit */}
+                            {safeArr(u.kondisi_sebelum).length > 0 && (
+                              <div style={{ marginBottom:4 }}>
+                                <span style={{ fontSize:10, color:cs.muted }}>Kondisi masuk: </span>
+                                {safeArr(u.kondisi_sebelum).map((k,ki) => (
+                                  <span key={ki} style={{ fontSize:10, background:cs.yellow+"15",
+                                    color:cs.yellow, padding:"1px 6px", borderRadius:99, marginRight:3 }}>{k}</span>
+                                ))}
+                              </div>
+                            )}
+                            {/* Pekerjaan dilakukan — array dari mkUnit */}
+                            {safeArr(u.pekerjaan).length > 0 && (
+                              <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:4 }}>
+                                <span style={{ fontSize:10, color:cs.muted, alignSelf:"center" }}>Dikerjakan: </span>
+                                {safeArr(u.pekerjaan).map((p,pi) => (
+                                  <span key={pi} style={{ fontSize:10, background:cs.accent+"15",
+                                    color:cs.accent, padding:"1px 6px", borderRadius:99 }}>{p}</span>
+                                ))}
+                              </div>
+                            )}
+                            {/* Kondisi sesudah — array dari mkUnit */}
+                            {safeArr(u.kondisi_setelah).length > 0 && (
+                              <div style={{ marginBottom:3 }}>
+                                <span style={{ fontSize:10, color:cs.muted }}>Setelah: </span>
+                                {safeArr(u.kondisi_setelah).map((k,ki) => (
+                                  <span key={ki} style={{ fontSize:10, background:cs.green+"15",
+                                    color:cs.green, padding:"1px 6px", borderRadius:99, marginRight:3 }}>{k}</span>
+                                ))}
+                              </div>
+                            )}
+                            {u.catatan_unit && (
+                              <div style={{ fontSize:11, color:"#7dd3fc", marginTop:3 }}>💬 {u.catatan_unit}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Rekomendasi teknisi */}
+                    {svc.rekomendasi && (
+                      <div style={{ background:"#0ea5e910", border:"1px solid #0ea5e933", borderRadius:8,
+                        padding:"7px 10px", marginBottom:8, fontSize:12, color:"#7dd3fc" }}>
+                        💡 <b>Rekomendasi:</b> {svc.rekomendasi}
+                      </div>
+                    )}
+
+                    {/* Material yang dipakai */}
+                    {safeArr(svc.materials).length > 0 && (
+                      <div style={{ fontSize:11, color:cs.muted, marginBottom:6 }}>
+                        🔩 Material: {safeArr(svc.materials).map(m => `${m.nama} ${m.jumlah}${m.satuan}`).join(", ")}
+                      </div>
+                    )}
+
+                    {/* Foto thumbnail */}
+                    {safeArr(svc.foto_urls).length > 0 && (
+                      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:8 }}>
+                        {safeArr(svc.foto_urls).slice(0,5).map((url, fi) => (
+                          <img key={fi} src={url} alt={`Foto ${fi+1}`}
+                            onClick={() => window.open(url, "_blank")}
+                            style={{ width:56, height:56, objectFit:"cover", borderRadius:8,
+                              cursor:"pointer", border:"1px solid "+cs.border,
+                              transition:"opacity .15s" }}
+                            onMouseEnter={e=>e.target.style.opacity=".8"}
+                            onMouseLeave={e=>e.target.style.opacity="1"} />
+                        ))}
+                        {safeArr(svc.foto_urls).length > 5 && (
+                          <div style={{ width:56, height:56, borderRadius:8, background:cs.surface,
+                            border:"1px solid "+cs.border, display:"flex", alignItems:"center",
+                            justifyContent:"center", fontSize:11, color:cs.muted, cursor:"pointer" }}
+                            onClick={() => window.open(svc.foto_urls[5], "_blank")}>
+                            +{safeArr(svc.foto_urls).length - 5}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Action buttons — buat order baru / lihat invoice */}
+                    <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
+                      {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && svc.invoice_id && (
+                        <button
+                          onClick={()=>{
+                            const inv = invoicesData.find(i=>i.id===svc.invoice_id);
+                            if(inv){ setSelectedInvoice(inv); setModalInvoiceDetail(true); }
+                          }}
+                          style={{ fontSize:11, padding:"5px 12px", borderRadius:7, cursor:"pointer",
+                            background:cs.green+"15", border:"1px solid "+cs.green+"44", color:cs.green }}>
+                          🧾 Lihat Invoice
+                        </button>
+                      )}
+                      {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+                        <button
+                          onClick={()=>{
+                            setNewOrderForm(f=>({
+                              ...f,
+                              customer: selectedCustomer.name,
+                              phone:    selectedCustomer.phone,
+                              address:  selectedCustomer.address,
+                              area:     selectedCustomer.area,
+                              service:  svc.service,
+                              type:     svc.type,
+                              units:    svc.units,
+                            }));
+                            setModalOrder(true);
+                          }}
+                          style={{ fontSize:11, padding:"5px 12px", borderRadius:7, cursor:"pointer",
+                            background:cs.accent+"15", border:"1px solid "+cs.accent+"44", color:cs.accent }}>
+                          🔁 Order Ulang
+                        </button>
+                      )}
+                    </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:12, padding:18, display:"grid", gap:10 }}>
@@ -5964,6 +6193,128 @@ Silakan buat invoice dari ARA Chat 👆`;
               {/* ── STEP 1: Konfirmasi Unit ── */}
               {laporanStep===1&&(
                 <div style={{display:"grid",gap:14}}>
+
+                  {/* ── GAP-C FIX: History AC Customer (referensi teknisi) ── */}
+                  {(() => {
+                    const custHistRef = buildCustomerHistory(
+                      { name: laporanModal.customer, phone: laporanModal.phone },
+                      ordersData.filter(o => o.id !== laporanModal.id),
+                      laporanReports,
+                      invoicesData
+                    ).filter(h => h.laporan_id || h.status === "COMPLETED");
+                    if (custHistRef.length === 0) return null;
+                    const lastJob = custHistRef[0]; // job terakhir (sudah sorted desc)
+                    const allUnits = custHistRef.flatMap(h => h.unit_detail || []);
+                    // Kumpulkan semua AC yang pernah dikerjakan (unik per label/merk)
+                    const acPernah = [...new Map(allUnits.map(u => [u.label||u.merk||"AC", u])).values()];
+                    return (
+                      <div style={{background:"#0ea5e908",border:"1px solid #0ea5e933",borderRadius:12,padding:"12px 14px"}}>
+                        <div style={{fontWeight:700,color:"#7dd3fc",fontSize:12,marginBottom:8}}>
+                          📋 Referensi History AC — {laporanModal.customer}
+                          <span style={{fontSize:10,color:cs.muted,marginLeft:8,fontWeight:400}}>
+                            ({custHistRef.length} kunjungan sebelumnya)
+                          </span>
+                        </div>
+
+                        {/* Info kunjungan terakhir */}
+                        <div style={{background:cs.surface,borderRadius:8,padding:"8px 10px",marginBottom:8,fontSize:11}}>
+                          <div style={{fontWeight:700,color:cs.text,marginBottom:4}}>
+                            Terakhir dikunjungi: <span style={{color:cs.accent}}>{lastJob.date}</span>
+                            <span style={{color:cs.muted,marginLeft:8}}>{lastJob.service} · {lastJob.teknisi}</span>
+                          </div>
+                          {/* Detail unit AC — sesuai mkUnit: label, merk, pk, tipe, kondisi_sebelum[], kondisi_setelah[], pekerjaan[] */}
+                          {(lastJob.unit_detail||[]).map((u,ui)=>(
+                            <div key={ui} style={{marginBottom:ui<(lastJob.unit_detail.length-1)?8:0,
+                              paddingBottom:ui<(lastJob.unit_detail.length-1)?8:0,
+                              borderBottom:ui<(lastJob.unit_detail.length-1)?"1px dashed "+cs.border:"none"}}>
+                              {/* Identitas unit */}
+                              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:3}}>
+                                <span style={{color:cs.accent,fontWeight:700,fontSize:12}}>Unit {u.unit_no}</span>
+                                <span style={{color:cs.text,fontWeight:600,fontSize:12}}>{u.label}</span>
+                                {u.merk&&<span style={{color:cs.muted,fontSize:11}}>{u.merk}</span>}
+                                {u.pk&&<span style={{fontSize:10,background:cs.accent+"12",color:cs.accent,padding:"1px 6px",borderRadius:99}}>{u.pk}</span>}
+                                {parseFloat(u.freon_ditambah)>0&&(
+                                  <span style={{fontSize:10,background:cs.yellow+"12",color:cs.yellow,padding:"1px 6px",borderRadius:99}}>🧊 +{u.freon_ditambah}kg freon</span>
+                                )}
+                                {u.ampere_akhir&&(
+                                  <span style={{fontSize:10,background:cs.green+"12",color:cs.green,padding:"1px 6px",borderRadius:99}}>⚡ {u.ampere_akhir}A</span>
+                                )}
+                              </div>
+                              {/* Kondisi sebelum */}
+                              {safeArr(u.kondisi_sebelum).length>0&&(
+                                <div style={{fontSize:11,marginBottom:2}}>
+                                  <span style={{color:cs.muted}}>Kondisi masuk: </span>
+                                  {safeArr(u.kondisi_sebelum).map((k,ki)=>(
+                                    <span key={ki} style={{background:cs.yellow+"15",color:cs.yellow,fontSize:10,padding:"1px 6px",borderRadius:99,marginRight:4}}>{k}</span>
+                                  ))}
+                                </div>
+                              )}
+                              {/* Pekerjaan dilakukan */}
+                              {safeArr(u.pekerjaan).length>0&&(
+                                <div style={{fontSize:11,marginBottom:2}}>
+                                  <span style={{color:cs.muted}}>Dikerjakan: </span>
+                                  {safeArr(u.pekerjaan).map((p,pi)=>(
+                                    <span key={pi} style={{background:cs.accent+"15",color:cs.accent,fontSize:10,padding:"1px 6px",borderRadius:99,marginRight:4}}>{p}</span>
+                                  ))}
+                                </div>
+                              )}
+                              {/* Kondisi sesudah */}
+                              <div style={{fontSize:11}}>
+                                <span style={{color:cs.muted}}>Setelah: </span>
+                                {safeArr(u.kondisi_setelah).length>0
+                                  ? safeArr(u.kondisi_setelah).map((k,ki)=>(
+                                      <span key={ki} style={{background:cs.green+"15",color:cs.green,fontSize:10,padding:"1px 6px",borderRadius:99,marginRight:4}}>{k}</span>
+                                    ))
+                                  : <span style={{color:cs.muted,fontStyle:"italic"}}>tidak direkam</span>
+                                }
+                              </div>
+                              {u.catatan_unit&&<div style={{fontSize:11,color:"#7dd3fc",marginTop:3}}>💬 {u.catatan_unit}</div>}
+                            </div>
+                          ))}
+                          {lastJob.rekomendasi&&(
+                            <div style={{color:"#7dd3fc",marginTop:4,fontStyle:"italic"}}>
+                              💡 Rekomendasi lalu: {lastJob.rekomendasi}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Semua AC yang pernah dikerjakan */}
+                        {acPernah.length>0&&(
+                          <div style={{fontSize:11,color:cs.muted}}>
+                            <span style={{fontWeight:700,color:cs.text}}>AC di lokasi ini: </span>
+                            {acPernah.map((u,ui)=>(
+                              <span key={ui} style={{marginRight:8}}>
+                                {u.label||u.merk||`Unit ${u.unit_no}`}
+                                {u.merk&&u.label?` (${u.merk})`:""}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* History ringkas semua kunjungan */}
+                        {custHistRef.length>1&&(
+                          <details style={{marginTop:8}}>
+                            <summary style={{fontSize:11,color:cs.accent,cursor:"pointer",fontWeight:700}}>
+                              Lihat semua {custHistRef.length} kunjungan ▾
+                            </summary>
+                            <div style={{marginTop:6,display:"grid",gap:4}}>
+                              {custHistRef.map((h,hi)=>(
+                                <div key={hi} style={{fontSize:11,color:cs.muted,display:"flex",gap:8,flexWrap:"wrap"}}>
+                                  <span style={{color:cs.text,fontFamily:"monospace"}}>{h.job_id}</span>
+                                  <span>{h.date}</span>
+                                  <span style={{color:cs.accent}}>{h.service}</span>
+                                  <span>{h.units}unit</span>
+                                  <span>{h.teknisi}</span>
+                                  {h.laporan_id&&<span style={{color:cs.green}}>✅ lap</span>}
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:12,padding:14}}>
                     <div style={{fontSize:12,color:cs.muted,marginBottom:10}}>Order tercatat <b style={{color:cs.text}}>{laporanModal.units||1} unit</b> AC. Sesuaikan dengan kondisi aktual.</div>
                     <div style={{display:"grid",gap:8}}>
