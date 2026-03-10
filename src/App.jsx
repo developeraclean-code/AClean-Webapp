@@ -1425,55 +1425,52 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       const existing = customersData.find(c => c.phone === form.phone);
 
       if (!existing) {
-        // ── Customer BARU: insert ke Supabase tanpa kirim `id` ──
-        // Biarkan DB generate id-nya sendiri (menghindari type conflict)
-        // Validasi: phone wajib ada (UNIQUE NOT NULL di DB)
+        // ── Customer BARU ──
         if (!form.phone || form.phone.trim().length < 5) {
+          // Phone kosong — skip insert, hanya log
           addAgentLog("CUSTOMER_SKIP", "Customer " + form.customer + " tidak disimpan: no HP kosong", "WARNING");
         } else {
-        const insertPayload = {
-          name:          form.customer.trim(),
-          phone:         form.phone.trim(),
-          address:       (form.address  || "").trim(),
-          area:          (form.area     || "").trim(),
-          notes:         "",
-          is_vip:        false,
-          total_orders:  1,
-          joined:        orderDate,
-          last_service:  orderDate,
-        };
-        const { data: savedCust, error: custErr } = await supabase
-          .from("customers")
-          .insert(insertPayload)
-          .select()
-          .single();
-
-        if (custErr) {
-          // Coba upsert sebagai fallback (kalau phone sudah ada tapi belum di state)
-          const { data: upsertedCust, error: upsertErr } = await supabase
+          const insertPayload = {
+            name:         form.customer.trim(),
+            phone:        form.phone.trim(),
+            address:      (form.address || "").trim(),
+            area:         (form.area    || "").trim(),
+            notes:        "",
+            is_vip:       false,
+            total_orders: 1,
+            joined:       orderDate,
+            last_service: orderDate,
+          };
+          const { data: savedCust, error: custErr } = await supabase
             .from("customers")
-            .upsert(insertPayload, { onConflict: "phone", ignoreDuplicates: false })
+            .insert(insertPayload)
             .select()
             .single();
-          if (upsertErr) {
-            addAgentLog("CUSTOMER_SAVE_ERROR",
-              "Gagal simpan customer " + form.customer + ": " + custErr.message, "ERROR");
-            showNotif("⚠️ Customer gagal tersimpan ke DB: " + custErr.message + " — coba tambah manual di menu Customer");
-            // Tetap tambah ke state lokal agar UI tidak kosong
-            setCustomersData(prev => [...prev, { ...insertPayload, id: "CUST_LOCAL_" + Date.now() }]);
+
+          if (custErr) {
+            // Fallback: upsert jika insert gagal (misal phone sudah ada di DB tapi belum di state)
+            const { data: upsertedCust, error: upsertErr } = await supabase
+              .from("customers")
+              .upsert(insertPayload, { onConflict: "phone", ignoreDuplicates: false })
+              .select()
+              .single();
+            if (upsertErr) {
+              addAgentLog("CUSTOMER_SAVE_ERROR",
+                "Gagal simpan customer " + form.customer + ": " + custErr.message, "ERROR");
+              showNotif("⚠️ Customer gagal ke DB: " + custErr.message + " — tambah manual di menu Customer");
+              setCustomersData(prev => [...prev, { ...insertPayload, id: "CUST_LOCAL_" + Date.now() }]);
+            } else {
+              const c2 = upsertedCust || { ...insertPayload, id: "CUST_" + Date.now() };
+              setCustomersData(prev => [...prev, c2]);
+              addAgentLog("CUSTOMER_AUTO_ADDED", "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
+              showNotif("✅ Order + Customer baru " + form.customer + " tersimpan!");
+            }
           } else {
-            const finalCust = upsertedCust || { ...insertPayload, id: "CUST_" + Date.now() };
-            setCustomersData(prev => [...prev, finalCust]);
-            addAgentLog("CUSTOMER_AUTO_ADDED",
-              "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
-            showNotif("✅ Order + Customer baru " + form.customer + " tersimpan!");
+            const c1 = savedCust || { ...insertPayload, id: "CUST_" + Date.now() };
+            setCustomersData(prev => [...prev, c1]);
+            addAgentLog("CUSTOMER_AUTO_ADDED", "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
+            showNotif("✅ Order + Customer baru " + form.customer + " tersimpan ke database!");
           }
-        } else {
-          const finalCust = savedCust || { ...insertPayload, id: "CUST_" + Date.now() };
-          setCustomersData(prev => [...prev, finalCust]);
-          addAgentLog("CUSTOMER_AUTO_ADDED",
-            "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
-          showNotif("✅ Order + Customer baru " + form.customer + " tersimpan ke database!");
         }
       } else {
         // ── Customer EXISTING: update total_orders & last_service ──
@@ -1491,7 +1488,6 @@ _Simpan pesan ini sebagai bukti pelunasan._`
           addAgentLog("CUSTOMER_UPDATE_WARN", "Gagal update total_orders: " + (e?.message||""), "WARNING");
         }
       }
-      } // end if phone valid
     }
     return newId;
   };
