@@ -932,6 +932,24 @@ export default function ACleanWebApp() {
           console.log("✅ PRICE_LIST loaded from DB:", plRes.data.length, "rows");
         }
       } catch(e) { console.warn("price_list DB fallback to default:", e?.message); }
+
+      // ── BRAIN LOAD: Baca brain.md & brain_customer dari Supabase ara_brain ──
+      try {
+        const brainRes = await supabase.from("ara_brain").select("key,value");
+        if (!brainRes.error && brainRes.data && brainRes.data.length > 0) {
+          const brainMap = Object.fromEntries(brainRes.data.map(r => [r.key, r.value]));
+          // Override localStorage dengan nilai dari DB (DB = sumber kebenaran)
+          if (brainMap.brain_md && typeof brainMap.brain_md === "string" && brainMap.brain_md.length > 10) {
+            setBrainMd(brainMap.brain_md);
+            _lsSave("brainMd", brainMap.brain_md);
+          }
+          if (brainMap.brain_customer && typeof brainMap.brain_customer === "string" && brainMap.brain_customer.length > 10) {
+            setBrainMdCustomer(brainMap.brain_customer);
+            _lsSave("brainMdCustomer", brainMap.brain_customer);
+          }
+          console.log("✅ ARA Brain loaded from Supabase — sync ke semua device");
+        }
+      } catch(e) { console.warn("ara_brain DB load failed, pakai localStorage:", e?.message); }
     };
 
     setDataLoading(true);
@@ -5611,7 +5629,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
             <div style={{ background:cs.ara+"15", borderBottom:"1px solid "+cs.ara+"33", padding:"16px 22px", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
               <div>
                 <div style={{ fontWeight:800, color:cs.ara, fontSize:16 }}>🧠 Edit Brain.md — Memori Permanen ARA</div>
-                <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>Tersimpan di sistem · Otomatis terbaca oleh semua LLM yang terkoneksi</div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>☁️ Tersimpan di Supabase · Sync ke semua device · Tidak hilang saat clear cache</div>
               </div>
               <button onClick={() => setModalBrainEdit(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:24, cursor:"pointer" }}>×</button>
             </div>
@@ -5634,7 +5652,23 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"9px 16px", borderRadius:8, cursor:"pointer", fontSize:12 }}>🔄 Reset ke Default</button>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setModalBrainEdit(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"9px 18px", borderRadius:8, cursor:"pointer", fontWeight:600 }}>Batal</button>
-                <button onClick={() => { showNotif("Brain.md tersimpan — ARA akan gunakan memori terbaru"); setModalBrainEdit(false); }}
+                <button onClick={async () => {
+                    showNotif("⏳ Menyimpan Brain.md ke Supabase...");
+                    try {
+                      const { error: brainErr } = await supabase.from("ara_brain").upsert(
+                        { key: "brain_md", value: brainMd, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() },
+                        { onConflict: "key" }
+                      );
+                      if (brainErr) throw brainErr;
+                      _lsSave("brainMd", brainMd);
+                      addAgentLog("BRAIN_SAVED", "Brain.md disimpan ke Supabase (" + brainMd.length + " karakter)", "SUCCESS");
+                      showNotif("✅ Brain.md tersimpan permanen di Supabase — sync ke semua device!");
+                    } catch(e) {
+                      _lsSave("brainMd", brainMd);
+                      showNotif("⚠️ Supabase gagal, tersimpan lokal: " + (e?.message||""));
+                    }
+                    setModalBrainEdit(false);
+                  }}
                   style={{ background:"linear-gradient(135deg,"+cs.ara+",#7c3aed)", border:"none", color:"#fff", padding:"9px 22px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>💾 Simpan Brain.md</button>
               </div>
             </div>
@@ -5671,7 +5705,23 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               </button>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setModalBrainCustomerEdit(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"9px 18px", borderRadius:8, cursor:"pointer", fontSize:13 }}>Batal</button>
-                <button onClick={() => { showNotif("Brain Customer tersimpan ✅"); setModalBrainCustomerEdit(false); }}
+                <button onClick={async () => {
+                    showNotif("⏳ Menyimpan Brain Customer ke Supabase...");
+                    try {
+                      const { error: bcErr } = await supabase.from("ara_brain").upsert(
+                        { key: "brain_customer", value: brainMdCustomer, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() },
+                        { onConflict: "key" }
+                      );
+                      if (bcErr) throw bcErr;
+                      _lsSave("brainMdCustomer", brainMdCustomer);
+                      addAgentLog("BRAIN_CUSTOMER_SAVED", "Brain Customer disimpan ke Supabase (" + brainMdCustomer.length + " karakter)", "SUCCESS");
+                      showNotif("✅ Brain Customer tersimpan permanen di Supabase — sync ke semua device!");
+                    } catch(e) {
+                      _lsSave("brainMdCustomer", brainMdCustomer);
+                      showNotif("⚠️ Supabase gagal, tersimpan lokal: " + (e?.message||""));
+                    }
+                    setModalBrainCustomerEdit(false);
+                  }}
                   style={{ background:"linear-gradient(135deg,#22c55e,#16a34a)", border:"none", color:"#fff", padding:"9px 22px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
                   💾 Simpan Brain Customer
                 </button>
