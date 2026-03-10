@@ -1399,20 +1399,19 @@ _Simpan pesan ini sebagai bukti pelunasan._`
 
     // GAP 1.5: Simpan ke technician_schedule untuk cegah double booking
     if (form.teknisi && form.date && form.time && timeEnd) {
-      const tek = teknisiData.find(t => t.name === form.teknisi);
-      if (tek?.id) {
-        const [h1,m1] = (form.time||"09:00").split(":");
-        const [h2,m2] = (timeEnd||"17:00").split(":");
-        await supabase.from("technician_schedule").insert({
-          teknisi_id: tek.id,
-          teknisi: form.teknisi,
-          order_id: newId,
-          date: form.date,
-          start_time: `${h1}:${m1}:00`,
-          end_time: `${h2}:${m2}:00`,
-          status: "ACTIVE"
-        }).then(({error:se}) => { if(se) addAgentLog("SCHEDULE_WARNING", "Schedule insert: "+se.message, "WARNING"); });
-      }
+      // Insert ke technician_schedule — field minimal agar kompatibel berbagai schema
+      try {
+        const schedPayload = {
+          order_id:  newId,
+          teknisi:   form.teknisi,
+          date:      form.date,
+          time_start: form.time||"09:00",
+          time_end:   timeEnd,
+          status:    "ACTIVE",
+        };
+        const { error: se } = await supabase.from("technician_schedule").insert(schedPayload);
+        if (se) addAgentLog("SCHEDULE_WARNING", "Schedule insert: "+se.message, "WARNING");
+      } catch(e) { /* technician_schedule opsional */ }
     }
 
     addAgentLog("ORDER_CREATED", `Order baru ${newId} — ${form.customer} (${form.service} ${form.units} unit)`, "SUCCESS");
@@ -2736,6 +2735,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,type:o.type||"",units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }}
                           style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
                       )}
+                      {currentUser?.role==="Owner" && (
+                        <button onClick={async()=>{
+                          if (!window.confirm(`🗑️ Hapus order ${o.id} — ${o.customer}?\n\nOrder yang sudah ada invoice TIDAK bisa dihapus.\nTindakan ini permanen!`)) return;
+                          if (o.invoice_id) { showNotif("❌ Tidak bisa hapus: order sudah punya invoice "+o.invoice_id); return; }
+                          const { error: delErr } = await supabase.from("orders").delete().eq("id", o.id);
+                          if (delErr) { showNotif("❌ Gagal hapus order: "+delErr.message); return; }
+                          // Hapus schedule juga
+                          try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch(_){}
+                          setOrdersData(prev => prev.filter(x => x.id !== o.id));
+                          addAgentLog("ORDER_DELETED", `Owner hapus order ${o.id} — ${o.customer} (${o.service})`, "WARNING");
+                          showNotif("✅ Order "+o.id+" dihapus permanen");
+                        }} title="Hapus order (Owner only)"
+                          style={{ background:"#ef444422", border:"1px solid #ef444444", color:"#ef4444", padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:700 }}>🗑️</button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -3530,6 +3543,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           )}
                           {!isTekRole && (
                             <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
+                          )}
+                          {currentUser?.role==="Owner" && !(["COMPLETED","PAID"].includes(o.status)) && (
+                            <button onClick={async()=>{
+                              if(!window.confirm(`🗑️ Hapus order ${o.id} — ${o.customer}?\nOrder COMPLETED/PAID tidak bisa dihapus.\nAksi ini tidak bisa dibatalkan!`)) return;
+                              const { error: delOrdErr } = await supabase.from("orders").delete().eq("id", o.id);
+                              if (delOrdErr) { showNotif("❌ Gagal hapus order: "+delOrdErr.message); return; }
+                              // Hapus schedule terkait
+                              try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch(_){}
+                              setOrdersData(prev => prev.filter(ord => ord.id !== o.id));
+                              addAgentLog("ORDER_DELETED", `Owner hapus order ${o.id} — ${o.customer} (${o.service})`, "WARNING");
+                              showNotif("🗑️ Order "+o.id+" berhasil dihapus");
+                            }} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }} title="Hapus order (Owner only)">🗑️</button>
                           )}
                           {isTekRole && (
                             <button onClick={() => { window.open("https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(o.address),"_blank"); }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>🗺 Maps</button>
