@@ -397,7 +397,7 @@ export default function ACleanWebApp() {
   const fotoInputRef = useRef();
 
   // ── New order / stok / customer form ──
-  const [newOrderForm,     setNewOrderForm]     = useState({ customer:"", phone:"", address:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
+  const [newOrderForm,     setNewOrderForm]     = useState({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
   const [newStokForm,      setNewStokForm]      = useState({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
   const [newTeknisiForm,   setNewTeknisiForm]   = useState({ name:"", role:"Teknisi", phone:"", skills:[] });
   const [modalAddCustomer, setModalAddCustomer] = useState(false);
@@ -1379,10 +1379,12 @@ _Simpan pesan ini sebagai bukti pelunasan._`
     // GAP 4: ID aman — timestamp ms + random 3 digit, tidak bergantung array.length
     const newId = "JOB" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
     const timeEnd = hitungJamSelesai(form.time||"09:00", form.service||"Cleaning", form.units||1);
+    // Cek customer existing by phone ATAU name (untuk customer_id)
+    const preExistCust = customersData.find(c => c.phone === form.phone || c.name === form.customer);
     const newOrder = {
       id:newId,
       customer: form.customer, phone: form.phone, address: form.address,
-      customer_id: customersData.find(c=>c.name===form.customer)?.id || null,
+      customer_id: preExistCust?.id || null,
       service: form.service, type: form.type, units: parseInt(form.units)||1,
       teknisi: form.teknisi, helper: form.helper||null,
       date: form.date, time: form.time, time_end: timeEnd, status:"CONFIRMED",
@@ -1416,21 +1418,52 @@ _Simpan pesan ini sebagai bukti pelunasan._`
 
     // Dispatch WA tidak lagi otomatis — gunakan tombol 📤 di daftar order
 
-    // GAP 5: Auto-upsert customer jika nomor HP baru
+    // GAP 5 FIX: Auto-upsert customer jika nomor HP baru — simpan ke Supabase dengan payload lengkap
     if (form.phone && form.customer) {
       const existing = customersData.find(c => c.phone === form.phone);
       if (!existing) {
+        // Payload lengkap sesuai schema tabel customers
+        const custId = "CUST" + Date.now().toString().slice(-8);
         const newCust = {
-          id: "CUST" + Date.now(),
-          name: form.customer, phone: form.phone,
-          address: form.address||"", area: form.area||"",
-          total_orders: 1, joined: form.date, last_service: form.date
+          id: custId,
+          name: form.customer,
+          phone: form.phone,
+          address: form.address || "",
+          area: form.area || "",
+          notes: "",
+          is_vip: false,
+          total_orders: 1,
+          joined: form.date || new Date().toISOString().slice(0,10),
+          last_service: form.date || new Date().toISOString().slice(0,10),
         };
+        // Update state lokal dulu (optimistic UI)
         setCustomersData(prev => [...prev, newCust]);
-        await supabase.from("customers").upsert(
-          {name:form.customer, phone:form.phone, address:form.address||"", area:form.area||""},
-          {onConflict:"phone", ignoreDuplicates:false}
-        ).catch(()=>{});
+        // Simpan ke Supabase — full payload, error ditampilkan (tidak ditelan)
+        const { error: custErr } = await supabase.from("customers").upsert(
+          newCust,
+          { onConflict: "phone", ignoreDuplicates: false }
+        );
+        if (custErr) {
+          addAgentLog("CUSTOMER_SAVE_ERROR", "Gagal simpan customer baru " + form.customer + ": " + custErr.message, "ERROR");
+          showNotif("⚠️ Order tersimpan, tapi customer gagal sync ke DB: " + custErr.message);
+        } else {
+          addAgentLog("CUSTOMER_AUTO_ADDED", "Customer baru otomatis ditambahkan: " + form.customer + " (" + form.phone + ")", "SUCCESS");
+          showNotif("✅ Order + Customer baru " + form.customer + " tersimpan ke database!");
+        }
+      } else {
+        // Update total_orders & last_service untuk customer existing
+        const updatedOrders = (existing.total_orders || 0) + 1;
+        setCustomersData(prev => prev.map(c =>
+          c.phone === form.phone
+            ? { ...c, total_orders: updatedOrders, last_service: form.date }
+            : c
+        ));
+        await supabase.from("customers").update({
+          total_orders: updatedOrders,
+          last_service: form.date
+        }).eq("phone", form.phone).catch(e =>
+          addAgentLog("CUSTOMER_UPDATE_WARN", "Gagal update total_orders: " + e.message, "WARNING")
+        );
       }
     }
     return newId;
@@ -5248,10 +5281,18 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               <button onClick={() => setModalOrder(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
             </div>
             <div style={{ display:"grid", gap:12 }}>
-              {[["Nama Customer","customer","text"],["Nomor HP","phone","text"],["Alamat Lengkap","address","text"],["Catatan","notes","text"]].map(([label,key,type]) => (
+              {[["Nama Customer","customer","text"],["Nomor HP","phone","text"],["Alamat Lengkap","address","text"],["Area / Kota","area","text"],["Catatan","notes","text"]].map(([label,key,type]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                  <input type={type} value={newOrderForm[key]||""} onChange={e => setNewOrderForm(f=>({...f,[key]:e.target.value}))}
+                  <input type={type} value={newOrderForm[key]||""} onChange={e => {
+                    const val = e.target.value;
+                    if (key === "phone") {
+                      const match = customersData.find(c => c.phone === val);
+                      if (match) {
+                        setNewOrderForm(f => ({...f, phone:val, customer:match.name||f.customer, address:match.address||f.address, area:match.area||f.area}));
+                      } else { setNewOrderForm(f => ({...f, phone:val})); }
+                    } else { setNewOrderForm(f => ({...f, [key]:val})); }
+                  }}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
@@ -5392,7 +5433,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:6 }}>
                 <button onClick={() => setModalOrder(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
-                <button onClick={() => { if(!newOrderForm.customer){showNotif("Nama customer wajib diisi");return;} if(!newOrderForm.teknisi){showNotif("Pilih teknisi dulu");return;} if(!newOrderForm.date){showNotif("Pilih tanggal dulu");return;} createOrder(newOrderForm); setModalOrder(false); setNewOrderForm({ customer:"", phone:"", address:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" }); }}
+                <button onClick={() => { if(!newOrderForm.customer){showNotif("Nama customer wajib diisi");return;} if(!newOrderForm.teknisi){showNotif("Pilih teknisi dulu");return;} if(!newOrderForm.date){showNotif("Pilih tanggal dulu");return;} createOrder(newOrderForm); setModalOrder(false); setNewOrderForm({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" }); }}
                   style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>✓ Buat Order</button>
               </div>
             </div>
