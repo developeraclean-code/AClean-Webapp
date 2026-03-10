@@ -3069,51 +3069,34 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                 </button>
                               </>
                             ) : (
-                              <button onClick={()=>{ setPlEditItem(r); setPlEditForm({type:r.type,price:r.price,service:r.service,notes:r.notes||"",is_active:r.is_active!==false}); }}
-                                style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
-                                ✏️ Edit
-                              </button>
-                              {/* Delete — Owner ONLY */}
-                              {currentUser?.role==="Owner" && (
-                                <button onClick={async()=>{
-                                  if(!(window.confirm||((m)=>true))(`Hapus "${r.type}" dari price list?`)) return;
-                                  const {error:delErr} = await supabase.from("price_list").delete().eq("id",r.id);
-                                  if(delErr) { showNotif("❌ Gagal hapus: "+delErr.message); return; }
-                                  setPriceListData(prev => prev.filter(x => x.id !== r.id));
-                                  addAgentLog("PRICELIST_DELETE",`Item "${r.type}" (${r.service}) dihapus oleh Owner`,"WARNING");
-                                  showNotif("🗑️ Item dihapus dari price list");
-                                }}
-                                style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
-                                🗑️
-                              </button>
-                              )}
+                              <>
+                                <button onClick={()=>{ setPlEditItem(r); setPlEditForm({type:r.type,price:r.price,service:r.service,notes:r.notes||"",is_active:r.is_active!==false}); }}
+                                  style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                                  ✏️ Edit
+                                </button>
+                                {/* Delete — Owner ONLY */}
+                                {currentUser?.role==="Owner" && (
+                                  <button onClick={async()=>{
+                                    if (!window.confirm || window.confirm(`Hapus harga "${r.type}"? Tidak bisa dibatalkan.`)) {
+                                      const { error: delErr } = await supabase.from("price_list").delete().eq("id", r.id);
+                                      if (delErr) {
+                                        showNotif("❌ Gagal hapus: "+delErr.message);
+                                      } else {
+                                        setPriceListData(prev => prev.filter(p => p.id !== r.id));
+                                        const remaining = priceListData.filter(p => p.id !== r.id && p.is_active !== false);
+                                        const newPL = { ...PRICE_LIST_DEFAULT };
+                                        remaining.forEach(row => { if (!newPL[row.service]) newPL[row.service] = {}; newPL[row.service][row.type] = Number(row.price)||0; });
+                                        PRICE_LIST = newPL;
+                                        addAgentLog("PRICELIST_DELETE", `Hapus "${r.type}" (${r.service})`, "WARNING");
+                                        showNotif("✅ Item dihapus dari database");
+                                      }
+                                    }
+                                  }} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                                    🗑️
+                                  </button>
+                                )}
+                              </>
                             )
-                          )}
-                          {/* Delete: Owner ONLY — terhubung ke Supabase */}
-                          {currentUser?.role==="Owner" && !isEdit && (
-                            <button onClick={async()=>{
-                              if (!window.confirm || window.confirm(`Hapus harga "${r.type}" (${r.service})? Tidak bisa dibatalkan.`)) {
-                                const { error: delErr } = await supabase.from("price_list").delete().eq("id", r.id);
-                                if (delErr) {
-                                  showNotif("❌ Gagal hapus: "+delErr.message);
-                                } else {
-                                  setPriceListData(prev => prev.filter(p => p.id !== r.id));
-                                  // Rebuild PRICE_LIST global
-                                  const remaining = priceListData.filter(p => p.id !== r.id && p.is_active !== false);
-                                  const newPL = { ...PRICE_LIST_DEFAULT };
-                                  remaining.forEach(row => {
-                                    if (!newPL[row.service]) newPL[row.service] = {};
-                                    newPL[row.service][row.type] = Number(row.price)||0;
-                                  });
-                                  PRICE_LIST = newPL;
-                                  addAgentLog("PRICELIST_DELETE", `Hapus "${r.type}" (${r.service})`, "WARNING");
-                                  showNotif("✅ Item harga dihapus dari database");
-                                }
-                              }
-                            }} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
-                              🗑️ Hapus
-                            </button>
-                          )}
                         </div>
                       </td>
                     </tr>
