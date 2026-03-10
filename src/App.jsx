@@ -2167,6 +2167,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const unpaidCount   = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
     const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && (i.sent||"").startsWith(bulanIni)).reduce((a,b) => a+b.total, 0);
     const lowStock      = inventoryData.filter(i => i.status === "CRITICAL" || i.status === "OUT").length;
+    const garansiKritisD = invoicesData.filter(inv => {
+      if (!inv.garansi_expires) return false;
+      const d = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+      return d >= 0 && d <= 7;
+    });
+    const garansiExpireSoon = invoicesData.filter(inv => {
+      if (!inv.garansi_expires) return false;
+      const d = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+      return d >= 0 && d <= 30;
+    }).sort((a,b) => a.garansi_expires.localeCompare(b.garansi_expires));
     const greeting      = role === "Owner" ? "Owner" : "Admin";
 
     return (
@@ -2192,12 +2202,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         {/* KPI Cards */}
         <div style={{ display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:14 }}>
           {[
-            { label:"Order Hari Ini",      value:todayOrders.length,          sub:`${todayOrders.filter(o=>o.status==="IN_PROGRESS").length} aktif · ${todayOrders.filter(o=>o.status==="COMPLETED").length} selesai`, color:cs.accent, icon:"📋" },
-            { label:"Invoice Unpaid",       value:unpaidCount,                 sub:"Perlu follow-up",     color:cs.yellow, icon:"🧾" },
-            { label:"Pendapatan Bln Ini",   value:fmt(totalRevBulanIni),        sub:"Invoice terbayar",    color:cs.green,  icon:"💰" },
-            { label:"Stok Kritis",          value:lowStock,                    sub:"Perlu restock",       color:cs.red,    icon:"📦" },
+            { label:"Order Hari Ini",      value:todayOrders.length,          sub:`${todayOrders.filter(o=>o.status==="IN_PROGRESS").length} aktif · ${todayOrders.filter(o=>o.status==="COMPLETED").length} selesai`, color:cs.accent, icon:"📋", onClick:()=>setActiveMenu("orders") },
+            { label:"Invoice Unpaid",       value:unpaidCount,                 sub:"Perlu follow-up",     color:cs.yellow, icon:"🧾", onClick:()=>{setActiveMenu("invoice");setInvoiceFilter("UNPAID");} },
+            { label:"Pendapatan Bln Ini",   value:fmt(totalRevBulanIni),        sub:"Invoice terbayar",    color:cs.green,  icon:"💰", onClick:()=>{setActiveMenu("invoice");setInvoiceFilter("PAID");} },
+            { label:"Stok Kritis",          value:lowStock,                    sub:"Perlu restock",       color:cs.red,    icon:"📦", onClick:()=>setActiveMenu("inventory") },
           ].map(kpi => (
-            <div key={kpi.label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18 }}>
+            <div key={kpi.label} onClick={kpi.onClick} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18, cursor:"pointer" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
                 <span style={{ fontSize:24 }}>{kpi.icon}</span>
                 <span style={{ fontSize:11, color:cs.muted }}>{kpi.sub}</span>
@@ -2207,6 +2217,60 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </div>
           ))}
         </div>
+        {/* ══ GAP 7: Garansi akan berakhir (≤30 hari) ══ */}
+        {garansiExpireSoon.length > 0 && (
+          <div style={{ background:cs.card, border:"1px solid #22d3ee44", borderRadius:14, padding:20 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+              <div style={{ fontWeight:700, fontSize:15, color:cs.text }}>🛡️ Monitor Garansi — {garansiExpireSoon.length} aktif</div>
+              <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("Garansi");}}
+                style={{ background:"#22d3ee22", border:"1px solid #22d3ee44", color:"#22d3ee", padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>Lihat Semua →</button>
+            </div>
+            <div style={{ display:"grid", gap:8 }}>
+              {garansiExpireSoon.slice(0,5).map(inv => {
+                const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+                const col = daysLeft <= 3 ? "#ef4444" : daysLeft <= 7 ? cs.yellow : "#22d3ee";
+                return (
+                  <div key={inv.id} style={{ background:cs.surface, border:"1px solid "+col+"33", borderRadius:10, padding:"10px 14px", display:"flex", alignItems:"center", gap:12 }}>
+                    <span style={{ fontSize:18 }}>{daysLeft<=3?"🚨":daysLeft<=7?"⚠️":"🛡️"}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontWeight:700, fontSize:13, color:cs.text }}>{inv.customer}</div>
+                      <div style={{ fontSize:11, color:cs.muted }}>{inv.service} · {inv.id}</div>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontWeight:800, fontSize:13, color:col }}>{daysLeft}h lagi</div>
+                      <div style={{ fontSize:10, color:cs.muted }}>{inv.garansi_expires}</div>
+                    </div>
+                    {daysLeft <= 7 && (
+                      <button onClick={()=>{
+                        const custPhone = inv.phone || customersData.find(c=>c.name===inv.customer)?.phone;
+                        if (!custPhone) { showNotif("⚠️ No HP customer tidak ditemukan"); return; }
+                        sendWA(custPhone,
+                          `Halo *${inv.customer}* 👋
+
+Garansi layanan *${inv.service}* dari AClean akan berakhir *${daysLeft} hari lagi* (${inv.garansi_expires}).
+
+Jika ada kendala AC Anda, segera hubungi kami sebelum masa garansi habis.
+
+Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
+— Tim AClean`
+                        );
+                        addAgentLog("GARANSI_REMINDER", `WA garansi dikirim ke ${inv.customer} (${daysLeft}h lagi)`, "SUCCESS");
+                        showNotif("✅ WA reminder garansi terkirim ke "+inv.customer);
+                      }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>
+                        📱 Ingatkan
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              {garansiExpireSoon.length > 5 && (
+                <div style={{ textAlign:"center", fontSize:12, color:cs.muted, padding:8 }}>
+                  +{garansiExpireSoon.length-5} garansi lainnya — <span style={{color:cs.accent,cursor:"pointer"}} onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("Garansi");}}>lihat semua</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Today orders */}
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
@@ -2664,7 +2728,35 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>
             📋 Order Masuk <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filtered.length})</span>
           </div>
-          <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (() => {
+              const todayUndispatched = ordersData.filter(o =>
+                o.date === TODAY && !o.dispatch &&
+                ["PENDING","CONFIRMED","DISPATCHED"].includes(o.status)
+              );
+              return todayUndispatched.length > 0 ? (
+                <button onClick={async () => {
+                  if (!window.confirm(`📤 Dispatch WA ke ${todayUndispatched.length} teknisi untuk job hari ini?
+
+Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
+                  let sukses = 0, gagal = 0;
+                  showNotif(`⏳ Mengirim WA ke ${todayUndispatched.length} teknisi...`);
+                  for (const o of todayUndispatched) {
+                    try {
+                      await sendDispatchWA(o);
+                      sukses++;
+                      await new Promise(r => setTimeout(r, 500)); // jeda 0.5s antar WA
+                    } catch(e) { gagal++; }
+                  }
+                  addAgentLog("BULK_DISPATCH", `Bulk dispatch: ${sukses} sukses, ${gagal} gagal — ${TODAY}`, sukses>0?"SUCCESS":"ERROR");
+                  showNotif(`✅ Bulk dispatch selesai: ${sukses} WA terkirim${gagal>0?", "+gagal+" gagal":""}`);
+                }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"9px 14px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12, display:"flex", alignItems:"center", gap:6 }}>
+                  📤 Dispatch Hari Ini <span style={{background:"#25D366",color:"#fff",borderRadius:99,padding:"1px 7px",fontSize:11}}>{todayUndispatched.length}</span>
+                </button>
+              ) : null;
+            })()}
+            <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
+          </div>
         </div>
         {/* Search bar */}
         <div style={{ position:"relative" }}>
@@ -2794,8 +2886,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   const renderInvoice = () => {
     // ── SIM-3+2: status filter + search + pagination ──
+    // ══ GAP 7: Warranty tracker — filter garansi aktif ══
+    const garansiAktif = invoicesData.filter(inv => {
+      if (!inv.garansi_expires) return false;
+      const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+      return daysLeft >= 0;
+    }).sort((a,b) => a.garansi_expires.localeCompare(b.garansi_expires));
+    const garansiKritis = garansiAktif.filter(inv => {
+      const d = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+      return d <= 7;
+    });
+
     let filteredInv = [...invoicesData];
-    if (invoiceFilter !== "Semua") filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
+    if (invoiceFilter === "Garansi") {
+      filteredInv = garansiAktif;
+    } else if (invoiceFilter !== "Semua") {
+      filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
+    }
     if (searchInvoice.trim()) {
       const q = searchInvoice.trim().toLowerCase();
       filteredInv = filteredInv.filter(inv =>
@@ -2834,14 +2941,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           ["OVERDUE", cs.red],
           ["PAID", cs.green],
           ["PENDING_APPROVAL", cs.accent],
+          ["Garansi", "#22d3ee"],
         ].map(([s, col]) => {
-          const cnt = s==="Semua" ? invoicesData.length : invoicesData.filter(i=>i.status===s).length;
+          const cnt = s==="Semua" ? invoicesData.length
+            : s==="Garansi" ? garansiAktif.length
+            : invoicesData.filter(i=>i.status===s).length;
+          const showBadge = s==="Garansi" && garansiKritis.length > 0;
           return (
             <button key={s} onClick={()=>{setInvoiceFilter(s);setInvoicePage(1);}}
               style={{ padding:"6px 14px", borderRadius:99, border:"1px solid "+(invoiceFilter===s?col:cs.border),
                 background:invoiceFilter===s?col+"22":cs.card, color:invoiceFilter===s?col:cs.muted,
-                cursor:"pointer", fontSize:12, fontWeight:invoiceFilter===s?700:500 }}>
-              {s==="Semua"?"Semua":s==="PENDING_APPROVAL"?"Approval":s} ({cnt})
+                cursor:"pointer", fontSize:12, fontWeight:invoiceFilter===s?700:500, position:"relative" }}>
+              {s==="Semua"?"Semua":s==="PENDING_APPROVAL"?"Approval":s==="Garansi"?"🛡️ Garansi":s} ({cnt})
+              {showBadge && <span style={{position:"absolute",top:-4,right:-4,background:"#ef4444",color:"#fff",borderRadius:99,fontSize:9,padding:"1px 5px",fontWeight:800}}>{garansiKritis.length}</span>}
             </button>
           );
         })}
@@ -2854,6 +2966,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:14 }}>{inv.id}</span>
                 <span style={{ fontSize:10, padding:"3px 8px", borderRadius:99, background:(statusColor[inv.status]||cs.muted)+"22", color:statusColor[inv.status]||cs.muted, border:"1px solid "+(statusColor[inv.status]||cs.muted)+"44", fontWeight:700 }}>{inv.status.replace(/_/g," ")}</span>
                 {inv.follow_up > 0 && <span style={{ fontSize:10, color:cs.yellow }}>Follow-up: {inv.follow_up}x</span>}
+                {inv.garansi_expires && (() => {
+                  const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+                  if (daysLeft < 0) return <span style={{fontSize:10,color:cs.muted,background:cs.surface,padding:"1px 6px",borderRadius:4}}>🔒 Garansi selesai</span>;
+                  if (daysLeft <= 7) return <span style={{fontSize:10,color:"#ef4444",background:"#ef444418",padding:"1px 6px",borderRadius:4,fontWeight:700}}>⚠️ Garansi {daysLeft}h lagi</span>;
+                  if (daysLeft <= 30) return <span style={{fontSize:10,color:cs.yellow,background:cs.yellow+"18",padding:"1px 6px",borderRadius:4}}>🛡️ Garansi {daysLeft}h</span>;
+                  return <span style={{fontSize:10,color:cs.green,background:cs.green+"18",padding:"1px 6px",borderRadius:4}}>✅ Garansi {daysLeft}h</span>;
+                })()}
               </div>
               <div style={{ fontWeight:800, fontSize:18, color:cs.text, fontFamily:"monospace" }}>{fmt(inv.total)}</div>
             </div>
@@ -6929,31 +7048,52 @@ Silakan buat invoice dari ARA Chat 👆`;
             }
           }
 
-          // GAP 6 — Auto-deduct inventory dari material yang dipakai
+          // ══ GAP 3 FIX: Auto-deduct stok — direct DB update per material ══
           if (laporanMaterials.length > 0) {
-            deductInventory(laporanMaterials);
-            // Deduct di Supabase juga
-            laporanMaterials.forEach(mat => {
-              // ── GAP-02 FIX: deduct_inventory RPC + manual fallback jika RPC belum ada ──
-            supabase.rpc("deduct_inventory", {item_name: mat.nama, qty: parseFloat(mat.jumlah)||0})
-              .then(({error:rpcErr}) => {
-                if (rpcErr) {
-                  // RPC belum dibuat di Supabase — fallback ke update manual
-                  supabase.from("inventory").select("id,code,stock,min_alert,reorder")
-                    .ilike("name", mat.nama).limit(1)
-                    .then(({data:items}) => {
-                      if (items && items.length > 0) {
-                        const itm = items[0];
-                        const newStk = Math.max(0, (itm.stock||0) - (parseFloat(mat.jumlah)||0));
-                        const newSts = newStk===0?"OUT":newStk<=(itm.min_alert||1)?"CRITICAL":newStk<=(itm.reorder||3)?"WARNING":"OK";
-                        supabase.from("inventory").update({stock:newStk, status:newSts}).eq("id", itm.id)
-                          .then(()=>{ addAgentLog("STOCK_DEDUCTED", `${mat.nama}: -${mat.jumlah} (manual fallback, sisa ${newStk})`, "SUCCESS"); });
-                      }
-                    });
+            deductInventory(laporanMaterials); // update state lokal
+            let deductedCount = 0;
+            let lowStockWarnings = [];
+            for (const mat of laporanMaterials) {
+              const qty = parseFloat(mat.jumlah) || 0;
+              if (!mat.nama || qty <= 0) continue;
+              try {
+                // Cari item di inventory berdasarkan nama (case-insensitive)
+                const { data: items } = await supabase.from("inventory")
+                  .select("id,name,code,stock,min_alert,reorder,unit")
+                  .ilike("name", mat.nama.trim()).limit(1);
+                if (items && items.length > 0) {
+                  const itm = items[0];
+                  const newStk = Math.max(0, (itm.stock||0) - qty);
+                  const newSts = newStk===0?"OUT":newStk<=(itm.min_alert||1)?"CRITICAL":newStk<=(itm.reorder||3)?"WARNING":"OK";
+                  await supabase.from("inventory").update({
+                    stock: newStk, status: newSts, updated_at: new Date().toISOString()
+                  }).eq("id", itm.id);
+                  deductedCount++;
+                  addAgentLog("STOCK_DEDUCTED", `${itm.name}: -${qty} ${itm.unit||""} (sisa: ${newStk}) — job ${laporanModal.id}`, "SUCCESS");
+                  // Kumpulkan warning stok rendah
+                  if (newSts === "CRITICAL" || newSts === "OUT") {
+                    lowStockWarnings.push(`${itm.name} sisa ${newStk}`);
+                  }
+                } else {
+                  addAgentLog("STOCK_NOT_FOUND", `Material "${mat.nama}" tidak ditemukan di inventory`, "WARNING");
                 }
-              });
-            });
-            addAgentLog("MATERIAL_DEDUCT", `${laporanMaterials.length} material dipakai di ${laporanModal.id}`, "SUCCESS");
+              } catch(e) {
+                addAgentLog("STOCK_DEDUCT_ERR", `Gagal deduct ${mat.nama}: ${e?.message}`, "ERROR");
+              }
+            }
+            addAgentLog("MATERIAL_DEDUCT", `${deductedCount}/${laporanMaterials.length} material berhasil dideduct — job ${laporanModal.id}`, "SUCCESS");
+            // Notif Owner jika ada stok kritis
+            if (lowStockWarnings.length > 0) {
+              showNotif("⚠️ Stok hampir habis: " + lowStockWarnings.join(", ") + " — segera restock!");
+              const ownerAccs = userAccounts.filter(u => u.role==="Owner");
+              ownerAccs.forEach(u => { if(u.phone) sendWA(u.phone,
+                `⚠️ *Stok Material Kritis*
+Setelah job ${laporanModal.id}:
+${lowStockWarnings.map(w=>"• "+w).join("
+")}
+Segera restock. — ARA AClean`
+              ); });
+            }
           }
 
           // GAP 2 — Auto-generate invoice dengan price list
@@ -6965,6 +7105,9 @@ Silakan buat invoice dari ARA Chat 👆`;
           const today2 = new Date().toISOString().slice(0,10);
           const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
           const newInvoiceId = "INV-" + today2.replace(/-/g,"").slice(0,8) + "-" + invSeq;
+          // Hitung tanggal garansi (30 hari untuk Cleaning, 90 hari untuk Install)
+          const garansiDays = laporanModal.service==="Install" ? 90 : laporanModal.service==="Repair" ? 60 : 30;
+          const garansiExpires = new Date(Date.now() + garansiDays*24*60*60*1000).toISOString().slice(0,10);
           const newInvoice = {
             id: newInvoiceId,
             job_id: laporanModal.id,
@@ -6977,6 +7120,9 @@ Silakan buat invoice dari ARA Chat 👆`;
             dadakan: 0,
             total: laborTotal + matTotal,
             status: "PENDING_APPROVAL",
+            garansi_days: garansiDays,
+            garansi_expires: garansiExpires,
+            created_at: new Date().toISOString(),
           };
           // ── GAP-13 FIX: Auto-approve invoice Rp 0 (Complain garansi) ──
           if (newInvoice.total === 0 && laporanModal?.service === "Complain") {
@@ -7012,13 +7158,31 @@ Silakan buat invoice dari ARA Chat 👆`;
           }
           addAgentLog("INVOICE_CREATED", `Invoice ${newInvoiceId} dibuat dari laporan ${laporanModal.id} — ${fmt(newInvoice.total)} — menunggu approval Owner`, "SUCCESS");
 
-          // Notif WA ke Owner bahwa laporan + invoice menunggu approval
-          const ownerMsg = `📝 Laporan baru masuk dari ${laporanModal.teknisi}\n\n🔧 ${laporanModal.service} - ${laporanModal.customer}\n💰 Invoice: ${fmt(newInvoice.total)}\n\nMohon approve invoice ${newInvoiceId} di sistem. — ARA`;
-          fetch("/api/send-wa",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:"6281299898937",message:ownerMsg})}).catch(()=>{});
+          // ══ GAP 5 FIX: WA notif ke SEMUA Owner dengan detail invoice ══
+          const ownerAccounts = userAccounts.filter(u => u.role==="Owner");
+          const ownerWAMsg = `🔔 *Invoice Menunggu Approval*
+
+📋 Job: *${laporanModal.id}*
+👤 Customer: ${laporanModal.customer}
+🔧 Layanan: ${laporanModal.service} — ${laporanUnits.length} unit
+👷 Teknisi: ${laporanModal.teknisi}${laporanModal.helper?" + "+laporanModal.helper:""}
+
+💰 *Total: ${fmt(newInvoice.total)}*
+   • Jasa: ${fmt(newInvoice.labor)}
+   • Material: ${fmt(newInvoice.material)}
+
+🧾 Invoice: *${newInvoiceId}*
+Silakan approve di menu Invoice. — ARA`;
+          ownerAccounts.forEach(u => { if(u.phone) sendWA(u.phone, ownerWAMsg); });
+          // Fallback ke nomor hardcode jika tidak ada Owner di userAccounts
+          if (ownerAccounts.length === 0) {
+            fetch("/api/send-wa",{method:"POST",headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({phone:"6281299898937",message:ownerWAMsg})}).catch(()=>{});
+          }
 
           setLaporanSubmitted(true);
           pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
-          showNotif(`✅ Laporan ${laporanModal.id} (${laporanUnits.length} unit) terkirim! Invoice ${newInvoiceId} dibuat.`);
+          showNotif(`✅ Laporan ${laporanModal.id} terkirim! Invoice ${newInvoiceId} (${fmt(newInvoice.total)}) dibuat — menunggu approval Owner.`);
         };
 
         const tagStyle = (active, color) => ({
