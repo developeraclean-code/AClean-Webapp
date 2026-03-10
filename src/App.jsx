@@ -7086,13 +7086,8 @@ Silakan buat invoice dari ARA Chat 👆`;
             if (lowStockWarnings.length > 0) {
               showNotif("⚠️ Stok hampir habis: " + lowStockWarnings.join(", ") + " — segera restock!");
               const ownerAccs = userAccounts.filter(u => u.role==="Owner");
-              ownerAccs.forEach(u => { if(u.phone) sendWA(u.phone,
-                `⚠️ *Stok Material Kritis*
-Setelah job ${laporanModal.id}:
-${lowStockWarnings.map(w=>"• "+w).join("
-")}
-Segera restock. — ARA AClean`
-              ); });
+              const lowStockMsg = "⚠️ *Stok Material Kritis*\nSetelah job " + laporanModal.id + ":\n" + lowStockWarnings.map(w => "• " + w).join("\n") + "\nSegera restock. — ARA AClean";
+              ownerAccs.forEach(u => { if(u.phone) sendWA(u.phone, lowStockMsg); });
             }
           }
 
