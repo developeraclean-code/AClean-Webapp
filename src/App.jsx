@@ -3513,6 +3513,8 @@ _Laporan masuk setelah pekerjaan selesai._`;
         )}
           </>
         )}
+      </div>
+    );
   };
 
 
