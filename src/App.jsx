@@ -1427,11 +1427,15 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       if (!existing) {
         // ── Customer BARU: insert ke Supabase tanpa kirim `id` ──
         // Biarkan DB generate id-nya sendiri (menghindari type conflict)
+        // Validasi: phone wajib ada (UNIQUE NOT NULL di DB)
+        if (!form.phone || form.phone.trim().length < 5) {
+          addAgentLog("CUSTOMER_SKIP", "Customer " + form.customer + " tidak disimpan: no HP kosong", "WARNING");
+        } else {
         const insertPayload = {
-          name:          form.customer,
-          phone:         form.phone,
-          address:       form.address  || "",
-          area:          form.area     || "",
+          name:          form.customer.trim(),
+          phone:         form.phone.trim(),
+          address:       (form.address  || "").trim(),
+          area:          (form.area     || "").trim(),
           notes:         "",
           is_vip:        false,
           total_orders:  1,
@@ -1479,12 +1483,15 @@ _Simpan pesan ini sebagai bukti pelunasan._`
             ? { ...c, total_orders: updatedOrders, last_service: orderDate }
             : c
         ));
-        await supabase.from("customers")
-          .update({ total_orders: updatedOrders, last_service: orderDate })
-          .eq("phone", form.phone)
-          .catch(e => addAgentLog("CUSTOMER_UPDATE_WARN",
-            "Gagal update total_orders: " + e.message, "WARNING"));
+        try {
+          await supabase.from("customers")
+            .update({ total_orders: updatedOrders, last_service: orderDate })
+            .eq("phone", form.phone);
+        } catch(e) {
+          addAgentLog("CUSTOMER_UPDATE_WARN", "Gagal update total_orders: " + (e?.message||""), "WARNING");
+        }
       }
+      } // end if phone valid
     }
     return newId;
   };
@@ -1894,9 +1901,11 @@ _Simpan pesan ini sebagai bukti pelunasan._`
                 setCustomersData(prev => prev.map(c =>
                   c.phone === newOrd.phone ? { ...c, total_orders: (c.total_orders||0)+1, last_service: newOrd.date } : c
                 ));
-                await supabase.from("customers").update({
-                  total_orders: (existingCust.total_orders||0)+1, last_service: newOrd.date
-                }).eq("phone", newOrd.phone).catch(()=>{});
+                try {
+                  await supabase.from("customers").update({
+                    total_orders: (existingCust.total_orders||0)+1, last_service: newOrd.date
+                  }).eq("phone", newOrd.phone);
+                } catch(e) { console.warn("Customer update skip:", e?.message); }
                 ar += "\n👤 *Customer existing: " + newOrd.customer + " (order ke-" + ((existingCust.total_orders||0)+1) + ")*";
               }
             }
@@ -6444,19 +6453,23 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                   const {error:eoErr} = await supabase.from("orders").update(dbUpd).eq("id",editOrderItem.id);
           // ── GAP-10 FIX: Hapus schedule lama & insert baru setelah edit order ──
           if (!eoErr) {
-            await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id).catch(()=>{});
+            // Hapus schedule lama — gunakan try/catch, bukan .catch() langsung
+            try {
+              await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id);
+            } catch(e) { /* schedule tabel opsional, skip jika belum ada */ }
             if (editOrderForm.teknisi && editOrderForm.date) {
-              const dur = editOrderForm.service==="Install" ? 240 : editOrderForm.service==="Repair" ? 120 : 60;
-              await supabase.from("technician_schedule").insert({
-                order_id: editOrderItem.id,
-                teknisi: editOrderForm.teknisi,
-                date: editOrderForm.date,
-                time_start: editOrderForm.time||"09:00",
-                time_end: editOrderForm.time_end||(editOrderForm.time||"09:00"),
-                duration_min: dur * (parseInt(editOrderForm.units)||1),
-                status: "ACTIVE",
-              }).catch(()=>{});
-              addAgentLog("SCHEDULE_SYNCED", `Schedule diupdate untuk ${editOrderItem.id} setelah edit`, "SUCCESS");
+              const timeEnd2 = hitungJamSelesai(editOrderForm.time||"09:00", editOrderForm.service||"Cleaning", editOrderForm.units||1);
+              try {
+                await supabase.from("technician_schedule").insert({
+                  order_id: editOrderItem.id,
+                  teknisi:   editOrderForm.teknisi,
+                  date:      editOrderForm.date,
+                  time_start: editOrderForm.time||"09:00",
+                  time_end:   timeEnd2,
+                  status:    "ACTIVE",
+                });
+                addAgentLog("SCHEDULE_SYNCED", `Schedule diupdate untuk ${editOrderItem.id} setelah edit`, "SUCCESS");
+              } catch(e) { /* skip */ }
             }
           }
                   if(eoErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+eoErr.message);
@@ -6920,7 +6933,7 @@ Silakan buat invoice dari ARA Chat 👆`;
             newInvoice.status = "PAID";   // Complain garansi = langsung PAID karena Rp 0
             newInvoice.paid_at = new Date().toISOString();
             // Update order juga
-            supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id).catch(()=>{});
+            supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id).then(()=>{}).catch(()=>{}); // fire-and-forget
             addAgentLog("GARANSI_AUTO_APPROVE", `Invoice ${newInvoice.id} Rp 0 (Complain garansi) auto-approved`, "SUCCESS");
           }
           setInvoicesData(prev => [...prev, newInvoice]);
