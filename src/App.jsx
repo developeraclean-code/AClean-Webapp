@@ -3058,7 +3058,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           {/* Edit: Admin & Owner */}
                           {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
                             isEdit ? (
-                              <>
+                              <div style={{display:"flex",gap:6}}>
                                 <button onClick={handleSavePrice}
                                   style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
                                   💾 Simpan
@@ -3067,27 +3067,24 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                   style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>
                                   Batal
                                 </button>
-                              </>
+                              </div>
                             ) : (
-                              <>
+                              <div style={{display:"flex",gap:6}}>
                                 <button onClick={()=>{ setPlEditItem(r); setPlEditForm({type:r.type,price:r.price,service:r.service,notes:r.notes||"",is_active:r.is_active!==false}); }}
                                   style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                                   ✏️ Edit
                                 </button>
-                                {/* Delete — Owner ONLY */}
                                 {currentUser?.role==="Owner" && (
                                   <button onClick={async()=>{
-                                    if (!window.confirm || window.confirm(`Hapus harga "${r.type}"? Tidak bisa dibatalkan.`)) {
+                                    if (!window.confirm || window.confirm(`Hapus "${r.type}"? Tidak bisa dibatalkan.`)) {
                                       const { error: delErr } = await supabase.from("price_list").delete().eq("id", r.id);
-                                      if (delErr) {
-                                        showNotif("❌ Gagal hapus: "+delErr.message);
-                                      } else {
+                                      if (delErr) { showNotif("❌ Gagal hapus: "+delErr.message); }
+                                      else {
                                         setPriceListData(prev => prev.filter(p => p.id !== r.id));
-                                        const remaining = priceListData.filter(p => p.id !== r.id && p.is_active !== false);
                                         const newPL = { ...PRICE_LIST_DEFAULT };
-                                        remaining.forEach(row => { if (!newPL[row.service]) newPL[row.service] = {}; newPL[row.service][row.type] = Number(row.price)||0; });
+                                        priceListData.filter(p=>p.id!==r.id&&p.is_active!==false).forEach(row => { if(!newPL[row.service]) newPL[row.service]={}; newPL[row.service][row.type]=Number(row.price)||0; });
                                         PRICE_LIST = newPL;
-                                        addAgentLog("PRICELIST_DELETE", `Hapus "${r.type}" (${r.service})`, "WARNING");
+                                        addAgentLog("PRICELIST_DELETE",`Hapus "${r.type}" (${r.service})`,"WARNING");
                                         showNotif("✅ Item dihapus dari database");
                                       }
                                     }
@@ -3095,7 +3092,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                     🗑️
                                   </button>
                                 )}
-                              </>
+                              </div>
                             )
                         </div>
                       </td>
