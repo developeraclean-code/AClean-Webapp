@@ -1,12 +1,26 @@
 {
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ],
   "crons": [
     {
       "path": "/api/cron-reminder",
       "schedule": "0 10 * * 1-6"
     }
-  ]
+  ],
+  "functions": {
+    "api/upload-foto.js": {
+      "maxDuration": 30
+    },
+    "api/ara-chat.js": {
+      "maxDuration": 60
+    }
+  }
 }
