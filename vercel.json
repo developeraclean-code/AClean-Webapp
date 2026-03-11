@@ -20,6 +20,9 @@
       "maxDuration": 30,
       "memory": 512
     },
+    "api/foto.js": {
+      "maxDuration": 10
+    },
     "api/ara-chat.js": {
       "maxDuration": 60
     }
