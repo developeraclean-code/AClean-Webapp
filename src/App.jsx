@@ -5844,7 +5844,10 @@ Order yang sudah ada tidak terpengaruh.`)) return;
             <div style={{ background:cs.ara+"15", borderBottom:"1px solid "+cs.ara+"33", padding:"16px 22px", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
               <div>
                 <div style={{ fontWeight:800, color:cs.ara, fontSize:16 }}>🧠 Edit Brain.md — Memori Permanen ARA</div>
-                <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>☁️ Tersimpan di Supabase · Sync ke semua device · Tidak hilang saat clear cache</div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>
+                  {localStorage.getItem("aclean_brainMd") ? "💾 Backup lokal: ✅" : "💾 Backup lokal: ✗"}&nbsp;·&nbsp;
+                  ☁️ Supabase: tersimpan permanen · Sync semua device
+                </div>
               </div>
               <button onClick={() => setModalBrainEdit(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:24, cursor:"pointer" }}>×</button>
             </div>
@@ -5869,18 +5872,36 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 <button onClick={() => setModalBrainEdit(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"9px 18px", borderRadius:8, cursor:"pointer", fontWeight:600 }}>Batal</button>
                 <button onClick={async () => {
                     showNotif("⏳ Menyimpan Brain.md ke Supabase...");
+                    // Selalu simpan ke localStorage dulu sebagai backup instan
+                    _lsSave("brainMd", brainMd);
+                    let dbOk = false;
+                    // Attempt 1: upsert (insert or update on conflict)
                     try {
-                      const { error: brainErr } = await supabase.from("ara_brain").upsert(
-                        { key: "brain_md", value: brainMd, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() },
-                        { onConflict: "key" }
-                      );
-                      if (brainErr) throw brainErr;
-                      _lsSave("brainMd", brainMd);
-                      addAgentLog("BRAIN_SAVED", "Brain.md disimpan ke Supabase (" + brainMd.length + " karakter)", "SUCCESS");
-                      showNotif("✅ Brain.md tersimpan permanen di Supabase — sync ke semua device!");
+                      const payload = { key: "brain_md", value: brainMd, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() };
+                      const { error: e1 } = await supabase.from("ara_brain").upsert(payload, { onConflict: "key" });
+                      if (!e1) { dbOk = true; }
+                      else {
+                        // Attempt 2: coba UPDATE saja (jika row sudah ada)
+                        const { error: e2 } = await supabase.from("ara_brain")
+                          .update({ value: brainMd, updated_by: currentUser?.name||"Owner", updated_at: new Date().toISOString() })
+                          .eq("key", "brain_md");
+                        if (!e2) { dbOk = true; }
+                        else {
+                          // Attempt 3: INSERT baru (jika row belum ada)
+                          const { error: e3 } = await supabase.from("ara_brain")
+                            .insert({ key: "brain_md", value: brainMd, updated_by: currentUser?.name||"Owner" });
+                          if (!e3) dbOk = true;
+                          else throw new Error("Upsert: "+e1.message+" | Update: "+e2.message+" | Insert: "+e3.message);
+                        }
+                      }
                     } catch(e) {
-                      _lsSave("brainMd", brainMd);
-                      showNotif("⚠️ Supabase gagal, tersimpan lokal: " + (e?.message||""));
+                      showNotif("⚠️ DB error: " + (e?.message||"") + " — Tersimpan di localStorage saja. Jalankan fix_ara_brain_table.sql di Supabase.");
+                      addAgentLog("BRAIN_SAVE_ERROR", "Brain.md gagal ke DB: "+(e?.message||""), "ERROR");
+                      setModalBrainEdit(false); return;
+                    }
+                    if (dbOk) {
+                      addAgentLog("BRAIN_SAVED", "Brain.md disimpan ke Supabase (" + brainMd.length + " karakter)", "SUCCESS");
+                      showNotif("✅ Brain.md tersimpan permanen di Supabase + localStorage!");
                     }
                     setModalBrainEdit(false);
                   }}
@@ -5922,18 +5943,32 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 <button onClick={() => setModalBrainCustomerEdit(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"9px 18px", borderRadius:8, cursor:"pointer", fontSize:13 }}>Batal</button>
                 <button onClick={async () => {
                     showNotif("⏳ Menyimpan Brain Customer ke Supabase...");
+                    _lsSave("brainMdCustomer", brainMdCustomer);
+                    let dbOk = false;
                     try {
-                      const { error: bcErr } = await supabase.from("ara_brain").upsert(
-                        { key: "brain_customer", value: brainMdCustomer, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() },
-                        { onConflict: "key" }
-                      );
-                      if (bcErr) throw bcErr;
-                      _lsSave("brainMdCustomer", brainMdCustomer);
-                      addAgentLog("BRAIN_CUSTOMER_SAVED", "Brain Customer disimpan ke Supabase (" + brainMdCustomer.length + " karakter)", "SUCCESS");
-                      showNotif("✅ Brain Customer tersimpan permanen di Supabase — sync ke semua device!");
+                      const payload = { key: "brain_customer", value: brainMdCustomer, updated_by: currentUser?.name||"Owner", updated_at: new Date().toISOString() };
+                      const { error: e1 } = await supabase.from("ara_brain").upsert(payload, { onConflict: "key" });
+                      if (!e1) { dbOk = true; }
+                      else {
+                        const { error: e2 } = await supabase.from("ara_brain")
+                          .update({ value: brainMdCustomer, updated_by: currentUser?.name||"Owner", updated_at: new Date().toISOString() })
+                          .eq("key", "brain_customer");
+                        if (!e2) { dbOk = true; }
+                        else {
+                          const { error: e3 } = await supabase.from("ara_brain")
+                            .insert({ key: "brain_customer", value: brainMdCustomer, updated_by: currentUser?.name||"Owner" });
+                          if (!e3) dbOk = true;
+                          else throw new Error("Upsert: "+e1.message+" | Update: "+e2.message+" | Insert: "+e3.message);
+                        }
+                      }
                     } catch(e) {
-                      _lsSave("brainMdCustomer", brainMdCustomer);
-                      showNotif("⚠️ Supabase gagal, tersimpan lokal: " + (e?.message||""));
+                      showNotif("⚠️ DB error: " + (e?.message||"") + " — Tersimpan lokal. Jalankan fix_ara_brain_table.sql di Supabase.");
+                      addAgentLog("BRAIN_CUST_SAVE_ERROR", "Brain Customer gagal ke DB: "+(e?.message||""), "ERROR");
+                      setModalBrainCustomerEdit(false); return;
+                    }
+                    if (dbOk) {
+                      addAgentLog("BRAIN_CUSTOMER_SAVED", "Brain Customer disimpan ke Supabase (" + brainMdCustomer.length + " karakter)", "SUCCESS");
+                      showNotif("✅ Brain Customer tersimpan permanen di Supabase + localStorage!");
                     }
                     setModalBrainCustomerEdit(false);
                   }}
@@ -6833,54 +6868,62 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
         const toggleArr = (arr, val) => arr.includes(val)?arr.filter(x=>x!==val):[...arr,val];
 
         const handleFotoUpload = async (e) => {
-          const files = Array.from(e.target.files||[]).slice(0,10-laporanFotos.length);
-          showNotif(`⏳ Mengkompresi ${files.length} foto...`);
+          const files = Array.from(e.target.files||[]).slice(0, 10 - laporanFotos.length);
+          if (files.length === 0) return;
+          showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2...`);
           const compressed = await Promise.all(files.map(compressImg));
           const reportId = laporanModal?.id || "tmp";
 
-          const uploaded = await Promise.all(compressed.map(async (dataUrl, i) => {
-            const localId = Date.now()+i;
-            const label = `Foto ${laporanFotos.length+i+1}`;
-            let url = null;
+          // Upload satu per satu (bukan parallel) agar tidak timeout
+          const uploaded = [];
+          for (let i = 0; i < compressed.length; i++) {
+            const dataUrl  = compressed[i];
+            const localId  = Date.now() + i;
+            const label    = `Foto ${laporanFotos.length + i + 1}`;
+            let url        = null;
+            let errMsg     = "";
 
-            // ── Coba R2 via backend dulu ──
+            // ── SATU JALUR: R2 via /api/upload-foto ──
             try {
               const r = await fetch("/api/upload-foto", {
-                method:"POST", headers:{"Content-Type":"application/json"},
-                body: JSON.stringify({base64:dataUrl, filename:`foto_${localId}.jpg`, reportId})
+                method:  "POST",
+                headers: { "Content-Type": "application/json" },
+                body:    JSON.stringify({
+                  base64:   dataUrl,
+                  filename: `foto_${localId}.jpg`,
+                  reportId,
+                  mimeType: "image/jpeg",
+                }),
               });
               const d = await r.json();
-              if (d.success && d.url) { url = d.url; }
-            } catch(_) {}
-
-            // ── Fallback: Supabase Storage (jika R2 belum dikonfigurasi) ──
-            if (!url) {
-              try {
-                const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-                const byteStr = atob(base64Data);
-                const arr = new Uint8Array(byteStr.length);
-                for (let j=0; j<byteStr.length; j++) arr[j] = byteStr.charCodeAt(j);
-                const blob = new Blob([arr], {type:"image/jpeg"});
-                const path = `reports/${reportId}/${localId}.jpg`;
-                const { data: upData, error: upErr } = await supabase.storage
-                  .from("laporan-fotos")
-                  .upload(path, blob, {contentType:"image/jpeg", upsert:true});
-                if (!upErr && upData) {
-                  const { data: { publicUrl } } = supabase.storage
-                    .from("laporan-fotos")
-                    .getPublicUrl(path);
-                  url = publicUrl;
-                }
-              } catch(_) {}
+              if (d.success && d.url) {
+                url = d.url;
+              } else {
+                errMsg = d.error || "Upload gagal";
+                console.error("R2 upload error:", errMsg);
+              }
+            } catch (err) {
+              errMsg = err.message;
+              console.error("R2 fetch error:", err);
             }
 
-            return { id:localId, label, data_url:dataUrl, url };
-          }));
+            uploaded.push({ id: localId, label, data_url: dataUrl, url, errMsg });
+          }
 
-          setLaporanFotos(prev=>[...prev,...uploaded]);
-          const saved = uploaded.filter(f=>f.url).length;
-          showNotif(`✅ ${files.length} foto dikompresi (70%). ${saved} tersimpan ke cloud.`);
-          e.target.value="";
+          setLaporanFotos(prev => [...prev, ...uploaded]);
+          const saved  = uploaded.filter(f => f.url).length;
+          const failed = uploaded.filter(f => !f.url).length;
+
+          if (saved === uploaded.length) {
+            showNotif(`✅ ${saved} foto tersimpan di Cloudflare R2!`);
+          } else if (saved > 0) {
+            showNotif(`⚠️ ${saved} foto berhasil, ${failed} gagal. Hapus foto ⏳ lalu upload ulang.`);
+          } else {
+            // Semua gagal — tampilkan error detail
+            const firstErr = uploaded[0]?.errMsg || "unknown error";
+            showNotif(`❌ Upload gagal: ${firstErr}. Cek koneksi & coba lagi.`);
+          }
+          e.target.value = "";
         };
 
         const submitLaporan = async () => {
