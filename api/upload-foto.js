@@ -1,7 +1,5 @@
-// api/upload-foto.js
-// POST /api/upload-foto { base64, filename, reportId, mimeType? }
-// Upload foto laporan ke Cloudflare R2 via AWS4 Signature
-// FIX: hapus Content-Length & Host dari headers (reserved di fetch API)
+// api/upload-foto.js — v3 FIXED
+// POST { base64, filename, reportId, mimeType? }
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -11,7 +9,8 @@ export default async function handler(req, res) {
   if (req.method !== "POST")   return res.status(405).json({ error: "Method not allowed" });
 
   const { base64, filename, reportId, mimeType = "image/jpeg" } = req.body || {};
-  if (!base64 || !filename) return res.status(400).json({ error: "base64 dan filename wajib" });
+  if (!base64 || !filename)
+    return res.status(400).json({ error: "base64 dan filename wajib" });
 
   const acctId = (process.env.R2_ACCOUNT_ID || "").trim();
   const accKey = (process.env.R2_ACCESS_KEY  || "").trim();
@@ -23,90 +22,68 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "R2 credentials belum diset di Vercel env vars" });
 
   try {
-    // Decode base64 → Buffer
-    const raw  = base64.replace(/^data:[^;]+;base64,/, "");
-    const buf  = Buffer.from(raw, "base64");
-
+    // Decode base64
+    const raw = base64.replace(/^data:[^;]+;base64,/, "");
+    const buf = Buffer.from(raw, "base64");
     if (buf.length === 0)
-      return res.status(400).json({ error: "File kosong setelah decode base64" });
+      return res.status(400).json({ error: "File kosong setelah decode" });
 
-    // Build object key
+    // Object key
     const safe   = (filename || "foto.jpg").replace(/[^a-zA-Z0-9._-]/g, "_");
     const folder = reportId ? `reports/${reportId}` : "uploads";
     const key    = `${folder}/${Date.now()}_${safe}`;
 
-    // AWS4 Signature — TANPA Content-Length & Host di SignedHeaders
-    // (kedua header itu reserved di fetch API, tidak bisa di-set manual)
+    // AWS4 Signature
     const { createHmac, createHash } = await import("crypto");
     const hmac = (k, d) => createHmac("sha256", k).update(d).digest();
     const hash = (d)    => createHash("sha256").update(d).digest("hex");
 
-    const now    = new Date();
-    const dts    = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "") + "";
-    // Format: 20260311T201700Z
-    const dtsClean = now.toISOString()
-      .replace(/[-:]/g, "")
-      .replace(/\.\d+Z$/, "Z")
-      .slice(0, 16) + "00Z"; // YYYYMMDDTHHmmssZ
-    const dshrt  = dtsClean.slice(0, 8); // YYYYMMDD
+    // Timestamp — format: 20260311T202600Z (16 chars)
+    const dts   = new Date().toISOString().replace(/[-:.]/g, "").slice(0, 15) + "Z";
+    const dshrt = dts.slice(0, 8); // YYYYMMDD
 
-    const payloadHash = hash(buf);
-
-    // Signed headers: hanya x-amz-content-sha256 dan x-amz-date
-    // (TIDAK include content-length dan host — reserved headers)
-    const signedHeadersList = "x-amz-content-sha256;x-amz-date";
-    const canonHeaders =
+    const payloadHash    = hash(buf);
+    const signedHeaders  = "content-type;x-amz-content-sha256;x-amz-date";
+    const canonHeaders   =
+      `content-type:${mimeType}\n` +
       `x-amz-content-sha256:${payloadHash}\n` +
-      `x-amz-date:${dtsClean}\n`;
+      `x-amz-date:${dts}\n`;
 
     const canonRequest = [
       "PUT",
       `/${key}`,
-      "", // no query string
+      "",
       canonHeaders,
-      signedHeadersList,
+      signedHeaders,
       payloadHash,
     ].join("\n");
 
-    const credScope  = `${dshrt}/auto/s3/aws4_request`;
-    const strToSign  = ["AWS4-HMAC-SHA256", dtsClean, credScope, hash(canonRequest)].join("\n");
-
-    const signingKey = hmac(
-      hmac(hmac(hmac(`AWS4${secKey}`, dshrt), "auto"), "s3"),
-      "aws4_request"
-    );
+    const scope      = `${dshrt}/auto/s3/aws4_request`;
+    const strToSign  = ["AWS4-HMAC-SHA256", dts, scope, hash(canonRequest)].join("\n");
+    const signingKey = hmac(hmac(hmac(hmac(`AWS4${secKey}`, dshrt), "auto"), "s3"), "aws4_request");
     const signature  = createHmac("sha256", signingKey).update(strToSign).digest("hex");
-    const authHeader = `AWS4-HMAC-SHA256 Credential=${accKey}/${credScope}, SignedHeaders=${signedHeadersList}, Signature=${signature}`;
+    const auth       = `AWS4-HMAC-SHA256 Credential=${accKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
-    // Upload ke R2
+    // PUT ke R2
     const uploadUrl = `https://${acctId}.r2.cloudflarestorage.com/${bucket}/${key}`;
-
-    const r2Res = await fetch(uploadUrl, {
-      method: "PUT",
+    const r2 = await fetch(uploadUrl, {
+      method:  "PUT",
       headers: {
-        "Content-Type":          mimeType,
-        "x-amz-content-sha256":  payloadHash,
-        "x-amz-date":            dtsClean,
-        "Authorization":         authHeader,
+        "Content-Type":         mimeType,
+        "x-amz-content-sha256": payloadHash,
+        "x-amz-date":           dts,
+        "Authorization":        auth,
       },
       body: buf,
     });
 
-    if (!r2Res.ok) {
-      const errBody = await r2Res.text();
-      // Parse pesan error dari XML R2
-      const msgMatch = errBody.match(/<Message>([^<]+)<\/Message>/);
-      const codeMatch = errBody.match(/<Code>([^<]+)<\/Code>/);
-      const errMsg = msgMatch ? msgMatch[1] : errBody.slice(0, 200);
-      const errCode = codeMatch ? codeMatch[1] : r2Res.status;
-      return res.status(500).json({
-        success: false,
-        error: `R2 ${errCode}: ${errMsg}`,
-        http_status: r2Res.status,
-      });
+    if (!r2.ok) {
+      const xml      = await r2.text();
+      const code     = (xml.match(/<Code>([^<]+)/)     || [])[1] || r2.status;
+      const message  = (xml.match(/<Message>([^<]+)/)  || [])[1] || xml.slice(0, 200);
+      return res.status(500).json({ success: false, error: `R2 ${code}: ${message}` });
     }
 
-    // Build public URL
     const fileUrl = pubUrl
       ? `${pubUrl.replace(/\/$/, "")}/${key}`
       : `https://${acctId}.r2.cloudflarestorage.com/${bucket}/${key}`;
@@ -114,7 +91,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, url: fileUrl, key });
 
   } catch (err) {
-    console.error("upload-foto error:", err);
+    console.error("upload-foto:", err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 }
