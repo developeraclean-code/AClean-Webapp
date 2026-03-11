@@ -642,6 +642,25 @@ export default function ACleanWebApp() {
     r.readAsDataURL(file);
   });
 
+  // Helper: normalize URL foto agar selalu melalui Vercel proxy (SSL aman)
+  const fotoSrc = (url) => {
+    if (!url) return "";
+    // Sudah pakai proxy → langsung
+    if (url.startsWith("/api/foto")) return url;
+    // URL r2.dev lama → convert ke proxy
+    if (url.includes(".r2.dev/")) {
+      const keyMatch = url.match(/\.r2\.dev\/(.+)$/);
+      if (keyMatch) return `/api/foto?key=${encodeURIComponent(keyMatch[1])}`;
+    }
+    // URL r2.cloudflarestorage.com lama → extract key
+    if (url.includes(".r2.cloudflarestorage.com/")) {
+      const keyMatch = url.match(/cloudflarestorage\.com\/[^/]+\/(.+)$/);
+      if (keyMatch) return `/api/foto?key=${encodeURIComponent(keyMatch[1])}`;
+    }
+    // Supabase atau lainnya → pakai langsung
+    return url;
+  };
+
   const openLaporanModal = (order) => {
     // ANTI-DUPLIKAT: cek apakah sudah ada laporan untuk job ini
     const existingReport = laporanReports.find(r => r.job_id === (order._rewriteId ? order.id : order.id) && r.status !== "PENDING");
@@ -4434,8 +4453,8 @@ _Laporan masuk setelah pekerjaan selesai._`;
                 <div style={{fontSize:11,fontWeight:700,color:cs.green,marginBottom:6}}>📸 Foto Laporan ({safeArr(r.fotos).filter(f=>f.url).length})</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:6}}>
                   {safeArr(r.fotos).filter(f=>f.url).map((f,fi)=>(
-                    <div key={fi} style={{position:"relative",cursor:"pointer"}} onClick={()=>window.open(f.url,"_blank")}>
-                      <img src={f.url} alt={f.label||`Foto ${fi+1}`} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:7,border:"1px solid "+cs.border}} />
+                    <div key={fi} style={{position:"relative",cursor:"pointer"}} onClick={()=>window.open(fotoSrc(f.url),"_blank")}>
+                      <img src={fotoSrc(f.url)} alt={f.label||`Foto ${fi+1}`} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:7,border:"1px solid "+cs.border}} />
                       <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#000a",borderRadius:"0 0 7px 7px",padding:"2px 4px",fontSize:9,color:"#fff",textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{f.label||`Foto ${fi+1}`}</div>
                     </div>
                   ))}
