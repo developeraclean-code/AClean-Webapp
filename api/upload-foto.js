@@ -91,9 +91,8 @@ export default async function handler(req, res) {
     }
 
     // Public URL
-    const fileUrl = pubUrl
-      ? `${pubUrl.replace(/\/$/, "")}/${objKey}`
-      : `https://${acctId}.r2.cloudflarestorage.com/${bucket}/${objKey}`;
+    // URL selalu via /api/foto proxy — SSL dari Vercel, tidak perlu domain/r2.dev
+    const fileUrl = `/api/foto?key=${encodeURIComponent(objKey)}`;
 
     console.log("✅ R2 upload OK:", objKey, buf.length + "B");
     return res.status(200).json({ success: true, url: fileUrl, key: objKey });
