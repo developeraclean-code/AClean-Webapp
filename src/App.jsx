@@ -1268,7 +1268,7 @@ _AClean Service_`;
     // Update invoice — try full, fallback minimal
     {
       const {error:apErr} = await supabase.from("invoices").update({
-        status:"UNPAID", sent:today, due,
+        status:"UNPAID", sent:true, due,
         approved_by: currentUser?.name || null,
         approved_at: approvedAt,
       }).eq("id", inv.id);
