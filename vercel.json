@@ -16,15 +16,15 @@
     }
   ],
   "functions": {
-    "api/upload-foto.js": {
+    "api/[route].js": {
       "maxDuration": 30,
       "memory": 512
     },
-    "api/foto.js": {
-      "maxDuration": 10
-    },
     "api/ara-chat.js": {
       "maxDuration": 60
+    },
+    "api/cron-reminder.js": {
+      "maxDuration": 30
     }
   }
 }
