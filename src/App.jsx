@@ -360,7 +360,10 @@ export default function ACleanWebApp() {
   // ── Orders ──
   const [orderFilter,    setOrderFilter]    = useState("Semua");
   const [searchOrder,    setSearchOrder]    = useState("");
-  const [orderTekFilter, setOrderTekFilter] = useState("Semua");
+  const [orderTekFilter,  setOrderTekFilter]  = useState("Semua");
+  const [orderDateFrom,   setOrderDateFrom]   = useState("");
+  const [orderDateTo,     setOrderDateTo]     = useState("");
+  const [orderServiceFilter, setOrderServiceFilter] = useState("Semua"); // GAP-9
   const [orderPage,      setOrderPage]      = useState(1);
   const ORDER_PAGE_SIZE = 20;
 
@@ -559,6 +562,14 @@ export default function ACleanWebApp() {
       await Notification.requestPermission();
     }
   };
+  // GAP-7: jalankan check stuck jobs setiap 15 menit
+  const stuckCheckTimer = useRef(null);
+  const startStuckCheck = () => {
+    if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
+    stuckCheckTimer.current = setInterval(() => {
+      checkStuckJobs();
+    }, 15 * 60 * 1000); // 15 menit
+  };
   const pushNotif = (title, body, icon = "⬡") => {
     if ("Notification" in window && Notification.permission === "granted") {
       try {
@@ -571,6 +582,46 @@ export default function ACleanWebApp() {
     clearTimeout(notifTimer.current);
     notifTimer.current = setTimeout(() => setNotification(null), 3000);
     if (push) pushNotif("AClean", msg.replace(/[🔔📋✅❌⚠️💰]/g, "").trim());
+  };
+
+  // ── GAP-7: Cek job stuck — kirim reminder ke teknisi jika laporan belum masuk 1 jam setelah selesai ──
+  const checkStuckJobs = async () => {
+    const nowMs = Date.now();
+    const stuckOrders = ordersData.filter(o => {
+      if (!["DISPATCHED","ON_SITE"].includes(o.status)) return false;
+      if (!o.date || !o.time_end) return false;
+      // Sudah lewat tanggal job
+      if (o.date > TODAY) return false;
+      // Hitung estimasi selesai
+      const [h, m] = (o.time_end || "17:00").split(":").map(Number);
+      const jobEndMs = new Date(o.date + "T" + o.time_end + ":00").getTime();
+      const satu_jam = 60 * 60 * 1000;
+      // Sudah lebih dari 1 jam setelah selesai
+      return nowMs > (jobEndMs + satu_jam);
+    });
+
+    for (const o of stuckOrders) {
+      // Cek apakah sudah ada laporan
+      const sudahAda = laporanReports.find(r => r.job_id === o.id);
+      if (sudahAda) continue;
+      // Cek apakah reminder sudah dikirim (pakai agent_logs)
+      const sudahReminder = agentLogs.find(l =>
+        l.action === "LAPORAN_REMINDER" && l.detail?.includes(o.id)
+      );
+      if (sudahReminder) continue;
+
+      // Kirim WA reminder ke teknisi
+      const tek = teknisiData.find(t => t.name === o.teknisi);
+      if (tek?.phone) {
+        const msg = `⏰ *Reminder Laporan*
+
+Halo ${o.teknisi}, job *${o.id}* (${o.customer} — ${o.service}) sudah selesai lebih dari 1 jam.
+
+Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
+        sendWA(tek.phone, msg);
+      }
+      addAgentLog("LAPORAN_REMINDER", `Reminder laporan dikirim ke ${o.teknisi} — ${o.id}`, "WARNING");
+    }
   };
 
   // ── Laporan Helper Constants — sesuai standar AClean ──
@@ -1210,7 +1261,12 @@ ${matRowsHtml}
     };
 
     setDataLoading(true);
-    loadAll().finally(() => setDataLoading(false));
+    loadAll().finally(() => {
+      setDataLoading(false);
+      // GAP-7: Jalankan check stuck jobs segera setelah data load, lalu setiap 15 menit
+      setTimeout(() => checkStuckJobs(), 5000); // delay 5 detik agar state ready
+      startStuckCheck();
+    });
 
     // ── GAP-08 FIX: Auto-refresh data setiap 30 menit ──
     const _statsTimer = setInterval(() => {
@@ -1314,6 +1370,7 @@ ${matRowsHtml}
       .subscribe();
 
       clearInterval(_statsTimer);
+      if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current); // GAP-7 cleanup
       supabase.removeChannel(ch1);
       supabase.removeChannel(ch2);
       supabase.removeChannel(ch3);
@@ -1614,11 +1671,11 @@ _Simpan pesan ini sebagai bukti pelunasan._`
 
   // ── GAP 9: Create order (real state mutation) ──
   const createOrder = async (form) => {
-    // G3 FIX: Hard conflict check — block overbooking even if 2 admin input simultaneously
+    // GAP-1&2: DB-level conflict check (real-time, anti race condition)
     if (form.teknisi && form.date && form.time) {
-      const isAvail = cekTeknisiAvailable(form.teknisi, form.date, form.time, form.service, form.units);
-      if (!isAvail) {
-        showNotif("⚠️ " + form.teknisi + " sudah ada job di jam " + form.time + " tanggal " + form.date + ". Pilih jam lain.");
+      const dbCheck = await cekTeknisiAvailableDB(form.teknisi, form.date, form.time, form.service, form.units);
+      if (!dbCheck.ok) {
+        showNotif("⚠️ " + (dbCheck.reason || form.teknisi + " tidak tersedia di jam tersebut"));
         return null;
       }
     }
@@ -2273,10 +2330,10 @@ _Simpan pesan ini sebagai bukti pelunasan._`
             // ── Cek konflik di hari & jam baru sebelum reschedule ──
             let rescheduleConflict = null;
             if (tekForReschedule && act.date && act.time && rOrdCheck) {
-              const conflictResult = cekTeknisiAvailable(tekForReschedule, act.date, act.time, rOrdCheck.service, rOrdCheck.units);
-              // conflictResult = null jika tersedia, atau string alasan konflik
-              if (conflictResult && conflictResult !== true) {
-                rescheduleConflict = conflictResult;
+              // GAP-1/2: Cek dari DB langsung, bukan state lokal
+              const dbConflict = await cekTeknisiAvailableDB(tekForReschedule, act.date, act.time, rOrdCheck.service, rOrdCheck.units);
+              if (!dbConflict.ok && !dbConflict.reason?.includes(act.id)) {
+                rescheduleConflict = dbConflict.reason || "Ada order lain di waktu tersebut";
               }
             }
 
@@ -3005,6 +3062,9 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
     if (orderFilter === "Hari Ini") filtered = filtered.filter(o => o.date === TODAY);
     else if (orderFilter !== "Semua") filtered = filtered.filter(o => o.status === (sMap2[orderFilter]||orderFilter));
     if (orderTekFilter !== "Semua") filtered = filtered.filter(o => o.teknisi === orderTekFilter || o.helper === orderTekFilter);
+    if (orderDateFrom) filtered = filtered.filter(o => (o.date||"") >= orderDateFrom);
+    if (orderServiceFilter !== "Semua") filtered = filtered.filter(o => o.service === orderServiceFilter); // GAP-9
+    if (orderDateTo)   filtered = filtered.filter(o => (o.date||"") <= orderDateTo);
     if (searchOrder.trim()) {
       const q = searchOrder.trim().toLowerCase();
       filtered = filtered.filter(o =>
@@ -3020,8 +3080,19 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
     return (
       <div style={{ display:"grid", gap:14 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-          <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>
+          <div style={{ fontWeight:700, fontSize:18, color:cs.text, display:"flex", alignItems:"center", gap:10 }}>
             📋 Order Masuk <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filtered.length})</span>
+            {(() => {
+              const stuck = ordersData.filter(o =>
+                ["DISPATCHED","ON_SITE"].includes(o.status) && o.date < TODAY
+              ).length;
+              return stuck > 0 ? (
+                <span title="Job belum ada laporan (sudah lewat hari)" style={{ fontSize:11, background:cs.red+"22", color:cs.red, border:"1px solid "+cs.red+"44", borderRadius:99, padding:"2px 8px", fontWeight:700, cursor:"pointer" }}
+                  onClick={()=>{setOrderFilter("Semua");setOrderTekFilter("Semua");}}>
+                  ⚠️ {stuck} stuck
+                </span>
+              ) : null;
+            })()}
           </div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (() => {
@@ -3073,6 +3144,31 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
             style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"6px 10px", fontSize:12, cursor:"pointer" }}>
             {allTekOrd.map(t=><option key={t} value={t}>👷 {t}</option>)}
           </select>
+          <span style={{width:1,height:16,background:cs.border,display:"inline-block",marginLeft:4}} />
+          <input type="date" value={orderDateFrom} onChange={e=>{setOrderDateFrom(e.target.value);setOrderPage(1);}}
+            title="Dari tanggal"
+            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:orderDateFrom?cs.text:cs.muted, padding:"5px 8px", fontSize:11, cursor:"pointer", width:130 }} />
+          <span style={{color:cs.muted,fontSize:11}}>–</span>
+          <input type="date" value={orderDateTo} onChange={e=>{setOrderDateTo(e.target.value);setOrderPage(1);}}
+            title="Sampai tanggal"
+            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:orderDateTo?cs.text:cs.muted, padding:"5px 8px", fontSize:11, cursor:"pointer", width:130 }} />
+          {(orderDateFrom||orderDateTo) && (
+            <button onClick={()=>{setOrderDateFrom("");setOrderDateTo("");setOrderPage(1);}}
+              style={{background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:14,padding:"2px 4px"}} title="Reset tanggal">✕</button>
+          )}
+          {/* GAP-9: Filter service type */}
+          <span style={{width:1,height:16,background:cs.border,display:"inline-block",marginLeft:4}} />
+          <select value={orderServiceFilter} onChange={e=>{setOrderServiceFilter(e.target.value);setOrderPage(1);}}
+            style={{ background:cs.card, border:"1px solid "+(orderServiceFilter!="Semua"?cs.yellow:cs.border), borderRadius:8, color:orderServiceFilter!="Semua"?cs.yellow:cs.text, padding:"6px 10px", fontSize:12, cursor:"pointer" }}>
+            {["Semua","Cleaning","Install","Repair","Complain"].map(s=><option key={s} value={s}>🔧 {s}</option>)}
+          </select>
+          {/* GAP-9: Reset Semua filter */}
+          {(orderFilter!=="Semua"||orderTekFilter!=="Semua"||orderDateFrom||orderDateTo||orderServiceFilter!=="Semua"||searchOrder) && (
+            <button onClick={()=>{setOrderFilter("Semua");setOrderTekFilter("Semua");setOrderDateFrom("");setOrderDateTo("");setOrderServiceFilter("Semua");setSearchOrder("");setOrderPage(1);}}
+              style={{ background:cs.red+"18", border:"1px solid "+cs.red+"44", color:cs.red, padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+              ✕ Reset Semua
+            </button>
+          )}
         </div>
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
           <table style={{ width:"100%", borderCollapse:"collapse" }}>
@@ -4030,8 +4126,69 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
   // ============================================================
   // RENDER TEKNISI ADMIN
   // ============================================================
-  const renderTeknisiAdmin = () => (
+  const renderTeknisiAdmin = () => {
+    // GAP-11: Rekap performa per teknisi
+    const weekAgo  = new Date(Date.now()-7*24*60*60*1000).toISOString().slice(0,10);
+    const monthAgo = new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10);
+    const perfMap = {};
+    teknisiData.forEach(t => {
+      const jobsMinggu = ordersData.filter(o =>
+        (o.teknisi===t.name||o.helper===t.name) && (o.date||"") >= weekAgo
+      );
+      const jobsBulan = ordersData.filter(o =>
+        (o.teknisi===t.name||o.helper===t.name) && (o.date||"") >= monthAgo
+      );
+      const laporanMinggu = laporanReports.filter(r =>
+        (r.teknisi===t.name||r.helper===t.name) && (r.submitted_at||r.submitted||"") >= weekAgo
+      );
+      const revisi = laporanReports.filter(r =>
+        (r.teknisi===t.name||r.helper===t.name) && r.status==="REVISION"
+      ).length;
+      // Job stuck: DISPATCHED/ON_SITE tapi belum ada laporan & sudah lewat jam selesai
+      const stuck = ordersData.filter(o =>
+        (o.teknisi===t.name||o.helper===t.name) &&
+        ["DISPATCHED","ON_SITE"].includes(o.status) &&
+        o.date < TODAY
+      ).length;
+      const selesai = jobsMinggu.filter(o =>
+        ["COMPLETED","REPORT_SUBMITTED","INVOICE_APPROVED","INVOICE_CREATED","PAID"].includes(o.status)
+      ).length;
+      // GAP-11: Hitung laporan terlambat (ada laporan tapi > 2 jam setelah time_end)
+      const laporanTerlambat = laporanMinggu.filter(r => {
+        const order = ordersData.find(o => o.id === r.job_id || o.id === r.order_id);
+        if (!order || !order.time_end || !r.submitted_at) return false;
+        const endMs  = new Date((order.date||"")+"T"+(order.time_end||"17:00")+":00").getTime();
+        const subMs  = new Date(r.submitted_at).getTime();
+        return subMs > (endMs + 2*60*60*1000); // > 2 jam setelah selesai
+      }).length;
+      perfMap[t.name] = {
+        jobsMinggu: jobsMinggu.length, selesai, revisi, stuck,
+        jobsBulan: jobsBulan.length,
+        laporanMinggu: laporanMinggu.length,
+        onTime: laporanMinggu.length - laporanTerlambat,
+        terlambat: laporanTerlambat,
+        avgJobPerDay: +(jobsMinggu.length / 7).toFixed(1),
+      };
+    });
+
+    return (
     <div style={{ display:"grid", gap:16 }}>
+      {/* GAP-7: Banner stuck jobs */}
+      {(() => {
+        const stuckList = ordersData.filter(o =>
+          ["DISPATCHED","ON_SITE"].includes(o.status) && o.date < TODAY
+        );
+        if (stuckList.length === 0) return null;
+        return (
+          <div style={{ background:cs.red+"15", border:"1px solid "+cs.red+"33", borderRadius:10, padding:"10px 14px", display:"flex", gap:10, alignItems:"center" }}>
+            <span style={{fontSize:16}}>⚠️</span>
+            <div>
+              <div style={{fontWeight:700, color:cs.red, fontSize:13}}>{stuckList.length} job belum ada laporan (sudah lewat hari)</div>
+              <div style={{fontSize:11, color:cs.muted}}>{stuckList.map(o=>`${o.id} (${o.teknisi})`).join(", ")}</div>
+            </div>
+          </div>
+        );
+      })()}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>👷 Tim Teknisi</div>
         <button onClick={() => { setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[]}); setModalTeknisi(true); }} style={{ background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Tambah Anggota</button>
@@ -4039,6 +4196,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
         {teknisiData.map(t => {
           const stC = t.status==="on-job"?cs.green:t.status==="active"?cs.accent:cs.muted;
+          const perf = perfMap[t.name] || {};
           return (
             <div key={t.id} style={{ background:cs.card, border:"1px solid "+stC+"33", borderRadius:14, padding:16 }}>
               <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
@@ -4055,6 +4213,18 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                 <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginTop:6 }}>
                   {t.skills.map(s => <span key={s} style={{ background:cs.accent+"18", color:cs.accent, fontSize:9, padding:"2px 6px", borderRadius:4, fontWeight:600 }}>{s}</span>)}
                 </div>
+              </div>
+              {/* GAP-11: Rekap performa minggu ini */}
+              <div style={{ borderTop:"1px solid "+cs.border, paddingTop:8, marginBottom:10, display:"grid", gridTemplateColumns:"1fr 1fr", gap:4 }}>
+                <div style={{ fontSize:10, color:cs.muted }}>📅 7 hari</div>
+                <div style={{ fontSize:10, color:cs.muted }}>📅 30 hari</div>
+                <div style={{ fontSize:13, fontWeight:700, color:cs.text }}>{perf.jobsMinggu||0} job</div>
+                <div style={{ fontSize:13, fontWeight:700, color:cs.text }}>{perf.jobsBulan||0} job</div>
+                <div style={{ fontSize:10, color:cs.green }}>✅ {perf.selesai||0} selesai</div>
+                <div style={{ fontSize:10, color:perf.revisi>0?cs.yellow:cs.muted }}>🔄 {perf.revisi||0} revisi</div>
+                {(perf.stuck||0) > 0 && (
+                  <div style={{ fontSize:10, color:cs.red, gridColumn:"1/-1" }}>⚠️ {perf.stuck} job stuck (laporan belum masuk)</div>
+                )}
               </div>
               <div style={{ display:"flex", gap:6 }}>
                 <button onClick={() => { setEditTeknisi(t); setNewTeknisiForm({...t}); setModalTeknisi(true); }} style={{ flex:1, background:cs.accent+"18", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
@@ -4075,8 +4245,97 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
           );
         })}
       </div>
+
+      {/* GAP-11: Tabel Rekap Performa Mingguan — Enhanced */}
+      {(() => {
+        // Hitung ranking: siapa top performer minggu ini
+        const perfList = teknisiData.map(t => ({ ...t, p: perfMap[t.name]||{} }));
+        const maxJobs = Math.max(...perfList.map(t => t.p.jobsMinggu||0), 1);
+        const rankedByJob = [...perfList].sort((a,b)=>(b.p.jobsMinggu||0)-(a.p.jobsMinggu||0));
+        const topName = rankedByJob[0]?.name;
+        return (
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:16, marginTop:4 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+            <div style={{ fontWeight:700, fontSize:14, color:cs.text }}>📊 Rekap Performa Tim — 7 Hari Terakhir</div>
+            <div style={{ fontSize:11, color:cs.muted }}>
+              Total job: <strong style={{color:cs.accent}}>{perfList.reduce((a,t)=>a+(t.p.jobsMinggu||0),0)}</strong>
+              &nbsp;·&nbsp;Stuck: <strong style={{color:cs.red}}>{perfList.reduce((a,t)=>a+(t.p.stuck||0),0)}</strong>
+            </div>
+          </div>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead>
+                <tr style={{ background:cs.surface }}>
+                  {["#","Teknisi","Role","Job 7hr","Selesai","Rate","Bar","Revisi","Laporan","Stuck","Status"].map(h => (
+                    <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:cs.muted, borderBottom:"1px solid "+cs.border }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rankedByJob.map((t,i) => {
+                  const p = t.p;
+                  const completionRate = (p.jobsMinggu||0)>0 ? Math.round(((p.selesai||0)/(p.jobsMinggu||1))*100) : 0;
+                  const barPct = maxJobs>0 ? Math.round(((p.jobsMinggu||0)/maxJobs)*100) : 0;
+                  const isTop = t.name===topName && (p.jobsMinggu||0)>0;
+                  const hasIssue = (p.stuck||0)>0 || (p.revisi||0)>2;
+                  const rowBg = isTop ? cs.green+"0d" : hasIssue ? cs.red+"0d" : "transparent";
+                  const rateColor = completionRate>=80?cs.green:completionRate>=50?cs.yellow:cs.red;
+                  return (
+                    <tr key={t.id} style={{ borderBottom:"1px solid "+cs.border+"55", background:rowBg }}>
+                      <td style={{ padding:"8px 10px", color:cs.muted, fontWeight:700 }}>
+                        {isTop ? "🥇" : i===1 ? "🥈" : i===2 ? "🥉" : (i+1)}
+                      </td>
+                      <td style={{ padding:"8px 10px", fontWeight:700, color:cs.text }}>
+                        {t.name}
+                        {isTop && <span style={{fontSize:9,background:cs.green+"22",color:cs.green,borderRadius:99,padding:"1px 6px",marginLeft:4,fontWeight:700}}>TOP</span>}
+                      </td>
+                      <td style={{ padding:"8px 10px", color:cs.muted, fontSize:11 }}>{t.role}</td>
+                      <td style={{ padding:"8px 10px", fontWeight:700, color:cs.accent, fontSize:14 }}>{p.jobsMinggu||0}</td>
+                      <td style={{ padding:"8px 10px", color:cs.green }}>{p.selesai||0}</td>
+                      <td style={{ padding:"8px 10px" }}>
+                        <span style={{fontWeight:700,color:rateColor}}>{completionRate}%</span>
+                      </td>
+                      <td style={{ padding:"8px 10px", minWidth:80 }}>
+                        <div style={{ background:cs.surface, borderRadius:99, height:6, overflow:"hidden" }}>
+                          <div style={{ height:"100%", width:barPct+"%", background:isTop?cs.green:cs.accent, borderRadius:99, transition:"width 0.5s" }} />
+                        </div>
+                      </td>
+                      <td style={{ padding:"8px 10px", color:(p.revisi||0)>0?cs.yellow:cs.muted }}>
+                        {(p.revisi||0)>0 ? "🔄 "+(p.revisi||0) : "—"}
+                      </td>
+                      <td style={{ padding:"8px 10px", color:cs.muted }}>{p.laporanMinggu||0}</td>
+                      <td style={{ padding:"8px 10px", color:(p.stuck||0)>0?cs.red:cs.muted, fontWeight:(p.stuck||0)>0?700:400 }}>
+                        {(p.stuck||0)>0 ? <span style={{background:cs.red+"22",color:cs.red,borderRadius:99,padding:"2px 7px",fontSize:10}}>⚠️ {p.stuck} stuck</span> : "—"}
+                      </td>
+                      <td style={{ padding:"8px 10px" }}>
+                        {(p.stuck||0)>0
+                          ? <span style={{fontSize:10,color:cs.red,fontWeight:700}}>⚡ Perlu Perhatian</span>
+                          : completionRate>=80
+                            ? <span style={{fontSize:10,color:cs.green}}>✅ Baik</span>
+                            : completionRate>0
+                              ? <span style={{fontSize:10,color:cs.yellow}}>📈 Berkembang</span>
+                              : <span style={{fontSize:10,color:cs.muted}}>—</span>
+                        }
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {/* Legend */}
+          <div style={{ marginTop:10, display:"flex", gap:14, fontSize:10, color:cs.muted, flexWrap:"wrap" }}>
+            <span>🥇 Top performer</span>
+            <span style={{color:cs.green}}>■ Rate ≥80% = Baik</span>
+            <span style={{color:cs.yellow}}>■ Rate 50-79% = Berkembang</span>
+            <span style={{color:cs.red}}>■ Rate &lt;50% atau ada stuck</span>
+          </div>
+        </div>
+        );
+      })()}
     </div>
-  );
+    );
+  };
 
   // ============================================================
   // RENDER AGENT LOG
@@ -4119,26 +4378,29 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
   };
 
   // Cek apakah teknisi AVAILABLE di slot waktu tertentu (tidak overlap)
+  const MAX_LOKASI_PER_HARI = 6; // GAP-3: max 6 lokasi berbeda per teknisi per hari
+
   const cekTeknisiAvailable = (teknisiName, date, timeStart, service, units, checkAsHelper = false) => {
     const durBaru = hitungDurasi(service, units);
     const startBaru = (timeStart || "09:00").split(":").map(Number);
     const startMinBaru = startBaru[0] * 60 + startBaru[1];
     const endMinBaru   = startMinBaru + Math.round(durBaru * 60);
 
-    // Cek konflik sebagai teknisi ATAU sebagai helper
-    const conflicts = ordersData.filter(o =>
+    const activeOrders = ordersData.filter(o =>
       (checkAsHelper ? o.helper === teknisiName : (o.teknisi === teknisiName || o.helper === teknisiName)) &&
       o.date === date &&
-      // COMPLETED & SUBMITTED (laporan masuk) = pekerjaan sudah selesai → tidak block slot baru
-      ["PENDING","CONFIRMED","IN_PROGRESS","ON_SITE"].includes(o.status)
+      ["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS","ON_SITE"].includes(o.status)
     );
 
-    for (const o of conflicts) {
+    // GAP-3: Hard cap — max 6 lokasi per hari (tidak ada batasan unit)
+    if (activeOrders.length >= MAX_LOKASI_PER_HARI) return false;
+
+    // Cek overlap jam
+    for (const o of activeOrders) {
       const durExist = hitungDurasi(o.service || "Cleaning", o.units || 1);
       const startExist = (o.time || "09:00").split(":").map(Number);
       const startMinExist = startExist[0] * 60 + startExist[1];
       const endMinExist   = startMinExist + Math.round(durExist * 60);
-      // Overlap check
       if (startMinBaru < endMinExist && endMinBaru > startMinExist) return false;
     }
     return true;
@@ -4155,6 +4417,49 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
       }
     }
     return null; // penuh
+  };
+
+  // ── GAP-1 & GAP-2: Real-time availability check ke Supabase (anti race condition) ──
+  const cekTeknisiAvailableDB = async (teknisiName, date, timeStart, service, units) => {
+    try {
+      const durMenit = Math.round(hitungDurasi(service, units) * 60);
+      const startParts = (timeStart || "09:00").split(":").map(Number);
+      const startMin = startParts[0] * 60 + startParts[1];
+      const endMin   = startMin + durMenit;
+
+      // Query langsung ke Supabase — bukan state lokal
+      const { data: dbOrders, error } = await supabase
+        .from("orders")
+        .select("id, time, time_end, service, units, status")
+        .eq("teknisi", teknisiName)
+        .eq("date", date)
+        .in("status", ["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS","ON_SITE"]);
+
+      if (error) {
+        console.warn("cekAvailDB error:", error.message, "— fallback ke state lokal");
+        return cekTeknisiAvailable(teknisiName, date, timeStart, service, units);
+      }
+
+      // Hard cap: max 6 lokasi
+      if ((dbOrders||[]).length >= MAX_LOKASI_PER_HARI) {
+        return { ok: false, reason: `${teknisiName} sudah mencapai batas 6 job di tanggal ${date}` };
+      }
+
+      // Cek overlap jam
+      for (const o of (dbOrders||[])) {
+        const oStart = (o.time||"09:00").split(":").map(Number);
+        const oStartMin = oStart[0]*60 + oStart[1];
+        const oDur = Math.round(hitungDurasi(o.service||"Cleaning", o.units||1) * 60);
+        const oEndMin = oStartMin + oDur;
+        if (startMin < oEndMin && endMin > oStartMin) {
+          return { ok: false, reason: `${teknisiName} bentrok dengan job ${o.id} jam ${o.time}–${o.time_end||"?"}` };
+        }
+      }
+      return { ok: true };
+    } catch(e) {
+      console.warn("cekAvailDB catch:", e.message);
+      return { ok: true }; // fallback allow jika error network
+    }
   };
 
   // AREA PELAYANAN
@@ -5830,11 +6135,45 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Teknisi</div>
-                  <select value={newOrderForm.teknisi} onChange={e => setNewOrderForm(f=>({...f,teknisi:e.target.value,helper:""}))}
-                    style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
-                    <option value="">Pilih teknisi...</option>
-                    {teknisiData.filter(t=>t.role==="Teknisi").map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                  </select>
+                  {(() => {
+                    const tgl = newOrderForm.date || "";
+                    return (
+                      <select value={newOrderForm.teknisi} onChange={e => setNewOrderForm(f=>({...f,teknisi:e.target.value,helper:""}))}
+                        style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
+                        <option value="">Pilih teknisi...</option>
+                        {teknisiData.filter(t=>t.role==="Teknisi").map(t => {
+                          const jobHariIni = tgl ? ordersData.filter(o =>
+                            o.teknisi===t.name && o.date===tgl &&
+                            ["PENDING","CONFIRMED","DISPATCHED","ON_SITE","IN_PROGRESS"].includes(o.status)
+                          ).length : 0;
+                          const penuh = jobHariIni >= MAX_LOKASI_PER_HARI;
+                          return (
+                            <option key={t.id} value={t.name} disabled={penuh}>
+                              {penuh ? "🔴" : jobHariIni >= 4 ? "🟡" : "🟢"} {t.name} — {jobHariIni}/6 job{penuh ? " (PENUH)" : ""}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    );
+                  })()}
+                  {/* GAP-3: Warning cap 6 lokasi */}
+                  {newOrderForm.teknisi && newOrderForm.date && (() => {
+                    const jobCount = ordersData.filter(o =>
+                      o.teknisi===newOrderForm.teknisi && o.date===newOrderForm.date &&
+                      ["PENDING","CONFIRMED","DISPATCHED","ON_SITE","IN_PROGRESS"].includes(o.status)
+                    ).length;
+                    if (jobCount >= MAX_LOKASI_PER_HARI) return (
+                      <div style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", borderRadius:7, padding:"7px 10px", fontSize:11, color:cs.red, marginTop:4 }}>
+                        🔴 <b>{newOrderForm.teknisi}</b> sudah {jobCount} job di {newOrderForm.date} — batas 6 lokasi tercapai. Pilih teknisi lain atau tanggal lain.
+                      </div>
+                    );
+                    if (jobCount >= 4) return (
+                      <div style={{ background:cs.yellow+"18", border:"1px solid "+cs.yellow+"33", borderRadius:7, padding:"7px 10px", fontSize:11, color:cs.yellow, marginTop:4 }}>
+                        🟡 <b>{newOrderForm.teknisi}</b> sudah {jobCount}/6 job di tanggal ini.
+                      </div>
+                    );
+                    return null;
+                  })()}
                 </div>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Tanggal</div>
@@ -5919,8 +6258,33 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:6 }}>
                 <button onClick={() => setModalOrder(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
-                <button onClick={() => { if(!newOrderForm.customer){showNotif("Nama customer wajib diisi");return;} if(!newOrderForm.teknisi){showNotif("Pilih teknisi dulu");return;} if(!newOrderForm.date){showNotif("Pilih tanggal dulu");return;} createOrder(newOrderForm); setModalOrder(false); setNewOrderForm({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" }); }}
-                  style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>✓ Buat Order</button>
+                {(() => {
+                  const capReached = newOrderForm.teknisi && newOrderForm.date && ordersData.filter(o =>
+                    o.teknisi===newOrderForm.teknisi && o.date===newOrderForm.date &&
+                    ["PENDING","CONFIRMED","DISPATCHED","ON_SITE","IN_PROGRESS"].includes(o.status)
+                  ).length >= MAX_LOKASI_PER_HARI;
+                  return (
+                    <button
+                      disabled={capReached}
+                      onClick={async () => {
+                        if (!newOrderForm.customer) { showNotif("Nama customer wajib diisi"); return; }
+                        if (!newOrderForm.teknisi)  { showNotif("Pilih teknisi dulu"); return; }
+                        if (!newOrderForm.date)     { showNotif("Pilih tanggal dulu"); return; }
+                        // GAP-1&2: DB-level check sebelum submit (anti race condition)
+                        if (newOrderForm.teknisi && newOrderForm.date && newOrderForm.time) {
+                          const dbOk = await cekTeknisiAvailableDB(newOrderForm.teknisi, newOrderForm.date, newOrderForm.time, newOrderForm.service, newOrderForm.units);
+                          if (!dbOk.ok) { showNotif("⚠️ " + (dbOk.reason || "Jadwal bentrok, cek ulang")); return; }
+                        }
+                        const formCopy = {...newOrderForm};
+                        setModalOrder(false);
+                        setNewOrderForm({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
+                        await createOrder(formCopy);
+                      }}
+                      style={{ background: capReached ? cs.border : "linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color: capReached ? cs.muted : "#0a0f1e", padding:"12px", borderRadius:10, cursor: capReached ? "not-allowed" : "pointer", fontWeight:800, fontSize:14, opacity: capReached ? 0.6 : 1 }}>
+                      {capReached ? "🔴 Teknisi Penuh" : "✓ Buat Order"}
+                    </button>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -6964,6 +7328,23 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
               <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
                 <button onClick={()=>{setModalEditOrder(false);setEditOrderItem(null);}} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
                 <button onClick={async()=>{
+                  // GAP-1 & GAP-2: Cek ketersediaan teknisi di DB sebelum simpan edit
+                  const tekChanged = editOrderForm.teknisi !== editOrderItem.teknisi;
+                  const dateChanged = editOrderForm.date !== editOrderItem.date;
+                  const timeChanged = editOrderForm.time !== editOrderItem.time;
+                  if (editOrderForm.teknisi && (tekChanged || dateChanged || timeChanged)) {
+                    const dbCheck = await cekTeknisiAvailableDB(
+                      editOrderForm.teknisi, editOrderForm.date||editOrderItem.date,
+                      editOrderForm.time||editOrderItem.time||"09:00",
+                      editOrderForm.service||editOrderItem.service||"Cleaning",
+                      editOrderForm.units||editOrderItem.units||1
+                    );
+                    // Exclude order yang sedang diedit dari conflict check
+                    if (!dbCheck.ok && !dbCheck.reason?.includes(editOrderItem.id)) {
+                      showNotif("⚠️ " + (dbCheck.reason || editOrderForm.teknisi + " tidak tersedia di jadwal tersebut"));
+                      return;
+                    }
+                  }
                   const timeEnd = hitungJamSelesai(editOrderForm.time||"09:00", editOrderForm.service||"Cleaning", editOrderForm.units||1);
                   const updated = {...editOrderItem,...editOrderForm,time_end:timeEnd};
                   setOrdersData(prev=>prev.map(o=>o.id===editOrderItem.id?updated:o));
