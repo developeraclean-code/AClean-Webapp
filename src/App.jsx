@@ -1612,10 +1612,10 @@ _Simpan pesan ini sebagai bukti pelunasan._`
 
     // Attempt 1: full payload
     { const { error: e1 } = await supabase.from("orders").insert(newOrder);
-      if (!e1) { orderSaved = true; }
-      else console.warn("Order insert full failed:", e1.message); }
+      if (!e1) { orderSaved = true; console.log("✅ Order saved full:", newOrder.id); }
+      else console.warn("❌ A1 full:", e1.message, "| hint:", e1.hint, "| detail:", e1.details); }
 
-    // Attempt 2: tanpa kolom yang sering tidak ada di schema lama
+    // Attempt 2: kolom aman saja
     if (!orderSaved) {
       const safe2 = {
         id: newOrder.id, date: newOrder.date, status: newOrder.status,
@@ -1625,22 +1625,18 @@ _Simpan pesan ini sebagai bukti pelunasan._`
         customer_id: newOrder.customer_id,
       };
       const { error: e2 } = await supabase.from("orders").insert(safe2);
-      if (!e2) { orderSaved = true; }
-      else console.warn("Order insert safe2 failed:", e2.message);
-    }
+      if (!e2) { orderSaved = true; console.log("✅ Order saved safe2:", newOrder.id); }
+      else console.warn("❌ A2 safe:", e2.message, "| hint:", e2.hint); }
 
-    // Attempt 3: minimal absolut
+    // Attempt 3: hanya id + date + service + units + status
     if (!orderSaved) {
-      const minimal = {
-        id: newOrder.id, date: newOrder.date,
-        service: newOrder.service, units: newOrder.units,
-        status: newOrder.status,
-      };
+      const minimal = { id: newOrder.id, date: newOrder.date,
+        service: newOrder.service, units: newOrder.units, status: newOrder.status };
       const { error: e3 } = await supabase.from("orders").insert(minimal);
-      if (!e3) { orderSaved = true; }
+      if (!e3) { orderSaved = true; console.log("✅ Order saved minimal:", newOrder.id); }
       else {
-        showNotif("❌ Gagal simpan order: " + e3.message);
-        console.error("Order insert minimal failed:", e3.message);
+        console.error("❌ A3 minimal:", e3.message, "| hint:", e3.hint, "| detail:", e3.details);
+        showNotif("❌ Gagal simpan order: " + e3.message + (e3.hint ? " — " + e3.hint : ""));
         return null;
       }
     }
