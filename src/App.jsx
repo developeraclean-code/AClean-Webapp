@@ -661,6 +661,167 @@ export default function ACleanWebApp() {
     return url;
   };
 
+  // ── Generate & Download Invoice PDF (pakai browser print API) ──
+  const downloadInvoicePDF = (inv) => {
+    const fmt2 = (n) => "Rp " + (Number(n)||0).toLocaleString("id-ID");
+    const perUnit = inv.units > 0 ? Math.round((inv.labor||0) / inv.units) : (inv.labor||0);
+
+    const html = `<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Invoice ${inv.id} — AClean</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; font-size: 12px; color: #1e293b; background: #fff; }
+  .page { width: 794px; min-height: 1123px; margin: 0 auto; padding: 40px; }
+  .header { background: #1E3A5F; border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
+  .header-top { padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; }
+  .brand { font-size: 22px; font-weight: 800; color: #fff; }
+  .brand span { color: #60a5fa; }
+  .brand-sub { font-size: 11px; color: #93c5fd; margin-top: 2px; }
+  .inv-badge { background: #2563EB; color: #fff; padding: 6px 14px; border-radius: 6px; font-family: monospace; font-weight: 800; font-size: 15px; }
+  .inv-label { font-size: 10px; color: #93c5fd; font-weight: 600; text-align: right; margin-bottom: 4px; }
+  .header-sub { background: #0f2744; padding: 8px 24px; font-size: 10px; color: #94a3b8; display: flex; gap: 24px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .box { border-radius: 8px; padding: 14px 16px; }
+  .box-blue { background: #EFF6FF; }
+  .box-white { background: #fff; border: 1px solid #e2e8f0; }
+  .box-title { font-size: 10px; font-weight: 800; color: #1e40af; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
+  .row { display: flex; gap: 8px; margin-bottom: 4px; }
+  .row-label { color: #64748b; min-width: 90px; }
+  .row-val { color: #1e293b; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12px; }
+  thead tr { background: #1E3A5F; }
+  thead th { padding: 9px 12px; text-align: left; color: #fff; font-weight: 700; font-size: 10px; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  tbody td { padding: 9px 12px; color: #1e293b; border-bottom: 1px solid #f1f5f9; }
+  .total-row { background: #1E3A5F !important; }
+  .total-row td { color: #fff !important; font-weight: 800; font-size: 14px; border: none; }
+  .footer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+  .bank-box { background: #EFF6FF; border-radius: 8px; padding: 14px 16px; }
+  .bank-num { font-weight: 800; font-size: 16px; color: #1e293b; margin: 4px 0; }
+  .status-box { border-radius: 8px; padding: 14px 16px; }
+  .footer-note { text-align: center; padding-top: 16px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 11px; }
+  .status-paid { background: #F0FDF4; border: 1px solid #86efac; }
+  .status-unpaid { background: #FFFBEB; border: 1px solid #fde68a; }
+  .status-overdue { background: #FEF2F2; border: 1px solid #fca5a5; }
+  .garansi-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 10px 16px; margin-bottom: 16px; font-size: 11px; color: #166534; }
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .page { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-top">
+      <div>
+        <div class="brand"><span>AC</span>lean Service</div>
+        <div class="brand-sub">Jasa Servis AC Profesional · Tangerang Selatan</div>
+      </div>
+      <div>
+        <div class="inv-label">INVOICE</div>
+        <div class="inv-badge">${inv.id}</div>
+      </div>
+    </div>
+    <div class="header-sub">
+      <span>📍 Alam Sutera, Tangerang Selatan</span>
+      <span>📞 +62812-8989-8937</span>
+      <span>🏦 BCA 8830883011 a.n. Malda Retta</span>
+    </div>
+  </div>
+
+  <!-- Detail Grid -->
+  <div class="grid2">
+    <div class="box box-blue">
+      <div class="box-title">Detail Invoice</div>
+      <div class="row"><span class="row-label">Tanggal</span><span class="row-val">${inv.sent === true || inv.sent === false ? new Date().toLocaleDateString("id-ID") : (inv.sent || new Date().toLocaleDateString("id-ID"))}</span></div>
+      <div class="row"><span class="row-label">No. Invoice</span><span class="row-val">${inv.id}</span></div>
+      <div class="row"><span class="row-label">No. Order</span><span class="row-val">${inv.job_id || "—"}</span></div>
+      <div class="row"><span class="row-label">Jatuh Tempo</span><span class="row-val">${inv.due || "—"}</span></div>
+    </div>
+    <div class="box box-white">
+      <div class="box-title">Tagihan Kepada</div>
+      <div style="font-weight:700;font-size:14px;color:#1e293b;margin-bottom:6px">${inv.customer}</div>
+      <div style="color:#64748b">📱 ${inv.phone || "—"}</div>
+      <div style="color:#64748b;margin-top:4px">🔧 ${inv.service || "—"}</div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <table>
+    <thead>
+      <tr>
+        <th>Deskripsi Layanan</th>
+        <th style="text-align:center">Unit</th>
+        <th style="text-align:right">Harga/Unit</th>
+        <th style="text-align:right">Subtotal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>${inv.service || "Jasa Servis AC"}</td>
+        <td style="text-align:center">${inv.units || 1}</td>
+        <td style="text-align:right;font-family:monospace">${perUnit.toLocaleString("id-ID")}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:600">${(inv.labor||0).toLocaleString("id-ID")}</td>
+      </tr>
+      ${(inv.material > 0) ? `<tr><td>Material &amp; Spare Part</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.material||0).toLocaleString("id-ID")}</td></tr>` : ""}
+      ${(inv.dadakan > 0) ? `<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>` : ""}
+      <tr class="total-row">
+        <td colspan="3">TOTAL TAGIHAN</td>
+        <td style="text-align:right;font-family:monospace">Rp ${(inv.total||0).toLocaleString("id-ID")}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  ${inv.garansi_expires ? `<div class="garansi-box">🛡️ <strong>Garansi Servis ${inv.garansi_days || 30} Hari</strong> — berlaku sampai ${inv.garansi_expires}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</div>` : ""}
+
+  <!-- Footer -->
+  <div class="footer-grid">
+    <div class="bank-box">
+      <div class="box-title">Informasi Pembayaran</div>
+      <div style="color:#475569;font-size:11px">Transfer Bank BCA</div>
+      <div class="bank-num">8830883011</div>
+      <div style="color:#475569;font-size:11px">a.n. Malda Retta</div>
+      <div style="margin-top:8px;font-size:11px;color:#64748b">Kirim bukti transfer via WhatsApp ke nomor di atas</div>
+    </div>
+    <div class="status-box ${inv.status==="PAID"?"status-paid":inv.status==="OVERDUE"?"status-overdue":"status-unpaid"}">
+      <div class="box-title">Status Pembayaran</div>
+      <div style="font-weight:700;font-size:15px;color:#1e293b;margin-bottom:4px">
+        ${inv.status==="PAID" ? "✅ LUNAS" : inv.status==="OVERDUE" ? "⚠️ JATUH TEMPO" : "⏳ MENUNGGU PEMBAYARAN"}
+      </div>
+      <div style="font-size:11px;color:#64748b">Jatuh tempo: ${inv.due || "—"}</div>
+      ${inv.paid_at ? `<div style="font-size:11px;color:#16a34a;margin-top:4px">Dibayar: ${new Date(inv.paid_at).toLocaleDateString("id-ID")}</div>` : ""}
+    </div>
+  </div>
+
+  <div class="footer-note">
+    <p>Pertanyaan? Hubungi kami via WhatsApp: +62812-8989-8937</p>
+    <p style="font-style:italic;margin-top:4px;color:#94a3b8">Terima kasih telah mempercayakan perawatan AC Anda kepada AClean Service 🙏</p>
+  </div>
+</div>
+<script>window.onload = () => { window.print(); }</script>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const win  = window.open(url, "_blank", "width=860,height=1000,scrollbars=yes");
+    if (!win) {
+      // Fallback jika popup diblokir browser
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Invoice_${inv.id}_${inv.customer.replace(/\s+/g,"_")}.html`;
+      a.click();
+      showNotif("PDF disimpan sebagai file HTML — buka lalu Ctrl+P untuk cetak");
+    } else {
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+  };
+
   const openLaporanModal = (order) => {
     // ANTI-DUPLIKAT: cek apakah sudah ada laporan untuk job ini
     const existingReport = laporanReports.find(r => r.job_id === (order._rewriteId ? order.id : order.id) && r.status !== "PENDING");
@@ -6192,7 +6353,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
             </div>
             {/* Action bar */}
             <div style={{ background:"#f1f5f9", padding:"12px 20px", borderTop:"1px solid #e2e8f0", display:"flex", gap:10, justifyContent:"flex-end", borderRadius:"0 0 20px 20px", flexShrink:0 }}>
-              <button onClick={() => showNotif("PDF digenerate — siap download")} style={{ background:"#EFF6FF", border:"1px solid #bfdbfe", color:"#1d4ed8", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📥 Download PDF</button>
+              <button onClick={() => downloadInvoicePDF(liveInv)} style={{ background:"#EFF6FF", border:"1px solid #bfdbfe", color:"#1d4ed8", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📥 Download PDF</button>
               {liveInv.status === "UNPAID" && (
                 <button onClick={() => { invoiceReminderWA(liveInv); setModalPDF(false); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📱 Kirim via WA</button>
               )}
