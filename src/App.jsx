@@ -380,6 +380,7 @@ export default function ACleanWebApp() {
   const [searchPriceList,  setSearchPriceList]  = useState("");
   const [priceListSvcTab, setPriceListSvcTab]  = useState("Semua");
   const [priceListData,   setPriceListData]    = useState([]);
+  const [priceListSyncedAt, setPriceListSyncedAt] = useState(null); // timestamp terakhir sync harga
   const [plEditItem,      setPlEditItem]       = useState(null);
   const [plEditForm,      setPlEditForm]       = useState({});
   const [searchLaporan,   setSearchLaporan]   = useState("");
@@ -576,6 +577,31 @@ export default function ACleanWebApp() {
     clearTimeout(notifTimer.current);
     notifTimer.current = setTimeout(() => setNotification(null), 3000);
     if (push) pushNotif("AClean", msg.replace(/[🔔📋✅❌⚠️💰]/g, "").trim());
+  };
+
+  // ── FORCE RELOAD PRICE LIST: dipanggil dari tombol "Sync Harga" di panel ARA ──
+  const forceReloadPriceList = async () => {
+    try {
+      const { data, error } = await supabase.from("price_list").select("*").order("service").order("type");
+      if (error) { showNotif("❌ Gagal sync harga: " + error.message); return; }
+      if (!data || data.length === 0) { showNotif("⚠️ Tabel price_list kosong di Supabase"); return; }
+      setPriceListData(data);
+      const activePL = data.filter(r => r.is_active !== false);
+      const newPL = { ...PRICE_LIST_DEFAULT };
+      activePL.forEach(row => {
+        if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
+        if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
+        if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
+        if (!newPL[row.service]) newPL[row.service] = {};
+        newPL[row.service][row.type] = Number(row.price)||0;
+      });
+      PRICE_LIST = newPL;
+      setPriceListSyncedAt(new Date());
+      showNotif("✅ Harga berhasil di-sync dari Supabase (" + data.length + " item)");
+      addAgentLog("PRICELIST_SYNC", "Force reload price list: " + data.length + " item", "SUCCESS");
+    } catch(e) {
+      showNotif("❌ Error sync: " + e.message);
+    }
   };
 
   // ── GAP-7: Cek job stuck — kirim reminder ke teknisi jika laporan belum masuk 1 jam setelah selesai ──
@@ -1231,6 +1257,7 @@ ${matRowsHtml}
             newPL[row.service][row.type] = Number(row.price) || 0;
           });
           PRICE_LIST = newPL;
+          setPriceListSyncedAt(new Date());
           console.log("✅ PRICE_LIST loaded from DB:", plRes.data.length, "rows");
         }
       } catch(e) { console.warn("price_list DB fallback to default:", e?.message); }
@@ -1354,15 +1381,33 @@ ${matRowsHtml}
       })
       .subscribe();
 
-    return () => {
+    // BUG FIX: ch8 dipindah ke sini (bukan di dalam return/cleanup)
     const ch8 = supabase.channel("rt-pricelist")
       .on("postgres_changes", { event:"*", schema:"public", table:"price_list" }, () =>
         rtDebounced("pricelist", () =>
           supabase.from("price_list").select("*").order("service").order("type")
-            .then(({data}) => { if(data) setPriceListData(data); })
+            .then(({data}) => {
+              if (data) {
+                setPriceListData(data);
+                // Rebuild PRICE_LIST var agar bizContext ARA selalu fresh
+                const activePL = data.filter(r => r.is_active !== false);
+                const newPL = { ...PRICE_LIST_DEFAULT };
+                activePL.forEach(row => {
+                  if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
+                  if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
+                  if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
+                  if (!newPL[row.service]) newPL[row.service] = {};
+                  newPL[row.service][row.type] = Number(row.price)||0;
+                });
+                PRICE_LIST = newPL;
+                setPriceListSyncedAt(new Date());
+                console.log("✅ PRICE_LIST realtime sync:", data.length, "rows");
+              }
+            })
         ))
       .subscribe();
 
+    return () => {
       clearInterval(_statsTimer);
       if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current); // GAP-7 cleanup
       supabase.removeChannel(ch1);
@@ -1901,24 +1946,29 @@ _Simpan pesan ini sebagai bukti pelunasan._`
         totalUnpaid: invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").reduce((a,b)=>a+(b.total||0),0),
         stokKritis: inventoryData.filter(i=>i.status==="OUT"||i.status==="CRITICAL").map(i=>i.name),
       },
-      // ── PRICE LIST LIVE dari Supabase (bukan brain.md) ──
-      // ARA wajib gunakan harga dari sini — sudah sync dengan UI Owner
-      priceList: PRICE_LIST,
-      // Format flat untuk ARA lebih mudah baca
+      // ── PRICE LIST LIVE: baca dari priceListData (React state — reactive) ──
+      // priceListData di-update setiap kali ada perubahan di Supabase via realtime
       hargaLayanan: (() => {
-        const rows = [];
-        Object.entries(PRICE_LIST).forEach(([svc, types]) => {
-          if (typeof types === "object" && !Array.isArray(types)) {
-            Object.entries(types).forEach(([tipe, harga]) => {
-              if (tipe !== "default") rows.push({ service: svc, type: tipe, harga, formatted: "Rp" + Number(harga).toLocaleString("id-ID") });
-            });
-          }
-        });
-        // Tambah freon
-        if (PRICE_LIST.freon_R22)   rows.push({ service: "Freon", type: "R22",   harga: PRICE_LIST.freon_R22,   formatted: "Rp" + Number(PRICE_LIST.freon_R22).toLocaleString("id-ID") });
-        if (PRICE_LIST.freon_R410A) rows.push({ service: "Freon", type: "R410A", harga: PRICE_LIST.freon_R410A, formatted: "Rp" + Number(PRICE_LIST.freon_R410A).toLocaleString("id-ID") });
-        if (PRICE_LIST.freon_R32)   rows.push({ service: "Freon", type: "R32",   harga: PRICE_LIST.freon_R32,   formatted: "Rp" + Number(PRICE_LIST.freon_R32).toLocaleString("id-ID") });
-        return rows;
+        const src = priceListData.filter(r => r.is_active !== false);
+        if (src.length === 0) {
+          // Fallback ke PRICE_LIST var jika state belum load
+          const rows = [];
+          Object.entries(PRICE_LIST).forEach(([svc, types]) => {
+            if (typeof types === "object" && !Array.isArray(types)) {
+              Object.entries(types).forEach(([tipe, harga]) => {
+                if (tipe !== "default") rows.push({ service: svc, type: tipe, harga, formatted: "Rp" + Number(harga).toLocaleString("id-ID") });
+              });
+            }
+          });
+          return rows;
+        }
+        return src.map(r => ({
+          service: r.service,
+          type: r.type,
+          harga: Number(r.price)||0,
+          formatted: "Rp" + Number(r.price||0).toLocaleString("id-ID"),
+          notes: r.notes||null,
+        }));
       })(),
     };
 
@@ -3548,18 +3598,23 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
         is_active:   updated.is_active !== false,
       }).eq("id", updated.id);
       if (error) { showNotif("❌ Gagal update: "+error.message); return; }
-      // Update local state
-      setPriceListData(prev => prev.map(r => r.id===updated.id ? {...r,...updated} : r));
-      // Rebuild PRICE_LIST map
+      // Update local state & rebuild PRICE_LIST dari data terbaru
+      const freshList = priceListData.map(r => r.id===updated.id ? {...r,...updated} : r);
+      setPriceListData(freshList);
+      // Rebuild PRICE_LIST dari freshList (bukan priceListData yang stale)
       const newPL = { ...PRICE_LIST_DEFAULT };
-      priceListData.filter(r=>r.is_active!==false).forEach(row => {
-        if (row.id===updated.id) row = {...row,...updated};
+      freshList.filter(r=>r.is_active!==false).forEach(row => {
+        if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
+        if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
+        if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
         if (!newPL[row.service]) newPL[row.service] = {};
         newPL[row.service][row.type] = Number(row.price)||0;
       });
       PRICE_LIST = newPL;
+      setPriceListSyncedAt(new Date());
+      console.log("✅ PRICE_LIST updated after save:", Object.keys(newPL));
       setPlEditItem(null);
-      showNotif("✅ Harga diperbarui di DB — ARA & Invoice otomatis pakai harga baru");
+      showNotif("✅ Harga diperbarui — ARA langsung pakai harga baru");
       addAgentLog("PRICELIST_UPDATE", `Harga "${updated.type}" diupdate → Rp${fmt(updated.price)}`, "SUCCESS");
     };
 
@@ -4526,8 +4581,11 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
       "Invoice mana yang belum dibayar?",
       "Stok material apa yang kritis?",
       "Buat ringkasan order hari ini",
-      "Update dadakan INV-20260301-001 jadi Rp 50000",
+      "Tampilkan semua harga layanan terbaru",
     ];
+    const syncLabel = priceListSyncedAt
+      ? "Harga terakhir sync: " + priceListSyncedAt.toLocaleString("id-ID",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})
+      : "Harga belum di-sync dari Supabase";
     return (
       <div style={{ display:"grid", gap:0, height:"calc(100vh - 120px)", maxHeight:700 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
@@ -4535,12 +4593,38 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
             <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>🤖 ARA — AI Agent AClean</div>
             <div style={{ fontSize:12, color:cs.muted }}>Chat langsung · Bisa update data invoice, cek stok, analisa bisnis</div>
           </div>
-          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+            {/* Sync status indicator */}
+            <div style={{ display:"flex", alignItems:"center", gap:5, background:cs.surface, border:"1px solid "+cs.border, borderRadius:7, padding:"4px 10px" }}>
+              <div style={{ width:7, height:7, borderRadius:"50%", background:priceListSyncedAt?cs.green:cs.yellow }} />
+              <span style={{ fontSize:10, color:cs.muted }}>
+                Harga: {priceListSyncedAt
+                  ? priceListSyncedAt.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"})
+                  : "belum sync"}
+              </span>
+            </div>
+            <button
+              onClick={forceReloadPriceList}
+              title="Sync harga terbaru dari Supabase"
+              style={{ background:cs.green+"18", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 12px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+              🔄 Sync Harga
+            </button>
             <div style={{ width:8, height:8, borderRadius:"50%", background:araLoading?cs.yellow:cs.green }} />
             <span style={{ fontSize:11, color:cs.muted }}>{araLoading?"Berpikir...":"Online"}</span>
             <button onClick={() => setAraMessages([{ role:"assistant", content:"Halo! Saya ARA 🤖 — AI Agent AClean. Ada yang bisa saya bantu?" }])}
               style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"5px 12px", borderRadius:6, cursor:"pointer", fontSize:11 }}>🗑 Reset</button>
           </div>
+        </div>
+        {/* Harga sync status banner */}
+        <div style={{ background:priceListSyncedAt?cs.green+"12":cs.yellow+"18", border:"1px solid "+(priceListSyncedAt?cs.green:cs.yellow)+"33", borderRadius:8, padding:"6px 12px", marginBottom:8, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <span style={{ fontSize:11, color:priceListSyncedAt?cs.green:cs.yellow }}>
+            {priceListSyncedAt ? "✅ " : "⚠️ "}{syncLabel}
+          </span>
+          {!priceListSyncedAt && (
+            <button onClick={forceReloadPriceList} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"3px 10px", borderRadius:5, cursor:"pointer", fontSize:10, fontWeight:700 }}>
+              Sync Sekarang
+            </button>
+          )}
         </div>
         {/* Quick prompts */}
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
