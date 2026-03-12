@@ -3785,7 +3785,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                         <>
                           {o.status !== "ON_SITE" && (
                             <button onClick={async () => {
-                              await supabase.from("orders").update({status:"ON_SITE", confirmed_at: new Date().toISOString()}).eq("id",o.id);
+                              await supabase.from("orders").update({status:"ON_SITE"}).eq("id",o.id);
                               setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
                               showNotif("✅ Status → On Site!");
                               const admins = userAccounts.filter(u=>u.role==="Admin"||u.role==="Owner");
@@ -3933,48 +3933,38 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                             <button onClick={() => openWA(o.phone,"Halo "+o.customer+", saya "+myTekName+" dari AClean. Saya akan tiba pkl "+o.time+" untuk "+o.service+". Terima kasih!")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>💬 Chat WA</button>
                           )}
                           {isTekRole && o.dispatch && !["COMPLETED","CANCELLED","PAID"].includes(o.status) && (<>
-                            {/* Konfirmasi Hadir — update status SAJA */}
+                            {/* ── Konfirmasi Tiba: 1 tombol, update status ON_SITE, tanpa WA Admin ── */}
                             {o.status !== "ON_SITE" && (
                               <button onClick={async () => {
-                                await supabase.from("orders").update({status:"ON_SITE", confirmed_at: new Date().toISOString()}).eq("id",o.id);
+                                await supabase.from("orders").update({status:"ON_SITE"}).eq("id",o.id);
                                 setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
-                                showNotif("✅ Status → On Site! Notif otomatis ke Admin...");
-                                // ── GAP-04 FIX: Auto WA ke semua Admin saat ON_SITE ──
-                                const admins04 = userAccounts.filter(u => u.role==="Admin"||u.role==="Owner");
-                                const msg04 = `✅ *Teknisi Sudah di Lokasi*
-
-📋 Job: *${o.id}*
-👤 Customer: ${o.customer}
-📍 Alamat: ${o.address}
-👷 Teknisi: ${currentUser?.name||o.teknisi}
-🕐 Tiba: ${new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"})} WIB
-
-_Laporan masuk setelah pekerjaan selesai._`;
-                                admins04.forEach(adm => { if(adm?.phone) sendWA(adm.phone, msg04); });
-                                addAgentLog("ON_SITE_AUTO_NOTIF", `Auto notif ke ${admins04.length} Admin — ${o.id}`, "SUCCESS");
+                                showNotif("✅ Status → Sudah di Lokasi!");
+                                addAgentLog("ON_SITE", `${currentUser?.name} tiba di lokasi — ${o.id}`, "SUCCESS");
                               }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", borderRadius:8, padding:"7px 12px", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
-                              ✅ Konfirmasi Hadir
-                            </button>
+                                ✅ Konfirmasi Tiba
+                              </button>
                             )}
-                            {/* WA Notif ke Admin — terpisah */}
-                            <button onClick={() => {
-                              const adm = userAccounts.find(u=>u.role==="Admin"||u.role==="Owner");
-                              if(adm?.phone) sendWA(adm.phone,
-                                `✅ *Konfirmasi Kehadiran*
-👷 ${currentUser?.name} sudah tiba di lokasi
-📋 Job: ${o.id}
-👤 Customer: ${o.customer}
-📍 ${o.address}
-🔧 ${o.service} ${o.units} unit`
+                            {/* ── WA Customer: manual, teknisi isi estimasi jam tiba ── */}
+                            {o.phone && (() => {
+                              const jamSkrg = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
+                              const [h,m] = jamSkrg.split(":").map(Number);
+                              const etaDate = new Date(); etaDate.setMinutes(etaDate.getMinutes()+30);
+                              const jamEta = etaDate.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
+                              return (
+                                <button onClick={() => {
+                                  const eta = window.prompt(
+                                    `Estimasi tiba di lokasi ${o.customer}?\nContoh: 13:30`,
+                                    jamEta
+                                  );
+                                  if (!eta) return;
+                                  const msg = `Halo ${o.customer} 👋\n\nKami dari *AClean Service* akan segera tiba di lokasi Anda.\n\n📋 Job: ${o.id}\n🔧 Service: ${o.service} — ${o.units} unit\n⏰ Estimasi tiba: *${eta} WIB*\n\nMohon pastikan ada di lokasi ya! 🙏\n\n_${currentUser?.name} — AClean_`;
+                                  if (o.phone) sendWA(o.phone, msg);
+                                  else showNotif("⚠️ No. HP customer tidak tersedia");
+                                }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                                  📱 WA Customer
+                                </button>
                               );
-                            }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
-                              📱 Notif Admin
-                            </button>
-                            {/* WA ke Customer */}
-                            <button onClick={() => openWA(o.phone, `Halo ${o.customer}, saya ${currentUser?.name} dari AClean. Sudah tiba di lokasi, siap mulai pengerjaan. 🔧`)}
-                              style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
-                              📱 WA Customer
-                            </button>
+                            })()}
                           </>)}
                           <button onClick={() => openLaporanModal(o)} style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📝 Laporan</button>
                         </div>
