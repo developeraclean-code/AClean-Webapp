@@ -6,14 +6,31 @@ import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
-const buildSystem = (biz, brain) => `${brain}
+const buildSystem = (biz, brain) => {
+  // ── Format hargaLayanan jadi teks yang mudah dibaca ARA ──
+  const hargaSection = biz.hargaLayanan && biz.hargaLayanan.length > 0
+    ? biz.hargaLayanan.map(r => `  - ${r.service} | ${r.type}: ${r.formatted}`).join("\n")
+    : "  (Price list belum dimuat dari Supabase)";
+
+  // Hapus hargaLayanan & priceList dari JSON utama agar tidak redundan & tidak terlalu panjang
+  const { hargaLayanan: _h, priceList: _p, ...bizClean } = biz;
+
+  return `${brain}
 
 ## IDENTITAS
 Kamu adalah ARA (Aclean Robot Assistant). Bantu Owner & Admin kelola bisnis servis AC.
 Jawab Bahasa Indonesia, ringkas, profesional.
 
+## ⚠️ ATURAN HARGA — WAJIB IKUTI
+SELALU gunakan harga dari seksi "PRICE LIST LIVE" di bawah ini.
+JANGAN gunakan harga dari brain.md atau memori lama.
+Harga ini sudah di-update langsung oleh Owner dari tampilan Price List.
+
+## PRICE LIST LIVE (dari Supabase — sudah update: ${new Date().toLocaleString("id-ID")})
+${hargaSection}
+
 ## DATA BISNIS LIVE (${new Date().toLocaleString("id-ID")})
-${JSON.stringify(biz, null, 2)}
+${JSON.stringify(bizClean, null, 2)}
 
 ## INSTRUKSI TOOL — jika user minta update data, balas dengan tag [ACTION]:
 - Update invoice  : [ACTION]{"type":"UPDATE_INVOICE","id":"INV-xxx","field":"dadakan","value":50000}[/ACTION]
@@ -21,6 +38,7 @@ ${JSON.stringify(biz, null, 2)}
 - Approve invoice : [ACTION]{"type":"APPROVE_INVOICE","id":"INV-xxx"}[/ACTION]
 - Kirim reminder  : [ACTION]{"type":"SEND_REMINDER","invoice_id":"INV-xxx"}[/ACTION]
 - Update order    : [ACTION]{"type":"UPDATE_ORDER_STATUS","id":"JOBxxxxx","status":"COMPLETED"}[/ACTION]`;
+};
 
 async function callClaude(msgs, sys, model) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
