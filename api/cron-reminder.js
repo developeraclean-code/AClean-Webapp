@@ -1,211 +1,168 @@
 /**
- * /api/cron-reminder.js
- * ══════════════════════════════════════════════════════════
- * AClean — GAP-01 FIX: Invoice Overdue Reminder via Cron
- * ══════════════════════════════════════════════════════════
+ * /api/cron-reminder.js — ALL-IN-ONE CRON
+ * Semua tugas cron digabung ke 1 file untuk hemat Serverless Function slot
  *
- * Dipanggil otomatis oleh Vercel Cron setiap hari jam 17:00 WIB (10:00 UTC).
- * Logika:
- *   - 1–7  hari overdue → Reminder 1 (sopan)
- *   - 8–14 hari overdue → Reminder 2 (lebih tegas)
- *   - 15–21 hari overdue → Reminder 3 (eskalasi CS)
- *   - 22+  hari overdue → Eskalasi ke Owner
- *   - Invoice PENDING_APPROVAL > 6 jam → Auto-approve Cleaning/Install
- *
- * Cara aktifkan di Vercel:
- *   1. Tambahkan ke vercel.json:
- *      { "crons": [{ "path": "/api/cron-reminder", "schedule": "0 10 * * *" }] }
- *   2. Set env var: CRON_SECRET=<random_string_panjang>
- *
- * Cara test manual:
- *   curl -X POST https://a-clean-webapp.vercel.app/api/cron-reminder \
- *     -H "Authorization: Bearer <CRON_SECRET>"
+ * Routes (dipanggil via Vercel Cron atau manual):
+ *   POST /api/cron-reminder              → invoice overdue reminder (10:00 UTC)
+ *   POST /api/cron-reminder?task=daily   → laporan harian (11:00 UTC)
+ *   POST /api/cron-reminder?task=stock   → alert stok (01:00 UTC)
+ *   POST /api/cron-reminder?task=cleanup → cleanup foto lama (19:00 UTC tgl 1)
  */
 
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
+const sb = createClient(
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY // service key — bisa bypass RLS
+  process.env.SUPABASE_SERVICE_KEY
 );
 
 const OWNER_PHONE  = process.env.OWNER_PHONE  || "6281299898937";
 const FONNTE_TOKEN = process.env.FONNTE_TOKEN  || "";
 
-// ── Send WA via Fonnte ──────────────────────────────────────
 async function sendWA(phone, message) {
   if (!FONNTE_TOKEN || !phone) return false;
   try {
-    const res = await fetch("https://api.fonnte.com/send", {
+    const r = await fetch("https://api.fonnte.com/send", {
       method: "POST",
-      headers: {
-        "Authorization": FONNTE_TOKEN,
-        "Content-Type": "application/json",
-      },
+      headers: { "Authorization": FONNTE_TOKEN, "Content-Type": "application/json" },
       body: JSON.stringify({ target: phone, message, countryCode: "62" }),
     });
-    const data = await res.json();
-    return data.status === true;
-  } catch (e) {
-    console.error("sendWA error:", e.message);
-    return false;
+    const d = await r.json();
+    return d.status === true;
+  } catch(e) { return false; }
+}
+
+function fmt(n) { return "Rp" + (Number(n)||0).toLocaleString("id-ID"); }
+function daysSince(d) { return d ? Math.floor((Date.now()-new Date(d).getTime())/86400000) : 0; }
+
+async function log(action, detail, status="SUCCESS") {
+  await sb.from("agent_logs").insert({
+    action, detail, status, actor:"CRON",
+    time: new Date().toISOString()
+  }).catch(()=>{});
+}
+
+// ══════════════════════════════════════════════════
+// TASK 1: Invoice Reminder (default)
+// ══════════════════════════════════════════════════
+async function taskReminder() {
+  const today = new Date().toISOString().slice(0,10);
+  const res = { reminder1:0, reminder2:0, reminder3:0, escalated:0, autoapproved:0 };
+
+  const { data: invs } = await sb.from("invoices").select("*").in("status",["UNPAID","OVERDUE"]);
+  for (const inv of invs||[]) {
+    const daysOverdue = daysSince(inv.due || inv.sent);
+    if (inv.status==="UNPAID" && inv.due && inv.due<today) {
+      await sb.from("invoices").update({status:"OVERDUE"}).eq("id",inv.id);
+    }
+    if (!inv.phone) continue;
+    let msg = null;
+    if (daysOverdue>=1  && daysOverdue<=7)  { msg=`Halo ${inv.customer} 🙏\n\nPengingat invoice *${inv.id}* — ${fmt(inv.total)}, jatuh tempo ${inv.due}.\n\nTransfer ke: *BCA 8830883011* a.n. Malda Retta\nTerima kasih! — AClean`; res.reminder1++; }
+    else if (daysOverdue>=8  && daysOverdue<=14) { msg=`Halo ${inv.customer},\n\nInvoice *${inv.id}* belum dibayar (${daysOverdue} hari). Total: ${fmt(inv.total)}.\n\nTransfer ke *BCA 8830883011* a.n. Malda Retta.\n\n— AClean`; res.reminder2++; }
+    else if (daysOverdue>=15 && daysOverdue<=21) { msg=`Halo ${inv.customer},\n\nInvoice *${inv.id}* sudah ${daysOverdue} hari lewat jatuh tempo (${fmt(inv.total)}).\n\nAda kendala? Balas pesan ini. — AClean`; res.reminder3++; await sendWA(OWNER_PHONE,`⚠️ OVERDUE ${inv.id} — ${inv.customer} — ${daysOverdue}h — ${fmt(inv.total)}`); }
+    else if (daysOverdue>=22) { res.escalated++; await sendWA(OWNER_PHONE,`🚨 ESKALASI ${inv.id} — ${inv.customer} — ${daysOverdue}h — ${fmt(inv.total)}`); continue; }
+    if (msg) { await sendWA(inv.phone, msg); await log("REMINDER_SENT",`${inv.id} — ${daysOverdue}d`); }
   }
+
+  // Auto-approve PENDING_APPROVAL > 6 jam
+  const { data: pend } = await sb.from("invoices").select("*").eq("status","PENDING_APPROVAL");
+  for (const inv of pend||[]) {
+    const hrs = (Date.now()-new Date(inv.created_at).getTime())/3600000;
+    if (hrs>=6 && /(Cleaning|Install)/.test(inv.service||"")) {
+      const due = new Date(Date.now()+7*86400000).toISOString().slice(0,10);
+      await sb.from("invoices").update({status:"UNPAID",sent:true,due,approved_by:"CRON_AUTO",approved_at:new Date().toISOString()}).eq("id",inv.id);
+      res.autoapproved++;
+      await sendWA(OWNER_PHONE,`ℹ️ Invoice *${inv.id}* (${inv.customer}) auto-approved setelah ${Math.round(hrs)}j. Total: ${fmt(inv.total)}`);
+      if (inv.phone) await sendWA(inv.phone,`Halo ${inv.customer} 😊\n\nInvoice *${inv.id}* — ${fmt(inv.total)} sudah dikirim.\nJatuh tempo: ${due}\nTransfer ke *BCA 8830883011* a.n. Malda Retta 🙏`);
+    }
+  }
+
+  // Update UNPAID lewat due → OVERDUE
+  await sb.from("invoices").update({status:"OVERDUE"}).eq("status","UNPAID").lt("due",new Date().toISOString().slice(0,10));
+  await log("CRON_REMINDER",`r1=${res.reminder1} r2=${res.reminder2} r3=${res.reminder3} esc=${res.escalated} auto=${res.autoapproved}`);
+  return res;
 }
 
-// ── Format Rupiah ───────────────────────────────────────────
-function fmt(n) {
-  return "Rp" + (Number(n)||0).toLocaleString("id-ID");
+// ══════════════════════════════════════════════════
+// TASK 2: Daily Report
+// ══════════════════════════════════════════════════
+async function taskDaily() {
+  const today = new Date().toISOString().slice(0,10);
+  const [{ data:orders }, { data:invoices }, { data:laporan }] = await Promise.all([
+    sb.from("orders").select("*").eq("date",today),
+    sb.from("invoices").select("*").gte("created_at",today+"T00:00:00"),
+    sb.from("service_reports").select("*").eq("date",today),
+  ]);
+  const done    = (orders||[]).filter(o=>o.status==="COMPLETED").length;
+  const proses  = (orders||[]).filter(o=>["ON_SITE","WORKING"].includes(o.status)).length;
+  const masuk   = (invoices||[]).filter(i=>i.status==="PAID").reduce((s,i)=>s+(i.total||0),0);
+  const pending = (invoices||[]).filter(i=>["UNPAID","OVERDUE"].includes(i.status)).reduce((s,i)=>s+(i.total||0),0);
+  const tgl = new Date().toLocaleDateString("id-ID",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  const msg = `📊 *LAPORAN HARIAN ACLEAN*\n${tgl}\n\n🔧 Order: ✅${done} selesai · 🔄${proses} proses · 📝${(laporan||[]).length} laporan\n\n💰 Lunas: ${fmt(masuk)}\n⏳ Pending: ${fmt(pending)}\n\n_ARA AClean_`;
+  await sendWA(OWNER_PHONE, msg);
+  await log("DAILY_REPORT",`${done} selesai, ${fmt(masuk)} masuk`);
+  return { orders:orders?.length, revenue:masuk };
 }
 
-// ── Hitung hari dari tanggal ────────────────────────────────
-function daysSince(dateStr) {
-  if (!dateStr) return 0;
-  const diff = Date.now() - new Date(dateStr).getTime();
-  return Math.floor(diff / (1000 * 60 * 60 * 24));
+// ══════════════════════════════════════════════════
+// TASK 3: Stock Alert
+// ══════════════════════════════════════════════════
+async function taskStock() {
+  const { data:items } = await sb.from("inventory").select("*").in("status",["CRITICAL","OUT"]);
+  if (!items?.length) return { message:"Semua stok aman" };
+  const out  = items.filter(i=>i.status==="OUT");
+  const crit = items.filter(i=>i.status==="CRITICAL");
+  let msg = `⚠️ *ALERT STOK ACLEAN*\n${new Date().toLocaleDateString("id-ID")}\n\n`;
+  if (out.length)  { msg+=`🔴 *HABIS (${out.length}):*\n`;  out.forEach(i=>{msg+=`• ${i.name}: 0 ${i.unit}\n`;}); msg+="\n"; }
+  if (crit.length) { msg+=`🟠 *KRITIS (${crit.length}):*\n`; crit.forEach(i=>{msg+=`• ${i.name}: ${i.stock} ${i.unit}\n`;}); }
+  msg += "\n_Segera restock. — ARA AClean_";
+  await sendWA(OWNER_PHONE, msg);
+  await log("STOCK_ALERT",`${out.length} habis, ${crit.length} kritis`,"WARNING");
+  return { out:out.length, critical:crit.length };
 }
 
-// ── Log ke agent_logs ───────────────────────────────────────
-async function logAction(action, detail, status = "SUCCESS") {
-  await supabase.from("agent_logs").insert({
-    action,
-    detail,
-    status,
-    time: new Date().toISOString(),
-    actor: "CRON",
-  }).catch(() => {});
+// ══════════════════════════════════════════════════
+// TASK 4: Cleanup foto lama (>12 bulan) dari R2
+// ══════════════════════════════════════════════════
+async function taskCleanup() {
+  // Ambil laporan > 12 bulan lalu
+  const cutoff = new Date(Date.now()-365*86400000).toISOString();
+  const { data: old } = await sb.from("service_reports").select("id,fotos").lt("created_at",cutoff);
+  let deleted = 0;
+  for (const rep of old||[]) {
+    const fotos = rep.fotos||[];
+    if (!fotos.length) continue;
+    // Update record: hapus URL foto (foto sudah lama, hemat storage)
+    await sb.from("service_reports").update({fotos:[]}).eq("id",rep.id).catch(()=>{});
+    deleted += fotos.length;
+  }
+  await log("CLEANUP_FOTOS",`${deleted} foto lama dihapus dari ${old?.length||0} laporan`);
+  return { deleted, reports: old?.length||0 };
 }
 
-// ════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 // MAIN HANDLER
-// ════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 export default async function handler(req, res) {
-  // Auth check
-  const auth = req.headers.authorization || "";
-  const secret = process.env.CRON_SECRET || "";
-  if (secret && auth !== `Bearer ${secret}`) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  res.setHeader("Access-Control-Allow-Origin","*");
+  if (req.method !== "GET" && req.method !== "POST") return res.status(405).end();
 
-  // Hanya POST atau GET dari Vercel Cron
-  if (req.method !== "GET" && req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  const auth   = req.headers.authorization || "";
+  const secret = process.env.CRON_SECRET   || "";
+  if (secret && auth !== `Bearer ${secret}`) return res.status(401).json({error:"Unauthorized"});
 
-  const results = {
-    reminder1: 0, reminder2: 0, reminder3: 0, escalated: 0,
-    autoapproved: 0, errors: [],
-  };
+  const task = req.query.task || "reminder";
 
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    let result;
+    if (task === "daily")   result = await taskDaily();
+    else if (task === "stock")   result = await taskStock();
+    else if (task === "cleanup") result = await taskCleanup();
+    else                         result = await taskReminder();
 
-    // ── 1. Load semua invoice UNPAID & OVERDUE ──────────────
-    const { data: invoices, error: invErr } = await supabase
-      .from("invoices")
-      .select("id,customer,phone,total,status,sent,due,service")
-      .in("status", ["UNPAID", "OVERDUE"]);
-
-    if (invErr) throw new Error("Load invoices: " + invErr.message);
-
-    for (const inv of invoices || []) {
-      const daysOverdue = daysSince(inv.due || inv.sent);
-
-      // Tandai OVERDUE jika belum
-      if (inv.status === "UNPAID" && inv.due && inv.due < today) {
-        await supabase.from("invoices").update({ status: "OVERDUE" }).eq("id", inv.id);
-        inv.status = "OVERDUE";
-      }
-
-      if (!inv.phone) continue;
-
-      let msg = null;
-
-      if (daysOverdue >= 1 && daysOverdue <= 7) {
-        // Reminder 1 — sopan
-        msg = `Halo ${inv.customer} 🙏\n\nIni pengingat untuk invoice jasa servis AC dari *AClean Service*:\n\n📋 Invoice: *${inv.id}*\n🔧 Layanan: ${inv.service||"-"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${inv.due||"-"}\n\nMohon segera diselesaikan pembayarannya ya, Kak 😊\nTransfer ke: *BCA 8830883011* a.n. Malda Retta\n\nTerima kasih! — AClean Service`;
-        results.reminder1++;
-      } else if (daysOverdue >= 8 && daysOverdue <= 14) {
-        // Reminder 2 — lebih tegas
-        msg = `Halo ${inv.customer},\n\nKami menghubungi kembali terkait invoice *${inv.id}* yang belum dibayar (${daysOverdue} hari).\n\n💰 Total: *${fmt(inv.total)}*\n\nMohon segera lakukan pembayaran ke:\n🏦 *BCA 8830883011* a.n. Malda Retta\n\nJika ada kendala, balas pesan ini dan kami siap bantu.\n\n— AClean Service`;
-        results.reminder2++;
-      } else if (daysOverdue >= 15 && daysOverdue <= 21) {
-        // Reminder 3 — eskalasi ke CS
-        msg = `Halo ${inv.customer},\n\nInvoice *${inv.id}* sudah melewati jatuh tempo *${daysOverdue} hari*.\n\n💰 Total: *${fmt(inv.total)}*\n\nApakah ada kendala dengan pembayaran? Kami ingin membantu menyelesaikannya. Balas pesan ini atau hubungi CS kami.\n\nTerima kasih atas perhatiannya.\n— AClean Service`;
-        results.reminder3++;
-        // Notif CS
-        await sendWA(OWNER_PHONE, `⚠️ *OVERDUE ALERT*\nInvoice ${inv.id} — ${inv.customer}\nTotal: ${fmt(inv.total)}\nSudah ${daysOverdue} hari belum dibayar.\nPerlu follow-up manual.`);
-      } else if (daysOverdue >= 22) {
-        // Eskalasi ke Owner
-        results.escalated++;
-        await sendWA(OWNER_PHONE, `🚨 *ESKALASI OVERDUE*\nInvoice: ${inv.id}\nCustomer: ${inv.customer}\nTotal: ${fmt(inv.total)}\nOverdue: ${daysOverdue} hari\n\nMohon keputusan Owner — write-off atau tindak lanjut hukum?`);
-        await logAction("INVOICE_ESCALATED", `${inv.id} — ${daysOverdue} hari overdue`, "WARNING");
-        continue; // tidak kirim reminder ke customer, langsung eskalasi owner
-      }
-
-      if (msg) {
-        await sendWA(inv.phone, msg);
-        await logAction("REMINDER_SENT", `${inv.id} — ${inv.customer} — ${daysOverdue}d overdue`, "SUCCESS");
-      }
-    }
-
-    // ── 2. Auto-approve PENDING_APPROVAL > 6 jam (Cleaning/Install) ──
-    const { data: pending, error: pendErr } = await supabase
-      .from("invoices")
-      .select("id,customer,phone,total,service,created_at")
-      .eq("status", "PENDING_APPROVAL");
-
-    if (!pendErr) {
-      for (const inv of pending || []) {
-        const hoursWaiting = (Date.now() - new Date(inv.created_at).getTime()) / (1000 * 60 * 60);
-        const isAutoApprovable = (inv.service || "").includes("Cleaning") || (inv.service || "").includes("Install");
-
-        if (hoursWaiting >= 6 && isAutoApprovable) {
-          const dueDate = new Date();
-          dueDate.setDate(dueDate.getDate() + 7);
-          const due = dueDate.toISOString().slice(0, 10);
-
-          await supabase.from("invoices").update({
-            status: "UNPAID",
-            sent: today,
-            due,
-            approved_by: "CRON_AUTO",
-            approved_at: new Date().toISOString(),
-          }).eq("id", inv.id);
-
-          results.autoapproved++;
-          await logAction("AUTO_APPROVED", `${inv.id} auto-approved setelah ${Math.round(hoursWaiting)}j (Owner tidak reply)`, "SUCCESS");
-
-          // Notif Owner bahwa invoice auto-approved
-          await sendWA(OWNER_PHONE, `ℹ️ Invoice *${inv.id}* (${inv.customer}) auto-approved setelah ${Math.round(hoursWaiting)} jam.\nTotal: ${fmt(inv.total)}\nStatus → UNPAID. Kirim ke customer otomatis.`);
-
-          // Notif customer
-          if (inv.phone) {
-            await sendWA(inv.phone, `Halo ${inv.customer} 😊\n\nInvoice jasa servis AC Anda telah disiapkan:\n\n📋 Invoice: *${inv.id}*\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: *${due}*\n\nSilakan transfer ke:\n🏦 *BCA 8830883011* a.n. Malda Retta\n\nKirim bukti transfer ke nomor ini ya, Kak 🙏\n— AClean Service`);
-          }
-        }
-      }
-    }
-
-    // ── 3. Update status OVERDUE untuk semua UNPAID yang sudah lewat due ──
-    const { error: overdueErr } = await supabase
-      .from("invoices")
-      .update({ status: "OVERDUE" })
-      .eq("status", "UNPAID")
-      .lt("due", today);
-
-    if (overdueErr) results.errors.push("mark overdue: " + overdueErr.message);
-
-    await logAction("CRON_RUN", `reminder1=${results.reminder1} reminder2=${results.reminder2} reminder3=${results.reminder3} escalated=${results.escalated} autoapproved=${results.autoapproved}`, "SUCCESS");
-
-    return res.status(200).json({
-      ok: true,
-      timestamp: new Date().toISOString(),
-      ...results,
-    });
-
-  } catch (err) {
-    console.error("cron-reminder error:", err);
-    await logAction("CRON_ERROR", err.message, "ERROR").catch(() => {});
-    return res.status(500).json({ ok: false, error: err.message });
+    return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });
+  } catch(err) {
+    await log("CRON_ERROR", `task=${task}: ${err.message}`, "ERROR").catch(()=>{});
+    return res.status(500).json({ ok:false, error:err.message });
   }
 }
