@@ -48,6 +48,15 @@ function r2Env() {
   };
 }
 
+// Body size limit 10MB untuk upload foto base64
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "10mb",
+    },
+  },
+};
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin",  "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
