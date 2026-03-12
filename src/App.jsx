@@ -801,7 +801,35 @@ export default function ACleanWebApp() {
         <td style="text-align:right;font-family:monospace">${perUnit.toLocaleString("id-ID")}</td>
         <td style="text-align:right;font-family:monospace;font-weight:600">${(inv.labor||0).toLocaleString("id-ID")}</td>
       </tr>
-      ${(inv.material > 0) ? `<tr><td>Material &amp; Spare Part</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.material||0).toLocaleString("id-ID")}</td></tr>` : ""}
+      ${(() => {
+        const details = inv.materials_detail || [];
+        if (details.length === 0 && (inv.material||0) === 0) return "";
+        if (details.length === 0) {
+          // Fallback: tidak ada detail, tampilkan 1 baris total saja
+          return \`<tr><td style="color:#64748b;font-style:italic">Material &amp; Spare Part</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">\${(inv.material||0).toLocaleString("id-ID")}</td></tr>\`;
+        }
+        // Header material
+        let rows = \`<tr style="background:#f1f5f9"><td colspan="4" style="font-weight:800;color:#1e40af;padding:8px 12px;font-size:11px;letter-spacing:0.3px">📦 MATERIAL &amp; SPARE PART</td></tr>\`;
+        // Detail per item
+        details.forEach(m => {
+          const hargaStr = m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—";
+          const subStr   = m.subtotal > 0    ? m.subtotal.toLocaleString("id-ID")     : "—";
+          const namaStr  = m.keterangan ? \`\${m.nama} <span style="color:#64748b;font-size:10px">(\${m.keterangan})</span>\` : m.nama;
+          rows += \`<tr>
+            <td style="padding-left:24px">↳ \${namaStr}</td>
+            <td style="text-align:center">\${m.jumlah} \${m.satuan||""}</td>
+            <td style="text-align:right;font-family:monospace">\${hargaStr}</td>
+            <td style="text-align:right;font-family:monospace;font-weight:600">\${subStr}</td>
+          </tr>\`;
+        });
+        // Subtotal material
+        const totalMat = details.reduce((s,m) => s+(m.subtotal||0), 0) || (inv.material||0);
+        rows += \`<tr style="background:#eff6ff">
+          <td colspan="3" style="text-align:right;font-weight:700;color:#1e40af;font-size:11px">Subtotal Material</td>
+          <td style="text-align:right;font-family:monospace;font-weight:700;color:#1e40af">\${totalMat.toLocaleString("id-ID")}</td>
+        </tr>\`;
+        return rows;
+      })()}
       ${(inv.dadakan > 0) ? `<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>` : ""}
       <tr class="total-row">
         <td colspan="3">TOTAL TAGIHAN</td>
@@ -1053,6 +1081,17 @@ export default function ACleanWebApp() {
       // [G1 FIXED] laporan load handled below by parseLaporan block
       if (!inventoryRes.error && inventoryRes.data) setInventoryData(inventoryRes.data);
       // Load laporan — single clean parse, always run (even empty = clear demo data)
+      // Parse materials_detail JSON di invoices
+      if (!invoicesRes.error && invoicesRes.data) {
+        setInvoicesData(invoicesRes.data.map(inv => ({
+          ...inv,
+          materials_detail: (() => {
+            if (!inv.materials_detail) return [];
+            if (Array.isArray(inv.materials_detail)) return inv.materials_detail;
+            try { return JSON.parse(inv.materials_detail); } catch(_) { return []; }
+          })(),
+        })));
+      }
       if (!laporanRes.error && laporanRes.data) {
         const parseLaporan = r => ({
           ...r,
@@ -7415,6 +7454,37 @@ Silakan buat invoice dari ARA Chat 👆`;
           // Hitung tanggal garansi (30 hari untuk Cleaning, 90 hari untuk Install)
           const garansiDays = laporanModal.service==="Install" ? 90 : laporanModal.service==="Repair" ? 60 : 30;
           const garansiExpires = new Date(Date.now() + garansiDays*24*60*60*1000).toISOString().slice(0,10);
+          // Build materials_detail: nama, jumlah, satuan, harga satuan, subtotal
+          const materialsDetail = laporanMaterials
+            .filter(m => m.nama && (parseFloat(m.jumlah)||0) > 0)
+            .map(m => {
+              const invItem = inventoryData.find(i =>
+                i.name.toLowerCase().includes(m.nama.toLowerCase()) ||
+                m.nama.toLowerCase().includes(i.name.toLowerCase())
+              );
+              const hargaSatuan = invItem?.price || 0;
+              const qty = parseFloat(m.jumlah) || 0;
+              return {
+                nama: m.nama,
+                jumlah: qty,
+                satuan: m.satuan || "pcs",
+                harga_satuan: hargaSatuan,
+                subtotal: hargaSatuan * qty,
+                keterangan: m.keterangan || "",
+              };
+            });
+          // Tambah freon sebagai item terpisah jika ada
+          if (freonTotal2 > 0) {
+            materialsDetail.push({
+              nama: freonType === "freon_R410A" ? "Freon R410A" : "Freon R22",
+              jumlah: freonTotal2,
+              satuan: "kg",
+              harga_satuan: PRICE_LIST[freonType] || 150000,
+              subtotal: freonValue,
+              keterangan: "",
+            });
+          }
+
           const newInvoice = {
             id: newInvoiceId,
             job_id: laporanModal.id,
@@ -7424,6 +7494,7 @@ Silakan buat invoice dari ARA Chat 👆`;
             units: laporanUnits.length,
             labor: laborTotal,
             material: matTotal,
+            materials_detail: materialsDetail,
             dadakan: 0,
             total: laborTotal + matTotal,
             status: "PENDING_APPROVAL",
@@ -7442,9 +7513,16 @@ Silakan buat invoice dari ARA Chat 👆`;
           }
           setInvoicesData(prev => [...prev, newInvoice]);
           // Simpan invoice ke Supabase
+          // Siapkan payload Supabase — materials_detail disimpan sebagai JSON string
+          const invoicePayload = {
+            ...newInvoice,
+            materials_detail: newInvoice.materials_detail?.length > 0
+              ? JSON.stringify(newInvoice.materials_detail)
+              : null,
+          };
           // Insert invoice — try full object, fallback to minimal columns if schema mismatch
           {
-            const { error: invErr } = await supabase.from("invoices").insert(newInvoice);
+            const { error: invErr } = await supabase.from("invoices").insert(invoicePayload);
             if (invErr) {
               console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
               // status fallback: try PENDING_APPROVAL → UNPAID (schema constraint)
