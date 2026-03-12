@@ -1678,13 +1678,13 @@ _Simpan pesan ini sebagai bukti pelunasan._`
         } else {
           const insertPayload = {
             name:         form.customer.trim(),
-            phone:        form.phone.trim(),
+            phone:        normalizePhone(form.phone),
             address:      (form.address || "").trim(),
             area:         (form.area    || "").trim(),
             notes:        "",
             is_vip:       false,
             total_orders: 1,
-            joined:       orderDate,
+            joined_date:  orderDate,
             last_service: orderDate,
           };
           const { data: savedCust, error: custErr } = await supabase
@@ -2131,12 +2131,12 @@ _Simpan pesan ini sebagai bukti pelunasan._`
                   id: "CUST" + Date.now(),
                   name: newOrd.customer, phone: newOrd.phone,
                   address: newOrd.address || "", area: "",
-                  total_orders: 1, joined: newOrd.date, last_service: newOrd.date, is_vip: false
+                  total_orders: 1, joined_date: newOrd.date, last_service: newOrd.date, is_vip: false
                 };
                 setCustomersData(prev => [...prev, newCust]);
                 try {
                   await supabase.from("customers").upsert(
-                    { name: newOrd.customer, phone: newOrd.phone, address: newOrd.address||"", joined: newOrd.date },
+                    { name: newOrd.customer, phone: newOrd.phone, address: newOrd.address||"", joined_date: newOrd.date },
                     { onConflict: "phone", ignoreDuplicates: false }
                   );
                 } catch(e) { console.warn("Customer upsert:", e?.message); }
@@ -6771,7 +6771,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                       area:         newCustomerForm.area||"",
                       notes:        newCustomerForm.notes||"",
                       is_vip:       newCustomerForm.is_vip||false,
-                      joined:       today,
+                      joined_date:  today,
                       total_orders: 0,
                       last_service: null,
                     };
