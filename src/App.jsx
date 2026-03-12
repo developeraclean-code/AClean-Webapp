@@ -228,18 +228,12 @@ const BRAIN_MD_DEFAULT = `# ARA BRAIN v4.0 — AClean Service
 - Area Perlu Konfirmasi: Jakarta Barat, Jakarta Selatan (ongkir tambah)
 - Peran: Asisten AI eksekutif untuk Owner/Admin
 
-## LAYANAN & HARGA STANDAR
-| Layanan | Harga/unit |
-|---------|-----------|
-| Cuci AC | 80.000 |
-| Freon AC (R22) | 150.000 |
-| Freon AC (R32) | 200.000 |
-| Perbaikan AC | 100.000–500.000 (estimasi) |
-| Pasang AC Baru | 300.000 |
-| Bongkar AC | 150.000 |
-| Service AC | 120.000 |
-- Biaya dadakan (booking H-0): +50.000
+## LAYANAN & HARGA
+⚠️ WAJIB: Selalu gunakan harga dari seksi "PRICE LIST LIVE" yang ada di system prompt.
+Harga di-update langsung oleh Owner via UI — jangan gunakan angka lain.
+Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal)
 - Minimal 1 unit per order
+- Biaya dadakan (booking H-0): +Rp50.000 (tetap, bukan dari price list)
 
 ## SOP ORDER
 1. Cek jadwal teknisi sebelum assign (gunakan teknisiWorkload dari data live)
@@ -1907,6 +1901,25 @@ _Simpan pesan ini sebagai bukti pelunasan._`
         totalUnpaid: invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").reduce((a,b)=>a+(b.total||0),0),
         stokKritis: inventoryData.filter(i=>i.status==="OUT"||i.status==="CRITICAL").map(i=>i.name),
       },
+      // ── PRICE LIST LIVE dari Supabase (bukan brain.md) ──
+      // ARA wajib gunakan harga dari sini — sudah sync dengan UI Owner
+      priceList: PRICE_LIST,
+      // Format flat untuk ARA lebih mudah baca
+      hargaLayanan: (() => {
+        const rows = [];
+        Object.entries(PRICE_LIST).forEach(([svc, types]) => {
+          if (typeof types === "object" && !Array.isArray(types)) {
+            Object.entries(types).forEach(([tipe, harga]) => {
+              if (tipe !== "default") rows.push({ service: svc, type: tipe, harga, formatted: "Rp" + Number(harga).toLocaleString("id-ID") });
+            });
+          }
+        });
+        // Tambah freon
+        if (PRICE_LIST.freon_R22)   rows.push({ service: "Freon", type: "R22",   harga: PRICE_LIST.freon_R22,   formatted: "Rp" + Number(PRICE_LIST.freon_R22).toLocaleString("id-ID") });
+        if (PRICE_LIST.freon_R410A) rows.push({ service: "Freon", type: "R410A", harga: PRICE_LIST.freon_R410A, formatted: "Rp" + Number(PRICE_LIST.freon_R410A).toLocaleString("id-ID") });
+        if (PRICE_LIST.freon_R32)   rows.push({ service: "Freon", type: "R32",   harga: PRICE_LIST.freon_R32,   formatted: "Rp" + Number(PRICE_LIST.freon_R32).toLocaleString("id-ID") });
+        return rows;
+      })(),
     };
 
     try {
