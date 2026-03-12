@@ -42,11 +42,27 @@ const CUSTOMERS_DATA = [
 
 // ── buildCustomerHistory: LIVE dari ordersData + laporanReports + invoicesData
 // Dipanggil di: renderCustomers(), laporan step-1, order detail
+// ── normalizePhone: 08xxx / +62xxx / 628xxx → 628xxx ──────────────
+const normalizePhone = (p) => {
+  if (!p) return "";
+  const d = p.toString().replace(/[\s\-().+]/g, ""); // hapus spasi, strip, plus, kurung
+  if (d.startsWith("08"))  return "62" + d.slice(1);   // 08xxx → 628xxx
+  if (d.startsWith("62"))  return d;                    // 628xxx → tetap
+  if (d.startsWith("8"))   return "62" + d;             // 8xxx → 628xxx (tanpa 0)
+  return d;
+};
+
+// samePhone: bandingkan 2 nomor, dianggap sama jika normalisasi sama
+const samePhone = (a, b) => {
+  if (!a || !b) return false;
+  return normalizePhone(a) === normalizePhone(b);
+};
+
 const buildCustomerHistory = (customer, ordersData, laporanReports, invoicesData) => {
   if (!customer) return [];
   const nm = (s) => (s||"").trim().toLowerCase();
   const matchName  = (o) => nm(o.customer) === nm(customer.name);
-  const matchPhone = (o) => customer.phone && o.phone && o.phone === customer.phone;
+  const matchPhone = (o) => customer.phone && o.phone && samePhone(o.phone, customer.phone);
 
   return ordersData
     .filter(o => matchName(o) || matchPhone(o))
@@ -1562,10 +1578,10 @@ _Simpan pesan ini sebagai bukti pelunasan._`
     const newId = "JOB" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
     const timeEnd = hitungJamSelesai(form.time||"09:00", form.service||"Cleaning", form.units||1);
     // Cek customer existing by phone ATAU name (untuk customer_id)
-    const preExistCust = customersData.find(c => c.phone === form.phone || c.name === form.customer);
+    const preExistCust = customersData.find(c => samePhone(c.phone, form.phone) || c.name === form.customer);
     const newOrder = {
       id:newId,
-      customer: form.customer, phone: form.phone, address: form.address,
+      customer: form.customer, phone: normalizePhone(form.phone), address: form.address,
       customer_id: preExistCust?.id || null,
       service: form.service, type: form.type, units: parseInt(form.units)||1,
       teknisi: form.teknisi, helper: form.helper||null,
@@ -1603,7 +1619,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
     if (form.phone && form.customer) {
       const todayStr = new Date().toISOString().slice(0, 10);
       const orderDate = form.date || todayStr;
-      const existing = customersData.find(c => c.phone === form.phone);
+      const existing = customersData.find(c => samePhone(c.phone, form.phone));
 
       if (!existing) {
         // ── Customer BARU ──
@@ -1657,7 +1673,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
         // ── Customer EXISTING: update total_orders & last_service ──
         const updatedOrders = (existing.total_orders || 0) + 1;
         setCustomersData(prev => prev.map(c =>
-          c.phone === form.phone
+          samePhone(c.phone, form.phone)
             ? { ...c, total_orders: updatedOrders, last_service: orderDate }
             : c
         ));
@@ -2059,7 +2075,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
 
             // ── Auto-upsert customer (new vs existing detection) ──
             if (newOrd.phone && newOrd.customer) {
-              const existingCust = customersData.find(c => c.phone === newOrd.phone || c.name === newOrd.customer);
+              const existingCust = customersData.find(c => samePhone(c.phone, newOrd.phone) || c.name === newOrd.customer);
               if (!existingCust) {
                 const newCust = {
                   id: "CUST" + Date.now(),
@@ -2078,7 +2094,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
               } else {
                 // Update total_orders untuk customer existing
                 setCustomersData(prev => prev.map(c =>
-                  c.phone === newOrd.phone ? { ...c, total_orders: (c.total_orders||0)+1, last_service: newOrd.date } : c
+                  samePhone(c.phone, newOrd.phone) ? { ...c, total_orders: (c.total_orders||0)+1, last_service: newOrd.date } : c
                 ));
                 try {
                   await supabase.from("customers").update({
@@ -2464,7 +2480,7 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                   <div style={{ fontSize:11, color:cs.muted }}>{o.service} · {o.units} unit · 👷 {o.teknisi} · {o.time}</div>
                 </div>
                 <div style={{ display:"flex", gap:6 }}>
-                  <button onClick={() => { const cu=customersData.find(cu=>cu.phone===o.phone); if(cu){setSelectedCustomer(cu);setCustomerTab("history");setActiveMenu("customers");} }}
+                  <button onClick={() => { const cu=customersData.find(cu=>samePhone(cu.phone,o.phone)); if(cu){setSelectedCustomer(cu);setCustomerTab("history");setActiveMenu("customers");} }}
                     style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>History</button>
                   {!o.dispatch && <button onClick={() => dispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>Dispatch WA</button>}
                 </div>
@@ -2634,7 +2650,7 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:8, flexShrink:0 }}>
                     <button onClick={() => { setSelectedCustomer(cu); setCustomerTab("history"); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600, whiteSpace:"nowrap" }}>📋 Riwayat ({cHist.length})</button>
-                    <button onClick={() => { setNewOrderForm(f=>({...f,customer:cu.name,phone:cu.phone,address:cu.address})); setModalOrder(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>+ Order</button>
+                    <button onClick={() => { setNewOrderForm(f=>({...f,customer:cu.name,phone:normalizePhone(cu.phone),address:cu.address})); setModalOrder(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>+ Order</button>
                     <button onClick={() => openWA(cu.phone, "")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 WA</button>
                   </div>
                 </div>
@@ -5640,10 +5656,10 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   <input type={type} value={newOrderForm[key]||""} onChange={e => {
                     const val = e.target.value;
                     if (key === "phone") {
-                      const match = customersData.find(c => c.phone === val);
+                      const match = customersData.find(c => samePhone(c.phone, val));
                       if (match) {
-                        setNewOrderForm(f => ({...f, phone:val, customer:match.name||f.customer, address:match.address||f.address, area:match.area||f.area}));
-                      } else { setNewOrderForm(f => ({...f, phone:val})); }
+                        setNewOrderForm(f => ({...f, phone:normalizePhone(val), customer:match.name||f.customer, address:match.address||f.address, area:match.area||f.area}));
+                      } else { setNewOrderForm(f => ({...f, phone:normalizePhone(val)})); }
                     } else { setNewOrderForm(f => ({...f, [key]:val})); }
                   }}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
@@ -5652,7 +5668,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               {/* Customer auto-detect badge */}
               {newOrderForm.phone && newOrderForm.phone.length >= 6 && (() => {
                 const existCust = customersData.find(c =>
-                  c.phone === newOrderForm.phone ||
+                  samePhone(c.phone, newOrderForm.phone) ||
                   (newOrderForm.customer && c.name.toLowerCase() === newOrderForm.customer.toLowerCase())
                 );
                 return (
@@ -6656,14 +6672,14 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 <button onClick={async ()=>{
                   if(!newCustomerForm.name||!newCustomerForm.phone){showNotif("Nama dan nomor HP wajib diisi");return;}
                   // GAP 6: cek duplikat phone sebelum submit
-                  const existPhone = customersData.find(cu => cu.phone === newCustomerForm.phone && cu.id !== (selectedCustomer?.id||""));
+                  const existPhone = customersData.find(cu => samePhone(cu.phone, newCustomerForm.phone) && cu.id !== (selectedCustomer?.id||""));
                   if(existPhone){showNotif(`⚠️ Nomor HP sudah terdaftar atas nama "${existPhone.name}". Tidak bisa duplikat.`);return;}
                   if(selectedCustomer && selectedCustomer.id){
                     // UPDATE existing customer
                     setCustomersData(prev=>prev.map(cu=>cu.id===selectedCustomer.id?{...cu,...newCustomerForm}:cu));
                     setSelectedCustomer(prev=>({...prev,...newCustomerForm}));
                     // Hanya kolom yang ada di DB schema
-                    const dbUpdate = {name:newCustomerForm.name, phone:newCustomerForm.phone, address:newCustomerForm.address, area:newCustomerForm.area, notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false};
+                    const dbUpdate = {name:newCustomerForm.name, phone:normalizePhone(newCustomerForm.phone), address:newCustomerForm.address, area:newCustomerForm.area, notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false};
                     const {error:cErr} = await supabase.from("customers").update(dbUpdate).eq("id",selectedCustomer.id);
                     if(cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
                     else { addAgentLog("CUSTOMER_UPDATED","Customer "+newCustomerForm.name+" diupdate","SUCCESS"); showNotif("✅ Data "+newCustomerForm.name+" berhasil diupdate"); }
@@ -6672,7 +6688,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                     const today = new Date().toISOString().slice(0,10);
                     const dbCust = {
                       name:         newCustomerForm.name.trim(),
-                      phone:        newCustomerForm.phone.trim(),
+                      phone:        normalizePhone(newCustomerForm.phone),
                       address:      newCustomerForm.address||"",
                       area:         newCustomerForm.area||"",
                       notes:        newCustomerForm.notes||"",
