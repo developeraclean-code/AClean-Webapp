@@ -393,29 +393,7 @@ export default function ACleanWebApp() {
   const LAP_PAGE_SIZE = 10;
 
   // ── Laporan Tim ──
-  const [laporanReports,  setLaporanReports]  = useState([
-    { id:"LPR001", job_id:"JOB10002", teknisi:"Usaeri", helper:null, customer:"Maria Thomson",
-      service:"Repair", date:"2026-03-01", submitted:"2026-03-01 15:30", status:"SUBMITTED",
-      total_units:1,
-      units:[{ unit_no:1, label:"Unit 1 - Ruang Tengah", tipe:"AC Split 0.5-1PK", merk:"Daikin", pk:"1PK",
-        kondisi_sebelum:["AC tidak dingin","Kapasitor rusak"], kondisi_setelah:["Normal, dingin optimal","Semua fungsi normal"],
-        pekerjaan:["Ganti kapasitor","Cek instalasi"], freon_ditambah:"0", ampere_akhir:"4.5", catatan_unit:"Kapasitor 25uF diganti" }],
-      materials:[{id:1,nama:"Kapasitor",jumlah:"1",satuan:"pcs",keterangan:"25uF"}],
-      fotos:[], rekomendasi:"Cek freon 6 bulan lagi", catatan_global:"Kapasitor sudah aus", editLog:[] },
-    { id:"LPR002", job_id:"JOB10001", teknisi:"Mulyadi", helper:"Samsul", customer:"Eddy Limanto",
-      service:"Cleaning", date:"2026-03-01", submitted:"2026-03-01 11:45", status:"VERIFIED",
-      total_units:2,
-      units:[
-        { unit_no:1, label:"Unit 1 - Kamar Utama", tipe:"AC Split 0.5-1PK", merk:"Daikin", pk:"1PK",
-          kondisi_sebelum:["AC tidak dingin","Bau tidak sedap"], kondisi_setelah:["Normal, dingin optimal","Filter bersih"],
-          pekerjaan:["Deep cleaning","Cuci filter","Semprot evaporator"], freon_ditambah:"0", ampere_akhir:"3.8", catatan_unit:"" },
-        { unit_no:2, label:"Unit 2 - Ruang Tamu", tipe:"AC Split 0.5-1PK", merk:"Panasonic", pk:"1PK",
-          kondisi_sebelum:["Bau tidak sedap"], kondisi_setelah:["Filter bersih","Semua fungsi normal"],
-          pekerjaan:["Deep cleaning","Cuci filter"], freon_ditambah:"0", ampere_akhir:"3.9", catatan_unit:"" }
-      ],
-      materials:[], fotos:[], rekomendasi:"Jadwalkan Mei 2026", catatan_global:"2 unit selesai",
-      editLog:[{ by:"Mulyadi", at:"2026-03-01 12:00", field:"catatan_global", old:"selesai", new:"2 unit selesai" }] },
-  ]);
+  const [laporanReports,  setLaporanReports]  = useState([]);
   const [selectedLaporan, setSelectedLaporan] = useState(null);
   const [modalLaporanDetail, setModalLaporanDetail] = useState(false);
   const [editLaporanMode, setEditLaporanMode] = useState(false);
@@ -1352,12 +1330,15 @@ export default function ACleanWebApp() {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({phone, message})
       });
-      const d = await r.json();
+      const d = await r.json().catch(()=>({}));
       if (r.ok && d.success) return true;
-    } catch(_) {}
-    // Fallback: buka wa.me manual (jika FONNTE_TOKEN belum diset)
-    window.open("https://wa.me/"+phone+"?text="+encodeURIComponent(message),"_blank");
-    return false;
+      // API gagal → silent fail, TIDAK buka tab WA (agar tidak ganggu user di desktop)
+      console.warn("sendWA failed:", d.error || r.status);
+      return false;
+    } catch(err) {
+      console.warn("sendWA error:", err.message);
+      return false;
+    }
   };
 
   const openWA = (phone, msg) => {
@@ -1625,9 +1606,45 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       invoice_id:null, dispatch:false, notes:form.notes||""
     };
     setOrdersData(prev => [...prev, newOrder]);
-    const { error } = await supabase.from("orders").insert(newOrder);
-  // ── GAP-06: parent_job_id tersimpan di newOrder jika diisi di form ──
-    if (error) { showNotif("❌ Gagal simpan order: " + error.message); return null; }
+
+    // ── Fallback insert: coba full → minimal ──
+    let orderSaved = false;
+
+    // Attempt 1: full payload
+    { const { error: e1 } = await supabase.from("orders").insert(newOrder);
+      if (!e1) { orderSaved = true; }
+      else console.warn("Order insert full failed:", e1.message); }
+
+    // Attempt 2: tanpa kolom yang sering tidak ada di schema lama
+    if (!orderSaved) {
+      const safe2 = {
+        id: newOrder.id, date: newOrder.date, status: newOrder.status,
+        service: newOrder.service, units: newOrder.units,
+        customer: newOrder.customer, teknisi: newOrder.teknisi,
+        helper: newOrder.helper, time: newOrder.time, time_end: newOrder.time_end,
+        customer_id: newOrder.customer_id,
+      };
+      const { error: e2 } = await supabase.from("orders").insert(safe2);
+      if (!e2) { orderSaved = true; }
+      else console.warn("Order insert safe2 failed:", e2.message);
+    }
+
+    // Attempt 3: minimal absolut
+    if (!orderSaved) {
+      const minimal = {
+        id: newOrder.id, date: newOrder.date,
+        service: newOrder.service, units: newOrder.units,
+        status: newOrder.status,
+      };
+      const { error: e3 } = await supabase.from("orders").insert(minimal);
+      if (!e3) { orderSaved = true; }
+      else {
+        showNotif("❌ Gagal simpan order: " + e3.message);
+        console.error("Order insert minimal failed:", e3.message);
+        return null;
+      }
+    }
+    if (!orderSaved) return null;
 
     // GAP 1.5: Simpan ke technician_schedule untuk cegah double booking
     if (form.teknisi && form.date && form.time && timeEnd) {
