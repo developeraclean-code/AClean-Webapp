@@ -699,6 +699,39 @@ export default function ACleanWebApp() {
     const fmt2 = (n) => "Rp " + (Number(n)||0).toLocaleString("id-ID");
     const perUnit = inv.units > 0 ? Math.round((inv.labor||0) / inv.units) : (inv.labor||0);
 
+    // Build material rows HTML (di luar template literal agar tidak ada backtick conflict)
+    const matDetails = inv.materials_detail || [];
+    let matRowsHtml = "";
+    if (matDetails.length > 0 || (inv.material||0) > 0) {
+      if (matDetails.length === 0) {
+        // Fallback: tidak ada detail
+        matRowsHtml = '<tr><td style="color:#64748b;font-style:italic">Material &amp; Spare Part</td>'
+          + '<td style="text-align:center">—</td><td style="text-align:right">—</td>'
+          + '<td style="text-align:right;font-family:monospace;font-weight:600">'
+          + (inv.material||0).toLocaleString("id-ID") + "</td></tr>";
+      } else {
+        matRowsHtml = '<tr style="background:#f1f5f9"><td colspan="4" style="font-weight:800;color:#1e40af;padding:8px 12px;font-size:11px">📦 MATERIAL &amp; SPARE PART</td></tr>';
+        matDetails.forEach(m => {
+          const hargaStr = m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—";
+          const subStr   = m.subtotal > 0    ? m.subtotal.toLocaleString("id-ID")     : "—";
+          const namaLabel = m.keterangan
+            ? m.nama + ' <span style="color:#64748b;font-size:10px">(' + m.keterangan + ")</span>"
+            : m.nama;
+          matRowsHtml += "<tr>"
+            + '<td style="padding-left:24px">↳ ' + namaLabel + "</td>"
+            + '<td style="text-align:center">' + m.jumlah + " " + (m.satuan||"") + "</td>"
+            + '<td style="text-align:right;font-family:monospace">' + hargaStr + "</td>"
+            + '<td style="text-align:right;font-family:monospace;font-weight:600">' + subStr + "</td>"
+            + "</tr>";
+        });
+        const totalMat = matDetails.reduce((s,m) => s+(m.subtotal||0), 0) || (inv.material||0);
+        matRowsHtml += '<tr style="background:#eff6ff">'
+          + '<td colspan="3" style="text-align:right;font-weight:700;color:#1e40af;font-size:11px">Subtotal Material</td>'
+          + '<td style="text-align:right;font-family:monospace;font-weight:700;color:#1e40af">'
+          + totalMat.toLocaleString("id-ID") + "</td></tr>";
+      }
+    }
+
     const html = `<!DOCTYPE html>
 <html lang="id">
 <head>
@@ -801,35 +834,7 @@ export default function ACleanWebApp() {
         <td style="text-align:right;font-family:monospace">${perUnit.toLocaleString("id-ID")}</td>
         <td style="text-align:right;font-family:monospace;font-weight:600">${(inv.labor||0).toLocaleString("id-ID")}</td>
       </tr>
-      ${(() => {
-        const details = inv.materials_detail || [];
-        if (details.length === 0 && (inv.material||0) === 0) return "";
-        if (details.length === 0) {
-          // Fallback: tidak ada detail, tampilkan 1 baris total saja
-          return \`<tr><td style="color:#64748b;font-style:italic">Material &amp; Spare Part</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">\${(inv.material||0).toLocaleString("id-ID")}</td></tr>\`;
-        }
-        // Header material
-        let rows = \`<tr style="background:#f1f5f9"><td colspan="4" style="font-weight:800;color:#1e40af;padding:8px 12px;font-size:11px;letter-spacing:0.3px">📦 MATERIAL &amp; SPARE PART</td></tr>\`;
-        // Detail per item
-        details.forEach(m => {
-          const hargaStr = m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—";
-          const subStr   = m.subtotal > 0    ? m.subtotal.toLocaleString("id-ID")     : "—";
-          const namaStr  = m.keterangan ? \`\${m.nama} <span style="color:#64748b;font-size:10px">(\${m.keterangan})</span>\` : m.nama;
-          rows += \`<tr>
-            <td style="padding-left:24px">↳ \${namaStr}</td>
-            <td style="text-align:center">\${m.jumlah} \${m.satuan||""}</td>
-            <td style="text-align:right;font-family:monospace">\${hargaStr}</td>
-            <td style="text-align:right;font-family:monospace;font-weight:600">\${subStr}</td>
-          </tr>\`;
-        });
-        // Subtotal material
-        const totalMat = details.reduce((s,m) => s+(m.subtotal||0), 0) || (inv.material||0);
-        rows += \`<tr style="background:#eff6ff">
-          <td colspan="3" style="text-align:right;font-weight:700;color:#1e40af;font-size:11px">Subtotal Material</td>
-          <td style="text-align:right;font-family:monospace;font-weight:700;color:#1e40af">\${totalMat.toLocaleString("id-ID")}</td>
-        </tr>\`;
-        return rows;
-      })()}
+${matRowsHtml}
       ${(inv.dadakan > 0) ? `<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>` : ""}
       <tr class="total-row">
         <td colspan="3">TOTAL TAGIHAN</td>
