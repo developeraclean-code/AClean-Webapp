@@ -464,7 +464,10 @@ export default function ACleanWebApp() {
   const addAgentLog = async (action, detail, status="SUCCESS") => {
     const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
     setAgentLogs(prev => [{ time:now, action, detail, status }, ...prev].slice(0,50));
-    try { await supabase.from("agent_logs").insert({ time:now, action, detail, status }); } catch(e) {}
+    try {
+      const { error: alErr } = await supabase.from("agent_logs").insert({ time:now, action, detail, status });
+      if (alErr) console.error("agent_logs 400:", alErr.message, "|", alErr.hint, "|", alErr.details);
+    } catch(e) { console.error("agent_logs catch:", e.message); }
   };
 
   // ── Settings: _ls HARUS dideklarasi SEBELUM useState yang memakainya ──
@@ -1396,23 +1399,7 @@ Kamu ditugaskan sebagai Helper. — AClean`;
       } catch(e) { /* dispatch_logs opsional */ }
       addAgentLog("DISPATCH_WA_SENT", `WA dispatch ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
       showNotif(`✅ WA Dispatch terkirim ke ${order.teknisi}${order.helper?" + "+order.helper:""}`);
-      // ── GAP-12 FIX: Auto WA ke Customer — teknisi sedang dalam perjalanan ──
-      if (order.phone) {
-        const custDispatchMsg = `Halo ${order.customer} 👋
-
-Teknisi *${order.teknisi}* dari AClean sedang dalam perjalanan menuju lokasi Anda.
-
-📋 Job: ${order.id}
-🔧 Service: ${order.service} — ${order.units} unit
-📅 Jadwal: ${order.date} jam ${order.time}
-
-Estimasi tiba ±30 menit. Mohon pastikan ada di lokasi ya! 🙏
-
-_AClean Service_`;
-        sendWA(order.phone, custDispatchMsg).then(custOk => {
-          if(custOk) addAgentLog("CUST_NOTIF_DISPATCH", `WA on-the-way ke customer ${order.customer}`, "SUCCESS");
-        });
-      }
+      // WA ke customer TIDAK dikirim saat dispatch — teknisi belum tentu langsung berangkat
     } else {
       showNotif("📱 WA dibuka manual di browser");
     }
@@ -1655,14 +1642,32 @@ _Simpan pesan ini sebagai bukti pelunasan._`
           status:    "ACTIVE",
         };
         const { error: se } = await supabase.from("technician_schedule").insert(schedPayload);
-        if (se) addAgentLog("SCHEDULE_WARNING", "Schedule insert: "+se.message, "WARNING");
+        if (se) console.error("technician_schedule 400:", se.message, "|", se.hint, "|", se.details, "| payload:", JSON.stringify(schedPayload));
       } catch(e) { /* technician_schedule opsional */ }
     }
 
     addAgentLog("ORDER_CREATED", `Order baru ${newId} — ${form.customer} (${form.service} ${form.units} unit)`, "SUCCESS");
-    showNotif(`✅ Order ${newId} berhasil dibuat! Klik 📤 di daftar order untuk kirim WA ke teknisi.`);
 
-    // Dispatch WA tidak lagi otomatis — gunakan tombol 📤 di daftar order
+    // ── AUTO-DISPATCH: Owner/Admin buat order → langsung dispatch ke teknisi ──
+    // Teknisi tidak perlu menunggu tombol dispatch manual
+    if (form.teknisi && (currentUser?.role === "Owner" || currentUser?.role === "Admin")) {
+      // Update status ke DISPATCHED dulu
+      setOrdersData(prev => prev.map(o =>
+        o.id === newId ? { ...o, status: "DISPATCHED", dispatch: true, dispatch_at: new Date().toISOString() } : o
+      ));
+      await supabase.from("orders").update({
+        status: "DISPATCHED", dispatch: true, dispatch_at: new Date().toISOString()
+      }).eq("id", newId);
+
+      // Kirim WA ke teknisi (dan helper jika ada) + customer
+      await sendDispatchWA(newOrder);
+      showNotif(`✅ Order ${newId} dibuat & WA dispatch dikirim ke ${form.teknisi}!`);
+      addAgentLog("AUTO_DISPATCH", `Auto-dispatch ${newId} → ${form.teknisi}`, "SUCCESS");
+    } else {
+      showNotif(`✅ Order ${newId} berhasil dibuat!`);
+    }
+
+    // (komentar lama dihapus)
 
     // ── AUTO-SAVE CUSTOMER: tambah/update customer saat order dibuat ──
     if (form.phone && form.customer) {
