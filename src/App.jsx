@@ -2630,8 +2630,8 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                     {safeArr(svc.foto_urls).length > 0 && (
                       <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:8 }}>
                         {safeArr(svc.foto_urls).slice(0,5).map((url, fi) => (
-                          <img key={fi} src={url} alt={`Foto ${fi+1}`}
-                            onClick={() => window.open(url, "_blank")}
+                          <img key={fi} src={fotoSrc(url)} alt={`Foto ${fi+1}`}
+                            onClick={() => window.open(fotoSrc(url), "_blank")}
                             style={{ width:56, height:56, objectFit:"cover", borderRadius:8,
                               cursor:"pointer", border:"1px solid "+cs.border,
                               transition:"opacity .15s" }}
@@ -2642,7 +2642,7 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                           <div style={{ width:56, height:56, borderRadius:8, background:cs.surface,
                             border:"1px solid "+cs.border, display:"flex", alignItems:"center",
                             justifyContent:"center", fontSize:11, color:cs.muted, cursor:"pointer" }}
-                            onClick={() => window.open(svc.foto_urls[5], "_blank")}>
+                            onClick={() => window.open(fotoSrc(svc.foto_urls[5]), "_blank")}>
                             +{safeArr(svc.foto_urls).length - 5}
                           </div>
                         )}
