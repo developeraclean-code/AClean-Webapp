@@ -530,6 +530,7 @@ export default function ACleanWebApp() {
   const hariIni = todayDate.toLocaleDateString("id-ID", { weekday:"long", day:"numeric", month:"long", year:"numeric" });
   const bulanIni = todayDate.toISOString().slice(0,7); // "2026-03"
   const [weekOffset, setWeekOffset] = useState(0); // 0=minggu ini, -1=minggu lalu, +1=minggu depan
+  const [searchSchedule, setSearchSchedule] = useState(""); // BUG-4: search jadwal
 
   // ── WA Conversations reaktif ──
   const [waConversations, setWaConversations] = useState(WA_CONVERSATIONS);
@@ -2796,11 +2797,17 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
     const history = selectedCustomer
       ? buildCustomerHistory(selectedCustomer, ordersData, laporanReports, invoicesData)
       : [];
-    const filteredCusts = customersData.filter(cu =>
-      !searchCustomer ||
-      cu.name.toLowerCase().includes(searchCustomer.toLowerCase()) ||
-      cu.phone.includes(searchCustomer)
-    );
+    const _scq = searchCustomer.trim().toLowerCase();
+    const filteredCusts = customersData.filter(cu => {
+      if (!_scq) return true;
+      return (
+        (cu.name||"").toLowerCase().includes(_scq) ||
+        (cu.phone||"").includes(searchCustomer.trim()) ||
+        (cu.address||"").toLowerCase().includes(_scq) ||
+        (cu.area||"").toLowerCase().includes(_scq) ||
+        (cu.notes||"").toLowerCase().includes(_scq)
+      );
+    });
     return (
       <div style={{ display:"grid", gap:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -3131,9 +3138,14 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
     if (searchOrder.trim()) {
       const q = searchOrder.trim().toLowerCase();
       filtered = filtered.filter(o =>
-        (o.customer||"").toLowerCase().includes(q) || (o.id||"").toLowerCase().includes(q) ||
-        (o.phone||"").includes(searchOrder.trim()) || (o.teknisi||"").toLowerCase().includes(q) ||
-        (o.address||"").toLowerCase().includes(q)
+        (o.customer||"").toLowerCase().includes(q) ||
+        (o.id||"").toLowerCase().includes(q) ||
+        (o.phone||"").toLowerCase().includes(q) ||
+        (o.teknisi||"").toLowerCase().includes(q) ||
+        (o.helper||"").toLowerCase().includes(q) ||
+        (o.address||"").toLowerCase().includes(q) ||
+        (o.service||"").toLowerCase().includes(q) ||
+        (o.notes||"").toLowerCase().includes(q)
       );
     }
     filtered.sort((a,b) => (b.date+(b.time||"")).localeCompare(a.date+(a.time||"")));
@@ -3583,7 +3595,8 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
         (r.type||"").toLowerCase().includes(q) ||
         (r.service||"").toLowerCase().includes(q) ||
         (r.code||"").toLowerCase().includes(q) ||
-        (r.notes||"").toLowerCase().includes(q)
+        (r.notes||"").toLowerCase().includes(q) ||
+        String(r.price||"").includes(searchPriceList.trim())
       );
     }
 
@@ -3823,11 +3836,22 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
     const allTekNames = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
     // Helper: lihat jadwal via field o.helper, bukan o.teknisi
     const isHelperRole = currentUser?.role === "Helper";
-    const filteredOrders = activeTek === "Semua" 
-      ? ordersData 
-      : ordersData.filter(o => isHelperRole 
+    const _sqSched = searchSchedule.trim().toLowerCase();
+    const _baseOrders = activeTek === "Semua"
+      ? ordersData
+      : ordersData.filter(o => isHelperRole
           ? (o.helper === activeTek || o.teknisi === activeTek)
           : o.teknisi === activeTek);
+    // BUG-4: tambah search text filter di jadwal
+    const filteredOrders = !_sqSched ? _baseOrders : _baseOrders.filter(o =>
+      (o.customer||"").toLowerCase().includes(_sqSched) ||
+      (o.id||"").toLowerCase().includes(_sqSched) ||
+      (o.teknisi||"").toLowerCase().includes(_sqSched) ||
+      (o.helper||"").toLowerCase().includes(_sqSched) ||
+      (o.address||"").toLowerCase().includes(_sqSched) ||
+      (o.service||"").toLowerCase().includes(_sqSched) ||
+      (o.phone||"").includes(searchSchedule.trim())
+    );
     const teknisiList = activeTek === "Semua" ? allTekNames : [activeTek];
     // Untuk teknisi/helper: filter hanya hari ini
     const todayOrdersTek = isTekRole ? filteredOrders.filter(o => o.date === TODAY) : filteredOrders;
@@ -3889,6 +3913,23 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                 </button>
               );
             })}
+          </div>
+        )}
+
+        {/* BUG-4 FIX: Search bar di Jadwal */}
+        {!isTekRole && (
+          <div style={{ position:"relative" }}>
+            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:13, pointerEvents:"none" }}>🔍</span>
+            <input
+              value={searchSchedule}
+              onChange={e => setSearchSchedule(e.target.value)}
+              placeholder="Cari customer, teknisi, alamat, Job ID..."
+              style={{ width:"100%", background:cs.card, border:"1px solid "+(searchSchedule?cs.accent:cs.border), borderRadius:10, padding:"9px 36px", color:cs.text, fontSize:12, boxSizing:"border-box", outline:"none" }}
+            />
+            {searchSchedule && (
+              <button onClick={() => setSearchSchedule("")}
+                style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:15 }}>✕</button>
+            )}
           </div>
         )}
 
@@ -5000,7 +5041,15 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
     if (laporanStatusFilter!=="Semua") filtered=filtered.filter(r=>r.status===laporanStatusFilter);
     if (searchLaporan.trim()) {
       const q=searchLaporan.trim().toLowerCase();
-      filtered=filtered.filter(r=>(r.customer||"").toLowerCase().includes(q)||(r.teknisi||"").toLowerCase().includes(q)||(r.job_id||"").toLowerCase().includes(q)||(r.helper||"").toLowerCase().includes(q)||(r.service||"").toLowerCase().includes(q));
+      filtered=filtered.filter(r=>
+        (r.customer||"").toLowerCase().includes(q)||
+        (r.teknisi||"").toLowerCase().includes(q)||
+        (r.job_id||r.id||"").toLowerCase().includes(q)||
+        (r.helper||"").toLowerCase().includes(q)||
+        (r.service||"").toLowerCase().includes(q)||
+        (r.catatan_global||r.catatan||"").toLowerCase().includes(q)||
+        (r.rekomendasi||"").toLowerCase().includes(q)
+      );
     }
     filtered.sort((a,b)=>{const dA=a.submitted_at||a.date||"",dB=b.submitted_at||b.date||"";if(dB!==dA)return dB.localeCompare(dA);return (statusOrder[a.status]||9)-(statusOrder[b.status]||9);});
     const totPgL=Math.ceil(filtered.length/LAP_PAGE_SIZE)||1;
