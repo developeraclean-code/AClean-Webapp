@@ -2,7 +2,8 @@
 // POST /api/ara-chat { messages, bizContext, provider, model, brainMd }
 // Backend proxy ARA — support Claude, OpenAI, Gemini, Groq
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient }                                 from "@supabase/supabase-js";
+import { validateInternalToken, checkRateLimit, setCorsHeaders } from "./_auth.js";
 
 const sb = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
@@ -90,11 +91,16 @@ async function callGroq(msgs, sys, model) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin","*");
-  res.setHeader("Access-Control-Allow-Methods","POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers","Content-Type");
+  // ── SEC-02: CORS ──
+  setCorsHeaders(req, res);
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST")   return res.status(405).json({error:"Method not allowed"});
+
+  // ── SEC-02: Rate limit 30 req/menit per IP (ARA lebih ketat karena costly) ──
+  if (!checkRateLimit(req, res, 30, 60000)) return;
+
+  // ── SEC-02: Validasi internal token ──
+  if (!validateInternalToken(req, res)) return;
 
   const { messages, bizContext={}, provider: rawProvider, model, brainMd="" } = req.body||{};
   // ── Smart provider fallback: pakai provider dari frontend, tapi fallback ke env yang tersedia ──
