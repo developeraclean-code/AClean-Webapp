@@ -7,7 +7,8 @@
 //   POST /api/webhook-fonnte   webhook WA masuk
 //   POST /api/test-connection  { type, provider? }
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient }                                  from "@supabase/supabase-js";
+import { validateInternalToken, checkRateLimit, setCorsHeaders } from "./_auth.js";
 
 // ── Helpers AWS4 Signature ──
 async function awsSign({ method, bucket, key, acctId, accKey, secKey, mimeType, buf }) {
@@ -58,12 +59,17 @@ export const config = {
 };
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin",  "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  // ── SEC-02: CORS ──
+  setCorsHeaders(req, res);
   if (req.method === "OPTIONS") return res.status(200).end();
 
+  // ── SEC-02: Rate limit 120 req/menit per IP ──
+  if (!checkRateLimit(req, res, 120, 60000)) return;
+
+  // ── SEC-02: Validasi internal token (kecuali webhook Fonnte yang dari Fonnte server) ──
   const route = req.query.route;
+  const isWebhook = route === "webhook-fonnte";
+  if (!isWebhook && !validateInternalToken(req, res)) return;
 
   // ══════════════════════════════════════════════════
   // GET /api/foto?key=reports/ORD001/foto.jpg
