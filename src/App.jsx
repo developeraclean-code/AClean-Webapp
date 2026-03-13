@@ -330,8 +330,7 @@ export default function ACleanWebApp() {
   const [loginError,    setLoginError]    = useState("");
   const [loginEmail,    setLoginEmail]    = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [loginAttempts, setLoginAttempts] = useState(() => _ls("loginAttempts", 0));
-  const [lockoutUntil,  setLockoutUntil]  = useState(() => _ls("lockoutUntil",  0));
+
   const [modalAddUser,  setModalAddUser]  = useState(false);
   const [newUserForm,   setNewUserForm]   = useState({ name:"", email:"", role:"Admin", password:"", phone:"" });
   const [userAccounts,  setUserAccounts]  = useState([
@@ -490,6 +489,9 @@ export default function ACleanWebApp() {
       ? { "X-Internal-Token": import.meta.env.VITE_INTERNAL_API_SECRET }
       : {})
   });
+  // SEC-07: brute force states — harus setelah _ls didefinisikan
+  const [loginAttempts, setLoginAttempts] = useState(() => _ls("loginAttempts", 0));
+  const [lockoutUntil,  setLockoutUntil]  = useState(() => _ls("lockoutUntil",  0));
 
   // ── Settings state ──
   const [waProvider,      setWaProvider]      = useState(() => _ls("waProvider", "fonnte"));
