@@ -330,6 +330,8 @@ export default function ACleanWebApp() {
   const [loginError,    setLoginError]    = useState("");
   const [loginEmail,    setLoginEmail]    = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [loginAttempts, setLoginAttempts] = useState(() => _ls("loginAttempts", 0));
+  const [lockoutUntil,  setLockoutUntil]  = useState(() => _ls("lockoutUntil",  0));
   const [modalAddUser,  setModalAddUser]  = useState(false);
   const [newUserForm,   setNewUserForm]   = useState({ name:"", email:"", role:"Admin", password:"", phone:"" });
   const [userAccounts,  setUserAccounts]  = useState([
@@ -481,6 +483,13 @@ export default function ACleanWebApp() {
   } catch { return def; }
 };
   const _lsSave = (key, val) => { try { localStorage.setItem("aclean_"+key, JSON.stringify(val)); } catch {} };
+  // SEC-02: internal token untuk API calls (dibaca dari Vite env, TIDAK disimpan di localStorage)
+  const _apiHeaders = () => ({
+    "Content-Type": "application/json",
+    ...(import.meta.env.VITE_INTERNAL_API_SECRET
+      ? { "X-Internal-Token": import.meta.env.VITE_INTERNAL_API_SECRET }
+      : {})
+  });
 
   // ── Settings state ──
   const [waProvider,      setWaProvider]      = useState(() => _ls("waProvider", "fonnte"));
@@ -947,6 +956,11 @@ ${matRowsHtml}
 
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url  = URL.createObjectURL(blob);
+    // SEC-09: Audit log setiap kali invoice dicetak/download
+    addAgentLog("INVOICE_PRINT",
+      `Invoice ${inv.id} (${inv.customer}) dicetak oleh ${currentUser?.name || "Unknown"} — Rp${fmt(inv.total)}`,
+      "SUCCESS"
+    );
     const win  = window.open(url, "_blank", "width=860,height=1000,scrollbars=yes");
     if (!win) {
       // Fallback jika popup diblokir browser
@@ -990,6 +1004,16 @@ ${matRowsHtml}
   };
   const doLogin = async (email, pass) => {
     setLoginError("");
+
+    // ── SEC-07: Cek lockout brute force ──
+    const _now = Date.now();
+    const _lockout = _ls("lockoutUntil", 0);
+    if (_lockout > _now) {
+      const sisa = Math.ceil((_lockout - _now) / 1000);
+      setLoginError(`⛔ Terlalu banyak percobaan. Coba lagi dalam ${sisa} detik.`);
+      return;
+    }
+
     try {
       // ── Coba Supabase Auth dulu (untuk akun real dengan UUID) ──
       const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
@@ -1002,12 +1026,16 @@ ${matRowsHtml}
           setLoginError("Akun tidak aktif. Hubungi Owner.");
           await supabase.auth.signOut(); return;
         }
-        const userObj = { ...data.user, ...profile };
+        // SEC-08: Tambah expiry 8 jam ke session
+        const userObj = { ...data.user, ...profile, _exp: Date.now() + 8*60*60*1000 };
         setCurrentUser(userObj);
         setIsLoggedIn(true);
         setActiveRole(profile.role.toLowerCase());
         setActiveMenu("dashboard");
         _lsSave("localSession", userObj);
+        // SEC-07: Reset counter setelah login berhasil
+        setLoginAttempts(0); setLockoutUntil(0);
+        _lsSave("loginAttempts", 0); _lsSave("lockoutUntil", 0);
         showNotif("Selamat datang, " + profile.name + "!");
         requestPushPermission();
         return;
@@ -1018,19 +1046,33 @@ ${matRowsHtml}
         u.email.toLowerCase() === email.toLowerCase() && u.password === pass && u.active !== false
       );
       if (localUser) {
-        const userObj = { ...localUser, id: localUser.id };
+        // SEC-08: Tambah expiry 8 jam ke session
+        const userObj = { ...localUser, id: localUser.id, _exp: Date.now() + 8*60*60*1000 };
         setCurrentUser(userObj);
         setIsLoggedIn(true);
         setActiveRole(localUser.role.toLowerCase());
         setActiveMenu("dashboard");
-        // Simpan session lokal agar tidak hilang saat refresh
         _lsSave("localSession", userObj);
+        // SEC-07: Reset counter
+        setLoginAttempts(0); setLockoutUntil(0);
+        _lsSave("loginAttempts", 0); _lsSave("lockoutUntil", 0);
         showNotif("Selamat datang, " + localUser.name + "! (mode lokal)");
         requestPushPermission();
         return;
       }
 
-      setLoginError("Email atau password salah, atau akun tidak aktif.");
+      // SEC-07: increment attempt counter
+      const newAttempts = loginAttempts + 1;
+      setLoginAttempts(newAttempts);
+      _lsSave("loginAttempts", newAttempts);
+      if (newAttempts >= 5) {
+        const lockUntil = Date.now() + 5 * 60 * 1000; // 5 menit
+        setLockoutUntil(lockUntil);
+        _lsSave("lockoutUntil", lockUntil);
+        setLoginError("⛔ 5 percobaan gagal. Akun dikunci 5 menit.");
+      } else {
+        setLoginError(`Email atau password salah. (${newAttempts}/5 percobaan)`);
+      }
     } catch (err) {
       setLoginError("Terjadi kesalahan: " + err.message);
     }
@@ -1113,10 +1155,17 @@ ${matRowsHtml}
       // 1. Coba restore dari localStorage dulu (akun lokal/demo) — tidak butuh auth
       const saved = _ls("localSession", null);
       if (saved && saved.id && saved.role) {
-        setCurrentUser(saved);
-        setIsLoggedIn(true);
-        setActiveRole(saved.role.toLowerCase());
-        return; // sudah restore, skip Supabase auth check
+        // SEC-08: Cek expiry session — auto logout setelah 8 jam
+        if (saved._exp && Date.now() > saved._exp) {
+          _lsSave("localSession", null);
+          console.warn("SEC-08: Session expired, auto-logout");
+          // jatuh ke Supabase auth check
+        } else {
+          setCurrentUser(saved);
+          setIsLoggedIn(true);
+          setActiveRole(saved.role.toLowerCase());
+          return;
+        }
       }
       // 2. Fallback: Supabase Auth session (akun real) — wrapped try/catch agar tidak spam 400
       try {
@@ -1471,7 +1520,7 @@ ${matRowsHtml}
     if (!phone) return false;
     try {
       const r = await fetch("/api/send-wa", {
-        method:"POST", headers:{"Content-Type":"application/json"},
+        method:"POST", headers:_apiHeaders(),
         body: JSON.stringify({phone, message})
       });
       const d = await r.json().catch(()=>({}));
@@ -1978,7 +2027,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
 
       // ── Coba backend proxy dulu (API key aman di server) ──
       const backendRes = await fetch("/api/ara-chat", {
-        method:"POST", headers:{"Content-Type":"application/json"},
+        method:"POST", headers:_apiHeaders(),
         body: JSON.stringify({
           messages: newMessages.map(m=>({role:m.role, content:m.content})),
           bizContext, brainMd, provider:llmProvider, model:llmModel, ollamaUrl,
@@ -5588,7 +5637,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
           <FieldList fields={activeWA.fields} />
           <GuideBox guide={activeWA.guide} title={"Setup " + activeWA.label} />
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={async () => { setWaStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"wa",provider:waProvider,token:waToken,device:waDevice})}); const d=await r.json(); setWaStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setWaStatus("not_connected"); showNotif("❌ "+e.message); } }}
+            <button onClick={async () => { setWaStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:_apiHeaders(),body:JSON.stringify({type:"wa",provider:waProvider,token:waToken,device:waDevice})}); const d=await r.json(); setWaStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setWaStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {waStatus==="testing" ? "⏳ Testing..." : "🔌 Test &amp; Simpan Koneksi"}
             </button>
@@ -5782,7 +5831,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
           <FieldList fields={activeSTO.fields} />
           <GuideBox guide={activeSTO.guide} title={"Setup " + activeSTO.label} />
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={async () => { setStorageStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"storage"})}); const d=await r.json(); setStorageStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setStorageStatus("not_connected"); showNotif("❌ "+e.message); } }}
+            <button onClick={async () => { setStorageStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:_apiHeaders(),body:JSON.stringify({type:"storage"})}); const d=await r.json(); setStorageStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setStorageStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {storageStatus==="testing" ? "⏳ Testing..." : "🔌 Test &amp; Simpan Koneksi"}
             </button>
@@ -5959,8 +6008,11 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
             <div style={{ fontSize:12, color:cs.muted, marginBottom:22 }}>Login dengan akun yang diberikan oleh Owner</div>
 
             {loginError && (
-              <div style={{ background:"#ef444418", border:"1px solid #ef444433", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:12, color:cs.red }}>
-                ⚠️ {loginError}
+              <div style={{ background: loginError.startsWith("⛔") ? "#f9731620" : "#ef444418",
+                            border: "1px solid " + (loginError.startsWith("⛔") ? "#f97316" : "#ef444433"),
+                            borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:12,
+                            color: loginError.startsWith("⛔") ? "#f97316" : cs.red }}>
+                {loginError.startsWith("⛔") ? loginError : "⚠️ " + loginError}
               </div>
             )}
 
@@ -7727,7 +7779,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
             try {
               const r = await fetch("/api/upload-foto", {
                 method:  "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: _apiHeaders(),
                 body:    JSON.stringify({
                   base64:   dataUrl,
                   filename: `foto_${localId}.jpg`,
@@ -8093,7 +8145,7 @@ Silakan approve di menu Invoice. — ARA`;
           ownerAccounts.forEach(u => { if(u.phone) sendWA(u.phone, ownerWAMsg); });
           // Fallback ke nomor hardcode jika tidak ada Owner di userAccounts
           if (ownerAccounts.length === 0) {
-            fetch("/api/send-wa",{method:"POST",headers:{"Content-Type":"application/json"},
+            fetch("/api/send-wa",{method:"POST",headers:_apiHeaders(),
               body:JSON.stringify({phone:"6281299898937",message:ownerWAMsg})}).catch(()=>{});
           }
 
