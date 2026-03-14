@@ -368,6 +368,8 @@ export default function ACleanWebApp() {
   const [invoicePage,     setInvoicePage]     = useState(1);
   const INV_PAGE_SIZE = 15;
   const [modalPDF,        setModalPDF]        = useState(false);
+  const [modalApproveInv, setModalApproveInv] = useState(false); // popup pilihan approve
+  const [pendingApproveInv, setPendingApproveInv] = useState(null); // invoice yang menunggu approve
 
   // ── Schedule ──
   const [scheduleView,   setScheduleView]   = useState("week");
@@ -1288,6 +1290,26 @@ ${matRowsHtml}
         }
       } catch(e) { console.warn("Load teknisi failed:", e); }
 
+      // Load Owner & Admin → userAccounts (dari user_profiles yang sama)
+      try {
+        const uaRes = await supabase.from("user_profiles").select("*")
+          .in("role",["Owner","Admin","owner","admin"]).order("name");
+        if (!uaRes.error && uaRes.data && uaRes.data.length > 0) {
+          const roleColors = { owner:"#f59e0b", admin:"#38bdf8" };
+          const normalized = uaRes.data.map(u => ({
+            ...u,
+            role: (u.role||"").charAt(0).toUpperCase() + (u.role||"").slice(1).toLowerCase(),
+            color: u.color || roleColors[(u.role||"").toLowerCase()] || "#94a3b8",
+            avatar: u.avatar || (u.name||"").charAt(0).toUpperCase(),
+            active: u.active !== false,
+            lastLogin: u.last_login
+              ? new Date(u.last_login).toLocaleString("id-ID",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})
+              : "-",
+          }));
+          setUserAccounts(normalized);
+        }
+      } catch(e) { console.warn("Load userAccounts failed:", e); }
+
       // Load WA conversations dari Supabase (tabel opsional)
       try {
         const waRes = await supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false }).limit(50);
@@ -1629,7 +1651,8 @@ Kamu ditugaskan sebagai Helper. — AClean`;
   };
 
   // ── GAP 3: Approve invoice (real state mutation) ──
-  const approveInvoice = async (inv) => {
+  // ── Approve invoice (core) — tanpa kirim WA ──
+  const approveInvoiceCore = async (inv) => {
     const today = new Date().toISOString().slice(0,10);
     const due = new Date(Date.now() + 14*24*60*60*1000).toISOString().slice(0,10);
     const approvedAt = new Date().toISOString();
@@ -1664,10 +1687,31 @@ Kamu ditugaskan sebagai Helper. — AClean`;
         await supabase.from("orders").update({ status:"COMPLETED" }).eq("id", inv.job_id);
       }
     }
-    const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service||"Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
-    sendWA(inv.phone, waMsg);
     addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} approve oleh ${currentUser?.name||"—"} — ${inv.customer} ${fmt(inv.total)}`, "SUCCESS");
-    showNotif(`✅ Invoice ${inv.id} diapprove & dikirim ke ${inv.customer}`);
+    return due; // kembalikan due date untuk dipakai caller
+  };
+
+  // ── approveInvoice: buka popup pilihan (Kirim ke Customer / Simpan Dahulu) ──
+  const approveInvoice = (inv) => {
+    setPendingApproveInv(inv);
+    setModalApproveInv(true);
+  };
+
+  // ── Approve + kirim WA ke customer ──
+  const approveAndSend = async (inv) => {
+    const due = await approveInvoiceCore(inv);
+    const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service||"Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
+    const sent = await sendWA(inv.phone, waMsg);
+    if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}`);
+    else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
+    setModalApproveInv(false); setPendingApproveInv(null);
+  };
+
+  // ── Approve saja tanpa kirim WA ──
+  const approveSaveOnly = async (inv) => {
+    await approveInvoiceCore(inv);
+    showNotif(`✅ Invoice ${inv.id} diapprove — belum dikirim ke customer`);
+    setModalApproveInv(false); setPendingApproveInv(null);
   };
 
   // ── GAP 1.6: Mark Paid → simpan ke payments table ──
@@ -2931,6 +2975,15 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                     <button onClick={() => { setSelectedCustomer(cu); setCustomerTab("history"); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600, whiteSpace:"nowrap" }}>📋 Riwayat ({cHist.length})</button>
                     <button onClick={() => { setNewOrderForm(f=>({...f,customer:cu.name,phone:normalizePhone(cu.phone),address:cu.address})); setModalOrder(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>+ Order</button>
                     <button onClick={() => openWA(cu.phone, "")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 WA</button>
+                    {currentUser?.role === "Owner" && (
+                      <button onClick={async () => {
+                        if (!window.confirm(`🗑️ Hapus customer "${cu.name}"?\n\nSemua history order akan tetap ada.\nAksi ini tidak bisa dibatalkan.`)) return;
+                        setCustomersData(prev => prev.filter(c => c.id !== cu.id));
+                        const { error } = await supabase.from("customers").delete().eq("id", cu.id);
+                        if (error) showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message);
+                        else { addAgentLog("CUSTOMER_DELETED", "Customer " + cu.name + " dihapus", "WARNING"); showNotif("🗑️ Customer " + cu.name + " berhasil dihapus"); }
+                      }} style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>🗑️</button>
+                    )}
                   </div>
                 </div>
               );
@@ -3532,6 +3585,18 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                   <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>📤 Kirim ke Customer</button>
                   <button onClick={() => invoiceReminderWA(inv)} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>⚠️ Reminder OVERDUE</button>
                 </>
+              )}
+              {/* Hapus Invoice — Owner only, hanya status PENDING_APPROVAL */}
+              {currentUser?.role === "Owner" && inv.status === "PENDING_APPROVAL" && (
+                <button onClick={async () => {
+                  if (!window.confirm(`🗑️ Hapus invoice ${inv.id}?\n\nInvoice akan dihapus permanen dari database.\nOrder terkait akan dikembalikan ke status COMPLETED.`)) return;
+                  setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
+                  const { error } = await supabase.from("invoices").delete().eq("id", inv.id);
+                  if (error) { showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message); return; }
+                  if (inv.job_id) await supabase.from("orders").update({ status:"COMPLETED", invoice_id:null }).eq("id", inv.job_id);
+                  addAgentLog("INVOICE_DELETED", `Invoice ${inv.id} (${inv.customer}) dihapus oleh ${currentUser?.name}`, "WARNING");
+                  showNotif("🗑️ Invoice " + inv.id + " berhasil dihapus");
+                }} style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>🗑️ Hapus Invoice</button>
               )}
             </div>
           </div>
@@ -5994,7 +6059,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
           </div>
           {/* User list — hanya Owner & Admin (Teknisi/Helper dikelola di Tim Teknisi) */}
           <div style={{ display:"grid", gap:8 }}>
-            {userAccounts.filter(u => u.role === "Owner" || u.role === "Admin").map(u => (
+            {userAccounts.map(u => (
               <div key={u.id} style={{ background:cs.surface, border:"1px solid "+(u.active?cs.border:cs.red+"33"), borderRadius:10, padding:"12px 16px", display:"flex", alignItems:"center", gap:12 }}>
                 <div style={{ width:38, height:38, borderRadius:10, background:"linear-gradient(135deg,"+u.color+","+u.color+"66)", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:16, color:"#fff", flexShrink:0 }}>
                   {u.avatar}
@@ -6003,7 +6068,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:2 }}>
                     <span style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{u.name}</span>
                     <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:u.color+"22", color:u.color, fontWeight:700, border:"1px solid "+u.color+"44" }}>
-                      {u.role === "Owner" ? "👑" : u.role === "Admin" ? "🛠️" : "👷"} {u.role}
+                      {u.role === "Owner" ? "👑" : u.role === "Admin" ? "🛠️" : u.role === "Helper" ? "🤝" : "👷"} {u.role}
                     </span>
                     {!u.active && <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:cs.red+"22", color:cs.red, fontWeight:700 }}>Nonaktif</span>}
                   </div>
@@ -6738,7 +6803,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                 </div>
               )}
 
-              {editTeknisi && (
+              {editTeknisi && currentUser?.role === "Owner" && (
                 <div style={{ display:"grid", gap:6 }}>
                   <button onClick={async () => {
                     if (!window.confirm) { /* skip confirm in some envs */ }
@@ -7086,8 +7151,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               </div>
               <div style={{ display:"flex", gap:8 }}>
                 {liveInv.status === "PENDING_APPROVAL" && (
-                  <button onClick={() => { approveInvoice(liveInv); setModalPDF(false); }}
-                    style={{ background:"#22c55e", border:"none", color:"#fff", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>✓ Approve &amp; Kirim PDF</button>
+                  <button onClick={() => { setModalPDF(false); setTimeout(()=>approveInvoice(liveInv),100); }}
+                    style={{ background:"#22c55e", border:"none", color:"#fff", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>✓ Approve Invoice</button>
                 )}
                 <button onClick={() => setModalPDF(false)} style={{ background:"none", border:"1px solid #ffffff44", color:"#fff", padding:"6px 14px", borderRadius:8, cursor:"pointer", fontSize:13 }}>× Tutup</button>
               </div>
@@ -7203,6 +7268,71 @@ Order yang sudah ada tidak terpengaruh.`)) return;
         </div>
         );
       })()}
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* MODAL — APPROVE INVOICE (pilihan kirim/simpan) */}
+      {/* ══════════════════════════════════════════════════════ */}
+      {modalApproveInv && pendingApproveInv && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:500,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
+          onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:18,
+            padding:28, width:"100%", maxWidth:420, boxShadow:"0 20px 60px rgba(0,0,0,0.4)" }}
+            onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
+              <div>
+                <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>✅ Approve Invoice</div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:4 }}>Setelah approve, invoice tidak bisa diedit lagi</div>
+              </div>
+              <button onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}
+                style={{ background:"none", border:"none", color:cs.muted, fontSize:20, cursor:"pointer", lineHeight:1 }}>×</button>
+            </div>
+
+            {/* Info invoice */}
+            <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:12, padding:"14px 16px", marginBottom:20 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:14 }}>{pendingApproveInv.id}</span>
+                <span style={{ fontWeight:800, color:cs.green, fontSize:14 }}>{fmt(pendingApproveInv.total)}</span>
+              </div>
+              <div style={{ fontSize:12, color:cs.muted }}>👤 {pendingApproveInv.customer}</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>🔧 {pendingApproveInv.service}</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>📱 {pendingApproveInv.phone}</div>
+            </div>
+
+            {/* Pilihan */}
+            <div style={{ display:"grid", gap:10 }}>
+              {/* Opsi 1 — Kirim ke Customer */}
+              <button onClick={() => approveAndSend(pendingApproveInv)}
+                style={{ display:"flex", alignItems:"center", gap:14, background:"linear-gradient(135deg,"+cs.green+",#059669)",
+                  border:"none", borderRadius:12, padding:"14px 18px", cursor:"pointer", textAlign:"left" }}>
+                <span style={{ fontSize:24 }}>📤</span>
+                <div>
+                  <div style={{ fontWeight:800, fontSize:14, color:"#fff" }}>Approve & Kirim ke Customer</div>
+                  <div style={{ fontSize:11, color:"rgba(255,255,255,0.8)", marginTop:2 }}>Invoice langsung dikirim via WA ke {pendingApproveInv.phone}</div>
+                </div>
+              </button>
+
+              {/* Opsi 2 — Simpan Dahulu */}
+              <button onClick={() => approveSaveOnly(pendingApproveInv)}
+                style={{ display:"flex", alignItems:"center", gap:14, background:cs.card,
+                  border:"1px solid "+cs.border, borderRadius:12, padding:"14px 18px", cursor:"pointer", textAlign:"left" }}>
+                <span style={{ fontSize:24 }}>💾</span>
+                <div>
+                  <div style={{ fontWeight:800, fontSize:14, color:cs.text }}>Approve & Simpan Dahulu</div>
+                  <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>Invoice diapprove tapi belum dikirim — kirim manual nanti dari halaman Invoice</div>
+                </div>
+              </button>
+
+              <button onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}
+                style={{ background:"none", border:"none", color:cs.muted, fontSize:12, cursor:"pointer", padding:"6px 0" }}>
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* WA PANEL */}
