@@ -8891,7 +8891,7 @@ Silakan approve di menu Invoice. — ARA`;
                       ))}
                     </div>
                     {laporanMaterials.length<20&&(
-                      <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,harga:0,satuan:"pcs",keterangan:""}])}
+                      <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,satuan:"pcs",keterangan:""}])}
                         style={{marginTop:8,width:"100%",background:cs.green+"10",border:"1px dashed "+cs.green+"33",color:cs.green,borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>
                         + Tambah Material
                       </button>
