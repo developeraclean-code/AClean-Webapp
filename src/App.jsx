@@ -4391,7 +4391,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                             <button onClick={() => { window.open("https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(o.address),"_blank"); }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>🗺 Maps</button>
                           )}
                           {isTekRole && (
-                            <button onClick={() => openWA(o.phone,"Halo "+o.customer+", saya "+myTekName+" dari AClean. Saya akan tiba pkl "+o.time+" untuk "+o.service+". Terima kasih!")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>💬 Chat WA</button>
+                            <button onClick={() => { if(o.phone) openWA(o.phone,"Halo "+(o.customer||"Bapak/Ibu")+", saya "+myTekName+" dari AClean. Saya akan tiba pkl "+(o.time||"-")+" untuk "+(o.service||"servis AC")+". Terima kasih!"); else showNotif("❌ Nomor HP customer tidak tersedia"); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>💬 Chat WA</button>
                           )}
                           {isTekRole && o.dispatch && !["COMPLETED","CANCELLED","PAID"].includes(o.status) && (<>
                             {/* ── Konfirmasi Tiba: 1 tombol, update status ON_SITE, tanpa WA Admin ── */}
@@ -4549,7 +4549,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
               </div>
               <div style={{ display:"flex", gap:6 }}>
                 <button onClick={() => { setEditTeknisi(t); setNewTeknisiForm({...t}); setModalTeknisi(true); }} style={{ flex:1, background:cs.accent+"18", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
-                <button onClick={() => openWA(t.phone, "Halo " + t.name + ", ada info dari AClean:")} style={{ flex:1, background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 WA</button>
+                <button onClick={() => { if(t.phone) openWA(t.phone, "Halo " + (t.name||"Teknisi") + ", ada info dari AClean:"); else showNotif("❌ No. HP teknisi tidak ada"); }} style={{ flex:1, background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 WA</button>
                 {currentUser?.role === "Owner" && (
                   <button onClick={async () => {
                     if (window.confirm && !window.confirm(`Hapus ${t.name} dari tim?`)) return;
@@ -7104,6 +7104,19 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               <button onClick={()=>setModalEditInvoice(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
             </div>
             <div style={{ display:"grid", gap:12 }}>
+              {/* Detail Material dari laporan teknisi — read only info */}
+              {(editInvoiceData?.materials_detail||[]).length > 0 && (
+                <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"12px 14px", marginBottom:4 }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:cs.muted, marginBottom:8 }}>📦 Detail Material dari Laporan Teknisi</div>
+                  {(editInvoiceData.materials_detail||[]).map((m,mi) => (
+                    <div key={mi} style={{ display:"flex", justifyContent:"space-between", fontSize:12, color:cs.text, marginBottom:4, paddingBottom:4, borderBottom:"1px solid "+cs.border+"44" }}>
+                      <span>↳ {m.nama} <span style={{color:cs.muted}}>× {m.jumlah} {m.satuan||""}</span></span>
+                      <span style={{ fontFamily:"monospace", color:cs.accent }}>{m.subtotal > 0 ? fmt(m.subtotal) : (m.harga_satuan > 0 ? fmt(m.harga_satuan * (m.jumlah||1)) : "—")}</span>
+                    </div>
+                  ))}
+                  <div style={{ fontSize:11, color:cs.muted, marginTop:6 }}>💡 Edit nilai "Material (Rp)" di bawah untuk ubah total material</div>
+                </div>
+              )}
               {[["Jasa / Labor (Rp)","labor"],["Material (Rp)","material"],["Pekerjaan Tambahan / Dadakan (Rp)","dadakan"]].map(([label,key]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
