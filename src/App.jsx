@@ -1552,7 +1552,10 @@ ${matRowsHtml}
   // ── Helpers ──
   // ── WA: kirim via Fonnte backend, fallback wa.me ──
   const sendWA = async (phone, message) => {
-    if (!phone) return false;
+    if (!phone || !message) {
+      console.warn("sendWA skip: phone/message kosong", {phone, message: message?.slice(0,30)});
+      return false;
+    }
     try {
       const r = await fetch("/api/send-wa", {
         method:"POST", headers:_apiHeaders(),
@@ -1560,8 +1563,15 @@ ${matRowsHtml}
       });
       const d = await r.json().catch(()=>({}));
       if (r.ok && d.success) return true;
-      // API gagal → silent fail, TIDAK buka tab WA (agar tidak ganggu user di desktop)
-      console.warn("sendWA failed:", d.error || r.status);
+      // Log error detail — informasi berguna untuk debugging
+      const errMsg = d.error || d.detail || String(r.status);
+      console.warn("sendWA failed:", errMsg, "| target:", phone);
+      // Tampilkan notif hanya untuk error kritis (bukan quota/device)
+      if (errMsg.includes("FONNTE_TOKEN") || errMsg.includes("belum diset")) {
+        showNotif("⚠️ WA tidak terkirim: FONNTE_TOKEN belum diset di Vercel");
+      } else if (errMsg.includes("offline") || errMsg.includes("device")) {
+        showNotif("⚠️ WA tidak terkirim: Device Fonnte offline — scan ulang QR");
+      }
       return false;
     } catch(err) {
       console.warn("sendWA error:", err.message);
