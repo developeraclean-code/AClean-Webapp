@@ -656,7 +656,7 @@ export default function ACleanWebApp() {
 Halo ${o.teknisi}, job *${o.id}* (${o.customer} — ${o.service}) sudah selesai lebih dari 1 jam.
 
 Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
-        sendWA(tek.phone, msg);
+        if (tek?.phone) sendWA(tek.phone, msg);
       }
       addAgentLog("LAPORAN_REMINDER", `Reminder laporan dikirim ke ${o.teknisi} — ${o.id}`, "WARNING");
     }
@@ -1653,6 +1653,7 @@ Kamu ditugaskan sebagai Helper. — AClean`;
   };
 
   const invoiceReminderWA = (inv) => {
+  if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
     const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
     sendWA(inv.phone, msg);
   };
@@ -2021,7 +2022,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
     const bizContext = {
       today: TODAY,
       orders:    ordersData.map(o=>({id:o.id,customer:o.customer,service:o.service,type:o.type,units:o.units,status:o.status,date:o.date,time:o.time,teknisi:o.teknisi,helper:o.helper,dispatch:o.dispatch,invoice_id:o.invoice_id})),
-      invoices:  invoicesData.map(i=>({id:i.id,customer:i.customer,phone:i.phone,total:i.total,status:i.status,due:i.due,labor:i.labor,material:i.material,dadakan:i.dadakan})),
+      invoices:  invoicesData.map(i=>({id:i.id,customer:i.customer,phone:i.phone,total:i.total,status:i.status,due:i.due,labor:i.labor,material:i.material,dadakan:i.dadakan,materials_detail:(i.materials_detail||[]).map(m=>({nama:m.nama,jumlah:m.jumlah,satuan:m.satuan,harga_satuan:m.harga_satuan,subtotal:m.subtotal}))})),
       inventory: inventoryData.map(i=>({code:i.code,name:i.name,stock:i.stock,unit:i.unit,status:i.status,price:i.price,reorder:i.reorder})),
       customers: customersData.map(c=>({id:c.id,name:c.name,phone:c.phone,area:c.area,total_orders:c.total_orders,is_vip:c.is_vip})),
       laporan: laporanReports.map(r=>({id:r.id,job_id:r.job_id,teknisi:r.teknisi,customer:r.customer,service:r.service,status:r.status,date:r.date,submitted:r.submitted})),
@@ -2125,7 +2126,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       } else if (!backendRes && (llmApiKey || llmProvider === "ollama")) {
         // ── Fallback HANYA jika /api/ara-chat tidak tersedia (localhost dev) ──
         // Di production Vercel: proxy selalu ada, API key AMAN di server
-        const sysP = (typeof brainMd==="string"?brainMd:BRAIN_MD_DEFAULT)+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}
+        const sysP = (typeof brainMd==="string"?brainMd:BRAIN_MD_DEFAULT)+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000} (field: labor/material/dadakan/notes. Detail material ada di invoices[].materials_detail)\\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"material","value":200000} (ubah total material)\\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}
 - {"type":"CREATE_INVOICE","order_id":"ORD-xxx"}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
 
         if (llmProvider === "ollama") {
@@ -2545,7 +2546,7 @@ Jadwal layanan AC Anda *${act.id}* telah diubah:
 
 Mohon pastikan ada di lokasi pada waktu tersebut.
 Terima kasih — *AClean Service* 😊`;
-                sendWA(rOrd.phone, custMsg);
+                if (rOrd?.phone) sendWA(rOrd.phone, custMsg);
               }
               if (tekData?.phone) {
                 const rMsg = `📅 *Jadwal Diubah*
