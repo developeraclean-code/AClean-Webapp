@@ -3864,12 +3864,11 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
             ))}
           </div>
         </div>
-      </div>
 
-    {/* ── Modal Tambah Item PriceList ── */}
-    {plAddModal && (
-      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
-        <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:16, padding:24, width:"100%", maxWidth:420 }}>
+      {/* ── Modal Tambah Item PriceList ── */}
+      {plAddModal && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:16, padding:24, width:"100%", maxWidth:420 }}>
           <div style={{ fontWeight:800, fontSize:16, color:cs.text, marginBottom:16 }}>➕ Tambah Item Harga Baru</div>
           {[
             { label:"Jenis Layanan", key:"service", type:"select", opts:["Cleaning","Install","Repair","Complain"] },
@@ -3924,7 +3923,8 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
           </div>
         </div>
       </div>
-    )}
+      )}
+    </div>
     );
   };
 
