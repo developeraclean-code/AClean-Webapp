@@ -410,6 +410,8 @@ export default function ACleanWebApp() {
   // ── Modals ──
   const [modalOrder,   setModalOrder]   = useState(false);
   const [modalStok,    setModalStok]    = useState(false);
+  const [modalWaTek,   setModalWaTek]   = useState(false); // popup pilihan pesan WA teknisi ke customer
+  const [waTekTarget,  setWaTekTarget]  = useState(null);  // { phone, customer, service, time, address }
   const [modalTeknisi, setModalTeknisi] = useState(false);
   const [editTeknisi,  setEditTeknisi]  = useState(null);
   const [modalEditStok, setModalEditStok] = useState(false);
@@ -787,7 +789,14 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     const perUnit = inv.units > 0 ? Math.round((inv.labor||0) / inv.units) : (inv.labor||0);
 
     // Build material rows HTML (di luar template literal agar tidak ada backtick conflict)
-    const matDetails = inv.materials_detail || [];
+  // Build material rows HTML (di luar template literal agar tidak ada backtick conflict)
+  // Parse materials_detail — bisa array (sudah parsed) atau string JSON dari DB
+  const matDetails = (() => {
+    const md = inv.materials_detail;
+    if (!md) return [];
+    if (Array.isArray(md)) return md;
+    try { return JSON.parse(md); } catch(_) { return []; }
+  })();
     let matRowsHtml = "";
     if (matDetails.length > 0 || (inv.material||0) > 0) {
       if (matDetails.length === 0) {
@@ -1399,7 +1408,7 @@ ${matRowsHtml}
       .on("postgres_changes", { event:"*", schema:"public", table:"invoices" }, () =>
         rtDebounced("invoices", () =>
           supabase.from("invoices").select("*").order("created_at",{ascending:false}).limit(300)
-            .then(({data}) => { if(data) setInvoicesData(data); })
+            .then(({data}) => { if(data) setInvoicesData(data.map(inv => ({...inv, materials_detail: (() => { const md=inv.materials_detail; if(!md)return[]; if(Array.isArray(md))return md; try{return JSON.parse(md);}catch(_){return[];} })()}))) ; })
         ))
       .subscribe();
     const ch3 = supabase.channel("rt-inventory")
@@ -1560,9 +1569,25 @@ ${matRowsHtml}
     }
   };
 
-  const openWA = (phone, msg) => {
-    if (msg) sendWA(phone, msg);
-    else window.open("https://wa.me/"+phone,"_blank");
+  const openWA = async (phone, msg) => {
+    if (!phone) { showNotif("❌ Nomor HP tidak tersedia"); return; }
+    // Normalisasi nomor — pastikan format 628xxx
+    const normPhone = String(phone).replace(/^0/, "62").replace(/[^0-9]/g, "");
+    if (msg) {
+      // Coba kirim via Fonnte dulu
+      const sent = await sendWA(normPhone, msg);
+      if (sent) {
+        showNotif("✅ Pesan WA terkirim ke " + normPhone);
+      } else {
+        // Fonnte gagal → fallback buka wa.me agar teknisi tetap bisa kirim manual
+        showNotif("⚠️ Kirim otomatis gagal — membuka WhatsApp manual...");
+        const waUrl = "https://wa.me/" + normPhone + "?text=" + encodeURIComponent(msg);
+        window.open(waUrl, "_blank");
+      }
+    } else {
+      // Tidak ada pesan — langsung buka wa.me
+      window.open("https://wa.me/" + normPhone, "_blank");
+    }
   };
 
   // ── Dispatch: update status saja (tanpa WA) ──
@@ -2641,7 +2666,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <div style={{ fontSize:11, color:cs.muted }}>📍 {o.address}</div>
                   {o.helper && <div style={{ fontSize:11, color:cs.accent, marginTop:3 }}>🤝 Helper: {o.helper}</div>}
                   <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
-                    <button onClick={() => openWA(o.phone, "Halo "+o.customer+", saya "+myName+" dari AClean Service. Saya akan datang pkl "+o.time+" untuk "+o.service+". Terima kasih.")}
+                    <button onClick={() => { setWaTekTarget({phone:o.phone,customer:o.customer,service:o.service,time:o.time,address:o.address}); setModalWaTek(true); }}
                       style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:600 }}>💬 Chat WA</button>
                     <button onClick={() => { const url="https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(o.address); window.open(url,"_blank"); }}
                       style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:600 }}>🗺 Maps</button>
@@ -4213,7 +4238,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                         style={{ background:"#3b82f622", border:"1px solid #3b82f644", color:"#3b82f6", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                         🗺️ Maps
                       </button>
-                      <button onClick={() => openWA(o.phone,"Halo "+o.customer+", saya "+myTekName+" dari AClean, sedang menuju lokasi Anda.")}
+                      <button onClick={() => { setWaTekTarget({phone:o.phone,customer:o.customer,service:o.service,time:o.time,address:o.address}); setModalWaTek(true); }}
                         style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                         📱 WA
                       </button>
@@ -7335,6 +7360,98 @@ Order yang sudah ada tidak terpengaruh.`)) return;
       )}
 
       {/* ══════════════════════════════════════════════════════ */}
+      {/* MODAL — WA TEKNISI KE CUSTOMER (pilihan pesan) */}
+      {/* ══════════════════════════════════════════════════════ */}
+      {modalWaTek && waTekTarget && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:600,
+          display:"flex", alignItems:"flex-end", justifyContent:"center", padding:"0 0 0 0" }}
+          onClick={() => { setModalWaTek(false); setWaTekTarget(null); }}>
+          <div style={{ background:cs.surface, borderRadius:"18px 18px 0 0", width:"100%", maxWidth:480,
+            padding:"24px 20px 32px", border:"1px solid "+cs.border }}
+            onClick={e => e.stopPropagation()}>
+
+            {/* Handle bar */}
+            <div style={{ width:40, height:4, background:cs.border, borderRadius:99, margin:"0 auto 18px" }} />
+
+            {/* Header */}
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontWeight:800, fontSize:15, color:cs.text }}>📱 WA ke Customer</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>
+                {waTekTarget.customer} · {waTekTarget.phone}
+              </div>
+              <div style={{ fontSize:11, color:cs.muted, marginTop:1 }}>🔧 {waTekTarget.service}</div>
+            </div>
+
+            {/* Pilihan pesan */}
+            <div style={{ display:"grid", gap:8 }}>
+              {[
+                {
+                  icon:"🚗",
+                  label:"Konfirmasi sedang menuju",
+                  msg:`Halo ${waTekTarget.customer}, saya dari AClean Service sedang dalam perjalanan menuju lokasi Anda. Estimasi tiba pkl ${waTekTarget.time||"sebentar lagi"}. Mohon ditunggu ya! 🙏`
+                },
+                {
+                  icon:"📍",
+                  label:"Tanya patokan / lokasi",
+                  msg:`Halo ${waTekTarget.customer}, saya teknisi AClean yang akan servis hari ini. Boleh minta patokan lokasi rumah Bapak/Ibu? Alamat yang tercatat: ${waTekTarget.address||"—"}. Terima kasih 🙏`
+                },
+                {
+                  icon:"✅",
+                  label:"Konfirmasi jadwal hari ini",
+                  msg:`Halo ${waTekTarget.customer}, kami konfirmasi jadwal servis AC dari AClean hari ini pkl ${waTekTarget.time||"—"} untuk ${waTekTarget.service||"servis AC"}. Apakah masih bisa? 🙏`
+                },
+                {
+                  icon:"⏰",
+                  label:"Info terlambat / minta reschedule",
+                  msg:`Halo ${waTekTarget.customer}, mohon maaf kami dari AClean ada keterlambatan. Kami akan tiba sedikit lebih lama dari jadwal. Terima kasih atas pengertiannya 🙏`
+                },
+                {
+                  icon:"✔️",
+                  label:"Pekerjaan selesai — terima kasih",
+                  msg:`Halo ${waTekTarget.customer}, pekerjaan servis AC (${waTekTarget.service||"—"}) telah selesai. Terima kasih sudah mempercayakan ke AClean Service. Semoga AC-nya nyaman kembali! 😊`
+                },
+              ].map(({ icon, label, msg }) => (
+                <button key={label} onClick={async () => {
+                  setModalWaTek(false);
+                  setWaTekTarget(null);
+                  await openWA(waTekTarget.phone, msg);
+                }}
+                  style={{ display:"flex", alignItems:"center", gap:12, background:cs.card,
+                    border:"1px solid "+cs.border, borderRadius:12, padding:"12px 14px",
+                    cursor:"pointer", textAlign:"left", width:"100%" }}>
+                  <span style={{ fontSize:20, flexShrink:0 }}>{icon}</span>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:cs.text }}>{label}</div>
+                    <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>{msg.slice(0,60)}...</div>
+                  </div>
+                </button>
+              ))}
+
+              {/* Ketik manual */}
+              <button onClick={() => {
+                setModalWaTek(false); setWaTekTarget(null);
+                window.open("https://wa.me/" + String(waTekTarget.phone).replace(/^0/,"62").replace(/[^0-9]/g,""), "_blank");
+              }}
+                style={{ display:"flex", alignItems:"center", gap:12, background:"#25D36615",
+                  border:"1px solid #25D36633", borderRadius:12, padding:"12px 14px",
+                  cursor:"pointer", textAlign:"left", width:"100%" }}>
+                <span style={{ fontSize:20 }}>💬</span>
+                <div>
+                  <div style={{ fontSize:13, fontWeight:700, color:"#25D366" }}>Ketik pesan sendiri</div>
+                  <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>Buka WhatsApp — tulis pesan bebas</div>
+                </div>
+              </button>
+
+              <button onClick={() => { setModalWaTek(false); setWaTekTarget(null); }}
+                style={{ background:"none", border:"none", color:cs.muted, fontSize:12, cursor:"pointer", padding:"6px 0", marginTop:4 }}>
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════ */}
       {/* WA PANEL */}
       {/* ══════════════════════════════════════════════════════ */}
       {waPanel && (
@@ -8760,12 +8877,9 @@ Silakan approve di menu Invoice. — ARA`;
                             <button onClick={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
                               style={{background:"#ef444422",border:"1px solid #ef444433",color:"#ef4444",borderRadius:7,padding:"8px 10px",cursor:"pointer",fontSize:14,lineHeight:1,fontWeight:700}}>×</button>
                           </div>
-                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1.5fr",gap:8}}>
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:8}}>
                             <input type="number" value={mat.jumlah} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:e.target.value}:m))} placeholder="Jml" min="0"
                               style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
-                            <input type="number" value={mat.harga||0} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,harga:Number(e.target.value)}:m))}
-                              placeholder="Harga/unit" min="0"
-                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"7px 8px",color:cs.text,fontSize:12,outline:"none"}} />
                             <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
                               style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
                               {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
