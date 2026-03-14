@@ -384,6 +384,8 @@ export default function ACleanWebApp() {
   const [priceListSyncedAt, setPriceListSyncedAt] = useState(null); // timestamp terakhir sync harga
   const [plEditItem,      setPlEditItem]       = useState(null);
   const [plEditForm,      setPlEditForm]       = useState({});
+  const [plAddModal,      setPlAddModal]       = useState(false);
+  const [plNewForm,       setPlNewForm]        = useState({ service:"Cleaning", type:"", code:"", price:"", unit:"unit", notes:"" });
   const [searchLaporan,   setSearchLaporan]   = useState("");
   const [laporanSvcFilter, setLaporanSvcFilter] = useState("Semua");
   const [laporanStatusFilter, setLaporanStatusFilter] = useState("Semua");
@@ -3556,8 +3558,12 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
   const renderInventory = () => {
     const filteredInvt = inventoryData.filter(item =>
       !searchInventory ||
-      item.name.toLowerCase().includes(searchInventory.toLowerCase()) ||
-      item.code.toLowerCase().includes(searchInventory.toLowerCase())
+      (item.name||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
+      (item.code||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
+      (item.unit||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
+      (item.status||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
+      String(item.price||"").includes(searchInventory) ||
+      String(item.stock||"").includes(searchInventory)
     );
     return (
     <div style={{ display:"grid", gap:16 }}>
@@ -3573,7 +3579,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
           style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
         {searchInventory && <button onClick={()=>setSearchInventory("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
       </div>
-      {searchInventory && <div style={{ fontSize:12, color:cs.muted }}>Ditemukan <b style={{ color:cs.accent }}>{filteredInvt.length}</b> item</div>}
+      <div style={{ fontSize:12, color:cs.muted }}>{searchInventory ? <>Ditemukan <b style={{ color:cs.accent }}>{filteredInvt.length}</b> dari {inventoryData.length} item</> : <><b style={{ color:cs.accent }}>{inventoryData.length}</b> item total</>}</div>
       <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead>
@@ -3584,7 +3590,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
             </tr>
           </thead>
           <tbody>
-            {inventoryData.map((item,i) => {
+            {filteredInvt.map((item,i) => {
               const stC = item.status==="OUT"?cs.red:item.status==="CRITICAL"?cs.red:item.status==="WARNING"?cs.yellow:cs.green;
               return (
                 <tr key={item.code} style={{ borderTop:"1px solid "+cs.border, background:i%2===0?"transparent":cs.surface+"80" }}>
@@ -3696,13 +3702,18 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
             </div>
           </div>
           {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+            <div style={{ display:"flex", gap:8 }}>
             <button onClick={async()=>{
-              // Reload fresh dari DB
               const { data } = await supabase.from("price_list").select("*").order("service").order("type");
               if (data) { setPriceListData(data); showNotif("✅ Price list di-refresh dari DB"); }
             }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"8px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
-              🔄 Refresh dari DB
+              🔄 Refresh
             </button>
+            <button onClick={()=>{ setPlNewForm({ service:"Cleaning", type:"", code:"", price:"", unit:"unit", notes:"" }); setPlAddModal(true); }}
+              style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"8px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
+              + Tambah Item
+            </button>
+            </div>
           )}
         </div>
 
@@ -3854,6 +3865,66 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
           </div>
         </div>
       </div>
+
+    {/* ── Modal Tambah Item PriceList ── */}
+    {plAddModal && (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+        <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:16, padding:24, width:"100%", maxWidth:420 }}>
+          <div style={{ fontWeight:800, fontSize:16, color:cs.text, marginBottom:16 }}>➕ Tambah Item Harga Baru</div>
+          {[
+            { label:"Jenis Layanan", key:"service", type:"select", opts:["Cleaning","Install","Repair","Complain"] },
+            { label:"Tipe AC / Nama Item", key:"type", type:"text", ph:"contoh: AC 1 PK, AC 2 PK" },
+            { label:"Kode", key:"code", type:"text", ph:"contoh: CLN-1PK" },
+            { label:"Harga (Rp)", key:"price", type:"number", ph:"contoh: 150000" },
+            { label:"Satuan", key:"unit", type:"text", ph:"contoh: unit, set, meter" },
+            { label:"Catatan", key:"notes", type:"text", ph:"opsional" },
+          ].map(({ label, key, type, ph, opts }) => (
+            <div key={key} style={{ marginBottom:10 }}>
+              <div style={{ fontSize:11, color:cs.muted, marginBottom:4 }}>{label}</div>
+              {type === "select" ? (
+                <select value={plNewForm[key]} onChange={e => setPlNewForm(f=>({...f,[key]:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13 }}>
+                  {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              ) : (
+                <input type={type} value={plNewForm[key]} placeholder={ph||""}
+                  onChange={e => setPlNewForm(f=>({...f,[key]:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
+              )}
+            </div>
+          ))}
+          <div style={{ display:"flex", gap:8, marginTop:16 }}>
+            <button onClick={()=>setPlAddModal(false)}
+              style={{ flex:1, background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:600 }}>
+              Batal
+            </button>
+            <button onClick={async()=>{
+              if (!plNewForm.type.trim()) { showNotif("❌ Tipe/Nama item wajib diisi"); return; }
+              if (!plNewForm.price || isNaN(Number(plNewForm.price))) { showNotif("❌ Harga harus berupa angka"); return; }
+              const newItem = {
+                service: plNewForm.service,
+                type: plNewForm.type.trim(),
+                code: plNewForm.code.trim() || (plNewForm.service.slice(0,3).toUpperCase()+"-"+Date.now().toString().slice(-4)),
+                price: Number(plNewForm.price),
+                unit: plNewForm.unit.trim() || "unit",
+                notes: plNewForm.notes.trim(),
+                is_active: true,
+              };
+              const { data, error } = await supabase.from("price_list").insert(newItem).select().single();
+              if (error) { showNotif("❌ Gagal simpan: "+error.message); return; }
+              setPriceListData(prev => [...prev, data||newItem]);
+              setPriceListSyncedAt(new Date());
+              addAgentLog("PRICELIST_ADD", `Item baru "${newItem.type}" (${newItem.service}) Rp${fmt(newItem.price)} ditambah oleh ${currentUser?.name}`, "SUCCESS");
+              showNotif("✅ Item harga baru berhasil ditambah!");
+              setPlAddModal(false);
+            }}
+              style={{ flex:2, background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:700 }}>
+              💾 Simpan Item
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     );
   };
 
@@ -3967,9 +4038,9 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
           </div>
         )}
 
-        {/* BUG-4 FIX: Search bar di Jadwal */}
+        {/* Search bar di Jadwal — Owner & Admin */}
         {!isTekRole && (
-          <div style={{ position:"relative" }}>
+          <div style={{ position:"relative", marginTop:4 }}>
             <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:13, pointerEvents:"none" }}>🔍</span>
             <input
               value={searchSchedule}
