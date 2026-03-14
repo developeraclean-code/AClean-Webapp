@@ -430,7 +430,7 @@ export default function ACleanWebApp() {
   // ── New order / stok / customer form ──
   const [newOrderForm,     setNewOrderForm]     = useState({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
   const [newStokForm,      setNewStokForm]      = useState({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
-  const [newTeknisiForm,   setNewTeknisiForm]   = useState({ name:"", role:"Teknisi", phone:"", skills:[] });
+  const [newTeknisiForm,   setNewTeknisiForm]   = useState({ name:"", role:"Teknisi", phone:"", skills:[], email:"", password:"", buatAkun:false });
   const [modalAddCustomer, setModalAddCustomer] = useState(false);
   const [newCustomerForm,  setNewCustomerForm]  = useState({ name:"", phone:"", address:"", area:"", notes:"", is_vip:false });
   const [customersData,    setCustomersData]    = useState(CUSTOMERS_DATA);
@@ -6703,6 +6703,41 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   {["Teknisi","Helper","Supervisor"].map(r => <option key={r}>{r}</option>)}
                 </select>
               </div>
+
+              {/* ── Toggle: Buat Akun Login (hanya saat tambah baru) ── */}
+              {!editTeknisi && (
+                <div style={{background:cs.card,border:"1px solid "+(newTeknisiForm.buatAkun?cs.accent:cs.border),borderRadius:10,padding:"12px 14px"}}>
+                  <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                    <input type="checkbox" checked={!!newTeknisiForm.buatAkun}
+                      onChange={e=>setNewTeknisiForm(f=>({...f,buatAkun:e.target.checked,email:"",password:""}))}
+                      style={{width:16,height:16,accentColor:cs.accent}} />
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:newTeknisiForm.buatAkun?cs.accent:cs.text}}>🔑 Buat Akun Login</div>
+                      <div style={{fontSize:11,color:cs.muted,marginTop:1}}>Teknisi bisa login ke app untuk submit laporan</div>
+                    </div>
+                  </label>
+                  {newTeknisiForm.buatAkun && (
+                    <div style={{marginTop:12,display:"grid",gap:8}}>
+                      <div>
+                        <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Email Login</div>
+                        <input type="email" value={newTeknisiForm.email||""} placeholder="contoh: mulyadi@aclean.id"
+                          onChange={e=>setNewTeknisiForm(f=>({...f,email:e.target.value}))}
+                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"44",borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,boxSizing:"border-box",outline:"none"}} />
+                      </div>
+                      <div>
+                        <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Password</div>
+                        <input type="password" value={newTeknisiForm.password||""} placeholder="min. 6 karakter"
+                          onChange={e=>setNewTeknisiForm(f=>({...f,password:e.target.value}))}
+                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"44",borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,boxSizing:"border-box",outline:"none"}} />
+                      </div>
+                      <div style={{fontSize:11,color:cs.muted,background:cs.accent+"10",borderRadius:7,padding:"8px 10px"}}>
+                        💡 Email & password ini dipakai teknisi untuk login di halaman utama app
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {editTeknisi && (
                 <div style={{ display:"grid", gap:6 }}>
                   <button onClick={async () => {
@@ -6760,19 +6795,54 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                     if(tErr) showNotif("⚠️ Update lokal saja, DB gagal");
                     else { addAgentLog("TEKNISI_UPDATED","Data "+newTeknisiForm.name+" diupdate","SUCCESS"); showNotif("✅ "+newTeknisiForm.name+" berhasil diupdate"); }
                   } else {
-                    // Add new
-                    const newTek = {name:newTeknisiForm.name,phone:newTeknisiForm.phone,role:newTeknisiForm.role,skills:newTeknisiForm.skills||[],status:"active",jobs_today:0};
+                    // ── Add new teknisi ──
+                    let profileId = null;
+
+                    // Step 1: Buat akun Auth dulu (kalau diminta)
+                    if (newTeknisiForm.buatAkun) {
+                      if (!newTeknisiForm.email || !newTeknisiForm.password) {
+                        showNotif("❌ Email dan password wajib diisi untuk buat akun login"); return;
+                      }
+                      if (newTeknisiForm.password.length < 6) {
+                        showNotif("❌ Password minimal 6 karakter"); return;
+                      }
+                      const { data: authData, error: authErr } = await supabase.auth.admin
+                        ? supabase.auth.admin.createUser({ email: newTeknisiForm.email, password: newTeknisiForm.password, email_confirm: true })
+                        : await (async () => {
+                            // Fallback: pakai signUp biasa (kirim email konfirmasi)
+                            const r = await supabase.auth.signUp({ email: newTeknisiForm.email, password: newTeknisiForm.password });
+                            return r;
+                          })();
+                      if (authErr) { showNotif("❌ Gagal buat akun: "+authErr.message); return; }
+                      profileId = authData?.user?.id || null;
+                    }
+
+                    // Step 2: Insert ke user_profiles
+                    const newTek = {
+                      ...(profileId ? {id: profileId} : {}),
+                      name: newTeknisiForm.name,
+                      phone: newTeknisiForm.phone,
+                      role: newTeknisiForm.role,
+                      skills: newTeknisiForm.skills||[],
+                      status: "active",
+                      jobs_today: 0,
+                      ...(newTeknisiForm.email ? {email: newTeknisiForm.email} : {}),
+                    };
                     const {error:tErr,data:tData} = await supabase.from("user_profiles").insert(newTek).select().single();
                     if(tErr) {
                       showNotif("⚠️ Tersimpan lokal, DB gagal: "+tErr.message);
-                      setTeknisiData(prev=>[...prev,{...newTek,id:"TMP_"+Date.now()}]); // Reload dari DB saat refresh (normal)
+                      setTeknisiData(prev=>[...prev,{...newTek,id:"TMP_"+Date.now()}]);
                     } else {
                       setTeknisiData(prev=>[...prev,tData||newTek]);
-                      addAgentLog("TEKNISI_ADDED","Anggota baru: "+newTeknisiForm.name+" ("+newTeknisiForm.role+")","SUCCESS");
-                      showNotif("✅ "+newTeknisiForm.name+" berhasil ditambahkan");
+                      addAgentLog("TEKNISI_ADDED","Anggota baru: "+newTeknisiForm.name+" ("+newTeknisiForm.role+")"+(newTeknisiForm.buatAkun?" + akun login":""),"SUCCESS");
+                      if (newTeknisiForm.buatAkun) {
+                        showNotif("✅ "+newTeknisiForm.name+" ditambahkan + akun login dibuat! Cek email untuk konfirmasi.");
+                      } else {
+                        showNotif("✅ "+newTeknisiForm.name+" berhasil ditambahkan (tanpa akun login)");
+                      }
                     }
                   }
-                  setModalTeknisi(false); setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[]});
+                  setModalTeknisi(false); setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[],email:"",password:"",buatAkun:false});
                 }}
                   style={{ background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>
                   ✓ {editTeknisi?"Update":"Tambah"} Anggota
