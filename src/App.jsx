@@ -739,7 +739,7 @@ export default function ACleanWebApp() {
   const slaAlerts = ordersData.filter(o => {
     if (o.status !== "DISPATCHED" && o.status !== "CONFIRMED") return false;
     if (!o.date || !o.time || o.date > TODAY) return false;
-    const bookingMs = new Date(o.date + "T" + o.time + ":00").getTime();
+    const bookingMs = (o.date && o.time ? new Date(o.date + "T" + o.time + ":00").getTime() : 0);
     const menit30 = 30 * 60 * 1000;
     // Sudah lebih dari 30 menit dari jam booking tapi belum ON_SITE
     return (now2.getTime() > bookingMs + menit30) && o.date === TODAY;
@@ -771,7 +771,7 @@ export default function ACleanWebApp() {
       if (o.date > TODAY) return false;
       // Hitung estimasi selesai
       const [h, m] = (o.time_end || "17:00").split(":").map(Number);
-      const jobEndMs = new Date(o.date + "T" + o.time_end + ":00").getTime();
+      const jobEndMs = (o.date && o.time_end ? new Date(o.date + "T" + o.time_end + ":00").getTime() : 0);
       const satu_jam = 60 * 60 * 1000;
       // Sudah lebih dari 1 jam setelah selesai
       return nowMs > (jobEndMs + satu_jam);
@@ -1615,7 +1615,8 @@ ${matRowsHtml}
               if (status === "CHANNEL_ERROR") {
                 console.warn("⚠️ RT invoices error — fallback polling aktif");
                 // Polling manual setiap 30 detik
-                setInterval(() => supabase.from("invoices").select("*")
+                if (window._rtPoll_1617) clearInterval(window._rtPoll_1617);
+                window._rtPoll_1617 = setInterval(() => supabase.from("invoices").select("*")
                   .order("created_at",{ascending:false}).limit(300)
                   .then(({data}) => { if(data) setInvoicesData(data.map(inv => ({...inv,
                     materials_detail: (() => { const md=inv.materials_detail; if(!md) return []; if(Array.isArray(md)) return md; try{return JSON.parse(md);}catch(_){return [];} })()
@@ -1643,7 +1644,8 @@ ${matRowsHtml}
             .subscribe((status) => {
               if (status === "CHANNEL_ERROR") {
                 console.warn("⚠️ RT laporan error — fallback polling aktif");
-                setInterval(() => supabase.from("service_reports").select("*")
+                if (window._rtPoll_1645) clearInterval(window._rtPoll_1645);
+                window._rtPoll_1645 = setInterval(() => supabase.from("service_reports").select("*")
                   .order("submitted_at",{ascending:false}).limit(200)
                   .then(({data}) => { if(data) setLaporanReports(data.map(r => ({...r,
                     units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return [];} })() : (r.units||[]),
@@ -1671,7 +1673,8 @@ ${matRowsHtml}
             .subscribe((status) => {
               if (status === "CHANNEL_ERROR") {
                 console.warn("⚠️ RT pricelist error — fallback polling aktif");
-                setInterval(() => supabase.from("price_list").select("*")
+                if (window._rtPoll_1673) clearInterval(window._rtPoll_1673);
+                window._rtPoll_1673 = setInterval(() => supabase.from("price_list").select("*")
                   .order("service").order("type")
                   .then(({data}) => { if(data) {
                     setPriceListData(data);
@@ -2786,8 +2789,8 @@ _Simpan pesan ini sebagai bukti pelunasan._`
           // Fallback ke PRICE_LIST freon jika tidak ada di inventory
           if (!harga) {
             if (_mNama.includes("r-22")||_mNama.includes("r22")) harga = PRICE_LIST["freon_R22"]||150000;
-            else if (_mNama.includes("r-32")||_mNama.includes("r32")) harga = PRICE_LIST["freon_R32"]||160000;
-            else if (_mNama.includes("r-410")||_mNama.includes("r410")) harga = PRICE_LIST["freon_R410A"]||180000;
+            else if (_mNama.includes("r-32")||_mNama.includes("r32")) harga = PRICE_LIST["freon_R32"]||450000;
+            else if (_mNama.includes("r-410")||_mNama.includes("r410")) harga = PRICE_LIST["freon_R410A"]||450000;
           }
           const qty = parseFloat(m.jumlah || m.qty || m.quantity || 1);
                     return sum + (harga * qty);
@@ -2824,7 +2827,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
               setOrdersData(prev => prev.map(o => o.id===ord.id ? {...o, invoice_id:invId} : o));
               await supabase.from("orders").update({invoice_id:invId}).eq("id",ord.id);
               addAgentLog("ARA_CREATE_INVOICE","ARA buat invoice "+invId+" dari "+ord.id+" — "+newInv.customer,"SUCCESS");
-              ar = "\n✅ *Invoice " + invId + " dibuat untuk " + newInv.customer + " — Total: " + newInv.total.toLocaleString("id-ID") + "*";
+              ar = "\n✅ *Invoice " + invId + " dibuat untuk " + newInv.customer + " — Total: " + (newInv.total||0).toLocaleString("id-ID") + "*";
             }
           } else if (act.type==="CANCEL_ORDER") {
             setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,status:"CANCELLED"}:o));
@@ -3009,11 +3012,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div key={o.id} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px", marginBottom:8, display:"flex", alignItems:"center", gap:12 }}>
                   <div style={{ background:myColor+"22", border:"1px solid "+myColor+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:44, flexShrink:0 }}>
                     <div style={{ fontSize:14, fontWeight:800, color:myColor }}>{o.time}</div>
-                    <div style={{ fontSize:9, color:cs.muted }}>{o.date.slice(5)}</div>
+                    <div style={{ fontSize:9, color:cs.muted }}>{(o.date||"").slice(5)}</div>
                   </div>
                   <div style={{ flex:1 }}>
                     <div style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{o.customer}</div>
-                    <div style={{ fontSize:11, color:cs.muted }}>{o.service} · {o.units} unit · {o.address.slice(0,35)}...</div>
+                    <div style={{ fontSize:11, color:cs.muted }}>{o.service} · {o.units} unit · {(o.address||"-").slice(0,35)}...</div>
                   </div>
                 </div>
               ))}
@@ -3084,7 +3087,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 const slaOrders = ordersData.filter(o => {
                   if (o.status !== "DISPATCHED" && o.status !== "CONFIRMED") return false;
                   if (!o.date || !o.time || o.date !== TODAY) return false;
-                  const bMs = new Date(o.date+"T"+o.time+":00").getTime();
+                  const bMs = (o.date && o.time ? new Date(o.date+"T"+o.time+":00").getTime() : 0);
                   return now3.getTime() > bMs + 30*60*1000;
                 });
                 if (slaOrders.length === 0) return null;
@@ -3316,52 +3319,56 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
               const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
               const lastSvc = cHist[0]; // sudah sorted by date desc
               return (
-                <div key={cu.id} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20, display:"flex", gap:16, alignItems:"flex-start" }}>
-                  <div style={{ width:48, height:48, borderRadius:12, background:"linear-gradient(135deg,"+(cu.is_vip?cs.yellow:cs.accent)+",#3b82f6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>{cu.name.charAt(0)}</div>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
-                      <span style={{ fontWeight:700, color:cs.text, fontSize:15 }}>{cu.name}</span>
-                      {cu.is_vip && <span style={{ background:cs.yellow+"22", color:cs.yellow, fontSize:10, fontWeight:800, padding:"2px 7px", borderRadius:99, border:"1px solid "+cs.yellow+"44" }}>⭐ VIP</span>}
-                      <span style={{ fontSize:10, color:cs.muted, fontFamily:"monospace" }}>{cu.id}</span>
-                    </div>
-                    <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:"3px 20px", fontSize:12, color:cs.muted, marginBottom:8 }}>
-                      <span>📱 {cu.phone}</span><span>📍 {cu.area}</span>
-                      <span>🏠 {cu.address.slice(0,32)}...</span><span>📅 {cu.joined}</span>
-                    </div>
-                    {/* ── BONUS: Last service summary di customer card ── */}
-                    {lastSvc ? (
-                      <div style={{ fontSize:11, background:cs.surface, borderRadius:7, padding:"6px 10px", marginBottom:6, display:"flex", gap:10, flexWrap:"wrap" }}>
-                        <span style={{ color:cs.muted }}>🕐 Terakhir:</span>
-                        <span style={{ color:cs.text, fontWeight:600 }}>{lastSvc.date}</span>
-                        <span style={{ color:cs.accent }}>{lastSvc.service}</span>
-                        <span style={{ color:cs.muted }}>{lastSvc.units} unit · {lastSvc.teknisi}</span>
-                        {lastSvc.rekomendasi&&(
-                          <span style={{ color:"#7dd3fc", fontStyle:"italic" }}>💡 {lastSvc.rekomendasi.slice(0,50)}{lastSvc.rekomendasi.length>50?"...":""}</span>
-                        )}
-                        <span style={{ color:cHist.length>1?cs.green:cs.muted, fontWeight:700 }}>({cHist.length}x servis)</span>
-                      </div>
-                    ) : (
-                      <div style={{ fontSize:11, color:cs.muted, marginBottom:6 }}>Belum ada riwayat servis</div>
-                    )}
-                    {cu.notes && <div style={{ fontSize:12, color:"#7dd3fc", background:"#0ea5e910", padding:"6px 10px", borderRadius:7, border:"1px solid #0ea5e922" }}>💡 {cu.notes}</div>}
+                <div key={cu.id} style={{ background:cs.card, border:"1px solid "+cs.border,
+                  borderRadius:10, padding:"10px 12px",
+                  display:"flex", alignItems:"center", gap:10 }}>
+                  {/* Avatar */}
+                  <div style={{ width:38, height:38, borderRadius:"50%",
+                    background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:15, fontWeight:800, color:"#fff", flexShrink:0 }}>
+                    {(cu.name||"?").charAt(0).toUpperCase()}
                   </div>
-                  <div style={{ display:"flex", flexDirection:"column", gap:8, flexShrink:0 }}>
-                    <button onClick={() => { setSelectedCustomer(cu); setCustomerTab("history"); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600, whiteSpace:"nowrap" }}>📋 Riwayat ({cHist.length})</button>
-                    <button onClick={() => { setNewOrderForm(f=>({...f,customer:cu.name,phone:normalizePhone(cu.phone),address:cu.address})); setModalOrder(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>+ Order</button>
-                    <button onClick={() => openWA(cu.phone, "")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 WA</button>
-                    {currentUser?.role === "Owner" && (
-                      <button onClick={async () => {
-                        if (!await showConfirm({ icon:"🗑️", title:"Hapus Customer?", danger:true,
-  message:`Hapus customer "${cu.name}"?
-
-Semua history order akan tetap ada.`,
-  confirmText:"Hapus" })) return;
-                        setCustomersData(prev => prev.filter(c => c.id !== cu.id));
-                        const { error } = await supabase.from("customers").delete().eq("id", cu.id);
-                        if (error) showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message);
-                        else { addAgentLog("CUSTOMER_DELETED", "Customer " + cu.name + " dihapus", "WARNING"); showNotif("🗑️ Customer " + cu.name + " berhasil dihapus"); }
-                      }} style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>🗑️</button>
-                    )}
+                  {/* Info */}
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+                      <span style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{cu.name}</span>
+                      {cu.is_vip && <span style={{ fontSize:9, background:"#f59e0b22", color:"#f59e0b", padding:"1px 5px", borderRadius:99, fontWeight:700 }}>⭐VIP</span>}
+                    </div>
+                    <div style={{ fontSize:11, color:cs.muted }}>📱 {cu.phone||"-"}</div>
+                    <div style={{ fontSize:11, color:cs.muted, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:180 }}>📍 {cu.address||cu.area||"-"}</div>
+                  </div>
+                  {/* 4 Tombol 2x2 */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, flexShrink:0 }}>
+                    <button onClick={()=>{ setSelectedCustomer(cu); setCustomerTab("history"); }}
+                      style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent,
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                      📋 Riwayat
+                    </button>
+                    <button onClick={()=>{ setNewOrderForm(f=>({...f,customer:cu.name,phone:normalizePhone(cu.phone)||cu.phone,address:cu.address||"",service:"Cleaning"})); setModalOrder(true); }}
+                      style={{ background:cs.green+"18", border:"1px solid "+cs.green+"33", color:cs.green,
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                      📦 Order
+                    </button>
+                    <button onClick={()=>cu.phone && openWA(cu.phone,"")}
+                      style={{ background:"#25D36618", border:"1px solid #25D36633", color:"#25D366",
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                      💬 WA
+                    </button>
+                    {currentUser?.role === "Owner" ? (
+                      <button onClick={async()=>{
+                        if(!await showConfirm({ icon:"🗑️", title:"Hapus Customer?", danger:true,
+                          message:`Hapus "${cu.name}"?\nHistory order tetap ada.`,
+                          confirmText:"Hapus" })) return;
+                        setCustomersData(prev=>prev.filter(c=>c.id!==cu.id));
+                        const {error}=await supabase.from("customers").delete().eq("id",cu.id);
+                        if(error) showNotif("⚠️ "+error.message);
+                        else { addAgentLog("CUSTOMER_DELETED",cu.name+" dihapus","WARNING"); showNotif("🗑️ Dihapus"); }
+                      }} style={{ background:"#ef444418", border:"1px solid #ef444433", color:"#ef4444",
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                        🗑️ Hapus
+                      </button>
+                    ) : <div/>}
                   </div>
                 </div>
               );
@@ -3748,7 +3755,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`,
                   <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:12, color:cs.accent, fontWeight:700 }}>{o.id}</td>
                   <td style={{ padding:"10px 14px" }}>
                     <div style={{ fontSize:13, fontWeight:600, color:cs.text }}>{o.customer}</div>
-                    <div style={{ fontSize:11, color:cs.muted }}>{o.address.slice(0,28)}...</div>
+                    <div style={{ fontSize:11, color:cs.muted }}>{(o.address||"-").slice(0,28)}...</div>
                   </td>
                   <td style={{ padding:"10px 14px" }}>
                     {(() => { const sCol={Cleaning:"#22c55e",Install:"#3b82f6",Repair:"#f59e0b",Complain:"#ef4444"}[o.service]||cs.muted; return (
@@ -4710,7 +4717,7 @@ Tidak bisa dibatalkan.`,
                         <div style={{ background:(techColors[o.teknisi]||cs.accent)+"22", border:"1px solid "+(techColors[o.teknisi]||cs.accent)+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:54, flexShrink:0 }}>
                           <div style={{ fontSize:15, fontWeight:800, color:techColors[o.teknisi]||cs.accent }}>{o.time}</div>
                           <div style={{ fontSize:9, color:cs.muted }}>–{o.time_end||hitungJamSelesai(o.time,o.service,o.units)}</div>
-                          <div style={{ fontSize:9, color:cs.muted }}>{o.date.slice(5)}</div>
+                          <div style={{ fontSize:9, color:cs.muted }}>{(o.date||"").slice(5)}</div>
                         </div>
                         <div style={{ flex:1 }}>
                           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
@@ -4721,7 +4728,7 @@ Tidak bisa dibatalkan.`,
                           <div style={{ fontSize:12, color:cs.muted, display:"grid", gridTemplateColumns:"1fr 1fr", gap:"2px 14px" }}>
                             <span>🔧 {o.service} · {o.units} unit</span>
                             <span style={{ color:techColors[o.teknisi]||cs.muted }}>👷 {o.teknisi}{o.helper?" + "+o.helper:""}</span>
-                            <span>📍 {o.address.slice(0,32)}...</span>
+                            <span>📍 {(o.address||"-").slice(0,32)}...</span>
                           </div>
                         </div>
                         <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
@@ -7885,7 +7892,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   <tr style={{ background:"#fff" }}>
                     <td style={{ padding:"8px 10px", color:"#1e293b" }}>{liveInv.service}</td>
                     <td style={{ padding:"8px 10px", color:"#475569", textAlign:"center" }}>{liveInv.units}</td>
-                    <td style={{ padding:"8px 10px", color:"#475569", fontFamily:"monospace" }}>{(liveInv.labor/(liveInv.units||1)).toLocaleString("id-ID")}</td>
+                    <td style={{ padding:"8px 10px", color:"#475569", fontFamily:"monospace" }}>{((liveInv.labor||0)/(liveInv.units||1)).toLocaleString("id-ID")}</td>
                     <td style={{ padding:"8px 10px", color:"#1e293b", fontFamily:"monospace", fontWeight:600 }}>{liveInv.labor.toLocaleString("id-ID")}</td>
                   </tr>
                   )}
@@ -7920,7 +7927,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                         <td style={{ padding:"8px 10px", textAlign:"center" }}>—</td>
                         <td style={{ padding:"8px 10px" }}>—</td>
                         <td style={{ padding:"8px 10px", fontFamily:"monospace", fontWeight:600, color:"#1e293b", textAlign:"right" }}>
-                          {liveInv.material.toLocaleString("id-ID")}
+                          {(liveInv.material||0).toLocaleString("id-ID")}
                         </td>
                       </tr>
                     );
@@ -8824,7 +8831,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
       {laporanModal && !laporanSubmitted && (() => {
         const incompleteUnits = laporanUnits.filter(u=>!isUnitDone(u));
         const totalFreon = laporanUnits.reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0);
-        const presets = MATERIAL_PRESET[laporanModal.service] || MATERIAL_PRESET.Cleaning;
+        const presets = MATERIAL_PRESET[laporanModal?.service] || MATERIAL_PRESET.Cleaning;
         const isInstallJob = laporanModal?.service === "Install";
         const STEP_LABELS = ["","Konfirmasi Unit",
           isInstallJob ? "(skip)" : "Detail Per Unit",
@@ -8894,6 +8901,8 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
         };
 
   const submitLaporan = async () => {
+    if (submitLaporan._running) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
+    submitLaporan._running = true;
     // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
     const isInstall = laporanModal?.service === "Install";
 
@@ -8942,7 +8951,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
         currentUser?.name === laporanModal.helper &&
         !teknisiData.find(t => t.role === "Teknisi" && t.name === laporanModal.helper)),
       customer: laporanModal.customer,
-      service:  laporanModal.service,
+      service:  laporanModal?.service,
       date:     laporanModal.date,
       submitted: now,
       status:   "SUBMITTED",
@@ -8980,7 +8989,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
 ` +
       `Teknisi: ${laporanModal.teknisi}${laporanModal.helper ? " + " + laporanModal.helper : ""}
 ` +
-      `Layanan: ${laporanModal.service} — ${laporanUnits.length} unit
+      `Layanan: ${laporanModal?.service} — ${laporanUnits.length} unit
 ` +
       `Material: ${matCount} item
 ` +
@@ -9006,7 +9015,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
       rekomendasi:    newReport.rekomendasi,
       catatan_global: newReport.catatan_global,
       submitted_at:   new Date().toISOString(),
-      foto_urls:      laporanFotos.filter(f => f.url).map(f => f.url),
+      foto_urls:      (laporanFotos||[]).filter(f => f.url).map(f => f.url),
     };
 
     let savedOk = false;
@@ -9125,7 +9134,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
     // Untuk service lain: hitung dari PRICE_LIST
     const isInstallSvc = laporanModal.service === "Install";
     const laborTotalInv = isInstallSvc ? 0
-      : hitungLabor(laporanModal.service, laporanModal.type, laporanUnits.length);
+      : hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
     const matTotalInv   = hitungMaterialTotal(effectiveMaterials);
     const invoiceTotal  = laborTotalInv + matTotalInv;
     const todayInv      = new Date().toISOString().slice(0, 10);
@@ -9216,7 +9225,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
           }
           if (!hSat) {
             if      (nama2.includes("r-22")  || nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 150000;
-            else if (nama2.includes("r-32")  || nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 160000;
+            else if (nama2.includes("r-32")  || nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 450000;
             else if (nama2.includes("r-410") || nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
           }
           const rawQty = parseFloat(m.jumlah) || 0;
@@ -9234,7 +9243,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
         id: invId, job_id: laporanModal.id,
         customer: laporanModal.customer,
         phone:    laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
-        service:  laporanModal.service + " - " + laporanModal.type,
+        service:  laporanModal.service + (laporanModal.type ? " - " + laporanModal.type : ""),
         units:    laporanUnits.length,
         labor:    finalLabor,
         material: matTotalInv,
@@ -9318,6 +9327,7 @@ Silakan approve di menu Invoice. — ARA`;
     setLaporanSubmitted(true);
     pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
     showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan dikirim ke Owner/Admin untuk verifikasi.`);
+    submitLaporan._running = false;
   };
 
         const tagStyle = (active, color) => ({
