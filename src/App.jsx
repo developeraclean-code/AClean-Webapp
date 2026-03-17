@@ -7501,10 +7501,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               {liveInv.status === "UNPAID" && (
                 <button onClick={() => { invoiceReminderWA(liveInv); setModalPDF(false); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📱 Kirim via WA</button>
               )}
-              {liveInv.status === "PENDING_APPROVAL" && (
-                {currentUser?.role === "Owner" && (
+              {liveInv.status === "PENDING_APPROVAL" && currentUser?.role === "Owner" && (
                 <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
-                );}
               )}
             </div>
           </div>
