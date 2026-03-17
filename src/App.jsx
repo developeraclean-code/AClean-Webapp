@@ -152,45 +152,82 @@ const INVOICES_DATA = [
 
 // GAP 13 — Price list untuk auto-hitung invoice dari laporan
 // ── PRICE_LIST: default fallback (akan di-override oleh DB price_list tabel) ──
-const PRICE_LIST_DEFAULT = {
+  const PRICE_LIST_DEFAULT = {
   "Cleaning": {
-    "AC Split 0.5-1PK":   85000,
-    "AC Split 1.5-2.5PK": 100000,
-    "AC Cassette 2-2.5PK":250000,
-    "AC Cassette 3PK":    300000,
-    "AC Cassette 4PK":    350000,
-    "AC Standing":        200000,
-    "AC Duct":            400000,
-    "default":             85000,
+    "AC Split 0.5-1PK":              85000,
+    "AC Split 1.5-2.5PK":           100000,
+    "AC Cassette 2-2.5PK":          250000,
+    "AC Cassette 3PK":              300000,
+    "AC Cassette 4PK":              400000,
+    "AC Cassette 5PK":              500000,
+    "AC Cassette 6PK":              600000,
+    "AC Standing":                  100000,
+    "AC Split Duct":                100000,
+    "Jasa Service Besar 0,5PK - 1PK":   400000,
+    "Jasa Service Besar 1,5PK - 2,5PK": 450000,
+    "default":                       85000,
   },
   "Install": {
-    "Pasang AC 0.5-1PK":          500000,
-    "Pasang AC 1.5-2.5PK":         600000,
-    "Bongkar Pasang AC 0.5-1PK":   500000,
-    "Bongkar Pasang AC 1.5-2.5PK": 600000,
-    "default":                      500000,
+    "Pemasangan AC Baru 0,5PK - 1PK":       350000,
+    "Pemasangan AC Baru 1,5PK - 2PK":       400000,
+    "Pasang AC Split 3PK":                   450000,
+    "Bongkar Pasang AC Split 1/2 - 1PK":    500000,
+    "Bongkar Pasang AC Split 1,5 - 2,5PK":  550000,
+    "Bongkar Unit AC 0.5-1PK":               150000,
+    "Bongkar Unit AC 1.5-2.5PK":             200000,
+    "Bongkar Pasang Indoor AC":              200000,
+    "Bongkar Pasang Outdoor AC":             200000,
+    "Jasa Vacum AC 0,5PK - 2,5PK":           50000,
+    "Jasa Vacum Unit AC >3PK":               150000,
+    "Jasa Penarikan Pipa AC":                 25000,
+    "Jasa Penarikan Pipa Ruko":               35000,
+    "Pasang AC Cassette":                    900000,
+    "Pasang AC Standing":                    600000,
+    "Pemasangan AC Baru Apartemen":          350000,
+    "Jasa Instalasi Pipa AC":                200000,
+    "Jasa Instalasi Listrik":                150000,
+    "Flaring Pipa":                          100000,
+    "Flushing Pipa":                         200000,
+    "Jasa Bobok Tembok":                     150000,
+    "Jasa Pengelasan Pipa AC":               100000,
+    "Jasa Pembuatan Saluran Pembuangan":     150000,
+    "default":                               350000,
   },
   "Repair": {
-    "Pengecekan AC":       75000,
-    "Pengecekan AC Panas/Bocor": 75000,
-    "Perbaikan Freon Bocor": 150000,
-    "Perbaikan Kompresor":  250000,
-    "Perbaikan PCB/Elektrik": 175000,
-    "Ganti Kapasitor":     125000,
-    "Ganti Freon":         150000,
-    "default":              75000,
+    "Biaya Pengecekan AC":                   100000,
+    "Perbaikan Hermaplex":                   150000,
+    "Jasa Pemasangan Sparepart":             250000,
+    "Perbaikan PCB/Elektrik":                250000,
+    "Pergantian Kapasitor Fan Indoor":       250000,
+    "Pergantian Sensor Indoor":              250000,
+    "Pergantian Overload Outdoor":           300000,
+    "Jasa Pemasangan Sparepart Daikin":      330000,
+    "Kapasitor AC 0.5-1.5PK":               350000,
+    "Pergantian Kapasitor Outdoor 1PK":      350000,
+    "Pergantian Modul Indoor Standart":      400000,
+    "Kapasitor AC 2-2.5PK":                  450000,
+    "Pergantian Kapasitor Outdoor 1,5-2,5PK":450000,
+    "Test Press Unit":                       450000,
+    "Jasa Pemasangan Kompresor":             500000,
+    "Pergantian Modul Indoor Inverter":      500000,
+    "Kuras Vacum + Isi Freon R32/R410":      600000,
+    "Kuras Vacum Freon R22":                 600000,
+    "default":                               100000,
   },
   "Complain": {
-    "Komplain AC Tidak Dingin": 50000,
-    "Komplain Bising/Berisik":  50000,
-    "Komplain Setelah Service":      0,
-    "Komplain Garansi":              0,
-    "Pengecekan Ulang":         50000,
-    "default":                       0,
+    "Garansi Servis (gratis)":          0,
+    "Komplain AC Tidak Dingin":         0,
+    "Komplain Bising/Berisik":          0,
+    "Komplain Bocor Air":               0,
+    "Komplain Garansi":                 0,
+    "Komplain Setelah Servis":          0,
+    "Pengecekan AC Gratis":             0,
+    "Pengecekan Ulang":                 0,
+    "default":                          0,
   },
-  "freon_R22":   150000,
-  "freon_R410A": 450000,  // harga aktual — diupdate dari DB via price_list
-  "freon_R32":   160000,
+  "freon_R22":   450000,
+  "freon_R410A": 450000,
+  "freon_R32":   450000,
 };
 // PRICE_LIST akan di-replace oleh data DB setelah loadAll() — jangan edit langsung
 let PRICE_LIST = { ...PRICE_LIST_DEFAULT };
@@ -759,49 +796,50 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   // ── MATERIAL_PRESET: quick-add di STEP 3 (Service/Repair/Complain) ──
   const MATERIAL_PRESET = {
     Cleaning: [
-      {nama:"Freon R-22",        satuan:"kg"},
-      {nama:"Freon R-32",        satuan:"kg"},
-      {nama:"Freon R-410",       satuan:"kg"},
-      {nama:"Kapasitor <1PK",    satuan:"pcs"},
-      {nama:"Kapasitor >1PK",    satuan:"pcs"},
-      {nama:"Thermis Indoor",    satuan:"pcs"},
-      {nama:"Hermaplex",         satuan:"pcs"},
+      {nama:"Freon R-22",              satuan:"KG"},
+      {nama:"Freon R-32",              satuan:"KG"},
+      {nama:"Freon R-410A",            satuan:"KG"},
+      {nama:"Sparepart Kapasitor Fan", satuan:"Piece"},
+      {nama:"Thermis Indoor",          satuan:"Piece"},
+      {nama:"ACRYLIC INDOOR",          satuan:"Piece"},
+      {nama:"Selang Flexibel Drain",   satuan:"Meter"},
     ],
     Repair: [
-      {nama:"Freon R-22",        satuan:"kg"},
-      {nama:"Freon R-32",        satuan:"kg"},
-      {nama:"Freon R-410",       satuan:"kg"},
-      {nama:"Kapasitor <1PK",    satuan:"pcs"},
-      {nama:"Kapasitor >1PK",    satuan:"pcs"},
-      {nama:"Thermis Indoor",    satuan:"pcs"},
-      {nama:"Relay",             satuan:"pcs"},
-      {nama:"PCB Module",        satuan:"pcs"},
-      {nama:"Kipas Motor",       satuan:"pcs"},
+      {nama:"Freon R-22",              satuan:"KG"},
+      {nama:"Freon R-32",              satuan:"KG"},
+      {nama:"Freon R-410A",            satuan:"KG"},
+      {nama:"Sparepart Kapasitor Fan", satuan:"Piece"},
+      {nama:"Thermis Indoor",          satuan:"Piece"},
+      {nama:"Remote AC Multi",         satuan:"Unit"},
+      {nama:"REMOTE AC DAIKIN",        satuan:"Piece"},
+      {nama:"Steker Colokan",          satuan:"Piece"},
     ],
     Complain: [
-      {nama:"Freon R-22",        satuan:"kg"},
-      {nama:"Freon R-32",        satuan:"kg"},
-      {nama:"Freon R-410",       satuan:"kg"},
+      {nama:"Freon R-22",              satuan:"KG"},
+      {nama:"Freon R-32",              satuan:"KG"},
+      {nama:"Freon R-410A",            satuan:"KG"},
     ],
   };
   // ── INSTALL_ITEMS: preset form instalasi ──
   const INSTALL_ITEMS = [
-    { key:"pasang_05_1pk",   label:"Pasang AC 0.5PK-1PK",       satuan:"unit",  default:0 },
-    { key:"pasang_15_25pk",  label:"Pasang AC 1.5PK-2.5PK",     satuan:"unit",  default:0 },
-    { key:"bongkar_05_1pk",  label:"Bongkar AC 0.5PK-1PK",      satuan:"unit",  default:0 },
-    { key:"bongkar_15_25pk", label:"Bongkar AC 1.5PK-2.5PK",    satuan:"unit",  default:0 },
-    { key:"vacum_unit",      label:"Vacum Unit",                 satuan:"unit",  default:0 },
-    { key:"pipa_1pk",        label:"Pipa AC Hoda 1PK",          satuan:"meter", default:0 },
-    { key:"pipa_2pk",        label:"Pipa AC Hoda 2PK",          satuan:"meter", default:0 },
-    { key:"pipa_25pk",       label:"Pipa AC Hoda 2.5PK",        satuan:"meter", default:0 },
-    { key:"pipa_3pk",        label:"Pipa AC Hoda 3PK",          satuan:"meter", default:0 },
-    { key:"kabel_15",        label:"Kabel 3x1.5",               satuan:"meter", default:0 },
-    { key:"kabel_25",        label:"Kabel 3x2.5",               satuan:"meter", default:0 },
-    { key:"ducttape_biasa",  label:"Duct Tape Non Lem",         satuan:"meter", default:0 },
-    { key:"ducttape_lem",    label:"Duct Tape Lem",             satuan:"meter", default:0 },
-    { key:"jasa_pipa_rmh",   label:"Jasa Penarikan Pipa Rumah", satuan:"meter", default:0 },
-    { key:"jasa_pipa_ruko",  label:"Jasa Penarikan Pipa Ruko",  satuan:"meter", default:0 },
-    { key:"perapian_plafon", label:"Perapian Plafon",           satuan:"titik", default:0 },
+    { key:"pasang_05_1pk",   label:"Pemasangan AC Baru 0,5PK - 1PK",      satuan:"Unit",  default:0 },
+    { key:"pasang_15_2pk",   label:"Pemasangan AC Baru 1,5PK - 2PK",      satuan:"Unit",  default:0 },
+    { key:"bongkar_05_1pk",  label:"Bongkar Unit AC 0.5-1PK",             satuan:"Unit",  default:0 },
+    { key:"bongkar_15_25pk", label:"Bongkar Unit AC 1.5-2.5PK",           satuan:"Unit",  default:0 },
+    { key:"vacum_05_25pk",   label:"Jasa Vacum AC 0,5PK - 2,5PK",         satuan:"Unit",  default:0 },
+    { key:"pipa_1pk",        label:"Pipa AC Hoda 1PK",                    satuan:"Meter", default:0 },
+    { key:"pipa_2pk",        label:"Pipa AC Hoda 2PK",                    satuan:"Meter", default:0 },
+    { key:"pipa_25pk",       label:"Pipa AC Hoda 2,5PK",                  satuan:"Meter", default:0 },
+    { key:"pipa_3pk",        label:"Pipa AC Hoda 3PK",                    satuan:"Meter", default:0 },
+    { key:"kabel_15",        label:"Kabel Eterna 3x1,5",                  satuan:"Meter", default:0 },
+    { key:"kabel_25",        label:"Kabel Eterna 3x2,5",                  satuan:"Meter", default:0 },
+    { key:"ducttape_biasa",  label:"Duct Tape Non Lem",                   satuan:"Piece", default:0 },
+    { key:"ducttape_lem",    label:"Duct Tape Lem",                       satuan:"Piece", default:0 },
+    { key:"jasa_pipa_ac",    label:"Jasa Penarikan Pipa AC",              satuan:"Meter", default:0 },
+    { key:"jasa_pipa_ruko",  label:"Jasa Penarikan Pipa Ruko",            satuan:"Meter", default:0 },
+    { key:"dinabolt",        label:"DINABOLT Set",                        satuan:"Set",   default:0 },
+    { key:"karet_mounting",  label:"KARET MOUNTING",                      satuan:"Set",   default:0 },
+    { key:"breket_outdoor",  label:"Breket Outdoor",                      satuan:"Piece", default:0 },
   ];
   const TIPE_AC_OPT = ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"];
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
@@ -1733,20 +1771,32 @@ Kamu ditugaskan sebagai Helper. — AClean`;
 
   const hitungMaterialTotal = (materials) => {
     return materials.reduce((sum, m) => {
-      const nama = (m.nama||"").toLowerCase().trim();
-      // Normalisasi nama freon untuk matching: "freon r-410" ↔ "freon r410a"
-      const normNama = nama.replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
-      // Cari di inventory dengan fuzzy match
+      const raw  = (m.nama||"").toLowerCase().trim();
+      // Normalisasi: strip tanda baca, koma→titik, hapus brand "eterna"
+      const norm = raw
+        .replace(/,/g, ".")          // koma desimal → titik
+        .replace(/eterna\s*/g, "")   // hapus brand "Eterna"
+        .replace(/[-\s]/g, "")       // hapus dash & spasi
+        .replace(/r410a?$/, "r410")  // R-410A → r410
+        .replace(/r22a?$/,  "r22")
+        .replace(/r32a?$/,  "r32");
+      // Cari di inventory dengan fuzzy match (normalisasi dua arah)
       const invItem = inventoryData.find(inv => {
-        const n = inv.name.toLowerCase().replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
-        return n.includes(normNama) || normNama.includes(n);
+        const n = inv.name.toLowerCase()
+          .replace(/,/g, ".")
+          .replace(/eterna\s*/g, "")
+          .replace(/[-\s]/g, "")
+          .replace(/r410a?$/, "r410")
+          .replace(/r22a?$/,  "r22")
+          .replace(/r32a?$/,  "r32");
+        return n === norm || n.includes(norm) || norm.includes(n);
       });
       let harga = invItem ? invItem.price : 0;
-      // Fallback ke PRICE_LIST jika tidak ada di inventory
+      // Fallback ke PRICE_LIST freon
       if (!harga) {
-        if      (nama.includes("r-22")||nama.includes("r22"))  harga = PRICE_LIST["freon_R22"]   || 150000;
-        else if (nama.includes("r-32")||nama.includes("r32"))  harga = PRICE_LIST["freon_R32"]   || 160000;
-        else if (nama.includes("r-410")||nama.includes("r410")) harga = PRICE_LIST["freon_R410A"] || 450000;
+        if      (raw.includes("r-22")||raw.includes("r22"))  harga = PRICE_LIST["freon_R22"]   || 450000;
+        else if (raw.includes("r-32")||raw.includes("r32"))  harga = PRICE_LIST["freon_R32"]   || 450000;
+        else if (raw.includes("r-410")||raw.includes("r410")) harga = PRICE_LIST["freon_R410A"] || 450000;
       }
       return sum + (harga * (parseFloat(m.jumlah) || 0));
     }, 0);
@@ -6571,10 +6621,10 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                 <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Tipe AC</div>
                 <select value={newOrderForm.type||"AC Split 0.5-1PK"} onChange={e => setNewOrderForm(f=>({...f,type:e.target.value}))}
                   style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
-                  {newOrderForm.service==="Cleaning" && ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"].map(t=><option key={t}>{t}</option>)}
-                  {newOrderForm.service==="Install"  && ["Pasang AC 0.5-1PK","Pasang AC 1.5-2.5PK","Bongkar Pasang AC 0.5-1PK","Bongkar Pasang AC 1.5-2.5PK"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Cleaning" && ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Cassette 5PK","AC Cassette 6PK","AC Standing","AC Split Duct","Jasa Service Besar 0,5PK - 1PK","Jasa Service Besar 1,5PK - 2,5PK"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Install"  && ["Pemasangan AC Baru 0,5PK - 1PK","Pemasangan AC Baru 1,5PK - 2PK","Bongkar Pasang AC Split 1/2 - 1PK","Bongkar Pasang AC Split 1,5 - 2,5PK","Pasang AC Cassette","Pasang AC Standing","Pasang AC Split 3PK"].map(t=><option key={t}>{t}</option>)}
                   {newOrderForm.service==="Repair"   && ["Pengecekan AC","Pengecekan AC Panas/Bocor","Ganti Freon","Ganti Kompressor","Ganti Kapasitor","Bocor Refrigerant","Perbaikan PCB","Perbaikan Motor Fan"].map(t=><option key={t}>{t}</option>)}
-                  {newOrderForm.service==="Complain" && ["Komplain AC Tidak Dingin","Komplain Bising/Berisik","Komplain Setelah Service","Komplain Garansi","Pengecekan Ulang"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Complain" && ["Garansi Servis (gratis)","Komplain AC Tidak Dingin","Komplain Bising/Berisik","Komplain Bocor Air","Komplain Garansi","Komplain Setelah Servis","Pengecekan AC Gratis","Pengecekan Ulang"].map(t=><option key={t}>{t}</option>)}
                 </select>
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
@@ -6765,7 +6815,14 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   const stokStatus= stokAwal===0?"OUT":stokAwal<=minAlert?"CRITICAL":stokAwal<=reorderPt?"WARNING":"OK";
                   const newItem   = { code:newCode, name:newStokForm.name, unit:newStokForm.unit||"pcs", price:parseInt(newStokForm.price)||0, stock:stokAwal, reorder:reorderPt, min_alert:minAlert, status:stokStatus };
                   setInventoryData(prev=>[...prev,newItem]);
-                  const {error:invErr} = await supabase.from("inventory").insert(newItem);
+                  // Insert tanpa status — biarkan DB default, lalu update stock untuk trigger auto-status
+                  const insertPayload = { ...newItem };
+                  delete insertPayload.status; // hindari check constraint — trigger set otomatis
+                  const {error:invErr} = await supabase.from("inventory").insert(insertPayload);
+                  if (!invErr && stokAwal > 0) {
+                    // Trigger inventory_auto_status hanya jalan saat UPDATE stock
+                    await supabase.from("inventory").update({stock:stokAwal}).eq("code",newCode);
+                  }
                   if(invErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+invErr.message);
                   else { addAgentLog("STOCK_ADDED",`Material baru: ${newStokForm.name} (stok: ${newStokForm.stock} ${newStokForm.unit||"pcs"})`,"SUCCESS"); showNotif("✅ Material " + (newStokForm.name||"baru") + " berhasil ditambah"); }
                   setModalStok(false); setNewStokForm({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
@@ -6840,7 +6897,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                       });
                       // ignore inventory_transactions error (tabel opsional)
                     }
-                    const {error:eErr} = await supabase.from("inventory").update({stock:stokFinal,price:hargaBaru,reorder:reorderBaru,status:statusBaru}).eq("code",editStokItem.code);
+                    const {error:eErr} = await supabase.from("inventory").update({stock:stokFinal, price:hargaBaru, reorder:reorderBaru, updated_at:new Date().toISOString()}).eq("code",editStokItem.code);
                     if(eErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
                     else { addAgentLog("STOCK_UPDATED",`Stok ${editStokItem.name}: ${editStokItem.stock}→${stokFinal} ${editStokItem.unit} (${statusBaru})`,"SUCCESS"); showNotif("✅ Stok "+editStokItem.name+" diupdate → "+stokFinal+" "+editStokItem.unit); }
                     setModalEditStok(false); setEditStokItem(null); setNewStokForm({name:"",unit:"pcs",price:"",stock:"",reorder:"",min_alert:"",tambah:""});
@@ -8634,10 +8691,22 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
         .filter(m => m.nama && (parseFloat(m.jumlah) || 0) > 0)
         .map(m => {
           const nama2   = (m.nama || "").toLowerCase();
-          const normNama2 = nama2.replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+          const normNama2 = nama2
+            .replace(/,/g,".")
+            .replace(/eterna\s*/g,"")
+            .replace(/[-\s]/g,"")
+            .replace(/r410a?$/,"r410")
+            .replace(/r22a?$/,"r22")
+            .replace(/r32a?$/,"r32");
           const invItem = inventoryData.find(inv => {
-            const n = inv.name.toLowerCase().replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
-            return n.includes(normNama2) || normNama2.includes(n);
+            const n = inv.name.toLowerCase()
+              .replace(/,/g,".")
+              .replace(/eterna\s*/g,"")
+              .replace(/[-\s]/g,"")
+              .replace(/r410a?$/,"r410")
+              .replace(/r22a?$/,"r22")
+              .replace(/r32a?$/,"r32");
+            return n === normNama2 || n.includes(normNama2) || normNama2.includes(n);
           });
           let hSat = invItem?.price || 0;
           if (!hSat) {
