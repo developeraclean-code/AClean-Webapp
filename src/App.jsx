@@ -164,11 +164,11 @@ const PRICE_LIST_DEFAULT = {
     "default":             85000,
   },
   "Install": {
-    "Pasang AC 0.5-1PK":  500000,
-    "Pasang AC 1PK":      500000,
-    "Pasang AC 1.5-2PK":  600000,
-    "Pasang AC 2.5PK":    700000,
-    "default":            500000,
+    "Pasang AC 0.5-1PK":          500000,
+    "Pasang AC 1.5-2.5PK":         600000,
+    "Bongkar Pasang AC 0.5-1PK":   500000,
+    "Bongkar Pasang AC 1.5-2.5PK": 600000,
+    "default":                      500000,
   },
   "Repair": {
     "Pengecekan AC":       75000,
@@ -1027,7 +1027,14 @@ ${matRowsHtml}
     setLaporanUnits(Array.from({length:count},(_,i)=>mkUnit(i+1)));
     setLaporanMaterials([]);
     setLaporanFotos([]);
-  setLaporanInstallItems({});
+  // Auto-fill install items berdasarkan jumlah unit order
+  const _installDefaults = {};
+  if (order.service === "Install") {
+    const _u = Math.min(order.units||1, 10);
+    _installDefaults.pasang_ac = String(_u);
+    _installDefaults.vacum_unit = String(_u);
+  }
+  setLaporanInstallItems(_installDefaults);
     setLaporanRekomendasi("");
     setLaporanCatatan("");
     setActiveUnitIdx(0);
@@ -2512,7 +2519,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
               // Dadakan jika booking H-0
               const isToday = ord.date === today;
               const dadakanFee = isToday ? 50000 : 0;
-              const totalInv = laborTotal + materialTotal + dadakanFee;
+              const totalInv = laborTotal + materialCost + dadakanFee;
 
               const newInv = {
                 id: invId, job_id: ord.id,
@@ -6523,7 +6530,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                 <select value={newOrderForm.type||"AC Split 0.5-1PK"} onChange={e => setNewOrderForm(f=>({...f,type:e.target.value}))}
                   style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
                   {newOrderForm.service==="Cleaning" && ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"].map(t=><option key={t}>{t}</option>)}
-                  {newOrderForm.service==="Install"  && ["Pasang AC 0.5-1PK","Pasang AC 1PK","Pasang AC 1.5-2PK","Pasang AC 2.5PK"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Install"  && ["Pasang AC 0.5-1PK","Pasang AC 1.5-2.5PK","Bongkar Pasang AC 0.5-1PK","Bongkar Pasang AC 1.5-2.5PK"].map(t=><option key={t}>{t}</option>)}
                   {newOrderForm.service==="Repair"   && ["Pengecekan AC","Pengecekan AC Panas/Bocor","Ganti Freon","Ganti Kompressor","Ganti Kapasitor","Bocor Refrigerant","Perbaikan PCB","Perbaikan Motor Fan"].map(t=><option key={t}>{t}</option>)}
                   {newOrderForm.service==="Complain" && ["Komplain AC Tidak Dingin","Komplain Bising/Berisik","Komplain Setelah Service","Komplain Garansi","Pengecekan Ulang"].map(t=><option key={t}>{t}</option>)}
                 </select>
@@ -8597,7 +8604,7 @@ Silakan approve di menu Invoice. — ARA`;
 
           setLaporanSubmitted(true);
           pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
-          showNotif(`✅ Laporan ${laporanModal.id} terkirim! Invoice ${newInvoiceId} (${fmt(newInvoice.total)}) dibuat — menunggu approval Owner.`);
+          showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan terkirim ke Owner/Admin untuk verifikasi.`);
         };
 
         const tagStyle = (active, color) => ({
@@ -8965,7 +8972,7 @@ Silakan approve di menu Invoice. — ARA`;
                           <button onClick={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
                             style={{marginLeft:8,background:"#ef444422",border:"1px solid #ef444433",color:"#ef4444",borderRadius:7,padding:"8px 10px",cursor:"pointer",fontSize:14,lineHeight:1,fontWeight:700}}>×</button>
                         </div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:8}}>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                           <input type="number" value={mat.jumlah} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:e.target.value}:m))} placeholder="Jml" min="0"
                             style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
                           <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
