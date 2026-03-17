@@ -316,6 +316,11 @@ Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal)
 ## SOP INVOICE
 1. Invoice dibuat setelah laporan teknisi masuk (status SUBMITTED/COMPLETED)
 2. WAJIB gunakan action CREATE_INVOICE — jangan hitung manual
+3. CEK PEKERJAAN AKTUAL: Sebelum buat invoice, baca bizContext.laporan[].pekerjaan_aktual
+   - Jika has_service_besar = true → gunakan service_besar_type sebagai type invoice
+   - Contoh: order Cleaning AC Split 85rb TAPI laporan ada "Deep Cleaning (Service Besar)"
+     → invoice labor harus pakai "Jasa Service Besar 0,5PK - 1PK" = 400rb
+   - Selalu KONFIRMASI ke Owner sebelum apply harga berbeda dari order awal
 3. Invoice otomatis baca material + freon dari laporan → masuk ke field "material"
 4. Due date: H+3 dari tanggal selesai
 5. Kirim reminder WA jika H-1 due dan belum PAID
@@ -404,11 +409,12 @@ export default function ACleanWebApp() {
   const [modalAddUser,  setModalAddUser]  = useState(false);
   const [newUserForm,   setNewUserForm]   = useState({ name:"", email:"", role:"Admin", password:"", phone:"" });
   const [userAccounts,  setUserAccounts]  = useState([
-    { id:"USR001", name:"Malda Retta",  email:"owner@aclean.id",  role:"Owner",   phone:"6281299898937", avatar:"M", color:"#f59e0b", active:true,  password:"owner123",  lastLogin:"2026-03-03 08:15" },
-    { id:"USR002", name:"Admin AClean", email:"admin@aclean.id",  role:"Admin",   phone:"6281200000001", avatar:"A", color:"#38bdf8", active:true,  password:"admin123",  lastLogin:"2026-03-03 07:30" },
-    { id:"USR003", name:"Mulyadi",      email:"mulyadi@aclean.id",role:"Teknisi", phone:"6288225633768", avatar:"Y", color:"#22c55e", active:true,  password:"mly2026",   lastLogin:"2026-03-02 17:45" },
-    { id:"USR004", name:"Usaeri",       email:"usaeri@aclean.id", role:"Teknisi", phone:"6287786870189", avatar:"U", color:"#a78bfa", active:true,  password:"usr2026",   lastLogin:"2026-03-01 16:20" },
-    { id:"USR005", name:"Albana Niji",  email:"albana@aclean.id", role:"Teknisi", phone:"6287815496845", avatar:"B", color:"#34d399", active:false, password:"abn2026",   lastLogin:"2026-02-28 12:10" },
+    { id:"USR001", name:"Malda Retta",   email:"owner@aclean.id",   role:"Owner",   phone:"6281299898937", password:"owner@2026",   avatar:"M", color:"#f59e0b", active:true, lastLogin:"-" },
+    { id:"USR002", name:"Admin AClean",  email:"admin@aclean.id",   role:"Admin",   phone:"6281200000001", password:"admin@2026",   avatar:"A", color:"#38bdf8", active:true, lastLogin:"-" },
+    { id:"USR003", name:"Mulyadi",       email:"mulyadi@aclean.id", role:"Teknisi", phone:"6288225633768", password:"mly@2026",     avatar:"Y", color:"#22c55e", active:true, lastLogin:"-" },
+    { id:"USR004", name:"Albana Niji",   email:"albana@aclean.id",  role:"Helper",  phone:"6281200000002", password:"abn@2026",     avatar:"A", color:"#a78bfa", active:true, lastLogin:"-" },
+    { id:"USR005", name:"Budi Santoso",  email:"budi@aclean.id",    role:"Teknisi", phone:"6281200000003", password:"budi@2026",    avatar:"B", color:"#22c55e", active:true, lastLogin:"-" },
+    { id:"USR006", name:"Reza Firmansyah",email:"reza@aclean.id",   role:"Teknisi", phone:"6281200000004", password:"reza@2026",    avatar:"R", color:"#22c55e", active:true, lastLogin:"-" },
   ]);
 
   // ── Tim Teknisi state (reactive) ──
@@ -523,6 +529,9 @@ export default function ACleanWebApp() {
   const [editInvoiceData,  setEditInvoiceData]  = useState(null);
   const [editInvoiceForm,  setEditInvoiceForm]  = useState({});
   const [editInvoiceItems, setEditInvoiceItems] = useState([]); // per-item edit
+  const [modalEditPwd, setModalEditPwd] = useState(false);
+  const [editPwdTarget, setEditPwdTarget] = useState(null); // {id, name}
+  const [editPwdForm, setEditPwdForm] = useState({newPwd:"", confirmPwd:""});
   const [editAddType,  setEditAddType]  = useState(''); // 'jasa' | 'material'
   const [editAddSearch,setEditAddSearch]= useState('');
   const [editJasaItems, setEditJasaItems] = useState([]); // jasa items per-row
@@ -549,6 +558,17 @@ export default function ACleanWebApp() {
       if (alErr) console.error("agent_logs 400:", alErr.message, "|", alErr.hint, "|", alErr.details);
     } catch(e) { console.error("agent_logs catch:", e.message); }
   };
+
+  // ── App Settings: bank, phone, nama — load dari DB tabel app_settings ──
+  const [appSettings, setAppSettings] = useState({
+    bank_name:   "BCA",
+    bank_number: "8830883011",
+    bank_holder: "Malda Retta",
+    owner_phone: "6281299898937",
+    company_name:"AClean Service",
+    company_addr:"Alam Sutera, Tangerang Selatan",
+    wa_number:   "62812-8989-8937",
+  });
 
   // ── Settings: _ls HARUS dideklarasi SEBELUM useState yang memakainya ──
   const _ls = (key, def) => {
@@ -691,6 +711,35 @@ export default function ACleanWebApp() {
 
   // ── GAP-7: Cek job stuck — kirim reminder ke teknisi jika laporan belum masuk 1 jam setelah selesai ──
   const checkStuckJobs = async () => {
+  // ── SLA CHECK: alert jika teknisi belum ON_SITE 30 menit setelah jam booking ──
+  const now2 = new Date();
+  const slaAlerts = ordersData.filter(o => {
+    if (o.status !== "DISPATCHED" && o.status !== "CONFIRMED") return false;
+    if (!o.date || !o.time || o.date > TODAY) return false;
+    const bookingMs = new Date(o.date + "T" + o.time + ":00").getTime();
+    const menit30 = 30 * 60 * 1000;
+    // Sudah lebih dari 30 menit dari jam booking tapi belum ON_SITE
+    return (now2.getTime() > bookingMs + menit30) && o.date === TODAY;
+  });
+  if (slaAlerts.length > 0) {
+    slaAlerts.forEach(o => {
+      const alreadyAlerted = agentLogs.some(l =>
+        l.action === "SLA_ALERT" && (l.detail||"").includes(o.id)
+        && (Date.now() - new Date(l.created_at||0).getTime()) < 2*60*60*1000
+      );
+      if (!alreadyAlerted) {
+        addAgentLog("SLA_ALERT",
+          `⚠️ SLA: ${o.teknisi} belum konfirmasi tiba — ${o.id} ${o.customer} jam ${o.time}`,
+          "WARNING"
+        );
+        showNotif(`⚠️ SLA: ${o.teknisi} belum di lokasi ${o.customer} (booking ${o.time})`, true);
+        // Kirim WA Owner
+        const owners = [...(teknisiData||[]),...(userAccounts||[])].filter(u=>u.role==="Owner"&&u.phone);
+        const slaMsg = `⚠️ *SLA ALERT*\n📋 ${o.id}\n👤 ${o.customer}\n👷 ${o.teknisi||"-"}\n⏰ Booking: ${o.time} — belum konfirmasi tiba`;
+        owners.forEach(ow=>sendWA(ow.phone, slaMsg));
+      }
+    });
+  }
     const nowMs = Date.now();
     const stuckOrders = ordersData.filter(o => {
       if (!["DISPATCHED","ON_SITE"].includes(o.status)) return false;
@@ -992,9 +1041,9 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       </div>
     </div>
     <div class="header-sub">
-      <span>📍 Alam Sutera, Tangerang Selatan</span>
+      <span>📍 ${appSettings.company_addr}</span>
       <span>📞 +62812-8989-8937</span>
-      <span>🏦 BCA 8830883011 a.n. Malda Retta</span>
+      <span>🏦 ${appSettings.bank_name} ${appSettings.bank_number} a.n. ${appSettings.bank_holder}</span>
     </div>
   </div>
 
@@ -1049,8 +1098,8 @@ ${matRowsHtml}
     <div class="bank-box">
       <div class="box-title">Informasi Pembayaran</div>
       <div style="color:#475569;font-size:11px">Transfer Bank BCA</div>
-      <div class="bank-num">8830883011</div>
-      <div style="color:#475569;font-size:11px">a.n. Malda Retta</div>
+    <div class="bank-num">${appSettings.bank_number}</div>
+    <div style="color:#475569;font-size:11px">a.n. ${appSettings.bank_holder}</div>
       <div style="margin-top:8px;font-size:11px;color:#64748b">Kirim bukti transfer via WhatsApp ke nomor di atas</div>
     </div>
     <div class="status-box ${inv.status==="PAID"?"status-paid":inv.status==="OVERDUE"?"status-overdue":"status-unpaid"}">
@@ -1065,7 +1114,7 @@ ${matRowsHtml}
 
   <div class="footer-note">
     <p>Pertanyaan? Hubungi kami via WhatsApp: +62812-8989-8937</p>
-    <p style="font-style:italic;margin-top:4px;color:#94a3b8">Terima kasih telah mempercayakan perawatan AC Anda kepada AClean Service 🙏</p>
+    <p style="font-style:italic;margin-top:4px;color:#94a3b8">Terima kasih telah mempercayakan perawatan AC Anda kepada ${appSettings.company_name} 🙏</p>
   </div>
 </div>
 <script>window.onload = () => { window.print(); }</script>
@@ -1381,6 +1430,16 @@ ${matRowsHtml}
           // ── FIXED: selalu sync dari DB (override localStorage jika DB punya nilai) ──
           if (sMap.llm_provider) setLlmProvider(sMap.llm_provider);
           if (sMap.llm_model)    setLlmModel(sMap.llm_model);
+        // Load bank & phone settings dari DB
+        if (sMap.bank_number) setAppSettings(prev=>({...prev,
+          bank_name:   sMap.bank_name   || prev.bank_name,
+          bank_number: sMap.bank_number || prev.bank_number,
+          bank_holder: sMap.bank_holder || prev.bank_holder,
+          owner_phone: sMap.owner_phone || prev.owner_phone,
+          company_name:sMap.company_name|| prev.company_name,
+          company_addr:sMap.company_addr|| prev.company_addr,
+          wa_number:   sMap.wa_number   || prev.wa_number,
+        }));
           // Sync apiKey sesuai provider dari DB
           if (sMap.llm_provider) {
             const dbProv = sMap.llm_provider;
@@ -2232,6 +2291,9 @@ _Simpan pesan ini sebagai bukti pelunasan._`
         id:r.id, job_id:r.job_id, teknisi:r.teknisi, customer:r.customer,
         service:r.service, status:r.status, date:r.date, submitted:r.submitted,
         is_install: r.service==="Install",
+        pekerjaan_aktual: (r.units||[]).flatMap(u=>u.pekerjaan||[]),
+        has_service_besar: (r.units||[]).some(u=>(u.pekerjaan||[]).some(p=>p.toLowerCase().includes("besar")||p.toLowerCase().includes("deep"))),
+        service_besar_type: (r.units||[]).some(u=>(u.pekerjaan||[]).some(p=>p.toLowerCase().includes("besar")||p.toLowerCase().includes("deep"))) ? (r.total_units > 1 ? "Jasa Service Besar 1,5PK - 2,5PK" : "Jasa Service Besar 0,5PK - 1PK") : null,
         materials: (r.materials||[]).map(m=>({nama:m.nama,jumlah:m.jumlah,satuan:m.satuan})),
         total_units: r.total_units||0,
       })),
@@ -2666,7 +2728,21 @@ _Simpan pesan ini sebagai bukti pelunasan._`
               const today = new Date().toISOString().slice(0,10);
               const seq2  = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
               const invId = "INV-" + today.replace(/-/g,"").slice(2,8) + "-" + seq2;
-              const labor = PRICE_LIST[ord.service]?.[ord.type || "default"] || PRICE_LIST[ord.service]?.["default"] || 80000;
+        // Cek pekerjaan aktual dari laporan teknisi
+        const lapRepForLabor = laporanReports.find(r => r.job_id === ord.id);
+        const hasServiceBesar = lapRepForLabor?.units
+          ? lapRepForLabor.units.some(u => (u.pekerjaan||[]).some(p =>
+              p.toLowerCase().includes("besar") || p.toLowerCase().includes("deep")))
+          : false;
+        // Jika service besar → gunakan harga service besar
+        let effectiveType = ord.type || "default";
+        if (hasServiceBesar && ord.service === "Cleaning") {
+          effectiveType = (ord.units||1) > 1
+            ? "Jasa Service Besar 1,5PK - 2,5PK"
+            : "Jasa Service Besar 0,5PK - 1PK";
+        }
+        const labor = PRICE_LIST[ord.service]?.[effectiveType] ||
+          PRICE_LIST[ord.service]?.["default"] || 85000;
               const laborTotal = labor * (ord.units || 1);
 
               // ── Baca material + freon dari laporan teknisi ──
@@ -2974,6 +3050,32 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </div>
           ))}
         </div>
+              {/* ── SLA ALERT WIDGET ── */}
+              {(() => {
+                const now3 = new Date();
+                const slaOrders = ordersData.filter(o => {
+                  if (o.status !== "DISPATCHED" && o.status !== "CONFIRMED") return false;
+                  if (!o.date || !o.time || o.date !== TODAY) return false;
+                  const bMs = new Date(o.date+"T"+o.time+":00").getTime();
+                  return now3.getTime() > bMs + 30*60*1000;
+                });
+                if (slaOrders.length === 0) return null;
+                return (
+                <div style={{ background:"#ef444412", border:"1px solid #ef444433", borderRadius:12, padding:"14px 16px", marginBottom:12 }}>
+                  <div style={{ fontWeight:700, fontSize:14, color:"#ef4444", marginBottom:8 }}>⚠️ SLA Alert — {slaOrders.length} order belum konfirmasi tiba</div>
+                  {slaOrders.map(o=>(
+                    <div key={o.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px", background:"#ef444408", borderRadius:8, marginBottom:4 }}>
+                      <div>
+                        <div style={{ fontSize:12, fontWeight:700, color:cs.text }}>{o.customer}</div>
+                        <div style={{ fontSize:11, color:cs.muted }}>👷 {o.teknisi||"-"} · ⏰ booking {o.time}</div>
+                      </div>
+                      <span style={{ fontSize:10, background:"#ef444420", color:"#ef4444", padding:"3px 8px", borderRadius:99, fontWeight:700 }}>BELUM TIBA</span>
+                    </div>
+                  ))}
+                </div>
+                );
+              })()}
+
         {/* ══ GAP 7: Garansi akan berakhir (≤30 hari) ══ */}
         {garansiExpireSoon.length > 0 && (
           <div style={{ background:cs.card, border:"1px solid #22d3ee44", borderRadius:14, padding:20 }}>
@@ -4462,7 +4564,8 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                               await supabase.from("orders").update({status:"ON_SITE"}).eq("id",o.id);
                               setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
                               showNotif("✅ Status → On Site!");
-                              const admins = userAccounts.filter(u=>u.role==="Admin"||u.role==="Owner");
+        const admins = teknisiData.filter(u=>u.role==="Admin"||u.role==="Owner")
+          .concat((userAccounts||[]).filter(u=>u.role==="Admin"||u.role==="Owner"));
                               const msg = `✅ *Teknisi di Lokasi*
 📋 ${o.id} — ${o.customer}
 👷 ${myTekName}`;
@@ -4610,10 +4713,15 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                             {/* ── Konfirmasi Tiba: 1 tombol, update status ON_SITE, tanpa WA Admin ── */}
                             {o.status !== "ON_SITE" && (
                               <button onClick={async () => {
-                                await supabase.from("orders").update({status:"ON_SITE"}).eq("id",o.id);
+                                await supabase.from("orders").update({status:"ON_SITE", on_site_at:new Date().toISOString()}).eq("id",o.id);
                                 setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
                                 showNotif("✅ Status → Sudah di Lokasi!");
                                 addAgentLog("ON_SITE", `${currentUser?.name} tiba di lokasi — ${o.id}`, "SUCCESS");
+        // Notif Owner via WA saat teknisi konfirmasi tiba
+        const ownerContacts = [...(teknisiData||[]),...(userAccounts||[])]
+          .filter(u=>u.role==="Owner"&&u.phone);
+        const konfMsg = `✅ *Teknisi di Lokasi*\n📋 ${o.id}\n👤 ${o.customer}\n📍 ${o.address||"-"}\n👷 ${currentUser?.name}\n⏰ ${new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"})}`;
+        ownerContacts.forEach(ow=>sendWA(ow.phone, konfMsg));
                               }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", borderRadius:8, padding:"7px 12px", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
                                 ✅ Konfirmasi Tiba
                               </button>
@@ -6319,6 +6427,16 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                     <button onClick={() => { setNewUserForm({...u, password:""}); setModalAddUser(true); }}
                       style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent, padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
                   )}
+              {currentUser?.role === "Owner" && (
+                <button onClick={() => {
+                  setEditPwdTarget({id:u.id, name:u.name});
+                  setEditPwdForm({newPwd:"", confirmPwd:""});
+                  setModalEditPwd(true);
+                }} style={{ fontSize:11, background:"#f59e0b20", border:"1px solid #f59e0b44",
+                  color:"#f59e0b", borderRadius:6, padding:"4px 10px", cursor:"pointer", fontWeight:600 }}>
+                  🔑 Password
+                </button>
+              )}
                   {u.role !== "Owner" && (
                     <button onClick={() => { setUserAccounts(prev => prev.map(acc => acc.id===u.id ? {...acc, active:!acc.active} : acc)); showNotif((u.active?"Akun ":"Akun ")+(u.name)+(u.active?" dinonaktifkan":" diaktifkan")); }}
                       style={{ background:(u.active?cs.red:cs.green)+"18", border:"1px solid "+(u.active?cs.red:cs.green)+"33", color:u.active?cs.red:cs.green, padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>
@@ -6363,11 +6481,12 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
   // ============================================================
   // ─────────────── LOGIN SCREEN ───────────────
   if (!isLoggedIn) {
-    const DEMO_ACCOUNTS = [
-      { role:"Owner",   color:"#f59e0b", icon:"👑", email:"owner@aclean.id",   password:"owner123",  name:"Malda Retta",  desc:"Akses penuh semua menu & pengaturan" },
-      { role:"Admin",   color:"#38bdf8", icon:"🛠️", email:"admin@aclean.id",   password:"admin123",  name:"Admin AClean", desc:"Semua menu kecuali Pengaturan"       },
-      { role:"Teknisi", color:"#22c55e", icon:"👷", email:"mulyadi@aclean.id", password:"mly2026",   name:"Mulyadi",      desc:"Jadwal & Laporan Saya saja"          },
-      { role:"Helper",  color:"#a78bfa", icon:"🤝", email:"albana@aclean.id",  password:"abn2026",   name:"Albana Niji",  desc:"Jadwal & Laporan Saya saja"          },
+    // Quick login hints dihapus — gunakan email & password dari Supabase
+    const quickLogins = [
+      { role:"Owner",   icon:"👑", email:"owner@aclean.id",   hint:"owner@2026"   },
+      { role:"Admin",   icon:"🛠️", email:"admin@aclean.id",   hint:"admin@2026"   },
+      { role:"Teknisi", icon:"👷", email:"mulyadi@aclean.id", hint:"mly@2026"     },
+      { role:"Helper",  icon:"🤝", email:"albana@aclean.id",  hint:"abn@2026"     },
     ];
     return (
       <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
@@ -7313,6 +7432,68 @@ Order yang sudah ada tidak terpengaruh.`)) return;
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — EDIT INVOICE (GAP 3) */}
       {/* ══════════════════════════════════════════════════════ */}
+      {/* ══ MODAL EDIT PASSWORD (Owner only) ══ */}
+      {modalEditPwd && editPwdTarget && (
+        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:500,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.border,
+            borderRadius:16, width:"100%", maxWidth:380, padding:24 }}>
+            <div style={{ fontWeight:800, fontSize:15, color:cs.text, marginBottom:4 }}>🔑 Ganti Password</div>
+            <div style={{ fontSize:12, color:cs.muted, marginBottom:20 }}>Akun: <strong style={{color:cs.accent}}>{editPwdTarget.name}</strong></div>
+            <div style={{ display:"grid", gap:12 }}>
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Password Baru</div>
+                <input id="epwd_new" type="password" value={editPwdForm.newPwd}
+                  onChange={e=>setEditPwdForm(f=>({...f,newPwd:e.target.value}))}
+                  placeholder="Minimal 8 karakter"
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border,
+                    borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13 }}/>
+              </div>
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Konfirmasi Password</div>
+                <input id="epwd_confirm" type="password" value={editPwdForm.confirmPwd}
+                  onChange={e=>setEditPwdForm(f=>({...f,confirmPwd:e.target.value}))}
+                  placeholder="Ulangi password baru"
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border,
+                    borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13 }}/>
+              </div>
+              {editPwdForm.newPwd && editPwdForm.confirmPwd && editPwdForm.newPwd !== editPwdForm.confirmPwd && (
+                <div style={{ fontSize:11, color:cs.red }}>⚠️ Password tidak cocok</div>
+              )}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
+                <button onClick={()=>{ setModalEditPwd(false); setEditPwdTarget(null); }}
+                  style={{ padding:"10px", background:cs.surface, border:"1px solid "+cs.border,
+                    borderRadius:10, color:cs.text, cursor:"pointer", fontWeight:600 }}>Batal</button>
+                <button onClick={()=>{
+                  const p = editPwdForm.newPwd.trim();
+                  const c = editPwdForm.confirmPwd.trim();
+                  if (!p || p.length < 8) { showNotif("⚠️ Password minimal 8 karakter"); return; }
+                  if (p !== c) { showNotif("⚠️ Password tidak cocok"); return; }
+                  // Update di userAccounts state
+                  setUserAccounts(prev=>prev.map(u=>u.id===editPwdTarget.id?{...u,password:p}:u));
+                  // Jika user punya UUID Supabase → update di DB juga
+                  const isUUID = /^[0-9a-f-]{36}$/.test(String(editPwdTarget.id||"").toLowerCase());
+                  if (isUUID) {
+                    supabase.from("user_profiles").update({password:p}).eq("id",editPwdTarget.id)
+                      .then(({error})=>{
+                        if (!error) addAgentLog("PWD_CHANGED",`Password ${editPwdTarget.name} diubah oleh Owner`,"SUCCESS");
+                        else showNotif("✅ Tersimpan lokal. DB sync: "+error.message);
+                      });
+                  } else {
+                    addAgentLog("PWD_CHANGED",`Password ${editPwdTarget.name} diubah (lokal)`,"SUCCESS");
+                  }
+                  showNotif("✅ Password "+editPwdTarget.name+" berhasil diubah");
+                  setModalEditPwd(false); setEditPwdTarget(null);
+                }} style={{ padding:"10px", background:"linear-gradient(135deg,#f59e0b,#f97316)",
+                  border:"none", borderRadius:10, color:"#fff", cursor:"pointer", fontWeight:700 }}>
+                  💾 Simpan Password
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modalEditInvoice && editInvoiceData && (() => {
         // Build lookup lists dari priceListData + inventoryData
         const jasaLookup = priceListData
@@ -7580,8 +7761,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                   </div>
                 </div>
                 <div style={{ background:"#0f2744", padding:"8px 20px", display:"flex", gap:20, fontSize:10, color:"#94a3b8" }}>
-                  <span>📍 Alam Sutera, Tangerang Selatan</span>
-                  <span>🏦 BCA 8830883011 a.n. Malda Retta</span>
+                  <span>📍 ${appSettings.company_addr}</span>
+                  <span>🏦 ${appSettings.bank_name} ${appSettings.bank_number} a.n. ${appSettings.bank_holder}</span>
                 </div>
               </div>
               {/* Detail Grid */}
@@ -7675,8 +7856,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 <div style={{ background:"#EFF6FF", borderRadius:8, padding:"12px 14px" }}>
                   <div style={{ fontSize:10, fontWeight:800, color:"#1e40af", marginBottom:6 }}>Informasi Pembayaran</div>
                   <div style={{ fontSize:11, color:"#475569" }}>Transfer Bank BCA</div>
-                  <div style={{ fontWeight:800, color:"#1e293b", fontSize:13, marginTop:4 }}>8830883011</div>
-                  <div style={{ fontSize:11, color:"#475569" }}>a.n. Malda Retta</div>
+                  <div style={{ fontWeight:800, color:"#1e293b", fontSize:13, marginTop:4 }}>{appSettings.bank_number}</div>
+                  <div style={{ fontSize:11, color:"#475569" }}>a.n. {appSettings.bank_holder}</div>
                 </div>
                 <div style={{ background:liveInv.status==="OVERDUE"?"#FEF2F2":liveInv.status==="PAID"?"#F0FDF4":"#FFFBEB", borderRadius:8, padding:"12px 14px", border:"1px solid "+(liveInv.status==="OVERDUE"?"#fca5a5":liveInv.status==="PAID"?"#86efac":"#fde68a") }}>
                   <div style={{ fontSize:10, fontWeight:800, color:"#64748b", marginBottom:6 }}>Jatuh Tempo</div>
@@ -7686,8 +7867,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 </div>
               </div>
               <div style={{ textAlign:"center", padding:"10px 0", borderTop:"1px solid #e2e8f0" }}>
-                <div style={{ fontSize:11, color:"#64748b" }}>Pertanyaan? Hubungi kami via WA: +62812-8989-8937</div>
-                <div style={{ fontSize:11, color:"#94a3b8", fontStyle:"italic", marginTop:4 }}>Terima kasih telah mempercayakan perawatan AC Anda kepada AClean Service</div>
+                <div style={{ fontSize:11, color:"#64748b" }}>Pertanyaan? Hubungi kami via WA: ${appSettings.wa_number}</div>
+                <div style={{ fontSize:11, color:"#94a3b8", fontStyle:"italic", marginTop:4 }}>Terima kasih telah mempercayakan perawatan AC Anda kepada ${appSettings.company_name}</div>
               </div>
             </div>
             {/* Action bar */}
