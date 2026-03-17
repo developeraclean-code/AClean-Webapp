@@ -754,9 +754,6 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     { key:"jasa_pipa_ruko",label:"Jasa Penarikan Pipa Ruko", satuan:"meter",default:0 },
     { key:"perapian_plafon",label:"Perapian Plafon",         satuan:"titik",default:0 },
   ];
-    Cleaning:  ["Freon R22","Freon R410A","Filter Udara","Kompressor Oil","Pembersih Evaporator","Plastik Cuci AC"],
-    Repair:    ["Kapasitor","Thermostat","Sensor Indoor","Freon R22","Freon R410A","Relay","PCB Module","Kipas Motor"],
-    Complain:  [],
   const TIPE_AC_OPT = ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"];
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
 
