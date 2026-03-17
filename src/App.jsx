@@ -8511,11 +8511,8 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
       if (lowStockWarnings.length > 0) {
         showNotif("⚠️ Stok kritis: " + lowStockWarnings.join(", "));
         const ownerAccs = userAccounts.filter(u => u.role === "Owner");
-        const lowMsg = "⚠️ *Stok Material Kritis*
-Setelah job " + laporanModal.id + ":
-" +
-          lowStockWarnings.map(w => "• " + w).join("
-");
+        const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n` +
+          lowStockWarnings.map(w => "• " + w).join("\n");
         ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
       }
     }
