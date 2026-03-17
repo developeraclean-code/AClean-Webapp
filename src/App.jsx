@@ -7328,7 +7328,6 @@ Order yang sudah ada tidak terpengaruh.`)) return;
 
         const jasaTotal = editJasaItems.reduce((s,m)=>s+(m.subtotal||0), 0);
         const matTotal = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0), 0);
-        const matTotal = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0), 0);
         const newTotal = jasaTotal + matTotal;
         return (
         <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:450, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
