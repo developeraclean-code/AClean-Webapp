@@ -759,39 +759,49 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   // ── MATERIAL_PRESET: quick-add di STEP 3 (Service/Repair/Complain) ──
   const MATERIAL_PRESET = {
     Cleaning: [
-      {nama:"Freon R-22",  satuan:"kg"}, {nama:"Freon R-32",  satuan:"kg"},
-      {nama:"Freon R-410", satuan:"kg"}, {nama:"Filter Udara",satuan:"pcs"},
-      {nama:"Kompressor Oil",satuan:"liter"},{nama:"Pembersih Evaporator",satuan:"liter"},
-      {nama:"Plastik Cuci AC",satuan:"pcs"},
+      {nama:"Freon R-22",        satuan:"kg"},
+      {nama:"Freon R-32",        satuan:"kg"},
+      {nama:"Freon R-410",       satuan:"kg"},
+      {nama:"Kapasitor <1PK",    satuan:"pcs"},
+      {nama:"Kapasitor >1PK",    satuan:"pcs"},
+      {nama:"Thermis Indoor",    satuan:"pcs"},
+      {nama:"Hermaplex",         satuan:"pcs"},
     ],
     Repair: [
-      {nama:"Freon R-22",  satuan:"kg"}, {nama:"Freon R-32",  satuan:"kg"},
-      {nama:"Freon R-410", satuan:"kg"}, {nama:"Kapasitor",   satuan:"pcs"},
-      {nama:"Thermostat",  satuan:"pcs"},{nama:"Sensor Indoor",satuan:"pcs"},
-      {nama:"Relay",       satuan:"pcs"},{nama:"PCB Module",   satuan:"pcs"},
-      {nama:"Kipas Motor", satuan:"pcs"},
+      {nama:"Freon R-22",        satuan:"kg"},
+      {nama:"Freon R-32",        satuan:"kg"},
+      {nama:"Freon R-410",       satuan:"kg"},
+      {nama:"Kapasitor <1PK",    satuan:"pcs"},
+      {nama:"Kapasitor >1PK",    satuan:"pcs"},
+      {nama:"Thermis Indoor",    satuan:"pcs"},
+      {nama:"Relay",             satuan:"pcs"},
+      {nama:"PCB Module",        satuan:"pcs"},
+      {nama:"Kipas Motor",       satuan:"pcs"},
     ],
     Complain: [
-      {nama:"Freon R-22",  satuan:"kg"}, {nama:"Freon R-32",  satuan:"kg"},
-      {nama:"Freon R-410", satuan:"kg"},
+      {nama:"Freon R-22",        satuan:"kg"},
+      {nama:"Freon R-32",        satuan:"kg"},
+      {nama:"Freon R-410",       satuan:"kg"},
     ],
   };
   // ── INSTALL_ITEMS: preset form instalasi ──
   const INSTALL_ITEMS = [
-    { key:"pasang_ac",     label:"Pasang AC",               satuan:"unit",  default:0 },
-    { key:"bongkar_ac",    label:"Bongkar AC",              satuan:"unit",  default:0 },
-    { key:"vacum_unit",    label:"Vacum Unit",              satuan:"unit",  default:0 },
-    { key:"pipa_1pk",      label:"Pipa AC Hoda 1PK",        satuan:"meter", default:0 },
-    { key:"pipa_2pk",      label:"Pipa AC Hoda 2PK",        satuan:"meter", default:0 },
-    { key:"pipa_25pk",     label:"Pipa AC Hoda 2.5PK",      satuan:"meter", default:0 },
-    { key:"pipa_3pk",      label:"Pipa AC Hoda 3PK",        satuan:"meter", default:0 },
-    { key:"kabel_15",      label:"Kabel 3x1.5",             satuan:"meter", default:0 },
-    { key:"kabel_25",      label:"Kabel 3x2.5",             satuan:"meter", default:0 },
-    { key:"ducttape_biasa",label:"Duct Tape Non Lem",       satuan:"meter", default:0 },
-    { key:"ducttape_lem",  label:"Duct Tape Lem",           satuan:"meter", default:0 },
-    { key:"jasa_pipa_rmh", label:"Jasa Penarikan Pipa Rumah",satuan:"meter",default:0 },
-    { key:"jasa_pipa_ruko",label:"Jasa Penarikan Pipa Ruko", satuan:"meter",default:0 },
-    { key:"perapian_plafon",label:"Perapian Plafon",         satuan:"titik",default:0 },
+    { key:"pasang_05_1pk",   label:"Pasang AC 0.5PK-1PK",       satuan:"unit",  default:0 },
+    { key:"pasang_15_25pk",  label:"Pasang AC 1.5PK-2.5PK",     satuan:"unit",  default:0 },
+    { key:"bongkar_05_1pk",  label:"Bongkar AC 0.5PK-1PK",      satuan:"unit",  default:0 },
+    { key:"bongkar_15_25pk", label:"Bongkar AC 1.5PK-2.5PK",    satuan:"unit",  default:0 },
+    { key:"vacum_unit",      label:"Vacum Unit",                 satuan:"unit",  default:0 },
+    { key:"pipa_1pk",        label:"Pipa AC Hoda 1PK",          satuan:"meter", default:0 },
+    { key:"pipa_2pk",        label:"Pipa AC Hoda 2PK",          satuan:"meter", default:0 },
+    { key:"pipa_25pk",       label:"Pipa AC Hoda 2.5PK",        satuan:"meter", default:0 },
+    { key:"pipa_3pk",        label:"Pipa AC Hoda 3PK",          satuan:"meter", default:0 },
+    { key:"kabel_15",        label:"Kabel 3x1.5",               satuan:"meter", default:0 },
+    { key:"kabel_25",        label:"Kabel 3x2.5",               satuan:"meter", default:0 },
+    { key:"ducttape_biasa",  label:"Duct Tape Non Lem",         satuan:"meter", default:0 },
+    { key:"ducttape_lem",    label:"Duct Tape Lem",             satuan:"meter", default:0 },
+    { key:"jasa_pipa_rmh",   label:"Jasa Penarikan Pipa Rumah", satuan:"meter", default:0 },
+    { key:"jasa_pipa_ruko",  label:"Jasa Penarikan Pipa Ruko",  satuan:"meter", default:0 },
+    { key:"perapian_plafon", label:"Perapian Plafon",           satuan:"titik", default:0 },
   ];
   const TIPE_AC_OPT = ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"];
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
@@ -1065,7 +1075,9 @@ ${matRowsHtml}
   const _installDefaults = {};
   if (order.service === "Install") {
     const _u = Math.min(order.units||1, 10);
-    _installDefaults.pasang_ac = String(_u);
+    // Auto-fill pasang AC berdasarkan jumlah unit
+    _installDefaults.pasang_05_1pk  = String(_u);
+    _installDefaults.vacum_unit = String(_u);
     _installDefaults.vacum_unit = String(_u);
   }
   setLaporanInstallItems(_installDefaults);
@@ -1842,6 +1854,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       );
     }
     // GAP 1.6: Catat ke payments table untuk history + partial payment support
+    try {
     await supabase.from("payments").insert({
       invoice_id: inv.id,
       amount: inv.total,
@@ -1851,7 +1864,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       verified: true,
       verified_by: currentUser?.id || null,
       verified_at: paidAt,
-    }).catch(()=>{});
+    }); } catch(e) { console.warn("payments insert skip:", e?.message); }
     // Update customer last_service
     if (inv.phone) await supabase.from("customers").update({last_service:paidAt.slice(0,10)}).eq("phone",inv.phone);
     addAgentLog("PAYMENT_CONFIRMED", `Invoice ${inv.id} LUNAS — ${inv.customer} ${fmt(inv.total)} via ${method}`, "SUCCESS");
@@ -1879,7 +1892,8 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       // Update local state
       setInventoryData(prev => prev.map(i => i.code === item.code ? {...i, stock:newStock, status:newStatus} : i));
       // Insert transaksi ke DB (trigger Supabase akan update stock otomatis)
-      await supabase.from("inventory_transactions").insert({
+    try {
+    await supabase.from("inventory_transactions").insert({
         inventory_code: item.code,
         inventory_name: item.name,
         order_id: orderId || null,
@@ -1889,7 +1903,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
         notes: mat.keterangan || "",
         created_by: currentUser?.id || null,
         created_by_name: currentUser?.name || "",
-      }).catch(e => console.warn("inv tx:", e.message));
+    }); } catch(e) { console.warn("inv tx skip:", e?.message); }
       if (newStatus === "CRITICAL" || newStatus === "OUT") {
         addAgentLog("STOCK_ALERT", `${item.name}: ${newStatus} (sisa ${newStock} ${item.unit})`, "WARNING");
       }
@@ -7320,14 +7334,43 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                     <td style={{ padding:"8px 10px", color:"#475569", fontFamily:"monospace" }}>{(liveInv.labor/liveInv.units).toLocaleString("id-ID")}</td>
                     <td style={{ padding:"8px 10px", color:"#1e293b", fontFamily:"monospace", fontWeight:600 }}>{liveInv.labor.toLocaleString("id-ID")}</td>
                   </tr>
-                  {liveInv.material > 0 && (
-                    <tr style={{ background:"#f0f9ff" }}>
-                      <td style={{ padding:"8px 10px", color:"#1e293b" }}>Material &amp; Spare Part</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center" }}>—</td>
-                      <td style={{ padding:"8px 10px" }}>—</td>
-                      <td style={{ padding:"8px 10px", color:"#1e293b", fontFamily:"monospace", fontWeight:600 }}>{liveInv.material.toLocaleString("id-ID")}</td>
-                    </tr>
-                  )}
+                  {/* Per-item material dari materials_detail */}
+                  {(() => {
+                    const md = liveInv.materials_detail;
+                    const mArr = Array.isArray(md) ? md
+                      : (typeof md === "string" && md)
+                        ? (() => { try { return JSON.parse(md); } catch(_){ return []; } })()
+                        : [];
+                    if (mArr.length > 0) {
+                      return mArr.map((m, mi) => (
+                        <tr key={mi} style={{ background: mi%2===0 ? "#f0f9ff" : "#fff" }}>
+                          <td style={{ padding:"8px 10px", color:"#1e293b" }}>
+                            {m.nama}
+                            {m.keterangan && <span style={{ fontSize:10, color:"#64748b", marginLeft:4 }}>({m.keterangan})</span>}
+                          </td>
+                          <td style={{ padding:"8px 10px", textAlign:"center", color:"#475569" }}>{m.jumlah} {m.satuan}</td>
+                          <td style={{ padding:"8px 10px", fontFamily:"monospace", color:"#475569", textAlign:"right" }}>
+                            {m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—"}
+                          </td>
+                          <td style={{ padding:"8px 10px", fontFamily:"monospace", fontWeight:600, color:"#1e293b", textAlign:"right" }}>
+                            {m.subtotal > 0 ? m.subtotal.toLocaleString("id-ID") : "—"}
+                          </td>
+                        </tr>
+                      ));
+                    }
+                    // Fallback: materials_detail kosong → tampil 1 baris total
+                    if ((liveInv.material||0) > 0) return (
+                      <tr style={{ background:"#f0f9ff" }}>
+                        <td style={{ padding:"8px 10px", color:"#64748b", fontStyle:"italic" }}>Material &amp; Spare Part</td>
+                        <td style={{ padding:"8px 10px", textAlign:"center" }}>—</td>
+                        <td style={{ padding:"8px 10px" }}>—</td>
+                        <td style={{ padding:"8px 10px", fontFamily:"monospace", fontWeight:600, color:"#1e293b", textAlign:"right" }}>
+                          {liveInv.material.toLocaleString("id-ID")}
+                        </td>
+                      </tr>
+                    );
+                    return null;
+                  })()}
                   {liveInv.dadakan > 0 && (
                     <tr style={{ background:"#fffbeb" }}>
                       <td style={{ padding:"8px 10px", color:"#92400e" }}>Pekerjaan Tambahan</td>
@@ -8995,7 +9038,7 @@ Silakan approve di menu Invoice. — ARA`;
                     <button onClick={()=>setLaporanStep(1)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
                     <div style={{textAlign:"center",fontSize:11,color:cs.muted,alignSelf:"center"}}>{laporanUnits.filter(isUnitDone).length}/{laporanUnits.length} unit ✓</div>
                     <button onClick={()=>{
-                      if(incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi`);setActiveUnitIdx(laporanUnits.findIndex(u=>!isUnitDone(u)));return;}
+                      if(!isInstallJob && incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi`);setActiveUnitIdx(laporanUnits.findIndex(u=>!isUnitDone(u)));return;}
                       setLaporanStep(3);
                     }} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>Lanjut →</button>
                   </div>
@@ -9166,7 +9209,7 @@ Silakan approve di menu Invoice. — ARA`;
                       <div>
                         <span style={{color:cs.muted}}>Total: </span>
                         <span style={{fontWeight:700,color:cs.text}}>{laporanUnits.length} unit AC</span>
-                        {totalFreon>0&&<span style={{color:cs.muted}}> · Freon <span style={{color:cs.yellow}}>{totalFreon.toFixed(1)}kg</span></span>}
+                        {totalFreon>0&&<span style={{color:cs.muted}}> · Tekanan Freon: <span style={{color:cs.yellow}}>{totalFreon.toFixed(0)} psi</span></span>}
                         {laporanFotos.length>0&&<span style={{color:cs.muted}}> · <span style={{color:cs.green}}>{laporanFotos.length} foto</span></span>}
                         {laporanMaterials.length>0&&<span style={{color:cs.muted}}> · <span style={{color:cs.accent}}>{laporanMaterials.length} material</span></span>}
                       </div>
