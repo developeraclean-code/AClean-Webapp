@@ -3948,7 +3948,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`,
               {inv.status === "UNPAID" && (
                 <>
                   <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>📤 Kirim ke Customer</button>
-                  <button onClick={() => { if(await showConfirm({ icon:"💰", title:"Tandai Lunas?",
+                  <button onClick={async () => { if(await showConfirm({ icon:"💰", title:"Tandai Lunas?",
   message:`Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`,
   confirmText:"Ya, Lunas" })) { const pp = invoicesData.find(i=>i.id===inv.id); markPaid(pp||inv); }}} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12 }}>💰 Tandai Lunas</button>
                   <button onClick={() => invoiceReminderWA(inv)} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>🔔 Reminder</button>
