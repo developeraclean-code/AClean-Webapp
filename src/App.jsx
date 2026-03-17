@@ -523,6 +523,8 @@ export default function ACleanWebApp() {
   const [editInvoiceData,  setEditInvoiceData]  = useState(null);
   const [editInvoiceForm,  setEditInvoiceForm]  = useState({});
   const [editInvoiceItems, setEditInvoiceItems] = useState([]); // per-item edit
+  const [editAddType,  setEditAddType]  = useState(''); // 'jasa' | 'material'
+  const [editAddSearch,setEditAddSearch]= useState('');
 
   // GAP 7/8 — ARA Chat state (live LLM)
   const [araPanel,         setAraPanel]         = useState(false);
@@ -7303,123 +7305,209 @@ Order yang sudah ada tidak terpengaruh.`)) return;
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — EDIT INVOICE (GAP 3) */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalEditInvoice && editInvoiceData && (
+      {modalEditInvoice && editInvoiceData && (() => {
+        // Build lookup lists dari priceListData + inventoryData
+        const jasaLookup = priceListData
+          .filter(r => r.service !== 'Material' && (r.price||0) > 0)
+          .map(r => ({ label: r.service + ' / ' + r.type, harga: r.price||0, satuan: r.unit||'Unit' }));
+        const matLookup = inventoryData
+          .map(r => ({ label: r.name, harga: r.price||0, satuan: r.unit||'pcs' }));
+
+        const filteredJasa = jasaLookup.filter(x =>
+          x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
+        const filteredMat  = matLookup.filter(x =>
+          x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
+
+        const matTotal = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0), 0);
+        const newTotal = (editInvoiceForm.labor||0) + matTotal;
+
+        return (
         <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:450, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:20, width:"100%", maxWidth:520, maxHeight:"90vh", overflowY:"auto", padding:20 }}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:20, width:"100%", maxWidth:560, maxHeight:"90vh", overflowY:"auto", padding:20 }}>
+
             {/* Header */}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
               <div>
                 <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>✏️ Edit Invoice</div>
                 <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>{editInvoiceData.id} · {editInvoiceData.customer}</div>
               </div>
-              <button onClick={()=>setModalEditInvoice(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
+              <button onClick={()=>{ setModalEditInvoice(false); setEditAddType(''); setEditAddSearch(''); }}
+                style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
             </div>
 
-            <div style={{ display:"grid", gap:12 }}>
+            <div style={{ display:"grid", gap:14 }}>
 
-              {/* ── Per-item material edit ── */}
-              {editInvoiceItems.length > 0 && (
-                <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"12px 14px" }}>
-                  <div style={{ fontSize:12, fontWeight:700, color:cs.accent, marginBottom:10 }}>📦 Detail Item (edit langsung)</div>
-                  {editInvoiceItems.map((m, mi) => (
-                    <div key={mi} style={{ display:"grid", gridTemplateColumns:"1fr auto auto auto", gap:6, alignItems:"center", marginBottom:8, background:cs.surface, borderRadius:8, padding:"8px 10px" }}>
-                      <div style={{ fontSize:12, color:cs.text, fontWeight:600 }}>{m.nama}</div>
-                      <input id={"ei_qty_"+mi} type="number" min="0" step="0.1"
-                        value={m.jumlah||0}
-                        onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,jumlah:parseFloat(e.target.value)||0,subtotal:(parseFloat(e.target.value)||0)*(x.harga_satuan||0)}:x))}
-                        style={{ width:60, background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"4px 6px", color:cs.text, fontSize:12, textAlign:"center" }}
-                      />
-                      <span style={{ fontSize:11, color:cs.muted, minWidth:30 }}>{m.satuan}</span>
-                      <input id={"ei_harga_"+mi} type="number" min="0"
-                        value={m.harga_satuan||0}
-                        onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,harga_satuan:parseInt(e.target.value)||0,subtotal:(parseInt(e.target.value)||0)*(x.jumlah||0)}:x))}
-                        style={{ width:90, background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"4px 6px", color:cs.text, fontSize:12, textAlign:"right", fontFamily:"monospace" }}
-                      />
-                    </div>
-                  ))}
-                  {/* Tombol tambah item baru */}
-                  <button onClick={()=>setEditInvoiceItems(prev=>[...prev,{nama:"",jumlah:1,satuan:"pcs",harga_satuan:0,subtotal:0,_idx:Date.now()}])}
-                    style={{ width:"100%", marginTop:6, background:cs.green+"10", border:"1px dashed "+cs.green+"44", color:cs.green, borderRadius:8, padding:"7px", cursor:"pointer", fontSize:12, fontWeight:600 }}>
-                    + Tambah Item
+              {/* ── JASA / LABOR section ── */}
+              <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"12px 14px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:cs.accent }}>🔧 Jasa / Labor</div>
+                  <button onClick={()=>{ setEditAddType(editAddType==='jasa'?'':'jasa'); setEditAddSearch(''); }}
+                    style={{ fontSize:11, background:cs.accent+"20", border:"1px solid "+cs.accent+"44", color:cs.accent, borderRadius:6, padding:"4px 10px", cursor:"pointer", fontWeight:700 }}>
+                    {editAddType==='jasa' ? '✕ Tutup' : '+ Tambah Jasa'}
                   </button>
-                  <div style={{ fontSize:11, color:cs.muted, marginTop:8, textAlign:"right" }}>
-                    Subtotal material: <strong style={{color:cs.accent,fontFamily:"monospace"}}>{fmt(editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0),0))}</strong>
-                  </div>
                 </div>
-              )}
 
-              {/* ── Labor & biaya lain ── */}
-              {[["Jasa / Labor (Rp)","labor"],["Pekerjaan Tambahan / Dadakan (Rp)","dadakan"]].map(([label,key])=>(
-                <div key={key}>
-                  <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                  <input id={"ei_"+key} type="number" min="0" value={editInvoiceForm[key]||0}
-                    onChange={e=>setEditInvoiceForm(f=>({...f,[key]:parseInt(e.target.value)||0}))}
-                    style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:14, fontFamily:"monospace" }}
+                {/* Lookup jasa */}
+                {editAddType === 'jasa' && (
+                  <div style={{ marginBottom:10 }}>
+                    <input id="ei_search_jasa" autoFocus value={editAddSearch}
+                      onChange={e=>setEditAddSearch(e.target.value)}
+                      placeholder="Cari jasa... (Cleaning, Install, Repair...)"
+                      style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 10px", color:cs.text, fontSize:12, marginBottom:6 }}
+                    />
+                    <div style={{ maxHeight:160, overflowY:"auto", background:cs.surface, borderRadius:8, border:"1px solid "+cs.border }}>
+                      {filteredJasa.slice(0,20).map((item,idx) => (
+                        <div key={idx} onClick={()=>{
+                          setEditInvoiceForm(f=>({...f, labor:(f.labor||0)+item.harga}));
+                          setEditInvoiceItems(prev=>[...prev,{
+                            nama:item.label, jumlah:1, satuan:item.satuan,
+                            harga_satuan:item.harga, subtotal:item.harga, _idx:Date.now()+idx
+                          }]);
+                          setEditAddType(''); setEditAddSearch('');
+                        }}
+                          style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:cs.text, borderBottom:"1px solid "+cs.border+"44",
+                            display:"flex", justifyContent:"space-between" }}
+                          onMouseEnter={e=>e.currentTarget.style.background=cs.accent+"15"}
+                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                        >
+                          <span>{item.label}</span>
+                          <span style={{ fontFamily:"monospace", color:cs.accent, fontWeight:700 }}>{fmt(item.harga)}</span>
+                        </div>
+                      ))}
+                      {filteredJasa.length === 0 && (
+                        <div style={{ padding:"10px 12px", color:cs.muted, fontSize:12 }}>Tidak ada hasil</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Labor total */}
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:12, color:cs.muted, flex:1 }}>Total Jasa:</span>
+                  <input id="ei_labor" type="number" min="0" value={editInvoiceForm.labor||0}
+                    onChange={e=>setEditInvoiceForm(f=>({...f,labor:parseInt(e.target.value)||0}))}
+                    style={{ width:140, background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 10px", color:cs.text, fontSize:14, fontFamily:"monospace", textAlign:"right" }}
                   />
                 </div>
-              ))}
+              </div>
+
+              {/* ── MATERIAL section ── */}
+              <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"12px 14px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:cs.green }}>📦 Material</div>
+                  <button onClick={()=>{ setEditAddType(editAddType==='material'?'':'material'); setEditAddSearch(''); }}
+                    style={{ fontSize:11, background:cs.green+"20", border:"1px solid "+cs.green+"44", color:cs.green, borderRadius:6, padding:"4px 10px", cursor:"pointer", fontWeight:700 }}>
+                    {editAddType==='material' ? '✕ Tutup' : '+ Tambah Material'}
+                  </button>
+                </div>
+
+                {/* Lookup material */}
+                {editAddType === 'material' && (
+                  <div style={{ marginBottom:10 }}>
+                    <input id="ei_search_mat" autoFocus value={editAddSearch}
+                      onChange={e=>setEditAddSearch(e.target.value)}
+                      placeholder="Cari material... (Freon, Pipa, Kabel...)"
+                      style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 10px", color:cs.text, fontSize:12, marginBottom:6 }}
+                    />
+                    <div style={{ maxHeight:160, overflowY:"auto", background:cs.surface, borderRadius:8, border:"1px solid "+cs.border }}>
+                      {filteredMat.slice(0,20).map((item,idx) => (
+                        <div key={idx} onClick={()=>{
+                          setEditInvoiceItems(prev=>[...prev,{
+                            nama:item.label, jumlah:1, satuan:item.satuan,
+                            harga_satuan:item.harga, subtotal:item.harga, _idx:Date.now()+idx
+                          }]);
+                          setEditAddType(''); setEditAddSearch('');
+                        }}
+                          style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:cs.text, borderBottom:"1px solid "+cs.border+"44",
+                            display:"flex", justifyContent:"space-between", alignItems:"center" }}
+                          onMouseEnter={e=>e.currentTarget.style.background=cs.green+"10"}
+                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                        >
+                          <span>{item.label} <span style={{fontSize:10,color:cs.muted}}>/ {item.satuan}</span></span>
+                          <span style={{ fontFamily:"monospace", color:cs.green, fontWeight:700 }}>{fmt(item.harga)}</span>
+                        </div>
+                      ))}
+                      {filteredMat.length === 0 && (
+                        <div style={{ padding:"10px 12px", color:cs.muted, fontSize:12 }}>Tidak ada hasil</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Item list — editable */}
+                {editInvoiceItems.length > 0 && (
+                  <div style={{ marginBottom:8 }}>
+                    {editInvoiceItems.map((m, mi) => (
+                      <div key={m._idx||mi} style={{ display:"grid", gridTemplateColumns:"1fr 60px 30px 100px 28px", gap:5, alignItems:"center", marginBottom:6, padding:"6px 8px", background:cs.surface, borderRadius:8 }}>
+                        <input id={"ei_name_"+mi} value={m.nama||''} onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,nama:e.target.value}:x))}
+                          style={{ background:"transparent", border:"none", borderBottom:"1px solid "+cs.border, color:cs.text, fontSize:12, padding:"2px 4px" }} />
+                        <input id={"ei_qty_"+mi} type="number" min="0" step="0.1" value={m.jumlah||1}
+                          onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,jumlah:parseFloat(e.target.value)||0,subtotal:(parseFloat(e.target.value)||0)*(x.harga_satuan||0)}:x))}
+                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, textAlign:"center" }} />
+                        <span style={{ fontSize:10, color:cs.muted, textAlign:"center" }}>{m.satuan}</span>
+                        <input id={"ei_harga_"+mi} type="number" min="0" value={m.harga_satuan||0}
+                          onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,harga_satuan:parseInt(e.target.value)||0,subtotal:(parseInt(e.target.value)||0)*(x.jumlah||0)}:x))}
+                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, fontFamily:"monospace", textAlign:"right" }} />
+                        <button onClick={()=>setEditInvoiceItems(prev=>prev.filter((_,xi)=>xi!==mi))}
+                          style={{ background:"#ef444420", border:"none", color:"#ef4444", borderRadius:5, padding:"4px 6px", cursor:"pointer", fontSize:12, fontWeight:700 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ fontSize:11, color:cs.muted, textAlign:"right" }}>
+                  Subtotal material: <strong style={{color:cs.green, fontFamily:"monospace"}}>{fmt(matTotal)}</strong>
+                </div>
+              </div>
 
               {/* ── Total preview ── */}
-              {(() => {
-                const matTotal  = editInvoiceItems.length > 0
-                  ? editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0),0)
-                  : (editInvoiceForm.material||0);
-                const newTotal  = (editInvoiceForm.labor||0) + matTotal + (editInvoiceForm.dadakan||0);
-                return (
-                  <div style={{ background:cs.accent+"12", border:"1px solid "+cs.accent+"33", borderRadius:10, padding:14 }}>
-                    <div style={{ fontSize:12, color:cs.muted, marginBottom:4 }}>Total Baru</div>
-                    <div style={{ fontWeight:800, fontSize:20, color:cs.accent, fontFamily:"monospace" }}>{fmt(newTotal)}</div>
-                    {newTotal !== editInvoiceData.total && (
-                      <div style={{ fontSize:11, color:cs.yellow, marginTop:4 }}>
-                        Perubahan: {fmt(newTotal - editInvoiceData.total)} dari sebelumnya {fmt(editInvoiceData.total)}
-                      </div>
-                    )}
+              <div style={{ background:cs.accent+"12", border:"1px solid "+cs.accent+"33", borderRadius:10, padding:14 }}>
+                <div style={{ fontSize:12, color:cs.muted, marginBottom:4 }}>Total Invoice Baru</div>
+                <div style={{ fontWeight:800, fontSize:22, color:cs.accent, fontFamily:"monospace" }}>{fmt(newTotal)}</div>
+                {newTotal !== editInvoiceData.total && (
+                  <div style={{ fontSize:11, color:cs.yellow, marginTop:4 }}>
+                    Perubahan: {fmt(newTotal - editInvoiceData.total)} dari sebelumnya {fmt(editInvoiceData.total)}
                   </div>
-                );
-              })()}
+                )}
+              </div>
 
               {/* ── Catatan ── */}
               <div>
                 <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Catatan Perubahan</div>
-                <input id="ei_notes" value={editInvoiceForm.notes||""} onChange={e=>setEditInvoiceForm(f=>({...f,notes:e.target.value}))}
+                <input id="ei_notes" value={editInvoiceForm.notes||''}
+                  onChange={e=>setEditInvoiceForm(f=>({...f,notes:e.target.value}))}
                   placeholder="Alasan perubahan nilai..."
                   style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13 }}
                 />
               </div>
 
               {/* ── Action buttons ── */}
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
-                <button onClick={()=>setModalEditInvoice(false)}
-                  style={{ padding:"10px", background:cs.surface, border:"1px solid "+cs.border, borderRadius:10, color:cs.text, cursor:"pointer", fontWeight:600, fontSize:13 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10 }}>
+                <button onClick={()=>{ setModalEditInvoice(false); setEditAddType(''); setEditAddSearch(''); }}
+                  style={{ padding:"11px", background:cs.surface, border:"1px solid "+cs.border, borderRadius:10, color:cs.text, cursor:"pointer", fontWeight:600, fontSize:13 }}>
                   Batal
                 </button>
                 <button onClick={async()=>{
-                  const labor   = Math.max(0, parseInt(editInvoiceForm.labor)||0);
-                  const dadakan = Math.max(0, parseInt(editInvoiceForm.dadakan)||0);
-                  const matTotal2 = editInvoiceItems.length > 0
-                    ? editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0),0)
-                    : Math.max(0, parseInt(editInvoiceForm.material)||0);
-                  const newTotal = labor + matTotal2 + dadakan;
-                  if(newTotal <= 0){ showNotif("⚠️ Total invoice tidak boleh 0 atau negatif"); return; }
-                  // Siapkan materials_detail baru
-                  const newMD = editInvoiceItems.length > 0
-                    ? editInvoiceItems.filter(m=>m.nama&&m.jumlah>0)
-                    : (editInvoiceData.materials_detail||[]);
+                  const labor     = Math.max(0, parseInt(editInvoiceForm.labor)||0);
+                  const matTotal3 = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0),0);
+                  const newTotalFinal = labor + matTotal3;
+                  if(newTotalFinal <= 0){ showNotif("⚠️ Total tidak boleh 0"); return; }
+                  const newMD = editInvoiceItems.filter(m=>m.nama&&(m.jumlah||0)>0);
                   setInvoicesData(prev=>prev.map(i=>i.id===editInvoiceData.id
-                    ?{...i,labor,material:matTotal2,dadakan,total:newTotal,materials_detail:newMD}:i));
+                    ?{...i,labor,material:matTotal3,dadakan:0,total:newTotalFinal,materials_detail:newMD}:i));
                   let saved=false;
                   {const {error:e1}=await supabase.from("invoices").update({
-                    labor,material:matTotal2,dadakan,total:newTotal,
+                    labor, material:matTotal3, dadakan:0, total:newTotalFinal,
                     materials_detail:JSON.stringify(newMD)
                   }).eq("id",editInvoiceData.id); if(!e1)saved=true; else console.warn("editInv e1:",e1.message);}
-                  if(!saved){const {error:e2}=await supabase.from("invoices").update({labor,material:matTotal2,total:newTotal}).eq("id",editInvoiceData.id);
-                    if(!e2)saved=true; else console.warn("editInv e2:",e2.message);}
-                  if(!saved){const {error:e3}=await supabase.from("invoices").update({total:newTotal}).eq("id",editInvoiceData.id);
-                    if(!e3)saved=true; else showNotif("⚠️ Tersimpan lokal, sync DB gagal");}
-                  if(saved) addAgentLog("INVOICE_EDITED",`Invoice ${editInvoiceData.id} diedit Owner → ${fmt(newTotal)}`+(editInvoiceForm.notes?` (${editInvoiceForm.notes})`:""),"SUCCESS");
-                  showNotif(`✅ Invoice ${editInvoiceData.id} berhasil diupdate → ${fmt(newTotal)}`);
+                  if(!saved){const {error:e2}=await supabase.from("invoices").update({labor,material:matTotal3,total:newTotalFinal}).eq("id",editInvoiceData.id);
+                    if(!e2)saved=true;}
+                  if(!saved) await supabase.from("invoices").update({total:newTotalFinal}).eq("id",editInvoiceData.id);
+                  addAgentLog("INVOICE_EDITED",`Invoice ${editInvoiceData.id} diedit → ${fmt(newTotalFinal)}`+(editInvoiceForm.notes?` (${editInvoiceForm.notes})`:"")+` by Owner`,"SUCCESS");
+                  showNotif(`✅ Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotalFinal)}`);
                   setModalEditInvoice(false); setEditInvoiceData(null);
-                }} style={{ padding:"10px", background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", borderRadius:10, color:"#fff", cursor:"pointer", fontWeight:700, fontSize:13 }}>
+                  setEditAddType(''); setEditAddSearch('');
+                }} style={{ padding:"11px", background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", borderRadius:10, color:"#fff", cursor:"pointer", fontWeight:700, fontSize:13 }}>
                   💾 Simpan Perubahan
                 </button>
               </div>
@@ -7427,7 +7515,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — INVOICE PREVIEW */}
