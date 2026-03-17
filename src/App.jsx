@@ -194,6 +194,39 @@ const PRICE_LIST_DEFAULT = {
 };
 // PRICE_LIST akan di-replace oleh data DB setelah loadAll() — jangan edit langsung
 let PRICE_LIST = { ...PRICE_LIST_DEFAULT };
+// ── buildPriceListFromDB: bangun PRICE_LIST dari data DB ──
+// Menggantikan 5 loader duplikat yang tersebar di kode
+// Normalisasi: service/type key dari DB di-trim & lowercase untuk match
+const buildPriceListFromDB = (rows) => {
+  const pl = { ...PRICE_LIST_DEFAULT };
+  const active = rows.filter(r => r.is_active !== false);
+  active.forEach(row => {
+    const price = Number(row.price) || 0;
+    const notes = (row.notes || "").trim().toLowerCase();
+    const svc   = (row.service || "").trim();
+    const type  = (row.type    || "").trim();
+
+    // Freon: identifikasi via notes field
+    if (notes === "freon_r22"   || notes === "freon_r22")   { pl["freon_R22"]   = price; return; }
+    if (notes === "freon_r410a" || notes === "freon_r410")  { pl["freon_R410A"] = price; return; }
+    if (notes === "freon_r32")                               { pl["freon_R32"]   = price; return; }
+
+    // Freon via service name (kalau ada row khusus freon di price_list)
+    if (svc.toLowerCase().includes("freon")) {
+      if (svc.toLowerCase().includes("r22"))  { pl["freon_R22"]   = price; return; }
+      if (svc.toLowerCase().includes("r32"))  { pl["freon_R32"]   = price; return; }
+      if (svc.toLowerCase().includes("r410")) { pl["freon_R410A"] = price; return; }
+    }
+
+    // Service/type normal
+    if (svc) {
+      if (!pl[svc]) pl[svc] = {};
+      if (type) pl[svc][type] = price;
+    }
+  });
+  return pl;
+};
+
 
 // ── Dynamic tech color — deterministik berdasarkan hash nama ──
 const TECH_PALETTE = [
@@ -606,15 +639,7 @@ export default function ACleanWebApp() {
       if (!data || data.length === 0) { showNotif("⚠️ Tabel price_list kosong di Supabase"); return; }
       setPriceListData(data);
       const activePL = data.filter(r => r.is_active !== false);
-      const newPL = { ...PRICE_LIST_DEFAULT };
-      activePL.forEach(row => {
-        if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
-        if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
-        if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
-        if (!newPL[row.service]) newPL[row.service] = {};
-        newPL[row.service][row.type] = Number(row.price)||0;
-      });
-      PRICE_LIST = newPL;
+      PRICE_LIST = buildPriceListFromDB(activePL);
       setPriceListSyncedAt(new Date());
       showNotif("✅ Harga berhasil di-sync dari Supabase (" + data.length + " item)");
       addAgentLog("PRICELIST_SYNC", "Force reload price list: " + data.length + " item", "SUCCESS");
@@ -733,9 +758,23 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     const PEKERJAAN_OPT = (svc) => PEKERJAAN_BY_SERVICE[svc] || PEKERJAAN_BY_SERVICE["Cleaning"];
   // ── MATERIAL_PRESET: quick-add di STEP 3 (Service/Repair/Complain) ──
   const MATERIAL_PRESET = {
-    Cleaning:  ["Freon R-22","Freon R-32","Freon R-410","Filter Udara","Kompressor Oil","Pembersih Evaporator","Plastik Cuci AC"],
-    Repair:    ["Freon R-22","Freon R-32","Freon R-410","Kapasitor","Thermostat","Sensor Indoor","Relay","PCB Module","Kipas Motor"],
-    Complain:  ["Freon R-22","Freon R-32","Freon R-410"],
+    Cleaning: [
+      {nama:"Freon R-22",  satuan:"kg"}, {nama:"Freon R-32",  satuan:"kg"},
+      {nama:"Freon R-410", satuan:"kg"}, {nama:"Filter Udara",satuan:"pcs"},
+      {nama:"Kompressor Oil",satuan:"liter"},{nama:"Pembersih Evaporator",satuan:"liter"},
+      {nama:"Plastik Cuci AC",satuan:"pcs"},
+    ],
+    Repair: [
+      {nama:"Freon R-22",  satuan:"kg"}, {nama:"Freon R-32",  satuan:"kg"},
+      {nama:"Freon R-410", satuan:"kg"}, {nama:"Kapasitor",   satuan:"pcs"},
+      {nama:"Thermostat",  satuan:"pcs"},{nama:"Sensor Indoor",satuan:"pcs"},
+      {nama:"Relay",       satuan:"pcs"},{nama:"PCB Module",   satuan:"pcs"},
+      {nama:"Kipas Motor", satuan:"pcs"},
+    ],
+    Complain: [
+      {nama:"Freon R-22",  satuan:"kg"}, {nama:"Freon R-32",  satuan:"kg"},
+      {nama:"Freon R-410", satuan:"kg"},
+    ],
   };
   // ── INSTALL_ITEMS: preset form instalasi ──
   const INSTALL_ITEMS = [
@@ -831,16 +870,17 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
         "</tr>";
     });
   } else if ((inv.material||0) > 0) {
-    // Fallback: tidak ada detail → satu baris Material
+  } else if ((inv.material||0) > 0) {
+    // Fallback invoice lama: materials_detail belum tersimpan
+    // Tampilkan total material dalam 1 baris
     matRowsHtml =
-      '<tr>' +
-      '<td style="color:#64748b">Material &amp; Spare Part</td>' +
-      '<td style="text-align:center">—</td>' +
-      '<td style="text-align:right">—</td>' +
+      '<tr style="background:#f8fafc">' +
+      '<td style="color:#475569;font-style:italic">Material &amp; Spare Part</td>' +
+      '<td style="text-align:center;color:#94a3b8">—</td>' +
+      '<td style="text-align:right;color:#94a3b8">—</td>' +
       '<td style="text-align:right;font-family:monospace;font-weight:600">' +
       (inv.material||0).toLocaleString("id-ID") + "</td></tr>";
   }
-    const html = `<!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="UTF-8">
@@ -1353,15 +1393,7 @@ ${matRowsHtml}
           setPriceListData(plRes.data);
           // Build PRICE_LIST map untuk kalkulasi invoice
           const activePL = plRes.data.filter(r => r.is_active !== false);
-          const newPL = { ...PRICE_LIST_DEFAULT };
-          activePL.forEach(row => {
-            if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
-            if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
-            if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
-            if (!newPL[row.service]) newPL[row.service] = {};
-            newPL[row.service][row.type] = Number(row.price) || 0;
-          });
-          PRICE_LIST = newPL;
+          PRICE_LIST = buildPriceListFromDB(activePL);
           setPriceListSyncedAt(new Date());
           console.log("✅ PRICE_LIST loaded from DB:", plRes.data.length, "rows");
         }
@@ -1496,15 +1528,7 @@ ${matRowsHtml}
                 setPriceListData(data);
                 // Rebuild PRICE_LIST var agar bizContext ARA selalu fresh
                 const activePL = data.filter(r => r.is_active !== false);
-                const newPL = { ...PRICE_LIST_DEFAULT };
-                activePL.forEach(row => {
-                  if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
-                  if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
-                  if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
-                  if (!newPL[row.service]) newPL[row.service] = {};
-                  newPL[row.service][row.type] = Number(row.price)||0;
-                });
-                PRICE_LIST = newPL;
+                PRICE_LIST = buildPriceListFromDB(activePL);
                 setPriceListSyncedAt(new Date());
                 console.log("✅ PRICE_LIST realtime sync:", data.length, "rows");
               }
@@ -3818,15 +3842,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
       const freshList = priceListData.map(r => r.id===updated.id ? {...r,...updated} : r);
       setPriceListData(freshList);
       // Rebuild PRICE_LIST dari freshList (bukan priceListData yang stale)
-      const newPL = { ...PRICE_LIST_DEFAULT };
-      freshList.filter(r=>r.is_active!==false).forEach(row => {
-        if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
-        if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
-        if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
-        if (!newPL[row.service]) newPL[row.service] = {};
-        newPL[row.service][row.type] = Number(row.price)||0;
-      });
-      PRICE_LIST = newPL;
+      PRICE_LIST = buildPriceListFromDB(data.filter(r => r.is_active !== false));
       setPriceListSyncedAt(new Date());
       console.log("✅ PRICE_LIST updated after save:", Object.keys(newPL));
       setPlEditItem(null);
@@ -3973,9 +3989,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                                       if (delErr) { showNotif("❌ Gagal hapus: "+delErr.message); }
                                       else {
                                         setPriceListData(prev => prev.filter(p => p.id !== r.id));
-                                        const newPL = { ...PRICE_LIST_DEFAULT };
-                                        priceListData.filter(p=>p.id!==r.id&&p.is_active!==false).forEach(row => { if(!newPL[row.service]) newPL[row.service]={}; newPL[row.service][row.type]=Number(row.price)||0; });
-                                        PRICE_LIST = newPL;
+                                        PRICE_LIST = buildPriceListFromDB(data.filter(r => r.is_active !== false));
                                         addAgentLog("PRICELIST_DELETE",`Hapus "${r.type}" (${r.service})`,"WARNING");
                                         showNotif("✅ Item dihapus dari database");
                                       }
@@ -9038,9 +9052,9 @@ Silakan approve di menu Invoice. — ARA`;
                       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
                         <div style={{fontSize:11,color:cs.muted,width:"100%",marginBottom:2}}>Tap untuk tambah:</div>
                         {presets.map(p=>(
-                          <button key={p} onClick={()=>{if(laporanMaterials.length<20)setLaporanMaterials(prev=>[...prev,{id:Date.now(),nama:p,jumlah:"",satuan:"pcs",keterangan:""}]);setShowMatPreset(false);}}
+                          <button key={p.nama||p} onClick={()=>{if(laporanMaterials.length<20)setLaporanMaterials(prev=>[...prev,{id:Date.now(),nama:p.nama||p,jumlah:"",satuan:p.satuan||"pcs",keterangan:""}]);setShowMatPreset(false);}}
                             style={{fontSize:11,background:cs.surface,border:"1px solid "+cs.border,color:cs.text,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>
-                            {p}
+                            {p.nama||p}
                           </button>
                         ))}
                       </div>
