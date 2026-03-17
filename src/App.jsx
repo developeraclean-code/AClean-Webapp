@@ -1652,6 +1652,16 @@ ${matRowsHtml}
             });
           };
   }, [isLoggedIn]);
+  // ── Helper: parse materials_detail JSON safely ──
+  const parseMD = (md) => {
+    if (!md) return [];
+    if (Array.isArray(md)) return md;
+    if (typeof md === "string" && md) {
+      try { return JSON.parse(md); } catch(e) { return []; }
+    }
+    return [];
+  };
+
   // ── Colors ──
   const cs = {
     bg:      "#0a0f1e",
@@ -3791,7 +3801,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
               <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>👁 Preview</button>
               {/* Edit invoice — Owner bisa edit semua status kecuali PAID */}
               {inv.status !== "PAID" && (currentUser?.role === "Owner") && (
-                <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); setModalEditInvoice(true); }}
+                <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); setEditInvoiceItems(parseMD(inv.materials_detail).map((m,idx)=>({...m,_idx:idx}))); setModalEditInvoice(true); }}
                   style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
               {inv.status === "PENDING_APPROVAL" && (
@@ -7577,7 +7587,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 <button onClick={() => { invoiceReminderWA(liveInv); setModalPDF(false); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📱 Kirim via WA</button>
               )}
               {liveInv.status === "PENDING_APPROVAL" && currentUser?.role === "Owner" && (
-                <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); const _md=liveInv.materials_detail; const _mArr=Array.isArray(_md)?_md:(typeof _md==="string"&&_md?(() => {try{return JSON.parse(_md)}catch(e2){return []}})()):[]; setEditInvoiceItems(_mArr.map((m,idx)=>({...m,_idx:idx}))); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
+                <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); const _mArr=parseMD(liveInv.materials_detail); setEditInvoiceItems(_mArr.map((m,idx)=>({...m,_idx:idx}))); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
             </div>
           </div>
