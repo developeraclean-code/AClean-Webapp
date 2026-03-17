@@ -870,7 +870,6 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
         "</tr>";
     });
   } else if ((inv.material||0) > 0) {
-  } else if ((inv.material||0) > 0) {
     // Fallback invoice lama: materials_detail belum tersimpan
     // Tampilkan total material dalam 1 baris
     matRowsHtml =
@@ -881,6 +880,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       '<td style="text-align:right;font-family:monospace;font-weight:600">' +
       (inv.material||0).toLocaleString("id-ID") + "</td></tr>";
   }
+  const html = `<!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="UTF-8">
