@@ -795,15 +795,15 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     const PEKERJAAN_OPT = (svc) => PEKERJAAN_BY_SERVICE[svc] || PEKERJAAN_BY_SERVICE["Cleaning"];
   // ── MATERIAL_PRESET: quick-add di STEP 3 (Service/Repair/Complain) ──
   const MATERIAL_PRESET = {
-    Cleaning: [
-      {nama:"Freon R-22",              satuan:"KG"},
-      {nama:"Freon R-32",              satuan:"KG"},
-      {nama:"Freon R-410A",            satuan:"KG"},
-      {nama:"Sparepart Kapasitor Fan", satuan:"Piece"},
-      {nama:"Thermis Indoor",          satuan:"Piece"},
-      {nama:"ACRYLIC INDOOR",          satuan:"Piece"},
-      {nama:"Selang Flexibel Drain",   satuan:"Meter"},
-    ],
+  Cleaning: [
+    {nama:"Freon R-22",   satuan:"KG"},
+    {nama:"Freon R-32",   satuan:"KG"},
+    {nama:"Freon R-410A", satuan:"KG"},
+    {nama:"Kapasitor <1PK",satuan:"Piece"},
+    {nama:"Kapasitor >1PK",satuan:"Piece"},
+    {nama:"Thermis Indoor",satuan:"Piece"},
+    {nama:"Hermaplex",     satuan:"Meter"},
+  ],
     Repair: [
       {nama:"Freon R-22",              satuan:"KG"},
       {nama:"Freon R-32",              satuan:"KG"},
@@ -1799,27 +1799,33 @@ Kamu ditugaskan sebagai Helper. — AClean`;
   const hitungMaterialTotal = (materials) => {
     return materials.reduce((sum, m) => {
       const raw  = (m.nama||"").toLowerCase().trim();
-      // Normalisasi: strip tanda baca, koma→titik, hapus brand "eterna"
       const norm = raw
-        .replace(/,/g, ".")          // koma desimal → titik
-        .replace(/eterna\s*/g, "")   // hapus brand "Eterna"
-        .replace(/[-\s]/g, "")       // hapus dash & spasi
-        .replace(/r410a?$/, "r410")  // R-410A → r410
+        .replace(/,/g, ".")         
+        .replace(/eterna\s*/g, "")  
+        .replace(/[-\s]/g, "")      
+        .replace(/r410a?$/, "r410") 
         .replace(/r22a?$/,  "r22")
         .replace(/r32a?$/,  "r32");
-      // Cari di inventory dengan fuzzy match (normalisasi dua arah)
+      // 1. Cari di inventory
       const invItem = inventoryData.find(inv => {
         const n = inv.name.toLowerCase()
-          .replace(/,/g, ".")
-          .replace(/eterna\s*/g, "")
-          .replace(/[-\s]/g, "")
-          .replace(/r410a?$/, "r410")
-          .replace(/r22a?$/,  "r22")
-          .replace(/r32a?$/,  "r32");
+          .replace(/,/g, ".").replace(/eterna\s*/g, "")
+          .replace(/[-\s]/g, "").replace(/r410a?$/, "r410")
+          .replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
         return n === norm || n.includes(norm) || norm.includes(n);
       });
       let harga = invItem ? invItem.price : 0;
-      // Fallback ke PRICE_LIST freon
+      // 2. Fallback ke PRICE_LIST (semua service: Install, Material, Repair, dll)
+      if (!harga) {
+        const mNama = m.nama || "";
+        for (const svc of ["Material","Install","Repair","Cleaning","Complain"]) {
+          if (PRICE_LIST[svc] && PRICE_LIST[svc][mNama]) {
+            harga = PRICE_LIST[svc][mNama];
+            break;
+          }
+        }
+      }
+      // 3. Fallback freon spesifik
       if (!harga) {
         if      (raw.includes("r-22")||raw.includes("r22"))  harga = PRICE_LIST["freon_R22"]   || 450000;
         else if (raw.includes("r-32")||raw.includes("r32"))  harga = PRICE_LIST["freon_R32"]   || 450000;
@@ -3758,7 +3764,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
               <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>👁 Preview</button>
               {/* Edit invoice — Owner bisa edit semua status kecuali PAID */}
-              {inv.status !== "PAID" && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+              {inv.status !== "PAID" && (currentUser?.role === "Owner") && (
                 <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); setModalEditInvoice(true); }}
                   style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
@@ -7496,7 +7502,9 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 <button onClick={() => { invoiceReminderWA(liveInv); setModalPDF(false); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📱 Kirim via WA</button>
               )}
               {liveInv.status === "PENDING_APPROVAL" && (
+                {currentUser?.role === "Owner" && (
                 <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
+                );}
               )}
             </div>
           </div>
@@ -8736,6 +8744,16 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
             return n === normNama2 || n.includes(normNama2) || normNama2.includes(n);
           });
           let hSat = invItem?.price || 0;
+          // Fallback ke PRICE_LIST jika tidak ada di inventory (untuk Install jasa)
+          if (!hSat) {
+            const mNama = m.nama || "";
+            for (const svc of ["Material","Install","Repair","Cleaning","Complain"]) {
+              if (PRICE_LIST[svc] && PRICE_LIST[svc][mNama]) {
+                hSat = PRICE_LIST[svc][mNama];
+                break;
+              }
+            }
+          }
           if (!hSat) {
             if      (nama2.includes("r-22")  || nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 150000;
             else if (nama2.includes("r-32")  || nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 160000;
