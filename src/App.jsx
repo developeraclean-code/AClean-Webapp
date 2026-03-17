@@ -1024,12 +1024,13 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       </tr>
     </thead>
     <tbody>
+      ${(inv.labor > 0) ? `
       <tr>
         <td>${inv.service || "Jasa Servis AC"}</td>
         <td style="text-align:center">${inv.units || 1}</td>
         <td style="text-align:right;font-family:monospace">${perUnit.toLocaleString("id-ID")}</td>
         <td style="text-align:right;font-family:monospace;font-weight:600">${(inv.labor||0).toLocaleString("id-ID")}</td>
-      </tr>
+      </tr>` : ""}
 ${matRowsHtml}
       ${(inv.dadakan > 0) ? `<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>` : ""}
       <tr class="total-row">
@@ -7444,12 +7445,14 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                   </tr>
                 </thead>
                 <tbody>
+                  {liveInv.labor > 0 && (
                   <tr style={{ background:"#fff" }}>
                     <td style={{ padding:"8px 10px", color:"#1e293b" }}>{liveInv.service}</td>
                     <td style={{ padding:"8px 10px", color:"#475569", textAlign:"center" }}>{liveInv.units}</td>
-                    <td style={{ padding:"8px 10px", color:"#475569", fontFamily:"monospace" }}>{(liveInv.labor/liveInv.units).toLocaleString("id-ID")}</td>
+                    <td style={{ padding:"8px 10px", color:"#475569", fontFamily:"monospace" }}>{(liveInv.labor/(liveInv.units||1)).toLocaleString("id-ID")}</td>
                     <td style={{ padding:"8px 10px", color:"#1e293b", fontFamily:"monospace", fontWeight:600 }}>{liveInv.labor.toLocaleString("id-ID")}</td>
                   </tr>
+                  )}
                   {/* Per-item material dari materials_detail */}
                   {(() => {
                     const md = liveInv.materials_detail;
@@ -8689,7 +8692,11 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
 
     // ── 12. Auto-generate invoice ──
     // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST
-    const laborTotalInv = hitungLabor(laporanModal.service, laporanModal.type, laporanUnits.length);
+    // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
+    // Untuk service lain: hitung dari PRICE_LIST
+    const isInstallSvc = laporanModal.service === "Install";
+    const laborTotalInv = isInstallSvc ? 0
+      : hitungLabor(laporanModal.service, laporanModal.type, laporanUnits.length);
     const matTotalInv   = hitungMaterialTotal(effectiveMaterials);
     const invoiceTotal  = laborTotalInv + matTotalInv;
     const todayInv      = new Date().toISOString().slice(0, 10);
