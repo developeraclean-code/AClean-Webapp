@@ -427,6 +427,7 @@ export default function ACleanWebApp() {
   const [laporanFotos,       setLaporanFotos]       = useState([]);
   const [laporanRekomendasi, setLaporanRekomendasi] = useState("");
   const [laporanCatatan,     setLaporanCatatan]     = useState("");
+  const [laporanInstallItems, setLaporanInstallItems] = useState({}); // key→qty untuk Report Install
   const [activeUnitIdx,      setActiveUnitIdx]      = useState(0);
   const [showMatPreset,      setShowMatPreset]      = useState(false);
   const fotoInputRef = useRef();
@@ -730,12 +731,32 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     ],
   };
     const PEKERJAAN_OPT = (svc) => PEKERJAAN_BY_SERVICE[svc] || PEKERJAAN_BY_SERVICE["Cleaning"];
+  // ── MATERIAL_PRESET: quick-add di STEP 3 (Service/Repair/Complain) ──
   const MATERIAL_PRESET = {
     Cleaning:  ["Freon R22","Freon R410A","Filter Udara","Kompressor Oil","Pembersih Evaporator","Plastik Cuci AC"],
-    Install:   ["Pipa AC Hoda 1/4 3/8","Kabel Listrik 3x1.5","Kabel Listrik 3x2.5","Bracket Outdoor","Duct Tape","Stop Kontak","Paralon Pembuangan AC"],
     Repair:    ["Kapasitor","Thermostat","Sensor Indoor","Freon R22","Freon R410A","Relay","PCB Module","Kipas Motor"],
     Complain:  [],
   };
+  // ── INSTALL_ITEMS: preset form instalasi ──
+  const INSTALL_ITEMS = [
+    { key:"pasang_ac",     label:"Pasang AC",               satuan:"unit",  default:0 },
+    { key:"bongkar_ac",    label:"Bongkar AC",              satuan:"unit",  default:0 },
+    { key:"vacum_unit",    label:"Vacum Unit",              satuan:"unit",  default:0 },
+    { key:"pipa_1pk",      label:"Pipa AC Hoda 1PK",        satuan:"meter", default:0 },
+    { key:"pipa_2pk",      label:"Pipa AC Hoda 2PK",        satuan:"meter", default:0 },
+    { key:"pipa_25pk",     label:"Pipa AC Hoda 2.5PK",      satuan:"meter", default:0 },
+    { key:"pipa_3pk",      label:"Pipa AC Hoda 3PK",        satuan:"meter", default:0 },
+    { key:"kabel_15",      label:"Kabel 3x1.5",             satuan:"meter", default:0 },
+    { key:"kabel_25",      label:"Kabel 3x2.5",             satuan:"meter", default:0 },
+    { key:"ducttape_biasa",label:"Duct Tape Non Lem",       satuan:"meter", default:0 },
+    { key:"ducttape_lem",  label:"Duct Tape Lem",           satuan:"meter", default:0 },
+    { key:"jasa_pipa_rmh", label:"Jasa Penarikan Pipa Rumah",satuan:"meter",default:0 },
+    { key:"jasa_pipa_ruko",label:"Jasa Penarikan Pipa Ruko", satuan:"meter",default:0 },
+    { key:"perapian_plafon",label:"Perapian Plafon",         satuan:"titik",default:0 },
+  ];
+    Cleaning:  ["Freon R22","Freon R410A","Filter Udara","Kompressor Oil","Pembersih Evaporator","Plastik Cuci AC"],
+    Repair:    ["Kapasitor","Thermostat","Sensor Indoor","Freon R22","Freon R410A","Relay","PCB Module","Kipas Motor"],
+    Complain:  [],
   const TIPE_AC_OPT = ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"];
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
 
@@ -1009,6 +1030,7 @@ ${matRowsHtml}
     setLaporanUnits(Array.from({length:count},(_,i)=>mkUnit(i+1)));
     setLaporanMaterials([]);
     setLaporanFotos([]);
+  setLaporanInstallItems({});
     setLaporanRekomendasi("");
     setLaporanCatatan("");
     setActiveUnitIdx(0);
@@ -2035,7 +2057,13 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       invoices:  invoicesData.map(i=>({id:i.id,customer:i.customer,phone:i.phone,total:i.total,status:i.status,due:i.due,labor:i.labor,material:i.material,dadakan:i.dadakan,materials_detail:(i.materials_detail||[]).map(m=>({nama:m.nama,jumlah:m.jumlah,satuan:m.satuan,harga_satuan:m.harga_satuan,subtotal:m.subtotal}))})),
       inventory: inventoryData.map(i=>({code:i.code,name:i.name,stock:i.stock,unit:i.unit,status:i.status,price:i.price,reorder:i.reorder})),
       customers: customersData.map(c=>({id:c.id,name:c.name,phone:c.phone,area:c.area,total_orders:c.total_orders,is_vip:c.is_vip})),
-      laporan: laporanReports.map(r=>({id:r.id,job_id:r.job_id,teknisi:r.teknisi,customer:r.customer,service:r.service,status:r.status,date:r.date,submitted:r.submitted})),
+      laporan: laporanReports.map(r=>({
+        id:r.id, job_id:r.job_id, teknisi:r.teknisi, customer:r.customer,
+        service:r.service, status:r.status, date:r.date, submitted:r.submitted,
+        is_install: r.service==="Install",
+        materials: (r.materials||[]).map(m=>({nama:m.nama,jumlah:m.jumlah,satuan:m.satuan})),
+        total_units: r.total_units||0,
+      })),
       laporanPending: laporanReports.filter(r=>r.status==="SUBMITTED").length,
       laporanRevisi:  laporanReports.filter(r=>r.status==="REVISION").length,
       teknisiWorkload: teknisiData.filter(t=>t.role==="Teknisi"||t.role==="teknisi").map(t=>({
@@ -2480,10 +2508,9 @@ _Simpan pesan ini sebagai bukti pelunasan._`
                     return sum + (harga * qty);
                   }, 0)
                 : 0;
+          // [OPSI A] Freon tidak dihitung dari total_freon (psi data)
+          const freonCost  = 0; // freon masuk via material manual
               // Freon: hitung dari total_freon × harga freon (R32=200rb, R22=150rb default R32)
-              const freonType  = ord.type?.includes("R22") ? 150000 : 200000;
-              const freonCost  = lapRep?.total_freon ? Math.round(lapRep.total_freon * freonType) : 0;
-              const materialTotal = materialCost + freonCost;
 
               // Dadakan jika booking H-0
               const isToday = ord.date === today;
@@ -5371,7 +5398,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                 </div>
                 <div style={{fontSize:11,color:cs.muted}}>
                   {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}{u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
-                  {parseFloat(u.freon_ditambah)>0?`Freon +${u.freon_ditambah}kg`:""}
+                  {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
                   {u.catatan_unit?` · ${u.catatan_unit}`:""}
                 </div>
               </div>
@@ -5445,7 +5472,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                     const labor = PRICE_LIST[r.service]?.[ord?.type||"default"] || PRICE_LIST[r.service]?.["default"] || 85000;
                     const laborTotal = labor * (r.units || ord?.units || 1);
                     const matCost = safeArr(r.materials).reduce((s,m) => s + ((m.harga||m.price||0)*parseFloat(m.jumlah||m.qty||1)), 0);
-                    const freonCost = (r.total_freon||0) > 0 ? Math.round((r.total_freon||0) * (PRICE_LIST["freon_R32"]||200000)) : 0;
+        const freonCost = 0; // [OPSI A] Freon tidak dihitung dari total_freon (data psi)
                     const dadakan = ord?.date === new Date().toISOString().slice(0,10) ? 50000 : 0;
                     const totalInv = laborTotal + matCost + freonCost + dadakan;
                     const newInv = {
@@ -8104,7 +8131,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                           <div style={{fontSize:11,color:cs.muted}}>
                             {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}
                             {u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
-                            {parseFloat(u.freon_ditambah)>0?`Freon +${u.freon_ditambah}kg`:""}
+                            {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
                           </div>
                         )}
                       </div>
@@ -8168,7 +8195,11 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
         const incompleteUnits = laporanUnits.filter(u=>!isUnitDone(u));
         const totalFreon = laporanUnits.reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0);
         const presets = MATERIAL_PRESET[laporanModal.service] || MATERIAL_PRESET.Cleaning;
-        const STEP_LABELS = ["","Konfirmasi Unit","Detail Per Unit","Material & Foto","Submit"];
+        const isInstallJob = laporanModal?.service === "Install";
+        const STEP_LABELS = ["","Konfirmasi Unit",
+          isInstallJob ? "(skip)" : "Detail Per Unit",
+          isInstallJob ? "Form Instalasi" : "Material & Foto",
+          "Submit"];
 
         const updateUnit = (idx, updated) => setLaporanUnits(prev=>prev.map((u,i)=>i===idx?updated:u));
         const toggleArr = (arr, val) => arr.includes(val)?arr.filter(x=>x!==val):[...arr,val];
@@ -8246,6 +8277,18 @@ Lanjutkan submit laporan tanpa foto tersebut?
             if(!lanjut) return;
           }
           const now = new Date().toLocaleString("id-ID",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).replace(/\//g,"-");
+    // ── Report Install: convert installItems → materials format ──
+    const isInstall = isInstallJob; // ref dari STEP_LABELS area
+    const effectiveMaterials = isInstall
+      ? INSTALL_ITEMS
+          .filter(item => parseFloat(laporanInstallItems[item.key]||0) > 0)
+          .map(item => ({
+            id: item.key, nama: item.label,
+            jumlah: parseFloat(laporanInstallItems[item.key]||0),
+            satuan: item.satuan, keterangan: ""
+          }))
+      : laporanMaterials;
+
           const newReport = {
             // If rewriting existing report, reuse same ID (upsert overwrites)
             id: laporanModal._rewriteId || ("LPR_"+laporanModal.id+"_"+Date.now().toString(36).slice(-4).toUpperCase()),
@@ -8254,7 +8297,7 @@ Lanjutkan submit laporan tanpa foto tersebut?
             is_substitute: (currentUser?.role==="Helper" && currentUser?.name===laporanModal.helper && !teknisiData.find(t=>t.name===laporanModal.teknisi&&t.status!=="standby")) || false,
             customer:laporanModal.customer, service:laporanModal.service, date:laporanModal.date,
             submitted:now, status:"SUBMITTED", total_units:laporanUnits.length,
-            units:laporanUnits, materials:laporanMaterials,
+            units:laporanUnits, materials:effectiveMaterials,
             fotos:laporanFotos.map(f=>({id:f.id,label:f.label})),
             total_freon:totalFreon, rekomendasi:laporanRekomendasi, catatan_global:laporanCatatan,
             unit_mismatch: laporanUnits.length!==(laporanModal.units||1),
@@ -8299,7 +8342,7 @@ Silakan buat invoice dari ARA Chat 👆`;
           {
             const { error: e1 } = await supabase.from("service_reports").upsert({
               ...basePayload,
-              materials_json: JSON.stringify(laporanMaterials),
+              materials_json: JSON.stringify(effectiveMaterials),
               units_json:     JSON.stringify(laporanUnits),
             }, { onConflict: "id" });
             if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
@@ -8442,10 +8485,9 @@ Silakan buat invoice dari ARA Chat 👆`;
 
           // GAP 2 — Auto-generate invoice dengan price list
           const laborTotal = hitungLabor(laporanModal.service, laporanModal.type, laporanUnits.length);
-          const freonTotal2 = laporanUnits.reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0);
-          const freonType = laporanModal.type?.includes("R410")||laporanModal.type?.includes("inverter") ? "freon_R410A" : "freon_R22";
-          const freonValue = freonTotal2 * (PRICE_LIST[freonType]||150000);
-          const matTotal = hitungMaterialTotal(laporanMaterials) + freonValue;
+          // Tekanan freon (psi) = data laporan saja, TIDAK masuk kalkulasi invoice
+          // Freon sebagai material: teknisi input manual di STEP 3
+          const matTotal = hitungMaterialTotal(effectiveMaterials); // freon tidak dihitung dari psi
           const today2 = new Date().toISOString().slice(0,10);
           const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
           const newInvoiceId = "INV-" + today2.replace(/-/g,"").slice(0,8) + "-" + invSeq;
@@ -8453,7 +8495,7 @@ Silakan buat invoice dari ARA Chat 👆`;
           const garansiDays = laporanModal.service==="Install" ? 90 : laporanModal.service==="Repair" ? 60 : 30;
           const garansiExpires = new Date(Date.now() + garansiDays*24*60*60*1000).toISOString().slice(0,10);
           // Build materials_detail: nama, jumlah, satuan, harga satuan, subtotal
-          const materialsDetail = laporanMaterials
+          const materialsDetail = effectiveMaterials
             .filter(m => m.nama && (parseFloat(m.jumlah)||0) > 0)
             .map(m => {
               const invItem = inventoryData.find(i =>
@@ -8461,27 +8503,20 @@ Silakan buat invoice dari ARA Chat 👆`;
                 m.nama.toLowerCase().includes(i.name.toLowerCase())
               );
               const hargaSatuan = invItem?.price || 0;
-              const qty = parseFloat(m.jumlah) || 0;
+            const rawQty = parseFloat(m.jumlah) || 0;
+            // Freon: pembulatan ke atas, min 1 kg
+            const isFreon = (m.nama||"").toLowerCase().includes("freon");
+            const qty = isFreon ? Math.max(1, Math.ceil(rawQty)) : rawQty;
               return {
                 nama: m.nama,
                 jumlah: qty,
-                satuan: m.satuan || "pcs",
+              satuan: m.satuan || (isFreon ? 'kg' : 'pcs'),
                 harga_satuan: hargaSatuan,
                 subtotal: hargaSatuan * qty,
-                keterangan: m.keterangan || "",
+              keterangan: m.keterangan || (isFreon && rawQty !== qty ? `Aktual: ${rawQty} kg → dibulatkan ${qty} kg` : ""),
               };
             });
-          // Tambah freon sebagai item terpisah jika ada
-          if (freonTotal2 > 0) {
-            materialsDetail.push({
-              nama: freonType === "freon_R410A" ? "Freon R410A" : "Freon R22",
-              jumlah: freonTotal2,
-              satuan: "kg",
-              harga_satuan: PRICE_LIST[freonType] || 150000,
-              subtotal: freonValue,
-              keterangan: "",
-            });
-          }
+          // [OPSI A] Freon tidak otomatis masuk invoice dari tekanan (psi)
 
           const newInvoice = {
             id: newInvoiceId,
@@ -8748,7 +8783,7 @@ Silakan approve di menu Invoice. — ARA`;
                       ⚠ Jumlah unit berbeda dari order. Admin akan dinotifikasi untuk verifikasi.
                     </div>
                   )}
-                  <button onClick={()=>setLaporanStep(2)} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"13px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
+                  <button onClick={()=>setLaporanStep(laporanModal?.service==="Install" ? 3 : 2)} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"13px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
                     Lanjut — Isi Detail Unit →
                   </button>
                 </div>
@@ -8871,6 +8906,37 @@ Silakan approve di menu Invoice. — ARA`;
               {laporanStep===3&&(
                 <div style={{display:"grid",gap:14}}>
 
+                  {/* ══ REPORT INSTALL FORM ══ */}
+                  {laporanModal?.service==="Install" ? (
+                    <div style={{display:"grid",gap:10}}>
+                      <div style={{fontSize:12,fontWeight:700,color:cs.accent,marginBottom:2}}>🔧 Detail Pekerjaan Instalasi</div>
+                      <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Isi 0 jika tidak dikerjakan. Admin dapat mengedit setelah selesai.</div>
+                      {INSTALL_ITEMS.map(item=>(
+                        <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
+                          background:parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"08":cs.card,
+                          border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"44":cs.border),
+                          borderRadius:8,padding:"8px 10px"}}>
+                          <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
+                            {item.label}
+                            <span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
+                          </div>
+                          <input type="number" min="0" step={item.satuan==="meter"?"0.5":"1"}
+                            value={laporanInstallItems[item.key]??""}
+                            onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
+                            placeholder="0"
+                            style={{width:70,textAlign:"center",background:cs.surface,border:"1px solid "+cs.border,
+                              borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none"}}/>
+                        </div>
+                      ))}
+                      {/* Ringkasan install */}
+                      {Object.values(laporanInstallItems).some(v=>parseFloat(v||0)>0) && (
+                        <div style={{background:cs.green+"10",border:"1px solid "+cs.green+"33",borderRadius:9,padding:"10px 12px",fontSize:11,color:cs.green}}>
+                          ✅ {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).length} item diisi
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                  <>{/* Normal service/repair/complain material form */}
                   {/* Material */}
                   <div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -8972,6 +9038,9 @@ Silakan approve di menu Invoice. — ARA`;
 
                   {/* Rekomendasi & Catatan */}
                   <div>
+                  </>{/* end normal material form */}
+                  )}{/* end Install ternary */}
+
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:5}}>Rekomendasi untuk Customer</div>
                     <textarea value={laporanRekomendasi} onChange={e=>setLaporanRekomendasi(e.target.value)} rows={2} placeholder="cth: Disarankan servis berkala tiap 3 bulan..."
                       style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",resize:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
@@ -8983,7 +9052,7 @@ Silakan approve di menu Invoice. — ARA`;
                   </div>
 
                   <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
-                    <button onClick={()=>setLaporanStep(2)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
+                    <button onClick={()=>setLaporanStep(laporanModal?.service==="Install" ? 1 : 2)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
                     <button onClick={()=>setLaporanStep(4)} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>Lanjut → Ringkasan</button>
                   </div>
                 </div>
@@ -9006,6 +9075,23 @@ Silakan approve di menu Invoice. — ARA`;
                       </div>
                     </div>
                     {/* Per-unit summary */}
+                    {/* Install summary vs unit summary */}
+                    {laporanModal?.service==="Install" ? (
+                      <div style={{background:cs.card,border:"1px solid "+cs.accent+"33",borderRadius:10,padding:"12px 14px"}}>
+                        <div style={{fontWeight:700,color:cs.accent,marginBottom:8,fontSize:12}}>🔧 Detail Instalasi</div>
+                        {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).map(it=>(
+                          <div key={it.key} style={{display:"flex",justifyContent:"space-between",fontSize:12,
+                            color:cs.text,marginBottom:3,paddingBottom:3,borderBottom:"1px solid "+cs.border+"33"}}>
+                            <span>{it.label}</span>
+                            <span style={{fontWeight:700,color:cs.accent}}>{laporanInstallItems[it.key]} {it.satuan}</span>
+                          </div>
+                        ))}
+                        {!INSTALL_ITEMS.some(it=>parseFloat(laporanInstallItems[it.key]||0)>0) && (
+                          <div style={{color:cs.muted,fontSize:12,textAlign:"center"}}>Belum ada item diisi</div>
+                        )}
+                      </div>
+                    ) : (
+                    <>{/* normal per-unit summary */}
                     <div style={{display:"grid",gap:8}}>
                       {laporanUnits.map((u,i)=>(
                         <div key={i} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"10px 12px"}}>
@@ -9018,17 +9104,19 @@ Silakan approve di menu Invoice. — ARA`;
                           </div>
                           <div style={{fontSize:11,color:cs.muted}}>
                             {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}{u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
-                            {parseFloat(u.freon_ditambah)>0?`Freon +${u.freon_ditambah}kg`:""}
+                            {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
                             {u.catatan_unit?` · ${u.catatan_unit}`:""}
                           </div>
                         </div>
                       ))}
                     </div>
                     {/* Material */}
-                    {laporanMaterials.length>0&&(
+                    </>{/* end normal unit summary */}
+                    )}{/* end install ternary */}
+                    {(laporanModal?.service==="Install" ? INSTALL_ITEMS.some(it=>parseFloat(laporanInstallItems[it.key]||0)>0) : laporanMaterials.length>0)&&(
                       <div style={{marginTop:10}}>
                         <div style={{fontWeight:700,color:cs.text,marginBottom:5,fontSize:11}}>Material:</div>
-                        {laporanMaterials.map((m,mi)=>(
+                        {(laporanModal?.service==="Install" ? INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).map(it=>({nama:it.label,jumlah:laporanInstallItems[it.key],satuan:it.satuan,keterangan:""})) : laporanMaterials).map((m,mi)=>(
                           <div key={mi} style={{fontSize:11,color:cs.muted,marginBottom:2}}>• {m.nama}: {m.jumlah} {m.satuan}{m.keterangan?` — ${m.keterangan}`:""}</div>
                         ))}
                       </div>
