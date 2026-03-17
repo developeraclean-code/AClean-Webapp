@@ -9033,11 +9033,11 @@ Silakan approve di menu Invoice. — ARA`;
                     )}
                   </div>
 
-                  {/* Rekomendasi & Catatan */}
-                  <div>
                   </>{/* end normal material form */}
                   )}{/* end Install ternary */}
 
+                  {/* ── Rekomendasi & Catatan: shared untuk semua service ── */}
+                  <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:5}}>Rekomendasi untuk Customer</div>
                     <textarea value={laporanRekomendasi} onChange={e=>setLaporanRekomendasi(e.target.value)} rows={2} placeholder="cth: Disarankan servis berkala tiap 3 bulan..."
                       style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",resize:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
