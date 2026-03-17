@@ -2513,9 +2513,19 @@ _Simpan pesan ini sebagai bukti pelunasan._`
               const lapRep = laporanReports.find(r => r.job_id === ord.id);
               const materialCost = lapRep?.materials
                 ? lapRep.materials.reduce((sum, m) => {
-                    // Support both old field names (price/qty) and new names (harga/jumlah)
-                    const harga = m.harga || m.price || 0;
-                    const qty   = parseFloat(m.jumlah || m.qty || m.quantity || 1);
+          // Lookup harga dari inventory (sama seperti hitungMaterialTotal)
+          const _mNama = (m.nama||"").toLowerCase();
+          const _invItem = inventoryData.find(inv =>
+            inv.name.toLowerCase().includes(_mNama) || _mNama.includes(inv.name.toLowerCase())
+          );
+          let harga = _invItem?.price || m.harga || m.price || 0;
+          // Fallback ke PRICE_LIST freon jika tidak ada di inventory
+          if (!harga) {
+            if (_mNama.includes("r-22")||_mNama.includes("r22")) harga = PRICE_LIST["freon_R22"]||150000;
+            else if (_mNama.includes("r-32")||_mNama.includes("r32")) harga = PRICE_LIST["freon_R32"]||160000;
+            else if (_mNama.includes("r-410")||_mNama.includes("r410")) harga = PRICE_LIST["freon_R410A"]||180000;
+          }
+          const qty = parseFloat(m.jumlah || m.qty || m.quantity || 1);
                     return sum + (harga * qty);
                   }, 0)
                 : 0;
@@ -8275,7 +8285,11 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
         };
 
         const submitLaporan = async () => {
-          if(incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);return;}
+          // Install skip step 2 (detail unit) — validasi pekerjaan tidak diperlukan
+          if(incompleteUnits.length>0 && !isInstall){
+            showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);
+            return;
+          }
           // Cek foto gagal upload — warn tapi tidak block (sesuai keputusan: teknisi bisa reupload manual)
           const fotoGagal = laporanFotos.filter(f=>!f.url).length;
           if(fotoGagal > 0) {
