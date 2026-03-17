@@ -8904,8 +8904,8 @@ Silakan approve di menu Invoice. — ARA`;
                 <div style={{display:"grid",gap:14}}>
 
                   {/* ══ REPORT INSTALL FORM ══ */}
-                  {laporanModal?.service==="Install" ? (
-                    <div style={{display:"grid",gap:10}}>
+                  {isInstallJob && (
+                    <div style={{display:"grid",gap:10,marginBottom:8}}>
                       <div style={{fontSize:12,fontWeight:700,color:cs.accent,marginBottom:2}}>🔧 Detail Pekerjaan Instalasi</div>
                       <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Isi 0 jika tidak dikerjakan. Admin dapat mengedit setelah selesai.</div>
                       {INSTALL_ITEMS.map(item=>(
@@ -8925,15 +8925,17 @@ Silakan approve di menu Invoice. — ARA`;
                               borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none"}}/>
                         </div>
                       ))}
-                      {/* Ringkasan install */}
                       {Object.values(laporanInstallItems).some(v=>parseFloat(v||0)>0) && (
                         <div style={{background:cs.green+"10",border:"1px solid "+cs.green+"33",borderRadius:9,padding:"10px 12px",fontSize:11,color:cs.green}}>
                           ✅ {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).length} item diisi
                         </div>
                       )}
                     </div>
-                  ) : (
-                  <>{/* Normal service/repair/complain material form */}
+                  )}
+
+                  {/* ══ NORMAL MATERIAL FORM (Service/Repair/Complain) ══ */}
+                  {!isInstallJob && (
+                  <div style={{display:"grid",gap:10}}>
                   {/* Material */}
                   <div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -8944,52 +8946,51 @@ Silakan approve di menu Invoice. — ARA`;
                       </button>
                     </div>
                     {showMatPreset&&(
-                      <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:12,marginBottom:10}}>
-                        <div style={{fontSize:11,color:cs.muted,marginBottom:8}}>Tap untuk tambah cepat:</div>
-                        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                          {presets.map(p=>(
-                            <button key={p} onClick={()=>{if(laporanMaterials.length<20)setLaporanMaterials(prev=>[...prev,{id:Date.now(),nama:p,jumlah:"",satuan:"pcs",keterangan:""}]);setShowMatPreset(false);}}
-                              style={{fontSize:11,background:cs.accent+"10",border:"1px solid "+cs.accent+"22",color:cs.accent,borderRadius:6,padding:"5px 10px",cursor:"pointer"}}>+ {p}</button>
-                          ))}
-                        </div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                        <div style={{fontSize:11,color:cs.muted,width:"100%",marginBottom:2}}>Tap untuk tambah:</div>
+                        {presets.map(p=>(
+                          <button key={p} onClick={()=>{if(laporanMaterials.length<20)setLaporanMaterials(prev=>[...prev,{id:Date.now(),nama:p,jumlah:"",satuan:"pcs",keterangan:""}]);setShowMatPreset(false);}}
+                            style={{fontSize:11,background:cs.surface,border:"1px solid "+cs.border,color:cs.text,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>
+                            {p}
+                          </button>
+                        ))}
                       </div>
                     )}
-                    <div style={{display:"grid",gap:8}}>
-                      {laporanMaterials.length===0&&<div style={{textAlign:"center",padding:"14px 0",fontSize:12,color:cs.muted,fontStyle:"italic"}}>Belum ada material — opsional untuk Cleaning</div>}
-                      {laporanMaterials.map(mat=>(
-                        <div key={mat.id} style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
-                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                            <input value={mat.nama} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,nama:e.target.value}:m))} placeholder="Nama material..."
-                              style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
-                            <button onClick={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
-                              style={{background:"#ef444422",border:"1px solid #ef444433",color:"#ef4444",borderRadius:7,padding:"8px 10px",cursor:"pointer",fontSize:14,lineHeight:1,fontWeight:700}}>×</button>
-                          </div>
-                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:8}}>
-                            <input type="number" value={mat.jumlah} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:e.target.value}:m))} placeholder="Jml" min="0"
-                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
-                            <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
-                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
-                              {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
-                            </select>
-                            <input value={mat.keterangan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,keterangan:e.target.value}:m))} placeholder="Keterangan..."
-                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
-                          </div>
+                    {laporanMaterials.length===0&&<div style={{textAlign:"center",padding:"14px 0",fontSize:12,color:cs.muted,fontStyle:"italic"}}>Belum ada material. Tap + Tambah atau pakai Preset.</div>}
+                    {laporanMaterials.map(mat=>(
+                      <div key={mat.id} style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                          <input value={mat.nama} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,nama:e.target.value}:m))} placeholder="Nama material..."
+                            style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+                          <button onClick={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
+                            style={{marginLeft:8,background:"#ef444422",border:"1px solid #ef444433",color:"#ef4444",borderRadius:7,padding:"8px 10px",cursor:"pointer",fontSize:14,lineHeight:1,fontWeight:700}}>×</button>
                         </div>
-                      ))}
-                    </div>
-                    {laporanMaterials.length<20&&(
-                      <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,satuan:"pcs",keterangan:""}])}
-                        style={{marginTop:8,width:"100%",background:cs.green+"10",border:"1px dashed "+cs.green+"33",color:cs.green,borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>
-                        + Tambah Material
-                      </button>
-                    )}
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:8}}>
+                          <input type="number" value={mat.jumlah} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:e.target.value}:m))} placeholder="Jml" min="0"
+                            style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+                          <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
+                            style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
+                            {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
+                          </select>
+                          <input value={mat.keterangan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,keterangan:e.target.value}:m))} placeholder="Keterangan..."
+                            style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
+                        </div>
+                      </div>
+                    ))}
                   </div>
+                  {laporanMaterials.length<20&&(
+                    <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,satuan:"pcs",keterangan:""}])}
+                      style={{marginTop:8,width:"100%",background:cs.green+"10",border:"1px dashed "+cs.green+"33",color:cs.green,borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                      + Tambah Material
+                    </button>
+                  )}
+                  </div>
+                  )}{/* end !isInstallJob */}
 
-                  {/* Foto */}
+                  {/* ── Foto: tampil untuk semua service ── */}
                   <div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>
-                        📸 Foto Dokumentasi ({laporanFotos.length}/10)
+                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>📸 Foto Dokumentasi ({laporanFotos.length}/10)
                         {laporanFotos.length > 0 && (
                           <span style={{marginLeft:8,fontSize:11}}>
                             <span style={{color:cs.green}}>☁️ {laporanFotos.filter(f=>f.url).length} tersimpan</span>
@@ -9001,28 +9002,27 @@ Silakan approve di menu Invoice. — ARA`;
                       </div>
                       {laporanFotos.length<10&&(
                         <button onClick={()=>fotoInputRef.current?.click()}
-                          style={{fontSize:11,background:cs.yellow+"15",border:"1px solid "+cs.yellow+"33",color:cs.yellow,borderRadius:6,padding:"5px 11px",cursor:"pointer",fontWeight:600}}>+ Upload</button>
+                          style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>+ Foto</button>
                       )}
                     </div>
                     <input ref={fotoInputRef} type="file" accept="image/*" multiple onChange={handleFotoUpload} style={{display:"none"}}/>
                     {laporanFotos.length===0?(
                       <div onClick={()=>fotoInputRef.current?.click()}
-                        style={{border:"1px dashed "+cs.yellow+"33",borderRadius:10,padding:"20px",textAlign:"center",cursor:"pointer",color:cs.muted,fontSize:12}}>
+                        style={{border:"1px dashed "+cs.border,borderRadius:10,padding:"20px",textAlign:"center",cursor:"pointer",color:cs.muted,fontSize:12}}>
                         📷 Tap untuk upload foto<br/><span style={{fontSize:11}}>Sebelum &amp; sesudah servis, kondisi material</span>
                       </div>
                     ):(
                       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
                         {laporanFotos.map(f=>(
                           <div key={f.id} style={{position:"relative"}}>
-                            <img src={f.data_url} alt={f.label} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:8,border:"1px solid "+(f.url?cs.green:cs.yellow),opacity:f.url?1:0.75}}/>
-                            {/* Status badge: cloud = uploaded, clock = pending */}
-                            <div style={{position:"absolute",top:4,left:4,background:f.url?"#22c55ecc":"#f59e0bcc",borderRadius:4,padding:"1px 5px",fontSize:9,color:"#fff",fontWeight:700}}>
+                            <img src={f.data_url} alt={f.label} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:8,border:"1px solid "+cs.border}}/>
+                            <div style={{position:"absolute",top:4,right:4,background:f.url?"#22c55e":"#f59e0b",color:"#fff",fontSize:9,padding:"1px 5px",borderRadius:99,fontWeight:700}}>
                               {f.url ? "☁️ OK" : "⏳"}
                             </div>
                             <button onClick={()=>setLaporanFotos(p=>p.filter(x=>x.id!==f.id))}
-                              style={{position:"absolute",top:4,right:4,background:"#000a",border:"none",color:"#fff",borderRadius:"50%",width:20,height:20,cursor:"pointer",fontSize:12,lineHeight:"20px",padding:0,textAlign:"center"}}>×</button>
+                              style={{position:"absolute",top:4,left:4,background:"#ef4444cc",border:"none",color:"#fff",borderRadius:99,width:18,height:18,cursor:"pointer",fontSize:10,lineHeight:1,padding:0}}>×</button>
                             <input value={f.label} onChange={e=>setLaporanFotos(p=>p.map(x=>x.id===f.id?{...x,label:e.target.value}:x))}
-                              style={{marginTop:3,width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:5,padding:"4px 6px",color:cs.text,fontSize:10,outline:"none",boxSizing:"border-box"}}/>
+                              placeholder="Label foto..." style={{marginTop:3,width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:5,padding:"4px 6px",color:cs.text,fontSize:10,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         ))}
                         {laporanFotos.length<10&&(
@@ -9032,9 +9032,6 @@ Silakan approve di menu Invoice. — ARA`;
                       </div>
                     )}
                   </div>
-
-                  </>{/* end normal material form */}
-                  )}{/* end Install ternary */}
 
                   {/* ── Rekomendasi & Catatan: shared untuk semua service ── */}
                   <div>
