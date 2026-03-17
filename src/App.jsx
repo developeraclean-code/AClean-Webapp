@@ -1494,110 +1494,145 @@ ${matRowsHtml}
       _rtDebounce[key] = setTimeout(fn, delay);
     };
 
-    const ch1 = supabase.channel("rt-orders")
-      .on("postgres_changes", { event:"*", schema:"public", table:"orders" }, () =>
-        rtDebounced("orders", () =>
-          supabase.from("orders").select("*").order("date",{ascending:false}).limit(500)
-            .then(({data}) => {
-              if(data) {
-                setOrdersData(data);
-                pushNotif("AClean — Order Update", "Ada perubahan status order");
-              }
-            })
-        ))
-      .subscribe();
-    const ch2 = supabase.channel("rt-invoices")
-      .on("postgres_changes", { event:"*", schema:"public", table:"invoices" }, () =>
-        rtDebounced("invoices", () =>
-          supabase.from("invoices").select("*").order("created_at",{ascending:false}).limit(300)
-            .then(({data}) => { if(data) setInvoicesData(data.map(inv => ({...inv, materials_detail: (() => { const md=inv.materials_detail; if(!md)return[]; if(Array.isArray(md))return md; try{return JSON.parse(md);}catch(_){return[];} })()}))) ; })
-        ))
-      .subscribe();
-    const ch3 = supabase.channel("rt-inventory")
-      .on("postgres_changes", { event:"*", schema:"public", table:"inventory" }, () =>
-        supabase.from("inventory").select("*").order("code")
-          .then(({data}) => { if(data) setInventoryData(data); }))
-      .subscribe();
-    const ch4 = supabase.channel("rt-customers")
-      .on("postgres_changes", { event:"*", schema:"public", table:"customers" }, () =>
-        supabase.from("customers").select("*").order("name")
-          .then(({data}) => { if(data) setCustomersData(data); }))
-      .subscribe();
-    const ch5 = supabase.channel("rt-laporan")
-      .on("postgres_changes", { event:"*", schema:"public", table:"service_reports" }, () =>
-        rtDebounced("laporan", () =>
-        supabase.from("service_reports").select("*").order("submitted_at",{ascending:false}).limit(200)
-          .then(({data}) => {
-            if (data && data.length > 0) {
-              pushNotif("AClean — Laporan Masuk", "Teknisi baru submit laporan");
-              setLaporanReports(data.map(r => ({
-                ...r,
-                units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){return r.units    ||[];} })() : (r.units    ||[]),
-                materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })() : (r.materials||[]),
-                fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
-                editLog:   safeArr(r.edit_log ?? r.editLog),
-              })));
-            }
-          })))
-      .subscribe();
+          // ══ Supabase Realtime Channels ══
+          // Hanya 4 channel kritis (Supabase free tier: max concurrent realtime)
+          // WA tables (wa_conversations, wa_messages) di-skip jika tidak ada
 
-    // WA Conversations realtime
-    const ch6 = supabase.channel("rt-wa-conv")
-      .on("postgres_changes", { event:"*", schema:"public", table:"wa_conversations" }, () =>
-        supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
-          .then(({data}) => { if(data) setWaConversations(data); }))
-      .subscribe();
+          const _rtDebounce = {};
+          const rtDebounced = (key, fn, delay=800) => {
+            clearTimeout(_rtDebounce[key]);
+            _rtDebounce[key] = setTimeout(fn, delay);
+          };
 
-    // WA Messages realtime — reload history saat ada pesan baru
-    const ch7 = supabase.channel("rt-wa-msg")
-      .on("postgres_changes", { event:"INSERT", schema:"public", table:"wa_messages" }, (payload) => {
-        // Reload messages jika phone = selectedConv yang sedang dibuka
-        setWaMessages(prev => {
-          if (prev.length === 0) return prev; // tidak ada conv aktif
-          const phone = payload.new?.phone;
-          if (!phone) return prev;
-          // Append message baru jika milik conv yang sedang dibuka
-          if (prev[0]?.phone === phone || (prev.length > 0 && prev[0].phone === phone)) {
-            return [...prev, payload.new];
+          // CH1: Orders — kritis
+          const ch1 = supabase.channel("rt-orders")
+            .on("postgres_changes", { event:"*", schema:"public", table:"orders" }, () =>
+              rtDebounced("orders", () =>
+                supabase.from("orders").select("*").order("date",{ascending:false}).limit(500)
+                  .then(({data}) => { if(data) setOrdersData(data); })
+              ))
+            .subscribe((status) => {
+              if (status === "SUBSCRIBED") console.log("✅ RT orders connected");
+              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT orders error — akan polling manual");
+            });
+
+          // CH2: Invoices — kritis
+          const ch2 = supabase.channel("rt-invoices")
+            .on("postgres_changes", { event:"*", schema:"public", table:"invoices" }, () =>
+              rtDebounced("invoices", () =>
+                supabase.from("invoices").select("*").order("created_at",{ascending:false}).limit(300)
+                  .then(({data}) => { if(data) setInvoicesData(data.map(inv => ({
+                    ...inv,
+                    materials_detail: (() => {
+                      const md = inv.materials_detail;
+                      if (!md) return [];
+                      if (Array.isArray(md)) return md;
+                      try { return JSON.parse(md); } catch(_){ return []; }
+                    })()
+                  }))); })
+              ))
+            .subscribe((status) => {
+              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT invoices error");
+            });
+
+          // CH3: Laporan teknisi — kritis
+          const ch3 = supabase.channel("rt-laporan")
+            .on("postgres_changes", { event:"*", schema:"public", table:"service_reports" }, () =>
+              rtDebounced("laporan", () =>
+                supabase.from("service_reports").select("*").order("submitted_at",{ascending:false}).limit(200)
+                  .then(({data}) => {
+                    if (data && data.length > 0) {
+                      setLaporanReports(data.map(r => ({
+                        ...r,
+                        units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
+                        materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials || []; } })() : (r.materials || []),
+                        fotos:     r.fotos || (r.foto_urls||[]).map((u,idx)=>({id:idx,label:`Foto ${idx+1}`,url:u})),
+                        editLog:   safeArr(r.edit_log ?? r.editLog),
+                      })));
+                    }
+                  })
+              ))
+            .subscribe((status) => {
+              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT laporan error");
+            });
+
+          // CH4: Price list — kritis untuk ARA
+          const ch4 = supabase.channel("rt-pricelist")
+            .on("postgres_changes", { event:"*", schema:"public", table:"price_list" }, () =>
+              rtDebounced("pricelist", () =>
+                supabase.from("price_list").select("*").order("service").order("type")
+                  .then(({data}) => {
+                    if (data) {
+                      setPriceListData(data);
+                      const activePL = data.filter(r => r.is_active !== false);
+                      PRICE_LIST = buildPriceListFromDB(activePL);
+                      setPriceListSyncedAt(new Date());
+                    }
+                  })
+              ))
+            .subscribe((status) => {
+              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT pricelist error");
+            });
+
+          // CH5: Inventory — polling manual lebih aman (tidak perlu realtime ketat)
+          const ch5 = supabase.channel("rt-inventory")
+            .on("postgres_changes", { event:"*", schema:"public", table:"inventory" }, () =>
+              rtDebounced("inventory", () =>
+                supabase.from("inventory").select("*").order("code")
+                  .then(({data}) => { if(data) setInventoryData(data); })
+              ))
+            .subscribe((status) => {
+              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT inventory error — skip");
+            });
+
+          // CH6: Customers
+          const ch6 = supabase.channel("rt-customers")
+            .on("postgres_changes", { event:"*", schema:"public", table:"customers" }, () =>
+              rtDebounced("customers", () =>
+                supabase.from("customers").select("*").order("name")
+                  .then(({data}) => { if(data) setCustomersData(data); })
+              ))
+            .subscribe((status) => {
+              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT customers error — skip");
+            });
+
+          // CH7 & CH8: WA tables — opsional, skip gracefully jika tabel tidak ada
+          let ch7 = null, ch8 = null;
+          try {
+            ch7 = supabase.channel("rt-wa-conv")
+              .on("postgres_changes", { event:"*", schema:"public", table:"wa_conversations" }, () =>
+                supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
+                  .then(({data, error}) => { if(data && !error) setWaConversations(data); }))
+              .subscribe((status) => {
+                if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
+              });
+
+            ch8 = supabase.channel("rt-wa-msg")
+              .on("postgres_changes", { event:"INSERT", schema:"public", table:"wa_messages" }, (payload) => {
+                setWaMessages(prev => {
+                  if (prev.length === 0) return prev;
+                  const phone = payload.new?.phone;
+                  if (!phone) return prev;
+                  if (prev[0]?.phone === phone) return [...prev, payload.new];
+                  return prev;
+                });
+                supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
+                  .then(({data, error}) => { if(data && !error) setWaConversations(data); });
+              })
+              .subscribe((status) => {
+                if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_messages — tabel mungkin belum ada");
+              });
+          } catch(e) {
+            console.warn("WA realtime channels skip:", e?.message);
           }
-          return prev;
-        });
-        // Juga reload wa_conversations untuk update last_message
-        supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
-          .then(({data}) => { if(data) setWaConversations(data); });
-      })
-      .subscribe();
 
-    // BUG FIX: ch8 dipindah ke sini (bukan di dalam return/cleanup)
-    const ch8 = supabase.channel("rt-pricelist")
-      .on("postgres_changes", { event:"*", schema:"public", table:"price_list" }, () =>
-        rtDebounced("pricelist", () =>
-          supabase.from("price_list").select("*").order("service").order("type")
-            .then(({data}) => {
-              if (data) {
-                setPriceListData(data);
-                // Rebuild PRICE_LIST var agar bizContext ARA selalu fresh
-                const activePL = data.filter(r => r.is_active !== false);
-                PRICE_LIST = buildPriceListFromDB(activePL);
-                setPriceListSyncedAt(new Date());
-                console.log("✅ PRICE_LIST realtime sync:", data.length, "rows");
-              }
-            })
-        ))
-      .subscribe();
-
-    return () => {
-      clearInterval(_statsTimer);
-      if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current); // GAP-7 cleanup
-      supabase.removeChannel(ch1);
-      supabase.removeChannel(ch2);
-      supabase.removeChannel(ch3);
-      supabase.removeChannel(ch4);
-      supabase.removeChannel(ch5);
-      supabase.removeChannel(ch6);
-      supabase.removeChannel(ch7);
-      supabase.removeChannel(ch8);
-    };
+          return () => {
+            clearInterval(_statsTimer);
+            if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
+            [ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8].forEach(ch => {
+              try { if(ch) supabase.removeChannel(ch); } catch(_) {}
+            });
+          };
   }, [isLoggedIn]);
   // ── Colors ──
   const cs = {
