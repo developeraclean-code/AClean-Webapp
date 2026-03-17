@@ -1026,7 +1026,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       </tr>
     </thead>
     <tbody>
-      ${(inv.labor > 0) ? `
+      ${(inv.labor > 0 && matDetails.length === 0) ? `
       <tr>
         <td>${inv.service || "Jasa Servis AC"}</td>
         <td style="text-align:center">${inv.units || 1}</td>
@@ -7611,7 +7611,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                   </tr>
                 </thead>
                 <tbody>
-                  {liveInv.labor > 0 && (
+                  {liveInv.labor > 0 && parseMD(liveInv.materials_detail).length === 0 && (
                   <tr style={{ background:"#fff" }}>
                     <td style={{ padding:"8px 10px", color:"#1e293b" }}>{liveInv.service}</td>
                     <td style={{ padding:"8px 10px", color:"#475569", textAlign:"center" }}>{liveInv.units}</td>
