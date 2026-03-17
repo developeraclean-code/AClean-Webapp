@@ -1486,14 +1486,6 @@ ${matRowsHtml}
       loadAll().catch(e => console.warn("Auto-refresh error:", e));
     }, 30 * 60 * 1000); // 30 menit
 
-    // Realtime — data update otomatis di semua device
-    // ── SIM-7 FIX: debounce timer agar realtime tidak flood query ──
-    const _rtDebounce = {};
-    const rtDebounced = (key, fn, delay=600) => {
-      clearTimeout(_rtDebounce[key]);
-      _rtDebounce[key] = setTimeout(fn, delay);
-    };
-
           // ══ Supabase Realtime Channels ══
           // Hanya 4 channel kritis (Supabase free tier: max concurrent realtime)
           // WA tables (wa_conversations, wa_messages) di-skip jika tidak ada
