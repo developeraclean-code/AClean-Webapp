@@ -7326,8 +7326,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
         const filteredMat  = matLookup.filter(x =>
           x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
 
+        const jasaTotal = editJasaItems.reduce((s,m)=>s+(m.subtotal||0), 0);
         const matTotal = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0), 0);
-        const newTotal = jasaTotal + matTotal;
 
         return (
         <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:450, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
@@ -7505,9 +7505,9 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                   Batal
                 </button>
                 <button onClick={async()=>{
-                  const labor     = jasaTotal3;
-                  const jasaTotal3 = editJasaItems.reduce((s,m)=>s+(m.subtotal||0),0);
-                  const matTotal3 = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0),0);
+                  const jasaTotal3    = editJasaItems.reduce((s,m)=>s+(m.subtotal||0),0);
+                  const matTotal3     = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0),0);
+                  const labor         = jasaTotal3;
                   const newTotalFinal = jasaTotal3 + matTotal3;
                   if(newTotalFinal <= 0){ showNotif("⚠️ Total tidak boleh 0"); return; }
                   const newMD = [
