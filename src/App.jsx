@@ -1524,7 +1524,15 @@ ${matRowsHtml}
                   }))); })
               ))
             .subscribe((status) => {
-              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT invoices error");
+              if (status === "CHANNEL_ERROR") {
+                console.warn("⚠️ RT invoices error — fallback polling aktif");
+                // Polling manual setiap 30 detik
+                setInterval(() => supabase.from("invoices").select("*")
+                  .order("created_at",{ascending:false}).limit(300)
+                  .then(({data}) => { if(data) setInvoicesData(data.map(inv => ({...inv,
+                    materials_detail: (() => { const md=inv.materials_detail; if(!md) return []; if(Array.isArray(md)) return md; try{return JSON.parse(md);}catch(_){return [];} })()
+                  }))); }), 30000);
+              }
             });
 
           // CH3: Laporan teknisi — kritis
@@ -1545,7 +1553,17 @@ ${matRowsHtml}
                   })
               ))
             .subscribe((status) => {
-              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT laporan error");
+              if (status === "CHANNEL_ERROR") {
+                console.warn("⚠️ RT laporan error — fallback polling aktif");
+                setInterval(() => supabase.from("service_reports").select("*")
+                  .order("submitted_at",{ascending:false}).limit(200)
+                  .then(({data}) => { if(data) setLaporanReports(data.map(r => ({...r,
+                    units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return [];} })() : (r.units||[]),
+                    materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return [];} })() : (r.materials||[]),
+                    fotos:     r.fotos||(r.foto_urls||[]).map((u,idx)=>({id:idx,label:`Foto ${idx+1}`,url:u})),
+                    editLog:   safeArr(r.edit_log??r.editLog),
+                  }))); }), 30000);
+              }
             });
 
           // CH4: Price list — kritis untuk ARA
@@ -1563,7 +1581,15 @@ ${matRowsHtml}
                   })
               ))
             .subscribe((status) => {
-              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT pricelist error");
+              if (status === "CHANNEL_ERROR") {
+                console.warn("⚠️ RT pricelist error — fallback polling aktif");
+                setInterval(() => supabase.from("price_list").select("*")
+                  .order("service").order("type")
+                  .then(({data}) => { if(data) {
+                    setPriceListData(data);
+                    PRICE_LIST = buildPriceListFromDB(data.filter(r=>r.is_active!==false));
+                  }}), 60000);
+              }
             });
 
           // CH5: Inventory — polling manual lebih aman (tidak perlu realtime ketat)
@@ -3132,7 +3158,7 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
             {/* Search bar */}
             <div style={{ position:"relative" }}>
               <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-              <input value={searchCustomer} onChange={e=>setSearchCustomer(e.target.value)}
+              <input id="searchCustomer" value={searchCustomer} onChange={e=>setSearchCustomer(e.target.value)}
                 placeholder="Cari nama customer atau nomor telepon..."
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
               {searchCustomer && <button onClick={()=>setSearchCustomer("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
@@ -3510,7 +3536,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
         {/* Search bar */}
         <div style={{ position:"relative" }}>
           <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:14, pointerEvents:"none" }}>🔍</span>
-          <input value={searchOrder} onChange={e=>{setSearchOrder(e.target.value);setOrderPage(1);}}
+          <input id="searchOrder" value={searchOrder} onChange={e=>{setSearchOrder(e.target.value);setOrderPage(1);}}
             placeholder="Cari nama customer, Job ID, telepon, atau teknisi..."
             style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
           {searchOrder && <button onClick={()=>{setSearchOrder("");setOrderPage(1);}} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
@@ -3528,11 +3554,11 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
             {allTekOrd.map(t=><option key={t} value={t}>👷 {t}</option>)}
           </select>
           <span style={{width:1,height:16,background:cs.border,display:"inline-block",marginLeft:4}} />
-          <input type="date" value={orderDateFrom} onChange={e=>{setOrderDateFrom(e.target.value);setOrderPage(1);}}
+          <input id="orderDateFrom" type="date" value={orderDateFrom} onChange={e=>{setOrderDateFrom(e.target.value);setOrderPage(1);}}
             title="Dari tanggal"
             style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:orderDateFrom?cs.text:cs.muted, padding:"5px 8px", fontSize:11, cursor:"pointer", width:130 }} />
           <span style={{color:cs.muted,fontSize:11}}>–</span>
-          <input type="date" value={orderDateTo} onChange={e=>{setOrderDateTo(e.target.value);setOrderPage(1);}}
+          <input id="orderDateTo" type="date" value={orderDateTo} onChange={e=>{setOrderDateTo(e.target.value);setOrderPage(1);}}
             title="Sampai tanggal"
             style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:orderDateTo?cs.text:cs.muted, padding:"5px 8px", fontSize:11, cursor:"pointer", width:130 }} />
           {(orderDateFrom||orderDateTo) && (
@@ -3702,7 +3728,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
       {/* Search */}
       <div style={{ position:"relative" }}>
         <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-        <input value={searchInvoice} onChange={e=>{setSearchInvoice(e.target.value);setInvoicePage(1);}}
+        <input id="searchInvoice" value={searchInvoice} onChange={e=>{setSearchInvoice(e.target.value);setInvoicePage(1);}}
           placeholder="Cari nama customer, no. telepon, atau ID invoice..."
           style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
         {searchInvoice && <button onClick={()=>{setSearchInvoice("");setInvoicePage(1);}} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
@@ -3841,7 +3867,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
       {/* Search bar */}
       <div style={{ position:"relative" }}>
         <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-        <input value={searchInventory} onChange={e=>setSearchInventory(e.target.value)}
+        <input id="searchInventory" value={searchInventory} onChange={e=>setSearchInventory(e.target.value)}
           placeholder="Cari nama barang atau kode material..."
           style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
         {searchInventory && <button onClick={()=>setSearchInventory("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
@@ -3979,7 +4005,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
         {/* Search */}
         <div style={{ position:"relative" }}>
           <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:14, pointerEvents:"none" }}>🔍</span>
-          <input value={searchPriceList} onChange={e=>setSearchPriceList(e.target.value)}
+          <input id="searchPriceList" value={searchPriceList} onChange={e=>setSearchPriceList(e.target.value)}
             placeholder="Cari nama layanan, tipe AC, kode..."
             style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
           {searchPriceList && <button onClick={()=>setSearchPriceList("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
@@ -4029,7 +4055,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                       </td>
                       <td style={{ padding:"10px 14px" }}>
                         {isEdit ? (
-                          <input value={plEditForm.type||""} onChange={e=>setPlEditForm(f=>({...f,type:e.target.value}))}
+                          <input id="field_1" value={plEditForm.type||""} onChange={e=>setPlEditForm(f=>({...f,type:e.target.value}))}
                             style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"6px 10px", color:cs.text, fontSize:12, width:"100%" }} />
                         ) : (
                           <div>
@@ -4040,7 +4066,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                       </td>
                       <td style={{ padding:"10px 14px" }}>
                         {isEdit ? (
-                          <input type="number" value={plEditForm.price||""} onChange={e=>setPlEditForm(f=>({...f,price:e.target.value}))}
+                          <input id="field_number_2" type="number" value={plEditForm.price||""} onChange={e=>setPlEditForm(f=>({...f,price:e.target.value}))}
                             style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"6px 10px", color:cs.text, fontSize:13, fontWeight:700, width:110 }} />
                         ) : (
                           <div style={{ fontWeight:700, fontSize:13, color:cs.text, fontFamily:"monospace" }}>{fmt(r.price)}</div>
@@ -4049,7 +4075,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                       <td style={{ padding:"10px 14px" }}>
                         {isEdit ? (
                           <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, cursor:"pointer" }}>
-                            <input type="checkbox" checked={plEditForm.is_active!==false} onChange={e=>setPlEditForm(f=>({...f,is_active:e.target.checked}))} />
+                            <input id="field_checkbox_3" type="checkbox" checked={plEditForm.is_active!==false} onChange={e=>setPlEditForm(f=>({...f,is_active:e.target.checked}))} />
                             Aktif
                           </label>
                         ) : (
@@ -4143,7 +4169,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                   {opts.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               ) : (
-                <input type={type} value={plNewForm[key]} placeholder={ph||""}
+                <input id="field_4" type={type} value={plNewForm[key]} placeholder={ph||""}
                   onChange={e => setPlNewForm(f=>({...f,[key]:e.target.value}))}
                   style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
               )}
@@ -4299,7 +4325,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
         {!isTekRole && (
           <div style={{ position:"relative", marginTop:4 }}>
             <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:13, pointerEvents:"none" }}>🔍</span>
-            <input
+            <input id="searchSchedule"
               value={searchSchedule}
               onChange={e => setSearchSchedule(e.target.value)}
               placeholder="Cari customer, teknisi, alamat, Job ID..."
@@ -5090,7 +5116,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
           </div>
         )}
         <div style={{ display:"flex", gap:8, marginTop:8 }}>
-          <input
+          <input id="araInput"
             value={araInput} onChange={e=>setAraInput(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendToARA(araInput); } }}
             placeholder="Tanya ARA atau minta update data... (Enter untuk kirim)"
@@ -5476,7 +5502,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
         {/* Search */}
         <div style={{position:"relative"}}>
           <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:cs.muted,fontSize:14,pointerEvents:"none"}}>🔍</span>
-          <input value={searchLaporan} onChange={e=>{setSearchLaporan(e.target.value);setLaporanPage(1);}}
+          <input id="searchLaporan" value={searchLaporan} onChange={e=>{setSearchLaporan(e.target.value);setLaporanPage(1);}}
             placeholder="Cari nama teknisi, customer, ID job, atau layanan..."
             style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px 10px 38px",color:cs.text,fontSize:13,boxSizing:"border-box"}} />
           {searchLaporan && <button onClick={()=>{setSearchLaporan("");setLaporanPage(1);}} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:16}}>✕</button>}
@@ -5718,7 +5744,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
         {/* Search */}
         <div style={{position:"relative"}}>
           <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:cs.muted,fontSize:14,pointerEvents:"none"}}>&#128269;</span>
-          <input value={searchLaporan} onChange={e=>setSearchLaporan(e.target.value)}
+          <input id="searchLaporan" value={searchLaporan} onChange={e=>setSearchLaporan(e.target.value)}
             placeholder="Cari customer atau ID job..."
             style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px 10px 38px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
           {searchLaporan && <button onClick={()=>setSearchLaporan("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:20,lineHeight:1}}>x</button>}
@@ -5908,7 +5934,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
           return (
             <div key={f.k}>
               <div style={{ fontSize:11, color:cs.muted, marginBottom:3 }}>{f.label}</div>
-              <input type={f.t||"text"} placeholder={f.ph}
+              <input id="val" type={f.t||"text"} placeholder={f.ph}
                 value={val}
                 onChange={setter}
                 style={{ width:"100%", background:cs.surface, border:"1px solid "+(isSet?cs.green:cs.border), borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
@@ -6014,7 +6040,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
             {llmProvider === "ollama" && (
               <div style={{ marginTop:8 }}>
                 <div style={{ fontSize:11, color:cs.muted, marginBottom:4 }}>Atau ketik nama model custom (harus sama dengan <code style={{background:cs.surface,padding:"1px 5px",borderRadius:3}}>ollama list</code>):</div>
-                <input value={llmModel} onChange={e=>setLlmModel(e.target.value)} placeholder="contoh: llama3, mistral, qwen2.5:7b ..."
+                <input id="llmModel" value={llmModel} onChange={e=>setLlmModel(e.target.value)} placeholder="contoh: llama3, mistral, qwen2.5:7b ..."
                   style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.accent+"44", borderRadius:7, padding:"8px 11px", color:cs.text, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }} />
               </div>
             )}
@@ -6192,8 +6218,8 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
             ))}
           </div>
           <div style={{ display:"grid", gap:8 }}>
-            <input placeholder={dbProvider==="supabase"?"Supabase URL":"Host / Connection String"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
-            <input type="password" placeholder={dbProvider==="supabase"?"Supabase Anon Key":"Password / Secret Key"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
+            <input id="field_5" placeholder={dbProvider==="supabase"?"Supabase URL":"Host / Connection String"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
+            <input id="field_password_6" type="password" placeholder={dbProvider==="supabase"?"Supabase Anon Key":"Password / Secret Key"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
             <button onClick={() => { showNotif("Mencoba koneksi database..."); setTimeout(() => showNotif("Database terkoneksi! Tables: 15"), 2000); }}
               style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"9px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:700 }}>🔌 Test Koneksi</button>
           </div>
@@ -6348,13 +6374,13 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
 
             <div style={{ marginBottom:12 }}>
               <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Email</div>
-              <input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
+              <input id="loginEmail" type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
                 placeholder="email@aclean.id"
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"11px 14px", color:cs.text, fontSize:14, outline:"none", boxSizing:"border-box" }} />
             </div>
             <div style={{ marginBottom:20 }}>
               <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Password</div>
-              <input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
+              <input id="loginPassword" type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && doLogin(loginEmail, loginPassword)}
                 placeholder="••••••••"
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"11px 14px", color:cs.text, fontSize:14, outline:"none", boxSizing:"border-box" }} />
@@ -6575,7 +6601,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               {[["Nama Customer","customer","text"],["Nomor HP","phone","text"],["Alamat Lengkap","address","text"],["Area / Kota","area","text"],["Catatan","notes","text"]].map(([label,key,type]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                  <input type={type} value={newOrderForm[key]||""} onChange={e => {
+                  <input id="field_7" type={type} value={newOrderForm[key]||""} onChange={e => {
                     const val = e.target.value;
                     if (key === "phone") {
                       const normVal = normalizePhone(val);
@@ -6645,7 +6671,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                 </div>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Jumlah Unit</div>
-                  <input type="number" min="1" max="20" value={newOrderForm.units} onChange={e => setNewOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
+                  <input id="field_number_8" type="number" min="1" max="20" value={newOrderForm.units} onChange={e => setNewOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               </div>
@@ -6705,7 +6731,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                 </div>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Tanggal</div>
-                  <input type="date" value={newOrderForm.date} onChange={e => setNewOrderForm(f=>({...f,date:e.target.value}))}
+                  <input id="field_date_9" type="date" value={newOrderForm.date} onChange={e => setNewOrderForm(f=>({...f,date:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               </div>
@@ -6742,7 +6768,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                         );
                       })}
                     </div>
-                    <input type="time" min="09:00" max="17:00" value={newOrderForm.time||"09:00"} onChange={e=>setNewOrderForm(f=>({...f,time:e.target.value}))}
+                    <input id="field_time_10" type="time" min="09:00" max="17:00" value={newOrderForm.time||"09:00"} onChange={e=>setNewOrderForm(f=>({...f,time:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                     {/* Estimasi durasi & jam selesai */}
                     <div style={{ marginTop:8, background:avail?cs.green+"10":cs.red+"10", border:"1px solid "+(avail?cs.green:cs.red)+"22", borderRadius:8, padding:"8px 12px", display:"flex", gap:12, flexWrap:"wrap", fontSize:12 }}>
@@ -6833,7 +6859,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               {[["Nama Material","name","text"],["Satuan","unit","text"],["Harga/Unit","price","number"],["Stok Awal","stock","number"],["Reorder Point","reorder","number"],["Min Alert","min_alert","number"]].map(([label,key,type]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>{label}</div>
-                  <input type={type} value={newStokForm[key]||""} onChange={e => setNewStokForm(f=>({...f,[key]:e.target.value}))}
+                  <input id="field_11" type={type} value={newStokForm[key]||""} onChange={e => setNewStokForm(f=>({...f,[key]:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
@@ -6887,24 +6913,24 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Stok Saat Ini</div>
-                    <input type="number" value={newStokForm.stock ?? editStokItem.stock} onChange={e=>setNewStokForm(f=>({...f,stock:e.target.value}))}
+                    <input id="field_number_12" type="number" value={newStokForm.stock ?? editStokItem.stock} onChange={e=>setNewStokForm(f=>({...f,stock:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Tambah (+)</div>
-                    <input type="number" min="0" placeholder="0" value={newStokForm.tambah||""} onChange={e=>setNewStokForm(f=>({...f,tambah:e.target.value}))}
+                    <input id="field_number_13" type="number" min="0" placeholder="0" value={newStokForm.tambah||""} onChange={e=>setNewStokForm(f=>({...f,tambah:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                 </div>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Harga/Unit</div>
-                    <input type="number" value={newStokForm.price ?? editStokItem.price} onChange={e=>setNewStokForm(f=>({...f,price:e.target.value}))}
+                    <input id="field_number_14" type="number" value={newStokForm.price ?? editStokItem.price} onChange={e=>setNewStokForm(f=>({...f,price:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Reorder Point</div>
-                    <input type="number" value={newStokForm.reorder ?? editStokItem.reorder} onChange={e=>setNewStokForm(f=>({...f,reorder:e.target.value}))}
+                    <input id="field_number_15" type="number" value={newStokForm.reorder ?? editStokItem.reorder} onChange={e=>setNewStokForm(f=>({...f,reorder:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                 </div>
@@ -6956,7 +6982,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               {[["Nama Lengkap","name"],["Nomor WA","phone"]].map(([label,key]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>{label}</div>
-                  <input value={newTeknisiForm[key]||""} onChange={e => setNewTeknisiForm(f=>({...f,[key]:e.target.value}))}
+                  <input id="field_16" value={newTeknisiForm[key]||""} onChange={e => setNewTeknisiForm(f=>({...f,[key]:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
@@ -6972,7 +6998,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               {!editTeknisi && (
                 <div style={{background:cs.card,border:"1px solid "+(newTeknisiForm.buatAkun?cs.accent:cs.border),borderRadius:10,padding:"12px 14px"}}>
                   <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-                    <input type="checkbox" checked={!!newTeknisiForm.buatAkun}
+                    <input id="field_checkbox_17" type="checkbox" checked={!!newTeknisiForm.buatAkun}
                       onChange={e=>setNewTeknisiForm(f=>({...f,buatAkun:e.target.checked,email:"",password:""}))}
                       style={{width:16,height:16,accentColor:cs.accent}} />
                     <div>
@@ -6984,13 +7010,13 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                     <div style={{marginTop:12,display:"grid",gap:8}}>
                       <div>
                         <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Email Login</div>
-                        <input type="email" value={newTeknisiForm.email||""} placeholder="contoh: mulyadi@aclean.id"
+                        <input id="field_email_18" type="email" value={newTeknisiForm.email||""} placeholder="contoh: mulyadi@aclean.id"
                           onChange={e=>setNewTeknisiForm(f=>({...f,email:e.target.value}))}
                           style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"44",borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,boxSizing:"border-box",outline:"none"}} />
                       </div>
                       <div>
                         <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Password</div>
-                        <input type="password" value={newTeknisiForm.password||""} placeholder="min. 6 karakter"
+                        <input id="field_password_19" type="password" value={newTeknisiForm.password||""} placeholder="min. 6 karakter"
                           onChange={e=>setNewTeknisiForm(f=>({...f,password:e.target.value}))}
                           style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"44",borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,boxSizing:"border-box",outline:"none"}} />
                       </div>
@@ -7294,7 +7320,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               {[["Jasa / Labor (Rp)","labor"],["Material (Rp)","material"],["Pekerjaan Tambahan / Dadakan (Rp)","dadakan"]].map(([label,key]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                  <input type="number" min="0" value={editInvoiceForm[key]||0}
+                  <input id="field_number_20" type="number" min="0" value={editInvoiceForm[key]||0}
                     onChange={e=>setEditInvoiceForm(f=>({...f,[key]:parseInt(e.target.value)||0}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
@@ -7312,7 +7338,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               </div>
               <div key="notes">
                 <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Catatan Perubahan</div>
-                <input value={editInvoiceForm.notes||""} onChange={e=>setEditInvoiceForm(f=>({...f,notes:e.target.value}))}
+                <input id="field_21" value={editInvoiceForm.notes||""} onChange={e=>setEditInvoiceForm(f=>({...f,notes:e.target.value}))}
                   placeholder="Alasan perubahan nilai..."
                   style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
               </div>
@@ -7723,7 +7749,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                       ))}
                     </div>
                     <div style={{ padding:"10px 14px", borderTop:"1px solid "+cs.border, display:"flex", gap:8, flexShrink:0 }}>
-                      <input value={waInput} onChange={e => setWaInput(e.target.value)}
+                      <input id="waInput" value={waInput} onChange={e => setWaInput(e.target.value)}
                         onKeyDown={async e => { if(e.key==="Enter" && waInput.trim() && selectedConv){
                           const ok = await sendWA(selectedConv.phone, waInput);
                           addAgentLog("WA_SENT_MANUAL",`Manual reply ke ${selectedConv.name}: "${waInput.slice(0,40)}"`,"SUCCESS");
@@ -7874,7 +7900,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 {[["Nama Lengkap","name","text","Nama lengkap anggota"],["Email Login","email","email","nama@aclean.id"],["Nomor HP","phone","text","628812xxx"]].map(([label,key,type,ph]) => (
                   <div key={key}>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                    <input type={type} value={newUserForm[key]||""} onChange={e => setNewUserForm(f=>({...f,[key]:e.target.value}))}
+                    <input id="field_22" type={type} value={newUserForm[key]||""} onChange={e => setNewUserForm(f=>({...f,[key]:e.target.value}))}
                       placeholder={ph}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
@@ -7892,7 +7918,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                       </div>
                     </div>
                   ) : (
-                    <input type="password" value={newUserForm.password||""} onChange={e => setNewUserForm(f=>({...f,password:e.target.value}))}
+                    <input id="field_password_23" type="password" value={newUserForm.password||""} onChange={e => setNewUserForm(f=>({...f,password:e.target.value}))}
                       placeholder="min 8 karakter"
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   )}
@@ -7939,7 +7965,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
               {[["Nama Lengkap","name","text","Nama customer"],["Nomor HP","phone","text","628xxx"],["Alamat Lengkap","address","text","Jl. ..."],["Area/Kecamatan","area","text","Alam Sutera, BSD, dll"]].map(([lbl,key,type,ph])=>(
                 <div key={key}>
                   <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>{lbl}</div>
-                  <input type={type} value={newCustomerForm[key]||""} onChange={e=>setNewCustomerForm(f=>({...f,[key]:e.target.value}))}
+                  <input id="field_24" type={type} value={newCustomerForm[key]||""} onChange={e=>setNewCustomerForm(f=>({...f,[key]:e.target.value}))}
                     placeholder={ph} style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"10px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                 </div>
               ))}
@@ -8039,7 +8065,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                   {[["Nama Customer","customer","text"],["No. HP","phone","text"],["Alamat Lengkap","address","text"]].map(([lbl,key,type])=>(
                     <div key={key}>
                       <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>{lbl}</div>
-                      <input type={type} value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
+                      <input id="field_25" type={type} value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
                         style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                     </div>
                   ))}
@@ -8059,7 +8085,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                   </div>
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Jumlah Unit</div>
-                    <input type="number" min="1" max="20" value={editOrderForm.units||1} onChange={e=>setEditOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
+                    <input id="field_number_26" type="number" min="1" max="20" value={editOrderForm.units||1} onChange={e=>setEditOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                   </div>
                 </div>
@@ -8071,12 +8097,12 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Tanggal</div>
-                    <input type="date" value={editOrderForm.date||""} onChange={e=>setEditOrderForm(f=>({...f,date:e.target.value}))}
+                    <input id="field_date_27" type="date" value={editOrderForm.date||""} onChange={e=>setEditOrderForm(f=>({...f,date:e.target.value}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                   </div>
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Jam Mulai</div>
-                    <input type="time" min="09:00" max="17:00" value={editOrderForm.time||"09:00"} onChange={e=>setEditOrderForm(f=>({...f,time:e.target.value}))}
+                    <input id="field_time_28" type="time" min="09:00" max="17:00" value={editOrderForm.time||"09:00"} onChange={e=>setEditOrderForm(f=>({...f,time:e.target.value}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                   </div>
                 </div>
@@ -8124,7 +8150,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 </div>
                 <div>
                   <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Catatan Perubahan</div>
-                  <input value={editOrderForm.notes||""} onChange={e=>setEditOrderForm(f=>({...f,notes:e.target.value}))}
+                  <input id="field_29" value={editOrderForm.notes||""} onChange={e=>setEditOrderForm(f=>({...f,notes:e.target.value}))}
                     placeholder="Alasan perubahan..." style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                 </div>
               </div>
@@ -9017,7 +9043,7 @@ Silakan approve di menu Invoice. — ARA`;
                           <div style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 12px",fontSize:12,color:cs.text}}>
                             <span style={{color:cs.accent,fontWeight:700}}>Unit {u.unit_no}</span>
                           </div>
-                          <input value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Lokasi/nama unit..."
+                          <input id="field_30" value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Lokasi/nama unit..."
                             style={{width:140,background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           {laporanUnits.length>1&&(
                             <button onClick={()=>{const nu=laporanUnits.filter((_,i)=>i!==idx).map((u2,i)=>({...u2,unit_no:i+1}));setLaporanUnits(nu);setActiveUnitIdx(Math.max(0,idx-1));}}
@@ -9081,12 +9107,12 @@ Silakan approve di menu Invoice. — ARA`;
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Merk</div>
-                            <input value={u.merk} onChange={e=>upd({merk:e.target.value})} placeholder="Daikin..."
+                            <input id="field_31" value={u.merk} onChange={e=>upd({merk:e.target.value})} placeholder="Daikin..."
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>PK</div>
-                            <input value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
+                            <input id="field_32" value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         </div>
@@ -9096,7 +9122,7 @@ Silakan approve di menu Invoice. — ARA`;
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
                             {KONDISI_SBL.map(k=>(
                               <label key={k} style={tagStyle(u.kondisi_sebelum.includes(k),cs.yellow)}>
-                                <input type="checkbox" checked={u.kondisi_sebelum.includes(k)} onChange={()=>upd({kondisi_sebelum:toggleArr(u.kondisi_sebelum,k)})} style={{accentColor:cs.yellow}}/>{k}
+                                <input id="field_checkbox_33" type="checkbox" checked={u.kondisi_sebelum.includes(k)} onChange={()=>upd({kondisi_sebelum:toggleArr(u.kondisi_sebelum,k)})} style={{accentColor:cs.yellow}}/>{k}
                               </label>
                             ))}
                           </div>
@@ -9107,7 +9133,7 @@ Silakan approve di menu Invoice. — ARA`;
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
                             {PEKERJAAN_OPT(laporanModal?.service||"Cleaning").map(k=>(
                               <label key={k} style={tagStyle(u.pekerjaan.includes(k),cs.accent)}>
-                                <input type="checkbox" checked={u.pekerjaan.includes(k)} onChange={()=>upd({pekerjaan:toggleArr(u.pekerjaan,k)})} style={{accentColor:cs.accent}}/>{k}
+                                <input id="field_checkbox_34" type="checkbox" checked={u.pekerjaan.includes(k)} onChange={()=>upd({pekerjaan:toggleArr(u.pekerjaan,k)})} style={{accentColor:cs.accent}}/>{k}
                               </label>
                             ))}
                           </div>
@@ -9118,7 +9144,7 @@ Silakan approve di menu Invoice. — ARA`;
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
                             {KONDISI_SDH.map(k=>(
                               <label key={k} style={tagStyle(u.kondisi_setelah.includes(k),cs.green)}>
-                                <input type="checkbox" checked={u.kondisi_setelah.includes(k)} onChange={()=>upd({kondisi_setelah:toggleArr(u.kondisi_setelah,k)})} style={{accentColor:cs.green}}/>{k}
+                                <input id="field_checkbox_35" type="checkbox" checked={u.kondisi_setelah.includes(k)} onChange={()=>upd({kondisi_setelah:toggleArr(u.kondisi_setelah,k)})} style={{accentColor:cs.green}}/>{k}
                               </label>
                             ))}
                           </div>
@@ -9127,12 +9153,12 @@ Silakan approve di menu Invoice. — ARA`;
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Tekanan Freon (psi)</div>
-                            <input type="number" value={u.freon_ditambah} onChange={e=>upd({freon_ditambah:e.target.value})} placeholder="0" min="0" step="0.1"
+                            <input id="field_number_36" type="number" value={u.freon_ditambah} onChange={e=>upd({freon_ditambah:e.target.value})} placeholder="0" min="0" step="0.1"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Ampere Akhir (A)</div>
-                            <input type="number" value={u.ampere_akhir} onChange={e=>upd({ampere_akhir:e.target.value})} placeholder="0.0" min="0" step="0.1"
+                            <input id="field_number_37" type="number" value={u.ampere_akhir} onChange={e=>upd({ampere_akhir:e.target.value})} placeholder="0.0" min="0" step="0.1"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         </div>
@@ -9175,7 +9201,7 @@ Silakan approve di menu Invoice. — ARA`;
                             {item.label}
                             <span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
                           </div>
-                          <input type="number" min="0" step={item.satuan==="meter"?"0.5":"1"}
+                          <input id="field_number_38" type="number" min="0" step={item.satuan==="meter"?"0.5":"1"}
                             value={laporanInstallItems[item.key]??""}
                             onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
                             placeholder="0"
@@ -9218,19 +9244,19 @@ Silakan approve di menu Invoice. — ARA`;
                     {laporanMaterials.map(mat=>(
                       <div key={mat.id} style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                          <input value={mat.nama} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,nama:e.target.value}:m))} placeholder="Nama material..."
+                          <input id="field_39" value={mat.nama} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,nama:e.target.value}:m))} placeholder="Nama material..."
                             style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
                           <button onClick={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
                             style={{marginLeft:8,background:"#ef444422",border:"1px solid #ef444433",color:"#ef4444",borderRadius:7,padding:"8px 10px",cursor:"pointer",fontSize:14,lineHeight:1,fontWeight:700}}>×</button>
                         </div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                          <input type="number" value={mat.jumlah} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:e.target.value}:m))} placeholder="Jml" min="0"
+                          <input id="field_number_40" type="number" value={mat.jumlah} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:e.target.value}:m))} placeholder="Jml" min="0"
                             style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
                           <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
                             style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
                             {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
                           </select>
-                          <input value={mat.keterangan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,keterangan:e.target.value}:m))} placeholder="Keterangan..."
+                          <input id="field_41" value={mat.keterangan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,keterangan:e.target.value}:m))} placeholder="Keterangan..."
                             style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                         </div>
                       </div>
@@ -9263,7 +9289,7 @@ Silakan approve di menu Invoice. — ARA`;
                           style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>+ Foto</button>
                       )}
                     </div>
-                    <input ref={fotoInputRef} type="file" accept="image/*" multiple onChange={handleFotoUpload} style={{display:"none"}}/>
+                    <input id="field_file_42" ref={fotoInputRef} type="file" accept="image/*" multiple onChange={handleFotoUpload} style={{display:"none"}}/>
                     {laporanFotos.length===0?(
                       <div onClick={()=>fotoInputRef.current?.click()}
                         style={{border:"1px dashed "+cs.border,borderRadius:10,padding:"20px",textAlign:"center",cursor:"pointer",color:cs.muted,fontSize:12}}>
@@ -9279,7 +9305,7 @@ Silakan approve di menu Invoice. — ARA`;
                             </div>
                             <button onClick={()=>setLaporanFotos(p=>p.filter(x=>x.id!==f.id))}
                               style={{position:"absolute",top:4,left:4,background:"#ef4444cc",border:"none",color:"#fff",borderRadius:99,width:18,height:18,cursor:"pointer",fontSize:10,lineHeight:1,padding:0}}>×</button>
-                            <input value={f.label} onChange={e=>setLaporanFotos(p=>p.map(x=>x.id===f.id?{...x,label:e.target.value}:x))}
+                            <input id="field_43" value={f.label} onChange={e=>setLaporanFotos(p=>p.map(x=>x.id===f.id?{...x,label:e.target.value}:x))}
                               placeholder="Label foto..." style={{marginTop:3,width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:5,padding:"4px 6px",color:cs.text,fontSize:10,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         ))}
