@@ -189,7 +189,7 @@ const PRICE_LIST_DEFAULT = {
     "default":                       0,
   },
   "freon_R22":   150000,
-  "freon_R410A": 180000,
+  "freon_R410A": 450000,  // harga aktual — diupdate dari DB via price_list
   "freon_R32":   160000,
 };
 // PRICE_LIST akan di-replace oleh data DB setelah loadAll() — jangan edit langsung
@@ -815,37 +815,31 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     if (Array.isArray(md)) return md;
     try { return JSON.parse(md); } catch(_) { return []; }
   })();
-    let matRowsHtml = "";
-    if (matDetails.length > 0 || (inv.material||0) > 0) {
-      if (matDetails.length === 0) {
-        // Fallback: tidak ada detail
-        matRowsHtml = '<tr><td style="color:#64748b;font-style:italic">Material &amp; Spare Part</td>'
-          + '<td style="text-align:center">—</td><td style="text-align:right">—</td>'
-          + '<td style="text-align:right;font-family:monospace;font-weight:600">'
-          + (inv.material||0).toLocaleString("id-ID") + "</td></tr>";
-      } else {
-        matRowsHtml = '<tr style="background:#f1f5f9"><td colspan="4" style="font-weight:800;color:#1e40af;padding:8px 12px;font-size:11px">📦 MATERIAL &amp; SPARE PART</td></tr>';
-        matDetails.forEach(m => {
-          const hargaStr = m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—";
-          const subStr   = m.subtotal > 0    ? m.subtotal.toLocaleString("id-ID")     : "—";
-          const namaLabel = m.keterangan
-            ? m.nama + ' <span style="color:#64748b;font-size:10px">(' + m.keterangan + ")</span>"
-            : m.nama;
-          matRowsHtml += "<tr>"
-            + '<td style="padding-left:24px">↳ ' + namaLabel + "</td>"
-            + '<td style="text-align:center">' + m.jumlah + " " + (m.satuan||"") + "</td>"
-            + '<td style="text-align:right;font-family:monospace">' + hargaStr + "</td>"
-            + '<td style="text-align:right;font-family:monospace;font-weight:600">' + subStr + "</td>"
-            + "</tr>";
-        });
-        const totalMat = matDetails.reduce((s,m) => s+(m.subtotal||0), 0) || (inv.material||0);
-        matRowsHtml += '<tr style="background:#eff6ff">'
-          + '<td colspan="3" style="text-align:right;font-weight:700;color:#1e40af;font-size:11px">Subtotal Material</td>'
-          + '<td style="text-align:right;font-family:monospace;font-weight:700;color:#1e40af">'
-          + totalMat.toLocaleString("id-ID") + "</td></tr>";
-      }
-    }
-
+  let matRowsHtml = "";
+  if (matDetails.length > 0) {
+    // Per-item: setiap material = 1 baris di tabel
+    matDetails.forEach(m => {
+      const hSatStr = m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—";
+      const subStr  = m.subtotal     > 0 ? m.subtotal.toLocaleString("id-ID")     : "—";
+      const label   = m.nama + (m.keterangan ? ' <span style="color:#64748b;font-size:10px">(' + m.keterangan + ")</span>" : "");
+      matRowsHtml +=
+        "<tr>" +
+        '<td>' + label + "</td>" +
+        '<td style="text-align:center">' + m.jumlah + " " + (m.satuan||"") + "</td>" +
+        '<td style="text-align:right;font-family:monospace">' + hSatStr + "</td>" +
+        '<td style="text-align:right;font-family:monospace;font-weight:600">' + subStr + "</td>" +
+        "</tr>";
+    });
+  } else if ((inv.material||0) > 0) {
+    // Fallback: tidak ada detail → satu baris Material
+    matRowsHtml =
+      '<tr>' +
+      '<td style="color:#64748b">Material &amp; Spare Part</td>' +
+      '<td style="text-align:center">—</td>' +
+      '<td style="text-align:right">—</td>' +
+      '<td style="text-align:right;font-family:monospace;font-weight:600">' +
+      (inv.material||0).toLocaleString("id-ID") + "</td></tr>";
+  }
     const html = `<!DOCTYPE html>
 <html lang="id">
 <head>
@@ -935,7 +929,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   <table>
     <thead>
       <tr>
-        <th>Deskripsi Layanan</th>
+        <th>Deskripsi</th>
         <th style="text-align:center">Unit</th>
         <th style="text-align:right">Harga/Unit</th>
         <th style="text-align:right">Subtotal</th>
@@ -1703,17 +1697,20 @@ Kamu ditugaskan sebagai Helper. — AClean`;
 
   const hitungMaterialTotal = (materials) => {
     return materials.reduce((sum, m) => {
-      const nama = (m.nama||"").toLowerCase();
-      // Cari di inventory dulu
-      const invItem = inventoryData.find(i =>
-        i.name.toLowerCase().includes(nama) || nama.includes(i.name.toLowerCase())
-      );
-      // Fallback ke PRICE_LIST freon jika tidak ada di inventory
+      const nama = (m.nama||"").toLowerCase().trim();
+      // Normalisasi nama freon untuk matching: "freon r-410" ↔ "freon r410a"
+      const normNama = nama.replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+      // Cari di inventory dengan fuzzy match
+      const invItem = inventoryData.find(inv => {
+        const n = inv.name.toLowerCase().replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+        return n.includes(normNama) || normNama.includes(n);
+      });
       let harga = invItem ? invItem.price : 0;
+      // Fallback ke PRICE_LIST jika tidak ada di inventory
       if (!harga) {
-        if (nama.includes("r-22") || nama.includes("r22"))   harga = PRICE_LIST["freon_R22"]   || 150000;
-        else if (nama.includes("r-32") || nama.includes("r32")) harga = PRICE_LIST["freon_R32"] || 160000;
-        else if (nama.includes("r-410") || nama.includes("r410") || nama.includes("r410a")) harga = PRICE_LIST["freon_R410A"] || 180000;
+        if      (nama.includes("r-22")||nama.includes("r22"))  harga = PRICE_LIST["freon_R22"]   || 150000;
+        else if (nama.includes("r-32")||nama.includes("r32"))  harga = PRICE_LIST["freon_R32"]   || 160000;
+        else if (nama.includes("r-410")||nama.includes("r410")) harga = PRICE_LIST["freon_R410A"] || 450000;
       }
       return sum + (harga * (parseFloat(m.jumlah) || 0));
     }, 0);
@@ -8580,14 +8577,16 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
         .filter(m => m.nama && (parseFloat(m.jumlah) || 0) > 0)
         .map(m => {
           const nama2   = (m.nama || "").toLowerCase();
-          const invItem = inventoryData.find(inv =>
-            inv.name.toLowerCase().includes(nama2) || nama2.includes(inv.name.toLowerCase())
-          );
+          const normNama2 = nama2.replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+          const invItem = inventoryData.find(inv => {
+            const n = inv.name.toLowerCase().replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+            return n.includes(normNama2) || normNama2.includes(n);
+          });
           let hSat = invItem?.price || 0;
           if (!hSat) {
             if      (nama2.includes("r-22")  || nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 150000;
             else if (nama2.includes("r-32")  || nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 160000;
-            else if (nama2.includes("r-410") || nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 180000;
+            else if (nama2.includes("r-410") || nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
           }
           const rawQty = parseFloat(m.jumlah) || 0;
           const isF    = ["freon","r-22","r-32","r-410"].some(k => nama2.includes(k));
