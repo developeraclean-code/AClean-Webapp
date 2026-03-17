@@ -8284,416 +8284,414 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
           e.target.value = "";
         };
 
-        const submitLaporan = async () => {
-          // Install skip step 2 (detail unit) — validasi pekerjaan tidak diperlukan
-          if(incompleteUnits.length>0 && !isInstall){
-            showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);
-            return;
-          }
-          // Cek foto gagal upload — warn tapi tidak block (sesuai keputusan: teknisi bisa reupload manual)
-          const fotoGagal = laporanFotos.filter(f=>!f.url).length;
-          if(fotoGagal > 0) {
-            const lanjut = window.confirm(`⚠️ ${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).
+  const submitLaporan = async () => {
+    // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
+    const isInstall = laporanModal?.service === "Install";
 
-Lanjutkan submit laporan tanpa foto tersebut?
+    // ── 2. Validasi unit untuk non-Install ──
+    if (!isInstall && incompleteUnits.length > 0) {
+      showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);
+      return;
+    }
 
-• OK = lanjut submit
-• Batal = kembali & hapus foto gagal lalu upload ulang`);
-            if(!lanjut) return;
-          }
-          const now = new Date().toLocaleString("id-ID",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).replace(/\//g,"-");
-    // ── Report Install: convert installItems → materials format ──
-    const isInstall = isInstallJob; // ref dari STEP_LABELS area
+    // ── 3. Cek foto gagal upload ──
+    const fotoGagal = laporanFotos.filter(f => !f.url).length;
+    if (fotoGagal > 0) {
+      const lanjut = window.confirm(
+        `⚠️ ${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).
+
+` +
+        `Lanjutkan submit laporan tanpa foto tersebut?
+
+` +
+        `• OK = lanjut submit
+• Batal = kembali & hapus foto gagal lalu upload ulang`
+      );
+      if (!lanjut) return;
+    }
+
+    // ── 4. Siapkan materials yang efektif ──
+    // Install: pakai laporanInstallItems, lainnya: pakai laporanMaterials
     const effectiveMaterials = isInstall
       ? INSTALL_ITEMS
-          .filter(item => parseFloat(laporanInstallItems[item.key]||0) > 0)
+          .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
           .map(item => ({
-            id: item.key, nama: item.label,
-            jumlah: parseFloat(laporanInstallItems[item.key]||0),
-            satuan: item.satuan, keterangan: ""
+            id: item.key,
+            nama: item.label,
+            jumlah: parseFloat(laporanInstallItems[item.key] || 0),
+            satuan: item.satuan,
+            keterangan: "",
           }))
       : laporanMaterials;
 
-          const newReport = {
-            // If rewriting existing report, reuse same ID (upsert overwrites)
-            id: laporanModal._rewriteId || ("LPR_"+laporanModal.id+"_"+Date.now().toString(36).slice(-4).toUpperCase()),
-            job_id:laporanModal.id, teknisi:laporanModal.teknisi, helper:laporanModal.helper||null,
-            // ── GAP-07 FIX: is_substitute = true jika helper lapor sebagai pengganti teknisi utama ──
-            is_substitute: (currentUser?.role==="Helper" && currentUser?.name===laporanModal.helper && !teknisiData.find(t=>t.name===laporanModal.teknisi&&t.status!=="standby")) || false,
-            customer:laporanModal.customer, service:laporanModal.service, date:laporanModal.date,
-            submitted:now, status:"SUBMITTED", total_units:laporanUnits.length,
-            units:laporanUnits, materials:effectiveMaterials,
-            fotos:laporanFotos.map(f=>({id:f.id,label:f.label})),
-            total_freon:totalFreon, rekomendasi:laporanRekomendasi, catatan_global:laporanCatatan,
-            unit_mismatch: laporanUnits.length!==(laporanModal.units||1),
-            editLog: laporanModal._rewriteId ? [{
-              by: currentUser?.name||"Teknisi", at: new Date().toLocaleString("id-ID"),
-              field:"full_rewrite", old:"(laporan lama)", new:"Laporan ditulis ulang dari awal"
-            }] : []
+    const now = new Date().toLocaleString("id-ID", {
+      year:"numeric", month:"2-digit", day:"2-digit",
+      hour:"2-digit", minute:"2-digit"
+    });
+    const totalFreonLocal = laporanUnits.reduce((s, u) => s + (parseFloat(u.freon_ditambah) || 0), 0);
+
+    // ── 5. Buat objek laporan ──
+    const newReport = {
+      id: laporanModal._rewriteId || ("LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase()),
+      job_id:   laporanModal.id,
+      teknisi:  laporanModal.teknisi,
+      helper:   laporanModal.helper || null,
+      is_substitute: (currentUser?.role === "Helper" &&
+        currentUser?.name === laporanModal.helper &&
+        !teknisiData.find(t => t.role === "Teknisi" && t.name === laporanModal.helper)),
+      customer: laporanModal.customer,
+      service:  laporanModal.service,
+      date:     laporanModal.date,
+      submitted: now,
+      status:   "SUBMITTED",
+      total_units: laporanUnits.length,
+      units:    laporanUnits,
+      materials: effectiveMaterials,
+      fotos:    laporanFotos.map(f => ({ id: f.id, label: f.label })),
+      total_freon: totalFreonLocal,
+      rekomendasi: laporanRekomendasi,
+      catatan_global: laporanCatatan,
+      unit_mismatch: laporanUnits.length !== (laporanModal.units || 1),
+      editLog: laporanModal._rewriteId ? [{
+        by: currentUser?.name || "Teknisi",
+        at: new Date().toLocaleString("id-ID"),
+        field: "full_rewrite",
+        old: "(laporan lama)",
+        new: "Laporan ditulis ulang dari awal",
+      }] : [],
+    };
+
+    setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), newReport]);
+
+    // ── 6. WA notif ke Admin/Owner ──
+    const adminUsers = userAccounts.filter(u => u.role === "Admin" || u.role === "Owner");
+    const matCount = isInstall
+      ? INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length
+      : laporanMaterials.length;
+    const notifMsg =
+      `📋 *Laporan Selesai*
+
+` +
+      `Job: *${laporanModal.id}*
+` +
+      `Customer: ${laporanModal.customer}
+` +
+      `Teknisi: ${laporanModal.teknisi}${laporanModal.helper ? " + " + laporanModal.helper : ""}
+` +
+      `Layanan: ${laporanModal.service} — ${laporanUnits.length} unit
+` +
+      `Material: ${matCount} item
+` +
+      `Foto: ${laporanFotos.filter(f => f.url).length} foto
+
+` +
+      `Silakan buat invoice dari ARA Chat 👆`;
+    adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
+
+    // ── 7. Simpan laporan ke Supabase (3 attempt) ──
+    showNotif("⏳ Menyimpan laporan ke server...");
+    const basePayload = {
+      id:             newReport.id,
+      job_id:         newReport.job_id,
+      teknisi:        newReport.teknisi,
+      helper:         newReport.helper,
+      customer:       newReport.customer,
+      service:        newReport.service,
+      date:           newReport.date,
+      status:         "SUBMITTED",
+      total_units:    newReport.total_units,
+      total_freon:    newReport.total_freon,
+      rekomendasi:    newReport.rekomendasi,
+      catatan_global: newReport.catatan_global,
+      submitted_at:   new Date().toISOString(),
+      foto_urls:      laporanFotos.filter(f => f.url).map(f => f.url),
+    };
+
+    let savedOk = false;
+    { // Attempt 1: full payload dengan JSON cols
+      const { error: e1 } = await supabase.from("service_reports").upsert({
+        ...basePayload,
+        materials_json: JSON.stringify(effectiveMaterials),
+        units_json:     JSON.stringify(laporanUnits),
+      }, { onConflict: "id" });
+      if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
+      else console.warn("Attempt 1 failed:", e1.message);
+    }
+    if (!savedOk) { // Attempt 2: tanpa JSON cols
+      const { error: e2 } = await supabase.from("service_reports").upsert(
+        basePayload, { onConflict: "id" }
+      );
+      if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
+      else console.warn("Attempt 2 failed:", e2.message);
+    }
+    if (!savedOk) { // Attempt 3: minimal
+      const { error: e3 } = await supabase.from("service_reports").upsert({
+        id: newReport.id, job_id: newReport.job_id,
+        teknisi: newReport.teknisi, customer: newReport.customer,
+        service: newReport.service, date: newReport.date,
+        status: "SUBMITTED", total_units: newReport.total_units,
+        submitted_at: new Date().toISOString(),
+      }, { onConflict: "id" });
+      if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
+      else { console.error("All upsert attempts failed:", e3.message); showNotif("❌ Gagal simpan: " + e3.message); }
+    }
+
+    // ── 8. Reload laporan (backup, realtime juga akan trigger) ──
+    const reloadLaporan = async () => {
+      const { data } = await supabase.from("service_reports")
+        .select("*").order("submitted_at", { ascending: false });
+      if (data?.length > 0) {
+        setLaporanReports(data.map(r => ({
+          ...r,
+          units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
+          materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials || []; } })() : (r.materials || []),
+          fotos:     r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i+1}`, url })),
+          editLog:   safeArr(r.edit_log ?? r.editLog),
+        })));
+      }
+    };
+    setTimeout(reloadLaporan, 800);
+    setTimeout(reloadLaporan, 3000);
+
+    // ── 9. Update order status ──
+    setOrdersData(prev => prev.map(o =>
+      o.id === laporanModal.id ? { ...o, status: "REPORT_SUBMITTED" } : o
+    ));
+    {
+      const { error: ordErr } = await supabase.from("orders")
+        .update({ status: "REPORT_SUBMITTED" }).eq("id", laporanModal.id);
+      if (ordErr) {
+        console.warn("REPORT_SUBMITTED rejected — fallback COMPLETED:", ordErr.message);
+        await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", laporanModal.id);
+      }
+    }
+
+    // ── 10. Update status teknisi → active ──
+    ["teknisi","helper"].forEach(role => {
+      const name = role === "teknisi" ? laporanModal.teknisi : laporanModal.helper;
+      if (!name) return;
+      const tek = teknisiData.find(t => t.name === name);
+      if (!tek?.id) return;
+      setTeknisiData(prev => prev.map(t => t.name === name ? { ...t, status: "active" } : t));
+      if (/^[0-9a-f-]{36}$/.test(tek.id)) {
+        supabase.from("user_profiles").update({ status: "active" }).eq("id", tek.id);
+      }
+    });
+
+    // ── 11. Deduct stok material (non-Install) ──
+    const materialsToDeduct = isInstall ? [] : laporanMaterials;
+    if (materialsToDeduct.length > 0) {
+      deductInventory(materialsToDeduct);
+      let deductedCount = 0;
+      const lowStockWarnings = [];
+      for (const mat of materialsToDeduct) {
+        const qty = parseFloat(mat.jumlah) || 0;
+        if (!mat.nama || qty <= 0) continue;
+        try {
+          const { data: items } = await supabase.from("inventory")
+            .select("id,name,code,stock,min_alert,reorder,unit")
+            .ilike("name", mat.nama.trim()).limit(1);
+          if (items?.length > 0) {
+            const itm = items[0];
+            const newStk = Math.max(0, (itm.stock || 0) - qty);
+            const newSts = newStk === 0 ? "OUT"
+              : newStk <= (itm.min_alert || 1) ? "CRITICAL"
+              : newStk <= (itm.reorder || 3) ? "WARNING" : "OK";
+            await supabase.from("inventory").update({
+              stock: newStk, status: newSts, updated_at: new Date().toISOString()
+            }).eq("id", itm.id);
+            deductedCount++;
+            addAgentLog("STOCK_DEDUCTED", `${itm.name}: -${qty} (sisa: ${newStk}) — job ${laporanModal.id}`, "SUCCESS");
+            if (newSts === "CRITICAL" || newSts === "OUT") lowStockWarnings.push(`${itm.name} sisa ${newStk}`);
+          }
+        } catch(e) {
+          addAgentLog("STOCK_DEDUCT_ERR", `Gagal deduct ${mat.nama}: ${e?.message}`, "ERROR");
+        }
+      }
+      if (lowStockWarnings.length > 0) {
+        showNotif("⚠️ Stok kritis: " + lowStockWarnings.join(", "));
+        const ownerAccs = userAccounts.filter(u => u.role === "Owner");
+        const lowMsg = "⚠️ *Stok Material Kritis*
+Setelah job " + laporanModal.id + ":
+" +
+          lowStockWarnings.map(w => "• " + w).join("
+");
+        ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
+      }
+    }
+
+    // ── 12. Auto-generate invoice ──
+    // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST
+    const laborTotalInv = hitungLabor(laporanModal.service, laporanModal.type, laporanUnits.length);
+    const matTotalInv   = hitungMaterialTotal(effectiveMaterials);
+    const invoiceTotal  = laborTotalInv + matTotalInv;
+    const todayInv      = new Date().toISOString().slice(0, 10);
+    const isComplainSvc = laporanModal.service === "Complain";
+    const isZeroTotal   = invoiceTotal === 0;
+
+    // Cek garansi aktif (untuk skip invoice Complain Rp 0)
+    const prevGaransiActive = isComplainSvc && isZeroTotal
+      ? invoicesData
+          .filter(inv =>
+            inv.customer === laporanModal.customer &&
+            inv.service  !== "Complain" &&
+            inv.garansi_expires &&
+            inv.garansi_expires >= todayInv &&
+            ["PAID","UNPAID","APPROVED"].includes(inv.status)
+          )
+          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
+      : null;
+
+    // Cek garansi expired (untuk biaya pengecekan Rp 100.000)
+    const prevGaransiExpired = isComplainSvc && isZeroTotal && !prevGaransiActive
+      ? invoicesData
+          .filter(inv =>
+            inv.customer === laporanModal.customer &&
+            inv.service  !== "Complain" &&
+            inv.garansi_expires &&
+            inv.garansi_expires < todayInv &&
+            ["PAID","UNPAID","APPROVED"].includes(inv.status)
+          )
+          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
+      : null;
+
+    const BIAYA_CEK = 100000;
+    const finalLabor = (isComplainSvc && isZeroTotal && prevGaransiExpired)
+      ? BIAYA_CEK : laborTotalInv;
+    const finalTotal = (isComplainSvc && isZeroTotal && prevGaransiExpired)
+      ? BIAYA_CEK : invoiceTotal;
+
+    if (isComplainSvc && isZeroTotal && prevGaransiActive) {
+      // SKIP invoice — dalam garansi
+      setOrdersData(prev => prev.map(o =>
+        o.id === laporanModal.id ? { ...o, status: "COMPLETED" } : o
+      ));
+      try { await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", laporanModal.id); } catch(_) {}
+      addAgentLog("GARANSI_SKIP_INVOICE",
+        `Complain ${laporanModal.id} — dalam garansi s/d ${prevGaransiActive.garansi_expires} ` +
+        `(ref: ${prevGaransiActive.id}) → invoice di-skip`, "SUCCESS");
+
+    } else {
+      // BUAT invoice
+      const invSeq     = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
+      const invId      = "INV-" + todayInv.replace(/-/g, "").slice(0, 8) + "-" + invSeq;
+      const gDays      = laporanModal.service === "Install" ? 90 : laporanModal.service === "Repair" ? 60 : 30;
+      const gExpires   = new Date(Date.now() + gDays * 86400000).toISOString().slice(0, 10);
+
+      // Build materials_detail dengan harga dari inventory
+      const mDetail = effectiveMaterials
+        .filter(m => m.nama && (parseFloat(m.jumlah) || 0) > 0)
+        .map(m => {
+          const nama2   = (m.nama || "").toLowerCase();
+          const invItem = inventoryData.find(inv =>
+            inv.name.toLowerCase().includes(nama2) || nama2.includes(inv.name.toLowerCase())
+          );
+          let hSat = invItem?.price || 0;
+          if (!hSat) {
+            if      (nama2.includes("r-22")  || nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 150000;
+            else if (nama2.includes("r-32")  || nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 160000;
+            else if (nama2.includes("r-410") || nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 180000;
+          }
+          const rawQty = parseFloat(m.jumlah) || 0;
+          const isF    = ["freon","r-22","r-32","r-410"].some(k => nama2.includes(k));
+          const qty    = isF ? Math.max(1, Math.ceil(rawQty)) : rawQty;
+          return {
+            nama: m.nama, jumlah: qty,
+            satuan: m.satuan || (isF ? "kg" : "pcs"),
+            harga_satuan: hSat, subtotal: hSat * qty,
+            keterangan: m.keterangan || (isF && rawQty !== qty ? `Aktual: ${rawQty} kg → dibulatkan ${qty} kg` : ""),
           };
-          setLaporanReports(prev=>[...prev.filter(r=>r.job_id!==laporanModal.id),newReport]);
+        });
 
-          // ── Notifikasi Admin/Owner via WA saat laporan masuk ──
-          const adminUsers = userAccounts.filter(u => u.role==="Admin"||u.role==="Owner");
-          const notifMsg = `📋 *Laporan Selesai*
+      const newInvoice = {
+        id: invId, job_id: laporanModal.id,
+        customer: laporanModal.customer,
+        phone:    laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
+        service:  laporanModal.service + " - " + laporanModal.type,
+        units:    laporanUnits.length,
+        labor:    finalLabor,
+        material: matTotalInv,
+        materials_detail: mDetail,
+        dadakan:  0,
+        total:    finalTotal,
+        status:   "PENDING_APPROVAL",
+        garansi_days:    gDays,
+        garansi_expires: gExpires,
+        created_at: new Date().toISOString(),
+      };
 
-Job: *${laporanModal.id}*
-Customer: ${laporanModal.customer}
-Teknisi: ${laporanModal.teknisi}${laporanModal.helper?" + "+laporanModal.helper:""}
-Layanan: ${laporanModal.service} — ${laporanUnits.length} unit
-Material: ${laporanMaterials.length} item
-Foto: ${laporanFotos.filter(f=>f.url).length} foto
+      // Status override
+      if (isComplainSvc && finalTotal === 0) {
+        newInvoice.status   = "PAID";
+        newInvoice.paid_at  = new Date().toISOString();
+        addAgentLog("GARANSI_AUTO_PAID", `Invoice ${invId} Rp 0 → auto PAID`, "SUCCESS");
+      } else if (isComplainSvc && prevGaransiExpired) {
+        addAgentLog("GARANSI_EXPIRED_FEE",
+          `Invoice ${invId} — garansi expired (ref: ${prevGaransiExpired.id}) → biaya cek Rp ${BIAYA_CEK.toLocaleString("id-ID")}`,
+          "WARNING");
+      }
 
-Silakan buat invoice dari ARA Chat 👆`;
-          adminUsers.forEach(u => { if(u.phone) sendWA(u.phone, notifMsg); });
+      setInvoicesData(prev => [...prev, newInvoice]);
 
-          // Simpan laporan ke Supabase — AWAIT + fallback jika kolom JSON belum ada di schema
-          showNotif("⏳ Menyimpan laporan ke server...");
-          const basePayload = {
-            id: newReport.id, job_id: newReport.job_id, teknisi: newReport.teknisi,
-            helper: newReport.helper, customer: newReport.customer,
-            service: newReport.service, date: newReport.date,
-            status: "SUBMITTED", total_units: newReport.total_units,
-            total_freon: newReport.total_freon, rekomendasi: newReport.rekomendasi,
-            catatan_global: newReport.catatan_global,
-            submitted_at: new Date().toISOString(),
-            foto_urls: laporanFotos.filter(f=>f.url).map(f=>f.url),
-          };
+      // Simpan invoice ke Supabase
+      const invPayload = {
+        ...newInvoice,
+        materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
+      };
+      const { error: invErr } = await supabase.from("invoices").insert(invPayload);
+      if (invErr) {
+        console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
+        for (const st of ["PENDING_APPROVAL","UNPAID"]) {
+          const { error: e2 } = await supabase.from("invoices").insert({
+            id: newInvoice.id, job_id: newInvoice.job_id,
+            customer: newInvoice.customer, service: newInvoice.service,
+            units: newInvoice.units, labor: newInvoice.labor,
+            material: newInvoice.material, total: newInvoice.total,
+            status: st,
+          });
+          if (!e2) { console.log("✅ Invoice inserted:", st); break; }
+        }
+      }
 
-          // Simpan ke Supabase — bertahap dari lengkap ke minimal
-          let savedOk = false;
+      addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
 
-          // Attempt 1: full payload dengan JSON cols
-          {
-            const { error: e1 } = await supabase.from("service_reports").upsert({
-              ...basePayload,
-              materials_json: JSON.stringify(effectiveMaterials),
-              units_json:     JSON.stringify(laporanUnits),
-            }, { onConflict: "id" });
-            if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
-            else console.warn("Attempt 1 failed:", e1.message);
-          }
+      // WA notif ke Owner
+      const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
+      const ownerMsg =
+        `🔔 *Invoice Menunggu Approval*
 
-          // Attempt 2: tanpa JSON cols
-          if (!savedOk) {
-            const { error: e2 } = await supabase.from("service_reports").upsert(
-              basePayload, { onConflict: "id" }
-            );
-            if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
-            else console.warn("Attempt 2 failed:", e2.message);
-          }
+` +
+        `📋 Job: *${laporanModal.id}*
+` +
+        `👤 Customer: ${laporanModal.customer}
+` +
+        `🔧 Layanan: ${laporanModal.service} — ${laporanUnits.length} unit
+` +
+        `👷 Teknisi: ${laporanModal.teknisi}${laporanModal.helper ? " + " + laporanModal.helper : ""}
 
-          // Attempt 3: minimal — hanya kolom wajib
-          if (!savedOk) {
-            const minimal = {
-              id: newReport.id, job_id: newReport.job_id,
-              teknisi: newReport.teknisi, customer: newReport.customer,
-              service: newReport.service, date: newReport.date,
-              status: "SUBMITTED", total_units: newReport.total_units,
-              submitted_at: new Date().toISOString(),
-            };
-            const { error: e3 } = await supabase.from("service_reports").upsert(
-              minimal, { onConflict: "id" }
-            );
-            if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
-            else {
-              console.error("All upsert attempts failed:", e3.message);
-              showNotif("❌ Gagal simpan ke server: " + e3.message);
-            }
-          }
+` +
+        `💰 *Total: ${fmt(newInvoice.total)}*
+` +
+        `• Jasa: ${fmt(newInvoice.labor)}
+` +
+        `• Material: ${fmt(newInvoice.material)}
 
-          // Reload laporan untuk semua user setelah submit (realtime akan trigger, ini backup)
-          const reloadLaporan = async () => {
-            const { data, error } = await supabase
-              .from("service_reports")
-              .select("*")
-              .order("submitted_at", { ascending: false });
-            if (error) {
-              console.warn("Reload laporan error:", error.message);
-              return;
-            }
-            if (data && data.length > 0) {
-              setLaporanReports(data.map(r => ({
-                ...r,
-                units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){return r.units    ||[];} })() : (r.units    ||[]),
-                materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })() : (r.materials||[]),
-                fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
-                editLog:   safeArr(r.edit_log ?? r.editLog),
-              })));
-            }
-          };
-          setTimeout(reloadLaporan, 800);
-          setTimeout(reloadLaporan, 3000); // double-check setelah 3 detik
-
-          // Update order status ke REPORT_SUBMITTED — menunggu Admin/Owner buat & approve invoice
-          setOrdersData(prev => prev.map(o =>
-            o.id === laporanModal.id ? {...o, status:"REPORT_SUBMITTED"} : o
-          ));
-          // Update order status — after schema migration REPORT_SUBMITTED works
-          // Fallback chain: REPORT_SUBMITTED → COMPLETED (always in schema)
-          {
-            const { error: ordErr } = await supabase.from("orders")
-              .update({status:"REPORT_SUBMITTED"}).eq("id", laporanModal.id);
-            if (ordErr) {
-              console.warn("REPORT_SUBMITTED rejected:", ordErr.message, "— using COMPLETED");
-              await supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id);
-            }
-          }
-
-          // ── Teknisi SELESAI → status kembali "active" (siap terima job baru) ──
-          // Patokan: laporan disubmit = pekerjaan selesai secara aktual
-          const finTeknisi = teknisiData.find(t => t.name === laporanModal.teknisi);
-          if (finTeknisi?.id) {
-            setTeknisiData(prev => prev.map(t =>
-              t.name === laporanModal.teknisi ? {...t, status:"active"} : t
-            ));
-            // Only update if ID is a real Supabase UUID (not local demo ID like USR001)
-            if (finTeknisi.id && /^[0-9a-f-]{36}$/.test(finTeknisi.id)) {
-              supabase.from("user_profiles").update({status:"active"}).eq("id", finTeknisi.id);
-            }
-          }
-          // Helper juga kembali active
-          if (laporanModal.helper) {
-            const finHelper = teknisiData.find(t => t.name === laporanModal.helper);
-            if (finHelper?.id) {
-              setTeknisiData(prev => prev.map(t =>
-                t.name === laporanModal.helper ? {...t, status:"active"} : t
-              ));
-              if (finHelper.id && /^[0-9a-f-]{36}$/.test(finHelper.id)) {
-                supabase.from("user_profiles").update({status:"active"}).eq("id", finHelper.id);
-              }
-            }
-          }
-
-          // ══ GAP 3 FIX: Auto-deduct stok — direct DB update per material ══
-          if (laporanMaterials.length > 0) {
-            deductInventory(laporanMaterials); // update state lokal
-            let deductedCount = 0;
-            let lowStockWarnings = [];
-            for (const mat of laporanMaterials) {
-              const qty = parseFloat(mat.jumlah) || 0;
-              if (!mat.nama || qty <= 0) continue;
-              try {
-                // Cari item di inventory berdasarkan nama (case-insensitive)
-                const { data: items } = await supabase.from("inventory")
-                  .select("id,name,code,stock,min_alert,reorder,unit")
-                  .ilike("name", mat.nama.trim()).limit(1);
-                if (items && items.length > 0) {
-                  const itm = items[0];
-                  const newStk = Math.max(0, (itm.stock||0) - qty);
-                  const newSts = newStk===0?"OUT":newStk<=(itm.min_alert||1)?"CRITICAL":newStk<=(itm.reorder||3)?"WARNING":"OK";
-                  await supabase.from("inventory").update({
-                    stock: newStk, status: newSts, updated_at: new Date().toISOString()
-                  }).eq("id", itm.id);
-                  deductedCount++;
-                  addAgentLog("STOCK_DEDUCTED", `${itm.name}: -${qty} ${itm.unit||""} (sisa: ${newStk}) — job ${laporanModal.id}`, "SUCCESS");
-                  // Kumpulkan warning stok rendah
-                  if (newSts === "CRITICAL" || newSts === "OUT") {
-                    lowStockWarnings.push(`${itm.name} sisa ${newStk}`);
-                  }
-                } else {
-                  addAgentLog("STOCK_NOT_FOUND", `Material "${mat.nama}" tidak ditemukan di inventory`, "WARNING");
-                }
-              } catch(e) {
-                addAgentLog("STOCK_DEDUCT_ERR", `Gagal deduct ${mat.nama}: ${e?.message}`, "ERROR");
-              }
-            }
-            addAgentLog("MATERIAL_DEDUCT", `${deductedCount}/${laporanMaterials.length} material berhasil dideduct — job ${laporanModal.id}`, "SUCCESS");
-            // Notif Owner jika ada stok kritis
-            if (lowStockWarnings.length > 0) {
-              showNotif("⚠️ Stok hampir habis: " + lowStockWarnings.join(", ") + " — segera restock!");
-              const ownerAccs = userAccounts.filter(u => u.role==="Owner");
-              const lowStockMsg = "⚠️ *Stok Material Kritis*\nSetelah job " + laporanModal.id + ":\n" + lowStockWarnings.map(w => "• " + w).join("\n") + "\nSegera restock. — ARA AClean";
-              ownerAccs.forEach(u => { if(u.phone) sendWA(u.phone, lowStockMsg); });
-            }
-          }
-
-          // ── GAP 2: Auto-generate invoice ──
-          const laborTotal = hitungLabor(laporanModal.service, laporanModal.type, laporanUnits.length);
-          const matTotal   = hitungMaterialTotal(effectiveMaterials);
-          const invoiceTotal = laborTotal + matTotal;
-
-          // ── CEK GARANSI: Complain Rp 0 dalam masa garansi → SKIP invoice ──
-          // Cek apakah customer punya invoice sebelumnya yang garansi_expires masih valid hari ini
-          const today2     = new Date().toISOString().slice(0,10);
-          const isComplain = laporanModal.service === "Complain";
-          const isZeroTotal = invoiceTotal === 0;
-
-          // Cari invoice terakhir customer yang punya garansi aktif
-          const prevInvoiceWithGaransi = isComplain && isZeroTotal
-            ? invoicesData
-                .filter(inv =>
-                  inv.customer === laporanModal.customer &&
-                  inv.service !== "Complain" &&              // bukan invoice complain sebelumnya
-                  inv.garansi_expires &&                     // punya data garansi
-                  inv.garansi_expires >= today2 &&           // masih dalam masa garansi
-                  ["PAID","UNPAID","APPROVED"].includes(inv.status) // invoice valid
-                )
-                .sort((a,b) => (b.created_at||"").localeCompare(a.created_at||""))[0] // terbaru
-            : null;
-
-          const isInGaransi = !!prevInvoiceWithGaransi;
-
-          // ── Garansi expired: cek apakah ada invoice sebelumnya yang garansinya sudah habis
-          // Kalau iya → kenakan biaya pengecekan Rp 100.000 (override invoiceTotal)
-          const prevExpiredInvoice = isComplain && isZeroTotal && !isInGaransi
-            ? invoicesData
-                .filter(inv =>
-                  inv.customer === laporanModal.customer &&
-                  inv.service !== "Complain" &&
-                  inv.garansi_expires &&
-                  inv.garansi_expires < today2 &&           // garansi sudah EXPIRED
-                  ["PAID","UNPAID","APPROVED"].includes(inv.status)
-                )
-                .sort((a,b) => (b.created_at||"").localeCompare(a.created_at||""))[0]
-            : null;
-
-          // Jika garansi expired & tidak ada material berbayar → kenakan biaya cek Rp 100.000
-          const BIAYA_CEK_GARANSI_EXPIRED = 100000;
-          const finalInvoiceTotal = (isComplain && isZeroTotal && prevExpiredInvoice)
-            ? BIAYA_CEK_GARANSI_EXPIRED
-            : invoiceTotal;
-          const finalLaborTotal   = (isComplain && isZeroTotal && prevExpiredInvoice)
-            ? BIAYA_CEK_GARANSI_EXPIRED
-            : laborTotal;
-
-
-          // ── SKIP INVOICE: Complain Rp 0 + masih dalam garansi ──
-          if (isComplain && isZeroTotal && isInGaransi) {
-            // Tidak buat invoice — langsung selesaikan order
-            setOrdersData(prev => prev.map(o =>
-              o.id === laporanModal.id ? {...o, status:"COMPLETED"} : o
-            ));
-            try {
-              await supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id);
-            } catch(_) {}
-            addAgentLog(
-              "GARANSI_SKIP_INVOICE",
-              `Complain ${laporanModal.id} — ${laporanModal.customer} dalam garansi ` +
-              `s/d ${prevInvoiceWithGaransi.garansi_expires} (ref: ${prevInvoiceWithGaransi.id}) → invoice di-skip`,
-              "SUCCESS"
-            );
-            // Lanjut ke bagian akhir submitLaporan (WA notif, setLaporanSubmitted)
-          } else {
-            // ── BUAT INVOICE: Complain berbayar (>Rp 0) ATAU di luar garansi ──
-            const invSeq       = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
-            const newInvoiceId = "INV-" + today2.replace(/-/g,"").slice(0,8) + "-" + invSeq;
-            const garansiDays    = laporanModal.service==="Install" ? 90 : laporanModal.service==="Repair" ? 60 : 30;
-            const garansiExpires = new Date(Date.now() + garansiDays*24*60*60*1000).toISOString().slice(0,10);
-
-            // Build materials_detail
-            const materialsDetail = effectiveMaterials
-              .filter(m => m.nama && (parseFloat(m.jumlah)||0) > 0)
-              .map(m => {
-                const invItem = inventoryData.find(i =>
-                  i.name.toLowerCase().includes(m.nama.toLowerCase()) ||
-                  m.nama.toLowerCase().includes(i.name.toLowerCase())
-                );
-                const hargaSatuan = invItem?.price || 0;
-                const rawQty = parseFloat(m.jumlah) || 0;
-                const isFreon = ["freon","r-22","r-32","r-410"].some(k=>(m.nama||"").toLowerCase().includes(k));
-                const qty = isFreon ? Math.max(1, Math.ceil(rawQty)) : rawQty;
-                return {
-                  nama: m.nama,
-                  jumlah: qty,
-                  satuan: m.satuan || (isFreon ? "kg" : "pcs"),
-                  harga_satuan: hargaSatuan,
-                  subtotal: hargaSatuan * qty,
-                  keterangan: m.keterangan || (isFreon && rawQty !== qty ? `Aktual: ${rawQty} kg → dibulatkan ${qty} kg` : ""),
-                };
-              });
-
-            const newInvoice = {
-              id: newInvoiceId,
-              job_id:   laporanModal.id,
-              customer: laporanModal.customer,
-              phone:    laporanModal.phone || customersData.find(c=>c.name===laporanModal.customer)?.phone || "",
-              service:  laporanModal.service + " - " + laporanModal.type,
-              units:    laporanUnits.length,
-              labor:    finalLaborTotal,
-              material: matTotal,
-              materials_detail: materialsDetail,
-              dadakan:  0,
-              total:    finalInvoiceTotal,
-              status:   "PENDING_APPROVAL",
-              garansi_days:    garansiDays,
-              garansi_expires: garansiExpires,
-              created_at: new Date().toISOString(),
-            };
-
-            // Status override berdasarkan kondisi
-            if (isComplain && finalInvoiceTotal === 0) {
-              // Complain tanpa material & tidak ada invoice sebelumnya → auto-PAID
-              newInvoice.status  = "PAID";
-              newInvoice.paid_at = new Date().toISOString();
-              addAgentLog("GARANSI_AUTO_PAID", `Complain ${newInvoiceId} Rp 0 (tidak ada invoice sebelumnya) → auto PAID`, "SUCCESS");
-            } else if (isComplain && prevExpiredInvoice && finalInvoiceTotal === BIAYA_CEK_GARANSI_EXPIRED) {
-              // Garansi expired → biaya pengecekan
-              addAgentLog("GARANSI_EXPIRED_FEE",
-                `Complain ${newInvoiceId} — garansi expired (ref: ${prevExpiredInvoice.id} s/d ${prevExpiredInvoice.garansi_expires}) → biaya cek Rp ${BIAYA_CEK_GARANSI_EXPIRED.toLocaleString("id-ID")}`,
-                "WARNING");
-            }
-
-            setInvoicesData(prev => [...prev, newInvoice]);
-          // Simpan invoice ke Supabase
-          // Siapkan payload Supabase — materials_detail disimpan sebagai JSON string
-          const invoicePayload = {
-            ...newInvoice,
-            materials_detail: newInvoice.materials_detail?.length > 0
-              ? JSON.stringify(newInvoice.materials_detail)
-              : null,
-          };
-          // Insert invoice — try full object, fallback to minimal columns if schema mismatch
-          {
-            const { error: invErr } = await supabase.from("invoices").insert(invoicePayload);
-            if (invErr) {
-              console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
-              // status fallback: try PENDING_APPROVAL → UNPAID (schema constraint)
-              const tryStatuses = ["PENDING_APPROVAL", "UNPAID"];
-              for (const st of tryStatuses) {
-                const minimalInv = {
-                  id: newInvoice.id, job_id: newInvoice.job_id,
-                  customer: newInvoice.customer, service: newInvoice.service,
-                  units: newInvoice.units, labor: newInvoice.labor,
-                  material: newInvoice.material, total: newInvoice.total,
-                  status: st,
-                };
-                const { error: invErr2 } = await supabase.from("invoices").insert(minimalInv);
-                if (!invErr2) { console.log("✅ Invoice inserted with status:", st); break; }
-                console.warn("Invoice status", st, "rejected:", invErr2.message);
-              }
-            }
-          }
-          addAgentLog("INVOICE_CREATED", `Invoice ${newInvoiceId} dibuat dari laporan ${laporanModal.id} — ${fmt(newInvoice.total)} — menunggu approval Owner`, "SUCCESS");
-
-          // ══ GAP 5 FIX: WA notif ke SEMUA Owner dengan detail invoice ══
-          const ownerAccounts = userAccounts.filter(u => u.role==="Owner");
-          const ownerWAMsg = `🔔 *Invoice Menunggu Approval*
-
-📋 Job: *${laporanModal.id}*
-👤 Customer: ${laporanModal.customer}
-🔧 Layanan: ${laporanModal.service} — ${laporanUnits.length} unit
-👷 Teknisi: ${laporanModal.teknisi}${laporanModal.helper?" + "+laporanModal.helper:""}
-
-💰 *Total: ${fmt(newInvoice.total)}*
-   • Jasa: ${fmt(newInvoice.labor)}
-   • Material: ${fmt(newInvoice.material)}
-
-🧾 Invoice: *${newInvoiceId}*
+` +
+        `🧾 Invoice: *${invId}*
 Silakan approve di menu Invoice. — ARA`;
-          ownerAccounts.forEach(u => { if(u.phone) sendWA(u.phone, ownerWAMsg); });
-          // Fallback ke nomor hardcode jika tidak ada Owner di userAccounts
-          if (ownerAccounts.length === 0) {
-            fetch("/api/send-wa",{method:"POST",headers:_apiHeaders(),
-              body:JSON.stringify({phone:"6281299898937",message:ownerWAMsg})}).catch(()=>{});
-          }
+      ownerAccounts.forEach(u => { if (u.phone) sendWA(u.phone, ownerMsg); });
+      if (ownerAccounts.length === 0) {
+        fetch("/api/send-wa", {
+          method: "POST", headers: _apiHeaders(),
+          body: JSON.stringify({ phone: "6281299898937", message: ownerMsg })
+        }).catch(() => {});
+      }
+    }
 
-          } // end else (invoice dibuat)
-
-          setLaporanSubmitted(true);
-          pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
-          showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan terkirim ke Owner/Admin untuk verifikasi.`);
-        };
+    setLaporanSubmitted(true);
+    pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
+    showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan dikirim ke Owner/Admin untuk verifikasi.`);
+  };
 
         const tagStyle = (active, color) => ({
           display:"flex",alignItems:"center",gap:6,background:cs.card,
