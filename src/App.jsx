@@ -9069,8 +9069,8 @@ Silakan approve di menu Invoice. — ARA`;
                       </div>
                     </div>
                     {/* Per-unit summary */}
-                    {/* Install summary vs unit summary */}
-                    {laporanModal?.service==="Install" ? (
+                    {/* ══ Install summary ══ */}
+                    {isInstallJob && (
                       <div style={{background:cs.card,border:"1px solid "+cs.accent+"33",borderRadius:10,padding:"12px 14px"}}>
                         <div style={{fontWeight:700,color:cs.accent,marginBottom:8,fontSize:12}}>🔧 Detail Instalasi</div>
                         {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).map(it=>(
@@ -9084,33 +9084,43 @@ Silakan approve di menu Invoice. — ARA`;
                           <div style={{color:cs.muted,fontSize:12,textAlign:"center"}}>Belum ada item diisi</div>
                         )}
                       </div>
-                    ) : (
-                    <>{/* normal per-unit summary */}
-                    <div style={{display:"grid",gap:8}}>
-                      {laporanUnits.map((u,i)=>(
-                        <div key={i} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"10px 12px"}}>
-                          <div style={{fontWeight:700,color:cs.accent,marginBottom:5}}>Unit {u.unit_no} — {u.label} {u.merk?`(${u.merk})`:""}</div>
-                          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
-                            {u.kondisi_sebelum.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.yellow+"18",color:cs.yellow,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
+                    )}
+
+                    {/* ══ Per-unit summary (Service/Repair/Complain) ══ */}
+                    {!isInstallJob && (
+                      <div style={{display:"grid",gap:8}}>
+                        {laporanUnits.map((u,i)=>(
+                          <div key={i} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"10px 12px"}}>
+                            <div style={{fontWeight:700,color:cs.accent,marginBottom:5}}>Unit {u.unit_no} — {u.label} {u.merk?`(${u.merk})`:""}</div>
+                            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
+                              {u.kondisi_sebelum.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.yellow+"18",color:cs.yellow,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
+                            </div>
+                            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
+                              {u.pekerjaan.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.accent+"18",color:cs.accent,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
+                            </div>
+                            <div style={{fontSize:11,color:cs.muted}}>
+                              {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}{u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
+                              {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
+                              {u.catatan_unit?` · ${u.catatan_unit}`:""}
+                            </div>
                           </div>
-                          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
-                            {u.pekerjaan.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.accent+"18",color:cs.accent,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
-                          </div>
-                          <div style={{fontSize:11,color:cs.muted}}>
-                            {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}{u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
-                            {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
-                            {u.catatan_unit?` · ${u.catatan_unit}`:""}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {/* Material */}
-                    </>{/* end normal unit summary */}
-                    )}{/* end install ternary */}
-                    {(laporanModal?.service==="Install" ? INSTALL_ITEMS.some(it=>parseFloat(laporanInstallItems[it.key]||0)>0) : laporanMaterials.length>0)&&(
+                        ))}
+                      </div>
+                    )}
+
+                    {/* ══ Material summary ══ */}
+                    {isInstallJob && INSTALL_ITEMS.some(it=>parseFloat(laporanInstallItems[it.key]||0)>0) && (
+                      <div style={{marginTop:10}}>
+                        <div style={{fontWeight:700,color:cs.text,marginBottom:5,fontSize:11}}>Material Instalasi:</div>
+                        {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).map((it,mi)=>(
+                          <div key={mi} style={{fontSize:11,color:cs.muted,marginBottom:2}}>• {it.label}: {laporanInstallItems[it.key]} {it.satuan}</div>
+                        ))}
+                      </div>
+                    )}
+                    {!isInstallJob && laporanMaterials.length>0 && (
                       <div style={{marginTop:10}}>
                         <div style={{fontWeight:700,color:cs.text,marginBottom:5,fontSize:11}}>Material:</div>
-                        {(laporanModal?.service==="Install" ? INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).map(it=>({nama:it.label,jumlah:laporanInstallItems[it.key],satuan:it.satuan,keterangan:""})) : laporanMaterials).map((m,mi)=>(
+                        {laporanMaterials.map((m,mi)=>(
                           <div key={mi} style={{fontSize:11,color:cs.muted,marginBottom:2}}>• {m.nama}: {m.jumlah} {m.satuan}{m.keterangan?` — ${m.keterangan}`:""}</div>
                         ))}
                       </div>
