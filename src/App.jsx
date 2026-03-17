@@ -529,6 +529,16 @@ export default function ACleanWebApp() {
   const [editInvoiceData,  setEditInvoiceData]  = useState(null);
   const [editInvoiceForm,  setEditInvoiceForm]  = useState({});
   const [editInvoiceItems, setEditInvoiceItems] = useState([]); // per-item edit
+  // ── Confirm Modal (ganti window.confirm) ──
+  const [confirmModal, setConfirmModal] = useState(null);
+  // confirmModal = { title, message, icon, danger, onConfirm, onCancel, confirmText, cancelText }
+  const showConfirm = (opts) => new Promise(resolve => {
+    setConfirmModal({ ...opts,
+      onConfirm: () => { setConfirmModal(null); resolve(true);  },
+      onCancel:  () => { setConfirmModal(null); resolve(false); },
+    });
+  });
+
   const [modalEditPwd, setModalEditPwd] = useState(false);
   const [editPwdTarget, setEditPwdTarget] = useState(null); // {id, name}
   const [editPwdForm, setEditPwdForm] = useState({newPwd:"", confirmPwd:""});
@@ -2019,11 +2029,13 @@ Kamu ditugaskan sebagai Helper. — AClean`;
 
     // Notif WA ke customer — hanya jika admin/owner menyetujui (sendCustNotif=true)
     const shouldNotif = sendCustNotif === true ||
-      (sendCustNotif === null && window.confirm(
-        `Kirim konfirmasi pembayaran ke WhatsApp customer?
+      (sendCustNotif === null && await showConfirm({
+        icon:"📱", title:"Kirim Notif WA?",
+        message:`Kirim konfirmasi pembayaran ke WhatsApp customer?
 
-${inv.customer} — Rp ${(inv.total||0).toLocaleString("id-ID")}`
-      ));
+${inv.customer} — Rp ${(inv.total||0).toLocaleString("id-ID")}`,
+        confirmText:"Kirim WA"
+      }));
     if (shouldNotif && inv.phone) {
       sendWA(inv.phone,
         `✅ *Pembayaran Diterima!*
@@ -3323,7 +3335,11 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                     <button onClick={() => openWA(cu.phone, "")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 WA</button>
                     {currentUser?.role === "Owner" && (
                       <button onClick={async () => {
-                        if (!window.confirm(`🗑️ Hapus customer "${cu.name}"?\n\nSemua history order akan tetap ada.\nAksi ini tidak bisa dibatalkan.`)) return;
+                        if (!await showConfirm({ icon:"🗑️", title:"Hapus Customer?", danger:true,
+  message:`Hapus customer "${cu.name}"?
+
+Semua history order akan tetap ada.`,
+  confirmText:"Hapus" })) return;
                         setCustomersData(prev => prev.filter(c => c.id !== cu.id));
                         const { error } = await supabase.from("customers").delete().eq("id", cu.id);
                         if (error) showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message);
@@ -3556,12 +3572,14 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                       style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Data Customer</button>
                     <button onClick={()=>{ openWA(selectedCustomer.phone, ""); }}
                       style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 Hubungi WA</button>
-                    <button onClick={()=>{ if(window.confirm&&window.confirm("Tandai "+selectedCustomer.name+" sebagai "+(selectedCustomer.is_vip?"Regular":"VIP")+"?")){
+                    <button onClick={async ()=>{ if(await showConfirm({ icon:"⭐", title:"Ubah Status VIP?",
+                      message:`Tandai ${selectedCustomer.name} sebagai ${selectedCustomer.is_vip?"Regular":"VIP"}?`,
+                      confirmText:"Ya, Ubah" }))
                       setCustomersData(prev=>prev.map(cu=>cu.id===selectedCustomer.id?{...cu,is_vip:!cu.is_vip}:cu));
                       setSelectedCustomer(prev=>({...prev,is_vip:!prev.is_vip}));
                       supabase.from("customers").update({is_vip:!selectedCustomer.is_vip}).eq("id",selectedCustomer.id);
                       showNotif(selectedCustomer.name+(selectedCustomer.is_vip?" diturunkan ke Regular":" dijadikan VIP ⭐"));
-                    }}}
+                    }}
                       style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"8px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>{selectedCustomer.is_vip?"⭐ Hapus VIP":"⭐ Jadikan VIP"}</button>
                   </div>
                 )}
@@ -3629,9 +3647,11 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
               );
               return todayUndispatched.length > 0 ? (
                 <button onClick={async () => {
-                  if (!window.confirm(`📤 Dispatch WA ke ${todayUndispatched.length} teknisi untuk job hari ini?
+                  if (!await showConfirm({ icon:"📤", title:"Bulk Dispatch WA?",
+  message:`Kirim WA ke ${todayUndispatched.length} teknisi untuk job hari ini?
 
-Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
+Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`,
+  confirmText:"Ya, Kirim Semua" })) return;
                   let sukses = 0, gagal = 0;
                   showNotif(`⏳ Mengirim WA ke ${todayUndispatched.length} teknisi...`);
                   for (const o of todayUndispatched) {
@@ -3747,7 +3767,9 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                       )}
                       {currentUser?.role==="Owner" && (
                         <button onClick={async()=>{
-                          if (!window.confirm(`🗑️ Hapus order ${o.id} — ${o.customer}?\n\nOrder yang sudah ada invoice TIDAK bisa dihapus.\nTindakan ini permanen!`)) return;
+                          if (!await showConfirm({ icon:"🗑️", title:"Hapus Order?", danger:true,
+                            message:`Hapus order ${o.id} — ${o.customer}?\n\nOrder yang sudah ada invoice TIDAK bisa dihapus.`,
+                            confirmText:"Hapus" })) return;
                           if (o.invoice_id) { showNotif("❌ Tidak bisa hapus: order sudah punya invoice "+o.invoice_id); return; }
                           const { error: delErr } = await supabase.from("orders").delete().eq("id", o.id);
                           if (delErr) { showNotif("❌ Gagal hapus order: "+delErr.message); return; }
@@ -3926,7 +3948,9 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
               {inv.status === "UNPAID" && (
                 <>
                   <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>📤 Kirim ke Customer</button>
-                  <button onClick={() => { if(!window.confirm||window.confirm(`Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`)) { const pp = invoicesData.find(i=>i.id===inv.id); markPaid(pp||inv); }}} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12 }}>💰 Tandai Lunas</button>
+                  <button onClick={() => { if(await showConfirm({ icon:"💰", title:"Tandai Lunas?",
+  message:`Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`,
+  confirmText:"Ya, Lunas" })) { const pp = invoicesData.find(i=>i.id===inv.id); markPaid(pp||inv); }}} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12 }}>💰 Tandai Lunas</button>
                   <button onClick={() => invoiceReminderWA(inv)} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>🔔 Reminder</button>
                 </>
               )}
@@ -3939,7 +3963,9 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
               {/* Hapus Invoice — Owner only, hanya status PENDING_APPROVAL */}
               {currentUser?.role === "Owner" && inv.status === "PENDING_APPROVAL" && (
                 <button onClick={async () => {
-                  if (!window.confirm(`🗑️ Hapus invoice ${inv.id}?\n\nInvoice akan dihapus permanen dari database.\nOrder terkait akan dikembalikan ke status COMPLETED.`)) return;
+                  if (!await showConfirm({ icon:"🗑️", title:"Hapus Invoice?", danger:true,
+                    message:`Hapus invoice ${inv.id}?\n\nInvoice akan dihapus permanen dari database.\nOrder terkait akan kembali ke status COMPLETED.`,
+                    confirmText:"Hapus Permanen" })) return;
                   setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
                   const { error } = await supabase.from("invoices").delete().eq("id", inv.id);
                   if (error) { showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message); return; }
@@ -4025,7 +4051,10 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                       )}
                       {currentUser?.role === "Owner" && (
                         <button onClick={async () => {
-                          if (!window.confirm(`Hapus material "${item.name}"?`)) return;
+                          if (!await showConfirm({ icon:"🗑️", title:"Hapus Material?", danger:true,
+  message:`Hapus material "${item.name}"?
+Aksi ini tidak bisa dibatalkan.`,
+  confirmText:"Hapus" })) return;
                           // Delete pakai id (UUID) jika ada, fallback ke code
                           const delQuery = item.id && !String(item.id).startsWith("INV")
                             ? supabase.from("inventory").delete().eq("id", item.id)
@@ -4229,7 +4258,10 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                                 </button>
                                 {currentUser?.role==="Owner" && (
                                   <button onClick={async()=>{
-                                    if (!window.confirm || window.confirm(`Hapus "${r.type}"? Tidak bisa dibatalkan.`)) {
+                                    if (await showConfirm({ icon:"🗑️", title:"Hapus Price List?", danger:true,
+  message:`Hapus "${r.type}"?
+Tidak bisa dibatalkan.`,
+  confirmText:"Hapus" })) {
                                       const { error: delErr } = await supabase.from("price_list").delete().eq("id", r.id);
                                       if (delErr) { showNotif("❌ Gagal hapus: "+delErr.message); }
                                       else {
@@ -4693,7 +4725,9 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                           )}
                           {currentUser?.role==="Owner" && !(["COMPLETED","PAID"].includes(o.status)) && (
                             <button onClick={async()=>{
-                              if(!window.confirm(`🗑️ Hapus order ${o.id} — ${o.customer}?\nOrder COMPLETED/PAID tidak bisa dihapus.\nAksi ini tidak bisa dibatalkan!`)) return;
+                              if(!await showConfirm({ icon:"🗑️", title:"Hapus Order?", danger:true,
+                                message:`Hapus order ${o.id} — ${o.customer}?\nOrder COMPLETED/PAID tidak bisa dihapus.`,
+                                confirmText:"Hapus" })) return;
                               const { error: delOrdErr } = await supabase.from("orders").delete().eq("id", o.id);
                               if (delOrdErr) { showNotif("❌ Gagal hapus order: "+delOrdErr.message); return; }
                               // Hapus schedule terkait
@@ -4873,7 +4907,10 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
                 <button onClick={() => { if(t.phone) openWA(t.phone, "Halo " + (t.name||"Teknisi") + ", ada info dari AClean:"); else showNotif("❌ No. HP teknisi tidak ada"); }} style={{ flex:1, background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 WA</button>
                 {currentUser?.role === "Owner" && (
                   <button onClick={async () => {
-                    if (window.confirm && !window.confirm(`Hapus ${t.name} dari tim?`)) return;
+                    if (!await showConfirm({ icon:"👷", title:"Hapus dari Tim?", danger:true,
+  message:`Hapus ${t.name} dari tim?
+Data order yang sudah ada tidak terpengaruh.`,
+  confirmText:"Hapus" })) return;
                     setTeknisiData(prev => prev.filter(x => x.id !== t.id));
                     if (!String(t.id).startsWith("Tech")) {
                       await supabase.from("user_profiles").delete().eq("id", t.id);
@@ -7170,11 +7207,9 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               {editTeknisi && currentUser?.role === "Owner" && (
                 <div style={{ display:"grid", gap:6 }}>
                   <button onClick={async () => {
-                    if (!window.confirm) { /* skip confirm in some envs */ }
-                    else if (!window.confirm(`Hapus ${editTeknisi.name} dari tim dan database?
-
-Perhatian: Tindakan ini tidak bisa dibatalkan.
-Order yang sudah ada tidak terpengaruh.`)) return;
+                    if (!await showConfirm({ icon:"🗑️", title:"Hapus dari Tim & Database?", danger:true,
+                      message:`Hapus ${editTeknisi.name} dari tim dan database?\n\nPerhatian: Tindakan ini tidak bisa dibatalkan.\nOrder yang sudah ada tidak terpengaruh.`,
+                      confirmText:"Hapus Permanen" })) return;
                     // Hapus dari local state
                     setTeknisiData(prev => prev.filter(t => t.id !== editTeknisi.id));
                     // Hapus dari Supabase (jika punya UUID id)
@@ -7432,6 +7467,44 @@ Order yang sudah ada tidak terpengaruh.`)) return;
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — EDIT INVOICE (GAP 3) */}
       {/* ══════════════════════════════════════════════════════ */}
+      {/* ══ CONFIRM MODAL — ganti semua window.confirm() ══ */}
+      {confirmModal && (
+        <div style={{ position:"fixed", inset:0, background:"#000000cc", zIndex:9999,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div style={{ background:cs.surface, border:"1px solid "+(confirmModal.danger?cs.red:cs.border),
+            borderRadius:16, width:"100%", maxWidth:400, padding:24, boxShadow:"0 20px 60px #000a" }}>
+            {/* Icon + Title */}
+            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+              <div style={{ fontSize:28 }}>{confirmModal.icon||(confirmModal.danger?"⚠️":"❓")}</div>
+              <div style={{ fontWeight:800, fontSize:16, color:confirmModal.danger?cs.red:cs.text }}>
+                {confirmModal.title}
+              </div>
+            </div>
+            {/* Message */}
+            <div style={{ fontSize:13, color:cs.muted, lineHeight:1.6, marginBottom:20,
+              whiteSpace:"pre-line", background:cs.card, borderRadius:10, padding:"12px 14px" }}>
+              {confirmModal.message}
+            </div>
+            {/* Buttons */}
+            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <button onClick={confirmModal.onCancel}
+                style={{ padding:"9px 20px", background:cs.surface, border:"1px solid "+cs.border,
+                  borderRadius:10, color:cs.text, cursor:"pointer", fontWeight:600, fontSize:13 }}>
+                {confirmModal.cancelText||"Batal"}
+              </button>
+              <button onClick={confirmModal.onConfirm}
+                style={{ padding:"9px 20px", border:"none", borderRadius:10, cursor:"pointer",
+                  fontWeight:700, fontSize:13, color:"#fff",
+                  background: confirmModal.danger
+                    ? "linear-gradient(135deg,#ef4444,#dc2626)"
+                    : "linear-gradient(135deg,"+cs.accent+",#3b82f6)" }}>
+                {confirmModal.confirmText||(confirmModal.danger?"Ya, Hapus":"Ya, Lanjutkan")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ══ MODAL EDIT PASSWORD (Owner only) ══ */}
       {modalEditPwd && editPwdTarget && (
         <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:500,
@@ -8201,9 +8274,9 @@ Order yang sudah ada tidak terpengaruh.`)) return;
         // Handle delete user
         const handleDeleteUser = async () => {
           if (!newUserForm.id || newUserForm.role === "Owner") return;
-          if (window.confirm && !window.confirm(`Hapus akun ${newUserForm.name}?
-
-Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
+          if (!await showConfirm({ icon:"🗑️", title:"Hapus Akun?", danger:true,
+            message:`Hapus akun ${newUserForm.name}?\n\nAkun tidak bisa dipulihkan. Data order/laporan tetap ada.`,
+            confirmText:"Hapus Akun" })) return;
           const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
           if (isUUID(newUserForm.id)) {
             // Nonaktifkan di DB (tidak hapus permanen — jaga data historis)
@@ -8817,16 +8890,9 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
     // ── 3. Cek foto gagal upload ──
     const fotoGagal = laporanFotos.filter(f => !f.url).length;
     if (fotoGagal > 0) {
-      const lanjut = window.confirm(
-        `⚠️ ${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).
-
-` +
-        `Lanjutkan submit laporan tanpa foto tersebut?
-
-` +
-        `• OK = lanjut submit
-• Batal = kembali & hapus foto gagal lalu upload ulang`
-      );
+      const lanjut = await showConfirm({ icon:"⚠️", title:"Ada Foto Belum Tersimpan",
+        message:`${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).\n\nLanjutkan submit laporan tanpa foto tersebut?`,
+        confirmText:"Lanjutkan Submit" });
       if (!lanjut) return;
     }
 
