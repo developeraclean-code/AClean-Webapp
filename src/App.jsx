@@ -561,12 +561,25 @@ export default function ACleanWebApp() {
   // GAP 7 — Reactive agent logs
   const [agentLogs,        setAgentLogs]        = useState(AGENT_LOGS);
   const addAgentLog = async (action, detail, status="SUCCESS") => {
-    const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-    setAgentLogs(prev => [{ time:now, action, detail, status }, ...prev].slice(0,50));
+    const now       = new Date();
+    const timeStr   = now.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+    const createdAt = now.toISOString();
+    const userName  = currentUser?.name || "System";
+    const userId    = currentUser?.id   || null;
+    // Update local state
+    setAgentLogs(prev => [{ time:timeStr, action, detail, status,
+      user_name:userName, created_at:createdAt }, ...prev].slice(0,200));
+    // Persist ke Supabase
     try {
-      const { error: alErr } = await supabase.from("agent_logs").insert({ time:now, action, detail, status });
-      if (alErr) console.error("agent_logs 400:", alErr.message, "|", alErr.hint, "|", alErr.details);
-    } catch(e) { console.error("agent_logs catch:", e.message); }
+      const { error: alErr } = await supabase.from("agent_logs").insert({
+        action, detail, status,
+        time:       timeStr,
+        created_at: createdAt,
+        user_name:  userName,
+        user_id:    userId,
+      });
+      if (alErr) console.warn("agent_logs insert:", alErr.message, alErr.hint);
+    } catch(e) { console.warn("agent_logs catch:", e.message); }
   };
 
   // ── App Settings: bank, phone, nama — load dari DB tabel app_settings ──
@@ -1224,6 +1237,7 @@ ${matRowsHtml}
         setLoginAttempts(0); setLockoutUntil(0);
         _lsSave("loginAttempts", 0); _lsSave("lockoutUntil", 0);
         showNotif("Selamat datang, " + profile.name + "!");
+        addAgentLog("LOGIN", `${profile.name} (${profile.role}) login via Supabase Auth`, "SUCCESS");
         requestPushPermission();
         return;
       }
@@ -1244,6 +1258,7 @@ ${matRowsHtml}
         setLoginAttempts(0); setLockoutUntil(0);
         _lsSave("loginAttempts", 0); _lsSave("lockoutUntil", 0);
         showNotif("Selamat datang, " + localUser.name + "! (mode lokal)");
+          addAgentLog("LOGIN", `${localUser.name} (${localUser.role}) login lokal`, "SUCCESS");
         requestPushPermission();
         return;
       }
@@ -1268,6 +1283,7 @@ ${matRowsHtml}
   const doLogout = async () => {
     await supabase.auth.signOut();
     _lsSave("localSession", null);
+    addAgentLog("LOGOUT", `${currentUser?.name||"User"} (${currentUser?.role||""}) keluar`, "SUCCESS");
     setIsLoggedIn(false);
     setCurrentUser(null);
     setLoginEmail("");
@@ -1384,7 +1400,7 @@ ${matRowsHtml}
         supabase.from("customers").select("*").order("name"),
         supabase.from("inventory").select("*").order("code"),
         supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }),
-        supabase.from("agent_logs").select("*").order("time", { ascending: false }).limit(50),
+        supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(50),
       ]);
       // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
       // Jika error = fallback ke demo data yang sudah di-init
@@ -5329,10 +5345,10 @@ Data order yang sudah ada tidak terpengaruh.`,
           const lC = log.status==="ERROR"?cs.red:log.status==="WARNING"?cs.yellow:cs.green;
           return (
             <div key={i} style={{ display:"flex", gap:14, padding:"12px 18px", borderBottom:"1px solid "+cs.border, alignItems:"flex-start" }}>
-              <span style={{ fontFamily:"monospace", fontSize:11, color:cs.muted, whiteSpace:"nowrap", flexShrink:0 }}>{log.time}</span>
+              <span style={{ fontFamily:"monospace", fontSize:11, color:cs.muted, whiteSpace:"nowrap", flexShrink:0 }}>{log.time || (log.created_at ? new Date(log.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "-")}</span>
               <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:lC+"22", color:lC, border:"1px solid "+lC+"33", fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.status}</span>
               <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:cs.accent+"18", color:cs.accent, fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.action}</span>
-              <span style={{ fontSize:12, color:cs.muted }}>{log.detail}</span>
+              <span style={{ fontSize:12, color:cs.muted }}>{log.user_name ? `[${log.user_name}] ` : ""}{log.detail}</span>
             </div>
           );
         })}
