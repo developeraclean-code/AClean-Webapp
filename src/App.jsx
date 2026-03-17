@@ -525,6 +525,7 @@ export default function ACleanWebApp() {
   const [editInvoiceItems, setEditInvoiceItems] = useState([]); // per-item edit
   const [editAddType,  setEditAddType]  = useState(''); // 'jasa' | 'material'
   const [editAddSearch,setEditAddSearch]= useState('');
+  const [editJasaItems, setEditJasaItems] = useState([]); // jasa items per-row
 
   // GAP 7/8 — ARA Chat state (live LLM)
   const [araPanel,         setAraPanel]         = useState(false);
@@ -1655,6 +1656,9 @@ ${matRowsHtml}
           };
   }, [isLoggedIn]);
   // ── Helper: parse materials_detail JSON safely ──
+  // Nama prefix yang menandakan item adalah JASA (bukan material)
+  const jasaSvcNames = ["Cleaning /","Install /","Repair /","Complain /","Jasa ","Pemasangan ","Bongkar ","Vacum ","Flaring","Flushing"];
+
   const parseMD = (md) => {
     if (!md) return [];
     if (Array.isArray(md)) return md;
@@ -3803,7 +3807,11 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`)) return;
               <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>👁 Preview</button>
               {/* Edit invoice — Owner bisa edit semua status kecuali PAID */}
               {inv.status !== "PAID" && (currentUser?.role === "Owner") && (
-                <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); setEditInvoiceItems(parseMD(inv.materials_detail).map((m,idx)=>({...m,_idx:idx}))); setModalEditInvoice(true); }}
+                <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); const _allItems = parseMD(inv.materials_detail).map((m,idx)=>({...m,_idx:idx}));
+          const _jasaItems = _allItems.filter(m => jasaSvcNames.some(s => (m.nama||"").includes(s)));
+          const _matItems  = _allItems.filter(m => !jasaSvcNames.some(s => (m.nama||"").includes(s)));
+          setEditJasaItems(_jasaItems);
+          setEditInvoiceItems(_matItems); setModalEditInvoice(true); }}
                   style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
               {inv.status === "PENDING_APPROVAL" && (
@@ -7319,7 +7327,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
           x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
 
         const matTotal = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0), 0);
-        const newTotal = (editInvoiceForm.labor||0) + matTotal;
+        const newTotal = jasaTotal + matTotal;
 
         return (
         <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:450, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
@@ -7338,6 +7346,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
             <div style={{ display:"grid", gap:14 }}>
 
               {/* ── JASA / LABOR section ── */}
+              {/* ── JASA / LABOR section ── */}
               <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"12px 14px" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.accent }}>🔧 Jasa / Labor</div>
@@ -7346,8 +7355,6 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                     {editAddType==='jasa' ? '✕ Tutup' : '+ Tambah Jasa'}
                   </button>
                 </div>
-
-                {/* Lookup jasa */}
                 {editAddType === 'jasa' && (
                   <div style={{ marginBottom:10 }}>
                     <input id="ei_search_jasa" autoFocus value={editAddSearch}
@@ -7355,18 +7362,17 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                       placeholder="Cari jasa... (Cleaning, Install, Repair...)"
                       style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 10px", color:cs.text, fontSize:12, marginBottom:6 }}
                     />
-                    <div style={{ maxHeight:160, overflowY:"auto", background:cs.surface, borderRadius:8, border:"1px solid "+cs.border }}>
-                      {filteredJasa.slice(0,20).map((item,idx) => (
+                    <div style={{ maxHeight:180, overflowY:"auto", background:cs.surface, borderRadius:8, border:"1px solid "+cs.border }}>
+                      {filteredJasa.slice(0,25).map((item,idx) => (
                         <div key={idx} onClick={()=>{
-                          setEditInvoiceForm(f=>({...f, labor:(f.labor||0)+item.harga}));
-                          setEditInvoiceItems(prev=>[...prev,{
-                            nama:item.label, jumlah:1, satuan:item.satuan,
+                          setEditJasaItems(prev=>[...prev,{
+                            nama:item.label, jumlah:1, satuan:item.satuan||'Unit',
                             harga_satuan:item.harga, subtotal:item.harga, _idx:Date.now()+idx
                           }]);
                           setEditAddType(''); setEditAddSearch('');
                         }}
-                          style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:cs.text, borderBottom:"1px solid "+cs.border+"44",
-                            display:"flex", justifyContent:"space-between" }}
+                          style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:cs.text,
+                            borderBottom:"1px solid "+cs.border+"44", display:"flex", justifyContent:"space-between" }}
                           onMouseEnter={e=>e.currentTarget.style.background=cs.accent+"15"}
                           onMouseLeave={e=>e.currentTarget.style.background="transparent"}
                         >
@@ -7374,20 +7380,31 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                           <span style={{ fontFamily:"monospace", color:cs.accent, fontWeight:700 }}>{fmt(item.harga)}</span>
                         </div>
                       ))}
-                      {filteredJasa.length === 0 && (
-                        <div style={{ padding:"10px 12px", color:cs.muted, fontSize:12 }}>Tidak ada hasil</div>
-                      )}
+                      {filteredJasa.length === 0 && <div style={{ padding:"10px 12px", color:cs.muted, fontSize:12 }}>Tidak ada hasil</div>}
                     </div>
                   </div>
                 )}
-
-                {/* Labor total */}
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <span style={{ fontSize:12, color:cs.muted, flex:1 }}>Total Jasa:</span>
-                  <input id="ei_labor" type="number" min="0" value={editInvoiceForm.labor||0}
-                    onChange={e=>setEditInvoiceForm(f=>({...f,labor:parseInt(e.target.value)||0}))}
-                    style={{ width:140, background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 10px", color:cs.text, fontSize:14, fontFamily:"monospace", textAlign:"right" }}
-                  />
+                {editJasaItems.length > 0 && (
+                  <div style={{ marginBottom:8 }}>
+                    {editJasaItems.map((m, mi) => (
+                      <div key={m._idx||mi} style={{ display:"grid", gridTemplateColumns:"1fr 55px 30px 100px 28px", gap:5, alignItems:"center", marginBottom:6, padding:"6px 8px", background:cs.surface, borderRadius:8 }}>
+                        <input id={"ej_name_"+mi} value={m.nama||''} onChange={e=>setEditJasaItems(prev=>prev.map((x,xi)=>xi===mi?{...x,nama:e.target.value}:x))}
+                          style={{ background:"transparent", border:"none", borderBottom:"1px solid "+cs.border, color:cs.text, fontSize:12, padding:"2px 4px" }} />
+                        <input id={"ej_qty_"+mi} type="number" min="0" step="0.1" value={m.jumlah||1}
+                          onChange={e=>setEditJasaItems(prev=>prev.map((x,xi)=>xi===mi?{...x,jumlah:parseFloat(e.target.value)||0,subtotal:(parseFloat(e.target.value)||0)*(x.harga_satuan||0)}:x))}
+                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, textAlign:"center" }} />
+                        <span style={{ fontSize:10, color:cs.muted, textAlign:"center" }}>{m.satuan}</span>
+                        <input id={"ej_harga_"+mi} type="number" min="0" value={m.harga_satuan||0}
+                          onChange={e=>setEditJasaItems(prev=>prev.map((x,xi)=>xi===mi?{...x,harga_satuan:parseInt(e.target.value)||0,subtotal:(parseInt(e.target.value)||0)*(x.jumlah||0)}:x))}
+                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, fontFamily:"monospace", textAlign:"right" }} />
+                        <button onClick={()=>setEditJasaItems(prev=>prev.filter((_x,xi)=>xi!==mi))}
+                          style={{ background:"#ef444420", border:"none", color:"#ef4444", borderRadius:5, padding:"4px 6px", cursor:"pointer", fontSize:12, fontWeight:700 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ fontSize:11, color:cs.muted, textAlign:"right" }}>
+                  Subtotal jasa: <strong style={{color:cs.accent,fontFamily:"monospace"}}>{fmt(editJasaItems.reduce((s,m)=>s+(m.subtotal||0),0))}</strong>
                 </div>
               </div>
 
@@ -7488,11 +7505,15 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                   Batal
                 </button>
                 <button onClick={async()=>{
-                  const labor     = Math.max(0, parseInt(editInvoiceForm.labor)||0);
+                  const labor     = jasaTotal3;
+                  const jasaTotal3 = editJasaItems.reduce((s,m)=>s+(m.subtotal||0),0);
                   const matTotal3 = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0),0);
-                  const newTotalFinal = labor + matTotal3;
+                  const newTotalFinal = jasaTotal3 + matTotal3;
                   if(newTotalFinal <= 0){ showNotif("⚠️ Total tidak boleh 0"); return; }
-                  const newMD = editInvoiceItems.filter(m=>m.nama&&(m.jumlah||0)>0);
+                  const newMD = [
+                    ...editJasaItems.filter(m=>m.nama&&(m.jumlah||0)>0),
+                    ...editInvoiceItems.filter(m=>m.nama&&(m.jumlah||0)>0)
+                  ];
                   setInvoicesData(prev=>prev.map(i=>i.id===editInvoiceData.id
                     ?{...i,labor,material:matTotal3,dadakan:0,total:newTotalFinal,materials_detail:newMD}:i));
                   let saved=false;
@@ -7676,7 +7697,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 <button onClick={() => { invoiceReminderWA(liveInv); setModalPDF(false); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📱 Kirim via WA</button>
               )}
               {liveInv.status === "PENDING_APPROVAL" && currentUser?.role === "Owner" && (
-                <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); const _mArr=parseMD(liveInv.materials_detail); setEditInvoiceItems(_mArr.map((m,idx)=>({...m,_idx:idx}))); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
+                <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); const _aLv=parseMD(liveInv.materials_detail).map((m,idx)=>({...m,_idx:idx})); const _jLv=_aLv.filter(m=>jasaSvcNames.some(s=>(m.nama||"").includes(s))); const _mLv=_aLv.filter(m=>!jasaSvcNames.some(s=>(m.nama||"").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
             </div>
           </div>
