@@ -733,9 +733,9 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     const PEKERJAAN_OPT = (svc) => PEKERJAAN_BY_SERVICE[svc] || PEKERJAAN_BY_SERVICE["Cleaning"];
   // ── MATERIAL_PRESET: quick-add di STEP 3 (Service/Repair/Complain) ──
   const MATERIAL_PRESET = {
-    Cleaning:  ["Freon R22","Freon R410A","Filter Udara","Kompressor Oil","Pembersih Evaporator","Plastik Cuci AC"],
-    Repair:    ["Kapasitor","Thermostat","Sensor Indoor","Freon R22","Freon R410A","Relay","PCB Module","Kipas Motor"],
-    Complain:  [],
+    Cleaning:  ["Freon R-22","Freon R-32","Freon R-410","Filter Udara","Kompressor Oil","Pembersih Evaporator","Plastik Cuci AC"],
+    Repair:    ["Freon R-22","Freon R-32","Freon R-410","Kapasitor","Thermostat","Sensor Indoor","Relay","PCB Module","Kipas Motor"],
+    Complain:  ["Freon R-22","Freon R-32","Freon R-410"],
   };
   // ── INSTALL_ITEMS: preset form instalasi ──
   const INSTALL_ITEMS = [
@@ -1703,11 +1703,18 @@ Kamu ditugaskan sebagai Helper. — AClean`;
 
   const hitungMaterialTotal = (materials) => {
     return materials.reduce((sum, m) => {
+      const nama = (m.nama||"").toLowerCase();
+      // Cari di inventory dulu
       const invItem = inventoryData.find(i =>
-        i.name.toLowerCase().includes(m.nama.toLowerCase()) ||
-        m.nama.toLowerCase().includes(i.name.toLowerCase())
+        i.name.toLowerCase().includes(nama) || nama.includes(i.name.toLowerCase())
       );
-      const harga = invItem ? invItem.price : 0;
+      // Fallback ke PRICE_LIST freon jika tidak ada di inventory
+      let harga = invItem ? invItem.price : 0;
+      if (!harga) {
+        if (nama.includes("r-22") || nama.includes("r22"))   harga = PRICE_LIST["freon_R22"]   || 150000;
+        else if (nama.includes("r-32") || nama.includes("r32")) harga = PRICE_LIST["freon_R32"] || 160000;
+        else if (nama.includes("r-410") || nama.includes("r410") || nama.includes("r410a")) harga = PRICE_LIST["freon_R410A"] || 180000;
+      }
       return sum + (harga * (parseFloat(m.jumlah) || 0));
     }, 0);
   };
@@ -8487,68 +8494,133 @@ Silakan buat invoice dari ARA Chat 👆`;
             }
           }
 
-          // GAP 2 — Auto-generate invoice dengan price list
+          // ── GAP 2: Auto-generate invoice ──
           const laborTotal = hitungLabor(laporanModal.service, laporanModal.type, laporanUnits.length);
-          // Tekanan freon (psi) = data laporan saja, TIDAK masuk kalkulasi invoice
-          // Freon sebagai material: teknisi input manual di STEP 3
-          const matTotal = hitungMaterialTotal(effectiveMaterials); // freon tidak dihitung dari psi
-          const today2 = new Date().toISOString().slice(0,10);
-          const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
-          const newInvoiceId = "INV-" + today2.replace(/-/g,"").slice(0,8) + "-" + invSeq;
-          // Hitung tanggal garansi (30 hari untuk Cleaning, 90 hari untuk Install)
-          const garansiDays = laporanModal.service==="Install" ? 90 : laporanModal.service==="Repair" ? 60 : 30;
-          const garansiExpires = new Date(Date.now() + garansiDays*24*60*60*1000).toISOString().slice(0,10);
-          // Build materials_detail: nama, jumlah, satuan, harga satuan, subtotal
-          const materialsDetail = effectiveMaterials
-            .filter(m => m.nama && (parseFloat(m.jumlah)||0) > 0)
-            .map(m => {
-              const invItem = inventoryData.find(i =>
-                i.name.toLowerCase().includes(m.nama.toLowerCase()) ||
-                m.nama.toLowerCase().includes(i.name.toLowerCase())
-              );
-              const hargaSatuan = invItem?.price || 0;
-            const rawQty = parseFloat(m.jumlah) || 0;
-            // Freon: pembulatan ke atas, min 1 kg
-            const isFreon = (m.nama||"").toLowerCase().includes("freon");
-            const qty = isFreon ? Math.max(1, Math.ceil(rawQty)) : rawQty;
-              return {
-                nama: m.nama,
-                jumlah: qty,
-              satuan: m.satuan || (isFreon ? 'kg' : 'pcs'),
-                harga_satuan: hargaSatuan,
-                subtotal: hargaSatuan * qty,
-              keterangan: m.keterangan || (isFreon && rawQty !== qty ? `Aktual: ${rawQty} kg → dibulatkan ${qty} kg` : ""),
-              };
-            });
-          // [OPSI A] Freon tidak otomatis masuk invoice dari tekanan (psi)
+          const matTotal   = hitungMaterialTotal(effectiveMaterials);
+          const invoiceTotal = laborTotal + matTotal;
 
-          const newInvoice = {
-            id: newInvoiceId,
-            job_id: laporanModal.id,
-            customer: laporanModal.customer,
-            phone: laporanModal.phone || customersData.find(c=>c.name===laporanModal.customer)?.phone || "",
-            service: laporanModal.service + " - " + laporanModal.type,
-            units: laporanUnits.length,
-            labor: laborTotal,
-            material: matTotal,
-            materials_detail: materialsDetail,
-            dadakan: 0,
-            total: laborTotal + matTotal,
-            status: "PENDING_APPROVAL",
-            garansi_days: garansiDays,
-            garansi_expires: garansiExpires,
-            created_at: new Date().toISOString(),
-          };
-          // ── GAP-13 FIX: Auto-approve invoice Rp 0 (Complain garansi) ──
-          if (newInvoice.total === 0 && laporanModal?.service === "Complain") {
-            newInvoice.status = "UNPAID"; // skip PENDING_APPROVAL — langsung UNPAID (atau PAID jika Rp0)
-            newInvoice.status = "PAID";   // Complain garansi = langsung PAID karena Rp 0
-            newInvoice.paid_at = new Date().toISOString();
-            // Update order juga
-            (async()=>{ try{ await supabase.from("orders").update({status:"COMPLETED"}).eq("id",laporanModal.id); }catch(_){} })();
-            addAgentLog("GARANSI_AUTO_APPROVE", `Invoice ${newInvoice.id} Rp 0 (Complain garansi) auto-approved`, "SUCCESS");
-          }
-          setInvoicesData(prev => [...prev, newInvoice]);
+          // ── CEK GARANSI: Complain Rp 0 dalam masa garansi → SKIP invoice ──
+          // Cek apakah customer punya invoice sebelumnya yang garansi_expires masih valid hari ini
+          const today2     = new Date().toISOString().slice(0,10);
+          const isComplain = laporanModal.service === "Complain";
+          const isZeroTotal = invoiceTotal === 0;
+
+          // Cari invoice terakhir customer yang punya garansi aktif
+          const prevInvoiceWithGaransi = isComplain && isZeroTotal
+            ? invoicesData
+                .filter(inv =>
+                  inv.customer === laporanModal.customer &&
+                  inv.service !== "Complain" &&              // bukan invoice complain sebelumnya
+                  inv.garansi_expires &&                     // punya data garansi
+                  inv.garansi_expires >= today2 &&           // masih dalam masa garansi
+                  ["PAID","UNPAID","APPROVED"].includes(inv.status) // invoice valid
+                )
+                .sort((a,b) => (b.created_at||"").localeCompare(a.created_at||""))[0] // terbaru
+            : null;
+
+          const isInGaransi = !!prevInvoiceWithGaransi;
+
+          // ── Garansi expired: cek apakah ada invoice sebelumnya yang garansinya sudah habis
+          // Kalau iya → kenakan biaya pengecekan Rp 100.000 (override invoiceTotal)
+          const prevExpiredInvoice = isComplain && isZeroTotal && !isInGaransi
+            ? invoicesData
+                .filter(inv =>
+                  inv.customer === laporanModal.customer &&
+                  inv.service !== "Complain" &&
+                  inv.garansi_expires &&
+                  inv.garansi_expires < today2 &&           // garansi sudah EXPIRED
+                  ["PAID","UNPAID","APPROVED"].includes(inv.status)
+                )
+                .sort((a,b) => (b.created_at||"").localeCompare(a.created_at||""))[0]
+            : null;
+
+          // Jika garansi expired & tidak ada material berbayar → kenakan biaya cek Rp 100.000
+          const BIAYA_CEK_GARANSI_EXPIRED = 100000;
+          const finalInvoiceTotal = (isComplain && isZeroTotal && prevExpiredInvoice)
+            ? BIAYA_CEK_GARANSI_EXPIRED
+            : invoiceTotal;
+          const finalLaborTotal   = (isComplain && isZeroTotal && prevExpiredInvoice)
+            ? BIAYA_CEK_GARANSI_EXPIRED
+            : laborTotal;
+
+
+          // ── SKIP INVOICE: Complain Rp 0 + masih dalam garansi ──
+          if (isComplain && isZeroTotal && isInGaransi) {
+            // Tidak buat invoice — langsung selesaikan order
+            setOrdersData(prev => prev.map(o =>
+              o.id === laporanModal.id ? {...o, status:"COMPLETED"} : o
+            ));
+            try {
+              await supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id);
+            } catch(_) {}
+            addAgentLog(
+              "GARANSI_SKIP_INVOICE",
+              `Complain ${laporanModal.id} — ${laporanModal.customer} dalam garansi ` +
+              `s/d ${prevInvoiceWithGaransi.garansi_expires} (ref: ${prevInvoiceWithGaransi.id}) → invoice di-skip`,
+              "SUCCESS"
+            );
+            // Lanjut ke bagian akhir submitLaporan (WA notif, setLaporanSubmitted)
+          } else {
+            // ── BUAT INVOICE: Complain berbayar (>Rp 0) ATAU di luar garansi ──
+            const invSeq       = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
+            const newInvoiceId = "INV-" + today2.replace(/-/g,"").slice(0,8) + "-" + invSeq;
+            const garansiDays    = laporanModal.service==="Install" ? 90 : laporanModal.service==="Repair" ? 60 : 30;
+            const garansiExpires = new Date(Date.now() + garansiDays*24*60*60*1000).toISOString().slice(0,10);
+
+            // Build materials_detail
+            const materialsDetail = effectiveMaterials
+              .filter(m => m.nama && (parseFloat(m.jumlah)||0) > 0)
+              .map(m => {
+                const invItem = inventoryData.find(i =>
+                  i.name.toLowerCase().includes(m.nama.toLowerCase()) ||
+                  m.nama.toLowerCase().includes(i.name.toLowerCase())
+                );
+                const hargaSatuan = invItem?.price || 0;
+                const rawQty = parseFloat(m.jumlah) || 0;
+                const isFreon = ["freon","r-22","r-32","r-410"].some(k=>(m.nama||"").toLowerCase().includes(k));
+                const qty = isFreon ? Math.max(1, Math.ceil(rawQty)) : rawQty;
+                return {
+                  nama: m.nama,
+                  jumlah: qty,
+                  satuan: m.satuan || (isFreon ? "kg" : "pcs"),
+                  harga_satuan: hargaSatuan,
+                  subtotal: hargaSatuan * qty,
+                  keterangan: m.keterangan || (isFreon && rawQty !== qty ? `Aktual: ${rawQty} kg → dibulatkan ${qty} kg` : ""),
+                };
+              });
+
+            const newInvoice = {
+              id: newInvoiceId,
+              job_id:   laporanModal.id,
+              customer: laporanModal.customer,
+              phone:    laporanModal.phone || customersData.find(c=>c.name===laporanModal.customer)?.phone || "",
+              service:  laporanModal.service + " - " + laporanModal.type,
+              units:    laporanUnits.length,
+              labor:    finalLaborTotal,
+              material: matTotal,
+              materials_detail: materialsDetail,
+              dadakan:  0,
+              total:    finalInvoiceTotal,
+              status:   "PENDING_APPROVAL",
+              garansi_days:    garansiDays,
+              garansi_expires: garansiExpires,
+              created_at: new Date().toISOString(),
+            };
+
+            // Status override berdasarkan kondisi
+            if (isComplain && finalInvoiceTotal === 0) {
+              // Complain tanpa material & tidak ada invoice sebelumnya → auto-PAID
+              newInvoice.status  = "PAID";
+              newInvoice.paid_at = new Date().toISOString();
+              addAgentLog("GARANSI_AUTO_PAID", `Complain ${newInvoiceId} Rp 0 (tidak ada invoice sebelumnya) → auto PAID`, "SUCCESS");
+            } else if (isComplain && prevExpiredInvoice && finalInvoiceTotal === BIAYA_CEK_GARANSI_EXPIRED) {
+              // Garansi expired → biaya pengecekan
+              addAgentLog("GARANSI_EXPIRED_FEE",
+                `Complain ${newInvoiceId} — garansi expired (ref: ${prevExpiredInvoice.id} s/d ${prevExpiredInvoice.garansi_expires}) → biaya cek Rp ${BIAYA_CEK_GARANSI_EXPIRED.toLocaleString("id-ID")}`,
+                "WARNING");
+            }
+
+            setInvoicesData(prev => [...prev, newInvoice]);
           // Simpan invoice ke Supabase
           // Siapkan payload Supabase — materials_detail disimpan sebagai JSON string
           const invoicePayload = {
@@ -8601,6 +8673,8 @@ Silakan approve di menu Invoice. — ARA`;
             fetch("/api/send-wa",{method:"POST",headers:_apiHeaders(),
               body:JSON.stringify({phone:"6281299898937",message:ownerWAMsg})}).catch(()=>{});
           }
+
+          } // end else (invoice dibuat)
 
           setLaporanSubmitted(true);
           pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
