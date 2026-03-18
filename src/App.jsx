@@ -3347,7 +3347,6 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                   </div>
                   {/* Tombol — role-aware */}
                   {(currentUser?.role === "Teknisi" || currentUser?.role === "Helper") ? (
-                  {/* VIEW ONLY: Teknisi/Helper hanya Riwayat + WA */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, flexShrink:0 }}>
                     <button onClick={()=>{ setSelectedCustomer(cu); setCustomerTab("history"); }}
                       style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent,
@@ -3361,7 +3360,6 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                     </button>
                   </div>
                   ) : (
-                  {/* FULL: Owner/Admin dapat 4 tombol */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, flexShrink:0 }}>
                     <button onClick={()=>{ setSelectedCustomer(cu); setCustomerTab("history"); }}
                       style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent,
