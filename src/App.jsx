@@ -4634,6 +4634,15 @@ Tidak bisa dibatalkan.`,
                         style={{ background:"#3b82f622", border:"1px solid #3b82f644", color:"#3b82f6", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                         🗺️ Maps
                       </button>
+                       <button onClick={()=>{
+                         const cu = customersData.find(c=>c.name===o.customer);
+                         setHistoryPreview(cu||{name:o.customer,phone:o.phone,address:o.address});
+                       }}
+                         style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"44",
+                           color:cs.accent, borderRadius:8, padding:"6px 12px",
+                           cursor:"pointer", fontWeight:600, fontSize:12 }}>
+                         📋 History
+                       </button>
                       <button onClick={() => { setWaTekTarget({phone:o.phone,customer:o.customer,service:o.service,time:o.time,address:o.address}); setModalWaTek(true); }}
                         style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                         📱 WA
