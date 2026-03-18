@@ -6877,12 +6877,37 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
               {/* Tipe AC */}
               <div>
                 <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Tipe AC</div>
-                <select value={newOrderForm.type||"AC Split 0.5-1PK"} onChange={e => setNewOrderForm(f=>({...f,type:e.target.value}))}
-                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
-                  {newOrderForm.service==="Cleaning" && ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Cassette 5PK","AC Cassette 6PK","AC Standing","AC Split Duct","Jasa Service Besar 0,5PK - 1PK","Jasa Service Besar 1,5PK - 2,5PK"].map(t=><option key={t}>{t}</option>)}
-                  {newOrderForm.service==="Install"  && ["Pemasangan AC Baru 0,5PK - 1PK","Pemasangan AC Baru 1,5PK - 2PK","Bongkar Pasang AC Split 1/2 - 1PK","Bongkar Pasang AC Split 1,5 - 2,5PK","Pasang AC Cassette","Pasang AC Standing","Pasang AC Split 3PK"].map(t=><option key={t}>{t}</option>)}
-                  {newOrderForm.service==="Repair"   && ["Pengecekan AC","Pengecekan AC Panas/Bocor","Ganti Freon","Ganti Kompressor","Ganti Kapasitor","Bocor Refrigerant","Perbaikan PCB","Perbaikan Motor Fan"].map(t=><option key={t}>{t}</option>)}
-                  {newOrderForm.service==="Complain" && ["Garansi Servis (gratis)","Komplain AC Tidak Dingin","Komplain Bising/Berisik","Komplain Bocor Air","Komplain Garansi","Komplain Setelah Servis","Pengecekan AC Gratis","Pengecekan Ulang"].map(t=><option key={t}>{t}</option>)}
+                <select value={newOrderForm.type||""}  onChange={e => setNewOrderForm(f=>({...f,type:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13 }}>
+                  <option value="">Pilih tipe...</option>
+                  {(() => {
+                    // DYNAMIC dari priceListData â€” auto update saat price_list DB berubah
+                    const svc = newOrderForm.service;
+                    // Filter tipe dari DB, exclude sub-jasa Install (Jasa Penarikan, Flaring, dll)
+                    const INSTALL_EXCLUDE = [
+                      "Jasa Penarikan Pipa AC","Jasa Penarikan Pipa Ruko","Jasa Vacum AC 0,5PK - 2,5PK",
+                      "Flaring Pipa","Jasa Pengelasan Pipa AC","Jasa Bobok Tembok","Jasa Instalasi Listrik",
+                      "Jasa Pembuatan Saluran Pembuangan","Jasa Vacum Unit AC >3PK","Bongkar Pasang Indoor AC",
+                      "Bongkar Pasang Outdoor AC","Bongkar Unit AC 0.5-1PK","Bongkar Unit AC 1.5-2.5PK",
+                      "Flushing Pipa","Jasa Instalasi Pipa AC"
+                    ];
+                    // Exclude dari Cleaning juga: jasa besar dan transport
+                    const CLEANING_EXCLUDE = [
+                      "Jasa Service Besar 0,5PK - 1PK","Jasa Service Besar 1,5PK - 2,5PK",
+                      "Biaya Transport Bila 1 Unit"
+                    ];
+                    const types = priceListData
+                      .filter(r => r.service === svc && r.is_active !== false)
+                      .filter(r => {
+                        if (svc === "Install")  return !INSTALL_EXCLUDE.includes(r.type);
+                        if (svc === "Cleaning") return !CLEANING_EXCLUDE.includes(r.type);
+                        return true;
+                      })
+                      .map(r => r.type);
+                    return types.length > 0
+                      ? types.map(t => <option key={t} value={t}>{t}</option>)
+                      : <option disabled>Loading...</option>;
+                  })()}
                 </select>
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
