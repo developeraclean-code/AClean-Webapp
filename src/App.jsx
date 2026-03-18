@@ -504,6 +504,8 @@ export default function ACleanWebApp() {
   const [laporanRekomendasi, setLaporanRekomendasi] = useState("");
   const [laporanCatatan,     setLaporanCatatan]     = useState("");
   const [laporanInstallItems, setLaporanInstallItems] = useState({}); // key→qty untuk Report Install
+  const [matSearchId, setMatSearchId] = useState(null); // id material yang sedang di-search
+  const [matSearchQuery, setMatSearchQuery] = useState(""); // query search per baris
   const [activeUnitIdx,      setActiveUnitIdx]      = useState(0);
   const [showMatPreset,      setShowMatPreset]      = useState(false);
   const fotoInputRef = useRef();
@@ -914,6 +916,11 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     { key:"dinabolt",        label:"DINABOLT Set",                        satuan:"Set",   default:0 },
     { key:"karet_mounting",  label:"KARET MOUNTING",                      satuan:"Set",   default:0 },
     { key:"breket_outdoor",  label:"Breket Outdoor",                      satuan:"Piece", default:0 },
+  { key:"kuras_vacum_r32",  label:"Kuras Vacum + Isi Freon R32/R410", satuan:"Unit",  default:0 },
+  { key:"kuras_vacum_r22",  label:"Kuras Vacum Freon R22",            satuan:"Unit",  default:0 },
+  { key:"freon_r22",        label:"Freon R-22",                       satuan:"KG",    default:0 },
+  { key:"freon_r32",        label:"Freon R-32",                       satuan:"KG",    default:0 },
+  { key:"freon_r410",       label:"Freon R-410A",                     satuan:"KG",    default:0 },
   ];
   const TIPE_AC_OPT = ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"];
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
@@ -1311,7 +1318,7 @@ ${matRowsHtml}
     }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
     if (role === "Teknisi" || role === "Helper")
-      return menu === "dashboard" || menu === "schedule" || menu === "myreport";
+    return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "customers";
     return false;
   };
 
@@ -3338,7 +3345,23 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                     <div style={{ fontSize:11, color:cs.muted }}>📱 {cu.phone||"-"}</div>
                     <div style={{ fontSize:11, color:cs.muted, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:180 }}>📍 {cu.address||cu.area||"-"}</div>
                   </div>
-                  {/* 4 Tombol 2x2 */}
+                  {/* Tombol — role-aware */}
+                  {(currentUser?.role === "Teknisi" || currentUser?.role === "Helper") ? (
+                  {/* VIEW ONLY: Teknisi/Helper hanya Riwayat + WA */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, flexShrink:0 }}>
+                    <button onClick={()=>{ setSelectedCustomer(cu); setCustomerTab("history"); }}
+                      style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent,
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                      📋 Riwayat
+                    </button>
+                    <button onClick={()=>cu.phone && openWA(cu.phone,"")}
+                      style={{ background:"#25D36618", border:"1px solid #25D36633", color:"#25D366",
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                      💬 WA
+                    </button>
+                  </div>
+                  ) : (
+                  {/* FULL: Owner/Admin dapat 4 tombol */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, flexShrink:0 }}>
                     <button onClick={()=>{ setSelectedCustomer(cu); setCustomerTab("history"); }}
                       style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent,
@@ -3370,6 +3393,7 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
                       </button>
                     ) : <div/>}
                   </div>
+                  )}
                 </div>
               );
             })}
@@ -3953,7 +3977,10 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`,
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
               <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>👁 Preview</button>
               {/* Edit invoice — Owner bisa edit semua status kecuali PAID */}
-              {inv.status !== "PAID" && (currentUser?.role === "Owner") && (
+              {/* Edit invoice */}
+              {inv.status !== "PAID" &&
+               (currentUser?.role === "Owner" ||
+                (currentUser?.role === "Admin" && inv.status === "PENDING_APPROVAL")) && (
                 <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); const _allItems = parseMD(inv.materials_detail).map((m,idx)=>({...m,_idx:idx}));
           const _jasaItems = _allItems.filter(m => jasaSvcNames.some(s => (m.nama||"").includes(s)));
           const _matItems  = _allItems.filter(m => !jasaSvcNames.some(s => (m.nama||"").includes(s)));
@@ -7998,7 +8025,8 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               {liveInv.status === "UNPAID" && (
                 <button onClick={() => { invoiceReminderWA(liveInv); setModalPDF(false); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📱 Kirim via WA</button>
               )}
-              {liveInv.status === "PENDING_APPROVAL" && currentUser?.role === "Owner" && (
+              {liveInv.status === "PENDING_APPROVAL" &&
+               (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                 <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); const _aLv=parseMD(liveInv.materials_detail).map((m,idx)=>({...m,_idx:idx})); const _jLv=_aLv.filter(m=>jasaSvcNames.some(s=>(m.nama||"").includes(s))); const _mLv=_aLv.filter(m=>!jasaSvcNames.some(s=>(m.nama||"").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
             </div>
@@ -9658,35 +9686,70 @@ Silakan approve di menu Invoice. — ARA`;
               {laporanStep===3&&(
                 <div style={{display:"grid",gap:14}}>
 
-                  {/* ══ REPORT INSTALL FORM ══ */}
-                  {isInstallJob && (
-                    <div style={{display:"grid",gap:10,marginBottom:8}}>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.accent,marginBottom:2}}>🔧 Detail Pekerjaan Instalasi</div>
-                      <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Isi 0 jika tidak dikerjakan. Admin dapat mengedit setelah selesai.</div>
-                      {INSTALL_ITEMS.map(item=>(
-                        <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
-                          background:parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"08":cs.card,
-                          border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"44":cs.border),
-                          borderRadius:8,padding:"8px 10px"}}>
-                          <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
-                            {item.label}
-                            <span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
-                          </div>
-                          <input id="field_number_38" type="number" min="0" step={item.satuan==="meter"?"0.5":"1"}
-                            value={laporanInstallItems[item.key]??""}
-                            onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
-                            placeholder="0"
-                            style={{width:70,textAlign:"center",background:cs.surface,border:"1px solid "+cs.border,
-                              borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none"}}/>
-                        </div>
-                      ))}
-                      {Object.values(laporanInstallItems).some(v=>parseFloat(v||0)>0) && (
-                        <div style={{background:cs.green+"10",border:"1px solid "+cs.green+"33",borderRadius:9,padding:"10px 12px",fontSize:11,color:cs.green}}>
-                          ✅ {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).length} item diisi
-                        </div>
-                      )}
-                    </div>
-                  )}
+              {/* ══ REPORT INSTALL FORM ══ */}
+              {isInstallJob && (
+              <div style={{display:"grid",gap:8,marginBottom:8}}>
+                <div style={{fontSize:12,fontWeight:700,color:cs.accent,marginBottom:2}}>🔧 Detail Pekerjaan Instalasi</div>
+                <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Isi 0 jika tidak dikerjakan.</div>
+                {/* ── Group 1: Jasa Pemasangan ── */}
+                <div style={{fontSize:10,fontWeight:700,color:cs.muted,letterSpacing:1,textTransform:"uppercase",marginTop:2}}>Jasa Pemasangan</div>
+                {INSTALL_ITEMS.filter(it=>["pasang_05_1pk","pasang_15_2pk","bongkar_05_1pk","bongkar_15_25pk","vacum_05_25pk"].includes(it.key)).map(item=>(
+                <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
+                  background:parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"08":cs.card,
+                  border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"44":cs.border),
+                  borderRadius:8,padding:"8px 10px"}}>
+                  <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
+                    {item.label}<span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
+                  </div>
+                  <input type="number" min="0" step={item.satuan==="Meter"?"0.5":"1"}
+                    value={laporanInstallItems[item.key]??""}
+                    onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
+                    placeholder="0"
+                    style={{width:64,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none",textAlign:"center"}}/>
+                </div>
+                ))}
+                {/* ── Group 2: Material ── */}
+                <div style={{fontSize:10,fontWeight:700,color:cs.muted,letterSpacing:1,textTransform:"uppercase",marginTop:6}}>Material</div>
+                {INSTALL_ITEMS.filter(it=>["pipa_1pk","pipa_2pk","pipa_25pk","pipa_3pk","kabel_15","kabel_25","ducttape_biasa","ducttape_lem","jasa_pipa_ac","jasa_pipa_ruko","dinabolt","karet_mounting","breket_outdoor"].includes(it.key)).map(item=>(
+                <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
+                  background:parseFloat(laporanInstallItems[item.key]||0)>0?cs.green+"08":cs.card,
+                  border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?cs.green+"44":cs.border),
+                  borderRadius:8,padding:"8px 10px"}}>
+                  <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
+                    {item.label}<span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
+                  </div>
+                  <input type="number" min="0" step={item.satuan==="Meter"?"0.5":"1"}
+                    value={laporanInstallItems[item.key]??""}
+                    onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
+                    placeholder="0"
+                    style={{width:64,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none",textAlign:"center"}}/>
+                </div>
+                ))}
+                {/* ── Group 3: Freon & Vacum ── */}
+                <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",letterSpacing:1,textTransform:"uppercase",marginTop:6}}>❄️ Freon & Vacum</div>
+                {INSTALL_ITEMS.filter(it=>["kuras_vacum_r32","kuras_vacum_r22","freon_r22","freon_r32","freon_r410"].includes(it.key)).map(item=>(
+                <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
+                  background:parseFloat(laporanInstallItems[item.key]||0)>0?"#38bdf808":cs.card,
+                  border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?"#38bdf844":cs.border),
+                  borderRadius:8,padding:"8px 10px"}}>
+                  <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
+                    {item.label}<span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
+                  </div>
+                  <input type="number" min="0" step={item.satuan==="KG"?"0.5":"1"}
+                    value={laporanInstallItems[item.key]??""}
+                    onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
+                    placeholder="0"
+                    style={{width:64,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none",textAlign:"center"}}/>
+                </div>
+                ))}
+                {/* Summary */}
+                {Object.values(laporanInstallItems).some(v=>parseFloat(v||0)>0) && (
+                <div style={{background:cs.green+"10",border:"1px solid "+cs.green+"33",borderRadius:9,padding:"8px 12px",fontSize:11,color:cs.green,marginTop:4}}>
+                  ✅ {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).length} item diisi
+                </div>
+                )}
+              </div>
+              )}
 
                   {/* ══ NORMAL MATERIAL FORM (Service/Repair/Complain) ══ */}
                   {!isInstallJob && (
@@ -9712,26 +9775,88 @@ Silakan approve di menu Invoice. — ARA`;
                       </div>
                     )}
                     {laporanMaterials.length===0&&<div style={{textAlign:"center",padding:"14px 0",fontSize:12,color:cs.muted,fontStyle:"italic"}}>Belum ada material. Tap + Tambah atau pakai Preset.</div>}
-                    {laporanMaterials.map(mat=>(
-                      <div key={mat.id} style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                          <input id="field_39" value={mat.nama} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,nama:e.target.value}:m))} placeholder="Nama material..."
-                            style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
-                          <button onClick={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
-                            style={{marginLeft:8,background:"#ef444422",border:"1px solid #ef444433",color:"#ef4444",borderRadius:7,padding:"8px 10px",cursor:"pointer",fontSize:14,lineHeight:1,fontWeight:700}}>×</button>
-                        </div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                          <input id="field_number_40" type="number" value={mat.jumlah} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:e.target.value}:m))} placeholder="Jml" min="0"
-                            style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
-                          <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
-                            style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
-                            {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
-                          </select>
-                          <input id="field_41" value={mat.keterangan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,keterangan:e.target.value}:m))} placeholder="Keterangan..."
-                            style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
-                        </div>
+              {laporanMaterials.map(mat=>{
+                // Build lookup: inventory + price_list Material (tanpa harga)
+                const matLookup = [
+                  ...inventoryData.map(r=>({nama:r.name,satuan:r.unit||"pcs"})),
+                  ...priceListData.filter(r=>r.service==="Material").map(r=>({nama:r.type,satuan:r.unit||"pcs"}))
+                ].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i); // dedupe
+                const isSearching = matSearchId === mat.id;
+                const query = isSearching ? matSearchQuery : "";
+                const filtered = matLookup.filter(x=>
+                  x.nama.toLowerCase().includes(query.toLowerCase())
+                ).slice(0,12);
+                return (
+                <div key={mat.id} style={{background:cs.card,border:"1px solid "+(mat.nama?cs.accent+"44":cs.border),borderRadius:10,padding:"10px 12px",marginBottom:6}}>
+                  {/* Row 1: Nama material — dropdown search */}
+                  <div style={{position:"relative",marginBottom:6}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      {/* Nama field — tampilkan nama terpilih atau input search */}
+                      <div style={{flex:1,position:"relative"}}>
+                        <input
+                          id={"mat_search_"+mat.id}
+                          value={isSearching ? matSearchQuery : mat.nama}
+                          placeholder="Cari material..."
+                          onFocus={()=>{ setMatSearchId(mat.id); setMatSearchQuery(mat.nama); }}
+                          onChange={e=>{ setMatSearchQuery(e.target.value); }}
+                          onBlur={()=>setTimeout(()=>{ setMatSearchId(null); setMatSearchQuery(""); },200)}
+                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
+                            borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}
+                        />
+                        {/* Dropdown hasil search */}
+                        {isSearching && (
+                          <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:999,
+                            background:cs.surface,border:"1px solid "+cs.accent+"55",
+                            borderRadius:"0 0 10px 10px",maxHeight:200,overflowY:"auto",
+                            boxShadow:"0 8px 24px #0006"}}>
+                            {filtered.length > 0 ? filtered.map((item,idx)=>(
+                              <div key={idx}
+                                onMouseDown={()=>{
+                                  setLaporanMaterials(p=>p.map(m=>m.id===mat.id
+                                    ?{...m,nama:item.nama,satuan:item.satuan}:m));
+                                  setMatSearchId(null); setMatSearchQuery("");
+                                }}
+                                style={{padding:"9px 12px",cursor:"pointer",fontSize:13,
+                                  color:cs.text,borderBottom:"1px solid "+cs.border+"33",
+                                  display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                                onMouseEnter={e=>e.currentTarget.style.background=cs.accent+"18"}
+                                onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                              >
+                                <span style={{fontWeight:600}}>{item.nama}</span>
+                                <span style={{fontSize:11,color:cs.muted,marginLeft:8}}>{item.satuan}</span>
+                              </div>
+                            )) : (
+                              <div style={{padding:"10px 12px",color:cs.muted,fontSize:12}}>
+                                Tidak ditemukan — ketik manual
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    ))}
+                      {/* Tombol hapus baris */}
+                      <button onMouseDown={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
+                        style={{background:"#ef444420",border:"none",color:"#ef4444",
+                          borderRadius:7,padding:"6px 10px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                  {/* Row 2: Qty + Satuan */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <input type="number" min="0" step="0.5" value={mat.jumlah}
+                      onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:parseFloat(e.target.value)||0}:m))}
+                      placeholder="Jumlah"
+                      style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                        padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                    <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
+                      style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                        padding:"7px 10px",color:cs.text,fontSize:13}}>
+                      {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+                );
+              })}
                   </div>
                   {laporanMaterials.length<20&&(
                     <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,satuan:"pcs",keterangan:""}])}
