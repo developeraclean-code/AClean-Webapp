@@ -3290,6 +3290,11 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
         (cu.notes||"").toLowerCase().includes(_scq)
       );
     });
+    // SD2: Pre-compute history semua customer sekali
+    const allCustHistory = {};
+    filteredCusts.forEach(cu => {
+      allCustHistory[cu.id] = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
+    });
     return (
       <div style={{ display:"grid", gap:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -3323,11 +3328,6 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
             {searchCustomer && (
               <div style={{ fontSize:12, color:cs.muted }}>Menampilkan <b style={{ color:cs.accent }}>{filteredCusts.length}</b> dari {customersData.length} customer</div>
             )}
-              // SD2: Pre-compute history sekali, bukan per card
-              const allCustHistory = {};
-              filteredCusts.forEach(cu => {
-                allCustHistory[cu.id] = allCustHistory[cu.id] || [];
-              });
             {filteredCusts.map(cu => {
               const cHist = allCustHistory[cu.id] || [];
               const lastSvc = cHist[0]; // sudah sorted by date desc
