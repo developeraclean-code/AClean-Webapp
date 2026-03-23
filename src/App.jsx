@@ -3323,8 +3323,13 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
             {searchCustomer && (
               <div style={{ fontSize:12, color:cs.muted }}>Menampilkan <b style={{ color:cs.accent }}>{filteredCusts.length}</b> dari {customersData.length} customer</div>
             )}
+              // SD2: Pre-compute history sekali, bukan per card
+              const allCustHistory = {};
+              filteredCusts.forEach(cu => {
+                allCustHistory[cu.id] = allCustHistory[cu.id] || [];
+              });
             {filteredCusts.map(cu => {
-              const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
+              const cHist = allCustHistory[cu.id] || [];
               const lastSvc = cHist[0]; // sudah sorted by date desc
               return (
                 <div key={cu.id} style={{ background:cs.card, border:"1px solid "+cs.border,
@@ -4829,27 +4834,6 @@ Tidak bisa dibatalkan.`,
                                 ✅ Konfirmasi Tiba
                               </button>
                             )}
-                            {/* ── WA Customer: manual, teknisi isi estimasi jam tiba ── */}
-                            {o.phone && (() => {
-                              const jamSkrg = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
-                              const [h,m] = jamSkrg.split(":").map(Number);
-                              const etaDate = new Date(); etaDate.setMinutes(etaDate.getMinutes()+30);
-                              const jamEta = etaDate.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
-                              return (
-                                <button onClick={() => {
-                                  const eta = window.prompt(
-                                    `Estimasi tiba di lokasi ${o.customer}?\nContoh: 13:30`,
-                                    jamEta
-                                  );
-                                  if (!eta) return;
-                                  const msg = `Halo ${o.customer} 👋\n\nKami dari *AClean Service* akan segera tiba di lokasi Anda.\n\n📋 Job: ${o.id}\n🔧 Service: ${o.service} — ${o.units} unit\n⏰ Estimasi tiba: *${eta} WIB*\n\nMohon pastikan ada di lokasi ya! 🙏\n\n_${currentUser?.name} — AClean_`;
-                                  if (o.phone) sendWA(o.phone, msg);
-                                  else showNotif("⚠️ No. HP customer tidak tersedia");
-                                }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
-                                  📱 WA Customer
-                                </button>
-                              );
-                            })()}
                           </>)}
                           <button onClick={() => openLaporanModal(o)} style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📝 Laporan</button>
                         </div>
@@ -7616,7 +7600,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   {/* Detail per unit AC */}
                   {(h.unit_detail||[]).length > 0 && (
                     <div style={{ margin:"0 18px 8px", background:cs.card, borderRadius:8, padding:"8px 10px" }}>
-                      {h.unit_detail.map((u, ui) => (
+                      {(h.unit_detail||[]).map((u, ui) => (
                         <div key={ui} style={{ marginBottom:ui<h.unit_detail.length-1?6:0,
                           paddingBottom:ui<h.unit_detail.length-1?5:0,
                           borderBottom:ui<h.unit_detail.length-1?"1px solid "+cs.border+"33":"none" }}>
@@ -7653,7 +7637,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                     <div style={{ padding:"0 18px 12px" }}>
                       <div style={{ fontSize:10, color:cs.muted, marginBottom:5, fontWeight:600 }}>📸 Foto ({h.foto_urls.length})</div>
                       <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:4 }}>
-                        {h.foto_urls.map((url, fi) => (
+                        {(h.foto_urls||[]).map((url, fi) => (
                           <img key={fi} src={url} alt={"Foto "+(fi+1)}
                             onClick={()=>window.open(url,"_blank")}
                             onError={e=>{ e.target.style.display="none"; }}
