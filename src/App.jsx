@@ -1751,6 +1751,105 @@ ${matRowsHtml}
             });
           };
   }, [isLoggedIn]);
+
+  // ── PSEUDO-CRON: cek setiap menit, jalankan job yang aktif ──
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const cronRunner = setInterval(() => {
+      const now      = new Date();
+      const nowHHMM  = now.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",hour12:false});
+      const nowDay   = now.toLocaleDateString("id-ID",{weekday:"long"}); // "Senin","Selasa",...
+      const todayStr = now.toISOString().slice(0,10);
+
+      cronJobs.forEach(job => {
+        if (!job.active) return;
+        // Cek jam cocok (toleransi 1 menit)
+        if (job.time !== nowHHMM) return;
+        // Cek hari cocok
+        const dayMatch = job.days === "Setiap Hari" ||
+          job.days.toLowerCase().includes(nowDay.toLowerCase());
+        if (!dayMatch) return;
+        // Hindari double-run: cek apakah sudah jalan hari ini
+        const lastRun = localStorage.getItem("cron_last_"+job.id);
+        if (lastRun === todayStr) return;
+        localStorage.setItem("cron_last_"+job.id, todayStr);
+
+        // ── Eksekusi per job ──
+        addAgentLog("CRON_RUN", job.name+" dijalankan otomatis", "SUCCESS");
+
+        if (job.id === 1) {
+          // Payment Reminder: kirim reminder invoice UNPAID yang sudah lewat due
+          const unpaid = invoicesData.filter(inv =>
+            inv.status === "UNPAID" && inv.due && inv.due < todayStr && inv.phone
+          );
+          unpaid.forEach(inv => invoiceReminderWA(inv));
+          addAgentLog("CRON_REMINDER", unpaid.length+" invoice reminder terkirim", "SUCCESS");
+        }
+
+        if (job.id === 2) {
+          // Laporan Harian: summary orders hari ini
+          const todayDone  = ordersData.filter(o => o.date===todayStr&&o.status==="COMPLETED").length;
+          const todayTotal = ordersData.filter(o => o.date===todayStr).length;
+          const pendingInv = invoicesData.filter(i => i.status==="PENDING_APPROVAL").length;
+          addAgentLog("CRON_DAILY",
+            `Daily: ${todayDone}/${todayTotal} job selesai, ${pendingInv} invoice pending`,
+            "SUCCESS"
+          );
+        }
+
+        if (job.id === 3) {
+          // Laporan Mingguan: rekap 7 hari
+          const weekAgo  = new Date(Date.now()-7*24*60*60*1000).toISOString().slice(0,10);
+          const weekDone = ordersData.filter(o => o.date>=weekAgo&&o.status==="COMPLETED").length;
+          const weekRev  = invoicesData.filter(i => i.status==="PAID"&&(i.paid_at||"")>=weekAgo)
+            .reduce((s,i)=>s+(i.total||0),0);
+          addAgentLog("CRON_WEEKLY",
+            `Weekly: ${weekDone} job selesai, revenue Rp ${weekRev.toLocaleString("id-ID")}`,
+            "SUCCESS"
+          );
+        }
+
+        if (job.id === 4) {
+          // Overdue Detection: tandai invoice UNPAID yang sudah lewat due date
+          const overdue = invoicesData.filter(i =>
+            i.status==="UNPAID" && i.due && i.due < todayStr
+          );
+          if (overdue.length > 0) {
+            supabase.from("invoices").update({status:"OVERDUE"})
+              .eq("status","UNPAID").lt("due", todayStr)
+              .then(({error}) => {
+                if (!error) {
+                  setInvoicesData(prev => prev.map(inv =>
+                    inv.status==="UNPAID" && inv.due && inv.due < todayStr
+                      ? {...inv, status:"OVERDUE"} : inv
+                  ));
+                  addAgentLog("CRON_OVERDUE",
+                    overdue.length+" invoice ditandai OVERDUE", "WARNING"
+                  );
+                }
+              });
+          }
+        }
+
+        if (job.id === 5) {
+          // Stok Alert: cek material di bawah min_alert
+          const kritisItems = inventoryData.filter(item =>
+            (item.stock||0) <= (item.min_alert||0)
+          );
+          if (kritisItems.length > 0) {
+            addAgentLog("CRON_STOK",
+              kritisItems.length+" item stok kritis: "+
+              kritisItems.slice(0,3).map(i=>i.name).join(", "),
+              "WARNING"
+            );
+          }
+        }
+      });
+    }, 60000); // cek setiap 1 menit
+
+    return () => clearInterval(cronRunner);
+  }, [isLoggedIn, cronJobs, invoicesData, ordersData, inventoryData]);
+
   // ── Helper: parse materials_detail JSON safely ──
   // Nama prefix yang menandakan item adalah JASA (bukan material)
   const jasaSvcNames = ["Cleaning /","Install /","Repair /","Complain /","Jasa ","Pemasangan ","Bongkar ","Vacum ","Flaring","Flushing"];
@@ -5926,14 +6025,27 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
     // Get my ORDERS_DATA jobs that don't have a report yet — show as pending
     const myJobs = ordersData.filter(o => o.teknisi===myName || o.helper===myName);
     const reportedJobIds = submittedReps.map(r => r.job_id);
-    const pendingJobs = myJobs.filter(o => !reportedJobIds.includes(o.id));
+    // Filter: hanya tampilkan job hari ini atau sebelumnya
+    // Job masa depan (H+1, H+2) tidak ditampilkan — teknisi belum perlu laporan
+    const pendingJobs = myJobs.filter(o =>
+      !reportedJobIds.includes(o.id) &&
+      (o.date || "") <= TODAY
+    );
     const pendingAsDraft = pendingJobs.map(o => ({
       id:"PENDING_"+o.id, job_id:o.id, teknisi:o.teknisi, helper:o.helper||null,
       customer:o.customer, service:o.service, date:o.date, submitted:"Belum dibuat",
       status:"PENDING", kondisi_sebelum:"", kondisi_setelah:"", pekerjaan:[],
       rekomendasi:"", catatan:"", freon:"0", ampere:"", editLog:[]
     }));
-    const myReps = [...submittedReps, ...pendingAsDraft];
+    const myReps = [...submittedReps, ...pendingAsDraft]
+      .sort((a, b) => {
+        // Hari ini paling atas, lalu urut tanggal desc
+        const da = a.date || a.submitted?.slice(0,10) || "";
+        const db = b.date || b.submitted?.slice(0,10) || "";
+        if (da === TODAY && db !== TODAY) return -1;
+        if (db === TODAY && da !== TODAY) return 1;
+        return db.localeCompare(da);
+      });
     const filtReps = myReps.filter(r =>
       !searchLaporan ||
       r.customer.toLowerCase().includes(searchLaporan.toLowerCase()) ||
