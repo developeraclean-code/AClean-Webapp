@@ -5807,59 +5807,118 @@ ${matRowsHtml}
               </div>
             )}
 
-            {/* OPSI B */}
-            <div style={{display:"grid",gap:10}}>
-              {(()=>{
-                const inv=invoicesData.find(i=>i.job_id===r.job_id);
-                if(!inv) return(<div style={{fontSize:12,color:cs.muted,padding:"7px 12px",background:cs.surface,borderRadius:8,display:"flex",alignItems:"center",gap:6}}>
-                  <span>Invoice otomatis dibuat saat teknisi submit laporan</span></div>);
-                const iC=inv.status==="PAID"?cs.green:inv.status==="APPROVED"?cs.accent:inv.status==="OVERDUE"?cs.red:cs.yellow;
-                const iL={"PENDING_APPROVAL":"Menunggu Approve","APPROVED":"Disetujui","PAID":"Lunas","OVERDUE":"Jatuh Tempo"}[inv.status]||inv.status;
-                return(<div style={{background:iC+"10",border:"1px solid "+iC+"33",borderRadius:9,padding:"9px 13px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+            {/* ── Invoice info bar ── */}
+            {(() => {
+              const inv = invoicesData.find(i => i.job_id === r.job_id);
+              if (!inv) return (
+                <div style={{fontSize:12,color:cs.muted,padding:"7px 12px",
+                  background:cs.surface,borderRadius:8}}>
+                  Invoice otomatis dibuat saat teknisi submit laporan
+                </div>
+              );
+              const iC = inv.status==="PAID"    ? cs.green  :
+                         inv.status==="APPROVED" ? cs.accent :
+                         inv.status==="OVERDUE"  ? cs.red    : cs.yellow;
+              const iL = {PENDING_APPROVAL:"Menunggu Approve",APPROVED:"Disetujui",
+                          PAID:"Lunas",OVERDUE:"Jatuh Tempo"}[inv.status] || inv.status;
+              return (
+                <div style={{background:iC+"10",border:"1px solid "+iC+"33",borderRadius:9,
+                  padding:"9px 13px",display:"flex",justifyContent:"space-between",
+                  alignItems:"center",flexWrap:"wrap",gap:8}}>
                   <div>
-                    <div style={{fontSize:12,fontWeight:700,color:iC,marginBottom:2}}>{inv.id}</div>
-                    <div style={{fontSize:11,color:cs.muted,display:"flex",alignItems:"center",gap:6}}>
+                    <div style={{fontSize:12,fontWeight:700,color:iC,marginBottom:2}}>
+                      {inv.id}
+                    </div>
+                    <div style={{fontSize:11,color:cs.muted,display:"flex",
+                      alignItems:"center",gap:6}}>
                       <span style={{fontWeight:600}}>{fmt(inv.total)}</span>
-                      <span style={{padding:"1px 8px",borderRadius:99,fontSize:10,fontWeight:700,background:iC+"22",color:iC}}>{iL}</span>
+                      <span style={{padding:"1px 8px",borderRadius:99,fontSize:10,
+                        fontWeight:700,background:iC+"22",color:iC}}>{iL}</span>
                     </div>
                   </div>
-                  <button onClick={()=>{setSelectedInvoice(inv);setActiveMenu("invoice");}}
-                    style={{fontSize:11,padding:"5px 13px",borderRadius:7,border:"1px solid "+iC+"55",background:iC+"18",color:iC,cursor:"pointer",fontWeight:700}}>
+                  <button
+                    onClick={() => { setSelectedInvoice(inv); setActiveMenu("invoice"); }}
+                    style={{fontSize:11,padding:"5px 13px",borderRadius:7,
+                      border:"1px solid "+iC+"55",background:iC+"18",
+                      color:iC,cursor:"pointer",fontWeight:700}}>
                     Buka Invoice
                   </button>
-                </div>);
-              })()}
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                {r.status==="SUBMITTED"&&(<>
-                  <button onClick={async()=>{
-                    const inv=invoicesData.find(i=>i.job_id===r.job_id);
-                    setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
-                    const uid=isRealUUID(currentUser?.id)?currentUser.id:null;
-                    const {error:vErr}=await supabase.from("service_reports").update({status:"VERIFIED",verified_by:uid,verified_at:new Date().toISOString()}).eq("id",r.id);
-                    if(vErr) await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
-                    addAgentLog("LAPORAN_VERIFIED","Laporan "+r.job_id+" diverifikasi","SUCCESS");
-                    showNotif(inv?"Verified! Invoice "+inv.id+" ("+inv.status+")":"Laporan "+r.job_id+" diverifikasi");
-                  }} style={{padding:"7px 18px",borderRadius:8,border:"none",background:"linear-gradient(135deg,"+cs.green+",#059669)",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                </div>
+              );
+            })()}
+
+            {/* ── Action buttons ── */}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+              {r.status === "SUBMITTED" && (
+                <>
+                  <button
+                    onClick={async () => {
+                      const inv = invoicesData.find(i => i.job_id === r.job_id);
+                      setLaporanReports(p =>
+                        p.map(x => x.id === r.id ? {...x, status:"VERIFIED"} : x)
+                      );
+                      const uid = isRealUUID(currentUser?.id) ? currentUser.id : null;
+                      const { error: vErr } = await supabase
+                        .from("service_reports")
+                        .update({
+                          status: "VERIFIED",
+                          verified_by: uid,
+                          verified_at: new Date().toISOString()
+                        })
+                        .eq("id", r.id);
+                      if (vErr) {
+                        await supabase.from("service_reports")
+                          .update({ status: "VERIFIED" }).eq("id", r.id);
+                      }
+                      addAgentLog("LAPORAN_VERIFIED",
+                        "Laporan " + r.job_id + " diverifikasi", "SUCCESS");
+                      showNotif(inv
+                        ? "Verified! Invoice " + inv.id + " (" + inv.status + ")"
+                        : "Laporan " + r.job_id + " diverifikasi");
+                    }}
+                    style={{padding:"7px 18px",borderRadius:8,border:"none",
+                      background:"linear-gradient(135deg,"+cs.green+",#059669)",
+                      color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
                     Verifikasi
                   </button>
-                  <button onClick={async()=>{
-                    setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));
-                    await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
-                    addAgentLog("LAPORAN_REVISION","Laporan "+r.job_id+" minta revisi","WARNING");
-                    showNotif("Revisi diminta: "+r.job_id);
-                    const tek=userAccounts.find(u=>u.name===r.teknisi&&u.phone);
-                    if(tek?.phone) sendWA(tek.phone,"Laporan Perlu Direvisi\nJob: "+r.job_id+"\nCustomer: "+r.customer+"\n\nAdmin meminta revisi. Silakan perbaiki laporan. — AClean");
-                  }} style={{padding:"7px 14px",borderRadius:8,border:"1px solid "+cs.yellow+"55",background:cs.yellow+"12",color:cs.yellow,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                  <button
+                    onClick={async () => {
+                      setLaporanReports(p =>
+                        p.map(x => x.id === r.id ? {...x, status:"REVISION"} : x)
+                      );
+                      await supabase.from("service_reports")
+                        .update({ status: "REVISION" }).eq("id", r.id);
+                      addAgentLog("LAPORAN_REVISION",
+                        "Laporan " + r.job_id + " minta revisi", "WARNING");
+                      showNotif("Revisi diminta: " + r.job_id);
+                      const tek = userAccounts.find(u => u.name === r.teknisi && u.phone);
+                      if (tek?.phone) sendWA(tek.phone,
+                        "Laporan Perlu Direvisi\nJob: " + r.job_id +
+                        "\nCustomer: " + r.customer +
+                        "\n\nAdmin meminta revisi. Silakan perbaiki laporan. — AClean");
+                    }}
+                    style={{padding:"7px 14px",borderRadius:8,
+                      border:"1px solid "+cs.yellow+"55",background:cs.yellow+"12",
+                      color:cs.yellow,fontWeight:700,fontSize:12,cursor:"pointer"}}>
                     Revisi
                   </button>
-                </>)}
-                {r.status==="REVISION"&&<span style={{fontSize:12,color:cs.yellow}}>Menunggu revisi dari {r.teknisi}</span>}
-                {r.status==="VERIFIED"&&(()=>{
-                  const inv=invoicesData.find(i=>i.job_id===r.job_id);
-                  return<span style={{fontSize:12,color:cs.green}}>{"Diverifikasi"+(inv?" · Invoice: "+inv.status:"")}</span>;
-                })()}
-                {r.status==="REJECTED"&&<span style={{fontSize:12,color:cs.red}}>Ditolak</span>}
-              </div>
+                </>
+              )}
+              {r.status === "REVISION" && (
+                <span style={{fontSize:12,color:cs.yellow}}>
+                  Menunggu revisi dari {r.teknisi}
+                </span>
+              )}
+              {r.status === "VERIFIED" && (
+                <span style={{fontSize:12,color:cs.green}}>
+                  {"Diverifikasi" + (invoicesData.find(i=>i.job_id===r.job_id)
+                    ? " · Invoice: " + invoicesData.find(i=>i.job_id===r.job_id).status
+                    : "")}
+                </span>
+              )}
+              {r.status === "REJECTED" && (
+                <span style={{fontSize:12,color:cs.red}}>Ditolak</span>
+              )}
             </div>
             </div>
           </div>
