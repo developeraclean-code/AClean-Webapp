@@ -500,11 +500,11 @@ export default function ACleanWebApp() {
   const [laporanSubmitted,   setLaporanSubmitted]   = useState(false);
   const [laporanUnits,       setLaporanUnits]       = useState([]);
   const [laporanMaterials,   setLaporanMaterials]   = useState([]);
-  const [laporanJasaItems,    setLaporanJasaItems]    = useState([]); // Array jasa dipilih teknisi
-  const [showJasaSearch,      setShowJasaSearch]      = useState(false); // toggle search panel jasa
-  const [jasaSearchQ,         setJasaSearchQ]         = useState("");    // query search jasa
-  const [showMatSearch,       setShowMatSearch]        = useState(false); // toggle search panel material
-  const [matSearchQ2,         setMatSearchQ2]         = useState("");    // query search material
+  const [laporanJasaItems,   setLaporanJasaItems]   = useState([]);
+  const [showJasaSearch,     setShowJasaSearch]     = useState(false);
+  const [jasaSearchQ,        setJasaSearchQ]        = useState("");
+  const [showMatSearch,      setShowMatSearch]      = useState(false);
+  const [matSearchQ2,        setMatSearchQ2]        = useState("");
   const [laporanFotos,       setLaporanFotos]       = useState([]);
   const [laporanRekomendasi, setLaporanRekomendasi] = useState("");
   const [laporanCatatan,     setLaporanCatatan]     = useState("");
@@ -1197,10 +1197,8 @@ ${matRowsHtml}
     setLaporanUnits(Array.from({length:count},(_,i)=>mkUnit(i+1)));
     setLaporanMaterials([]);
     setLaporanJasaItems([]);
-    setShowJasaSearch(false);
-    setJasaSearchQ("");
-    setShowMatSearch(false);
-    setMatSearchQ2("");
+    setShowJasaSearch(false); setJasaSearchQ("");
+    setShowMatSearch(false);  setMatSearchQ2("");
     setLaporanFotos([]);
   // Auto-fill install items berdasarkan jumlah unit order
   const _installDefaults = {};
@@ -1761,105 +1759,6 @@ ${matRowsHtml}
             });
           };
   }, [isLoggedIn]);
-
-  // ── PSEUDO-CRON: cek setiap menit, jalankan job yang aktif ──
-  useEffect(() => {
-    if (!isLoggedIn) return;
-    const cronRunner = setInterval(() => {
-      const now      = new Date();
-      const nowHHMM  = now.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",hour12:false});
-      const nowDay   = now.toLocaleDateString("id-ID",{weekday:"long"}); // "Senin","Selasa",...
-      const todayStr = now.toISOString().slice(0,10);
-
-      cronJobs.forEach(job => {
-        if (!job.active) return;
-        // Cek jam cocok (toleransi 1 menit)
-        if (job.time !== nowHHMM) return;
-        // Cek hari cocok
-        const dayMatch = job.days === "Setiap Hari" ||
-          job.days.toLowerCase().includes(nowDay.toLowerCase());
-        if (!dayMatch) return;
-        // Hindari double-run: cek apakah sudah jalan hari ini
-        const lastRun = localStorage.getItem("cron_last_"+job.id);
-        if (lastRun === todayStr) return;
-        localStorage.setItem("cron_last_"+job.id, todayStr);
-
-        // ── Eksekusi per job ──
-        addAgentLog("CRON_RUN", job.name+" dijalankan otomatis", "SUCCESS");
-
-        if (job.id === 1) {
-          // Payment Reminder: kirim reminder invoice UNPAID yang sudah lewat due
-          const unpaid = invoicesData.filter(inv =>
-            inv.status === "UNPAID" && inv.due && inv.due < todayStr && inv.phone
-          );
-          unpaid.forEach(inv => invoiceReminderWA(inv));
-          addAgentLog("CRON_REMINDER", unpaid.length+" invoice reminder terkirim", "SUCCESS");
-        }
-
-        if (job.id === 2) {
-          // Laporan Harian: summary orders hari ini
-          const todayDone  = ordersData.filter(o => o.date===todayStr&&o.status==="COMPLETED").length;
-          const todayTotal = ordersData.filter(o => o.date===todayStr).length;
-          const pendingInv = invoicesData.filter(i => i.status==="PENDING_APPROVAL").length;
-          addAgentLog("CRON_DAILY",
-            `Daily: ${todayDone}/${todayTotal} job selesai, ${pendingInv} invoice pending`,
-            "SUCCESS"
-          );
-        }
-
-        if (job.id === 3) {
-          // Laporan Mingguan: rekap 7 hari
-          const weekAgo  = new Date(Date.now()-7*24*60*60*1000).toISOString().slice(0,10);
-          const weekDone = ordersData.filter(o => o.date>=weekAgo&&o.status==="COMPLETED").length;
-          const weekRev  = invoicesData.filter(i => i.status==="PAID"&&(i.paid_at||"")>=weekAgo)
-            .reduce((s,i)=>s+(i.total||0),0);
-          addAgentLog("CRON_WEEKLY",
-            `Weekly: ${weekDone} job selesai, revenue Rp ${weekRev.toLocaleString("id-ID")}`,
-            "SUCCESS"
-          );
-        }
-
-        if (job.id === 4) {
-          // Overdue Detection: tandai invoice UNPAID yang sudah lewat due date
-          const overdue = invoicesData.filter(i =>
-            i.status==="UNPAID" && i.due && i.due < todayStr
-          );
-          if (overdue.length > 0) {
-            supabase.from("invoices").update({status:"OVERDUE"})
-              .eq("status","UNPAID").lt("due", todayStr)
-              .then(({error}) => {
-                if (!error) {
-                  setInvoicesData(prev => prev.map(inv =>
-                    inv.status==="UNPAID" && inv.due && inv.due < todayStr
-                      ? {...inv, status:"OVERDUE"} : inv
-                  ));
-                  addAgentLog("CRON_OVERDUE",
-                    overdue.length+" invoice ditandai OVERDUE", "WARNING"
-                  );
-                }
-              });
-          }
-        }
-
-        if (job.id === 5) {
-          // Stok Alert: cek material di bawah min_alert
-          const kritisItems = inventoryData.filter(item =>
-            (item.stock||0) <= (item.min_alert||0)
-          );
-          if (kritisItems.length > 0) {
-            addAgentLog("CRON_STOK",
-              kritisItems.length+" item stok kritis: "+
-              kritisItems.slice(0,3).map(i=>i.name).join(", "),
-              "WARNING"
-            );
-          }
-        }
-      });
-    }, 60000); // cek setiap 1 menit
-
-    return () => clearInterval(cronRunner);
-  }, [isLoggedIn, cronJobs, invoicesData, ordersData, inventoryData]);
-
   // ── Helper: parse materials_detail JSON safely ──
   // Nama prefix yang menandakan item adalah JASA (bukan material)
   const jasaSvcNames = ["Cleaning /","Install /","Repair /","Complain /","Jasa ","Pemasangan ","Bongkar ","Vacum ","Flaring","Flushing"];
@@ -2038,10 +1937,8 @@ Kamu ditugaskan sebagai Helper. — AClean`;
 
   // ── GAP 2: Hitung labor dari price list ──
   const hitungLabor = (service, type, units) => {
-    // Prioritas: priceListData (DB) > PRICE_LIST hardcode
     const plItem = priceListData.find(r => r.service === service && r.type === type);
-    if (plItem && plItem.price > 0) return (plItem.price) * (units || 1);
-    // Fallback ke hardcode
+    if (plItem && plItem.price > 0) return plItem.price * (units || 1);
     const svcMap = PRICE_LIST[service] || PRICE_LIST["Cleaning"];
     const hargaPerUnit = svcMap[type] || svcMap["default"] || 85000;
     return hargaPerUnit * (units || 1);
@@ -2057,20 +1954,17 @@ Kamu ditugaskan sebagai Helper. — AClean`;
         .replace(/r410a?$/, "r410") 
         .replace(/r22a?$/,  "r22")
         .replace(/r32a?$/,  "r32");
-      // 1. Cari di inventory
-  // Skip inventory lookup untuk item jasa (nama mengandung "Jasa" / "Kuras")
-  const isJasaItem = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama||"").trim());
+      const isJasaItem = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama||"").trim());
+      // 1. Cari di inventory (skip jasa)
       const invItem = isJasaItem ? null : inventoryData.find(inv => {
         const n = inv.name.toLowerCase()
           .replace(/,/g, ".").replace(/eterna\s*/g, "")
           .replace(/[-\s]/g, "").replace(/r410a?$/, "r410")
           .replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
-    // Hanya match jika nama sangat mirip (hindari false match freon ke kuras vacum)
-    if (n === norm) return true;
-    // Substring match hanya jika salah satu nama cukup panjang (>6 char)
-    if (norm.length > 6 && n.includes(norm)) return true;
-    if (n.length > 6 && norm.includes(n)) return true;
-    return false;
+        if (n === norm) return true;
+        if (norm.length > 6 && n.includes(norm)) return true;
+        if (n.length > 6 && norm.includes(n)) return true;
+        return false;
       });
       let harga = invItem ? invItem.price : 0;
       // 2. Fallback ke PRICE_LIST (semua service: Install, Material, Repair, dll)
@@ -2083,11 +1977,11 @@ Kamu ditugaskan sebagai Helper. — AClean`;
           }
         }
       }
-  // 2b. Fallback ke priceListData DB (exact type name match)
-  if (!harga) {
-    const plItem = priceListData.find(r => r.type && r.type.trim() === (m.nama||"").trim());
-    if (plItem) harga = plItem.price || 0;
-  }
+      // 2b. Fallback priceListData DB
+      if (!harga) {
+        const plIt = priceListData.find(r => r.type && r.type.trim() === (m.nama||"").trim());
+        if (plIt) harga = plIt.price || 0;
+      }
       // 3. Fallback freon spesifik
       if (!harga) {
         if      (raw.includes("r-22")||raw.includes("r22"))  harga = PRICE_LIST["freon_R22"]   || 450000;
@@ -3415,11 +3309,6 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
         (cu.notes||"").toLowerCase().includes(_scq)
       );
     });
-    // SD2: Pre-compute history semua customer sekali
-    const allCustHistory = {};
-    filteredCusts.forEach(cu => {
-      allCustHistory[cu.id] = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
-    });
     return (
       <div style={{ display:"grid", gap:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -3454,7 +3343,7 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
               <div style={{ fontSize:12, color:cs.muted }}>Menampilkan <b style={{ color:cs.accent }}>{filteredCusts.length}</b> dari {customersData.length} customer</div>
             )}
             {filteredCusts.map(cu => {
-              const cHist = allCustHistory[cu.id] || [];
+              const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
               const lastSvc = cHist[0]; // sudah sorted by date desc
               return (
                 <div key={cu.id} style={{ background:cs.card, border:"1px solid "+cs.border,
@@ -4959,6 +4848,7 @@ Tidak bisa dibatalkan.`,
                                 ✅ Konfirmasi Tiba
                               </button>
                             )}
+                            {/* WA Customer ETA — disabled */}
                           </>)}
                           <button onClick={() => openLaporanModal(o)} style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📝 Laporan</button>
                         </div>
@@ -5877,7 +5767,7 @@ Data order yang sudah ada tidak terpengaruh.`,
               <div><span style={{color:cs.muted}}>Tanggal: </span><span style={{color:cs.text}}>{r.date}</span></div>
               <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit AC</span></div>
               {safeArr(r.materials).length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
-              {r.fotos&&r.fotos.length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
+              {safeArr(r.fotos).length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
               {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon Total: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
             </div>
 
@@ -6051,11 +5941,8 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
     // Get my ORDERS_DATA jobs that don't have a report yet — show as pending
     const myJobs = ordersData.filter(o => o.teknisi===myName || o.helper===myName);
     const reportedJobIds = submittedReps.map(r => r.job_id);
-    // Filter: hanya tampilkan job hari ini atau sebelumnya
-    // Job masa depan (H+1, H+2) tidak ditampilkan — teknisi belum perlu laporan
     const pendingJobs = myJobs.filter(o =>
-      !reportedJobIds.includes(o.id) &&
-      (o.date || "") <= TODAY
+      !reportedJobIds.includes(o.id) && (o.date || "") <= TODAY
     );
     const pendingAsDraft = pendingJobs.map(o => ({
       id:"PENDING_"+o.id, job_id:o.id, teknisi:o.teknisi, helper:o.helper||null,
@@ -6064,12 +5951,11 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
       rekomendasi:"", catatan:"", freon:"0", ampere:"", editLog:[]
     }));
     const myReps = [...submittedReps, ...pendingAsDraft]
-      .sort((a, b) => {
-        // Hari ini paling atas, lalu urut tanggal desc
-        const da = a.date || a.submitted?.slice(0,10) || "";
-        const db = b.date || b.submitted?.slice(0,10) || "";
-        if (da === TODAY && db !== TODAY) return -1;
-        if (db === TODAY && da !== TODAY) return 1;
+      .sort((a,b)=>{
+        const da=a.date||a.submitted?.slice(0,10)||"";
+        const db=b.date||b.submitted?.slice(0,10)||"";
+        if(da===TODAY&&db!==TODAY) return -1;
+        if(db===TODAY&&da!==TODAY) return 1;
         return db.localeCompare(da);
       });
     const filtReps = myReps.filter(r =>
@@ -9145,8 +9031,8 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
         const totalFreon = laporanUnits.reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0);
         const presets = MATERIAL_PRESET[laporanModal?.service] || MATERIAL_PRESET.Cleaning;
         const isInstallJob = laporanModal?.service === "Install";
-        const STEP_LABELS = ["","Konfirmasi Unit","Detail Unit",
-          isInstallJob ? "Detail Instalasi" : "Jasa & Material",
+        const STEP_LABELS = ["","Konfirmasi Unit",
+          isInstallJob ? "(skip)" : "Detail Per Unit",
           isInstallJob ? "Form Instalasi" : "Material & Foto",
           "Submit"];
 
@@ -9235,19 +9121,17 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
 
     // ── 4. Siapkan materials yang efektif ──
     // Install: pakai laporanInstallItems, lainnya: pakai laporanMaterials
-    // effectiveMaterials: Install=INSTALL_ITEMS, lainnya=Jasa+Material dari dropdown
     const jasaAsMaterials = laporanJasaItems.map(j => ({
-      id: "jasa_"+j.id, nama: j.nama, jumlah: j.jumlah || 1,
-      satuan: j.satuan || "pcs", harga_satuan: j.harga_satuan || 0,
-      keterangan: "jasa"
+      id:"jasa_"+j.id, nama:j.nama, jumlah:j.jumlah||1,
+      satuan:j.satuan||"pcs", harga_satuan:j.harga_satuan||0, keterangan:"jasa"
     }));
     const effectiveMaterials = isInstall
       ? INSTALL_ITEMS
           .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
           .map(item => ({
-            id: item.key, nama: item.label,
-            jumlah: parseFloat(laporanInstallItems[item.key] || 0),
-            satuan: item.satuan, keterangan: "",
+            id:item.key, nama:item.label,
+            jumlah:parseFloat(laporanInstallItems[item.key] || 0),
+            satuan:item.satuan, keterangan:"",
           }))
       : [...jasaAsMaterials, ...laporanMaterials];
 
@@ -9449,36 +9333,18 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
     // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
     // Untuk service lain: hitung dari PRICE_LIST
     const isInstallSvc = laporanModal.service === "Install";
-    // Labor: jasaItems-first (presisi dari dropdown), fallback per-unit
+    // Labor = sum jasa dari dropdown; fallback hitungLabor
     const laborTotalInv = isInstallSvc ? 0 : (() => {
-      // Jika teknisi sudah pilih jasa dari dropdown → gunakan langsung
       const jasaPilihan = laporanJasaItems.filter(j => j.nama);
-      if (jasaPilihan.length > 0) {
-        return jasaPilihan.reduce((s,j) =>
-          s + ((j.harga_satuan||0) * (parseFloat(j.jumlah)||1)), 0);
-      }
-      // Fallback: hitung per unit dari priceListData/PRICE_LIST
-      let total = 0;
-      for (const u of laporanUnits) {
-        const hasServiceBesar = (u.pekerjaan||[]).some(p =>
-          /deep.clean|service.besar|besar/i.test(p));
-        if (hasServiceBesar) {
-          const isPK15 = /1[,.]5|2[,.]?|2pk|1\.5/i.test(u.tipe||"");
-          const sbKey = isPK15
-            ? "Jasa Service Besar 1,5PK - 2,5PK"
-            : "Jasa Service Besar 0,5PK - 1PK";
-          const sbItem = priceListData.find(r => r.service==="Cleaning" && r.type===sbKey);
-          total += sbItem?.price || PRICE_LIST["Cleaning"]?.[sbKey] || 400000;
-        } else {
-          const tipe = u.tipe || laporanModal.type || "AC Split 0.5-1PK";
-          const plItem = priceListData.find(r => r.service===laporanModal?.service && r.type===tipe);
-          const svcMap = PRICE_LIST[laporanModal?.service] || PRICE_LIST["Cleaning"];
-          total += plItem?.price || svcMap[tipe] || svcMap["default"] || 85000;
-        }
-      }
-      return total;
+      if (jasaPilihan.length > 0)
+        return jasaPilihan.reduce((s,j) => s+((j.harga_satuan||0)*(parseFloat(j.jumlah)||1)), 0);
+      return hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
     })();
-    const matTotalInv   = hitungMaterialTotal(effectiveMaterials);
+    // ★ CORE FIX: matTotalInv = material fisik SAJA (bukan effectiveMaterials)
+    //   Sebelumnya double-count: labor(jasa) + mat(jasa+material) = 2x jasa
+    const matTotalInv = hitungMaterialTotal(
+      laporanMaterials.filter(m => m.nama && parseFloat(m.jumlah||0) > 0)
+    );
     const invoiceTotal  = laborTotalInv + matTotalInv;
     const todayInv      = new Date().toISOString().slice(0, 10);
     const isComplainSvc = laporanModal.service === "Complain";
@@ -9534,21 +9400,9 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
       const gExpires   = new Date(Date.now() + gDays * 86400000).toISOString().slice(0, 10);
 
       // Build materials_detail dengan harga dari inventory
-    // Jika item sudah ada harga_satuan (dari jasaItems/INSTALL_ITEMS),
-    // gunakan langsung tanpa lookup ulang
       const mDetail = effectiveMaterials
         .filter(m => m.nama && (parseFloat(m.jumlah) || 0) > 0)
         .map(m => {
-      // Shortcut: jika sudah ada harga_satuan presisi, pakai langsung
-      if (m.harga_satuan > 0) {
-        return {
-          nama: m.nama, jumlah: parseFloat(m.jumlah)||1,
-          satuan: m.satuan||"pcs",
-          harga_satuan: m.harga_satuan,
-          subtotal: m.harga_satuan * (parseFloat(m.jumlah)||1),
-          keterangan: m.keterangan||"",
-        };
-      }
           const nama2   = (m.nama || "").toLowerCase();
           const normNama2 = nama2
             .replace(/,/g,".")
@@ -9557,8 +9411,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
             .replace(/r410a?$/,"r410")
             .replace(/r22a?$/,"r22")
             .replace(/r32a?$/,"r32");
-        const isJasaItem2 = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama||"").trim());
-          const invItem = isJasaItem2 ? null : inventoryData.find(inv => {
+          const invItem = inventoryData.find(inv => {
             const n = inv.name.toLowerCase()
               .replace(/,/g,".")
               .replace(/eterna\s*/g,"")
@@ -9566,10 +9419,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               .replace(/r410a?$/,"r410")
               .replace(/r22a?$/,"r22")
               .replace(/r32a?$/,"r32");
-          if (n === normNama2) return true;
-          if (normNama2.length > 6 && n.includes(normNama2)) return true;
-          if (n.length > 6 && normNama2.includes(n)) return true;
-          return false;
+            return n === normNama2 || n.includes(normNama2) || normNama2.includes(n);
           });
           let hSat = invItem?.price || 0;
           // Fallback ke PRICE_LIST jika tidak ada di inventory (untuk Install jasa)
@@ -9580,11 +9430,6 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                 hSat = PRICE_LIST[svc][mNama];
                 break;
               }
-        // Fallback ke priceListData DB (exact name)
-        if (!hSat) {
-          const plItem = priceListData.find(r => r.type && r.type.trim() === (m.nama||"").trim());
-          if (plItem) hSat = plItem.price || 0;
-        }
             }
           }
           if (!hSat) {
@@ -10063,215 +9908,120 @@ Silakan approve di menu Invoice. — ARA`;
               )}
 
                   {/* ══ NORMAL MATERIAL FORM (Service/Repair/Complain) ══ */}
-            {!isInstallJob && (
-            <div style={{display:"grid",gap:14}}>
-
-              {/* ══ SECTION A: JASA — search + click seperti invoice owner ══ */}
-              <div style={{background:cs.card,border:"1px solid "+cs.accent+"33",borderRadius:12,padding:14}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                  <div style={{fontWeight:700,fontSize:13,color:cs.accent}}>🔧 Jasa</div>
-                  <button onClick={()=>setShowJasaSearch(prev=>!prev)}
-                    style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,
-                      borderRadius:7,padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
-                    + Tambah Jasa
-                  </button>
-                </div>
-
-                {/* Search dropdown — muncul saat + Tambah diklik */}
-                {showJasaSearch&&(
-                <div style={{marginBottom:10,position:"relative"}}>
-                  <input
-                    autoFocus
-                    placeholder="Cari jasa... (Cleaning, Repair, Install...)"
-                    value={jasaSearchQ}
-                    onChange={e=>setJasaSearchQ(e.target.value)}
-                    style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"55",
-                      borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",
-                      boxSizing:"border-box"}}/>
-                  <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
-                    marginTop:4,maxHeight:220,overflowY:"auto"}}>
-                    {(()=>{
-                      // Build list: semua service kecuali Material, urutkan Cleaning dulu sesuai job
-                      const svcOrder = laporanModal?.service==="Cleaning"
-                        ? ["Cleaning","Repair","Install","Complain"]
-                        : laporanModal?.service==="Repair"
-                        ? ["Repair","Cleaning","Install","Complain"]
-                        : ["Repair","Cleaning","Install","Complain"];
-                      const allJasa = svcOrder.flatMap(svc=>
-                        priceListData
-                          .filter(r=>r.service===svc&&(r.price||0)>=0)
-                          .map(r=>({label:svc+" / "+r.type, svc, type:r.type, price:r.price||0, satuan:r.unit||"pcs"}))
-                      );
-                      const filtered = jasaSearchQ.trim()
-                        ? allJasa.filter(j=>j.label.toLowerCase().includes(jasaSearchQ.toLowerCase()))
-                        : allJasa;
-                      if (filtered.length===0) return (
-                        <div style={{padding:"10px 12px",color:cs.muted,fontSize:12}}>Tidak ada hasil</div>
-                      );
-                      return filtered.map((j,ji)=>(
-                        <div key={ji}
-                          onClick={()=>{
-                            setLaporanJasaItems(prev=>[...prev,{
-                              id:Date.now()+ji, nama:j.type, svc:j.svc,
-                              jumlah:1, satuan:j.satuan, harga_satuan:j.price
-                            }]);
-                            setShowJasaSearch(false);
-                            setJasaSearchQ("");
-                          }}
-                          style={{padding:"9px 12px",cursor:"pointer",fontSize:12,color:cs.text,
-                            borderBottom:"1px solid "+cs.border+"44",
-                            display:"flex",justifyContent:"space-between",alignItems:"center"}}
-                          onMouseEnter={e=>e.currentTarget.style.background=cs.accent+"15"}
-                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                          <span>{j.label}</span>
-                          <span style={{fontSize:10,color:cs.muted,background:cs.surface,
-                            padding:"1px 6px",borderRadius:4}}>{j.svc}</span>
-                        </div>
-                      ));
-                    })()}
+                  {!isInstallJob && (
+                  <div style={{display:"grid",gap:10}}>
+                  {/* Material */}
+                  <div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>🔧 Material Digunakan ({laporanMaterials.length}/20)</div>
+                      <button onClick={()=>setShowMatPreset(v=>!v)}
+                        style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>
+                        {showMatPreset?"✕ Tutup":"📦 Preset "+laporanModal.service}
+                      </button>
+                    </div>
+                    {showMatPreset&&(
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                        <div style={{fontSize:11,color:cs.muted,width:"100%",marginBottom:2}}>Tap untuk tambah:</div>
+                        {presets.map(p=>(
+                          <button key={p.nama||p} onClick={()=>{if(laporanMaterials.length<20)setLaporanMaterials(prev=>[...prev,{id:Date.now(),nama:p.nama||p,jumlah:"",satuan:p.satuan||"pcs",keterangan:""}]);setShowMatPreset(false);}}
+                            style={{fontSize:11,background:cs.surface,border:"1px solid "+cs.border,color:cs.text,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>
+                            {p.nama||p}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {laporanMaterials.length===0&&<div style={{textAlign:"center",padding:"14px 0",fontSize:12,color:cs.muted,fontStyle:"italic"}}>Belum ada material. Tap + Tambah atau pakai Preset.</div>}
+              {laporanMaterials.map(mat=>{
+                // Build lookup: inventory + price_list Material (tanpa harga)
+                const matLookup = [
+                  ...inventoryData.map(r=>({nama:r.name,satuan:r.unit||"pcs"})),
+                  ...priceListData.filter(r=>r.service==="Material").map(r=>({nama:r.type,satuan:r.unit||"pcs"}))
+                ].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i); // dedupe
+                const isSearching = matSearchId === mat.id;
+                const query = isSearching ? matSearchQuery : "";
+                const filtered = matLookup.filter(x=>
+                  x.nama.toLowerCase().includes(query.toLowerCase())
+                ).slice(0,12);
+                return (
+                <div key={mat.id} style={{background:cs.card,border:"1px solid "+(mat.nama?cs.accent+"44":cs.border),borderRadius:10,padding:"10px 12px",marginBottom:6}}>
+                  {/* Row 1: Nama material — dropdown search */}
+                  <div style={{position:"relative",marginBottom:6}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      {/* Nama field — tampilkan nama terpilih atau input search */}
+                      <div style={{flex:1,position:"relative"}}>
+                        <input
+                          id={"mat_search_"+mat.id}
+                          value={isSearching ? matSearchQuery : mat.nama}
+                          placeholder="Cari material..."
+                          onFocus={()=>{ setMatSearchId(mat.id); setMatSearchQuery(mat.nama); }}
+                          onChange={e=>{ setMatSearchQuery(e.target.value); }}
+                          onBlur={()=>setTimeout(()=>{ setMatSearchId(null); setMatSearchQuery(""); },200)}
+                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
+                            borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}
+                        />
+                        {/* Dropdown hasil search */}
+                        {isSearching && (
+                          <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:999,
+                            background:cs.surface,border:"1px solid "+cs.accent+"55",
+                            borderRadius:"0 0 10px 10px",maxHeight:200,overflowY:"auto",
+                            boxShadow:"0 8px 24px #0006"}}>
+                            {filtered.length > 0 ? filtered.map((item,idx)=>(
+                              <div key={idx}
+                                onMouseDown={()=>{
+                                  setLaporanMaterials(p=>p.map(m=>m.id===mat.id
+                                    ?{...m,nama:item.nama,satuan:item.satuan}:m));
+                                  setMatSearchId(null); setMatSearchQuery("");
+                                }}
+                                style={{padding:"9px 12px",cursor:"pointer",fontSize:13,
+                                  color:cs.text,borderBottom:"1px solid "+cs.border+"33",
+                                  display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                                onMouseEnter={e=>e.currentTarget.style.background=cs.accent+"18"}
+                                onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                              >
+                                <span style={{fontWeight:600}}>{item.nama}</span>
+                                <span style={{fontSize:11,color:cs.muted,marginLeft:8}}>{item.satuan}</span>
+                              </div>
+                            )) : (
+                              <div style={{padding:"10px 12px",color:cs.muted,fontSize:12}}>
+                                Tidak ditemukan — ketik manual
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {/* Tombol hapus baris */}
+                      <button onMouseDown={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
+                        style={{background:"#ef444420",border:"none",color:"#ef4444",
+                          borderRadius:7,padding:"6px 10px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                  {/* Row 2: Qty + Satuan */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <input type="number" min="0" step="0.5" value={mat.jumlah}
+                      onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:parseFloat(e.target.value)||0}:m))}
+                      placeholder="Jumlah"
+                      style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                        padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                    <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
+                      style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                        padding:"7px 10px",color:cs.text,fontSize:13}}>
+                      {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
+                    </select>
                   </div>
                 </div>
-                )}
-
-                {/* Selected jasa items */}
-                {laporanJasaItems.length===0&&!showJasaSearch&&(
-                  <div style={{fontSize:12,color:cs.muted,textAlign:"center",padding:"6px 0"}}>
-                    Belum ada jasa. Tap "+ Tambah Jasa".
+                );
+              })}
                   </div>
-                )}
-                {laporanJasaItems.map((item,idx)=>(
-                <div key={item.id} style={{display:"grid",gridTemplateColumns:"1fr 70px 28px",
-                  gap:6,alignItems:"center",marginBottom:6}}>
-                  <div style={{background:cs.surface,border:"1px solid "+cs.accent+"33",borderRadius:8,
-                    padding:"7px 10px",fontSize:12,color:cs.text,overflow:"hidden",
-                    textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                    {item.svc ? item.svc+" / " : ""}{item.nama}
+                  {laporanMaterials.length<20&&(
+                    <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,satuan:"pcs",keterangan:""}])}
+                      style={{marginTop:8,width:"100%",background:cs.green+"10",border:"1px dashed "+cs.green+"33",color:cs.green,borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                      + Tambah Material
+                    </button>
+                  )}
                   </div>
-                  <input type="number" min="1" step="1"
-                    value={item.jumlah||1}
-                    onChange={e=>setLaporanJasaItems(prev=>prev.map((it,ii)=>ii===idx
-                      ? {...it,jumlah:parseFloat(e.target.value)||1}
-                      : it))}
-                    style={{background:cs.surface,border:"1px solid "+cs.border,
-                      borderRadius:8,padding:"7px 6px",color:cs.text,fontSize:12,
-                      outline:"none",textAlign:"center"}}/>
-                  <button onClick={()=>setLaporanJasaItems(prev=>prev.filter((_,ii)=>ii!==idx))}
-                    style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",
-                      color:cs.red,borderRadius:7,padding:"6px",fontSize:13,
-                      cursor:"pointer",lineHeight:1}}>✕</button>
-                </div>
-                ))}
-              </div>
-
-              {/* ══ SECTION B: MATERIAL — search + click ══ */}
-              <div style={{background:cs.card,border:"1px solid "+cs.green+"33",borderRadius:12,padding:14}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                  <div style={{fontWeight:700,fontSize:13,color:cs.green}}>📦 Material</div>
-                  <button onClick={()=>setShowMatSearch(prev=>!prev)}
-                    style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
-                      borderRadius:7,padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
-                    + Tambah Material
-                  </button>
-                </div>
-
-                {showMatSearch&&(
-                <div style={{marginBottom:10}}>
-                  <input
-                    autoFocus
-                    placeholder="Cari material... (Freon, Pipa, Kapasitor...)"
-                    value={matSearchQ2}
-                    onChange={e=>setMatSearchQ2(e.target.value)}
-                    style={{width:"100%",background:cs.surface,border:"1px solid "+cs.green+"55",
-                      borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",
-                      boxSizing:"border-box"}}/>
-                  <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
-                    marginTop:4,maxHeight:200,overflowY:"auto"}}>
-                    {(()=>{
-                      const allMat = [
-                        ...inventoryData.map(r=>({nama:r.name,satuan:r.unit||"pcs",src:"inv",price:r.price||0})),
-                        ...priceListData.filter(r=>r.service==="Material")
-                          .map(r=>({nama:r.type,satuan:"pcs",src:"pl",price:r.price||0}))
-                      ].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i)
-                       .sort((a,b)=>a.nama.localeCompare(b.nama));
-                      const filtered = matSearchQ2.trim()
-                        ? allMat.filter(m=>m.nama.toLowerCase().includes(matSearchQ2.toLowerCase()))
-                        : allMat;
-                      if (filtered.length===0) return (
-                        <div style={{padding:"10px 12px",color:cs.muted,fontSize:12}}>Tidak ada hasil</div>
-                      );
-                      return filtered.map((m,mi)=>(
-                        <div key={mi}
-                          onClick={()=>{
-                            setLaporanMaterials(prev=>[...prev,{
-                              id:Date.now()+mi, nama:m.nama, jumlah:1,
-                              satuan:m.satuan, keterangan:""
-                            }]);
-                            setShowMatSearch(false);
-                            setMatSearchQ2("");
-                          }}
-                          style={{padding:"9px 12px",cursor:"pointer",fontSize:12,color:cs.text,
-                            borderBottom:"1px solid "+cs.border+"44",
-                            display:"flex",justifyContent:"space-between",alignItems:"center"}}
-                          onMouseEnter={e=>e.currentTarget.style.background=cs.green+"15"}
-                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                          <span>{m.nama}</span>
-                          <span style={{fontSize:10,color:cs.muted}}>{m.satuan}</span>
-                        </div>
-                      ));
-                    })()}
-                  </div>
-                </div>
-                )}
-
-                {laporanMaterials.length===0&&!showMatSearch&&(
-                  <div style={{fontSize:12,color:cs.muted,textAlign:"center",padding:"6px 0"}}>
-                    Tidak ada material tambahan — opsional.
-                  </div>
-                )}
-                {laporanMaterials.map((mat,idx)=>(
-                <div key={mat.id||idx} style={{display:"grid",gridTemplateColumns:"1fr 70px 44px 28px",
-                  gap:6,alignItems:"center",marginBottom:6}}>
-                  <div style={{background:cs.surface,border:"1px solid "+cs.green+"33",borderRadius:8,
-                    padding:"7px 10px",fontSize:12,color:cs.text,overflow:"hidden",
-                    textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                    {mat.nama}
-                  </div>
-                  <input type="number" min="0" step="0.5"
-                    value={mat.jumlah||""}
-                    onChange={e=>setLaporanMaterials(prev=>prev.map((m,mi)=>mi===idx
-                      ? {...m,jumlah:e.target.value}
-                      : m))}
-                    placeholder="Qty"
-                    style={{background:cs.surface,border:"1px solid "+cs.border,
-                      borderRadius:8,padding:"7px 6px",color:cs.text,fontSize:12,
-                      outline:"none",textAlign:"center"}}/>
-                  <div style={{fontSize:11,color:cs.muted,textAlign:"center",overflow:"hidden"}}>
-                    {mat.satuan||"-"}
-                  </div>
-                  <button onClick={()=>setLaporanMaterials(prev=>prev.filter((_,mi)=>mi!==idx))}
-                    style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",
-                      color:cs.red,borderRadius:7,padding:"6px",fontSize:13,
-                      cursor:"pointer",lineHeight:1}}>✕</button>
-                </div>
-                ))}
-              </div>
-
-              {/* ══ CATATAN & REKOMENDASI ══ */}
-              <div style={{display:"grid",gap:8}}>
-                <textarea rows={2} placeholder="Catatan tambahan (opsional)..."
-                  value={laporanCatatan}
-                  onChange={e=>setLaporanCatatan(e.target.value)}
-                  style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
-                    padding:"8px 10px",color:cs.text,fontSize:12,resize:"vertical",outline:"none"}}/>
-                <textarea rows={2} placeholder="Rekomendasi untuk customer (opsional)..."
-                  value={laporanRekomendasi}
-                  onChange={e=>setLaporanRekomendasi(e.target.value)}
-                  style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
-                    padding:"8px 10px",color:cs.text,fontSize:12,resize:"vertical",outline:"none"}}/>
-              </div>
-
-            </div>
-            )}{/* end !isInstallJob */}
+                  )}{/* end !isInstallJob */}
 
                   {/* ── Foto: tampil untuk semua service ── */}
                   <div>
@@ -10333,12 +10083,7 @@ Silakan approve di menu Invoice. — ARA`;
 
                   <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
                     <button onClick={()=>setLaporanStep(laporanModal?.service==="Install" ? 1 : 2)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
-                    <button onClick={()=>{
-              if (!isInstallJob && laporanJasaItems.filter(j=>j.nama).length===0) {
-                showNotif("⚠️ Pilih minimal 1 jasa yang dikerjakan"); return;
-              }
-              setLaporanStep(4);
-            }} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>Lanjut → Ringkasan</button>
+                    <button onClick={()=>setLaporanStep(4)} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>Lanjut → Ringkasan</button>
                   </div>
                 </div>
               )}
@@ -10408,30 +10153,14 @@ Silakan approve di menu Invoice. — ARA`;
                         ))}
                       </div>
                     )}
-            {!isInstallJob && (laporanJasaItems.filter(j=>j.nama).length>0||laporanMaterials.filter(m=>m.nama&&parseFloat(m.jumlah||0)>0).length>0) && (
-            <div style={{marginTop:10}}>
-              {laporanJasaItems.filter(j=>j.nama).length>0&&(
-              <div style={{marginBottom:6}}>
-                <div style={{fontWeight:700,color:cs.accent,marginBottom:4,fontSize:11}}>🔧 Jasa:</div>
-                {laporanJasaItems.filter(j=>j.nama).map((j,ji)=>(
-                <div key={ji} style={{fontSize:11,color:cs.text,marginBottom:2}}>
-                  • {j.nama}{j.jumlah>1?` ×${j.jumlah}`:""}
-                </div>
-                ))}
-              </div>
-              )}
-              {laporanMaterials.filter(m=>m.nama&&parseFloat(m.jumlah||0)>0).length>0&&(
-              <div>
-                <div style={{fontWeight:700,color:cs.green,marginBottom:4,fontSize:11}}>📦 Material:</div>
-                {laporanMaterials.filter(m=>m.nama&&parseFloat(m.jumlah||0)>0).map((m,mi)=>(
-                <div key={mi} style={{fontSize:11,color:cs.text,marginBottom:2}}>
-                  • {m.nama}: {m.jumlah} {m.satuan}
-                </div>
-                ))}
-              </div>
-              )}
-            </div>
-            )}
+                    {!isInstallJob && laporanMaterials.length>0 && (
+                      <div style={{marginTop:10}}>
+                        <div style={{fontWeight:700,color:cs.text,marginBottom:5,fontSize:11}}>Material:</div>
+                        {laporanMaterials.map((m,mi)=>(
+                          <div key={mi} style={{fontSize:11,color:cs.muted,marginBottom:2}}>• {m.nama}: {m.jumlah} {m.satuan}{m.keterangan?` — ${m.keterangan}`:""}</div>
+                        ))}
+                      </div>
+                    )}
                     {laporanRekomendasi&&<div style={{marginTop:8,fontSize:11}}><span style={{color:cs.muted}}>Rekomendasi: </span><span style={{color:cs.text}}>{laporanRekomendasi}</span></div>}
                     {laporanUnits.length!==(laporanModal.units||1)&&(
                       <div style={{marginTop:10,background:cs.yellow+"10",border:"1px solid "+cs.yellow+"22",borderRadius:8,padding:"8px 12px",fontSize:11,color:cs.yellow}}>⚠ Unit tidak sama dengan order asal — Admin akan dikonfirmasi</div>
