@@ -9413,11 +9413,20 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
           return s + harga * (parseFloat(m.jumlah)||1);
         }, 0);
       // Fallback: hitungLabor dari type order
+      // Skip untuk Complain (tidak ada biaya jasa default)
+      // Skip jika tidak ada jasa sama sekali (hanya material)
+      const isComplainJob = laporanModal?.service === "Complain";
+      const hasAnyJasa = jasaPilihan.length > 0 || jasaFromMat.length > 0;
+      if (isComplainJob || !hasAnyJasa) return 0;
       return hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
     })();
 
     // Material = hanya item fisik (bukan jasa price_list)
-    const matTotalInv = hitungMaterialTotal(matOnly);
+    // Install: hitung dari effectiveMaterials (INSTALL_ITEMS)
+    // Non-Install: hanya material fisik (matOnly), jasa sudah di laborTotalInv
+    const matTotalInv = isInstallSvc
+      ? hitungMaterialTotal(effectiveMaterials)
+      : hitungMaterialTotal(matOnly);
     const invoiceTotal  = laborTotalInv + matTotalInv;
     const todayInv      = new Date().toISOString().slice(0, 10);
     const isComplainSvc = laporanModal.service === "Complain";
@@ -9449,7 +9458,13 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
           .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
       : null;
 
-    const BIAYA_CEK = 100000;
+    // BIAYA_CEK: ambil dari price_list DB, fallback 100,000
+    const BIAYA_CEK = (() => {
+      const pl = priceListData.find(r =>
+        r.service === "Repair" && r.type === "Biaya Pengecekan AC"
+      );
+      return (pl && pl.price > 0) ? pl.price : 100000;
+    })();
     const finalLabor = (isComplainSvc && isZeroTotal && prevGaransiExpired)
       ? BIAYA_CEK : laborTotalInv;
     const finalTotal = (isComplainSvc && isZeroTotal && prevGaransiExpired)
@@ -9506,9 +9521,17 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
             }
           }
           if (!hSat) {
-            if      (nama2.includes("r-22")  || nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 150000;
-            else if (nama2.includes("r-32")  || nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 450000;
-            else if (nama2.includes("r-410") || nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
+            // Freon: cari dari inventoryData dulu, lalu PRICE_LIST, fallback 450,000
+            const freonInv = inventoryData.find(i => {
+              const n = i.name.toLowerCase();
+              return (nama2.includes("r-22")||nama2.includes("r22")) ? n.includes("r-22")||n.includes("r22") :
+                     (nama2.includes("r-410")||nama2.includes("r410")) ? n.includes("r-410")||n.includes("r410") :
+                     (nama2.includes("r-32")||nama2.includes("r32")) ? n.includes("r-32")||n.includes("r32") : false;
+            });
+            if (freonInv && freonInv.price > 0) { hSat = freonInv.price; }
+            else if (nama2.includes("r-22")||nama2.includes("r22"))   hSat = PRICE_LIST["freon_R22"]   || 450000;
+            else if (nama2.includes("r-32")||nama2.includes("r32"))   hSat = PRICE_LIST["freon_R32"]   || 450000;
+            else if (nama2.includes("r-410")||nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
           }
           const rawQty = parseFloat(m.jumlah) || 0;
           const isF    = ["freon","r-22","r-32","r-410"].some(k => nama2.includes(k));
