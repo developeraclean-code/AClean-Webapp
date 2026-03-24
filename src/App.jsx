@@ -9470,7 +9470,6 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
       }
       return total;
     })();
-      : hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
     const matTotalInv   = hitungMaterialTotal(effectiveMaterials);
     const invoiceTotal  = laborTotalInv + matTotalInv;
     const todayInv      = new Date().toISOString().slice(0, 10);
