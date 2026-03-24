@@ -9333,18 +9333,45 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
     // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
     // Untuk service lain: hitung dari PRICE_LIST
     const isInstallSvc = laporanModal.service === "Install";
-    // Labor = sum jasa dari dropdown; fallback hitungLabor
+
+    // ════════════════════════════════════════════════════════════
+    // SMART SPLIT: pisah laporanMaterials jadi jasa vs material
+    // Backward-compatible: form lama (campur) & form baru (terpisah)
+    // ════════════════════════════════════════════════════════════
+    const jasaNamesSet = new Set(
+      priceListData
+        .filter(r => r.service !== "Material")
+        .map(r => r.type && r.type.trim())
+    );
+    // Item dari laporanMaterials yang ternyata adalah jasa price_list
+    const jasaFromMat = laporanMaterials.filter(m =>
+      m.nama && jasaNamesSet.has(m.nama.trim())
+    );
+    // Item dari laporanMaterials yang benar-benar material fisik
+    const matOnly = laporanMaterials.filter(m =>
+      m.nama && !jasaNamesSet.has(m.nama.trim()) && parseFloat(m.jumlah||0) > 0
+    );
+
+    // Labor = jasaItems dropdown (baru) + jasaFromMat (lama) + fallback hitungLabor
     const laborTotalInv = isInstallSvc ? 0 : (() => {
+      // Prioritas: jasaItems dari dropdown (form baru)
       const jasaPilihan = laporanJasaItems.filter(j => j.nama);
       if (jasaPilihan.length > 0)
-        return jasaPilihan.reduce((s,j) => s+((j.harga_satuan||0)*(parseFloat(j.jumlah)||1)), 0);
+        return jasaPilihan.reduce((s,j) =>
+          s + ((j.harga_satuan||0) * (parseFloat(j.jumlah)||1)), 0);
+      // Form lama: hitung harga jasa dari jasaFromMat
+      if (jasaFromMat.length > 0)
+        return jasaFromMat.reduce((s,m) => {
+          const plItem = priceListData.find(r => r.type && r.type.trim() === m.nama.trim());
+          const harga  = plItem?.price || 0;
+          return s + harga * (parseFloat(m.jumlah)||1);
+        }, 0);
+      // Fallback: hitungLabor dari type order
       return hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
     })();
-    // ★ CORE FIX: matTotalInv = material fisik SAJA (bukan effectiveMaterials)
-    //   Sebelumnya double-count: labor(jasa) + mat(jasa+material) = 2x jasa
-    const matTotalInv = hitungMaterialTotal(
-      laporanMaterials.filter(m => m.nama && parseFloat(m.jumlah||0) > 0)
-    );
+
+    // Material = hanya item fisik (bukan jasa price_list)
+    const matTotalInv = hitungMaterialTotal(matOnly);
     const invoiceTotal  = laborTotalInv + matTotalInv;
     const todayInv      = new Date().toISOString().slice(0, 10);
     const isComplainSvc = laporanModal.service === "Complain";
