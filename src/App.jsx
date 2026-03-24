@@ -1994,8 +1994,8 @@ Kamu ditugaskan sebagai Helper. â€” AClean`;
         const plIt = priceListData.find(r => r.type && r.type.trim() === (m.nama||"").trim());
         if (plIt) harga = plIt.price || 0;
       }
-      // 3. Fallback freon spesifik
-      if (!harga) {
+      // 3. Fallback freon spesifik â€” HANYA untuk item freon murni, skip jasa
+      if (!harga && !isJasaItem) {
         if      (raw.includes("r-22")||raw.includes("r22"))  harga = PRICE_LIST["freon_R22"]   || 450000;
         else if (raw.includes("r-32")||raw.includes("r32"))  harga = PRICE_LIST["freon_R32"]   || 450000;
         else if (raw.includes("r-410")||raw.includes("r410")) harga = PRICE_LIST["freon_R410A"] || 450000;
@@ -9070,34 +9070,75 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
         const jasaNamesSet = new Set(
           priceListData.filter(r=>r.service!=="Material").map(r=>r.type&&r.type.trim())
         );
-        // Preset Jasa per service dari priceListData (DB-synced)
+        // Preset Jasa per service dari priceListData (DB-synced sepenuhnya)
         const jasaPresetBySvc = {
-          Cleaning: priceListData.filter(r=>r.service==="Cleaning").map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit"})),
-          Repair:   priceListData.filter(r=>r.service==="Repair").map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit"})),
-          Complain: priceListData.filter(r=>r.service==="Complain"||r.service==="Repair").map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:r.service})),
-        };
-        // Preset Repair/Sparepart (item repair + sparepart dari inventory + price_list Repair)
-        const repairPresetBySvc = {
-          Cleaning: [
-            ...priceListData.filter(r=>r.service==="Repair"&&r.price>0).slice(0,8).map(r=>({t:r.type,p:r.price||0})),
-          ],
-          Repair: [
-            ...inventoryData.map(r=>({t:r.name,p:r.price||0,sat:r.unit,src:"inv"})),
-          ],
+          Cleaning: priceListData
+            .filter(r=>r.service==="Cleaning")
+            .sort((a,b)=>a.type.localeCompare(b.type))
+            .map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Cleaning"})),
+          Repair:   priceListData
+            .filter(r=>r.service==="Repair")
+            .sort((a,b)=>a.type.localeCompare(b.type))
+            .map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Repair"})),
           Complain: [
-            ...priceListData.filter(r=>r.service==="Repair"&&r.price>0).slice(0,6).map(r=>({t:r.type,p:r.price||0})),
-          ],
+            ...priceListData.filter(r=>r.service==="Complain").map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Complain"})),
+            ...priceListData.filter(r=>r.service==="Repair"&&r.price>0).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Repair"})),
+          ].filter((v,i,a)=>a.findIndex(x=>x.t===v.t)===i),
+          Install:  priceListData
+            .filter(r=>r.service==="Install")
+            .sort((a,b)=>a.type.localeCompare(b.type))
+            .map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Install"})),
         };
-        // Preset Material per service (dari MATERIAL_PRESET + inventoryData)
+        // Preset Repair/Sparepart â€” gabungan priceListData Repair + inventoryData (DB-synced)
+        const _repairPL = priceListData
+          .filter(r=>r.service==="Repair"&&(r.price||0)>=0)
+          .sort((a,b)=>a.type.localeCompare(b.type))
+          .map(r=>({t:r.type, p:r.price||0, sat:r.unit||"unit", src:"pl"}));
+        const _repairInv = inventoryData
+          .sort((a,b)=>a.name.localeCompare(b.name))
+          .map(r=>({t:r.name, p:r.price||0, sat:r.unit||"pcs", src:"inv"}));
+        // Gabung, dedup by nama
+        const _repairAll = [..._repairPL, ..._repairInv]
+          .filter((v,i,a)=>a.findIndex(x=>x.t===v.t)===i);
+        const repairPresetBySvc = {
+          Cleaning: _repairAll,
+          Repair:   _repairAll,
+          Complain: _repairAll,
+        };
+        // Preset Material â€” SEMUA dari inventoryData (DB-synced)
+        // Sort: freon dulu, lalu alphabetical
+        const _allInvMat = [...inventoryData]
+          .sort((a,b) => {
+            const aF = /freon/i.test(a.name); const bF = /freon/i.test(b.name);
+            if (aF && !bF) return -1; if (bF && !aF) return 1;
+            return a.name.localeCompare(b.name);
+          })
+          .map(r => ({nama:r.name, satuan:r.unit||"pcs", p:r.price||0}));
         const matPresetBySvc = {
-          Cleaning: [...(MATERIAL_PRESET.Cleaning||[]).map(m=>({...m,p:inventoryData.find(i=>i.name===m.nama)?.price||0}))],
-          Repair:   [...(MATERIAL_PRESET.Repair||[]).map(m=>({...m,p:inventoryData.find(i=>i.name===m.nama)?.price||0}))],
-          Complain: [...(MATERIAL_PRESET.Complain||[]).map(m=>({...m,p:inventoryData.find(i=>i.name===m.nama)?.price||0}))],
+          Cleaning: _allInvMat,
+          Repair:   _allInvMat,
+          Complain: _allInvMat,
+          Install:  _allInvMat,
         };
         const STEP_LABELS = ["","Konfirmasi Unit",
           isInstallJob ? "(skip)" : "Detail Per Unit",
           isInstallJob ? "Form Instalasi" : "Jasa & Material",
           "Ringkasan"];
+
+        // INSTALL_ITEMS dengan harga dari priceListData (DB-synced)
+        // Teknisi tidak lihat harga, tapi invoice calculation pakai harga DB
+        const installItemsDB = INSTALL_ITEMS.map(item => {
+          const pl = priceListData.find(r => r.type && r.type.trim() === item.label.trim());
+          const inv = inventoryData.find(r => r.name && r.name.trim() === item.label.trim());
+          return {
+            ...item,
+            price: pl?.price || inv?.price
+              || PRICE_LIST["Install"]?.[item.label]
+              || PRICE_LIST["Repair"]?.[item.label]
+              || PRICE_LIST["Material"]?.[item.label]
+              || 0,
+          };
+        });
 
         const updateUnit = (idx, updated) => setLaporanUnits(prev=>prev.map((u,i)=>i===idx?updated:u));
         const toggleArr = (arr, val) => arr.includes(val)?arr.filter(x=>x!==val):[...arr,val];
@@ -9198,13 +9239,9 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
       ? INSTALL_ITEMS
           .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
           .map(item => {
-            // Lookup harga dari priceListData DB, fallback PRICE_LIST
-            const plItem = priceListData.find(r => r.type && r.type.trim() === item.label.trim());
-            const hargaSat = plItem?.price
-              || PRICE_LIST["Install"]?.[item.label]
-              || PRICE_LIST["Repair"]?.[item.label]
-              || PRICE_LIST["Material"]?.[item.label]
-              || 0;
+            // Pakai harga dari installItemsDB (sudah DB-synced)
+            const dbItem = installItemsDB.find(i => i.key === item.key);
+            const hargaSat = dbItem?.price || 0;
             const qty = parseFloat(laporanInstallItems[item.key] || 0);
             return {
               id:item.key, nama:item.label,
@@ -9577,17 +9614,21 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
             }
           }
           if (!hSat) {
-            // Freon: cari dari inventoryData dulu, lalu PRICE_LIST, fallback 450,000
-            const freonInv = inventoryData.find(i => {
-              const n = i.name.toLowerCase();
-              return (nama2.includes("r-22")||nama2.includes("r22")) ? n.includes("r-22")||n.includes("r22") :
-                     (nama2.includes("r-410")||nama2.includes("r410")) ? n.includes("r-410")||n.includes("r410") :
-                     (nama2.includes("r-32")||nama2.includes("r32")) ? n.includes("r-32")||n.includes("r32") : false;
-            });
-            if (freonInv && freonInv.price > 0) { hSat = freonInv.price; }
-            else if (nama2.includes("r-22")||nama2.includes("r22"))   hSat = PRICE_LIST["freon_R22"]   || 450000;
-            else if (nama2.includes("r-32")||nama2.includes("r32"))   hSat = PRICE_LIST["freon_R32"]   || 450000;
-            else if (nama2.includes("r-410")||nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
+            // Freon fallback: HANYA untuk item material freon murni
+            // Skip jika isJasaItem (Kuras Vacum, Bongkar, Pemasangan, dll)
+            const isJasaItem2 = /^(jasa|kuras|bongkar|pemasangan|pasang)/i.test((m.nama||"").trim());
+            if (!isJasaItem2) {
+              const freonInv = inventoryData.find(i => {
+                const n = i.name.toLowerCase();
+                return (nama2.includes("r-22")||nama2.includes("r22")) ? n.includes("r-22")||n.includes("r22") :
+                       (nama2.includes("r-410")||nama2.includes("r410")) ? n.includes("r-410")||n.includes("r410") :
+                       (nama2.includes("r-32")||nama2.includes("r32")) ? n.includes("r-32")||n.includes("r32") : false;
+              });
+              if (freonInv && freonInv.price > 0) { hSat = freonInv.price; }
+              else if (nama2.includes("r-22")||nama2.includes("r22"))   hSat = PRICE_LIST["freon_R22"]   || 450000;
+              else if (nama2.includes("r-32")||nama2.includes("r32"))   hSat = PRICE_LIST["freon_R32"]   || 450000;
+              else if (nama2.includes("r-410")||nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
+            }
           }
           const rawQty = parseFloat(m.jumlah) || 0;
           const isF    = ["freon","r-22","r-32","r-410"].some(k => nama2.includes(k));
