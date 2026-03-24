@@ -501,6 +501,10 @@ export default function ACleanWebApp() {
   const [laporanUnits,       setLaporanUnits]       = useState([]);
   const [laporanMaterials,   setLaporanMaterials]   = useState([]);
   const [laporanJasaItems,    setLaporanJasaItems]    = useState([]); // Array jasa dipilih teknisi
+  const [showJasaSearch,      setShowJasaSearch]      = useState(false); // toggle search panel jasa
+  const [jasaSearchQ,         setJasaSearchQ]         = useState("");    // query search jasa
+  const [showMatSearch,       setShowMatSearch]        = useState(false); // toggle search panel material
+  const [matSearchQ2,         setMatSearchQ2]         = useState("");    // query search material
   const [laporanFotos,       setLaporanFotos]       = useState([]);
   const [laporanRekomendasi, setLaporanRekomendasi] = useState("");
   const [laporanCatatan,     setLaporanCatatan]     = useState("");
@@ -1193,6 +1197,10 @@ ${matRowsHtml}
     setLaporanUnits(Array.from({length:count},(_,i)=>mkUnit(i+1)));
     setLaporanMaterials([]);
     setLaporanJasaItems([]);
+    setShowJasaSearch(false);
+    setJasaSearchQ("");
+    setShowMatSearch(false);
+    setMatSearchQ2("");
     setLaporanFotos([]);
   // Auto-fill install items berdasarkan jumlah unit order
   const _installDefaults = {};
@@ -10056,138 +10064,196 @@ Silakan approve di menu Invoice. — ARA`;
 
                   {/* ══ NORMAL MATERIAL FORM (Service/Repair/Complain) ══ */}
             {!isInstallJob && (
-            <div style={{display:"grid",gap:16}}>
+            <div style={{display:"grid",gap:14}}>
 
-              {/* ══ SECTION A: JASA ══ */}
+              {/* ══ SECTION A: JASA — search + click seperti invoice owner ══ */}
               <div style={{background:cs.card,border:"1px solid "+cs.accent+"33",borderRadius:12,padding:14}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                   <div style={{fontWeight:700,fontSize:13,color:cs.accent}}>🔧 Jasa</div>
-                  <button onClick={()=>setLaporanJasaItems(prev=>[...prev,{
-                    id:Date.now(), nama:"", jumlah:1, satuan:"pcs", harga_satuan:0
-                  }])}
-                  style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,
-                    borderRadius:7,padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                  <button onClick={()=>setShowJasaSearch(prev=>!prev)}
+                    style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,
+                      borderRadius:7,padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
                     + Tambah Jasa
                   </button>
                 </div>
-                {laporanJasaItems.length===0&&(
-                  <div style={{fontSize:12,color:cs.muted,textAlign:"center",padding:"8px 0"}}>
-                    Belum ada jasa. Tap "+ Tambah Jasa" untuk pilih.
+
+                {/* Search dropdown — muncul saat + Tambah diklik */}
+                {showJasaSearch&&(
+                <div style={{marginBottom:10,position:"relative"}}>
+                  <input
+                    autoFocus
+                    placeholder="Cari jasa... (Cleaning, Repair, Install...)"
+                    value={jasaSearchQ}
+                    onChange={e=>setJasaSearchQ(e.target.value)}
+                    style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"55",
+                      borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",
+                      boxSizing:"border-box"}}/>
+                  <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                    marginTop:4,maxHeight:220,overflowY:"auto"}}>
+                    {(()=>{
+                      // Build list: semua service kecuali Material, urutkan Cleaning dulu sesuai job
+                      const svcOrder = laporanModal?.service==="Cleaning"
+                        ? ["Cleaning","Repair","Install","Complain"]
+                        : laporanModal?.service==="Repair"
+                        ? ["Repair","Cleaning","Install","Complain"]
+                        : ["Repair","Cleaning","Install","Complain"];
+                      const allJasa = svcOrder.flatMap(svc=>
+                        priceListData
+                          .filter(r=>r.service===svc&&(r.price||0)>=0)
+                          .map(r=>({label:svc+" / "+r.type, svc, type:r.type, price:r.price||0, satuan:r.unit||"pcs"}))
+                      );
+                      const filtered = jasaSearchQ.trim()
+                        ? allJasa.filter(j=>j.label.toLowerCase().includes(jasaSearchQ.toLowerCase()))
+                        : allJasa;
+                      if (filtered.length===0) return (
+                        <div style={{padding:"10px 12px",color:cs.muted,fontSize:12}}>Tidak ada hasil</div>
+                      );
+                      return filtered.map((j,ji)=>(
+                        <div key={ji}
+                          onClick={()=>{
+                            setLaporanJasaItems(prev=>[...prev,{
+                              id:Date.now()+ji, nama:j.type, svc:j.svc,
+                              jumlah:1, satuan:j.satuan, harga_satuan:j.price
+                            }]);
+                            setShowJasaSearch(false);
+                            setJasaSearchQ("");
+                          }}
+                          style={{padding:"9px 12px",cursor:"pointer",fontSize:12,color:cs.text,
+                            borderBottom:"1px solid "+cs.border+"44",
+                            display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                          onMouseEnter={e=>e.currentTarget.style.background=cs.accent+"15"}
+                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                          <span>{j.label}</span>
+                          <span style={{fontSize:10,color:cs.muted,background:cs.surface,
+                            padding:"1px 6px",borderRadius:4}}>{j.svc}</span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+                )}
+
+                {/* Selected jasa items */}
+                {laporanJasaItems.length===0&&!showJasaSearch&&(
+                  <div style={{fontSize:12,color:cs.muted,textAlign:"center",padding:"6px 0"}}>
+                    Belum ada jasa. Tap "+ Tambah Jasa".
                   </div>
                 )}
-                {laporanJasaItems.map((item,idx)=>{
-                  // Dropdown options dari priceListData sesuai service, kecuali Install
-                  const svcOpts = priceListData
-                    .filter(r=>{
-                      if (laporanModal?.service==="Cleaning") return r.service==="Cleaning";
-                      if (laporanModal?.service==="Repair")   return r.service==="Repair";
-                      if (laporanModal?.service==="Complain") return r.service==="Repair"||r.service==="Complain";
-                      return r.service===laporanModal?.service;
-                    })
-                    .sort((a,b)=>a.type.localeCompare(b.type));
-                  const selected = svcOpts.find(r=>r.type===item.nama);
-                  return (
-                  <div key={item.id} style={{display:"grid",gridTemplateColumns:"1fr 64px 28px",
-                    gap:6,alignItems:"center",marginBottom:6}}>
-                    <select
-                      value={item.nama||""}
-                      onChange={e=>{
-                        const opt = svcOpts.find(r=>r.type===e.target.value);
-                        setLaporanJasaItems(prev=>prev.map((it,ii)=>ii===idx
-                          ? {...it, nama:e.target.value,
-                             satuan:"pcs",
-                             harga_satuan: opt?.price||0}
-                          : it));
-                      }}
-                      style={{background:cs.surface,border:"1px solid "+(item.nama?cs.accent+"55":cs.border),
-                        borderRadius:8,padding:"7px 8px",color:item.nama?cs.text:cs.muted,fontSize:12,
-                        outline:"none"}}>
-                      <option value="">-- Pilih Jasa --</option>
-                      {svcOpts.map(r=>(
-                        <option key={r.id||r.type} value={r.type}>{r.type}</option>
-                      ))}
-                    </select>
-                    <input type="number" min="1" step="1"
-                      value={item.jumlah||1}
-                      onChange={e=>setLaporanJasaItems(prev=>prev.map((it,ii)=>ii===idx
-                        ? {...it,jumlah:parseFloat(e.target.value)||1}
-                        : it))}
-                      style={{background:cs.surface,border:"1px solid "+cs.border,
-                        borderRadius:8,padding:"7px 6px",color:cs.text,fontSize:12,
-                        outline:"none",textAlign:"center"}}/>
-                    <button onClick={()=>setLaporanJasaItems(prev=>prev.filter((_,ii)=>ii!==idx))}
-                      style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",
-                        color:cs.red,borderRadius:7,padding:"6px",fontSize:13,
-                        cursor:"pointer",lineHeight:1}}>✕</button>
+                {laporanJasaItems.map((item,idx)=>(
+                <div key={item.id} style={{display:"grid",gridTemplateColumns:"1fr 70px 28px",
+                  gap:6,alignItems:"center",marginBottom:6}}>
+                  <div style={{background:cs.surface,border:"1px solid "+cs.accent+"33",borderRadius:8,
+                    padding:"7px 10px",fontSize:12,color:cs.text,overflow:"hidden",
+                    textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {item.svc ? item.svc+" / " : ""}{item.nama}
                   </div>
-                  );
-                })}
+                  <input type="number" min="1" step="1"
+                    value={item.jumlah||1}
+                    onChange={e=>setLaporanJasaItems(prev=>prev.map((it,ii)=>ii===idx
+                      ? {...it,jumlah:parseFloat(e.target.value)||1}
+                      : it))}
+                    style={{background:cs.surface,border:"1px solid "+cs.border,
+                      borderRadius:8,padding:"7px 6px",color:cs.text,fontSize:12,
+                      outline:"none",textAlign:"center"}}/>
+                  <button onClick={()=>setLaporanJasaItems(prev=>prev.filter((_,ii)=>ii!==idx))}
+                    style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",
+                      color:cs.red,borderRadius:7,padding:"6px",fontSize:13,
+                      cursor:"pointer",lineHeight:1}}>✕</button>
+                </div>
+                ))}
               </div>
 
-              {/* ══ SECTION B: MATERIAL FISIK ══ */}
+              {/* ══ SECTION B: MATERIAL — search + click ══ */}
               <div style={{background:cs.card,border:"1px solid "+cs.green+"33",borderRadius:12,padding:14}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                   <div style={{fontWeight:700,fontSize:13,color:cs.green}}>📦 Material</div>
-                  <button onClick={()=>setLaporanMaterials(prev=>[...prev,{
-                    id:Date.now(),nama:"",jumlah:1,satuan:"pcs",keterangan:""
-                  }])}
-                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
-                    borderRadius:7,padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                  <button onClick={()=>setShowMatSearch(prev=>!prev)}
+                    style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
+                      borderRadius:7,padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
                     + Tambah Material
                   </button>
                 </div>
-                {laporanMaterials.length===0&&(
-                  <div style={{fontSize:12,color:cs.muted,textAlign:"center",padding:"8px 0"}}>
+
+                {showMatSearch&&(
+                <div style={{marginBottom:10}}>
+                  <input
+                    autoFocus
+                    placeholder="Cari material... (Freon, Pipa, Kapasitor...)"
+                    value={matSearchQ2}
+                    onChange={e=>setMatSearchQ2(e.target.value)}
+                    style={{width:"100%",background:cs.surface,border:"1px solid "+cs.green+"55",
+                      borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",
+                      boxSizing:"border-box"}}/>
+                  <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                    marginTop:4,maxHeight:200,overflowY:"auto"}}>
+                    {(()=>{
+                      const allMat = [
+                        ...inventoryData.map(r=>({nama:r.name,satuan:r.unit||"pcs",src:"inv",price:r.price||0})),
+                        ...priceListData.filter(r=>r.service==="Material")
+                          .map(r=>({nama:r.type,satuan:"pcs",src:"pl",price:r.price||0}))
+                      ].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i)
+                       .sort((a,b)=>a.nama.localeCompare(b.nama));
+                      const filtered = matSearchQ2.trim()
+                        ? allMat.filter(m=>m.nama.toLowerCase().includes(matSearchQ2.toLowerCase()))
+                        : allMat;
+                      if (filtered.length===0) return (
+                        <div style={{padding:"10px 12px",color:cs.muted,fontSize:12}}>Tidak ada hasil</div>
+                      );
+                      return filtered.map((m,mi)=>(
+                        <div key={mi}
+                          onClick={()=>{
+                            setLaporanMaterials(prev=>[...prev,{
+                              id:Date.now()+mi, nama:m.nama, jumlah:1,
+                              satuan:m.satuan, keterangan:""
+                            }]);
+                            setShowMatSearch(false);
+                            setMatSearchQ2("");
+                          }}
+                          style={{padding:"9px 12px",cursor:"pointer",fontSize:12,color:cs.text,
+                            borderBottom:"1px solid "+cs.border+"44",
+                            display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                          onMouseEnter={e=>e.currentTarget.style.background=cs.green+"15"}
+                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                          <span>{m.nama}</span>
+                          <span style={{fontSize:10,color:cs.muted}}>{m.satuan}</span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+                )}
+
+                {laporanMaterials.length===0&&!showMatSearch&&(
+                  <div style={{fontSize:12,color:cs.muted,textAlign:"center",padding:"6px 0"}}>
                     Tidak ada material tambahan — opsional.
                   </div>
                 )}
-                {laporanMaterials.map((mat,idx)=>{
-                  const matOpts = [
-                    ...inventoryData.map(r=>({nama:r.name,satuan:r.unit,src:"inv"})),
-                    ...priceListData
-                      .filter(r=>r.service==="Material")
-                      .map(r=>({nama:r.type,satuan:"pcs",src:"pl"}))
-                  ].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i)
-                   .sort((a,b)=>a.nama.localeCompare(b.nama));
-                  return (
-                  <div key={mat.id} style={{display:"grid",
-                    gridTemplateColumns:"1fr 64px 56px 28px",
-                    gap:6,alignItems:"center",marginBottom:6}}>
-                    <select
-                      value={mat.nama||""}
-                      onChange={e=>{
-                        const opt = matOpts.find(o=>o.nama===e.target.value);
-                        setLaporanMaterials(prev=>prev.map((m,mi)=>mi===idx
-                          ? {...m,nama:e.target.value,satuan:opt?.satuan||"pcs"}
-                          : m));
-                      }}
-                      style={{background:cs.surface,border:"1px solid "+(mat.nama?cs.green+"55":cs.border),
-                        borderRadius:8,padding:"7px 8px",color:mat.nama?cs.text:cs.muted,fontSize:12,
-                        outline:"none"}}>
-                      <option value="">-- Pilih Material --</option>
-                      {matOpts.map((o,oi)=>(
-                        <option key={oi} value={o.nama}>{o.nama}</option>
-                      ))}
-                    </select>
-                    <input type="number" min="0" step="0.5"
-                      value={mat.jumlah||""}
-                      onChange={e=>setLaporanMaterials(prev=>prev.map((m,mi)=>mi===idx
-                        ? {...m,jumlah:e.target.value}
-                        : m))}
-                      placeholder="Qty"
-                      style={{background:cs.surface,border:"1px solid "+cs.border,
-                        borderRadius:8,padding:"7px 6px",color:cs.text,fontSize:12,
-                        outline:"none",textAlign:"center"}}/>
-                    <div style={{fontSize:11,color:cs.muted,textAlign:"center"}}>
-                      {mat.satuan||"-"}
-                    </div>
-                    <button onClick={()=>setLaporanMaterials(prev=>prev.filter((_,mi)=>mi!==idx))}
-                      style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",
-                        color:cs.red,borderRadius:7,padding:"6px",fontSize:13,
-                        cursor:"pointer",lineHeight:1}}>✕</button>
+                {laporanMaterials.map((mat,idx)=>(
+                <div key={mat.id||idx} style={{display:"grid",gridTemplateColumns:"1fr 70px 44px 28px",
+                  gap:6,alignItems:"center",marginBottom:6}}>
+                  <div style={{background:cs.surface,border:"1px solid "+cs.green+"33",borderRadius:8,
+                    padding:"7px 10px",fontSize:12,color:cs.text,overflow:"hidden",
+                    textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {mat.nama}
                   </div>
-                  );
-                })}
+                  <input type="number" min="0" step="0.5"
+                    value={mat.jumlah||""}
+                    onChange={e=>setLaporanMaterials(prev=>prev.map((m,mi)=>mi===idx
+                      ? {...m,jumlah:e.target.value}
+                      : m))}
+                    placeholder="Qty"
+                    style={{background:cs.surface,border:"1px solid "+cs.border,
+                      borderRadius:8,padding:"7px 6px",color:cs.text,fontSize:12,
+                      outline:"none",textAlign:"center"}}/>
+                  <div style={{fontSize:11,color:cs.muted,textAlign:"center",overflow:"hidden"}}>
+                    {mat.satuan||"-"}
+                  </div>
+                  <button onClick={()=>setLaporanMaterials(prev=>prev.filter((_,mi)=>mi!==idx))}
+                    style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",
+                      color:cs.red,borderRadius:7,padding:"6px",fontSize:13,
+                      cursor:"pointer",lineHeight:1}}>✕</button>
+                </div>
+                ))}
               </div>
 
               {/* ══ CATATAN & REKOMENDASI ══ */}
