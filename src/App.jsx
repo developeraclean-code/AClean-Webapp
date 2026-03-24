@@ -5952,7 +5952,7 @@ Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
                 {r.status==="VERIFIED"&&(()=>{
                   const inv=invoicesData.find(i=>i.job_id===r.job_id);
                   return<span style={{fontSize:12,color:cs.green}}>
-                    ✓ Diverifikasi{inv?` · Invoice: ${inv.status}`:""}
+                    {"✓ Diverifikasi"+(inv?" · Invoice: "+inv.status:"")}
                   </span>;
                 })()}
                 {r.status==="REJECTED"&&(
