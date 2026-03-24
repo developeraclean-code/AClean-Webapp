@@ -9434,9 +9434,14 @@ Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
     }
 
     // ── 12. Auto-generate invoice ──
-    // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST
-    // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
-    // Untuk service lain: hitung dari PRICE_LIST
+    // RULE: 1 JOB = 1 INVOICE MUTLAK
+    // Jika invoice sudah ada (dari laporan sebelumnya / revisi):
+    //   → UPDATE existing invoice (recalculate ulang)
+    // Jika belum ada → INSERT baru
+    const existingInv = invoicesData.find(i => i.job_id === laporanModal.id);
+    const invId = existingInv?.id
+      || ("INV-" + laporanModal.date?.replace(/-/g,"") + "-" +
+          Math.random().toString(36).slice(-4).toUpperCase());
     const isInstallSvc = laporanModal.service === "Install";
     const jasaNamesSet2 = new Set(
       priceListData.filter(r=>r.service!=="Material").map(r=>r.type&&r.type.trim())
@@ -9586,7 +9591,10 @@ Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
         materials_detail: mDetail,
         dadakan:  0,
         total:    finalTotal,
-        status:   "PENDING_APPROVAL",
+        // Pertahankan status jika sudah APPROVED/PAID, reset ke PENDING_APPROVAL jika resubmit
+        status: existingInv && ["APPROVED","PAID"].includes(existingInv.status)
+          ? existingInv.status
+          : "PENDING_APPROVAL",
         garansi_days:    gDays,
         garansi_expires: gExpires,
         created_at: new Date().toISOString(),
@@ -9603,14 +9611,25 @@ Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
           "WARNING");
       }
 
-      setInvoicesData(prev => [...prev, newInvoice]);
+      // UPSERT: ganti invoice lama jika ada, tambah baru jika belum ada
+      setInvoicesData(prev => {
+        const exists = prev.some(i => i.id === newInvoice.id || i.job_id === newInvoice.job_id);
+        if (exists) {
+          return prev.map(i =>
+            (i.id === newInvoice.id || i.job_id === newInvoice.job_id) ? newInvoice : i
+          );
+        }
+        return [...prev, newInvoice];
+      });
 
       // Simpan invoice ke Supabase
       const invPayload = {
         ...newInvoice,
         materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
       };
-      const { error: invErr } = await supabase.from("invoices").insert(invPayload);
+      // UPSERT bukan INSERT — mencegah duplikat jika laporan di-resubmit
+      const { error: invErr } = await supabase.from("invoices")
+        .upsert(invPayload, { onConflict: "id" });
       if (invErr) {
         console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
         for (const st of ["PENDING_APPROVAL","UNPAID"]) {
