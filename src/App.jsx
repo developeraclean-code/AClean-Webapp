@@ -6070,22 +6070,24 @@ ${matRowsHtml}
     )}
 
     {r.status === "VERIFIED" && (() => {
-      const inv = invoicesData.find(i => i.job_id === r.job_id);
-      return (
-        <span style={{ fontSize: 12, color: cs.green }}>
-          {"Diverifikasi" + (inv ? " · Invoice: " + inv.status : "")}
-        </span>
-      );
-    })()}
+  const inv = invoicesData.find(i => i.job_id === r.job_id);
+  return (
+    <span style={{ fontSize: 12, color: cs.green }}>
+      {"Diverifikasi" + (inv ? " · Invoice: " + inv.status : "")}
+    </span>
+  );
+})()}
 
-    {r.status === "REJECTED" && (
-      <span style={{ fontSize: 12, color: cs.red }}>
-        Ditolak
-      </span>
-    )}
-  </div>
-</div>
-        ))}
+{r.status === "REJECTED" && (
+  <span style={{ fontSize: 12, color: cs.red }}>
+    Ditolak
+  </span>
+)}
+
+</div> {/* penutup container dalam item */}
+</div> {/* penutup card/item */}
+
+))} {/* penutup .map */}
         {/* Pagination Laporan */}
         {totPgL > 1 && (
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"10px 0"}}>
