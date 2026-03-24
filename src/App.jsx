@@ -2087,22 +2087,12 @@ Kamu ditugaskan sebagai Helper. — AClean`;
     const shouldNotif = sendCustNotif === true ||
       (sendCustNotif === null && await showConfirm({
         icon:"📱", title:"Kirim Notif WA?",
-        message:`Kirim konfirmasi pembayaran ke WhatsApp customer?
-
-${inv.customer} — Rp ${(inv.total||0).toLocaleString("id-ID")}`,
+        message:"Kirim konfirmasi WA ke "+inv.customer+"?",
         confirmText:"Kirim WA"
       }));
     if (shouldNotif && inv.phone) {
       sendWA(inv.phone,
-        `✅ *Pembayaran Diterima!*
-
-Yth. ${inv.customer},
-
-Pembayaran untuk invoice *${inv.id}* sebesar *Rp ${(inv.total||0).toLocaleString("id-ID")}* telah kami terima dan dikonfirmasi.
-
-Terima kasih telah menggunakan layanan *AClean Service* 🙏
-
-_Simpan pesan ini sebagai bukti pelunasan._`
+        "Pembayaran invoice "+inv.id+" Rp "+(inv.total||0).toLocaleString("id-ID")+" diterima. Terima kasih telah menggunakan AClean Service!"
       );
     }
     // GAP 1.6: Catat ke payments table untuk history + partial payment support
@@ -3172,14 +3162,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         const custPhone = inv.phone || customersData.find(c=>c.name===inv.customer)?.phone;
                         if (!custPhone) { showNotif("⚠️ No HP customer tidak ditemukan"); return; }
                         sendWA(custPhone,
-                          `Halo *${inv.customer}* 👋
-
-Garansi layanan *${inv.service}* dari AClean akan berakhir *${daysLeft} hari lagi* (${inv.garansi_expires}).
-
-Jika ada kendala AC Anda, segera hubungi kami sebelum masa garansi habis.
-
-Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
-— Tim AClean`
+                          "Halo "+inv.customer+". Garansi "+inv.service+" dari AClean berakhir "+daysLeft+" hari lagi ("+inv.garansi_expires+"). Hubungi kami jika ada kendala. — AClean"
                         );
                         addAgentLog("GARANSI_REMINDER", `WA garansi dikirim ke ${inv.customer} (${daysLeft}h lagi)`, "SUCCESS");
                         showNotif("✅ WA reminder garansi terkirim ke "+inv.customer);
@@ -3723,9 +3706,7 @@ Terima kasih telah mempercayakan perawatan AC Anda kepada AClean! 🌟
               return todayUndispatched.length > 0 ? (
                 <button onClick={async () => {
                   if (!await showConfirm({ icon:"📤", title:"Bulk Dispatch WA?",
-  message:`Kirim WA ke ${todayUndispatched.length} teknisi untuk job hari ini?
-
-Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`,
+  message:"Kirim WA ke "+todayUndispatched.length+" teknisi untuk job hari ini?",
   confirmText:"Ya, Kirim Semua" })) return;
                   let sukses = 0, gagal = 0;
                   showNotif(`⏳ Mengirim WA ke ${todayUndispatched.length} teknisi...`);
@@ -4130,8 +4111,7 @@ Semua teknisi yang belum di-dispatch akan dikirim WA sekaligus.`,
                       {currentUser?.role === "Owner" && (
                         <button onClick={async () => {
                           if (!await showConfirm({ icon:"🗑️", title:"Hapus Material?", danger:true,
-  message:`Hapus material "${item.name}"?
-Aksi ini tidak bisa dibatalkan.`,
+  message:"Hapus material "+item.name+"? Tidak bisa dibatalkan.",
   confirmText:"Hapus" })) return;
                           // Delete pakai id (UUID) jika ada, fallback ke code
                           const delQuery = item.id && !String(item.id).startsWith("INV")
@@ -4337,8 +4317,7 @@ Aksi ini tidak bisa dibatalkan.`,
                                 {currentUser?.role==="Owner" && (
                                   <button onClick={async()=>{
                                     if (await showConfirm({ icon:"🗑️", title:"Hapus Price List?", danger:true,
-  message:`Hapus "${r.type}"?
-Tidak bisa dibatalkan.`,
+  message:"Hapus "+r.type+"? Tidak bisa dibatalkan.",
   confirmText:"Hapus" })) {
                                       const { error: delErr } = await supabase.from("price_list").delete().eq("id", r.id);
                                       if (delErr) { showNotif("❌ Gagal hapus: "+delErr.message); }
@@ -4866,8 +4845,7 @@ Tidak bisa dibatalkan.`,
                               const jamEta = etaDate.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
                               return (
                                 <button onClick={() => {
-                                  // window.prompt disabled — pakai estimasi 30 menit
-                                  const eta = jamEta;
+                                  const eta = jamEta; // window.prompt disabled
                                   if (!eta) return;
                                   const msg = `Halo ${o.customer} 👋\n\nKami dari *AClean Service* akan segera tiba di lokasi Anda.\n\n📋 Job: ${o.id}\n🔧 Service: ${o.service} — ${o.units} unit\n⏰ Estimasi tiba: *${eta} WIB*\n\nMohon pastikan ada di lokasi ya! 🙏\n\n_${currentUser?.name} — AClean_`;
                                   if (o.phone) sendWA(o.phone, msg);
@@ -5004,8 +4982,7 @@ Tidak bisa dibatalkan.`,
                 {currentUser?.role === "Owner" && (
                   <button onClick={async () => {
                     if (!await showConfirm({ icon:"👷", title:"Hapus dari Tim?", danger:true,
-  message:`Hapus ${t.name} dari tim?
-Data order yang sudah ada tidak terpengaruh.`,
+  message:"Hapus "+t.name+" dari tim? Data order tidak terpengaruh.",
   confirmText:"Hapus" })) return;
                     setTeknisiData(prev => prev.filter(x => x.id !== t.id));
                     if (!String(t.id).startsWith("Tech")) {
@@ -5864,100 +5841,58 @@ Data order yang sudah ada tidak terpengaruh.`,
               </div>
             )}
 
-            {/* ══ OPSI B: Verifikasi + Invoice Link ══ */}
+            {/* OPSI B */}
             <div style={{display:"grid",gap:10}}>
-
-              {/* ── Invoice info bar ── */}
               {(()=>{
                 const inv=invoicesData.find(i=>i.job_id===r.job_id);
-                if(!inv) return(
-                  <div style={{fontSize:12,color:cs.muted,padding:"7px 12px",background:cs.surface,
-                    borderRadius:8,display:"flex",alignItems:"center",gap:6}}>
-                    <span>🧾</span><span>Invoice akan otomatis dibuat saat teknisi submit laporan</span>
-                  </div>
-                );
-                const iColor=inv.status==="PAID"?cs.green:inv.status==="APPROVED"?cs.accent:
-                             inv.status==="OVERDUE"?cs.red:cs.yellow;
-                const iLabel=inv.status==="PENDING_APPROVAL"?"Menunggu Approve":
-                             inv.status==="APPROVED"?"Disetujui":inv.status==="PAID"?"Lunas":
-                             inv.status==="OVERDUE"?"Jatuh Tempo":inv.status;
-                return(
-                  <div style={{background:iColor+"10",border:"1px solid "+iColor+"33",borderRadius:9,
-                    padding:"9px 13px",display:"flex",justifyContent:"space-between",
-                    alignItems:"center",flexWrap:"wrap",gap:8}}>
-                    <div>
-                      <div style={{fontSize:12,fontWeight:700,color:iColor,marginBottom:2}}>
-                        🧾 {inv.id}
-                      </div>
-                      <div style={{fontSize:11,color:cs.muted,display:"flex",alignItems:"center",gap:6}}>
-                        <span style={{fontWeight:600}}>{fmt(inv.total)}</span>
-                        <span style={{padding:"1px 8px",borderRadius:99,fontSize:10,fontWeight:700,
-                          background:iColor+"22",color:iColor}}>{iLabel}</span>
-                      </div>
+                if(!inv) return(<div style={{fontSize:12,color:cs.muted,padding:"7px 12px",background:cs.surface,borderRadius:8,display:"flex",alignItems:"center",gap:6}}>
+                  <span>Invoice otomatis dibuat saat teknisi submit laporan</span></div>);
+                const iC=inv.status==="PAID"?cs.green:inv.status==="APPROVED"?cs.accent:inv.status==="OVERDUE"?cs.red:cs.yellow;
+                const iL={"PENDING_APPROVAL":"Menunggu Approve","APPROVED":"Disetujui","PAID":"Lunas","OVERDUE":"Jatuh Tempo"}[inv.status]||inv.status;
+                return(<div style={{background:iC+"10",border:"1px solid "+iC+"33",borderRadius:9,padding:"9px 13px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:700,color:iC,marginBottom:2}}>{inv.id}</div>
+                    <div style={{fontSize:11,color:cs.muted,display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontWeight:600}}>{fmt(inv.total)}</span>
+                      <span style={{padding:"1px 8px",borderRadius:99,fontSize:10,fontWeight:700,background:iC+"22",color:iC}}>{iL}</span>
                     </div>
-                    <button onClick={()=>{setSelectedInvoice(inv);setActiveMenu("invoice");}}
-                      style={{fontSize:11,padding:"5px 13px",borderRadius:7,
-                        border:"1px solid "+iColor+"55",background:iColor+"18",
-                        color:iColor,cursor:"pointer",fontWeight:700}}>
-                      → Buka Invoice
-                    </button>
                   </div>
-                );
+                  <button onClick={()=>{setSelectedInvoice(inv);setActiveMenu("invoice");}}
+                    style={{fontSize:11,padding:"5px 13px",borderRadius:7,border:"1px solid "+iC+"55",background:iC+"18",color:iC,cursor:"pointer",fontWeight:700}}>
+                    Buka Invoice
+                  </button>
+                </div>);
               })()}
-
-              {/* ── Action buttons ── */}
               <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                 {r.status==="SUBMITTED"&&(<>
                   <button onClick={async()=>{
                     const inv=invoicesData.find(i=>i.job_id===r.job_id);
                     setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
                     const uid=isRealUUID(currentUser?.id)?currentUser.id:null;
-                    const {error:vErr}=await supabase.from("service_reports").update({
-                      status:"VERIFIED",verified_by:uid,verified_at:new Date().toISOString()
-                    }).eq("id",r.id);
+                    const {error:vErr}=await supabase.from("service_reports").update({status:"VERIFIED",verified_by:uid,verified_at:new Date().toISOString()}).eq("id",r.id);
                     if(vErr) await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
-                    addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} diverifikasi`,"SUCCESS");
-                    showNotif(inv
-                      ?`✅ Verified! Invoice ${inv.id} (${inv.status})`
-                      :`✅ Laporan ${r.job_id} diverifikasi`);
-                  }}
-                  style={{padding:"7px 18px",borderRadius:8,border:"none",
-                    background:"linear-gradient(135deg,"+cs.green+",#059669)",
-                    color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
-                    ✓ Verifikasi
+                    addAgentLog("LAPORAN_VERIFIED","Laporan "+r.job_id+" diverifikasi","SUCCESS");
+                    showNotif(inv?"Verified! Invoice "+inv.id+" ("+inv.status+")":"Laporan "+r.job_id+" diverifikasi");
+                  }} style={{padding:"7px 18px",borderRadius:8,border:"none",background:"linear-gradient(135deg,"+cs.green+",#059669)",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                    Verifikasi
                   </button>
                   <button onClick={async()=>{
                     setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));
                     await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
-                    addAgentLog("LAPORAN_REVISION",`Laporan ${r.job_id} minta revisi`,"WARNING");
-                    showNotif("⚠️ Revisi diminta — "+r.job_id);
+                    addAgentLog("LAPORAN_REVISION","Laporan "+r.job_id+" minta revisi","WARNING");
+                    showNotif("Revisi diminta: "+r.job_id);
                     const tek=userAccounts.find(u=>u.name===r.teknisi&&u.phone);
-                    if(tek?.phone) sendWA(tek.phone,
-                      `⚠️ *Laporan Perlu Direvisi*
-Job: *${r.job_id}*
-Customer: ${r.customer}
-Service: ${r.service}
-
-Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
-                  }}
-                  style={{padding:"7px 14px",borderRadius:8,
-                    border:"1px solid "+cs.yellow+"55",background:cs.yellow+"12",
-                    color:cs.yellow,fontWeight:700,fontSize:12,cursor:"pointer"}}>
-                    ⚠ Revisi
+                    if(tek?.phone) sendWA(tek.phone,"Laporan Perlu Direvisi\nJob: "+r.job_id+"\nCustomer: "+r.customer+"\n\nAdmin meminta revisi. Silakan perbaiki laporan. — AClean");
+                  }} style={{padding:"7px 14px",borderRadius:8,border:"1px solid "+cs.yellow+"55",background:cs.yellow+"12",color:cs.yellow,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                    Revisi
                   </button>
                 </>)}
-                {r.status==="REVISION"&&(
-                  <span style={{fontSize:12,color:cs.yellow}}>⏳ Menunggu revisi dari {r.teknisi}</span>
-                )}
+                {r.status==="REVISION"&&<span style={{fontSize:12,color:cs.yellow}}>Menunggu revisi dari {r.teknisi}</span>}
                 {r.status==="VERIFIED"&&(()=>{
                   const inv=invoicesData.find(i=>i.job_id===r.job_id);
-                  return<span style={{fontSize:12,color:cs.green}}>
-                    {"✓ Diverifikasi"+(inv?" · Invoice: "+inv.status:"")}
-                  </span>;
+                  return<span style={{fontSize:12,color:cs.green}}>{"Diverifikasi"+(inv?" · Invoice: "+inv.status:"")}</span>;
                 })()}
-                {r.status==="REJECTED"&&(
-                  <span style={{fontSize:12,color:cs.red}}>✕ Ditolak</span>
-                )}
+                {r.status==="REJECTED"&&<span style={{fontSize:12,color:cs.red}}>Ditolak</span>}
               </div>
             </div>
             </div>
@@ -9088,44 +9023,21 @@ Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
         const totalFreon = laporanUnits.reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0);
         const presets = MATERIAL_PRESET[laporanModal?.service] || MATERIAL_PRESET.Cleaning;
         const isInstallJob = laporanModal?.service === "Install";
-        const jasaNamesSet = new Set(
-          priceListData.filter(r=>r.service!=="Material").map(r=>r.type&&r.type.trim())
-        );
-        const jasaPresetBySvc = {
-          Cleaning: priceListData.filter(r=>r.service==="Cleaning")
-            .sort((a,b)=>a.type.localeCompare(b.type))
-            .map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Cleaning"})),
-          Repair: priceListData.filter(r=>r.service==="Repair")
-            .sort((a,b)=>a.type.localeCompare(b.type))
-            .map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Repair"})),
-          Complain: [
-            ...priceListData.filter(r=>r.service==="Complain").map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Complain"})),
-            ...priceListData.filter(r=>r.service==="Repair"&&r.price>0).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Repair"})),
-          ].filter((v,i,a)=>a.findIndex(x=>x.t===v.t)===i),
-          Install: priceListData.filter(r=>r.service==="Install")
-            .sort((a,b)=>a.type.localeCompare(b.type))
-            .map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Install"})),
+        const jasaNamesSet=new Set(priceListData.filter(r=>r.service!=="Material").map(r=>r.type&&r.type.trim()));
+        const jasaPresetBySvc={
+          Cleaning:priceListData.filter(r=>r.service==="Cleaning").sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Cleaning"})),
+          Repair:priceListData.filter(r=>r.service==="Repair").sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Repair"})),
+          Complain:[...priceListData.filter(r=>r.service==="Complain").map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Complain"})),...priceListData.filter(r=>r.service==="Repair"&&r.price>0).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Repair"}))].filter((v,i,a)=>a.findIndex(x=>x.t===v.t)===i),
+          Install:priceListData.filter(r=>r.service==="Install").sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Install"})),
         };
-        const _repairAll = [
-          ...priceListData.filter(r=>r.service==="Repair"&&(r.price||0)>=0)
-            .sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",src:"pl"})),
-          ...inventoryData.sort((a,b)=>a.name.localeCompare(b.name))
-            .map(r=>({t:r.name,p:r.price||0,sat:r.unit||"pcs",src:"inv"})),
-        ].filter((v,i,a)=>a.findIndex(x=>x.t===v.t)===i);
-        const repairPresetBySvc = { Cleaning:_repairAll, Repair:_repairAll, Complain:_repairAll };
-        const _allInvMat = [...inventoryData]
-          .sort((a,b)=>{ const aF=/freon/i.test(a.name); const bF=/freon/i.test(b.name);
-            if(aF&&!bF) return -1; if(bF&&!aF) return 1; return a.name.localeCompare(b.name); })
-          .map(r=>({nama:r.name,satuan:r.unit||"pcs",p:r.price||0}));
-        const matPresetBySvc = { Cleaning:_allInvMat, Repair:_allInvMat, Complain:_allInvMat, Install:_allInvMat };
-        const installItemsDB = INSTALL_ITEMS.map(item => {
-          const pl=priceListData.find(r=>r.type&&r.type.trim()===item.label.trim());
-          const iv=inventoryData.find(r=>r.name&&r.name.trim()===item.label.trim());
-          return {...item,price:pl?.price||iv?.price||PRICE_LIST["Install"]?.[item.label]||PRICE_LIST["Repair"]?.[item.label]||0};
-        });
-        const STEP_LABELS = ["","Konfirmasi Unit",
-          isInstallJob ? "(skip)" : "Detail Per Unit",
-          isInstallJob ? "Form Instalasi" : "Jasa & Material",
+        const _repairAll=[...priceListData.filter(r=>r.service==="Repair"&&(r.price||0)>=0).sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",src:"pl"})),...inventoryData.sort((a,b)=>a.name.localeCompare(b.name)).map(r=>({t:r.name,p:r.price||0,sat:r.unit||"pcs",src:"inv"}))].filter((v,i,a)=>a.findIndex(x=>x.t===v.t)===i);
+        const repairPresetBySvc={Cleaning:_repairAll,Repair:_repairAll,Complain:_repairAll};
+        const _allInvMat=[...inventoryData].sort((a,b)=>{const aF=/freon/i.test(a.name);const bF=/freon/i.test(b.name);if(aF&&!bF)return -1;if(bF&&!aF)return 1;return a.name.localeCompare(b.name);}).map(r=>({nama:r.name,satuan:r.unit||"pcs",p:r.price||0}));
+        const matPresetBySvc={Cleaning:_allInvMat,Repair:_allInvMat,Complain:_allInvMat,Install:_allInvMat};
+        const installItemsDB=INSTALL_ITEMS.map(item=>{const pl=priceListData.find(r=>r.type&&r.type.trim()===item.label.trim());const iv=inventoryData.find(r=>r.name&&r.name.trim()===item.label.trim());return{...item,price:pl?.price||iv?.price||PRICE_LIST["Install"]?.[item.label]||PRICE_LIST["Repair"]?.[item.label]||0};});
+        const STEP_LABELS=["","Konfirmasi Unit",
+          isInstallJob?"(skip)":"Detail Per Unit",
+          isInstallJob?"Form Instalasi":"Jasa & Material",
           "Ringkasan"];
 
         const updateUnit = (idx, updated) => setLaporanUnits(prev=>prev.map((u,i)=>i===idx?updated:u));
@@ -9285,23 +9197,14 @@ Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
       ? INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length
       : laporanMaterials.length;
     const notifMsg =
-      `📋 *Laporan Selesai*
-
-` +
-      `Job: *${laporanModal.id}*
-` +
-      `Customer: ${laporanModal.customer}
-` +
-      `Teknisi: ${laporanModal.teknisi}${laporanModal.helper ? " + " + laporanModal.helper : ""}
-` +
-      `Layanan: ${laporanModal?.service} — ${laporanUnits.length} unit
-` +
-      `Material: ${matCount} item
-` +
-      `Foto: ${laporanFotos.filter(f => f.url).length} foto
-
-` +
-      `Silakan buat invoice dari ARA Chat 👆`;
+      "Laporan Selesai\n\n"
+      +"Job: "+laporanModal.id+"\n"
+      +"Customer: "+laporanModal.customer+"\n"
+      +"Teknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")+"\n"
+      +"Layanan: "+laporanModal?.service+" - "+laporanUnits.length+" unit\n"
+      +"Material: "+matCount+" item\n"
+      +"Foto: "+laporanFotos.filter(f=>f.url).length+" foto\n\n"
+      +"Silakan cek invoice di menu Invoice.";
     adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
 
     // ── 7. Simpan laporan ke Supabase (3 attempt) ──
@@ -9433,15 +9336,12 @@ Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
       }
     }
 
-    // ── 12. Auto-generate invoice ──
-    // RULE: 1 JOB = 1 INVOICE MUTLAK
-    // Jika invoice sudah ada (dari laporan sebelumnya / revisi):
-    //   → UPDATE existing invoice (recalculate ulang)
-    // Jika belum ada → INSERT baru
-    const existingInv = invoicesData.find(i => i.job_id === laporanModal.id);
-    const invId = existingInv?.id
-      || ("INV-" + laporanModal.date?.replace(/-/g,"") + "-" +
-          Math.random().toString(36).slice(-4).toUpperCase());
+    // ── 12. Auto-generate invoice — 1 JOB = 1 INVOICE MUTLAK ──
+    const existingInv=invoicesData.find(i=>i.job_id===laporanModal.id);
+    const invId=existingInv?.id||("INV-"+(laporanModal.date||"").replace(/-/g,"")+"-"+Math.random().toString(36).slice(-4).toUpperCase());
+    // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST
+    // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
+    // Untuk service lain: hitung dari PRICE_LIST
     const isInstallSvc = laporanModal.service === "Install";
     const jasaNamesSet2 = new Set(
       priceListData.filter(r=>r.service!=="Material").map(r=>r.type&&r.type.trim())
@@ -9591,10 +9491,7 @@ Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
         materials_detail: mDetail,
         dadakan:  0,
         total:    finalTotal,
-        // Pertahankan status jika sudah APPROVED/PAID, reset ke PENDING_APPROVAL jika resubmit
-        status: existingInv && ["APPROVED","PAID"].includes(existingInv.status)
-          ? existingInv.status
-          : "PENDING_APPROVAL",
+        status:existingInv&&["APPROVED","PAID"].includes(existingInv.status)?existingInv.status:"PENDING_APPROVAL",
         garansi_days:    gDays,
         garansi_expires: gExpires,
         created_at: new Date().toISOString(),
@@ -9611,25 +9508,14 @@ Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
           "WARNING");
       }
 
-      // UPSERT: ganti invoice lama jika ada, tambah baru jika belum ada
-      setInvoicesData(prev => {
-        const exists = prev.some(i => i.id === newInvoice.id || i.job_id === newInvoice.job_id);
-        if (exists) {
-          return prev.map(i =>
-            (i.id === newInvoice.id || i.job_id === newInvoice.job_id) ? newInvoice : i
-          );
-        }
-        return [...prev, newInvoice];
-      });
+      setInvoicesData(prev=>{const e=prev.some(i=>i.id===newInvoice.id||i.job_id===newInvoice.job_id);return e?prev.map(i=>(i.id===newInvoice.id||i.job_id===newInvoice.job_id)?newInvoice:i):[...prev,newInvoice];});
 
       // Simpan invoice ke Supabase
       const invPayload = {
         ...newInvoice,
         materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
       };
-      // UPSERT bukan INSERT — mencegah duplikat jika laporan di-resubmit
-      const { error: invErr } = await supabase.from("invoices")
-        .upsert(invPayload, { onConflict: "id" });
+      const { error: invErr } = await supabase.from("invoices").upsert(invPayload,{onConflict:"id"});
       if (invErr) {
         console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
         for (const st of ["PENDING_APPROVAL","UNPAID"]) {
@@ -9649,27 +9535,13 @@ Admin meminta revisi. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
       // WA notif ke Owner
       const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
       const ownerMsg =
-        `🔔 *Invoice Menunggu Approval*
-
-` +
-        `📋 Job: *${laporanModal.id}*
-` +
-        `👤 Customer: ${laporanModal.customer}
-` +
-        `🔧 Layanan: ${laporanModal.service} — ${laporanUnits.length} unit
-` +
-        `👷 Teknisi: ${laporanModal.teknisi}${laporanModal.helper ? " + " + laporanModal.helper : ""}
-
-` +
-        `💰 *Total: ${fmt(newInvoice.total)}*
-` +
-        `• Jasa: ${fmt(newInvoice.labor)}
-` +
-        `• Material: ${fmt(newInvoice.material)}
-
-` +
-        `🧾 Invoice: *${invId}*
-Silakan approve di menu Invoice. — ARA`;
+        "Invoice Menunggu Approval\n"
+        +"Job: "+laporanModal.id+"\n"
+        +"Customer: "+laporanModal.customer+"\n"
+        +"Layanan: "+laporanModal.service+" - "+laporanUnits.length+" unit\n"
+        +"Teknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")+"\n"
+        +"Total: "+fmt(newInvoice.total)+"  Jasa: "+fmt(newInvoice.labor)+" Material: "+fmt(newInvoice.material)+"\n"
+        +"Invoice: "+invId+"  Silakan approve di menu Invoice. — ARA";
       ownerAccounts.forEach(u => { if (u.phone) sendWA(u.phone, ownerMsg); });
       if (ownerAccounts.length === 0) {
         fetch("/api/send-wa", {
@@ -10337,14 +10209,8 @@ Silakan approve di menu Invoice. — ARA`;
                           addAgentLog("COMPLAIN_UPGRADED",`Complain ${laporanModal.id} → Repair ${rId}`,"SUCCESS");
                           showNotif(`✅ Job Repair ${rId} dibuat! Admin dinotifikasi.`);
                           const admR=userAccounts.filter(u=>u.role==="Admin"||u.role==="Owner");
-                          admR.forEach(a=>{if(a?.phone)sendWA(a.phone,`🔧 *Upgrade Complain → Repair*
-
-Complain: ${laporanModal.id}
-Repair Baru: *${rId}*
-Customer: ${laporanModal.customer}
-Teknisi: ${laporanModal.teknisi}
-
-Silakan approve & buat invoice. — ARA`);});
+                          admR.forEach(a=>{if(a?.phone)sendWA(a.phone,
+                            "Upgrade Complain Repair\nComplain: "+laporanModal.id+"\nRepair Baru: "+rId+"\nCustomer: "+laporanModal.customer+"\nTeknisi: "+laporanModal.teknisi+"\n\nSilakan approve. — ARA");});
                         } else showNotif("❌ Gagal buat Repair: "+rErr.message);
                       }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,
                         padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",width:"100%"}}>
