@@ -9167,11 +9167,23 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
     const effectiveMaterials = isInstall
       ? INSTALL_ITEMS
           .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
-          .map(item => ({
-            id:item.key, nama:item.label,
-            jumlah:parseFloat(laporanInstallItems[item.key] || 0),
-            satuan:item.satuan, keterangan:"",
-          }))
+          .map(item => {
+            // Lookup harga dari priceListData DB, fallback PRICE_LIST
+            const plItem = priceListData.find(r => r.type && r.type.trim() === item.label.trim());
+            const hargaSat = plItem?.price
+              || PRICE_LIST["Install"]?.[item.label]
+              || PRICE_LIST["Repair"]?.[item.label]
+              || PRICE_LIST["Material"]?.[item.label]
+              || 0;
+            const qty = parseFloat(laporanInstallItems[item.key] || 0);
+            return {
+              id:item.key, nama:item.label,
+              jumlah:qty, satuan:item.satuan,
+              harga_satuan:hargaSat,
+              subtotal:hargaSat * qty,
+              keterangan:"",
+            };
+          })
       : [...jasaAsMaterials, ...laporanMaterials];
 
     const now = new Date().toLocaleString("id-ID", {
