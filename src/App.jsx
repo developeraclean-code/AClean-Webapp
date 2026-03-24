@@ -1895,25 +1895,12 @@ ${matRowsHtml}
   const sendDispatchWA = async (order) => {
     const tek = teknisiData.find(t => t.name === order.teknisi);
     if (!tek?.phone) return showNotif("⚠️ No. HP teknisi tidak ditemukan");
-    const msg = `📋 *DISPATCH JOB ${order.id}*
-👤 Customer: *${order.customer}*
-📍 Alamat: ${order.address}
-🔧 Service: ${order.service} — ${order.units} unit
-📅 Jadwal: ${order.date} jam ${order.time}${order.time_end?"–"+order.time_end:""}
-
-Segera konfirmasi kehadiran. — AClean`;
+    const msg = "DISPATCH JOB "+order.id+"\nCustomer: "+order.customer+"\nAlamat: "+order.address+"\nService: "+order.service+" - "+order.units+" unit\nJadwal: "+order.date+" jam "+order.time+(order.time_end?" - "+order.time_end:"")+"\n\nSegera konfirmasi kehadiran. — AClean";
     const ok = await sendWA(tek.phone, msg);
     if (order.helper) {
       const helperData = teknisiData.find(t => t.name === order.helper);
       if (helperData?.phone) {
-        const helperMsg = `📋 *ASSIST JOB ${order.id}*
-👤 Customer: *${order.customer}*
-📍 Alamat: ${order.address}
-🔧 Service: ${order.service} — ${order.units} unit
-📅 Jadwal: ${order.date} jam ${order.time}
-👷 Teknisi: ${order.teknisi}
-
-Kamu ditugaskan sebagai Helper. — AClean`;
+        const helperMsg = "ASSIST JOB "+order.id+"\nCustomer: "+order.customer+"\nAlamat: "+order.address+"\nService: "+order.service+" - "+order.units+" unit\nJadwal: "+order.date+" jam "+order.time+"\nTeknisi: "+order.teknisi+"\n\nKamu ditugaskan sebagai Helper. — AClean";
         await sendWA(helperData.phone, helperMsg);
       }
     }
@@ -2888,29 +2875,11 @@ Kamu ditugaskan sebagai Helper. — AClean`;
               const tekData = teknisiData.find(t=>t.name===(act.teknisi||rOrd.teknisi));
               // Notif customer
               if (rOrd.phone) {
-                const custMsg = `📅 *Info Perubahan Jadwal*
-
-Yth. ${rOrd.customer},
-Jadwal layanan AC Anda *${act.id}* telah diubah:
-📅 Tanggal baru: *${act.date}*
-⏰ Jam: ${act.time||"09:00"}
-🔧 Layanan: ${rOrd.service}
-
-Mohon pastikan ada di lokasi pada waktu tersebut.
-Terima kasih — *AClean Service* 😊`;
+                const custMsg = "Info Perubahan Jadwal\n\nYth. "+rOrd.customer+",\nJadwal AC "+act.id+" telah diubah:\nTanggal baru: "+act.date+"\nJam: "+(act.time||"09:00")+"\nLayanan: "+rOrd.service+"\n\nMohon pastikan ada di lokasi. Terima kasih — AClean";
                 if (rOrd?.phone) sendWA(rOrd.phone, custMsg);
               }
               if (tekData?.phone) {
-                const rMsg = `📅 *Jadwal Diubah*
-
-Halo ${tekData.name}, jadwal order *${act.id}* telah diubah:
-👤 Customer: ${rOrd.customer}
-📍 Alamat: ${rOrd.address||"-"}
-🔧 Layanan: ${rOrd.service}
-📅 Tanggal baru: ${act.date}
-⏰ Jam: ${act.time||"09:00"}
-
-Mohon sesuaikan jadwal Anda. Terima kasih!`;
+                const rMsg = "Jadwal Diubah\n\nHalo "+tekData.name+", jadwal order "+act.id+" telah diubah:\nCustomer: "+rOrd.customer+"\nLayanan: "+rOrd.service+"\nTanggal baru: "+act.date+"\nJam: "+(act.time||"09:00")+"\n\nMohon sesuaikan jadwal Anda. Terima kasih!";
                 sendWA(tekData.phone, rMsg);
               }
             }
@@ -4664,9 +4633,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               showNotif("✅ Status → On Site!");
         const admins = teknisiData.filter(u=>u.role==="Admin"||u.role==="Owner")
           .concat((userAccounts||[]).filter(u=>u.role==="Admin"||u.role==="Owner"));
-                              const msg = `✅ *Teknisi di Lokasi*
-📋 ${o.id} — ${o.customer}
-👷 ${myTekName}`;
+                              const msg = "Teknisi di Lokasi\n" + o.id + " - " + o.customer + "\nTeknisi: " + myTekName;
                               admins.forEach(adm=>{if(adm?.phone) sendWA(adm.phone,msg);});
                             }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700 }}>
                               ✅ On Site
