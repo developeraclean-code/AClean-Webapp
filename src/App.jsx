@@ -6069,14 +6069,15 @@ ${matRowsHtml}
       </span>
     )}
 
-    {r.status === "VERIFIED" && (() => {
-  const inv = invoicesData.find(i => i.job_id === r.job_id);
-  return (
-    <span style={{ fontSize: 12, color: cs.green }}>
-      {"Diverifikasi" + (inv ? " · Invoice: " + inv.status : "")}
-    </span>
-  );
-})()}
+    {r.status === "VERIFIED" && (
+  <span style={{ fontSize: 12, color: cs.green }}>
+    {"Diverifikasi" + (
+      invoicesData.find(i => i.job_id === r.job_id)
+        ? " · Invoice: " + invoicesData.find(i => i.job_id === r.job_id).status
+        : ""
+    )}
+  </span>
+)}
 
 {r.status === "REJECTED" && (
   <span style={{ fontSize: 12, color: cs.red }}>
