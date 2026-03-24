@@ -1487,6 +1487,13 @@ ${matRowsHtml}
           company_addr:sMap.company_addr|| prev.company_addr,
           wa_number:   sMap.wa_number   || prev.wa_number,
         }));
+        // Load cronJobs settings dari DB
+        if (sMap.cron_jobs) {
+          try {
+            const saved = JSON.parse(sMap.cron_jobs);
+            if (Array.isArray(saved) && saved.length > 0) setCronJobs(saved);
+          } catch(e) {}
+        }
           // Sync apiKey sesuai provider dari DB
           if (sMap.llm_provider) {
             const dbProv = sMap.llm_provider;
@@ -4279,7 +4286,7 @@ Aksi ini tidak bisa dibatalkan.`,
                       </td>
                       <td style={{ padding:"10px 14px" }}>
                         {isEdit ? (
-                          <input id="field_1" value={plEditForm.type||""} onChange={e=>setPlEditForm(f=>({...f,type:e.target.value}))}
+                          <input value={plEditForm.type||""} onChange={e=>setPlEditForm(f=>({...f,type:e.target.value}))}
                             style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"6px 10px", color:cs.text, fontSize:12, width:"100%" }} />
                         ) : (
                           <div>
@@ -4396,7 +4403,7 @@ Tidak bisa dibatalkan.`,
                   {opts.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               ) : (
-                <input id="field_4" type={type} value={plNewForm[key]} placeholder={ph||""}
+                <input type={type} value={plNewForm[key]} placeholder={ph||""}
                   onChange={e => setPlNewForm(f=>({...f,[key]:e.target.value}))}
                   style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
               )}
@@ -6482,13 +6489,29 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
                 <div style={{ fontSize:12, color:cs.muted }}>Tugas otomatis ARA</div>
               </div>
             </div>
-            <button onClick={() => setCronJobs(prev => [...prev, { id:Date.now(), name:"Job Baru", time:"09:00", days:"Setiap Hari", active:false, task:"Deskripsi tugas..." }])}
+            <button onClick={async () => {
+              const newJob = { id:Date.now(), name:"Job Baru", time:"09:00", days:"Setiap Hari", active:false, task:"Deskripsi tugas" };
+              const updated = [...cronJobs, newJob];
+              setCronJobs(updated);
+              await supabase.from("app_settings").upsert(
+                {key:"cron_jobs", value:JSON.stringify(updated)},
+                {onConflict:"key"}
+              );
+            }}
               style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:700 }}>+ Tambah Job</button>
           </div>
           <div style={{ display:"grid", gap:8 }}>
             {cronJobs.map((job,idx) => (
               <div key={job.id} style={{ background:cs.surface, border:"1px solid "+(job.active?cs.green:cs.border), borderRadius:10, padding:"12px 14px", display:"flex", gap:12, alignItems:"center" }}>
-                <div onClick={() => setCronJobs(prev => prev.map((j,i) => i===idx ? {...j,active:!j.active} : j))}
+                <div onClick={async () => {
+                  const updated = cronJobs.map((j,i) => i===idx ? {...j,active:!j.active} : j);
+                  setCronJobs(updated);
+                  // Persist ke Supabase app_settings
+                  await supabase.from("app_settings").upsert(
+                    {key:"cron_jobs", value:JSON.stringify(updated)},
+                    {onConflict:"key"}
+                  );
+                }}
                   style={{ width:34, height:20, borderRadius:99, background:job.active?cs.green:cs.border, cursor:"pointer", position:"relative", flexShrink:0 }}>
                   <div style={{ position:"absolute", width:14, height:14, borderRadius:"50%", background:"#fff", top:3, left:job.active?17:3, transition:"left 0.2s" }} />
                 </div>
@@ -6496,7 +6519,14 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
                   <div style={{ fontWeight:700, color:job.active?cs.text:cs.muted, fontSize:13 }}>{job.name}</div>
                   <div style={{ fontSize:11, color:cs.muted }}>{job.time} Â· {job.days} Â· {job.task}</div>
                 </div>
-                <button onClick={() => setCronJobs(prev => prev.filter((_,i) => i!==idx))} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>Ã—</button>
+                <button onClick={async () => {
+                  const updated = cronJobs.filter((_,i) => i!==idx);
+                  setCronJobs(updated);
+                  await supabase.from("app_settings").upsert(
+                    {key:"cron_jobs", value:JSON.stringify(updated)},
+                    {onConflict:"key"}
+                  );
+                }} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>Ã—</button>
               </div>
             ))}
           </div>
@@ -6859,7 +6889,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
               {[["Nama Customer","customer","text"],["Nomor HP","phone","text"],["Alamat Lengkap","address","text"],["Area / Kota","area","text"],["Catatan","notes","text"]].map(([label,key,type]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                  <input id="field_7" type={type} value={newOrderForm[key]||""} onChange={e => {
+                  <input type={type} value={newOrderForm[key]||""} onChange={e => {
                     const val = e.target.value;
                     if (key === "phone") {
                       const normVal = normalizePhone(val);
@@ -7142,7 +7172,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
               {[["Nama Material","name","text"],["Satuan","unit","text"],["Harga/Unit","price","number"],["Stok Awal","stock","number"],["Reorder Point","reorder","number"],["Min Alert","min_alert","number"]].map(([label,key,type]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>{label}</div>
-                  <input id="field_11" type={type} value={newStokForm[key]||""} onChange={e => setNewStokForm(f=>({...f,[key]:e.target.value}))}
+                  <input type={type} value={newStokForm[key]||""} onChange={e => setNewStokForm(f=>({...f,[key]:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
@@ -7265,7 +7295,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
               {[["Nama Lengkap","name"],["Nomor WA","phone"]].map(([label,key]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>{label}</div>
-                  <input id="field_16" value={newTeknisiForm[key]||""} onChange={e => setNewTeknisiForm(f=>({...f,[key]:e.target.value}))}
+                  <input value={newTeknisiForm[key]||""} onChange={e => setNewTeknisiForm(f=>({...f,[key]:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
@@ -8549,7 +8579,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
                 {[["Nama Lengkap","name","text","Nama lengkap anggota"],["Email Login","email","email","nama@aclean.id"],["Nomor HP","phone","text","628812xxx"]].map(([label,key,type,ph]) => (
                   <div key={key}>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                    <input id="field_22" type={type} value={newUserForm[key]||""} onChange={e => setNewUserForm(f=>({...f,[key]:e.target.value}))}
+                    <input type={type} value={newUserForm[key]||""} onChange={e => setNewUserForm(f=>({...f,[key]:e.target.value}))}
                       placeholder={ph}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
@@ -8614,7 +8644,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
               {[["Nama Lengkap","name","text","Nama customer"],["Nomor HP","phone","text","628xxx"],["Alamat Lengkap","address","text","Jl. ..."],["Area/Kecamatan","area","text","Alam Sutera, BSD, dll"]].map(([lbl,key,type,ph])=>(
                 <div key={key}>
                   <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>{lbl}</div>
-                  <input id="field_24" type={type} value={newCustomerForm[key]||""} onChange={e=>setNewCustomerForm(f=>({...f,[key]:e.target.value}))}
+                  <input type={type} value={newCustomerForm[key]||""} onChange={e=>setNewCustomerForm(f=>({...f,[key]:e.target.value}))}
                     placeholder={ph} style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"10px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                 </div>
               ))}
@@ -8714,7 +8744,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
                   {[["Nama Customer","customer","text"],["No. HP","phone","text"],["Alamat Lengkap","address","text"]].map(([lbl,key,type])=>(
                     <div key={key}>
                       <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>{lbl}</div>
-                      <input id="field_25" type={type} value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
+                      <input type={type} value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
                         style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                     </div>
                   ))}
@@ -8799,7 +8829,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
                 </div>
                 <div>
                   <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Catatan Perubahan</div>
-                  <input id="field_29" value={editOrderForm.notes||""} onChange={e=>setEditOrderForm(f=>({...f,notes:e.target.value}))}
+                  <input value={editOrderForm.notes||""} onChange={e=>setEditOrderForm(f=>({...f,notes:e.target.value}))}
                     placeholder="Alasan perubahan..." style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                 </div>
               </div>
@@ -9503,6 +9533,20 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. â
       const mDetail = effectiveMaterials
         .filter(m => m.nama && (parseFloat(m.jumlah) || 0) > 0)
         .map(m => {
+          // Shortcut: jika effectiveMaterials sudah punya harga_satuan (dari DB lookup)
+          // gunakan langsung â€” ini yang konsisten dengan matTotalInv
+          if ((m.harga_satuan || 0) > 0) {
+            const rawQty2 = parseFloat(m.jumlah) || 0;
+            const isF2 = ["freon","r-22","r-32","r-410"].some(k => (m.nama||"").toLowerCase().includes(k));
+            const qty2 = isF2 ? Math.max(1, Math.ceil(rawQty2)) : rawQty2;
+            return {
+              nama: m.nama, jumlah: qty2,
+              satuan: m.satuan || (isF2 ? "kg" : "pcs"),
+              harga_satuan: m.harga_satuan,
+              subtotal: m.harga_satuan * qty2,
+              keterangan: m.keterangan || "",
+            };
+          }
           const nama2   = (m.nama || "").toLowerCase();
           const normNama2 = nama2
             .replace(/,/g,".")
@@ -9806,7 +9850,7 @@ Silakan approve di menu Invoice. â€” ARA`;
                           <div style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 12px",fontSize:12,color:cs.text}}>
                             <span style={{color:cs.accent,fontWeight:700}}>Unit {u.unit_no}</span>
                           </div>
-                          <input id="field_30" value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Lokasi/nama unit..."
+                          <input value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Lokasi/nama unit..."
                             style={{width:140,background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           {laporanUnits.length>1&&(
                             <button onClick={()=>{const nu=laporanUnits.filter((_,i)=>i!==idx).map((u2,i)=>({...u2,unit_no:i+1}));setLaporanUnits(nu);setActiveUnitIdx(Math.max(0,idx-1));}}
@@ -9870,12 +9914,12 @@ Silakan approve di menu Invoice. â€” ARA`;
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Merk</div>
-                            <input id="field_31" value={u.merk} onChange={e=>upd({merk:e.target.value})} placeholder="Daikin..."
+                            <input id={`field_merk_${activeUnitIdx}`} value={u.merk} onChange={e=>upd({merk:e.target.value})} placeholder="Daikin..."
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>PK</div>
-                            <input id="field_32" value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
+                            <input id={`field_pk_${activeUnitIdx}`} value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         </div>
