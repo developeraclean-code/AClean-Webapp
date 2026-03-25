@@ -500,14 +500,6 @@ export default function ACleanWebApp() {
   const [laporanSubmitted,   setLaporanSubmitted]   = useState(false);
   const [laporanUnits,       setLaporanUnits]       = useState([]);
   const [laporanMaterials,   setLaporanMaterials]   = useState([]);
-  const [laporanJasaItems,   setLaporanJasaItems]   = useState([]);  // Jasa section A
-  const [laporanRepairItems, setLaporanRepairItems] = useState([]);  // Repair/Sparepart B
-  const [showJasaSearch,     setShowJasaSearch]     = useState(false);
-  const [jasaSearchQ,        setJasaSearchQ]        = useState("");
-  const [showRepairSearch,   setShowRepairSearch]   = useState(false);
-  const [repairSearchQ,      setRepairSearchQ]      = useState("");
-  const [showMatSearch,      setShowMatSearch]      = useState(false);
-  const [matSearchQ2,        setMatSearchQ2]        = useState("");
   const [laporanFotos,       setLaporanFotos]       = useState([]);
   const [laporanRekomendasi, setLaporanRekomendasi] = useState("");
   const [laporanCatatan,     setLaporanCatatan]     = useState("");
@@ -1114,12 +1106,13 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       </tr>
     </thead>
     <tbody>
-      ${(inv.labor > 0 && matDetails.length === 0) ?
-        '<tr><td>' + (inv.service || "Jasa Servis AC") + '</td>'
-        + '<td style="text-align:center">' + (inv.units || 1) + '</td>'
-        + '<td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td>'
-        + '<td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor||0).toLocaleString("id-ID") + '</td></tr>'
-      : ""}
+      ${(inv.labor > 0 && matDetails.length === 0) ? '
+      <tr>
+        <td>${inv.service || "Jasa Servis AC"}</td>
+        <td style="text-align:center">${inv.units || 1}</td>
+        <td style="text-align:right;font-family:monospace">${perUnit.toLocaleString("id-ID")}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:600">${(inv.labor||0).toLocaleString("id-ID")}</td>
+      </tr>' : ""}
 ${matRowsHtml}
       ${(inv.dadakan > 0) ? '<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>' : ""}
       <tr class="total-row">
@@ -1198,11 +1191,6 @@ ${matRowsHtml}
     const count = Math.min(order.units||1, 10);
     setLaporanUnits(Array.from({length:count},(_,i)=>mkUnit(i+1)));
     setLaporanMaterials([]);
-    setLaporanJasaItems([]);
-    setLaporanRepairItems([]);
-    setShowJasaSearch(false);  setJasaSearchQ("");
-    setShowRepairSearch(false); setRepairSearchQ("");
-    setShowMatSearch(false);   setMatSearchQ2("");
     setLaporanFotos([]);
   // Auto-fill install items berdasarkan jumlah unit order
   const _installDefaults = {};
@@ -1486,11 +1474,6 @@ ${matRowsHtml}
           company_addr:sMap.company_addr|| prev.company_addr,
           wa_number:   sMap.wa_number   || prev.wa_number,
         }));
-        if (sMap.cron_jobs) {
-          try { const s=JSON.parse(sMap.cron_jobs);
-            if(Array.isArray(s)&&s.length>0) setCronJobs(s);
-          } catch(e){}
-        }
           // Sync apiKey sesuai provider dari DB
           if (sMap.llm_provider) {
             const dbProv = sMap.llm_provider;
@@ -1894,12 +1877,25 @@ ${matRowsHtml}
   const sendDispatchWA = async (order) => {
     const tek = teknisiData.find(t => t.name === order.teknisi);
     if (!tek?.phone) return showNotif("⚠️ No. HP teknisi tidak ditemukan");
-    const msg = "DISPATCH JOB "+order.id+"\nCustomer: "+order.customer+"\nAlamat: "+order.address+"\nService: "+order.service+" - "+order.units+" unit\nJadwal: "+order.date+" jam "+order.time+(order.time_end?" - "+order.time_end:"")+"\n\nSegera konfirmasi kehadiran. — AClean";
+    const msg =
+      "DISPATCH JOB "+order.id+"\n"
+      +"Customer: "+order.customer+"\n"
+      +"Alamat: "+order.address+"\n"
+      +"Service: "+order.service+" - "+order.units+" unit\n"
+      +"Jadwal: "+order.date+" jam "+order.time+(order.time_end?" - "+order.time_end:"")+"\n\n"
+      +"Segera konfirmasi kehadiran. — AClean";
     const ok = await sendWA(tek.phone, msg);
     if (order.helper) {
       const helperData = teknisiData.find(t => t.name === order.helper);
       if (helperData?.phone) {
-        const helperMsg = "ASSIST JOB "+order.id+"\nCustomer: "+order.customer+"\nAlamat: "+order.address+"\nService: "+order.service+" - "+order.units+" unit\nJadwal: "+order.date+" jam "+order.time+"\nTeknisi: "+order.teknisi+"\n\nKamu ditugaskan sebagai Helper. — AClean";
+        const helperMsg =
+          "ASSIST JOB "+order.id+"\n"
+          +"Customer: "+order.customer+"\n"
+          +"Alamat: "+order.address+"\n"
+          +"Service: "+order.service+" - "+order.units+" unit\n"
+          +"Jadwal: "+order.date+" jam "+order.time+"\n"
+          +"Teknisi: "+order.teknisi+"\n\n"
+          +"Kamu ditugaskan sebagai Helper. — AClean";
         await sendWA(helperData.phone, helperMsg);
       }
     }
@@ -1933,8 +1929,6 @@ ${matRowsHtml}
 
   // ── GAP 2: Hitung labor dari price list ──
   const hitungLabor = (service, type, units) => {
-    const plItem = priceListData.find(r => r.service === service && r.type === type);
-    if (plItem && plItem.price > 0) return plItem.price * (units || 1);
     const svcMap = PRICE_LIST[service] || PRICE_LIST["Cleaning"];
     const hargaPerUnit = svcMap[type] || svcMap["default"] || 85000;
     return hargaPerUnit * (units || 1);
@@ -1950,36 +1944,27 @@ ${matRowsHtml}
         .replace(/r410a?$/, "r410") 
         .replace(/r22a?$/,  "r22")
         .replace(/r32a?$/,  "r32");
-      const isJasaItem = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama||"").trim());
-      // 1. Cari di inventory (skip jasa)
-      const invItem = isJasaItem ? null : inventoryData.find(inv => {
+      // 1. Cari di inventory
+      const invItem = inventoryData.find(inv => {
         const n = inv.name.toLowerCase()
           .replace(/,/g, ".").replace(/eterna\s*/g, "")
           .replace(/[-\s]/g, "").replace(/r410a?$/, "r410")
           .replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
-        if (n === norm) return true;
-        if (norm.length > 6 && n.includes(norm)) return true;
-        if (n.length > 6 && norm.includes(n)) return true;
-        return false;
+        return n === norm || n.includes(norm) || norm.includes(n);
       });
       let harga = invItem ? invItem.price : 0;
       // 2. Fallback ke PRICE_LIST (semua service: Install, Material, Repair, dll)
       if (!harga) {
         const mNama = m.nama || "";
-        for (const svc of ["Repair","Install","Material","Cleaning","Complain"]) {
+        for (const svc of ["Material","Install","Repair","Cleaning","Complain"]) {
           if (PRICE_LIST[svc] && PRICE_LIST[svc][mNama]) {
             harga = PRICE_LIST[svc][mNama];
             break;
           }
         }
       }
-      // 2b. Fallback priceListData DB exact
+      // 3. Fallback freon spesifik
       if (!harga) {
-        const plIt = priceListData.find(r => r.type && r.type.trim() === (m.nama||"").trim());
-        if (plIt) harga = plIt.price || 0;
-      }
-      // 3. Fallback freon spesifik — skip jika isJasaItem
-      if (!harga && !isJasaItem) {
         if      (raw.includes("r-22")||raw.includes("r22"))  harga = PRICE_LIST["freon_R22"]   || 450000;
         else if (raw.includes("r-32")||raw.includes("r32"))  harga = PRICE_LIST["freon_R32"]   || 450000;
         else if (raw.includes("r-410")||raw.includes("r410")) harga = PRICE_LIST["freon_R410A"] || 450000;
@@ -2073,12 +2058,12 @@ ${matRowsHtml}
     const shouldNotif = sendCustNotif === true ||
       (sendCustNotif === null && await showConfirm({
         icon:"📱", title:"Kirim Notif WA?",
-        message:"Kirim konfirmasi WA ke "+inv.customer+"?",
+        message:"Kirim konfirmasi WA? "+inv.customer+" Rp "+(inv.total||0).toLocaleString("id-ID"),
         confirmText:"Kirim WA"
       }));
     if (shouldNotif && inv.phone) {
       sendWA(inv.phone,
-        "Pembayaran invoice "+inv.id+" Rp "+(inv.total||0).toLocaleString("id-ID")+" diterima. Terima kasih telah menggunakan AClean Service!"
+        "Pembayaran "+inv.id+" Rp "+(inv.total||0).toLocaleString("id-ID")+" diterima. Terima kasih! — AClean"
       );
     }
     // GAP 1.6: Catat ke payments table untuk history + partial payment support
@@ -2874,11 +2859,29 @@ ${matRowsHtml}
               const tekData = teknisiData.find(t=>t.name===(act.teknisi||rOrd.teknisi));
               // Notif customer
               if (rOrd.phone) {
-                const custMsg = "Info Perubahan Jadwal\n\nYth. "+rOrd.customer+",\nJadwal AC "+act.id+" telah diubah:\nTanggal baru: "+act.date+"\nJam: "+(act.time||"09:00")+"\nLayanan: "+rOrd.service+"\n\nMohon pastikan ada di lokasi. Terima kasih — AClean";
+                const custMsg = `📅 *Info Perubahan Jadwal*
+
+Yth. ${rOrd.customer},
+Jadwal layanan AC Anda *${act.id}* telah diubah:
+📅 Tanggal baru: *${act.date}*
+⏰ Jam: ${act.time||"09:00"}
+🔧 Layanan: ${rOrd.service}
+
+Mohon pastikan ada di lokasi pada waktu tersebut.
+Terima kasih — *AClean Service* 😊`;
                 if (rOrd?.phone) sendWA(rOrd.phone, custMsg);
               }
               if (tekData?.phone) {
-                const rMsg = "Jadwal Diubah\n\nHalo "+tekData.name+", jadwal order "+act.id+" telah diubah:\nCustomer: "+rOrd.customer+"\nLayanan: "+rOrd.service+"\nTanggal baru: "+act.date+"\nJam: "+(act.time||"09:00")+"\n\nMohon sesuaikan jadwal Anda. Terima kasih!";
+                const rMsg = `📅 *Jadwal Diubah*
+
+Halo ${tekData.name}, jadwal order *${act.id}* telah diubah:
+👤 Customer: ${rOrd.customer}
+📍 Alamat: ${rOrd.address||"-"}
+🔧 Layanan: ${rOrd.service}
+📅 Tanggal baru: ${act.date}
+⏰ Jam: ${act.time||"09:00"}
+
+Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 sendWA(tekData.phone, rMsg);
               }
             }
@@ -3130,7 +3133,9 @@ ${matRowsHtml}
                         const custPhone = inv.phone || customersData.find(c=>c.name===inv.customer)?.phone;
                         if (!custPhone) { showNotif("⚠️ No HP customer tidak ditemukan"); return; }
                         sendWA(custPhone,
-                          "Halo "+inv.customer+". Garansi "+inv.service+" dari AClean berakhir "+daysLeft+" hari lagi ("+inv.garansi_expires+"). Hubungi kami jika ada kendala. — AClean"
+                          "Halo "+inv.customer+". Garansi "+inv.service
+                          +" berakhir "+daysLeft+" hari lagi ("+inv.garansi_expires+")."
+                          +" Hubungi kami jika ada kendala. — AClean"
                         );
                         addAgentLog("GARANSI_REMINDER", `WA garansi dikirim ke ${inv.customer} (${daysLeft}h lagi)`, "SUCCESS");
                         showNotif("✅ WA reminder garansi terkirim ke "+inv.customer);
@@ -4632,7 +4637,10 @@ ${matRowsHtml}
                               showNotif("✅ Status → On Site!");
         const admins = teknisiData.filter(u=>u.role==="Admin"||u.role==="Owner")
           .concat((userAccounts||[]).filter(u=>u.role==="Admin"||u.role==="Owner"));
-                              const msg = "Teknisi di Lokasi\n" + o.id + " - " + o.customer + "\nTeknisi: " + myTekName;
+                              const msg =
+                                "Teknisi di Lokasi\n"
+                                +"Job: "+o.id+" - "+o.customer+"\n"
+                                +"Teknisi: "+myTekName;
                               admins.forEach(adm=>{if(adm?.phone) sendWA(adm.phone,msg);});
                             }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700 }}>
                               ✅ On Site
@@ -4811,7 +4819,10 @@ ${matRowsHtml}
                               const jamEta = etaDate.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
                               return (
                                 <button onClick={() => {
-                                  const eta = jamEta; // window.prompt disabled
+                                  const eta = window.prompt(
+                                    `Estimasi tiba di lokasi ${o.customer}?\nContoh: 13:30`,
+                                    jamEta
+                                  );
                                   if (!eta) return;
                                   const msg = `Halo ${o.customer} 👋\n\nKami dari *AClean Service* akan segera tiba di lokasi Anda.\n\n📋 Job: ${o.id}\n🔧 Service: ${o.service} — ${o.units} unit\n⏰ Estimasi tiba: *${eta} WIB*\n\nMohon pastikan ada di lokasi ya! 🙏\n\n_${currentUser?.name} — AClean_`;
                                   if (o.phone) sendWA(o.phone, msg);
@@ -5670,7 +5681,7 @@ ${matRowsHtml}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
           <div>
             <div style={{fontWeight:800,fontSize:18,color:cs.text}}>Laporan Tim Teknisi <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filtered.length})</span></div>
-            <div style={{fontSize:12,color:cs.muted,marginTop:2}}>Verifikasi laporan teknisi · Invoice otomatis sudah dibuat saat submit</div>
+            <div style={{fontSize:12,color:cs.muted,marginTop:2}}>Verifikasi laporan, cek riwayat edit, tandai sesuai atau minta revisi</div>
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {[["SUBMITTED",cs.accent,"Baru"],["VERIFIED",cs.green,"Verified"],["REVISION",cs.yellow,"Revisi"],["REJECTED",cs.red,"Ditolak"]].map(([s,col,lbl])=>(
@@ -5738,7 +5749,7 @@ ${matRowsHtml}
               <div><span style={{color:cs.muted}}>Tanggal: </span><span style={{color:cs.text}}>{r.date}</span></div>
               <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit AC</span></div>
               {safeArr(r.materials).length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
-              {safeArr(r.fotos).length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
+              {r.fotos&&r.fotos.length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
               {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon Total: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
             </div>
 
@@ -5807,119 +5818,80 @@ ${matRowsHtml}
               </div>
             )}
 
-            {/* ── Invoice info bar ── */}
-            {(() => {
-              const inv = invoicesData.find(i => i.job_id === r.job_id);
-              if (!inv) return (
-                <div style={{fontSize:12,color:cs.muted,padding:"7px 12px",
-                  background:cs.surface,borderRadius:8}}>
-                  Invoice otomatis dibuat saat teknisi submit laporan
-                </div>
-              );
-              const iC = inv.status==="PAID"    ? cs.green  :
-                         inv.status==="APPROVED" ? cs.accent :
-                         inv.status==="OVERDUE"  ? cs.red    : cs.yellow;
-              const iL = {PENDING_APPROVAL:"Menunggu Approve",APPROVED:"Disetujui",
-                          PAID:"Lunas",OVERDUE:"Jatuh Tempo"}[inv.status] || inv.status;
-              return (
-                <div style={{background:iC+"10",border:"1px solid "+iC+"33",borderRadius:9,
-                  padding:"9px 13px",display:"flex",justifyContent:"space-between",
-                  alignItems:"center",flexWrap:"wrap",gap:8}}>
-                  <div>
-                    <div style={{fontSize:12,fontWeight:700,color:iC,marginBottom:2}}>
-                      {inv.id}
-                    </div>
-                    <div style={{fontSize:11,color:cs.muted,display:"flex",
-                      alignItems:"center",gap:6}}>
-                      <span style={{fontWeight:600}}>{fmt(inv.total)}</span>
-                      <span style={{padding:"1px 8px",borderRadius:99,fontSize:10,
-                        fontWeight:700,background:iC+"22",color:iC}}>{iL}</span>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => { setSelectedInvoice(inv); setActiveMenu("invoice"); }}
-                    style={{fontSize:11,padding:"5px 13px",borderRadius:7,
-                      border:"1px solid "+iC+"55",background:iC+"18",
-                      color:iC,cursor:"pointer",fontWeight:700}}>
-                    Buka Invoice
-                  </button>
-                </div>
-              );
-            })()}
-
-            {/* ── Action buttons ── */}
+            {/* Actions */}
             <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-              {r.status === "SUBMITTED" && (
-                <>
-                  <button
-                    onClick={async () => {
-                      const inv = invoicesData.find(i => i.job_id === r.job_id);
-                      setLaporanReports(p =>
-                        p.map(x => x.id === r.id ? {...x, status:"VERIFIED"} : x)
-                      );
-                      const uid = isRealUUID(currentUser?.id) ? currentUser.id : null;
-                      const { error: vErr } = await supabase
-                        .from("service_reports")
-                        .update({
-                          status: "VERIFIED",
-                          verified_by: uid,
-                          verified_at: new Date().toISOString()
-                        })
-                        .eq("id", r.id);
-                      if (vErr) {
-                        await supabase.from("service_reports")
-                          .update({ status: "VERIFIED" }).eq("id", r.id);
-                      }
-                      addAgentLog("LAPORAN_VERIFIED",
-                        "Laporan " + r.job_id + " diverifikasi", "SUCCESS");
-                      showNotif(inv
-                        ? "Verified! Invoice " + inv.id + " (" + inv.status + ")"
-                        : "Laporan " + r.job_id + " diverifikasi");
-                    }}
-                    style={{padding:"7px 18px",borderRadius:8,border:"none",
-                      background:"linear-gradient(135deg,"+cs.green+",#059669)",
-                      color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
-                    Verifikasi
-                  </button>
-                  <button
-                    onClick={async () => {
-                      setLaporanReports(p =>
-                        p.map(x => x.id === r.id ? {...x, status:"REVISION"} : x)
-                      );
-                      await supabase.from("service_reports")
-                        .update({ status: "REVISION" }).eq("id", r.id);
-                      addAgentLog("LAPORAN_REVISION",
-                        "Laporan " + r.job_id + " minta revisi", "WARNING");
-                      showNotif("Revisi diminta: " + r.job_id);
-                      const tek = userAccounts.find(u => u.name === r.teknisi && u.phone);
-                      if (tek?.phone) sendWA(tek.phone,
-                        "Laporan Perlu Direvisi\nJob: " + r.job_id +
-                        "\nCustomer: " + r.customer +
-                        "\n\nAdmin meminta revisi. Silakan perbaiki laporan. — AClean");
-                    }}
-                    style={{padding:"7px 14px",borderRadius:8,
-                      border:"1px solid "+cs.yellow+"55",background:cs.yellow+"12",
-                      color:cs.yellow,fontWeight:700,fontSize:12,cursor:"pointer"}}>
-                    Revisi
-                  </button>
-                </>
-              )}
-              {r.status === "REVISION" && (
-                <span style={{fontSize:12,color:cs.yellow}}>
-                  Menunggu revisi dari {r.teknisi}
-                </span>
-              )}
-              {r.status === "VERIFIED" && (
-                <span style={{fontSize:12,color:cs.green}}>
-                  {"Diverifikasi" + (invoicesData.find(i=>i.job_id===r.job_id)
-                    ? " · Invoice: " + invoicesData.find(i=>i.job_id===r.job_id).status
-                    : "")}
-                </span>
-              )}
-              {r.status === "REJECTED" && (
-                <span style={{fontSize:12,color:cs.red}}>Ditolak</span>
-              )}
-            </div>
+              {r.status==="SUBMITTED" && (<>
+                <button onClick={async()=>{
+                  // ── SIM-10: Verify laporan + AUTO-CREATE invoice ──
+                  setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
+                  const verifiedById = isRealUUID(currentUser?.id) ? currentUser.id : null;
+                  const {error:vErr} = await supabase.from("service_reports").update({
+                    status:"VERIFIED", verified_by:verifiedById, verified_at:new Date().toISOString()
+                  }).eq("id",r.id);
+                  if(vErr) await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
+                  addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi`,"SUCCESS");
+
+                  // Cek apakah invoice sudah ada
+                  const existInv = invoicesData.find(i => i.job_id === r.job_id);
+                  if (existInv) {
+                    showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
+                  } else {
+                    // AUTO-CREATE invoice PENDING_APPROVAL (tidak langsung kirim ke customer)
+                    const ord = ordersData.find(o => o.id === r.job_id);
+                    const invId = "INV" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
+                    const labor = PRICE_LIST[r.service]?.[ord?.type||"default"] || PRICE_LIST[r.service]?.["default"] || 85000;
+                    const laborTotal = labor * (r.units || ord?.units || 1);
+                    const matCost = safeArr(r.materials).reduce((s,m) => s + ((m.harga||m.price||0)*parseFloat(m.jumlah||m.qty||1)), 0);
+        const freonCost = 0; // [OPSI A] Freon tidak dihitung dari total_freon (data psi)
+                    const dadakan = ord?.date === new Date().toISOString().slice(0,10) ? 50000 : 0;
+                    const totalInv = laborTotal + matCost + freonCost + dadakan;
+                    const newInv = {
+                      id:invId, job_id:r.job_id, laporan_id:r.id,
+                      customer:r.customer, phone:r.phone||ord?.phone||"",
+                      service:r.service+(ord?.type?" - "+ord.type:""), units:r.units||ord?.units||1,
+                      teknisi:r.teknisi||"",
+                      labor:laborTotal, material:matCost+freonCost, dadakan, discount:0,
+                      total:totalInv,
+                      status:"PENDING_APPROVAL",  // ⚠ harus approve dulu sebelum dikirim
+                      due: new Date(Date.now()+3*86400000).toISOString().slice(0,10),
+                      sent:false, created_at:new Date().toISOString()
+                    };
+                    setInvoicesData(prev => [...prev, newInv]);
+                    const {error:iErr} = await supabase.from("invoices").insert(newInv);
+                    if(iErr) showNotif("⚠️ Invoice gagal simpan: "+iErr.message);
+                    else {
+                      await supabase.from("orders").update({invoice_id:invId}).eq("id",r.job_id);
+                      setOrdersData(prev=>prev.map(o=>o.id===r.job_id?{...o,invoice_id:invId}:o));
+                      addAgentLog("AUTO_INVOICE",`Invoice ${invId} auto-dibuat dari laporan ${r.job_id}`,"SUCCESS");
+                      showNotif(`✅ Invoice ${invId} dibuat (${fmt(totalInv)}) — tunggu approval Owner/Admin`);
+                      // Notif Owner
+                      const owners = userAccounts.filter(u=>u.role==="Owner"||u.role==="Admin");
+                      owners.forEach(o => { if(o?.phone) sendWA(o.phone, `⚡ *Invoice Auto-Generated*\n\nJob: *${r.job_id}*\nCustomer: ${r.customer}\nService: ${r.service}\nTotal: *${fmt(totalInv)}*\n\nMohon cek dan approve invoice di menu Invoice. — AClean`); });
+                    }
+                  }
+                }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>✅ Verifikasi + Buat Invoice</button>
+                <button onClick={async()=>{
+                  setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));
+                  await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
+                  addAgentLog("LAPORAN_REVISION",`Laporan ${r.job_id} diminta revisi oleh ${currentUser?.name}`,"WARNING");
+                  showNotif("⚠️ Revisi diminta untuk laporan "+r.job_id);
+                  // SIM-11: WA notif ke teknisi saat laporan REVISION
+                  const tekAccRev = userAccounts.find(u=>u.name===r.teknisi&&u.phone);
+                  if(tekAccRev?.phone) sendWA(tekAccRev.phone,
+                    "Laporan Perlu Direvisi\nJob: "+r.job_id
+                    +"\nCustomer: "+r.customer+"\nService: "+r.service
+                    +"\n\nAdmin meminta revisi. Silakan perbaiki. — AClean");
+                }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>Minta Revisi</button>
+                <button onClick={async()=>{
+                  setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REJECTED"}:x));
+                  await supabase.from("service_reports").update({status:"REJECTED"}).eq("id",r.id);
+                  addAgentLog("LAPORAN_REJECTED",`Laporan ${r.job_id} ditolak oleh ${currentUser?.name}`,"ERROR");
+                  showNotif("❌ Laporan "+r.job_id+" ditolak");
+                }} style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",color:cs.red,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>Tolak</button>
+              </>)}
+              {r.status==="REVISION" && <span style={{fontSize:12,color:cs.yellow}}>Menunggu revisi dari {r.teknisi}</span>}
+              {r.status==="VERIFIED" && <span style={{fontSize:12,color:cs.green}}>Laporan sudah terverifikasi</span>}
+              {r.status==="REJECTED" && <span style={{fontSize:12,color:cs.red}}>Laporan ditolak</span>}
             </div>
           </div>
         ))}
@@ -5948,23 +5920,14 @@ ${matRowsHtml}
     // Get my ORDERS_DATA jobs that don't have a report yet — show as pending
     const myJobs = ordersData.filter(o => o.teknisi===myName || o.helper===myName);
     const reportedJobIds = submittedReps.map(r => r.job_id);
-    const pendingJobs = myJobs.filter(o =>
-      !reportedJobIds.includes(o.id) && (o.date||"") <= TODAY
-    );
+    const pendingJobs = myJobs.filter(o => !reportedJobIds.includes(o.id));
     const pendingAsDraft = pendingJobs.map(o => ({
       id:"PENDING_"+o.id, job_id:o.id, teknisi:o.teknisi, helper:o.helper||null,
       customer:o.customer, service:o.service, date:o.date, submitted:"Belum dibuat",
       status:"PENDING", kondisi_sebelum:"", kondisi_setelah:"", pekerjaan:[],
       rekomendasi:"", catatan:"", freon:"0", ampere:"", editLog:[]
     }));
-    const myReps = [...submittedReps, ...pendingAsDraft]
-      .sort((a,b)=>{
-        const da=a.date||a.submitted?.slice(0,10)||"";
-        const db=b.date||b.submitted?.slice(0,10)||"";
-        if(da===TODAY&&db!==TODAY) return -1;
-        if(db===TODAY&&da!==TODAY) return 1;
-        return db.localeCompare(da);
-      });
+    const myReps = [...submittedReps, ...pendingAsDraft];
     const filtReps = myReps.filter(r =>
       !searchLaporan ||
       r.customer.toLowerCase().includes(searchLaporan.toLowerCase()) ||
@@ -6490,12 +6453,7 @@ ${matRowsHtml}
           <div style={{ display:"grid", gap:8 }}>
             {cronJobs.map((job,idx) => (
               <div key={job.id} style={{ background:cs.surface, border:"1px solid "+(job.active?cs.green:cs.border), borderRadius:10, padding:"12px 14px", display:"flex", gap:12, alignItems:"center" }}>
-                <div onClick={async () => {
-                  const upd=cronJobs.map((j,ii)=>ii===idx?{...j,active:!j.active}:j);
-                  setCronJobs(upd);
-                  await supabase.from("app_settings").upsert(
-                    {key:"cron_jobs",value:JSON.stringify(upd)},{onConflict:"key"});
-                }}
+                <div onClick={() => setCronJobs(prev => prev.map((j,i) => i===idx ? {...j,active:!j.active} : j))}
                   style={{ width:34, height:20, borderRadius:99, background:job.active?cs.green:cs.border, cursor:"pointer", position:"relative", flexShrink:0 }}>
                   <div style={{ position:"absolute", width:14, height:14, borderRadius:"50%", background:"#fff", top:3, left:job.active?17:3, transition:"left 0.2s" }} />
                 </div>
@@ -6503,12 +6461,7 @@ ${matRowsHtml}
                   <div style={{ fontWeight:700, color:job.active?cs.text:cs.muted, fontSize:13 }}>{job.name}</div>
                   <div style={{ fontSize:11, color:cs.muted }}>{job.time} · {job.days} · {job.task}</div>
                 </div>
-                <button onClick={async () => {
-                  const upd=cronJobs.filter((_,ii)=>ii!==idx);
-                  setCronJobs(upd);
-                  await supabase.from("app_settings").upsert(
-                    {key:"cron_jobs",value:JSON.stringify(upd)},{onConflict:"key"});
-                }} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
+                <button onClick={() => setCronJobs(prev => prev.filter((_,i) => i!==idx))} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
               </div>
             ))}
           </div>
@@ -7641,7 +7594,7 @@ ${matRowsHtml}
                   {/* Detail per unit AC */}
                   {(h.unit_detail||[]).length > 0 && (
                     <div style={{ margin:"0 18px 8px", background:cs.card, borderRadius:8, padding:"8px 10px" }}>
-                      {(h.unit_detail||[]).map((u, ui) => (
+                      {h.unit_detail.map((u, ui) => (
                         <div key={ui} style={{ marginBottom:ui<h.unit_detail.length-1?6:0,
                           paddingBottom:ui<h.unit_detail.length-1?5:0,
                           borderBottom:ui<h.unit_detail.length-1?"1px solid "+cs.border+"33":"none" }}>
@@ -7678,7 +7631,7 @@ ${matRowsHtml}
                     <div style={{ padding:"0 18px 12px" }}>
                       <div style={{ fontSize:10, color:cs.muted, marginBottom:5, fontWeight:600 }}>📸 Foto ({h.foto_urls.length})</div>
                       <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:4 }}>
-                        {(h.foto_urls||[]).map((url, fi) => (
+                        {h.foto_urls.map((url, fi) => (
                           <img key={fi} src={url} alt={"Foto "+(fi+1)}
                             onClick={()=>window.open(url,"_blank")}
                             onError={e=>{ e.target.style.display="none"; }}
@@ -9048,22 +9001,10 @@ ${matRowsHtml}
         const totalFreon = laporanUnits.reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0);
         const presets = MATERIAL_PRESET[laporanModal?.service] || MATERIAL_PRESET.Cleaning;
         const isInstallJob = laporanModal?.service === "Install";
-        const jasaNamesSet=new Set(priceListData.filter(r=>r.service!=="Material").map(r=>r.type&&r.type.trim()));
-        const jasaPresetBySvc={
-          Cleaning:priceListData.filter(r=>r.service==="Cleaning").sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Cleaning"})),
-          Repair:priceListData.filter(r=>r.service==="Repair").sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Repair"})),
-          Complain:[...priceListData.filter(r=>r.service==="Complain").map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Complain"})),...priceListData.filter(r=>r.service==="Repair"&&r.price>0).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Repair"}))].filter((v,i,a)=>a.findIndex(x=>x.t===v.t)===i),
-          Install:priceListData.filter(r=>r.service==="Install").sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Install"})),
-        };
-        const _repairAll=[...priceListData.filter(r=>r.service==="Repair"&&(r.price||0)>=0).sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",src:"pl"})),...inventoryData.sort((a,b)=>a.name.localeCompare(b.name)).map(r=>({t:r.name,p:r.price||0,sat:r.unit||"pcs",src:"inv"}))].filter((v,i,a)=>a.findIndex(x=>x.t===v.t)===i);
-        const repairPresetBySvc={Cleaning:_repairAll,Repair:_repairAll,Complain:_repairAll};
-        const _allInvMat=[...inventoryData].sort((a,b)=>{const aF=/freon/i.test(a.name);const bF=/freon/i.test(b.name);if(aF&&!bF)return -1;if(bF&&!aF)return 1;return a.name.localeCompare(b.name);}).map(r=>({nama:r.name,satuan:r.unit||"pcs",p:r.price||0}));
-        const matPresetBySvc={Cleaning:_allInvMat,Repair:_allInvMat,Complain:_allInvMat,Install:_allInvMat};
-        const installItemsDB=INSTALL_ITEMS.map(item=>{const pl=priceListData.find(r=>r.type&&r.type.trim()===item.label.trim());const iv=inventoryData.find(r=>r.name&&r.name.trim()===item.label.trim());return{...item,price:pl?.price||iv?.price||PRICE_LIST["Install"]?.[item.label]||PRICE_LIST["Repair"]?.[item.label]||0};});
-        const STEP_LABELS=["","Konfirmasi Unit",
-          isInstallJob?"(skip)":"Detail Per Unit",
-          isInstallJob?"Form Instalasi":"Jasa & Material",
-          "Ringkasan"];
+        const STEP_LABELS = ["","Konfirmasi Unit",
+          isInstallJob ? "(skip)" : "Detail Per Unit",
+          isInstallJob ? "Form Instalasi" : "Material & Foto",
+          "Submit"];
 
         const updateUnit = (idx, updated) => setLaporanUnits(prev=>prev.map((u,i)=>i===idx?updated:u));
         const toggleArr = (arr, val) => arr.includes(val)?arr.filter(x=>x!==val):[...arr,val];
@@ -9150,32 +9091,17 @@ ${matRowsHtml}
 
     // ── 4. Siapkan materials yang efektif ──
     // Install: pakai laporanInstallItems, lainnya: pakai laporanMaterials
-    const jasaAsMaterials = [
-      ...laporanJasaItems.map(j => ({
-        id:"jasa_"+j.id, nama:j.nama, jumlah:j.jumlah||1,
-        satuan:j.satuan||"pcs", harga_satuan:j.harga_satuan||0, keterangan:"jasa"
-      })),
-      ...laporanRepairItems.map(r => ({
-        id:"repair_"+(r.id||r.nama), nama:r.nama, jumlah:r.jumlah||1,
-        satuan:r.satuan||"pcs", harga_satuan:r.harga_satuan||0, keterangan:"repair"
-      })),
-    ];
     const effectiveMaterials = isInstall
       ? INSTALL_ITEMS
           .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
-          .map(item => {
-            const plItem = priceListData.find(r => r.type && r.type.trim() === item.label.trim());
-            const inv2   = inventoryData.find(r => r.name && r.name.trim() === item.label.trim());
-            const hargaSat = plItem?.price || inv2?.price
-              || PRICE_LIST["Install"]?.[item.label]
-              || PRICE_LIST["Repair"]?.[item.label] || 0;
-            const qty = parseFloat(laporanInstallItems[item.key] || 0);
-            return {
-              id:item.key, nama:item.label, jumlah:qty, satuan:item.satuan,
-              harga_satuan:hargaSat, subtotal:hargaSat*qty, keterangan:"",
-            };
-          })
-      : [...jasaAsMaterials, ...laporanMaterials];
+          .map(item => ({
+            id: item.key,
+            nama: item.label,
+            jumlah: parseFloat(laporanInstallItems[item.key] || 0),
+            satuan: item.satuan,
+            keterangan: "",
+          }))
+      : laporanMaterials;
 
     const now = new Date().toLocaleString("id-ID", {
       year:"numeric", month:"2-digit", day:"2-digit",
@@ -9222,14 +9148,12 @@ ${matRowsHtml}
       ? INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length
       : laporanMaterials.length;
     const notifMsg =
-      "Laporan Selesai\n\n"
-      +"Job: "+laporanModal.id+"\n"
-      +"Customer: "+laporanModal.customer+"\n"
-      +"Teknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")+"\n"
-      +"Layanan: "+laporanModal?.service+" - "+laporanUnits.length+" unit\n"
-      +"Material: "+matCount+" item\n"
-      +"Foto: "+laporanFotos.filter(f=>f.url).length+" foto\n\n"
-      +"Silakan cek invoice di menu Invoice.";
+      "Laporan Selesai\nJob: "+laporanModal.id
+      +"\nCustomer: "+laporanModal.customer
+      +"\nTeknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")
+      +"\nLayanan: "+laporanModal?.service+" - "+laporanUnits.length+" unit"
+      +"\nMaterial: "+matCount+" item  Foto: "+laporanFotos.filter(f=>f.url).length+" foto"
+      +"\n\nSilakan cek invoice di menu Invoice.";
     adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
 
     // ── 7. Simpan laporan ke Supabase (3 attempt) ──
@@ -9361,44 +9285,14 @@ ${matRowsHtml}
       }
     }
 
-    // ── 12. Auto-generate invoice — 1 JOB = 1 INVOICE MUTLAK ──
-    const existingInv=invoicesData.find(i=>i.job_id===laporanModal.id);
-    const invId=existingInv?.id||("INV-"+(laporanModal.date||"").replace(/-/g,"")+"-"+Math.random().toString(36).slice(-4).toUpperCase());
+    // ── 12. Auto-generate invoice ──
     // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST
     // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
     // Untuk service lain: hitung dari PRICE_LIST
     const isInstallSvc = laporanModal.service === "Install";
-    const jasaNamesSet2 = new Set(
-      priceListData.filter(r=>r.service!=="Material").map(r=>r.type&&r.type.trim())
-    );
-    const repairNamesInMat = new Set(laporanRepairItems.map(r=>r.nama));
-    const jasaFromMat = laporanMaterials.filter(m=>
-      m.nama && jasaNamesSet2.has(m.nama.trim())
-    );
-    const matOnly = laporanMaterials.filter(m=>
-      m.nama && !jasaNamesSet2.has(m.nama.trim()) &&
-      !repairNamesInMat.has(m.nama) && parseFloat(m.jumlah||0)>0
-    );
-    const laborTotalInv = isInstallSvc ? 0 : (() => {
-      const jasaPilihan = [
-        ...laporanJasaItems.filter(j=>j.nama),
-        ...laporanRepairItems.filter(r=>r.nama),
-      ];
-      if (jasaPilihan.length > 0)
-        return jasaPilihan.reduce((s,j)=>s+((j.harga_satuan||0)*(parseFloat(j.jumlah)||1)),0);
-      if (jasaFromMat.length > 0)
-        return jasaFromMat.reduce((s,m)=>{
-          const pl=priceListData.find(r=>r.type&&r.type.trim()===m.nama.trim());
-          return s+(pl?.price||0)*(parseFloat(m.jumlah)||1);
-        },0);
-      const isComplainJob = laporanModal?.service==="Complain";
-      const hasAnyJasa = jasaPilihan.length>0||jasaFromMat.length>0;
-      if (isComplainJob||!hasAnyJasa) return 0;
-      return hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
-    })();
-    const matTotalInv = isInstallSvc
-      ? hitungMaterialTotal(effectiveMaterials)
-      : hitungMaterialTotal(matOnly);
+    const laborTotalInv = isInstallSvc ? 0
+      : hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
+    const matTotalInv   = hitungMaterialTotal(effectiveMaterials);
     const invoiceTotal  = laborTotalInv + matTotalInv;
     const todayInv      = new Date().toISOString().slice(0, 10);
     const isComplainSvc = laporanModal.service === "Complain";
@@ -9430,10 +9324,7 @@ ${matRowsHtml}
           .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
       : null;
 
-    const BIAYA_CEK = (() => {
-      const pl = priceListData.find(r=>r.service==="Repair"&&r.type==="Biaya Pengecekan AC");
-      return (pl&&pl.price>0) ? pl.price : 100000;
-    })();
+    const BIAYA_CEK = 100000;
     const finalLabor = (isComplainSvc && isZeroTotal && prevGaransiExpired)
       ? BIAYA_CEK : laborTotalInv;
     const finalTotal = (isComplainSvc && isZeroTotal && prevGaransiExpired)
@@ -9490,7 +9381,7 @@ ${matRowsHtml}
             }
           }
           if (!hSat) {
-            if      (nama2.includes("r-22")  || nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 450000;
+            if      (nama2.includes("r-22")  || nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 150000;
             else if (nama2.includes("r-32")  || nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 450000;
             else if (nama2.includes("r-410") || nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
           }
@@ -9516,7 +9407,7 @@ ${matRowsHtml}
         materials_detail: mDetail,
         dadakan:  0,
         total:    finalTotal,
-        status:existingInv&&["APPROVED","PAID"].includes(existingInv.status)?existingInv.status:"PENDING_APPROVAL",
+        status:   "PENDING_APPROVAL",
         garansi_days:    gDays,
         garansi_expires: gExpires,
         created_at: new Date().toISOString(),
@@ -9533,14 +9424,14 @@ ${matRowsHtml}
           "WARNING");
       }
 
-      setInvoicesData(prev=>{const e=prev.some(i=>i.id===newInvoice.id||i.job_id===newInvoice.job_id);return e?prev.map(i=>(i.id===newInvoice.id||i.job_id===newInvoice.job_id)?newInvoice:i):[...prev,newInvoice];});
+      setInvoicesData(prev => [...prev, newInvoice]);
 
       // Simpan invoice ke Supabase
       const invPayload = {
         ...newInvoice,
         materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
       };
-      const { error: invErr } = await supabase.from("invoices").upsert(invPayload,{onConflict:"id"});
+      const { error: invErr } = await supabase.from("invoices").insert(invPayload);
       if (invErr) {
         console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
         for (const st of ["PENDING_APPROVAL","UNPAID"]) {
@@ -9560,13 +9451,12 @@ ${matRowsHtml}
       // WA notif ke Owner
       const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
       const ownerMsg =
-        "Invoice Menunggu Approval\n"
-        +"Job: "+laporanModal.id+"\n"
-        +"Customer: "+laporanModal.customer+"\n"
-        +"Layanan: "+laporanModal.service+" - "+laporanUnits.length+" unit\n"
-        +"Teknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")+"\n"
-        +"Total: "+fmt(newInvoice.total)+"  Jasa: "+fmt(newInvoice.labor)+" Material: "+fmt(newInvoice.material)+"\n"
-        +"Invoice: "+invId+"  Silakan approve di menu Invoice. — ARA";
+        "Invoice Menunggu Approval\nJob: "+laporanModal.id
+        +"\nCustomer: "+laporanModal.customer
+        +"\nLayanan: "+laporanModal.service+" - "+laporanUnits.length+" unit"
+        +"\nTeknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")
+        +"\nTotal: "+fmt(newInvoice.total)+" Jasa: "+fmt(newInvoice.labor)+" Mat: "+fmt(newInvoice.material)
+        +"\nInvoice: "+invId+" Silakan approve di menu Invoice. — ARA";
       ownerAccounts.forEach(u => { if (u.phone) sendWA(u.phone, ownerMsg); });
       if (ownerAccounts.length === 0) {
         fetch("/api/send-wa", {
@@ -10235,7 +10125,10 @@ ${matRowsHtml}
                           showNotif(`✅ Job Repair ${rId} dibuat! Admin dinotifikasi.`);
                           const admR=userAccounts.filter(u=>u.role==="Admin"||u.role==="Owner");
                           admR.forEach(a=>{if(a?.phone)sendWA(a.phone,
-                            "Upgrade Complain Repair\nComplain: "+laporanModal.id+"\nRepair Baru: "+rId+"\nCustomer: "+laporanModal.customer+"\nTeknisi: "+laporanModal.teknisi+"\n\nSilakan approve. — ARA");});
+                            "Upgrade Complain Repair\nComplain: "+laporanModal.id
+                            +"\nRepair Baru: "+rId+"\nCustomer: "+laporanModal.customer
+                            +"\nTeknisi: "+laporanModal.teknisi
+                            +"\n\nSilakan approve. — ARA");});
                         } else showNotif("❌ Gagal buat Repair: "+rErr.message);
                       }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,
                         padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",width:"100%"}}>
