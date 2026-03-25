@@ -9489,8 +9489,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       ? BIAYA_CEK : laborTotalInv;
     const finalTotal = (isComplainSvc && isZeroTotal && (prevGaransiExpired || noGaransiComplain))
       ? BIAYA_CEK : invoiceTotal;
-    const finalTotal = (isComplainSvc && isZeroTotal && prevGaransiExpired)
-      ? BIAYA_CEK : invoiceTotal;
 
     if (isComplainSvc && isZeroTotal && prevGaransiActive) {
       // SKIP invoice — dalam garansi
