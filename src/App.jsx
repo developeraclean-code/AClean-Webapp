@@ -1121,7 +1121,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
         + '<td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor||0).toLocaleString("id-ID") + '</td></tr>'
       : ""}
 ${matRowsHtml}
-      ${(inv.dadakan > 0) ? `<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>` : ""}
+      ${(inv.dadakan > 0) ? '<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>' : ""}
       <tr class="total-row">
         <td colspan="3">TOTAL TAGIHAN</td>
         <td style="text-align:right;font-family:monospace">Rp ${(inv.total||0).toLocaleString("id-ID")}</td>
@@ -1129,7 +1129,7 @@ ${matRowsHtml}
     </tbody>
   </table>
 
-  ${inv.garansi_expires ? `<div class="garansi-box">🛡️ <strong>Garansi Servis ${inv.garansi_days || 30} Hari</strong> — berlaku sampai ${inv.garansi_expires}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</div>` : ""}
+  ${inv.garansi_expires ? '<div class="garansi-box">🛡️ <strong>Garansi Servis ${inv.garansi_days || 30} Hari</strong> — berlaku sampai ${inv.garansi_expires}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</div>' : ""}
 
   <!-- Footer -->
   <div class="footer-grid">
@@ -1146,7 +1146,7 @@ ${matRowsHtml}
         ${inv.status==="PAID" ? "✅ LUNAS" : inv.status==="OVERDUE" ? "⚠️ JATUH TEMPO" : "⏳ MENUNGGU PEMBAYARAN"}
       </div>
       <div style="font-size:11px;color:#64748b">Jatuh tempo: ${inv.due || "—"}</div>
-      ${inv.paid_at ? `<div style="font-size:11px;color:#16a34a;margin-top:4px">Dibayar: ${new Date(inv.paid_at).toLocaleDateString("id-ID")}</div>` : ""}
+      ${inv.paid_at ? '<div style="font-size:11px;color:#16a34a;margin-top:4px">Dibayar: ${new Date(inv.paid_at).toLocaleDateString("id-ID")}</div>' : ""}
     </div>
   </div>
 
