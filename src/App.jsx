@@ -1108,7 +1108,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     <tbody>
       ${(inv.labor > 0 && matDetails.length === 0)
         ? "<tr>"
-          + "<td>" + (inv.service || "Jasa Servis AC") + "</td>"
+          + "<td>" + (inv.service || "Jasa Servis AC") + (inv.garansi_status==="GARANSI_DENGAN_MATERIAL"?" (Garansi Jasa Gratis)":"") + "</td>"
           + "<td style=\"text-align:center\">" + (inv.units || 1) + "</td>"
           + "<td style=\"text-align:right;font-family:monospace\">" + perUnit.toLocaleString("id-ID") + "</td>"
           + "<td style=\"text-align:right;font-family:monospace;font-weight:600\">" + (inv.labor||0).toLocaleString("id-ID") + "</td>"
@@ -3040,6 +3040,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       const d = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
       return d >= 0 && d <= 30;
     }).sort((a,b) => a.garansi_expires.localeCompare(b.garansi_expires));
+    // ── GAP-4 FIX: Invoice pending >3 hari alert ──
+    const pendingOldInv = invoicesData.filter(inv => {
+      if (inv.status !== "PENDING_APPROVAL") return false;
+      const daysPending = Math.ceil((new Date() - new Date(inv.created_at||inv.sent||"")) / 86400000);
+      return daysPending > 3;
+    });
+    // GAP-6 FIX: Invoice approved belum bayar
+    const approvedUnpaid = invoicesData.filter(inv => inv.status === "APPROVED");
+
     const greeting      = role === "Owner" ? "Owner" : "Admin";
 
     return (
@@ -3047,6 +3056,65 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div>
             <div style={{ fontWeight:800, fontSize:22, color:cs.text }}>Selamat pagi, {greeting} 👋</div>
+        {/* ── GAP-4: Pending Invoice Alert ── */}
+        {pendingOldInv.length > 0 && (
+          <div style={{background:"#ef444410",border:"1px solid #ef444440",borderRadius:14,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:24}}>🔴</span>
+              <div>
+                <div style={{fontWeight:800,color:"#ef4444",fontSize:13}}>
+                  {pendingOldInv.length} Invoice Pending Approval &gt;3 Hari!
+                </div>
+                <div style={{fontSize:11,color:cs.muted,marginTop:2}}>
+                  Total tertahan: Rp {pendingOldInv.reduce((s,i)=>s+(i.total||0),0).toLocaleString("id-ID")}
+                  {" "}&mdash; perlu segera di-approve atau follow-up
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8"}}>
+              <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("PENDING_APPROVAL");}}
+                style={{padding:"7px 16px",borderRadius:8,background:"#ef444422",border:"1px solid #ef444444",color:"#ef4444",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                Lihat Invoice
+              </button>
+              <button onClick={()=>{
+                pendingOldInv.forEach(inv=>{
+                  const owners=userAccounts.filter(u=>u.role==="Owner"||u.role==="Admin");
+                  if(owners.length>0&&owners[0].phone) sendWA(owners[0].phone,
+                    "Reminder: Invoice "+inv.id+" ("+inv.customer+") pending approval "+
+                    Math.ceil((new Date()-new Date(inv.created_at||inv.sent||""))/86400000)+" hari. "+
+                    "Total: Rp "+fmt(inv.total)+". Segera approve."
+                  );
+                });
+                showNotif("WA reminder terkirim ke "+pendingOldInv.length+" invoice pending");
+              }}
+                style={{padding:"7px 16px",borderRadius:8,background:"#ef444422",border:"1px solid #ef444444",color:"#ef4444",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                📱 WA Remind Admin
+              </button>
+            </div>
+          </div>
+        )}
+        {/* ── GAP-6: Approved Belum Bayar Filter ── */}
+        {approvedUnpaid.length > 0 && (
+          <div style={{background:"#f59e0b10",border:"1px solid #f59e0b40",borderRadius:14,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:24}}>🟡</span>
+              <div>
+                <div style={{fontWeight:800,color:cs.yellow,fontSize:13}}>
+                  {approvedUnpaid.length} Invoice Approved Belum Dibayar
+                </div>
+                <div style={{fontSize:11,color:cs.muted,marginTop:2}}>
+                  Total: Rp {approvedUnpaid.reduce((s,i)=>s+(i.total||0),0).toLocaleString("id-ID")}
+                  {" "}&mdash; sudah disetujui, menunggu pembayaran customer
+                </div>
+              </div>
+            </div>
+            <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("APPROVED");}}
+              style={{padding:"7px 16px",borderRadius:8,background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+              Lihat Invoice
+            </button>
+          </div>
+        )}
+
             <div style={{ fontSize:13, color:cs.muted }}>{hariIni} · ARA aktif memantau</div>
           </div>
           <div style={{ display:"flex", gap:10 }}>
@@ -3948,7 +4016,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </div>
             {/* GAP 3 — breakdown nilai */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:6, marginBottom:10, fontSize:11 }}>
-              <div style={{ background:cs.surface, borderRadius:6, padding:"6px 10px" }}><div style={{color:cs.muted}}>Jasa</div><div style={{color:cs.text,fontWeight:700}}>{fmt(inv.labor)}</div></div>
+              <div style={{ background:inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF"?cs.green+"10":cs.surface, borderRadius:6, padding:"6px 10px",border:inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF"?"1px solid "+cs.green+"33":"none" }}>
+                <div style={{color:cs.muted}}>Jasa</div>
+                <div style={{color:inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF"?cs.green:cs.text,fontWeight:700}}>
+                  {inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF"
+                    ? "Rp 0 (Garansi)"
+                    : fmt(inv.labor)}
+                </div>
+              </div>
               <div style={{ background:cs.surface, borderRadius:6, padding:"6px 10px" }}><div style={{color:cs.muted}}>Material</div><div style={{color:cs.text,fontWeight:700}}>{fmt(inv.material)}</div></div>
               <div style={{ background:inv.dadakan>0?cs.yellow+"18":cs.surface, borderRadius:6, padding:"6px 10px", border:inv.dadakan>0?"1px solid "+cs.yellow+"44":"none" }}><div style={{color:cs.muted}}>Tambahan</div><div style={{color:inv.dadakan>0?cs.yellow:cs.text,fontWeight:700}}>{fmt(inv.dadakan)}</div></div>
             </div>
@@ -9172,6 +9247,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           }))
       : laporanMaterials;
 
+    // ── GAP-2 FIX: Install wajib ada minimal 1 jasa + 1 item vacum ──
+    if (isInstall) {
+      const hasJasa = effectiveMaterials.some(m => m.nama && /jasa/i.test(m.nama));
+      const hasVacum = effectiveMaterials.some(m => m.nama && /vacum|vacuum|vakum/i.test(m.nama));
+      if (!hasJasa || !hasVacum) {
+        showNotif(
+          (!hasJasa ? "Install wajib ada minimal 1 item Jasa. " : "")
+          + (!hasVacum ? "Install wajib ada item Vacum." : "")
+        );
+        submitLaporan._running = false;
+        return;
+      }
+    }
+
     const now = new Date().toLocaleString("id-ID", {
       year:"numeric", month:"2-digit", day:"2-digit",
       hour:"2-digit", minute:"2-digit"
@@ -9394,8 +9483,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       : null;
 
     const BIAYA_CEK = 100000;
-    const finalLabor = (isComplainSvc && isZeroTotal && prevGaransiExpired)
+    // GAP-1 FIX: Complain no-garansi total=0 → auto BIAYA_CEK
+    const noGaransiComplain = isComplainSvc && isZeroTotal && !prevGaransiActive && !prevGaransiExpired;
+    const finalLabor = (isComplainSvc && isZeroTotal && (prevGaransiExpired || noGaransiComplain))
       ? BIAYA_CEK : laborTotalInv;
+    const finalTotal = (isComplainSvc && isZeroTotal && (prevGaransiExpired || noGaransiComplain))
+      ? BIAYA_CEK : invoiceTotal;
     const finalTotal = (isComplainSvc && isZeroTotal && prevGaransiExpired)
       ? BIAYA_CEK : invoiceTotal;
 
