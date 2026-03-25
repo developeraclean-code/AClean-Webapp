@@ -5648,6 +5648,71 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   // RENDER LAPORAN TIM  (Owner & Admin)
   // ============================================================
+  
+  // ── GARANSI BADGE HELPER ──────────────────────────────────────
+  // Cek apakah job_id / customer masih dalam masa garansi
+  const getGaransiInfo = (jobId, customer, serviceType) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const isComplain = serviceType === "Complain";
+    
+    if (isComplain) {
+      // Untuk job Complain: cek garansi aktif dari invoice sebelumnya
+      const prevInv = invoicesData
+        .filter(inv =>
+          inv.customer === customer &&
+          inv.service !== "Complain" &&
+          inv.garansi_expires
+        )
+        .sort((a, b) => (b.created_at||"").localeCompare(a.created_at||""));
+      const aktif = prevInv.find(inv => inv.garansi_expires >= today);
+      const expired = !aktif && prevInv.find(inv => inv.garansi_expires < today);
+      if (aktif) return { type: "AKTIF", expires: aktif.garansi_expires, ref: aktif.id };
+      if (expired) return { type: "EXPIRED", expires: expired.garansi_expires, ref: expired.id };
+      return { type: "NONE" };
+    } else {
+      // Untuk job non-Complain: cek garansi dari invoice job ini sendiri
+      const inv = invoicesData.find(i => i.job_id === jobId);
+      if (inv && inv.garansi_expires) {
+        if (inv.garansi_expires >= today) return { type: "BERLAKU", expires: inv.garansi_expires, days: inv.garansi_days || 30 };
+        return { type: "HABIS", expires: inv.garansi_expires };
+      }
+      return { type: "NONE" };
+    }
+  };
+
+  const renderGaransiBadge = (jobId, customer, serviceType) => {
+    const g = getGaransiInfo(jobId, customer, serviceType);
+    if (g.type === "AKTIF") return (
+      <span style={{fontSize:10,fontWeight:700,padding:"3px 10px",borderRadius:99,
+        background:"#8b5cf622",color:"#8b5cf6",border:"1px solid #8b5cf644",
+        display:"inline-flex",alignItems:"center",gap:4}}>
+        🛡️ GARANSI AKTIF s/d {g.expires}
+      </span>
+    );
+    if (g.type === "BERLAKU") return (
+      <span style={{fontSize:10,fontWeight:700,padding:"3px 10px",borderRadius:99,
+        background:"#10b98122",color:"#10b981",border:"1px solid #10b98144",
+        display:"inline-flex",alignItems:"center",gap:4}}>
+        🛡️ Garansi s/d {g.expires}
+      </span>
+    );
+    if (g.type === "EXPIRED") return (
+      <span style={{fontSize:10,fontWeight:700,padding:"3px 10px",borderRadius:99,
+        background:"#ef444422",color:"#ef4444",border:"1px solid #ef444444",
+        display:"inline-flex",alignItems:"center",gap:4}}>
+        ⚠️ Garansi expired {g.expires} — Biaya cek Rp 100rb
+      </span>
+    );
+    if (g.type === "HABIS") return (
+      <span style={{fontSize:10,padding:"3px 10px",borderRadius:99,
+        background:"#64748b22",color:"#64748b",border:"1px solid #64748b33",
+        display:"inline-flex",alignItems:"center",gap:4}}>
+        Garansi habis {g.expires}
+      </span>
+    );
+    return null;
+  };
+  // ──────────────────────────────────────────────────────────────
   const renderLaporanTim = () => {
     const sMap = { SUBMITTED:[cs.accent,"Submitted"], VERIFIED:[cs.green,"Terverifikasi"], REVISION:[cs.yellow,"Perlu Revisi"], REJECTED:[cs.red,"Ditolak"] };
     const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,fontWeight:700}}>{lbl}</span>; };
@@ -5733,6 +5798,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                 <span style={{fontFamily:"monospace",fontWeight:800,color:cs.accent,fontSize:14}}>{r.job_id}</span>
                 {badge(r.status)}
+                {renderGaransiBadge(r.job_id, r.customer, r.service)}
                 {safeArr(r.editLog).length>0 && (
                   <span style={{fontSize:10,color:cs.yellow,background:cs.yellow+"15",padding:"2px 8px",borderRadius:99,border:"1px solid "+cs.yellow+"33"}}>
                     Diedit {safeArr(r.editLog).length}x
@@ -5747,6 +5813,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div><span style={{color:cs.muted}}>Customer: </span><span style={{fontWeight:700,color:cs.text}}>{r.customer}</span></div>
               <div><span style={{color:cs.muted}}>Teknisi: </span><span style={{fontWeight:700,color:cs.accent}}>{r.teknisi}{r.helper?" + "+r.helper+" (Helper)":""}</span></div>
               <div><span style={{color:cs.muted}}>Layanan: </span><span style={{color:cs.text}}>{r.service}</span></div>
+                <div style={{gridColumn:"1 / -1",marginTop:2}}>{renderGaransiBadge(r.job_id, r.customer, r.service)}</div>
               <div><span style={{color:cs.muted}}>Tanggal: </span><span style={{color:cs.text}}>{r.date}</span></div>
               <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit AC</span></div>
               {safeArr(r.materials).length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
@@ -5979,6 +6046,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <span style={{fontFamily:"monospace",fontWeight:800,color:cs.accent}}>{r.job_id}</span>
                     {badge(r.status)}
+                    {renderGaransiBadge(r.job_id, r.customer, r.service)}
                     {isHelper && <span style={{fontSize:10,color:cs.muted,background:cs.surface,padding:"1px 7px",borderRadius:99}}>Helper</span>}
                     {safeArr(r.editLog).length>0 && <span style={{fontSize:10,color:cs.muted}}>Diedit {safeArr(r.editLog).length}x</span>}
                   </div>
@@ -9489,6 +9557,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div>
                   <div style={{fontWeight:800,fontSize:16,color:cs.text}}>📝 Laporan Servis</div>
                   <div style={{fontSize:12,color:cs.muted,marginTop:2}}>{laporanModal.id} · {laporanModal.customer} · {laporanModal.service}</div>
+              {laporanModal.service==="Complain" && (
+                <div style={{marginTop:6}}>
+                  {renderGaransiBadge(laporanModal.id, laporanModal.customer, laporanModal.service)}
+                </div>
+              )}
+
                 </div>
                 <button onClick={()=>setLaporanModal(null)} style={{background:"none",border:"none",color:cs.muted,fontSize:24,cursor:"pointer",lineHeight:1,padding:0}}>×</button>
               </div>
@@ -9503,7 +9577,32 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               {laporanStep===1&&(
                 <div style={{display:"grid",gap:14}}>
 
-                  {/* ── GAP-C FIX: History AC Customer (referensi teknisi) ── */}
+                  {/* Garansi info box untuk Complain */}
+              {laporanModal.service==="Complain" && (() => {
+                const g = getGaransiInfo(laporanModal.id, laporanModal.customer, "Complain");
+                if (g.type === "AKTIF") return (
+                  <div style={{background:"#8b5cf610",border:"1px solid #8b5cf644",borderRadius:12,padding:"14px 16px",marginBottom:4}}>
+                    <div style={{fontWeight:800,color:"#8b5cf6",fontSize:13,marginBottom:4}}>🛡️ JOB INI DALAM MASA GARANSI</div>
+                    <div style={{fontSize:12,color:"#a78bfa"}}>Garansi aktif s/d <strong>{g.expires}</strong> (ref: {g.ref})</div>
+                    <div style={{fontSize:11,color:"#94a3b8",marginTop:6}}>✅ Invoice akan otomatis Rp 0 (gratis). Jika butuh sparepart/material, tetap diinput dan akan dicharge terpisah.</div>
+                  </div>
+                );
+                if (g.type === "EXPIRED") return (
+                  <div style={{background:"#ef444410",border:"1px solid #ef444444",borderRadius:12,padding:"14px 16px",marginBottom:4}}>
+                    <div style={{fontWeight:800,color:"#ef4444",fontSize:13,marginBottom:4}}>⚠️ GARANSI SUDAH HABIS</div>
+                    <div style={{fontSize:12,color:"#fca5a5"}}>Garansi expired {g.expires} (ref: {g.ref})</div>
+                    <div style={{fontSize:11,color:"#94a3b8",marginTop:6}}>Invoice biaya pengecekan Rp 100.000 akan otomatis dibuat. Jika ada pekerjaan tambahan, gunakan tombol Upgrade ke Repair.</div>
+                  </div>
+                );
+                return (
+                  <div style={{background:"#64748b10",border:"1px solid #64748b33",borderRadius:12,padding:"12px 16px",marginBottom:4}}>
+                    <div style={{fontWeight:700,color:"#94a3b8",fontSize:12}}>ℹ️ Tidak ada garansi aktif untuk customer ini</div>
+                    <div style={{fontSize:11,color:"#64748b",marginTop:4}}>Invoice normal akan dibuat sesuai pekerjaan yang dilakukan.</div>
+                  </div>
+                );
+              })()}
+
+              {/* ── GAP-C FIX: History AC Customer (referensi teknisi) ── */}
                   {(() => {
                     const custHistRef = buildCustomerHistory(
                       { name: laporanModal.customer, phone: laporanModal.phone },
