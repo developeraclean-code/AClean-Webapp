@@ -1106,13 +1106,14 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       </tr>
     </thead>
     <tbody>
-      ${(inv.labor > 0 && matDetails.length === 0) ? '
-      <tr>
-        <td>${inv.service || "Jasa Servis AC"}</td>
-        <td style="text-align:center">${inv.units || 1}</td>
-        <td style="text-align:right;font-family:monospace">${perUnit.toLocaleString("id-ID")}</td>
-        <td style="text-align:right;font-family:monospace;font-weight:600">${(inv.labor||0).toLocaleString("id-ID")}</td>
-      </tr>' : ""}
+      ${(inv.labor > 0 && matDetails.length === 0)
+        ? "<tr>"
+          + "<td>" + (inv.service || "Jasa Servis AC") + "</td>"
+          + "<td style=\"text-align:center\">" + (inv.units || 1) + "</td>"
+          + "<td style=\"text-align:right;font-family:monospace\">" + perUnit.toLocaleString("id-ID") + "</td>"
+          + "<td style=\"text-align:right;font-family:monospace;font-weight:600\">" + (inv.labor||0).toLocaleString("id-ID") + "</td>"
+          + "</tr>"
+        : ""}
 ${matRowsHtml}
       ${(inv.dadakan > 0) ? '<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>' : ""}
       <tr class="total-row">
