@@ -10090,7 +10090,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               borderRadius:8,padding:"8px 10px",color:item.nama?cs.text:cs.muted,fontSize:13}}>
                             <option value="">-- Pilih jasa --</option>
                             {allJasaOpt.map(o=>(
-                              <option key={o.nama} value={o.nama}>{o.nama} — Rp {o.harga.toLocaleString("id-ID")}</option>
+                              <option key={o.nama} value={o.nama}>{o.nama}</option>
                             ))}
                             <option value="__manual__">✏️ Input manual...</option>
                           </select>
