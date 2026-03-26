@@ -9483,28 +9483,29 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const isComplainSvc = laporanModal.service === "Complain";
     const isZeroTotal   = invoiceTotal === 0;
 
-    // Cek garansi aktif (untuk skip invoice Complain Rp 0)
-    const prevGaransiActive = isComplainSvc && isZeroTotal
+    // ── GARANSI CHECK: selalu cek untuk Complain, terlepas dari total ──
+    // Cek apakah customer punya garansi AKTIF (belum expired)
+    const prevGaransiActive = isComplainSvc
       ? invoicesData
           .filter(inv =>
             inv.customer === laporanModal.customer &&
             inv.service  !== "Complain" &&
             inv.garansi_expires &&
             inv.garansi_expires >= todayInv &&
-            ["PAID","UNPAID","APPROVED"].includes(inv.status)
+            ["PAID","UNPAID","APPROVED","PENDING_APPROVAL"].includes(inv.status)
           )
           .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
       : null;
 
-    // Cek garansi expired (untuk biaya pengecekan Rp 100.000)
-    const prevGaransiExpired = isComplainSvc && isZeroTotal && !prevGaransiActive
+    // Cek garansi EXPIRED (pernah punya garansi tapi sudah habis)
+    const prevGaransiExpired = isComplainSvc && !prevGaransiActive
       ? invoicesData
           .filter(inv =>
             inv.customer === laporanModal.customer &&
             inv.service  !== "Complain" &&
             inv.garansi_expires &&
             inv.garansi_expires < todayInv &&
-            ["PAID","UNPAID","APPROVED"].includes(inv.status)
+            ["PAID","UNPAID","APPROVED","PENDING_APPROVAL"].includes(inv.status)
           )
           .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
       : null;
@@ -9513,14 +9514,29 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       const pl = priceListData.find(r=>r.service==="Repair"&&r.type==="Biaya Pengecekan AC");
       return (pl&&pl.price>0) ? pl.price : 100000;
     })();
-    // GAP-1 FIX: Complain no-garansi total=0 → auto BIAYA_CEK
-    const noGaransiComplain = isComplainSvc && isZeroTotal && !prevGaransiActive && !prevGaransiExpired;
-    const finalLabor = (isComplainSvc && isZeroTotal && (prevGaransiExpired || noGaransiComplain))
-      ? BIAYA_CEK : laborTotalInv;
-    const finalTotal = (isComplainSvc && isZeroTotal && (prevGaransiExpired || noGaransiComplain))
-      ? BIAYA_CEK : invoiceTotal;
 
-    if (isComplainSvc && isZeroTotal && prevGaransiActive) {
+    // ── FINAL LABOR/TOTAL untuk Complain ──────────────────────────────
+    // Garansi AKTIF → jasa gratis (labor=0), material tetap dicharge
+    // Garansi EXPIRED + tidak ada input → biaya cek 100rb
+    // Tidak ada garansi + tidak ada input → biaya cek 100rb
+    // Ada input jasa/material → harga normal (garansi hanya cover jasa)
+    const noGaransiComplain = isComplainSvc && !prevGaransiActive && !prevGaransiExpired;
+    let finalLabor = laborTotalInv;
+    let finalTotal = invoiceTotal;
+    if (isComplainSvc) {
+      if (prevGaransiActive) {
+        // Garansi aktif: jasa gratis, material tetap bayar
+        finalLabor = 0;
+        finalTotal = matTotalInv; // hanya material
+      } else if (isZeroTotal) {
+        // Tidak ada garansi aktif DAN teknisi tidak input apapun → biaya cek
+        finalLabor = BIAYA_CEK;
+        finalTotal = BIAYA_CEK;
+      }
+      // Jika ada input (isZeroTotal=false) tapi garansi expired/no-garansi → harga normal
+    }
+
+    if (isComplainSvc && prevGaransiActive && finalTotal === 0) {
       // SKIP invoice — dalam garansi
       setOrdersData(prev => prev.map(o =>
         o.id === laporanModal.id ? { ...o, status: "COMPLETED" } : o
@@ -9534,7 +9550,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       // BUAT invoice
       const invSeq     = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
       const invId      = "INV-" + todayInv.replace(/-/g, "").slice(0, 8) + "-" + invSeq;
-      const gDays      = laporanModal.service === "Install" ? 90 : laporanModal.service === "Repair" ? 60 : 30;
+      const gDays      = 30; // Semua service: garansi 30 hari dari terbit invoice
       const gExpires   = new Date(Date.now() + gDays * 86400000).toISOString().slice(0, 10);
 
       // Build materials_detail dengan harga dari inventory
@@ -9600,6 +9616,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         status:   "PENDING_APPROVAL",
         garansi_days:    gDays,
         garansi_expires: gExpires,
+        garansi_status:  isComplainSvc
+          ? (prevGaransiActive ? (matTotalInv > 0 ? 'GARANSI_DENGAN_MATERIAL' : 'GARANSI_AKTIF')
+            : prevGaransiExpired ? 'GARANSI_EXPIRED' : 'NO_GARANSI')
+          : null,
         created_at: new Date().toISOString(),
       };
 
