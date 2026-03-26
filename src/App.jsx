@@ -3092,6 +3092,36 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           </div>
         </div>
 
+        {/* ── GAP-4: Pending invoice >3 hari ── */}
+        {pendingOldInv && pendingOldInv.length > 0 && (
+          <div style={{background:"#ef444410",border:"1px solid #ef444440",borderRadius:14,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:22}}>🔴</span>
+              <div>
+                <div style={{fontWeight:800,color:"#ef4444",fontSize:13}}>{pendingOldInv.length} Invoice Pending Approval &gt;3 Hari</div>
+                <div style={{fontSize:11,color:cs.muted}}>Total tertahan: Rp {pendingOldInv.reduce((s,i)=>s+(i.total||0),0).toLocaleString("id-ID")}</div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("PENDING_APPROVAL");}} style={{padding:"7px 14px",borderRadius:8,background:"#ef444422",border:"1px solid #ef444444",color:"#ef4444",fontWeight:700,fontSize:12,cursor:"pointer"}}>Lihat Invoice</button>
+              <button onClick={()=>{showNotif("WA reminder dikirim ke admin");}} style={{padding:"7px 14px",borderRadius:8,background:"#ef444422",border:"1px solid #ef444444",color:"#ef4444",fontWeight:700,fontSize:12,cursor:"pointer"}}>📱 WA Remind</button>
+            </div>
+          </div>
+        )}
+        {/* ── GAP-6: Approved belum bayar ── */}
+        {approvedUnpaid && approvedUnpaid.length > 0 && (
+          <div style={{background:cs.yellow+"10",border:"1px solid "+cs.yellow+"40",borderRadius:14,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:22}}>🟡</span>
+              <div>
+                <div style={{fontWeight:800,color:cs.yellow,fontSize:13}}>{approvedUnpaid.length} Invoice Approved Belum Dibayar</div>
+                <div style={{fontSize:11,color:cs.muted}}>Total: Rp {approvedUnpaid.reduce((s,i)=>s+(i.total||0),0).toLocaleString("id-ID")}</div>
+              </div>
+            </div>
+            <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("APPROVED");}} style={{padding:"7px 14px",borderRadius:8,background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,fontWeight:700,fontSize:12,cursor:"pointer"}}>Lihat Invoice</button>
+          </div>
+        )}
+
         {/* KPI Cards */}
         <div style={{ display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:14 }}>
           {[
@@ -10345,33 +10375,3 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     </div>
   );
 }
-
-        {/* ── GAP-4: Pending invoice >3 hari ── */}
-        {pendingOldInv && pendingOldInv.length > 0 && (
-          <div style={{background:"#ef444410",border:"1px solid #ef444440",borderRadius:14,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:22}}>🔴</span>
-              <div>
-                <div style={{fontWeight:800,color:"#ef4444",fontSize:13}}>{pendingOldInv.length} Invoice Pending Approval &gt;3 Hari</div>
-                <div style={{fontSize:11,color:cs.muted}}>Total tertahan: Rp {pendingOldInv.reduce((s,i)=>s+(i.total||0),0).toLocaleString("id-ID")}</div>
-              </div>
-            </div>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("PENDING_APPROVAL");}} style={{padding:"7px 14px",borderRadius:8,background:"#ef444422",border:"1px solid #ef444444",color:"#ef4444",fontWeight:700,fontSize:12,cursor:"pointer"}}>Lihat Invoice</button>
-              <button onClick={()=>{showNotif("WA reminder dikirim ke admin");}} style={{padding:"7px 14px",borderRadius:8,background:"#ef444422",border:"1px solid #ef444444",color:"#ef4444",fontWeight:700,fontSize:12,cursor:"pointer"}}>📱 WA Remind</button>
-            </div>
-          </div>
-        )}
-        {/* ── GAP-6: Approved belum bayar ── */}
-        {approvedUnpaid && approvedUnpaid.length > 0 && (
-          <div style={{background:cs.yellow+"10",border:"1px solid "+cs.yellow+"40",borderRadius:14,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:22}}>🟡</span>
-              <div>
-                <div style={{fontWeight:800,color:cs.yellow,fontSize:13}}>{approvedUnpaid.length} Invoice Approved Belum Dibayar</div>
-                <div style={{fontSize:11,color:cs.muted}}>Total: Rp {approvedUnpaid.reduce((s,i)=>s+(i.total||0),0).toLocaleString("id-ID")}</div>
-              </div>
-            </div>
-            <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("APPROVED");}} style={{padding:"7px 14px",borderRadius:8,background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,fontWeight:700,fontSize:12,cursor:"pointer"}}>Lihat Invoice</button>
-          </div>
-        )}
