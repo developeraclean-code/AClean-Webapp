@@ -501,6 +501,8 @@ export default function ACleanWebApp() {
   const [laporanUnits,       setLaporanUnits]       = useState([]);
   const [laporanMaterials,   setLaporanMaterials]   = useState([]);
   const [laporanJasaItems,   setLaporanJasaItems]   = useState([]);  // Jasa section A
+  const [jasaManualText,    setJasaManualText]    = useState({});  // {item.id: text} untuk input manual jasa
+  const [repairManualText,  setRepairManualText]  = useState({});  // {item.id: text} untuk input manual repair
   const [laporanRepairItems, setLaporanRepairItems] = useState([]);  // Repair/Sparepart B
   const [showJasaSearch,     setShowJasaSearch]     = useState(false);
   const [jasaSearchQ,        setJasaSearchQ]        = useState("");
@@ -1193,8 +1195,8 @@ ${matRowsHtml}
     const count = Math.min(order.units||1, 10);
     setLaporanUnits(Array.from({length:count},(_,i)=>mkUnit(i+1)));
     setLaporanMaterials([]);
-    setLaporanJasaItems([]);
-    setLaporanRepairItems([]);
+    setLaporanJasaItems([]); setJasaManualText({});
+    setLaporanRepairItems([]); setRepairManualText({});
     setShowJasaSearch(false);  setJasaSearchQ("");
     setShowRepairSearch(false); setRepairSearchQ("");
     setShowMatSearch(false);   setMatSearchQ2("");
@@ -10079,12 +10081,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         {/* Nama jasa */}
                         <div style={{display:"flex",alignItems:"center",gap:6}}>
                           <select
-                            value={item.nama}
+                            value={item._isManual ? "__manual__" : item.nama}
                             onChange={e=>{
-                              const sel = allJasaOpt.find(x=>x.nama===e.target.value);
-                              setLaporanJasaItems(p=>p.map(j=>j.id===item.id
-                                ?{...j,nama:e.target.value,harga_satuan:sel?.harga||0,satuan:sel?.satuan||"pcs"}
-                                :j));
+                              const val = e.target.value;
+                              if(val==="__manual__"){
+                                setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                  ?{...j,nama:"__manual__",_isManual:true,harga_satuan:0,satuan:"pcs"}:j));
+                                setJasaManualText(p=>({...p,[item.id]:""}));
+                              } else {
+                                const sel = allJasaOpt.find(x=>x.nama===val);
+                                setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                  ?{...j,nama:val,_isManual:false,harga_satuan:sel?.harga||0,satuan:sel?.satuan||"pcs"}:j));
+                              }
                             }}
                             style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,
                               borderRadius:8,padding:"8px 10px",color:item.nama?cs.text:cs.muted,fontSize:13}}>
@@ -10100,12 +10108,31 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             ×
                           </button>
                         </div>
-                        {/* Manual input jika pilih manual */}
-                        {item.nama==="__manual__"&&(
-                          <input value={item._manualNama||""}
-                            onChange={e=>setLaporanJasaItems(p=>p.map(j=>j.id===item.id
-                              ?{...j,_manualNama:e.target.value,nama:e.target.value}:j))}
-                            placeholder="Nama jasa (manual)..."
+                        {/* Manual input jika pilih manual — pakai local state agar tidak close saat ketik */}
+                        {item._isManual&&(
+                          <input
+                            value={jasaManualText[item.id]??"" }
+                            onChange={e=>{
+                              // Hanya update local text — TIDAK ubah laporanJasaItems.nama
+                              // Sehingga _isManual tetap true dan input tidak close
+                              setJasaManualText(p=>({...p,[item.id]:e.target.value}));
+                            }}
+                            onBlur={e=>{
+                              // Commit ke state saat user keluar dari input
+                              const txt = (jasaManualText[item.id]||"").trim();
+                              if(txt) setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                ?{...j,nama:txt,_isManual:true}:j));
+                            }}
+                            onKeyDown={e=>{
+                              if(e.key==="Enter"){
+                                const txt=(jasaManualText[item.id]||"").trim();
+                                if(txt) setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                  ?{...j,nama:txt,_isManual:true}:j));
+                                e.target.blur();
+                              }
+                            }}
+                            placeholder="Ketik nama jasa..."
+                            autoFocus
                             style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"55",
                               borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
                         )}
@@ -10117,6 +10144,116 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               ?{...j,jumlah:parseFloat(e.target.value)||1}:j))}
                             style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
                               borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                        </div>
+                      </div>
+                      );
+                    })}
+                  </div>
+                  )}
+
+                  {/* ══ REPAIR / SPAREPART SECTION: [+] Repair ══ */}
+                  {!isInstallJob && (
+                  <div style={{display:"grid",gap:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <div style={{fontSize:12,fontWeight:700,color:cs.yellow}}>🔩 Repair / Sparepart ({laporanRepairItems.length})</div>
+                      <button onClick={()=>{
+                        if(laporanRepairItems.length<10) setLaporanRepairItems(p=>[...p,{
+                          id:Date.now(), nama:"", jumlah:1, satuan:"pcs", harga_satuan:0, _isManual:false
+                        }]);
+                      }}
+                        style={{fontSize:11,background:cs.yellow+"15",border:"1px solid "+cs.yellow+"33",color:cs.yellow,
+                          borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>
+                        + Tambah Repair
+                      </button>
+                    </div>
+                    {laporanRepairItems.length===0&&(
+                      <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:cs.muted,
+                        background:cs.surface,borderRadius:8,border:"1px dashed "+cs.border}}>
+                        Belum ada item repair. Klik + Tambah Repair untuk input sparepart/perbaikan.
+                      </div>
+                    )}
+                    {laporanRepairItems.map((rItem,rIdx)=>{
+                      const repairOpt = priceListData
+                        .filter(r=>r.service==="Repair" && parseInt(r.price||0)>0)
+                        .map(r=>({nama:r.type, satuan:r.unit||"pcs", harga:parseInt(r.price||0)}));
+                      const invRepairOpt = inventoryData
+                        .filter(r=>parseInt(r.price||0)>0)
+                        .map(r=>({nama:r.name, satuan:r.unit||"pcs", harga:parseInt(r.price||0)}));
+                      const allRepairOpt = [...repairOpt,...invRepairOpt]
+                        .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,30);
+                      return (
+                      <div key={rItem.id} style={{background:cs.card,border:"1px solid "+(rItem.nama?cs.yellow+"44":cs.border),
+                        borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
+                        {/* Nama repair */}
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <select
+                            value={rItem._isManual?"__manual__":rItem.nama}
+                            onChange={e=>{
+                              const val=e.target.value;
+                              if(val==="__manual__"){
+                                setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
+                                  ?{...r,nama:"__manual__",_isManual:true,harga_satuan:0,satuan:"pcs"}:r));
+                                setRepairManualText(p=>({...p,[rItem.id]:""}));
+                              } else {
+                                const sel=allRepairOpt.find(x=>x.nama===val);
+                                setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
+                                  ?{...r,nama:val,_isManual:false,harga_satuan:sel?.harga||0,satuan:sel?.satuan||"pcs"}:r));
+                              }
+                            }}
+                            style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,
+                              borderRadius:8,padding:"8px 10px",color:rItem.nama&&!rItem._isManual?cs.text:cs.muted,fontSize:13}}>
+                            <option value="">-- Pilih repair/sparepart --</option>
+                            {allRepairOpt.map(o=>(
+                              <option key={o.nama} value={o.nama}>{o.nama}</option>
+                            ))}
+                            <option value="__manual__">✏️ Input manual...</option>
+                          </select>
+                          <button onMouseDown={()=>setLaporanRepairItems(p=>p.filter(r=>r.id!==rItem.id))}
+                            style={{background:"#ef444420",border:"none",color:"#ef4444",
+                              borderRadius:7,padding:"6px 10px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>
+                            ×
+                          </button>
+                        </div>
+                        {/* Manual input untuk repair */}
+                        {rItem._isManual&&(
+                          <input
+                            value={repairManualText[rItem.id]??""}
+                            onChange={e=>setRepairManualText(p=>({...p,[rItem.id]:e.target.value}))}
+                            onBlur={e=>{
+                              const txt=(repairManualText[rItem.id]||"").trim();
+                              if(txt) setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
+                                ?{...r,nama:txt,_isManual:true}:r));
+                            }}
+                            onKeyDown={e=>{
+                              if(e.key==="Enter"){
+                                const txt=(repairManualText[rItem.id]||"").trim();
+                                if(txt) setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
+                                  ?{...r,nama:txt,_isManual:true}:r));
+                                e.target.blur();
+                              }
+                            }}
+                            placeholder="Ketik nama repair/sparepart..."
+                            autoFocus
+                            style={{width:"100%",background:cs.surface,border:"1px solid "+cs.yellow+"55",
+                              borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                        )}
+                        {/* Qty — satuan otomatis dari DB */}
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"center"}}>
+                          <div>
+                            <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Jumlah</div>
+                            <input type="number" min="1" step="1" value={rItem.jumlah||1}
+                              onChange={e=>setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
+                                ?{...r,jumlah:parseFloat(e.target.value)||1}:r))}
+                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
+                                borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Satuan</div>
+                            <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                              padding:"8px 10px",color:cs.muted,fontSize:13,textAlign:"center"}}>
+                              {rItem.satuan||"pcs"}
+                            </div>
+                          </div>
                         </div>
                       </div>
                       );
