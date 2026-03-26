@@ -1004,7 +1004,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       matRowsHtml +=
         "<tr>" +
         '<td>' + label + "</td>" +
-        '<td style="text-align:center">' + m.jumlah + " " + (m.satuan||"") + "</td>" +
+        '<td style="text-align:right;width:72px;white-space:nowrap">' + m.jumlah + " " + (m.satuan||"") + "</td>" +
         '<td style="text-align:right;font-family:monospace">' + hSatStr + "</td>" +
         '<td style="text-align:right;font-family:monospace;font-weight:600">' + subStr + "</td>" +
         "</tr>";
@@ -1109,10 +1109,10 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   <table>
     <thead>
       <tr>
-        <th>Deskripsi</th>
-        <th style="text-align:center">Unit</th>
-        <th style="text-align:right">Harga/Unit</th>
-        <th style="text-align:right">Subtotal</th>
+        <th style="width:auto">Deskripsi</th>
+        <th style="text-align:right;width:72px;white-space:nowrap">Jml Unit</th>
+        <th style="text-align:right;width:100px;white-space:nowrap">Harga/Unit</th>
+        <th style="text-align:right;width:100px;white-space:nowrap">Subtotal</th>
       </tr>
     </thead>
     <tbody>
@@ -8234,8 +8234,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:14, fontSize:12 }}>
                 <thead>
                   <tr style={{ background:"#1E3A5F" }}>
-                    {["Deskripsi","Jml Unit","Harga Satuan","Subtotal"].map(h => (
-                      <th key={h} style={{ padding:"8px 10px", textAlign:"left", color:"#fff", fontWeight:700, fontSize:10 }}>{h}</th>
+                    {[["Deskripsi","auto"],["Jml Unit","72px"],["Harga Satuan","100px"],["Subtotal","100px"]].map(([h,w]) => (
+                      <th key={h} style={{ padding:"8px 10px", textAlign:h==="Deskripsi"?"left":"right", color:"#fff", fontWeight:700, width:w, fontSize:10 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -8262,7 +8262,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             {m.nama}
                             {m.keterangan && <span style={{ fontSize:10, color:"#64748b", marginLeft:4 }}>({m.keterangan})</span>}
                           </td>
-                          <td style={{ padding:"8px 10px", textAlign:"center", color:"#475569" }}>{m.jumlah} {m.satuan}</td>
+                          <td style={{ padding:"8px 10px", textAlign:"right", color:"#475569", width:"72px" }}>{m.jumlah} {m.satuan}</td>
                           <td style={{ padding:"8px 10px", fontFamily:"monospace", color:"#475569", textAlign:"right" }}>
                             {m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—"}
                           </td>
