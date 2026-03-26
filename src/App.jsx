@@ -10023,6 +10023,114 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               </div>
               )}
 
+                  {/* ══ JASA SECTION: [+] Jasa ══ */}
+                  {!isInstallJob && (
+                  <div style={{display:"grid",gap:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <div style={{fontSize:12,fontWeight:700,color:cs.accent}}>⚡ Jasa / Layanan ({laporanJasaItems.length})</div>
+                      <button onClick={()=>{
+                        const svc = laporanModal?.service||"";
+                        const plJasa = priceListData.filter(r=>
+                          r.service===svc && r.category==="Jasa" && parseInt(r.price||0)>0
+                        );
+                        if(laporanJasaItems.length<10) setLaporanJasaItems(p=>[...p,{
+                          id:Date.now(),nama:"",jumlah:1,satuan:"pcs",harga_satuan:0
+                        }]);
+                      }}
+                        style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,
+                          borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>
+                        + Tambah Jasa
+                      </button>
+                    </div>
+                    {laporanJasaItems.length===0&&(
+                      <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:cs.muted,
+                        background:cs.surface,borderRadius:8,border:"1px dashed "+cs.border}}>
+                        Belum ada jasa. Klik + Tambah Jasa untuk input biaya layanan.
+                      </div>
+                    )}
+                    {laporanJasaItems.map((item,idx)=>{
+                      const jasaLookup = priceListData
+                        .filter(r=>r.category==="Jasa" && parseInt(r.price||0)>0)
+                        .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}));
+                      const svcLookup = priceListData
+                        .filter(r=>r.service===laporanModal?.service && parseInt(r.price||0)>0)
+                        .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}));
+                      const allJasaOpt = [...jasaLookup,...svcLookup]
+                        .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,20);
+                      return (
+                      <div key={item.id} style={{background:cs.card,border:"1px solid "+(item.nama?cs.accent+"44":cs.border),
+                        borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
+                        {/* Nama jasa */}
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <select
+                            value={item.nama}
+                            onChange={e=>{
+                              const sel = allJasaOpt.find(x=>x.nama===e.target.value);
+                              setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                ?{...j,nama:e.target.value,harga_satuan:sel?.harga||0,satuan:sel?.satuan||"pcs"}
+                                :j));
+                            }}
+                            style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,
+                              borderRadius:8,padding:"8px 10px",color:item.nama?cs.text:cs.muted,fontSize:13}}>
+                            <option value="">-- Pilih jasa --</option>
+                            {allJasaOpt.map(o=>(
+                              <option key={o.nama} value={o.nama}>{o.nama} — Rp {o.harga.toLocaleString("id-ID")}</option>
+                            ))}
+                            <option value="__manual__">✏️ Input manual...</option>
+                          </select>
+                          <button onMouseDown={()=>setLaporanJasaItems(p=>p.filter(j=>j.id!==item.id))}
+                            style={{background:"#ef444420",border:"none",color:"#ef4444",
+                              borderRadius:7,padding:"6px 10px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>
+                            ×
+                          </button>
+                        </div>
+                        {/* Manual input jika pilih manual */}
+                        {item.nama==="__manual__"&&(
+                          <input value={item._manualNama||""}
+                            onChange={e=>setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                              ?{...j,_manualNama:e.target.value,nama:e.target.value}:j))}
+                            placeholder="Nama jasa (manual)..."
+                            style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"55",
+                              borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                        )}
+                        {/* Qty + Harga */}
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                          <div>
+                            <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Jumlah Unit</div>
+                            <input type="number" min="1" step="1" value={item.jumlah||1}
+                              onChange={e=>setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                ?{...j,jumlah:parseFloat(e.target.value)||1}:j))}
+                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
+                                borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Harga/Unit (Rp)</div>
+                            <input type="number" min="0" value={item.harga_satuan||0}
+                              onChange={e=>setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                ?{...j,harga_satuan:parseFloat(e.target.value)||0}:j))}
+                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
+                                borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                          </div>
+                        </div>
+                        {/* Subtotal */}
+                        {item.nama&&item.nama!=="__manual__"&&(item.harga_satuan||0)>0&&(
+                          <div style={{fontSize:11,color:cs.accent,textAlign:"right",fontWeight:700}}>
+                            Subtotal: Rp {((item.harga_satuan||0)*(item.jumlah||1)).toLocaleString("id-ID")}
+                          </div>
+                        )}
+                      </div>
+                      );
+                    })}
+                    {/* Total Jasa */}
+                    {laporanJasaItems.length>0&&(
+                      <div style={{fontSize:12,fontWeight:700,color:cs.accent,textAlign:"right",
+                        background:cs.accent+"10",border:"1px solid "+cs.accent+"33",borderRadius:8,padding:"8px 12px"}}>
+                        Total Jasa: Rp {laporanJasaItems.reduce((s,j)=>s+((j.harga_satuan||0)*(j.jumlah||1)),0).toLocaleString("id-ID")}
+                      </div>
+                    )}
+                  </div>
+                  )}
+
                   {/* ══ NORMAL MATERIAL FORM (Service/Repair/Complain) ══ */}
                   {!isInstallJob && (
                   <div style={{display:"grid",gap:10}}>
