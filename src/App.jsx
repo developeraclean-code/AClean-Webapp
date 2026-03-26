@@ -5942,7 +5942,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       owners.forEach(o => { if(o?.phone) sendWA(o.phone, `⚡ *Invoice Auto-Generated*\n\nJob: *${r.job_id}*\nCustomer: ${r.customer}\nService: ${r.service}\nTotal: *${fmt(totalInv)}*\n\nMohon cek dan approve invoice di menu Invoice. — AClean`); });
                     }
                   }
-                }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>✅ Verifikasi + Buat Invoice</button>
+                }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>✅ Verifikasi</button>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));
                   await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
@@ -5962,6 +5962,35 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   showNotif("❌ Laporan "+r.job_id+" ditolak");
                 }} style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",color:cs.red,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>Tolak</button>
               </>)}
+              {/* Delete laporan — Owner & Admin */}
+              {(currentUser?.role==="Owner" || currentUser?.role==="Admin") && (
+                <button onClick={async()=>{
+                  const ok = await showConfirm({
+                    icon:"🗑️", title:"Hapus Laporan?",
+                    message:"Hapus laporan "+r.job_id+" ("+r.customer+")? Invoice terkait juga akan dihapus.",
+                    confirmText:"Ya, Hapus"
+                  });
+                  if(!ok) return;
+                  // Hapus laporan
+                  await supabase.from("service_reports").delete().eq("id",r.id);
+                  setLaporanReports(p=>p.filter(x=>x.id!==r.id));
+                  // Hapus invoice terkait jika ada
+                  const relInv = invoicesData.filter(i=>i.job_id===r.job_id);
+                  if(relInv.length>0){
+                    await Promise.all(relInv.map(inv=>supabase.from("invoices").delete().eq("id",inv.id)));
+                    setInvoicesData(p=>p.filter(i=>i.job_id!==r.job_id));
+                  }
+                  // Reset order status ke COMPLETED (bukan INVOICED)
+                  await supabase.from("orders").update({status:"COMPLETED",invoice_id:null}).eq("id",r.job_id);
+                  setOrdersData(p=>p.map(o=>o.id===r.job_id?{...o,status:"COMPLETED",invoice_id:null}:o));
+                  addAgentLog("LAPORAN_DELETED","Laporan "+r.job_id+" dihapus oleh "+currentUser?.name,"WARNING");
+                  showNotif("🗑️ Laporan "+r.job_id+" dihapus");
+                }}
+                  style={{background:cs.red+"18",border:"1px solid "+cs.red+"33",color:cs.red,
+                    padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                  🗑️ Hapus Laporan
+                </button>
+              )}
               {r.status==="REVISION" && <span style={{fontSize:12,color:cs.yellow}}>Menunggu revisi dari {r.teknisi}</span>}
               {r.status==="VERIFIED" && <span style={{fontSize:12,color:cs.green}}>Laporan sudah terverifikasi</span>}
               {r.status==="REJECTED" && <span style={{fontSize:12,color:cs.red}}>Laporan ditolak</span>}
