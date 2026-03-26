@@ -5921,6 +5921,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       due: new Date(Date.now()+3*86400000).toISOString().slice(0,10),
                       sent:false, created_at:new Date().toISOString()
                     };
+                    // 1 invoice per job — hapus invoice lama jika ada
+                    const oldInvs = invoicesData.filter(inv => inv.job_id === r.job_id);
+                    if (oldInvs.length > 0) {
+                      await Promise.all(oldInvs.map(oi => supabase.from("invoices").delete().eq("id",oi.id)));
+                      setInvoicesData(prev => prev.filter(inv => inv.job_id !== r.job_id));
+                    }
                     setInvoicesData(prev => [...prev, newInv]);
                     const {error:iErr} = await supabase.from("invoices").insert(newInv);
                     if(iErr) showNotif("⚠️ Invoice gagal simpan: "+iErr.message);
@@ -9613,6 +9619,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         ...newInvoice,
         materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
       };
+      // ── 1 invoice per job: cek existing, delete + insert baru ──
+      // Hapus invoice lama untuk job ini (jika ada) agar tidak double
+      const existingInvForJob = invoicesData.filter(i => i.job_id === laporanModal.id);
+      if (existingInvForJob.length > 0) {
+        await Promise.all(existingInvForJob.map(old =>
+          supabase.from("invoices").delete().eq("id", old.id)
+        ));
+        setInvoicesData(prev => prev.filter(i => i.job_id !== laporanModal.id));
+        addAgentLog("INVOICE_REWRITE", "Invoice lama dihapus untuk " + laporanModal.id + " (rewrite)", "INFO");
+      }
       const { error: invErr } = await supabase.from("invoices").insert(invPayload);
       if (invErr) {
         console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
@@ -10093,41 +10109,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"55",
                               borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
                         )}
-                        {/* Qty + Harga */}
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                          <div>
-                            <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Jumlah Unit</div>
-                            <input type="number" min="1" step="1" value={item.jumlah||1}
-                              onChange={e=>setLaporanJasaItems(p=>p.map(j=>j.id===item.id
-                                ?{...j,jumlah:parseFloat(e.target.value)||1}:j))}
-                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
-                                borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
-                          </div>
-                          <div>
-                            <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Harga/Unit (Rp)</div>
-                            <input type="number" min="0" value={item.harga_satuan||0}
-                              onChange={e=>setLaporanJasaItems(p=>p.map(j=>j.id===item.id
-                                ?{...j,harga_satuan:parseFloat(e.target.value)||0}:j))}
-                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
-                                borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
-                          </div>
+                        {/* Qty Unit saja — harga disembunyikan dari teknisi */}
+                        <div>
+                          <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Jumlah Unit</div>
+                          <input type="number" min="1" step="1" value={item.jumlah||1}
+                            onChange={e=>setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                              ?{...j,jumlah:parseFloat(e.target.value)||1}:j))}
+                            style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
+                              borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
                         </div>
-                        {/* Subtotal */}
-                        {item.nama&&item.nama!=="__manual__"&&(item.harga_satuan||0)>0&&(
-                          <div style={{fontSize:11,color:cs.accent,textAlign:"right",fontWeight:700}}>
-                            Subtotal: Rp {((item.harga_satuan||0)*(item.jumlah||1)).toLocaleString("id-ID")}
-                          </div>
-                        )}
                       </div>
                       );
                     })}
-                    {/* Total Jasa */}
-                    {laporanJasaItems.length>0&&(
-                      <div style={{fontSize:12,fontWeight:700,color:cs.accent,textAlign:"right",
-                        background:cs.accent+"10",border:"1px solid "+cs.accent+"33",borderRadius:8,padding:"8px 12px"}}>
-                        Total Jasa: Rp {laporanJasaItems.reduce((s,j)=>s+((j.harga_satuan||0)*(j.jumlah||1)),0).toLocaleString("id-ID")}
-                      </div>
-                    )}
                   </div>
                   )}
 
@@ -10140,7 +10133,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>🔧 Material Digunakan ({laporanMaterials.length}/20)</div>
                       <button onClick={()=>setShowMatPreset(v=>!v)}
                         style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>
-                        {showMatPreset?"✕ Tutup":"📦 Preset "+laporanModal.service}
+                        {showMatPreset?"✕ Tutup":"📦 Preset Material"}
                       </button>
                     </div>
                     {showMatPreset&&(
@@ -10228,11 +10221,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       placeholder="Jumlah"
                       style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
                         padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
-                    <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
-                      style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
-                        padding:"7px 10px",color:cs.text,fontSize:13}}>
-                      {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
-                    </select>
+                    <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                      padding:"8px 10px",color:cs.muted,fontSize:13,textAlign:"center",
+                      display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      {mat.satuan||"pcs"}
+                    </div>
                   </div>
                 </div>
                 );
