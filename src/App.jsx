@@ -7207,26 +7207,40 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     o.teknisi===newOrderForm.teknisi && o.date===newOrderForm.date &&
                     ["PENDING","CONFIRMED","DISPATCHED","ON_SITE","IN_PROGRESS"].includes(o.status)
                   ).length >= MAX_LOKASI_PER_HARI;
+                  // ── CLASH HARD-BLOCK: cek overlap jam secara lokal ──
+                  const clashDetected = !!(newOrderForm.teknisi && newOrderForm.date && newOrderForm.time
+                    && !cekTeknisiAvailable(newOrderForm.teknisi, newOrderForm.date,
+                        newOrderForm.time||"09:00", newOrderForm.service, newOrderForm.units||1));
+                  const isBlocked = capReached || clashDetected;
                   return (
-                    <button
-                      disabled={capReached}
-                      onClick={async () => {
-                        if (!newOrderForm.customer) { showNotif("Nama customer wajib diisi"); return; }
-                        if (!newOrderForm.teknisi)  { showNotif("Pilih teknisi dulu"); return; }
-                        if (!newOrderForm.date)     { showNotif("Pilih tanggal dulu"); return; }
-                        // GAP-1&2: DB-level check sebelum submit (anti race condition)
-                        if (newOrderForm.teknisi && newOrderForm.date && newOrderForm.time) {
-                          const dbOk = await cekTeknisiAvailableDB(newOrderForm.teknisi, newOrderForm.date, newOrderForm.time, newOrderForm.service, newOrderForm.units);
-                          if (!dbOk.ok) { showNotif("⚠️ " + (dbOk.reason || "Jadwal bentrok, cek ulang")); return; }
-                        }
-                        const formCopy = {...newOrderForm};
-                        setModalOrder(false);
-                        setNewOrderForm({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
-                        await createOrder(formCopy);
-                      }}
-                      style={{ background: capReached ? cs.border : "linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color: capReached ? cs.muted : "#0a0f1e", padding:"12px", borderRadius:10, cursor: capReached ? "not-allowed" : "pointer", fontWeight:800, fontSize:14, opacity: capReached ? 0.6 : 1 }}>
-                      {capReached ? "🔴 Teknisi Penuh" : "✓ Buat Order"}
-                    </button>
+                    <>
+                      {clashDetected && (
+                        <div style={{background:"#ef444412",border:"1px solid #ef444440",borderRadius:9,
+                          padding:"10px 14px",fontSize:12,color:"#ef4444",fontWeight:700,marginBottom:6}}>
+                          🚫 Jadwal Bentrok! Teknisi <strong>{newOrderForm.teknisi}</strong> sudah ada job di jam ini.
+                          Pilih jam lain atau ganti teknisi.
+                        </div>
+                      )}
+                      <button
+                        disabled={isBlocked}
+                        onClick={async () => {
+                          if (!newOrderForm.customer) { showNotif("Nama customer wajib diisi"); return; }
+                          if (!newOrderForm.teknisi)  { showNotif("Pilih teknisi dulu"); return; }
+                          if (!newOrderForm.date)     { showNotif("Pilih tanggal dulu"); return; }
+                          // DB-level final check (anti race condition)
+                          if (newOrderForm.teknisi && newOrderForm.date && newOrderForm.time) {
+                            const dbOk = await cekTeknisiAvailableDB(newOrderForm.teknisi, newOrderForm.date, newOrderForm.time, newOrderForm.service, newOrderForm.units);
+                            if (!dbOk.ok) { showNotif("🚫 " + (dbOk.reason || "Jadwal bentrok, cek ulang")); return; }
+                          }
+                          const formCopy = {...newOrderForm};
+                          setModalOrder(false);
+                          setNewOrderForm({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
+                          await createOrder(formCopy);
+                        }}
+                        style={{ background: isBlocked ? cs.border : "linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color: isBlocked ? cs.muted : "#0a0f1e", padding:"12px", borderRadius:10, cursor: isBlocked ? "not-allowed" : "pointer", fontWeight:800, fontSize:14, opacity: isBlocked ? 0.6 : 1 }}>
+                        {capReached ? "🔴 Teknisi Penuh" : clashDetected ? "🚫 Jadwal Bentrok" : "✓ Buat Order"}
+                      </button>
+                    </>
                   );
                 })()}
               </div>
