@@ -998,8 +998,12 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   if (matDetails.length > 0) {
     // Per-item: setiap material = 1 baris di tabel
     matDetails.forEach(m => {
-      const hSatStr = m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—";
-      const subStr  = m.subtotal     > 0 ? m.subtotal.toLocaleString("id-ID")     : "—";
+      // Fallback: jika harga_satuan=0 tapi subtotal>0, hitung dari subtotal/jumlah
+      const hSatFix = m.harga_satuan > 0 ? m.harga_satuan
+        : (m.subtotal > 0 && m.jumlah > 0 ? Math.round(m.subtotal / m.jumlah) : 0);
+      const hSatStr = hSatFix > 0 ? hSatFix.toLocaleString("id-ID") : "—";
+      const subStr  = m.subtotal > 0 ? m.subtotal.toLocaleString("id-ID")
+        : (hSatFix > 0 && m.jumlah > 0 ? (hSatFix * m.jumlah).toLocaleString("id-ID") : "—");
       const label   = m.nama + (m.keterangan ? ' <span style="color:#64748b;font-size:10px">(' + m.keterangan + ")</span>" : "");
       matRowsHtml +=
         "<tr>" +
@@ -8264,7 +8268,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           </td>
                           <td style={{ padding:"8px 10px", textAlign:"right", color:"#475569", width:"72px" }}>{m.jumlah} {m.satuan}</td>
                           <td style={{ padding:"8px 10px", fontFamily:"monospace", color:"#475569", textAlign:"right" }}>
-                            {m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—"}
+                {(() => {
+                              const hF = m.harga_satuan > 0 ? m.harga_satuan
+                                : (m.subtotal>0&&m.jumlah>0?Math.round(m.subtotal/m.jumlah):0);
+                              return hF > 0 ? hF.toLocaleString("id-ID") : "—";
+                            })()}
                           </td>
                           <td style={{ padding:"8px 10px", fontFamily:"monospace", fontWeight:600, color:"#1e293b", textAlign:"right" }}>
                             {m.subtotal > 0 ? m.subtotal.toLocaleString("id-ID") : "—"}
@@ -9646,6 +9654,29 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             keterangan: ket,
           };
         });
+
+      // ── AUTO-INJECT baris jasa jika teknisi tidak input via form [+] Tambah Jasa ──
+      // Berlaku: non-Install, labor > 0, tidak ada jasa di mDetail
+      const hasJasaInDetail = mDetail.some(m => m.keterangan === "jasa" || m.keterangan === "repair");
+      if (!isInstallSvc && finalLabor > 0 && !hasJasaInDetail) {
+        const unitCount = laporanUnits.length || 1;
+        const hPerUnit  = Math.round(finalLabor / unitCount);
+        // Pisah per unit — setiap unit 1 baris jasa
+        laporanUnits.forEach((u, idx) => {
+          const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || idx + 1));
+          const namaJasa  = (laporanModal.service || "") +
+            (laporanModal.type ? " - " + laporanModal.type : "") +
+            " (" + unitLabel + ")";
+          mDetail.unshift({
+            nama: namaJasa,
+            jumlah: 1,
+            satuan: "unit",
+            harga_satuan: hPerUnit,
+            subtotal: hPerUnit,
+            keterangan: "jasa",
+          });
+        });
+      }
 
       const newInvoice = {
         id: invId, job_id: laporanModal.id,
