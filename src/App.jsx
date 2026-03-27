@@ -997,19 +997,27 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   let matRowsHtml = "";
   if (matDetails.length > 0) {
     // Per-item: setiap material = 1 baris di tabel
-    // Group items by category for section headers in PDF
-    const jasaRows   = matDetails.filter(m=>m.keterangan==="jasa");
-    const repairRows = matDetails.filter(m=>m.keterangan==="repair");
-    const freonRows  = matDetails.filter(m=>{
-      const n=(m.nama||"").toLowerCase();
-      return m.keterangan!=="jasa"&&m.keterangan!=="repair"&&
-        ["freon","kuras vacum","vacum"].some(k=>n.includes(k));
-    });
-    const matRows    = matDetails.filter(m=>{
-      const n=(m.nama||"").toLowerCase();
-      return m.keterangan!=="jasa"&&m.keterangan!=="repair"&&
-        !["freon","kuras vacum","vacum"].some(k=>n.includes(k));
-    });
+    // Group items by category — support both new (keterangan field) and old invoices (detect by nama)
+    // Helper: detect kategori dari nama item jika keterangan kosong
+    const detectKat = (m) => {
+      if (m.keterangan==="jasa")   return "jasa";
+      if (m.keterangan==="repair") return "repair";
+      const n = (m.nama||"").toLowerCase();
+      // Freon / kuras vacum — by nama
+      if (["freon","kuras vacum","vacum"].some(k=>n.includes(k))) return "freon";
+      // Jasa cleaning/service — by nama pattern (old invoice format)
+      const svcNames = ["cleaning","install","complain","repair","service","jasa pemasangan","jasa perbaikan"];
+      if (svcNames.some(k=>n.includes(k))) return "jasa";
+      // Known repair/sparepart items — by nama
+      const repairNames = ["kapasitor","kompresor","sparepart","pcb","modul","overload","sensor","pipa","kabel","insulasi","breket"];
+      if (repairNames.some(k=>n.includes(k))) return "repair";
+      // Default: material
+      return "mat";
+    };
+    const jasaRows   = matDetails.filter(m=>detectKat(m)==="jasa");
+    const repairRows = matDetails.filter(m=>detectKat(m)==="repair");
+    const freonRows  = matDetails.filter(m=>detectKat(m)==="freon");
+    const matRows    = matDetails.filter(m=>detectKat(m)==="mat");
 
     const addSectionHeader = (label, color) => {
       matRowsHtml += '<tr style="background:'+color+'10">' +
@@ -1053,13 +1061,31 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       !jasaRows.includes(m)&&!repairRows.includes(m)&&!matRows.includes(m)&&!freonRows.includes(m)
     );
     if (otherRows.length > 0) { otherRows.forEach(addRow); }
+
+    // CRITICAL: jika inv.material > 0 tapi tidak ada di matDetails (invoice lama)
+    // Tampilkan sebagai baris material/freon tambahan
+    const matDetailTotal = matDetails.reduce((s,m)=>s+(m.subtotal||0),0);
+    const invMaterial = inv.material||0;
+    const matNotInDetail = invMaterial > 0 && matDetailTotal < invMaterial - 1000;
+    if (matNotInDetail) {
+      const remainMat = invMaterial - matDetails.filter(m=>detectKat(m)!=="jasa"&&detectKat(m)!=="repair").reduce((s,m)=>s+(m.subtotal||0),0);
+      if (remainMat > 0) {
+        addSectionHeader("❄️ Material / Freon", "#06b6d4");
+        matRowsHtml +=
+          "<tr><td style=\"color:#475569;font-style:italic\">Material &amp; Freon</td>" +
+          "<td style=\"text-align:right\">—</td><td style=\"text-align:right\">—</td>" +
+          "<td style=\"text-align:right;font-family:monospace;font-weight:600\">" +
+          remainMat.toLocaleString("id-ID") + "</td></tr>";
+      }
+    }
   } else if ((inv.material||0) > 0) {
-    // Fallback invoice lama: materials_detail belum tersimpan
-    // Tampilkan total material dalam 1 baris
+    // Fallback invoice lama: materials_detail kosong tapi ada inv.material
+    // Reconstruct dari inv.material → tampilkan sebagai material/freon row
     matRowsHtml =
+      '<tr style="background:#06b6d410"><td colspan="4" style="padding:5px 12px;font-size:10px;font-weight:800;color:#06b6d4;text-transform:uppercase;letter-spacing:1px">❄️ Material / Freon</td></tr>' +
       '<tr style="background:#f8fafc">' +
-      '<td style="color:#475569;font-style:italic">Material &amp; Spare Part</td>' +
-      '<td style="text-align:center;color:#94a3b8">—</td>' +
+      '<td style="color:#475569;font-style:italic">Material &amp; Freon (total)</td>' +
+      '<td style="text-align:right;color:#94a3b8">—</td>' +
       '<td style="text-align:right;color:#94a3b8">—</td>' +
       '<td style="text-align:right;font-family:monospace;font-weight:600">' +
       (inv.material||0).toLocaleString("id-ID") + "</td></tr>";
