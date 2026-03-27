@@ -1116,7 +1116,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       </tr>
     </thead>
     <tbody>
-      ${inv.labor > 0 ? '<tr><td>' + ((inv.service || "Jasa Servis AC") + (inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF" ? " (Garansi Jasa Gratis)" : "")) + '</td><td style="text-align:center">' + (inv.units || 1) + '</td><td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td><td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor||0).toLocaleString("id-ID") + '</td></tr>' : ""}
+      ${(inv.labor > 0 && !matDetails.some(m=>m.keterangan==="jasa"||m.keterangan==="repair")) ? '<tr><td>' + ((inv.service || "Jasa Servis AC") + (inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF" ? " (Garansi Jasa Gratis)" : "")) + '</td><td style="text-align:center">' + (inv.units || 1) + '</td><td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td><td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor||0).toLocaleString("id-ID") + '</td></tr>' : ""}
 ${matRowsHtml}
       ${(inv.dadakan > 0) ? '<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>' : ""}
       <tr class="total-row">
@@ -8240,7 +8240,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </tr>
                 </thead>
                 <tbody>
-                  {liveInv.labor > 0 && parseMD(liveInv.materials_detail).length === 0 && (
+                  {liveInv.labor > 0 && !parseMD(liveInv.materials_detail).some(m=>m.keterangan==="jasa"||m.keterangan==="repair") && (
                   <tr style={{ background:"#fff" }}>
                     <td style={{ padding:"8px 10px", color:"#1e293b" }}>{liveInv.service}</td>
                     <td style={{ padding:"8px 10px", color:"#475569", textAlign:"center" }}>{liveInv.units}</td>
@@ -9596,52 +9596,54 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       const gDays      = 30; // Semua service: garansi 30 hari dari terbit invoice
       const gExpires   = new Date(Date.now() + gDays * 86400000).toISOString().slice(0, 10);
 
-      // Build materials_detail dengan harga dari inventory
+      // Build materials_detail — SEMUA item (jasa, repair, material) breakdown 1-1
+      // PRIORITY: gunakan harga_satuan dari item langsung (sudah disimpan saat input laporan)
+      //           hanya lookup inventory jika harga_satuan belum ada (item lama/legacy)
       const mDetail = effectiveMaterials
         .filter(m => m.nama && (parseFloat(m.jumlah) || 0) > 0)
         .map(m => {
-          const nama2   = (m.nama || "").toLowerCase();
-          const normNama2 = nama2
-            .replace(/,/g,".")
-            .replace(/eterna\s*/g,"")
-            .replace(/[-\s]/g,"")
-            .replace(/r410a?$/,"r410")
-            .replace(/r22a?$/,"r22")
-            .replace(/r32a?$/,"r32");
-          const invItem = inventoryData.find(inv => {
-            const n = inv.name.toLowerCase()
-              .replace(/,/g,".")
-              .replace(/eterna\s*/g,"")
-              .replace(/[-\s]/g,"")
-              .replace(/r410a?$/,"r410")
-              .replace(/r22a?$/,"r22")
-              .replace(/r32a?$/,"r32");
-            return n === normNama2 || n.includes(normNama2) || normNama2.includes(n);
-          });
-          let hSat = invItem?.price || 0;
-          // Fallback ke PRICE_LIST jika tidak ada di inventory (untuk Install jasa)
+          const nama2 = (m.nama || "").toLowerCase();
+          const isF   = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k => nama2.includes(k));
+          const rawQty = parseFloat(m.jumlah) || 0;
+          const qty    = isF ? Math.max(1, Math.ceil(rawQty)) : rawQty;
+
+          // Jika harga sudah ada dari input teknisi (jasa/repair/install items) — pakai langsung
+          let hSat = parseFloat(m.harga_satuan) || 0;
+
+          // Jika belum ada harga (material dari laporanMaterials) → lookup inventory/pricelist
           if (!hSat) {
-            const mNama = m.nama || "";
-            for (const svc of ["Material","Install","Repair","Cleaning","Complain"]) {
-              if (PRICE_LIST[svc] && PRICE_LIST[svc][mNama]) {
-                hSat = PRICE_LIST[svc][mNama];
-                break;
+            const normNama = nama2
+              .replace(/,/g,".").replace(/eterna\s*/g,"")
+              .replace(/[-\s]/g,"")
+              .replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+            const invItem = inventoryData.find(inv => {
+              const n = (inv.name||"").toLowerCase()
+                .replace(/,/g,".").replace(/eterna\s*/g,"")
+                .replace(/[-\s]/g,"")
+                .replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+              return n === normNama || n.includes(normNama) || normNama.includes(n);
+            });
+            hSat = invItem?.price || 0;
+            if (!hSat) {
+              const mNama = m.nama || "";
+              for (const svc of ["Material","Install","Repair","Cleaning","Complain"]) {
+                if (PRICE_LIST[svc]?.[mNama]) { hSat = PRICE_LIST[svc][mNama]; break; }
               }
             }
+            if (!hSat && isF) {
+              if      (nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 450000;
+              else if (nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 450000;
+              else if (nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
+            }
           }
-          if (!hSat) {
-            if      (nama2.includes("r-22")  || nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 450000;
-            else if (nama2.includes("r-32")  || nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 450000;
-            else if (nama2.includes("r-410") || nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
-          }
-          const rawQty = parseFloat(m.jumlah) || 0;
-          const isF    = ["freon","r-22","r-32","r-410"].some(k => nama2.includes(k));
-          const qty    = isF ? Math.max(1, Math.ceil(rawQty)) : rawQty;
+
+          const ket = m.keterangan || (isF && rawQty !== qty ? `Aktual: ${rawQty} kg → dibulatkan ${qty} kg` : "");
           return {
             nama: m.nama, jumlah: qty,
             satuan: m.satuan || (isF ? "kg" : "pcs"),
-            harga_satuan: hSat, subtotal: hSat * qty,
-            keterangan: m.keterangan || (isF && rawQty !== qty ? `Aktual: ${rawQty} kg → dibulatkan ${qty} kg` : ""),
+            harga_satuan: hSat,
+            subtotal: hSat * qty,
+            keterangan: ket,
           };
         });
 
