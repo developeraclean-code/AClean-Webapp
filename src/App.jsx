@@ -1002,14 +1002,19 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     const detectKat = (m) => {
       if (m.keterangan==="jasa")   return "jasa";
       if (m.keterangan==="repair") return "repair";
+      if (m.keterangan==="freon")  return "freon";
       const n = (m.nama||"").toLowerCase();
       // Freon / kuras vacum — by nama
-      if (["freon","kuras vacum","vacum"].some(k=>n.includes(k))) return "freon";
-      // Jasa cleaning/service — by nama pattern (old invoice format)
-      const svcNames = ["cleaning","install","complain","repair","service","jasa pemasangan","jasa perbaikan"];
-      if (svcNames.some(k=>n.includes(k))) return "jasa";
-      // Known repair/sparepart items — by nama
-      const repairNames = ["kapasitor","kompresor","sparepart","pcb","modul","overload","sensor","pipa","kabel","insulasi","breket"];
+      if (["freon","kuras vacum + isi freon","kuras vacum"].some(k=>n.includes(k))) return "freon";
+      // Jasa — by nama pattern
+      const jasaNames = ["cleaning","jasa vacum","jasa pemasangan","jasa perbaikan","jasa servis",
+        "pemasangan ac","bongkar ac","biaya pengecekan","service besar","complain"];
+      if (jasaNames.some(k=>n.includes(k))) return "jasa";
+      // Install material — pipa, kabel, breket, insulasi, duct tape masuk ke material
+      const matNames = ["pipa","kabel","insulasi","breket","duct tape","ducttape","selang"];
+      if (matNames.some(k=>n.includes(k))) return "mat";
+      // Repair/sparepart
+      const repairNames = ["kapasitor","kompresor","sparepart","pcb","modul","overload","sensor"];
       if (repairNames.some(k=>n.includes(k))) return "repair";
       // Default: material
       return "mat";
@@ -2898,6 +2903,22 @@ ${matRowsHtml}
               const dadakanFee = isToday ? 50000 : 0;
               const totalInv = laborTotal + materialCost + dadakanFee;
 
+              // Build materials_detail for ARA invoice from laporan
+              const _araMatDetail = (() => {
+                if (!lapRep) return null;
+                const mats = (() => {
+                  if (lapRep.materials_json) { try { return JSON.parse(lapRep.materials_json); } catch(_){} }
+                  return safeArr(lapRep.materials);
+                })().filter(m=>m.nama&&parseFloat(m.jumlah||0)>0);
+                if (!mats.length) return null;
+                return JSON.stringify(mats.map(m=>({
+                  nama:m.nama, jumlah:parseFloat(m.jumlah)||1,
+                  satuan:m.satuan||"pcs",
+                  harga_satuan:parseFloat(m.harga_satuan)||0,
+                  subtotal:(parseFloat(m.harga_satuan)||0)*(parseFloat(m.jumlah)||1),
+                  keterangan:m.keterangan||""
+                })));
+              })();
               const newInv = {
                 id: invId, job_id: ord.id,
                 customer: ord.customer, phone: ord.phone || "",
@@ -2905,6 +2926,7 @@ ${matRowsHtml}
                 units: ord.units || 1,
                 labor: laborTotal,
                 material: materialTotal,
+                materials_detail: _araMatDetail,
                 dadakan: dadakanFee,
                 discount: 0,
                 total: totalInv,
@@ -5977,8 +5999,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const ord = ordersData.find(o => o.id === r.job_id);
                     const invId = "INV" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
 
-                    // Build mDetail dari r.materials (sudah tersimpan di laporan)
-                    const vMats = safeArr(r.materials).filter(m=>m.nama&&parseFloat(m.jumlah||0)>0);
+                    // Build mDetail dari r.materials / materials_json (fallback chain)
+                    const _rawMats = (() => {
+                      // Priority: materials_json (string dari DB) > r.materials (parsed)
+                      if (r.materials_json) {
+                        try { return JSON.parse(r.materials_json); } catch(_) {}
+                      }
+                      if (r.units_json && r.service === "Install") {
+                        // Install: units_json tidak relevan, pakai materials
+                      }
+                      return safeArr(r.materials);
+                    })();
+                    const vMats = _rawMats.filter(m=>m.nama&&parseFloat(m.jumlah||0)>0);
                     const vMDetail = vMats.map(m => {
                       const nama2 = (m.nama||"").toLowerCase();
                       const isF = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
@@ -9741,11 +9773,17 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         mDetail.push(mkRow(m.nama, m.jumlah, m.satuan||"pcs", m.harga_satuan||0, m.keterangan||""));
       });
 
-      // D. Install rows sudah di effectiveMaterials — ganti seluruh mDetail jika Install
+      // D. Install rows — build dari laporanInstallItems dengan keterangan yang benar
       if (isInstallSvc) {
         mDetail.length = 0;
+        // Jasa Install (pasang, vacum, kuras) → keterangan:"jasa"
+        const INSTALL_JASA_KEYS = ["pasang","vacum","bongkar","kuras"];
         effectiveMaterials.filter(m=>m.nama&&parseFloat(m.jumlah||0)>0).forEach(m=>{
-          mDetail.push(mkRow(m.nama, m.jumlah, m.satuan||"pcs", m.harga_satuan||0, m.keterangan||""));
+          const n = (m.nama||"").toLowerCase();
+          const isJasa = INSTALL_JASA_KEYS.some(k=>n.includes(k));
+          const isFreon = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>n.includes(k));
+          const ket = m.keterangan || (isJasa?"jasa":isFreon?"freon":"");
+          mDetail.push(mkRow(m.nama, m.jumlah, m.satuan||"pcs", m.harga_satuan||0, ket));
         });
       }
 
