@@ -2931,6 +2931,8 @@ ${matRowsHtml}
                 discount: 0,
                 total: totalInv,
                 status: "PENDING",
+                garansi_days: 30,
+                garansi_expires: new Date(Date.now()+30*86400000).toISOString().slice(0,10),
                 laporan_id: lapRep?.id || null,
                 due: new Date(Date.now() + 3*86400000).toISOString().slice(0,10),
                 sent: false, created_at: new Date().toISOString()
@@ -9646,7 +9648,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         ? 0  // teknisi sudah pilih jasa manual via form → pakai itu
         : (laporanModal?.service==="Complain"
           ? 0  // Complain → handle via garansi logic
-          : hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length));
+          : repairSumForm > 0
+            ? 0  // Repair items sudah capture service cost → tidak perlu baseline
+            : hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length));
 
       return svcFeeBaseline + jasaSumForm + repairSumForm;
     })();
@@ -9788,26 +9792,42 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       }
 
       // E. AUTO-INJECT service fee jika tidak ada jasa item dari form
-      //    Logic: Cleaning + Repair bisa dalam 1 job → breakdown terpisah di invoice
-      //    - Jika TIDAK ada jasa item → inject cleaning/service fee per unit SELALU
-      //    - Repair item tetap tampil terpisah (jasa perbaikan tambahan)
-      //    - Material tetap tampil terpisah
-      //    - Freon/Kuras Vacum masuk keterangan khusus dari nama item
+      //    Rules:
+      //    - Cleaning/Install: inject service fee per unit SELALU (kecuali ada jasaItems)
+      //    - Repair: HANYA inject "Biaya Pengecekan" jika tidak ada repairItems
+      //      (jika ada repairItems, repair items sudah merepresentasikan biaya jasa)
+      //    - Complain: tidak inject (handled oleh garansi logic → finalLabor/finalTotal)
       if (!isInstallSvc && !mDetail.some(m=>m.keterangan==="jasa")) {
-        // Hitung service fee dari hitungLabor (cleaning fee baseline)
-        // jika jasaItems kosong, gunakan hitungLabor sebagai service fee dasar
-        const svcFee = (() => {
-          if (laporanJasaItems.filter(j=>j.nama).length > 0) return 0; // sudah di A
-          return hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
-        })();
-        if (svcFee > 0) {
-          const unitCount = laporanUnits.length || 1;
-          const hPerUnit  = Math.round(svcFee / unitCount);
-          [...laporanUnits].reverse().forEach((u, idx) => {
-            const unitLabel = u.label || u.merk || ("Unit "+(u.unit_no || (unitCount-idx)));
-            const namaJasa  = (laporanModal.service||"")+(laporanModal.type?" - "+laporanModal.type:"")+" ("+unitLabel+")";
-            mDetail.unshift({ nama:namaJasa, jumlah:1, satuan:"unit", harga_satuan:hPerUnit, subtotal:hPerUnit, keterangan:"jasa" });
-          });
+        const hasRepairItems = mDetail.some(m=>m.keterangan==="repair");
+        const isRepairSvc   = laporanModal?.service==="Repair";
+        const isComplainSvc2 = laporanModal?.service==="Complain";
+        // Inject hanya jika:
+        // - Bukan Complain (Complain punya garansi logic sendiri)
+        // - Bukan Repair dengan repair items (repair items = service cost)
+        const shouldInject = !isComplainSvc2 && !(isRepairSvc && hasRepairItems);
+        if (shouldInject) {
+          const svcFee = (() => {
+            if (laporanJasaItems.filter(j=>j.nama).length > 0) return 0;
+            if (isRepairSvc) return 0; // Repair tanpa items = Biaya Cek (handled via finalLabor)
+            return hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
+          })();
+          if (svcFee > 0) {
+            const unitCount = laporanUnits.length || 1;
+            const hPerUnit  = Math.round(svcFee / unitCount);
+            [...laporanUnits].reverse().forEach((u, idx) => {
+              const unitLabel = u.label || u.merk || ("Unit "+(u.unit_no || (unitCount-idx)));
+              const namaJasa  = (laporanModal.service||"")+(laporanModal.type?" - "+laporanModal.type:"")+" ("+unitLabel+")";
+              mDetail.unshift({ nama:namaJasa, jumlah:1, satuan:"unit", harga_satuan:hPerUnit, subtotal:hPerUnit, keterangan:"jasa" });
+            });
+          }
+        }
+        // Repair tanpa items: inject "Biaya Pengecekan" dari finalLabor (BIAYA_CEK)
+        if (isRepairSvc && !hasRepairItems && finalLabor > 0) {
+          mDetail.unshift({ nama:"Biaya Pengecekan AC", jumlah:1, satuan:"unit", harga_satuan:finalLabor, subtotal:finalLabor, keterangan:"jasa" });
+        }
+        // Complain biaya cek: inject dari finalLabor jika ada
+        if (isComplainSvc2 && finalLabor > 0 && finalLabor <= 200000) {
+          mDetail.unshift({ nama:"Biaya Pengecekan (Tanpa Garansi)", jumlah:1, satuan:"unit", harga_satuan:finalLabor, subtotal:finalLabor, keterangan:"jasa" });
         }
       }
 
