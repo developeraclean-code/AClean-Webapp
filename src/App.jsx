@@ -9831,6 +9831,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         }
       }
 
+      // garansi_status: hanya untuk state lokal (tidak ada kolom ini di DB)
+      const garansiStatusLocal = isComplainSvc
+        ? (prevGaransiActive ? (matTotalInv > 0 ? 'GARANSI_DENGAN_MATERIAL' : 'GARANSI_AKTIF')
+          : prevGaransiExpired ? 'GARANSI_EXPIRED' : 'NO_GARANSI')
+        : null;
       const newInvoice = {
         id: invId, job_id: laporanModal.id,
         customer: laporanModal.customer,
@@ -9839,16 +9844,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         units:    laporanUnits.length,
         labor:    finalLabor,
         material: matTotalInv,
-        materials_detail: mDetail,
+        materials_detail: mDetail,           // array untuk state/display
+        garansi_status: garansiStatusLocal,  // hanya state, tidak ke DB
         dadakan:  0,
         total:    finalTotal,
         status:   "PENDING_APPROVAL",
         garansi_days:    gDays,
         garansi_expires: gExpires,
-        garansi_status:  isComplainSvc
-          ? (prevGaransiActive ? (matTotalInv > 0 ? 'GARANSI_DENGAN_MATERIAL' : 'GARANSI_AKTIF')
-            : prevGaransiExpired ? 'GARANSI_EXPIRED' : 'NO_GARANSI')
-          : null,
         created_at: new Date().toISOString(),
       };
 
@@ -9865,9 +9867,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
       setInvoicesData(prev => [...prev, newInvoice]);
 
-      // Simpan invoice ke Supabase
+      // Simpan invoice ke Supabase — exclude fields yang tidak ada di DB schema
+      const { garansi_status: _gs, ...invBase } = newInvoice;
       const invPayload = {
-        ...newInvoice,
+        ...invBase,
         materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
       };
       // ── 1 invoice per job: cek existing, delete + insert baru ──
