@@ -997,22 +997,62 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   let matRowsHtml = "";
   if (matDetails.length > 0) {
     // Per-item: setiap material = 1 baris di tabel
-    matDetails.forEach(m => {
-      // Fallback: jika harga_satuan=0 tapi subtotal>0, hitung dari subtotal/jumlah
+    // Group items by category for section headers in PDF
+    const jasaRows   = matDetails.filter(m=>m.keterangan==="jasa");
+    const repairRows = matDetails.filter(m=>m.keterangan==="repair");
+    const freonRows  = matDetails.filter(m=>{
+      const n=(m.nama||"").toLowerCase();
+      return m.keterangan!=="jasa"&&m.keterangan!=="repair"&&
+        ["freon","kuras vacum","vacum"].some(k=>n.includes(k));
+    });
+    const matRows    = matDetails.filter(m=>{
+      const n=(m.nama||"").toLowerCase();
+      return m.keterangan!=="jasa"&&m.keterangan!=="repair"&&
+        !["freon","kuras vacum","vacum"].some(k=>n.includes(k));
+    });
+
+    const addSectionHeader = (label, color) => {
+      matRowsHtml += '<tr style="background:'+color+'10">' +
+        '<td colspan="4" style="padding:5px 12px;font-size:10px;font-weight:800;color:'+color+';'+
+        'text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid '+color+'33">' +
+        label + '</td></tr>';
+    };
+    const addRow = (m) => {
       const hSatFix = m.harga_satuan > 0 ? m.harga_satuan
         : (m.subtotal > 0 && m.jumlah > 0 ? Math.round(m.subtotal / m.jumlah) : 0);
       const hSatStr = hSatFix > 0 ? hSatFix.toLocaleString("id-ID") : "—";
       const subStr  = m.subtotal > 0 ? m.subtotal.toLocaleString("id-ID")
         : (hSatFix > 0 && m.jumlah > 0 ? (hSatFix * m.jumlah).toLocaleString("id-ID") : "—");
-      const label   = m.nama + (m.keterangan ? ' <span style="color:#64748b;font-size:10px">(' + m.keterangan + ")</span>" : "");
       matRowsHtml +=
         "<tr>" +
-        '<td>' + label + "</td>" +
+        "<td>" + m.nama + "</td>" +
         '<td style="text-align:right;width:72px;white-space:nowrap">' + m.jumlah + " " + (m.satuan||"") + "</td>" +
         '<td style="text-align:right;font-family:monospace">' + hSatStr + "</td>" +
         '<td style="text-align:right;font-family:monospace;font-weight:600">' + subStr + "</td>" +
         "</tr>";
-    });
+    };
+
+    if (jasaRows.length > 0) {
+      addSectionHeader("⚡ Jasa / Layanan", "#3b82f6");
+      jasaRows.forEach(addRow);
+    }
+    if (repairRows.length > 0) {
+      addSectionHeader("🔩 Repair / Perbaikan", "#f59e0b");
+      repairRows.forEach(addRow);
+    }
+    if (matRows.length > 0) {
+      addSectionHeader("🔧 Material / Sparepart", "#10b981");
+      matRows.forEach(addRow);
+    }
+    if (freonRows.length > 0) {
+      addSectionHeader("❄️ Freon / Kuras Vacum", "#06b6d4");
+      freonRows.forEach(addRow);
+    }
+    // Fallback: ada item tapi tidak terklasifikasi
+    const otherRows = matDetails.filter(m=>
+      !jasaRows.includes(m)&&!repairRows.includes(m)&&!matRows.includes(m)&&!freonRows.includes(m)
+    );
+    if (otherRows.length > 0) { otherRows.forEach(addRow); }
   } else if ((inv.material||0) > 0) {
     // Fallback invoice lama: materials_detail belum tersimpan
     // Tampilkan total material dalam 1 baris
@@ -9510,21 +9550,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       !repairNamesInMat.has(m.nama) && parseFloat(m.jumlah||0)>0
     );
     const laborTotalInv = isInstallSvc ? 0 : (() => {
-      const jasaPilihan = [
-        ...laporanJasaItems.filter(j=>j.nama),
-        ...laporanRepairItems.filter(r=>r.nama),
-      ];
-      if (jasaPilihan.length > 0)
-        return jasaPilihan.reduce((s,j)=>s+((j.harga_satuan||0)*(parseFloat(j.jumlah)||1)),0);
-      if (jasaFromMat.length > 0)
-        return jasaFromMat.reduce((s,m)=>{
-          const pl=priceListData.find(r=>r.type&&r.type.trim()===m.nama.trim());
-          return s+(pl?.price||0)*(parseFloat(m.jumlah)||1);
-        },0);
-      const isComplainJob = laporanModal?.service==="Complain";
-      const hasAnyJasa = jasaPilihan.length>0||jasaFromMat.length>0;
-      if (isComplainJob||!hasAnyJasa) return 0;
-      return hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
+      // Labor = service fee (cleaning/repair baseline) + jasa items + repair items
+      // ALL bisa hadir bersamaan dalam 1 job
+      const jasaSumForm   = laporanJasaItems.filter(j=>j.nama)
+        .reduce((s,j)=>s+((j.harga_satuan||0)*(parseFloat(j.jumlah)||1)),0);
+      const repairSumForm = laporanRepairItems.filter(r=>r.nama)
+        .reduce((s,r)=>s+((r.harga_satuan||0)*(parseFloat(r.jumlah)||1)),0);
+
+      // Service fee baseline (dari hitungLabor) — HANYA jika tidak ada jasa via form
+      const svcFeeBaseline = jasaSumForm > 0
+        ? 0  // teknisi sudah pilih jasa manual via form → pakai itu
+        : (laporanModal?.service==="Complain"
+          ? 0  // Complain → handle via garansi logic
+          : hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length));
+
+      return svcFeeBaseline + jasaSumForm + repairSumForm;
     })();
     const matTotalInv = isInstallSvc
       ? hitungMaterialTotal(effectiveMaterials)
@@ -9604,78 +9644,81 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       const gDays      = 30; // Semua service: garansi 30 hari dari terbit invoice
       const gExpires   = new Date(Date.now() + gDays * 86400000).toISOString().slice(0, 10);
 
-      // Build materials_detail — SEMUA item (jasa, repair, material) breakdown 1-1
-      // PRIORITY: gunakan harga_satuan dari item langsung (sudah disimpan saat input laporan)
-      //           hanya lookup inventory jika harga_satuan belum ada (item lama/legacy)
-      const mDetail = effectiveMaterials
-        .filter(m => m.nama && (parseFloat(m.jumlah) || 0) > 0)
-        .map(m => {
-          const nama2 = (m.nama || "").toLowerCase();
-          const isF   = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k => nama2.includes(k));
-          const rawQty = parseFloat(m.jumlah) || 0;
-          const qty    = isF ? Math.max(1, Math.ceil(rawQty)) : rawQty;
-
-          // Jika harga sudah ada dari input teknisi (jasa/repair/install items) — pakai langsung
-          let hSat = parseFloat(m.harga_satuan) || 0;
-
-          // Jika belum ada harga (material dari laporanMaterials) → lookup inventory/pricelist
-          if (!hSat) {
-            const normNama = nama2
-              .replace(/,/g,".").replace(/eterna\s*/g,"")
-              .replace(/[-\s]/g,"")
-              .replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
-            const invItem = inventoryData.find(inv => {
-              const n = (inv.name||"").toLowerCase()
-                .replace(/,/g,".").replace(/eterna\s*/g,"")
-                .replace(/[-\s]/g,"")
-                .replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
-              return n === normNama || n.includes(normNama) || normNama.includes(n);
-            });
-            hSat = invItem?.price || 0;
-            if (!hSat) {
-              const mNama = m.nama || "";
-              for (const svc of ["Material","Install","Repair","Cleaning","Complain"]) {
-                if (PRICE_LIST[svc]?.[mNama]) { hSat = PRICE_LIST[svc][mNama]; break; }
-              }
-            }
-            if (!hSat && isF) {
-              if      (nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 450000;
-              else if (nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 450000;
-              else if (nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
-            }
-          }
-
-          const ket = m.keterangan || (isF && rawQty !== qty ? `Aktual: ${rawQty} kg → dibulatkan ${qty} kg` : "");
-          return {
-            nama: m.nama, jumlah: qty,
-            satuan: m.satuan || (isF ? "kg" : "pcs"),
-            harga_satuan: hSat,
-            subtotal: hSat * qty,
-            keterangan: ket,
-          };
+      // ── BUILD mDetail — BREAKDOWN 1-1, SINGLE SOURCE OF TRUTH ──────────────
+      // Helper: lookup harga dari inventory/pricelist jika tidak ada di item
+      const lookupHarga = (nama, satuanHint) => {
+        const nama2 = (nama||"").toLowerCase();
+        const isF   = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
+        const norm  = nama2.replace(/,/g,".").replace(/eterna\s*/g,"")
+          .replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+        let h = 0;
+        const inv = inventoryData.find(i=>{
+          const n=(i.name||"").toLowerCase().replace(/,/g,".").replace(/eterna\s*/g,"")
+            .replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+          return n===norm||n.includes(norm)||norm.includes(n);
         });
+        h = inv?.price || 0;
+        if (!h) { for (const sv of ["Material","Repair","Install","Cleaning","Complain"]) { if (PRICE_LIST[sv]?.[nama]) { h=PRICE_LIST[sv][nama]; break; } } }
+        if (!h && isF) { h = nama2.includes("r22")?PRICE_LIST["freon_R22"]||450000 : nama2.includes("r32")?PRICE_LIST["freon_R32"]||450000 : PRICE_LIST["freon_R410A"]||450000; }
+        return h;
+      };
+      const mkRow = (nama, jumlah, satuan, hSat, ket) => {
+        const nama2 = (nama||"").toLowerCase();
+        const isF   = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
+        const rawQ  = parseFloat(jumlah)||0;
+        const qty   = isF ? Math.max(1,Math.ceil(rawQ)) : rawQ;
+        const h     = parseFloat(hSat)||0 || lookupHarga(nama, satuan);
+        const ketFin= ket || (isF&&rawQ!==qty?`Aktual: ${rawQ} kg → dibulatkan ${qty} kg`:"");
+        return { nama, jumlah:qty, satuan:satuan||(isF?"kg":"pcs"), harga_satuan:h, subtotal:h*qty, keterangan:ketFin };
+      };
 
-      // ── AUTO-INJECT baris jasa jika teknisi tidak input via form [+] Tambah Jasa ──
-      // Berlaku: non-Install, labor > 0, tidak ada jasa di mDetail
-      const hasJasaInDetail = mDetail.some(m => m.keterangan === "jasa" || m.keterangan === "repair");
-      if (!isInstallSvc && finalLabor > 0 && !hasJasaInDetail) {
-        const unitCount = laporanUnits.length || 1;
-        const hPerUnit  = Math.round(finalLabor / unitCount);
-        // Pisah per unit — setiap unit 1 baris jasa
-        laporanUnits.forEach((u, idx) => {
-          const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || idx + 1));
-          const namaJasa  = (laporanModal.service || "") +
-            (laporanModal.type ? " - " + laporanModal.type : "") +
-            " (" + unitLabel + ")";
-          mDetail.unshift({
-            nama: namaJasa,
-            jumlah: 1,
-            satuan: "unit",
-            harga_satuan: hPerUnit,
-            subtotal: hPerUnit,
-            keterangan: "jasa",
+      const mDetail = [];
+
+      // A. Jasa rows (dari [+] Tambah Jasa form) — keterangan: "jasa"
+      laporanJasaItems.filter(j=>j.nama&&j.nama!=="__manual__"&&parseFloat(j.jumlah||0)>0).forEach(j=>{
+        mDetail.push(mkRow(j.nama, j.jumlah||1, j.satuan||"pcs", j.harga_satuan||0, "jasa"));
+      });
+
+      // B. Repair rows (dari [+] Tambah Repair form) — keterangan: "repair"
+      laporanRepairItems.filter(r=>r.nama&&parseFloat(r.jumlah||0)>0).forEach(r=>{
+        mDetail.push(mkRow(r.nama, r.jumlah||1, r.satuan||"pcs", r.harga_satuan||0, "repair"));
+      });
+
+      // C. Material rows (dari [+] Tambah Material / Preset) — keterangan: "" atau freon label
+      laporanMaterials.filter(m=>m.nama&&parseFloat(m.jumlah||0)>0).forEach(m=>{
+        mDetail.push(mkRow(m.nama, m.jumlah, m.satuan||"pcs", m.harga_satuan||0, m.keterangan||""));
+      });
+
+      // D. Install rows sudah di effectiveMaterials — ganti seluruh mDetail jika Install
+      if (isInstallSvc) {
+        mDetail.length = 0;
+        effectiveMaterials.filter(m=>m.nama&&parseFloat(m.jumlah||0)>0).forEach(m=>{
+          mDetail.push(mkRow(m.nama, m.jumlah, m.satuan||"pcs", m.harga_satuan||0, m.keterangan||""));
+        });
+      }
+
+      // E. AUTO-INJECT service fee jika tidak ada jasa item dari form
+      //    Logic: Cleaning + Repair bisa dalam 1 job → breakdown terpisah di invoice
+      //    - Jika TIDAK ada jasa item → inject cleaning/service fee per unit SELALU
+      //    - Repair item tetap tampil terpisah (jasa perbaikan tambahan)
+      //    - Material tetap tampil terpisah
+      //    - Freon/Kuras Vacum masuk keterangan khusus dari nama item
+      if (!isInstallSvc && !mDetail.some(m=>m.keterangan==="jasa")) {
+        // Hitung service fee dari hitungLabor (cleaning fee baseline)
+        // jika jasaItems kosong, gunakan hitungLabor sebagai service fee dasar
+        const svcFee = (() => {
+          if (laporanJasaItems.filter(j=>j.nama).length > 0) return 0; // sudah di A
+          return hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
+        })();
+        if (svcFee > 0) {
+          const unitCount = laporanUnits.length || 1;
+          const hPerUnit  = Math.round(svcFee / unitCount);
+          [...laporanUnits].reverse().forEach((u, idx) => {
+            const unitLabel = u.label || u.merk || ("Unit "+(u.unit_no || (unitCount-idx)));
+            const namaJasa  = (laporanModal.service||"")+(laporanModal.type?" - "+laporanModal.type:"")+" ("+unitLabel+")";
+            mDetail.unshift({ nama:namaJasa, jumlah:1, satuan:"unit", harga_satuan:hPerUnit, subtotal:hPerUnit, keterangan:"jasa" });
           });
-        });
+        }
       }
 
       const newInvoice = {
