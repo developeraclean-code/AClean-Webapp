@@ -5973,23 +5973,49 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   if (existInv) {
                     showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
                   } else {
-                    // AUTO-CREATE invoice PENDING_APPROVAL (tidak langsung kirim ke customer)
+                    // AUTO-CREATE invoice — breakdown 1-1 dari r.materials (laporan data)
                     const ord = ordersData.find(o => o.id === r.job_id);
                     const invId = "INV" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
-                    const labor = PRICE_LIST[r.service]?.[ord?.type||"default"] || PRICE_LIST[r.service]?.["default"] || 85000;
-                    const laborTotal = labor * (r.units || ord?.units || 1);
-                    const matCost = safeArr(r.materials).reduce((s,m) => s + ((m.harga||m.price||0)*parseFloat(m.jumlah||m.qty||1)), 0);
-        const freonCost = 0; // [OPSI A] Freon tidak dihitung dari total_freon (data psi)
-                    const dadakan = ord?.date === new Date().toISOString().slice(0,10) ? 50000 : 0;
-                    const totalInv = laborTotal + matCost + freonCost + dadakan;
+
+                    // Build mDetail dari r.materials (sudah tersimpan di laporan)
+                    const vMats = safeArr(r.materials).filter(m=>m.nama&&parseFloat(m.jumlah||0)>0);
+                    const vMDetail = vMats.map(m => {
+                      const nama2 = (m.nama||"").toLowerCase();
+                      const isF = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
+                      const rawQ = parseFloat(m.jumlah)||0;
+                      const qty  = isF ? Math.max(1,Math.ceil(rawQ)) : rawQ;
+                      let hSat   = parseFloat(m.harga_satuan)||0;
+                      if (!hSat) {
+                        const inv2 = inventoryData.find(i=>(i.name||"").toLowerCase().includes(nama2)||nama2.includes((i.name||"").toLowerCase()));
+                        hSat = inv2?.price || 0;
+                      }
+                      if (!hSat && isF) hSat = nama2.includes("r22")?450000:nama2.includes("r32")?450000:450000;
+                      return { nama:m.nama, jumlah:qty, satuan:m.satuan||"pcs", harga_satuan:hSat, subtotal:hSat*qty, keterangan:m.keterangan||"" };
+                    });
+
+                    // Inject service fee jika tidak ada jasa row
+                    if (!vMDetail.some(m=>m.keterangan==="jasa")) {
+                      const svcFeeV = hitungLabor(r.service, ord?.type, r.units||ord?.units||1);
+                      if (svcFeeV > 0) {
+                        const uCount = r.units||ord?.units||1;
+                        vMDetail.unshift({ nama:(r.service||"")+(ord?.type?" - "+ord.type:"")+" (Servis)", jumlah:uCount, satuan:"unit", harga_satuan:Math.round(svcFeeV/uCount), subtotal:svcFeeV, keterangan:"jasa" });
+                      }
+                    }
+
+                    const laborV   = vMDetail.filter(m=>m.keterangan==="jasa"||m.keterangan==="repair").reduce((s,m)=>s+m.subtotal,0) || hitungLabor(r.service, ord?.type, r.units||ord?.units||1);
+                    const matV     = vMDetail.filter(m=>m.keterangan!=="jasa"&&m.keterangan!=="repair").reduce((s,m)=>s+m.subtotal,0);
+                    const totalInv = laborV + matV;
                     const newInv = {
                       id:invId, job_id:r.job_id, laporan_id:r.id,
                       customer:r.customer, phone:r.phone||ord?.phone||"",
                       service:r.service+(ord?.type?" - "+ord.type:""), units:r.units||ord?.units||1,
                       teknisi:r.teknisi||"",
-                      labor:laborTotal, material:matCost+freonCost, dadakan, discount:0,
+                      labor:laborV, material:matV,
+                      materials_detail: vMDetail.length > 0 ? JSON.stringify(vMDetail) : null,
+                      dadakan:0, discount:0,
                       total:totalInv,
-                      status:"PENDING_APPROVAL",  // ⚠ harus approve dulu sebelum dikirim
+                      status:"PENDING_APPROVAL",
+                      garansi_days:30, garansi_expires:new Date(Date.now()+30*86400000).toISOString().slice(0,10),
                       due: new Date(Date.now()+3*86400000).toISOString().slice(0,10),
                       sent:false, created_at:new Date().toISOString()
                     };
