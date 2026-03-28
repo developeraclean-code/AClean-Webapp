@@ -3476,7 +3476,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             {/* Search bar */}
             <div style={{ position:"relative" }}>
               <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-              <input id="searchCustomer" value={searchCustomer} onChange={e=>{setSearchCustomer(e.target.value);setCustomerPage(1);}}}
+              <input id="searchCustomer" value={searchCustomer} onChange={e=>{setSearchCustomer(e.target.value);setCustomerPage(1);}}
                 placeholder="Cari nama customer atau nomor telepon..."
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
               {searchCustomer && <button onClick={()=>setSearchCustomer("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
