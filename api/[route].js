@@ -172,13 +172,17 @@ export default async function handler(req, res) {
       const type = (req.query&&req.query.type) || (req.body&&req.body.type) || "";
 
       if (type === "wa" || type === "fonnte") {
-        const FT = process.env.FONNTE_TOKEN;
-        if (!FT) return res.status(200).json({ ok: false, error: "FONNTE_TOKEN belum diset" });
+        // Use token from request body (user testing) or env var
+        const rb = req.body || {};
+        const FT = rb.token || process.env.FONNTE_TOKEN;
+        if (!FT) return res.status(200).json({ ok: false, success: false, error: "FONNTE_TOKEN belum diset" });
         try {
           const r = await fetch("https://api.fonnte.com/validate", { method:"POST", headers:{ Authorization:FT, "Content-Type":"application/json" }, body:JSON.stringify({}) });
           const d = await r.json().catch(()=>({}));
-          return res.status(200).json({ ok: r.ok && d.status !== false, detail: d });
-        } catch(e) { return res.status(200).json({ ok: false, error: e.message }); }
+          const isOk = r.ok && d.status !== false;
+          // Return both `ok` and `success` for compatibility
+          return res.status(200).json({ ok: isOk, success: isOk, message: isOk ? "Fonnte terhubung" : (d.reason || "Gagal terkoneksi"), detail: d });
+        } catch(e) { return res.status(200).json({ ok: false, success: false, error: e.message }); }
       }
 
       if (type === "storage" || type === "r2") {
@@ -205,7 +209,7 @@ export default async function handler(req, res) {
       }
 
       return res.status(200).json({
-        ok: true, service: "AClean API",
+        ok: true, success: true, service: "AClean API",
         env: { fonnte: !!process.env.FONNTE_TOKEN, llm_key: !!process.env.LLM_API_KEY, cloudflare: !!process.env.CLOUDFLARE_API_TOKEN, owner_phone: !!process.env.OWNER_PHONE, supabase: !!process.env.SUPABASE_SERVICE_KEY }
       });
     }
