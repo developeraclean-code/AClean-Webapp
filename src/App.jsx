@@ -6804,7 +6804,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             const isOn = appSettings[key] === "true";
             return (
               <div key={key} style={{ display:"flex", alignItems:"center", gap:14, padding:"12px 0",
-                borderBottom:"1px solid "+cs.border+", ".slice(0,-2) }}>
+                borderBottom:"1px solid "+cs.border }}>
                 <span style={{ fontSize:18, minWidth:24 }}>{icon}</span>
                 <div style={{ flex:1 }}>
                   <div style={{ fontWeight:700, color:isOn?cs.text:cs.muted, fontSize:13 }}>{label}</div>
