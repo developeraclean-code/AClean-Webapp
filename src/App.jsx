@@ -609,6 +609,7 @@ export default function ACleanWebApp() {
     company_addr:"",
     wa_number:   "",
     wa_autoreply_enabled: "false",
+    ara_training_rules:   "",
     wa_forward_to_owner:  "true",
   });
 
@@ -1565,6 +1566,7 @@ ${matRowsHtml}
           wa_number:   sMap.wa_number   || prev.wa_number,
           wa_autoreply_enabled: sMap.wa_autoreply_enabled ?? prev.wa_autoreply_enabled,
           wa_forward_to_owner:  sMap.wa_forward_to_owner  ?? prev.wa_forward_to_owner,
+          ara_training_rules:   sMap.ara_training_rules   ?? prev.ara_training_rules,
         }));
         if (sMap.cron_jobs) {
           try { const s=JSON.parse(sMap.cron_jobs);
@@ -6832,6 +6834,99 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           })}
           <div style={{ marginTop:12, padding:"10px 12px", background:cs.surface, borderRadius:8, fontSize:11, color:cs.muted }}>
             💡 <b>Mode aman:</b> Auto-Reply <b>OFF</b> + Forward <b>ON</b> = pesan masuk diteruskan ke Owner, dibalas manual. Ideal saat tim sedang sibuk.
+          </div>
+        </div>
+
+        {/* ── ARA TRAINING RULES UPLOAD (Owner only) ── */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+            <span style={{ fontSize:20 }}>🧠</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontWeight:800, color:cs.text, fontSize:14 }}>ARA Training Rules</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Upload file Excel training untuk melatih respons ARA lebih baik — tersimpan di Supabase</div>
+            </div>
+            <a href="#" onClick={async(e)=>{e.preventDefault();
+              const {data:d} = await supabase.from("app_settings").select("value").eq("key","ara_training_rules").single();
+              if(d?.value){const blob=new Blob([d.value],{type:"application/json"});const u=URL.createObjectURL(blob);const a=document.createElement("a");a.href=u;a.download="ara_rules.json";a.click();}
+            }} style={{ fontSize:11, color:cs.accent, textDecoration:"none" }}>⬇️ Download JSON</a>
+          </div>
+
+          {/* Stats */}
+          {(() => {
+            try {
+              const raw = appSettings.ara_training_rules;
+              if (!raw || raw === "{}") return null;
+              const d = typeof raw === "string" ? JSON.parse(raw) : raw;
+              const rules = (d.auto_reply_rules||[]).length;
+              const scenarios = (d.ara_training_scenarios||[]).length;
+              const troubles = (d.trouble_cases||[]).length;
+              if (!rules && !scenarios && !troubles) return null;
+              return (
+                <div style={{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap" }}>
+                  {[["🔁 Auto-Reply Rules", rules, cs.accent], ["🎭 Scenarios", scenarios, cs.green], ["⚠️ Trouble Cases", troubles, cs.yellow]].map(([label, count, color])=>(
+                    <div key={label} style={{ background:color+"18", border:"1px solid "+color+"44", borderRadius:8, padding:"6px 12px", fontSize:11, color:color, fontWeight:700 }}>
+                      {label}: {count}
+                    </div>
+                  ))}
+                  <div style={{ fontSize:11, color:cs.muted, alignSelf:"center" }}>
+                    v{(typeof raw==="string"?JSON.parse(raw):raw).version||"1.0"} — diupdate {(typeof raw==="string"?JSON.parse(raw):raw).updated||"-"}
+                  </div>
+                </div>
+              );
+            } catch(_) { return null; }
+          })()}
+
+          {/* Upload area */}
+          <div style={{ border:"2px dashed "+cs.border, borderRadius:10, padding:16, textAlign:"center", background:cs.surface }}>
+            <div style={{ fontSize:13, color:cs.muted, marginBottom:10 }}>
+              📂 Upload file Excel (.xlsx) atau JSON yang sudah diisi
+            </div>
+            <input type="file" accept=".xlsx,.json" id="ara-training-upload"
+              style={{ display:"none" }}
+              onChange={async(e)=>{
+                const file = e.target.files?.[0];
+                if (!file) return;
+                showNotif("⏳ Membaca file training...");
+                try {
+                  if (file.name.endsWith(".json")) {
+                    const text = await file.text();
+                    const parsed = JSON.parse(text);
+                    const val = JSON.stringify(parsed);
+                    await supabase.from("app_settings").upsert({key:"ara_training_rules", value:val},{onConflict:"key"});
+                    setAppSettings(prev=>({...prev, ara_training_rules: val}));
+                    const rules = (parsed.auto_reply_rules||[]).length;
+                    const sc = (parsed.ara_training_scenarios||[]).length;
+                    showNotif("✅ Training rules berhasil diupload: "+rules+" rules, "+sc+" scenarios");
+                  } else if (file.name.endsWith(".xlsx")) {
+                    showNotif("⚠️ Untuk file .xlsx, export dulu ke JSON dari sheet JSON Preview, lalu upload JSON-nya.");
+                  }
+                } catch(err) {
+                  showNotif("❌ Error baca file: " + err.message);
+                }
+                e.target.value = "";
+              }}
+            />
+            <button onClick={()=>document.getElementById("ara-training-upload").click()}
+              style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#fff", padding:"10px 24px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+              📤 Upload Training File
+            </button>
+            <div style={{ fontSize:11, color:cs.muted, marginTop:8 }}>
+              Format: .json (dari sheet "JSON Preview" di file Excel) atau .xlsx langsung
+            </div>
+          </div>
+
+          {/* Sync to ARA Brain */}
+          <div style={{ marginTop:12, padding:"10px 14px", background:cs.green+"12", border:"1px solid "+cs.green+"33", borderRadius:8, display:"flex", alignItems:"center", gap:12 }}>
+            <span style={{ fontSize:16 }}>🔄</span>
+            <div style={{ flex:1, fontSize:11, color:cs.muted }}>
+              Rules yang diupload otomatis digunakan ARA saat membalas pesan WA. Tidak perlu restart.
+            </div>
+            <button onClick={async()=>{
+              const {data:d} = await supabase.from("app_settings").select("value").eq("key","ara_training_rules").single();
+              if(d?.value){ setAppSettings(prev=>({...prev, ara_training_rules:d.value})); showNotif("✅ Rules ARA disync dari Supabase"); }
+            }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:7, cursor:"pointer", fontWeight:700, fontSize:12, whiteSpace:"nowrap" }}>
+              🔄 Sync Sekarang
+            </button>
           </div>
         </div>
 
