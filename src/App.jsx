@@ -442,7 +442,11 @@ export default function ACleanWebApp() {
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [invoiceFilter,   setInvoiceFilter]   = useState("Semua");
   const [invoicePage,     setInvoicePage]     = useState(1);
+  const [customerPage,    setCustomerPage]    = useState(1);
+  const [schedPage,       setSchedPage]       = useState(1);
   const INV_PAGE_SIZE = 15;
+  const CUST_PAGE_SIZE = 20;
+  const SCHED_PAGE_SIZE = 15;
   const [modalPDF,        setModalPDF]        = useState(false);
   const [modalApproveInv, setModalApproveInv] = useState(false); // popup pilihan approve
   const [pendingApproveInv, setPendingApproveInv] = useState(null); // invoice yang menunggu approve
@@ -604,6 +608,8 @@ export default function ACleanWebApp() {
     company_name:"",
     company_addr:"",
     wa_number:   "",
+    wa_autoreply_enabled: "false",
+    wa_forward_to_owner:  "true",
   });
 
   // ── Settings: _ls HARUS dideklarasi SEBELUM useState yang memakainya ──
@@ -1557,6 +1563,8 @@ ${matRowsHtml}
           company_name:sMap.company_name|| prev.company_name,
           company_addr:sMap.company_addr|| prev.company_addr,
           wa_number:   sMap.wa_number   || prev.wa_number,
+          wa_autoreply_enabled: sMap.wa_autoreply_enabled ?? prev.wa_autoreply_enabled,
+          wa_forward_to_owner:  sMap.wa_forward_to_owner  ?? prev.wa_forward_to_owner,
         }));
         if (sMap.cron_jobs) {
           try { const s=JSON.parse(sMap.cron_jobs);
@@ -2579,7 +2587,7 @@ ${matRowsHtml}
               { name:"create_order", description:"Buat order baru",
                 parameters:{ type:"OBJECT", properties:{
                   customer:{type:"STRING"}, phone:{type:"STRING"}, address:{type:"STRING"},
-                  service:{type:"STRING",enum:["Cuci AC","Freon AC","Perbaikan AC","Pasang AC Baru","Bongkar AC","Service AC"]},
+                  service:{type:"STRING",enum:["Cleaning","Repair","Install","Complain","Pasang AC Baru","Bongkar AC","Service AC"]},
                   units:{type:"NUMBER"}, teknisi:{type:"STRING"}, helper:{type:"STRING"},
                   date:{type:"STRING",description:"YYYY-MM-DD"}, time:{type:"STRING",description:"HH:MM"},
                   notes:{type:"STRING"}
@@ -2800,7 +2808,7 @@ ${matRowsHtml}
               customer: act.customer || "?",
               phone: act.phone || "",
               address: act.address || "",
-              service: act.service || "Cuci AC",
+              service: act.service || "Cleaning",
               units: parseInt(act.units)||1,
               teknisi: act.teknisi || "",
               helper: act.helper || "",
@@ -2811,6 +2819,14 @@ ${matRowsHtml}
               dispatch: false,
               created_at: new Date().toISOString(),
             };
+            // ── Auto-enforce helper rule (units>=3 atau Install) ──
+            if ((parseInt(newOrd.units)||1) >= 3 || newOrd.service === "Install") {
+              if (!newOrd.helper) {
+                const availHelper = teknisiData.find(t => t.role==="Helper" && t.status!=="inactive");
+                if (availHelper) { newOrd.helper = availHelper.name; }
+                else addAgentLog("ARA_WARN","Helper dibutuhkan tapi belum ada di database","WARNING");
+              }
+            }
             setOrdersData(prev => [...prev, newOrd]);
             const {error:oErr} = await supabase.from("orders").insert(newOrd);
             if (oErr) console.warn("Create order DB:", oErr.message);
@@ -2925,7 +2941,7 @@ ${matRowsHtml}
                 service: ord.service + (ord.type ? " - " + ord.type : ""),
                 units: ord.units || 1,
                 labor: laborTotal,
-                material: materialTotal,
+                material: materialCost,
                 materials_detail: _araMatDetail,
                 dadakan: dadakanFee,
                 discount: 0,
@@ -3432,6 +3448,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         (cu.notes||"").toLowerCase().includes(_scq)
       );
     });
+    const totPgCust = Math.ceil(filteredCusts.length / CUST_PAGE_SIZE) || 1;
+    const curPgCust = Math.min(customerPage, totPgCust);
+    const pageCusts = filteredCusts.slice((curPgCust-1)*CUST_PAGE_SIZE, curPgCust*CUST_PAGE_SIZE);
     return (
       <div style={{ display:"grid", gap:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -3457,7 +3476,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             {/* Search bar */}
             <div style={{ position:"relative" }}>
               <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-              <input id="searchCustomer" value={searchCustomer} onChange={e=>setSearchCustomer(e.target.value)}
+              <input id="searchCustomer" value={searchCustomer} onChange={e=>{setSearchCustomer(e.target.value);setCustomerPage(1);}}}
                 placeholder="Cari nama customer atau nomor telepon..."
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
               {searchCustomer && <button onClick={()=>setSearchCustomer("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
@@ -3465,7 +3484,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             {searchCustomer && (
               <div style={{ fontSize:12, color:cs.muted }}>Menampilkan <b style={{ color:cs.accent }}>{filteredCusts.length}</b> dari {customersData.length} customer</div>
             )}
-            {filteredCusts.map(cu => {
+            {pageCusts.map(cu => {
               const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
               const lastSvc = cHist[0]; // sudah sorted by date desc
               return (
@@ -3538,6 +3557,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 </div>
               );
             })}
+            {/* Customer pagination */}
+            {totPgCust > 1 && (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, marginTop:14, flexWrap:"wrap" }}>
+                <button onClick={()=>setCustomerPage(p=>Math.max(1,p-1))} disabled={curPgCust===1}
+                  style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
+                    background:curPgCust===1?cs.surface:cs.card, color:curPgCust===1?cs.muted:cs.text, cursor:curPgCust===1?"default":"pointer" }}>‹</button>
+                {Array.from({length:Math.min(totPgCust,7)},(_,i)=>{
+                  let pg=i+1;
+                  if(totPgCust>7){ if(curPgCust<=4) pg=i+1; else if(curPgCust>=totPgCust-3) pg=totPgCust-6+i; else pg=curPgCust-3+i; }
+                  return (<button key={pg} onClick={()=>setCustomerPage(pg)}
+                    style={{ padding:"5px 10px", borderRadius:8, border:"1px solid "+(curPgCust===pg?cs.accent:cs.border),
+                      background:curPgCust===pg?cs.accent:cs.card, color:curPgCust===pg?"#0a0f1e":cs.text, cursor:"pointer", fontWeight:curPgCust===pg?700:400 }}>{pg}</button>);
+                })}
+                <button onClick={()=>setCustomerPage(p=>Math.min(totPgCust,p+1))} disabled={curPgCust===totPgCust}
+                  style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
+                    background:curPgCust===totPgCust?cs.surface:cs.card, color:curPgCust===totPgCust?cs.muted:cs.text, cursor:curPgCust===totPgCust?"default":"pointer" }}>›</button>
+                <span style={{fontSize:11,color:cs.muted}}>hal {curPgCust}/{totPgCust} · {filteredCusts.length} customer</span>
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ display:"grid", gap:14 }}>
@@ -4872,7 +4910,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               }
               const dayNames2 = ["Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"];
               const sorted2 = [...filteredOrders].sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
-              const groups = sorted2.reduce((acc, o) => { if (!acc[o.date]) acc[o.date] = []; acc[o.date].push(o); return acc; }, {});
+              const totPgSched = Math.ceil(sorted2.length / SCHED_PAGE_SIZE) || 1;
+              const curPgSched = Math.min(schedPage, totPgSched);
+              const pagedSched = sorted2.slice((curPgSched-1)*SCHED_PAGE_SIZE, curPgSched*SCHED_PAGE_SIZE);
+              const groups = pagedSched.reduce((acc, o) => { if (!acc[o.date]) acc[o.date] = []; acc[o.date].push(o); return acc; }, {});
               return Object.entries(groups).map(([date2, dayOrders]) => {
                 const d2 = new Date(date2 + "T00:00:00");
                 const todayStr2 = new Date().toISOString().slice(0,10);
@@ -5001,6 +5042,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 );
               });
             })()}
+            {/* Jadwal pagination */}
+            {totPgSched > 1 && (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, marginTop:14, flexWrap:"wrap" }}>
+                <button onClick={()=>setSchedPage(p=>Math.max(1,p-1))} disabled={curPgSched===1}
+                  style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
+                    background:curPgSched===1?cs.surface:cs.card, color:curPgSched===1?cs.muted:cs.text, cursor:curPgSched===1?"default":"pointer" }}>‹</button>
+                {Array.from({length:Math.min(totPgSched,7)},(_,i)=>{
+                  let pg=i+1;
+                  if(totPgSched>7){ if(curPgSched<=4) pg=i+1; else if(curPgSched>=totPgSched-3) pg=totPgSched-6+i; else pg=curPgSched-3+i; }
+                  return (<button key={pg} onClick={()=>setSchedPage(pg)}
+                    style={{ padding:"5px 10px", borderRadius:8, border:"1px solid "+(curPgSched===pg?cs.accent:cs.border),
+                      background:curPgSched===pg?cs.accent:cs.card, color:curPgSched===pg?"#0a0f1e":cs.text, cursor:"pointer", fontWeight:curPgSched===pg?700:400 }}>{pg}</button>);
+                })}
+                <button onClick={()=>setSchedPage(p=>Math.min(totPgSched,p+1))} disabled={curPgSched===totPgSched}
+                  style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
+                    background:curPgSched===totPgSched?cs.surface:cs.card, color:curPgSched===totPgSched?cs.muted:cs.text, cursor:curPgSched===totPgSched?"default":"pointer" }}>›</button>
+                <span style={{fontSize:11,color:cs.muted}}>hal {curPgSched}/{totPgSched} · {sorted2.length} jadwal</span>
+              </div>
+            )}
           </div>
         )}
           </>
@@ -6725,6 +6785,53 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             <input id="field_password_6" type="password" placeholder={dbProvider==="supabase"?"Supabase Anon Key":"Password / Secret Key"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
             <button onClick={() => { showNotif("Mencoba koneksi database..."); setTimeout(() => showNotif("Database terkoneksi! Tables: 15"), 2000); }}
               style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"9px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:700 }}>🔌 Test Koneksi</button>
+          </div>
+        </div>
+
+        {/* ── WA AUTO-REPLY TOGGLE (Owner only) ── */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+            <span style={{ fontSize:20 }}>💬</span>
+            <div>
+              <div style={{ fontWeight:800, color:cs.text, fontSize:14 }}>Pengaturan WA Auto-Reply</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Kontrol auto-reply & notif masuk tanpa perlu ubah kode</div>
+            </div>
+          </div>
+          {[
+            { key:"wa_autoreply_enabled", label:"Auto-Reply Aktif",      desc:"Balas pesan customer otomatis berdasarkan keyword (halo, harga, order, dll)", icon:"🤖" },
+            { key:"wa_forward_to_owner",  label:"Forward ke Owner",       desc:"Teruskan semua pesan WA masuk ke nomor Owner sebagai notifikasi", icon:"📨" },
+          ].map(({ key, label, desc, icon }) => {
+            const isOn = appSettings[key] === "true";
+            return (
+              <div key={key} style={{ display:"flex", alignItems:"center", gap:14, padding:"12px 0",
+                borderBottom:"1px solid "+cs.border+", ".slice(0,-2) }}>
+                <span style={{ fontSize:18, minWidth:24 }}>{icon}</span>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontWeight:700, color:isOn?cs.text:cs.muted, fontSize:13 }}>{label}</div>
+                  <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>{desc}</div>
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:11, color:isOn?cs.green:cs.muted }}>{isOn?"ON":"OFF"}</span>
+                  <div onClick={async () => {
+                    const newVal = isOn ? "false" : "true";
+                    setAppSettings(prev => ({ ...prev, [key]: newVal }));
+                    await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict:"key" });
+                    showNotif((isOn?"⛔ ":"✅ ") + label + (isOn?" dimatikan":" diaktifkan"));
+                  }}
+                  style={{ width:44, height:24, borderRadius:99,
+                    background:isOn?"linear-gradient(135deg,"+cs.green+",#059669)":cs.surface,
+                    border:"1px solid "+(isOn?cs.green:cs.border),
+                    cursor:"pointer", position:"relative", transition:"all .2s" }}>
+                    <div style={{ position:"absolute", width:18, height:18, borderRadius:"50%", background:"#fff",
+                      top:2, left:isOn?22:2, transition:"left .2s",
+                      boxShadow:"0 1px 3px #0004" }} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ marginTop:12, padding:"10px 12px", background:cs.surface, borderRadius:8, fontSize:11, color:cs.muted }}>
+            💡 <b>Mode aman:</b> Auto-Reply <b>OFF</b> + Forward <b>ON</b> = pesan masuk diteruskan ke Owner, dibalas manual. Ideal saat tim sedang sibuk.
           </div>
         </div>
 
