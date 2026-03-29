@@ -408,14 +408,8 @@ export default function ACleanWebApp() {
 
   const [modalAddUser,  setModalAddUser]  = useState(false);
   const [newUserForm,   setNewUserForm]   = useState({ name:"", email:"", role:"Admin", password:"", phone:"" });
-  const [userAccounts,  setUserAccounts]  = useState([
-    { id:"USR001", name:"Malda Retta",   email:"owner@aclean.id",   role:"Owner",   phone:"6281299898937", password:"owner@2026",   avatar:"M", color:"#f59e0b", active:true, lastLogin:"-" },
-    { id:"USR002", name:"Admin AClean",  email:"admin@aclean.id",   role:"Admin",   phone:"6281200000001", password:"admin@2026",   avatar:"A", color:"#38bdf8", active:true, lastLogin:"-" },
-    { id:"USR003", name:"Mulyadi",       email:"mulyadi@aclean.id", role:"Teknisi", phone:"6288225633768", password:"mly@2026",     avatar:"Y", color:"#22c55e", active:true, lastLogin:"-" },
-    { id:"USR004", name:"Albana Niji",   email:"albana@aclean.id",  role:"Helper",  phone:"6281200000002", password:"abn@2026",     avatar:"A", color:"#a78bfa", active:true, lastLogin:"-" },
-    { id:"USR005", name:"Budi Santoso",  email:"budi@aclean.id",    role:"Teknisi", phone:"6281200000003", password:"budi@2026",    avatar:"B", color:"#22c55e", active:true, lastLogin:"-" },
-    { id:"USR006", name:"Reza Firmansyah",email:"reza@aclean.id",   role:"Teknisi", phone:"6281200000004", password:"reza@2026",    avatar:"R", color:"#22c55e", active:true, lastLogin:"-" },
-  ]);
+  const [userAccounts,  setUserAccounts]  = useState([]);
+  // userAccounts diload dari Supabase user_profiles — tidak ada password hardcode di sini
 
   // ── Tim Teknisi state (reactive) ──
   const [teknisiData, setTeknisiData] = useState(TEKNISI_DATA);
@@ -444,6 +438,9 @@ export default function ACleanWebApp() {
   const [invoicePage,     setInvoicePage]     = useState(1);
   const [customerPage,    setCustomerPage]    = useState(1);
   const [schedPage,       setSchedPage]       = useState(1);
+  const [dbHealthData,    setDbHealthData]    = useState([]);
+  const [dbHealthLoading, setDbHealthLoading] = useState(false);
+  const [vacuumLoading,   setVacuumLoading]   = useState({});
   const INV_PAGE_SIZE = 15;
   const CUST_PAGE_SIZE = 20;
   const SCHED_PAGE_SIZE = 15;
@@ -1341,26 +1338,8 @@ ${matRowsHtml}
         return;
       }
 
-      // ── Fallback: cek di userAccounts lokal (akun demo / belum di Supabase Auth) ──
-      const localUser = userAccounts.find(u =>
-        u.email.toLowerCase() === email.toLowerCase() && u.password === pass && u.active !== false
-      );
-      if (localUser) {
-        // SEC-08: Tambah expiry 8 jam ke session
-        const userObj = { ...localUser, id: localUser.id, _exp: Date.now() + 8*60*60*1000 };
-        setCurrentUser(userObj);
-        setIsLoggedIn(true);
-        setActiveRole(localUser.role.toLowerCase());
-        setActiveMenu("dashboard");
-        _lsSave("localSession", userObj);
-        // SEC-07: Reset counter
-        setLoginAttempts(0); setLockoutUntil(0);
-        _lsSave("loginAttempts", 0); _lsSave("lockoutUntil", 0);
-        showNotif("Selamat datang, " + localUser.name + "! (mode lokal)");
-          addAgentLog("LOGIN", `${localUser.name} (${localUser.role}) login lokal`, "SUCCESS");
-        requestPushPermission();
-        return;
-      }
+      // ── Fallback dihapus: semua login wajib via Supabase Auth ──
+      // Tidak ada lagi login dengan password hardcode
 
       // SEC-07: increment attempt counter
       const newAttempts = loginAttempts + 1;
@@ -6930,6 +6909,154 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           </div>
         </div>
 
+        {/* ── DATABASE HEALTH — DEAD ROWS MONITOR ── */}
+        {currentUser?.role === "Owner" && (
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:20 }}>🧹</span>
+              <div>
+                <div style={{ fontWeight:800, color:cs.text, fontSize:14 }}>Database Health — Dead Rows</div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Monitor "bangkai data" yang memboroskan storage. Jalankan VACUUM manual jika persentase tinggi.</div>
+              </div>
+            </div>
+            <button onClick={async () => {
+              setDbHealthLoading(true);
+              try {
+                const { data } = await supabase.rpc('get_dead_rows_stats').catch(() => ({ data: null }));
+                if (data) {
+                  setDbHealthData(data);
+                } else {
+                  // Fallback: query langsung
+                  const { data: raw } = await supabase
+                    .from('pg_stat_user_tables_view')
+                    .select('*')
+                    .catch(() => ({ data: null }));
+                  if (!raw) {
+                    showNotif("⚠️ Perlu setup view pg_stat — cek panduan di bawah");
+                  }
+                }
+              } catch(e) {
+                showNotif("❌ Gagal load health data: " + e.message);
+              } finally {
+                setDbHealthLoading(false);
+              }
+            }}
+            style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent,
+              padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12,
+              display:"flex", alignItems:"center", gap:6 }}>
+              {dbHealthLoading ? "⏳ Loading..." : "🔄 Refresh Stats"}
+            </button>
+          </div>
+
+          {/* Penjelasan dead rows */}
+          <div style={{ background:cs.surface, borderRadius:8, padding:"10px 14px", marginBottom:14,
+            border:"1px solid "+cs.border, fontSize:11, color:cs.muted, lineHeight:1.6 }}>
+            💡 <b style={{color:cs.text}}>Apa itu Dead Rows?</b> Saat data diupdate atau dihapus, PostgreSQL tidak langsung hapus dari disk — 
+            ia menandai data lama sebagai "mati" dulu (dead row). Ini normal dan aman. Data asli <b style={{color:cs.green}}>TIDAK hilang</b>. 
+            VACUUM hanya membersihkan "bangkai" ini agar storage lebih efisien. Jalankan jika persentase {">"} 50%.
+          </div>
+
+          {/* Tabel dead rows */}
+          {dbHealthData.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"20px 0", color:cs.muted, fontSize:12 }}>
+              Klik "Refresh Stats" untuk melihat kondisi database
+            </div>
+          ) : (
+            <div style={{ display:"grid", gap:6 }}>
+              {dbHealthData
+                .filter(r => r.dead_rows > 0)
+                .sort((a,b) => b.dead_rows - a.dead_rows)
+                .map(r => {
+                  const pct = r.live_rows > 0 ? Math.round(r.dead_rows / r.live_rows * 100) : r.dead_rows * 100;
+                  const color = pct >= 200 ? cs.red : pct >= 80 ? cs.yellow : cs.green;
+                  const label = pct >= 200 ? "Tinggi" : pct >= 80 ? "Sedang" : "Normal";
+                  const isVacuuming = vacuumLoading[r.tablename];
+                  return (
+                    <div key={r.tablename} style={{ display:"flex", alignItems:"center", gap:10,
+                      background:cs.surface, borderRadius:8, padding:"8px 12px",
+                      border:"1px solid "+(pct >= 200 ? cs.red+"44" : pct >= 80 ? cs.yellow+"44" : cs.border) }}>
+                      {/* Nama tabel */}
+                      <div style={{ width:160, fontWeight:600, fontSize:12, color:cs.text, fontFamily:"monospace" }}>
+                        {r.tablename}
+                      </div>
+                      {/* Stats */}
+                      <div style={{ fontSize:11, color:cs.muted, flex:1 }}>
+                        <span style={{ color:cs.green }}>✅ {r.live_rows} live</span>
+                        <span style={{ margin:"0 6px", color:cs.border }}>|</span>
+                        <span style={{ color:color }}>💀 {r.dead_rows} dead</span>
+                        {r.last_autovacuum && (
+                          <>
+                            <span style={{ margin:"0 6px", color:cs.border }}>|</span>
+                            <span>🕐 Auto-vacuum: {new Date(r.last_autovacuum).toLocaleDateString("id-ID")}</span>
+                          </>
+                        )}
+                      </div>
+                      {/* Progress bar */}
+                      <div style={{ width:100, height:6, background:cs.border, borderRadius:99, overflow:"hidden" }}>
+                        <div style={{ width:Math.min(100,pct)+"%" , height:"100%", background:color, borderRadius:99, transition:"width .3s" }} />
+                      </div>
+                      {/* Badge */}
+                      <div style={{ fontSize:10, padding:"2px 8px", borderRadius:99, fontWeight:700,
+                        background:color+"22", color:color, minWidth:50, textAlign:"center" }}>
+                        {pct}% {label}
+                      </div>
+                      {/* Tombol VACUUM */}
+                      <button
+                        disabled={isVacuuming || pct < 30}
+                        onClick={async () => {
+                          if (!await showConfirm({
+                            icon: "🧹",
+                            title: "Jalankan VACUUM?",
+                            message: `VACUUM pada tabel "${r.tablename}" akan membersihkan ${r.dead_rows} dead rows.\n\n⚠️ Data aktif TIDAK akan terhapus. Proses aman dan bisa dibatalkan kapan saja.`,
+                            confirmText: "Ya, Bersihkan"
+                          })) return;
+                          setVacuumLoading(prev => ({...prev, [r.tablename]: true}));
+                          try {
+                            // Panggil via Supabase RPC
+                            const { error } = await supabase.rpc('manual_vacuum_table', { table_name: r.tablename });
+                            if (error) throw new Error(error.message);
+                            showNotif("✅ VACUUM selesai: " + r.tablename);
+                            // Refresh stats
+                            setTimeout(async () => {
+                              const { data } = await supabase.rpc('get_dead_rows_stats');
+                              if (data) setDbHealthData(data);
+                            }, 1000);
+                          } catch(e) {
+                            showNotif("❌ VACUUM gagal: " + e.message);
+                          } finally {
+                            setVacuumLoading(prev => ({...prev, [r.tablename]: false}));
+                          }
+                        }}
+                        style={{ fontSize:11, padding:"4px 10px", borderRadius:7, cursor:isVacuuming || pct < 30 ? "default" : "pointer",
+                          background: pct < 30 ? cs.surface : cs.accent+"22",
+                          border:"1px solid "+(pct < 30 ? cs.border : cs.accent+"44"),
+                          color: pct < 30 ? cs.muted : cs.accent, fontWeight:600,
+                          opacity: isVacuuming ? 0.6 : 1, minWidth:80 }}>
+                        {isVacuuming ? "⏳ ..." : pct >= 30 ? "🧹 VACUUM" : "✅ OK"}
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+
+          {/* Info: kapan perlu VACUUM */}
+          <div style={{ marginTop:12, display:"flex", gap:10, flexWrap:"wrap" }}>
+            {[
+              { color:cs.green,  label:"Normal", desc:"< 80% — biarkan, autovacuum akan handle" },
+              { color:cs.yellow, label:"Sedang",  desc:"80–200% — perhatikan, VACUUM jika perlu" },
+              { color:cs.red,    label:"Tinggi",  desc:"> 200% — disarankan VACUUM manual" },
+            ].map(({ color, label, desc }) => (
+              <div key={label} style={{ display:"flex", alignItems:"center", gap:6, fontSize:11, color:cs.muted }}>
+                <div style={{ width:10, height:10, borderRadius:3, background:color }} />
+                <b style={{ color:cs.text }}>{label}:</b> {desc}
+              </div>
+            ))}
+          </div>
+        </div>
+        )}
+
         {/* ── CRON JOBS ── */}
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
@@ -7070,10 +7197,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   if (!isLoggedIn) {
     // Quick login hints dihapus — gunakan email & password dari Supabase
     const quickLogins = [
-      { role:"Owner",   icon:"👑", email:"owner@aclean.id",   hint:"owner@2026"   },
-      { role:"Admin",   icon:"🛠️", email:"admin@aclean.id",   hint:"admin@2026"   },
-      { role:"Teknisi", icon:"👷", email:"mulyadi@aclean.id", hint:"mly@2026"     },
-      { role:"Helper",  icon:"🤝", email:"albana@aclean.id",  hint:"abn@2026"     },
+      { role:"Owner",   icon:"👑", email:"owner@aclean.id"   },
+      { role:"Admin",   icon:"🛠️", email:"admin@aclean.id"   },
+      { role:"Teknisi", icon:"👷", email:"mulyadi@aclean.id"     },
+      { role:"Helper",  icon:"🤝", email:"albana@aclean.id"     },
     ];
     return (
       <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
