@@ -4895,7 +4895,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               const curPgSched = Math.min(schedPage, totPgSched);
               const pagedSched = sorted2.slice((curPgSched-1)*SCHED_PAGE_SIZE, curPgSched*SCHED_PAGE_SIZE);
               const groups = pagedSched.reduce((acc, o) => { if (!acc[o.date]) acc[o.date] = []; acc[o.date].push(o); return acc; }, {});
-              return Object.entries(groups).map(([date2, dayOrders]) => {
+              const groupsJSX = Object.entries(groups).map(([date2, dayOrders]) => {
                 const d2 = new Date(date2 + "T00:00:00");
                 const todayStr2 = new Date().toISOString().slice(0,10);
                 const tomorrowStr2 = new Date(Date.now()+86400000).toISOString().slice(0,10);
@@ -5022,26 +5022,30 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                 );
               });
+              return (
+                <>
+                  {groupsJSX}
+                  {totPgSched > 1 && (
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, marginTop:14, flexWrap:"wrap" }}>
+                      <button onClick={()=>setSchedPage(p=>Math.max(1,p-1))} disabled={curPgSched===1}
+                        style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
+                          background:curPgSched===1?cs.surface:cs.card, color:curPgSched===1?cs.muted:cs.text, cursor:curPgSched===1?"default":"pointer" }}>‹</button>
+                      {Array.from({length:Math.min(totPgSched,7)},(_,i)=>{
+                        let pg=i+1;
+                        if(totPgSched>7){ if(curPgSched<=4) pg=i+1; else if(curPgSched>=totPgSched-3) pg=totPgSched-6+i; else pg=curPgSched-3+i; }
+                        return (<button key={pg} onClick={()=>setSchedPage(pg)}
+                          style={{ padding:"5px 10px", borderRadius:8, border:"1px solid "+(curPgSched===pg?cs.accent:cs.border),
+                            background:curPgSched===pg?cs.accent:cs.card, color:curPgSched===pg?"#0a0f1e":cs.text, cursor:"pointer", fontWeight:curPgSched===pg?700:400 }}>{pg}</button>);
+                      })}
+                      <button onClick={()=>setSchedPage(p=>Math.min(totPgSched,p+1))} disabled={curPgSched===totPgSched}
+                        style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
+                          background:curPgSched===totPgSched?cs.surface:cs.card, color:curPgSched===totPgSched?cs.muted:cs.text, cursor:curPgSched===totPgSched?"default":"pointer" }}>›</button>
+                      <span style={{fontSize:11,color:cs.muted}}>hal {curPgSched}/{totPgSched} · {sorted2.length} jadwal</span>
+                    </div>
+                  )}
+                </>
+              );
             })()}
-            {/* Jadwal pagination */}
-            {totPgSched > 1 && (
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, marginTop:14, flexWrap:"wrap" }}>
-                <button onClick={()=>setSchedPage(p=>Math.max(1,p-1))} disabled={curPgSched===1}
-                  style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
-                    background:curPgSched===1?cs.surface:cs.card, color:curPgSched===1?cs.muted:cs.text, cursor:curPgSched===1?"default":"pointer" }}>‹</button>
-                {Array.from({length:Math.min(totPgSched,7)},(_,i)=>{
-                  let pg=i+1;
-                  if(totPgSched>7){ if(curPgSched<=4) pg=i+1; else if(curPgSched>=totPgSched-3) pg=totPgSched-6+i; else pg=curPgSched-3+i; }
-                  return (<button key={pg} onClick={()=>setSchedPage(pg)}
-                    style={{ padding:"5px 10px", borderRadius:8, border:"1px solid "+(curPgSched===pg?cs.accent:cs.border),
-                      background:curPgSched===pg?cs.accent:cs.card, color:curPgSched===pg?"#0a0f1e":cs.text, cursor:"pointer", fontWeight:curPgSched===pg?700:400 }}>{pg}</button>);
-                })}
-                <button onClick={()=>setSchedPage(p=>Math.min(totPgSched,p+1))} disabled={curPgSched===totPgSched}
-                  style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
-                    background:curPgSched===totPgSched?cs.surface:cs.card, color:curPgSched===totPgSched?cs.muted:cs.text, cursor:curPgSched===totPgSched?"default":"pointer" }}>›</button>
-                <span style={{fontSize:11,color:cs.muted}}>hal {curPgSched}/{totPgSched} · {sorted2.length} jadwal</span>
-              </div>
-            )}
           </div>
         )}
           </>
