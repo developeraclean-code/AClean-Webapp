@@ -217,20 +217,94 @@ export default async function handler(req, res) {
     // ── UPLOAD-FOTO ──
     if (route === "upload-foto") {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-      const { fileName, fileData, fileType, folder } = req.body || {};
-      if (!fileName || !fileData) return res.status(400).json({ error: "fileName dan fileData wajib" });
-      const CA=process.env.CLOUDFLARE_ACCOUNT_ID, CT=process.env.CLOUDFLARE_API_TOKEN, CB=process.env.R2_BUCKET_NAME||"aclean-fotos";
-      if (!CA||!CT) return res.status(500).json({ error: "Cloudflare env vars tidak diset" });
-      const key = (folder||"fotos") + "/" + Date.now() + "_" + fileName;
-      const r = await fetch("https://api.cloudflare.com/client/v4/accounts/"+CA+"/r2/buckets/"+CB+"/objects/"+key, {
-        method:"PUT", headers:{ Authorization:"Bearer "+CT, "Content-Type":fileType||"image/jpeg" }, body: Buffer.from(fileData,"base64")
-      });
-      if (!r.ok) return res.status(502).json({ success:false, error: await r.text() });
-      const pub = process.env.R2_PUBLIC_URL || ("https://pub-"+CA.slice(0,16)+".r2.dev");
-      return res.status(200).json({ success:true, url: pub+"/"+key, key });
+      const body = req.body || {};
+
+      // App.jsx mengirim: { base64, filename, reportId, mimeType }
+      const rawData  = body.base64 || body.fileData || "";
+      const fileName = body.filename || body.fileName || ("foto_" + Date.now() + ".jpg");
+      const mimeType = body.mimeType || body.fileType || "image/jpeg";
+      const folder   = body.reportId ? ("laporan/" + body.reportId) : (body.folder || "laporan");
+
+      if (!rawData) {
+        console.error("[upload-foto] body kosong, fields tersedia:", Object.keys(body));
+        return res.status(400).json({ error: "Tidak ada data foto", fields_received: Object.keys(body) });
+      }
+
+      // Strip "data:image/jpeg;base64," prefix jika ada
+      let base64Data = rawData;
+      if (rawData.startsWith("data:")) {
+        const parts = rawData.split(",");
+        base64Data = parts[1] || "";
+      }
+      if (!base64Data) {
+        return res.status(400).json({ error: "base64 kosong setelah strip prefix" });
+      }
+
+      // Cloudflare R2 credentials
+      const CA = process.env.CLOUDFLARE_ACCOUNT_ID;
+      const CT = process.env.CLOUDFLARE_API_TOKEN;
+      const CB = process.env.R2_BUCKET_NAME || "aclean-files";
+      const PUB = process.env.R2_PUBLIC_URL || "";
+
+      if (!CA || !CT) {
+        console.error("[upload-foto] Missing env: CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN");
+        return res.status(500).json({
+          error: "Cloudflare R2 belum dikonfigurasi. Tambahkan CLOUDFLARE_ACCOUNT_ID dan CLOUDFLARE_API_TOKEN di Vercel Environment Variables.",
+          env_check: { has_account_id: !!CA, has_api_token: !!CT }
+        });
+      }
+
+      const ts  = Date.now();
+      const key = folder + "/" + ts + "_" + fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const r2url = "https://api.cloudflare.com/client/v4/accounts/" + CA + "/r2/buckets/" + CB + "/objects/" + key;
+
+      try {
+        const imgBuffer = Buffer.from(base64Data, "base64");
+        console.log("[upload-foto] Uploading to R2:", key, "size:", imgBuffer.length, "bytes");
+
+        const r2res = await fetch(r2url, {
+          method: "PUT",
+          headers: {
+            "Authorization": "Bearer " + CT,
+            "Content-Type": mimeType,
+            "Content-Length": String(imgBuffer.length),
+          },
+          body: imgBuffer,
+        });
+
+        if (!r2res.ok) {
+          const errBody = await r2res.text();
+          console.error("[upload-foto] R2 PUT failed:", r2res.status, errBody);
+          return res.status(502).json({
+            success: false,
+            error: "R2 upload gagal (status " + r2res.status + "): " + errBody.slice(0, 200),
+          });
+        }
+
+        // Build public URL
+        let publicUrl;
+        if (PUB) {
+          publicUrl = PUB.replace(/\/$/, "") + "/" + key;
+        } else {
+          // Fallback: Cloudflare R2 public URL format
+          publicUrl = "https://" + CB + "." + CA + ".r2.cloudflarestorage.com/" + key;
+        }
+
+        console.log("[upload-foto] Success:", publicUrl);
+        return res.status(200).json({
+          success: true,
+          url: publicUrl,
+          key: key,
+          bucket: CB,
+          size: imgBuffer.length,
+        });
+      } catch (err) {
+        console.error("[upload-foto] Exception:", err.message);
+        return res.status(500).json({ success: false, error: "Server error: " + err.message });
+      }
     }
 
-    // ── CRON-REMINDER ──
+        // ── CRON-REMINDER ──
     if (route === "cron-reminder") {
       const SU=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL, SK=process.env.SUPABASE_SERVICE_KEY, FT=process.env.FONNTE_TOKEN;
       if (!SU||!SK||!FT) return res.status(200).json({ ok:false, error:"Env vars tidak lengkap" });
