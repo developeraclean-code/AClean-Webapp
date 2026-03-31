@@ -226,48 +226,87 @@ export default async function handler(req, res) {
       const folder   = body.reportId ? ("laporan/" + body.reportId) : (body.folder || "laporan");
 
       if (!rawData) {
-        console.error("[upload-foto] body kosong, fields tersedia:", Object.keys(body));
+        console.error("[upload-foto] body kosong. Fields:", Object.keys(body));
         return res.status(400).json({ error: "Tidak ada data foto", fields_received: Object.keys(body) });
       }
 
       // Strip "data:image/jpeg;base64," prefix jika ada
       let base64Data = rawData;
-      if (rawData.startsWith("data:")) {
-        const parts = rawData.split(",");
-        base64Data = parts[1] || "";
-      }
-      if (!base64Data) {
-        return res.status(400).json({ error: "base64 kosong setelah strip prefix" });
-      }
+      if (rawData.startsWith("data:")) base64Data = rawData.split(",")[1] || "";
+      if (!base64Data) return res.status(400).json({ error: "base64 kosong setelah strip prefix" });
 
-      // Cloudflare R2 credentials
-      const CA = process.env.CLOUDFLARE_ACCOUNT_ID;
-      const CT = process.env.CLOUDFLARE_API_TOKEN;
-      const CB = process.env.R2_BUCKET_NAME || "aclean-files";
-      const PUB = process.env.R2_PUBLIC_URL || "";
+      // ── Cloudflare R2 via S3-compatible API (AWS Sig V4) ──
+      const accessKeyId     = process.env.R2_ACCESS_KEY;
+      const secretAccessKey = process.env.R2_SECRET_KEY;
+      const accountId       = process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_ACCOUNT_ID;
+      const bucket          = process.env.R2_BUCKET_NAME || "aclean-files";
+      const publicUrl       = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
 
-      if (!CA || !CT) {
-        console.error("[upload-foto] Missing env: CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN");
+      if (!accessKeyId || !secretAccessKey || !accountId) {
+        console.error("[upload-foto] Missing R2 env vars:", {
+          has_access_key: !!accessKeyId,
+          has_secret_key: !!secretAccessKey,
+          has_account_id: !!accountId,
+        });
         return res.status(500).json({
-          error: "Cloudflare R2 belum dikonfigurasi. Tambahkan CLOUDFLARE_ACCOUNT_ID dan CLOUDFLARE_API_TOKEN di Vercel Environment Variables.",
-          env_check: { has_account_id: !!CA, has_api_token: !!CT }
+          error: "R2 credentials belum lengkap di Vercel. Butuh: R2_ACCESS_KEY, R2_SECRET_KEY, R2_ACCOUNT_ID",
+          env_check: { has_access_key: !!accessKeyId, has_secret_key: !!secretAccessKey, has_account_id: !!accountId }
         });
       }
 
-      const ts  = Date.now();
-      const key = folder + "/" + ts + "_" + fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const r2url = "https://api.cloudflare.com/client/v4/accounts/" + CA + "/r2/buckets/" + CB + "/objects/" + key;
+      const ts   = Date.now();
+      const safe = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const key  = folder + "/" + ts + "_" + safe;
+      const host = accountId + ".r2.cloudflarestorage.com";
+      const endpoint = "https://" + host + "/" + bucket + "/" + key;
 
       try {
         const imgBuffer = Buffer.from(base64Data, "base64");
-        console.log("[upload-foto] Uploading to R2:", key, "size:", imgBuffer.length, "bytes");
+        console.log("[upload-foto] Uploading to R2 S3:", key, imgBuffer.length, "bytes");
 
-        const r2res = await fetch(r2url, {
+        // AWS Signature V4 signing (manual, no SDK needed)
+        const crypto = await import("crypto");
+        const now    = new Date();
+        const dateStr  = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 8);   // YYYYMMDD
+        const timeStr  = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15);  // YYYYMMDDTHHmmss + Z
+        const amzDate  = timeStr + "Z";
+        const region   = "auto";
+        const service  = "s3";
+
+        // Hash of payload
+        const payloadHash = crypto.createHash("sha256").update(imgBuffer).digest("hex");
+
+        // Canonical request
+        const canonicalHeaders = "content-type:" + mimeType + "\n" +
+          "host:" + host + "\n" +
+          "x-amz-content-sha256:" + payloadHash + "\n" +
+          "x-amz-date:" + amzDate + "\n";
+        const signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
+        const canonicalUri  = "/" + bucket + "/" + encodeURIComponent(key).replace(/%2F/g, "/");
+        const canonicalReq  = ["PUT", canonicalUri, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
+
+        // String to sign
+        const credScope   = dateStr + "/" + region + "/" + service + "/aws4_request";
+        const reqHash     = crypto.createHash("sha256").update(canonicalReq).digest("hex");
+        const strToSign   = ["AWS4-HMAC-SHA256", amzDate, credScope, reqHash].join("\n");
+
+        // Signing key
+        const hmac = (key, data) => crypto.createHmac("sha256", key).update(data).digest();
+        const signingKey = hmac(hmac(hmac(hmac("AWS4" + secretAccessKey, dateStr), region), service), "aws4_request");
+        const signature  = crypto.createHmac("sha256", signingKey).update(strToSign).digest("hex");
+
+        // Authorization header
+        const authorization = "AWS4-HMAC-SHA256 Credential=" + accessKeyId + "/" + credScope +
+          ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
+
+        const r2res = await fetch(endpoint, {
           method: "PUT",
           headers: {
-            "Authorization": "Bearer " + CT,
-            "Content-Type": mimeType,
-            "Content-Length": String(imgBuffer.length),
+            "Authorization":        authorization,
+            "Content-Type":         mimeType,
+            "x-amz-date":           amzDate,
+            "x-amz-content-sha256": payloadHash,
+            "Content-Length":       String(imgBuffer.length),
           },
           body: imgBuffer,
         });
@@ -277,29 +316,26 @@ export default async function handler(req, res) {
           console.error("[upload-foto] R2 PUT failed:", r2res.status, errBody);
           return res.status(502).json({
             success: false,
-            error: "R2 upload gagal (status " + r2res.status + "): " + errBody.slice(0, 200),
+            error: "R2 upload gagal (" + r2res.status + "): " + errBody.slice(0, 300),
           });
         }
 
         // Build public URL
-        let publicUrl;
-        if (PUB) {
-          publicUrl = PUB.replace(/\/$/, "") + "/" + key;
-        } else {
-          // Fallback: Cloudflare R2 public URL format
-          publicUrl = "https://" + CB + "." + CA + ".r2.cloudflarestorage.com/" + key;
-        }
+        const finalUrl = publicUrl
+          ? publicUrl + "/" + key
+          : "https://" + host + "/" + bucket + "/" + key;
 
-        console.log("[upload-foto] Success:", publicUrl);
+        console.log("[upload-foto] Success:", finalUrl);
         return res.status(200).json({
           success: true,
-          url: publicUrl,
-          key: key,
-          bucket: CB,
-          size: imgBuffer.length,
+          url:     finalUrl,
+          key:     key,
+          bucket:  bucket,
+          size:    imgBuffer.length,
         });
+
       } catch (err) {
-        console.error("[upload-foto] Exception:", err.message);
+        console.error("[upload-foto] Exception:", err.message, err.stack);
         return res.status(500).json({ success: false, error: "Server error: " + err.message });
       }
     }
