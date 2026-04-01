@@ -256,7 +256,12 @@ export default async function handler(req, res) {
 
       const ts   = Date.now();
       const safe = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const key  = folder + "/" + ts + "_" + safe;
+      // Jika hash dikirim dari client, gunakan sebagai nama file → idempotent
+      // Upload foto yang sama = overwrite file yang sama di R2, tidak bikin duplikat
+      const clientHash = body.hash || "";
+      const key = clientHash
+        ? folder + "/" + clientHash + ".jpg"          // deterministic key dari hash
+        : folder + "/" + ts + "_" + safe;             // fallback: timestamp_filename
       const host = accountId + ".r2.cloudflarestorage.com";
       const endpoint = "https://" + host + "/" + bucket + "/" + key;
 
