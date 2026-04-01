@@ -1279,7 +1279,31 @@ ${matRowsHtml}
     setShowJasaSearch(false);  setJasaSearchQ("");
     setShowRepairSearch(false); setRepairSearchQ("");
     setShowMatSearch(false);   setMatSearchQ2("");
-    setLaporanFotos([]);
+    // ── LAYER 2 (lintas sesi): Load foto existing dari service_reports ──
+    // Jika sudah ada laporan untuk job ini, tampilkan foto yang sudah tersimpan
+    // sehingga teknisi tidak bisa upload ulang foto yang sama
+    const existingRep = laporanReports.find(r =>
+      r.job_id === order.id && r.status !== "REJECTED"
+    );
+    if (existingRep && existingRep.foto_urls && existingRep.foto_urls.length > 0) {
+      // Rebuild laporanFotos dari foto_urls yang sudah ada di DB
+      // hash dibuat dari URL (sebagai identifier unik per sesi)
+      const restoredFotos = existingRep.foto_urls.map((url, idx) => {
+        const hashFromUrl = url.split("/").pop().replace(".jpg","").slice(0, 16); // ambil hash dari nama file
+        return {
+          id:       Date.now() + idx,
+          label:    `Foto ${idx + 1}`,
+          data_url: url,      // tampilkan dari URL R2 (sudah tersimpan)
+          url:      url,      // sudah tersimpan = ☁️ OK
+          errMsg:   "",
+          hash:     hashFromUrl,
+          restored: true,     // flag: ini foto lama, bukan baru diupload
+        };
+      });
+      setLaporanFotos(restoredFotos);
+    } else {
+      setLaporanFotos([]);
+    }
   // Auto-fill install items berdasarkan jumlah unit order
   const _installDefaults = {};
   if (order.service === "Install") {
@@ -9662,31 +9686,66 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const toggleArr = (arr, val) => arr.includes(val)?arr.filter(x=>x!==val):[...arr,val];
 
         const handleFotoUpload = async (e) => {
-          const files = Array.from(e.target.files||[]).slice(0, 10 - laporanFotos.length);
-          if (files.length === 0) return;
-          showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2...`);
-          const compressed = await Promise.all(files.map(compressImg));
+          const rawFiles = Array.from(e.target.files||[]).slice(0, 10 - laporanFotos.length);
+          if (rawFiles.length === 0) return;
           const reportId = laporanModal?.id || "tmp";
 
-          // Upload satu per satu (bukan parallel) agar tidak timeout
+          // ── LAYER 1: Hash setiap file SEBELUM compress ──
+          // Fungsi hash SHA-256 sederhana via SubtleCrypto (tersedia di semua browser modern)
+          const hashFile = async (file) => {
+            const buf = await file.arrayBuffer();
+            const hashBuf = await crypto.subtle.digest("SHA-256", buf);
+            return Array.from(new Uint8Array(hashBuf))
+              .map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16); // 16 char = cukup unik
+          };
+
+          // Hitung hash semua file sebelum compress
+          const fileHashes = await Promise.all(rawFiles.map(hashFile));
+
+          // ── LAYER 2: Cek duplikat vs foto yang sudah ada di state (per sesi) ──
+          const existingHashes = new Set(laporanFotos.map(f => f.hash).filter(Boolean));
+          const files = [];
+          const hashes = [];
+          let skippedCount = 0;
+          rawFiles.forEach((file, i) => {
+            if (existingHashes.has(fileHashes[i])) {
+              skippedCount++;
+            } else {
+              files.push(file);
+              hashes.push(fileHashes[i]);
+            }
+          });
+
+          if (skippedCount > 0) {
+            showNotif(`⚠️ ${skippedCount} foto sudah ada (duplikat diabaikan).`);
+          }
+          if (files.length === 0) { e.target.value = ""; return; }
+
+          showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2...`);
+          const compressed = await Promise.all(files.map(compressImg));
+
+          // ── Upload satu per satu (bukan parallel) agar tidak timeout ──
           const uploaded = [];
           for (let i = 0; i < compressed.length; i++) {
-            const dataUrl  = compressed[i];
-            const localId  = Date.now() + i;
-            const label    = `Foto ${laporanFotos.length + i + 1}`;
-            let url        = null;
-            let errMsg     = "";
+            const dataUrl = compressed[i];
+            const hash    = hashes[i];
+            const localId = Date.now() + i;
+            const label   = `Foto ${laporanFotos.length + uploaded.length + i + 1}`;
+            let url       = null;
+            let errMsg    = "";
 
-            // ── SATU JALUR: R2 via /api/upload-foto ──
+            // ── LAYER 3: Kirim hash sebagai filename → R2 key idempotent ──
+            // Nama file = hash → upload foto yang sama = overwrite, tidak bikin duplikat di R2
             try {
               const r = await fetch("/api/upload-foto", {
                 method:  "POST",
                 headers: _apiHeaders(),
                 body:    JSON.stringify({
                   base64:   dataUrl,
-                  filename: `foto_${localId}.jpg`,
+                  filename: `${hash}.jpg`,       // hash sebagai nama file
                   reportId,
                   mimeType: "image/jpeg",
+                  hash,                          // kirim hash untuk validasi server
                 }),
               });
               const d = await r.json();
@@ -9701,7 +9760,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               console.error("R2 fetch error:", err);
             }
 
-            uploaded.push({ id: localId, label, data_url: dataUrl, url, errMsg });
+            uploaded.push({ id: localId, label, data_url: dataUrl, url, errMsg, hash });
           }
 
           setLaporanFotos(prev => [...prev, ...uploaded]);
@@ -9709,11 +9768,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           const failed = uploaded.filter(f => !f.url).length;
 
           if (saved === uploaded.length) {
-            showNotif(`✅ ${saved} foto tersimpan di Cloudflare R2!`);
+            showNotif(`✅ ${saved} foto tersimpan di R2!`);
           } else if (saved > 0) {
-            showNotif(`⚠️ ${saved} foto berhasil, ${failed} gagal. Hapus foto ⏳ lalu upload ulang.`);
+            showNotif(`⚠️ ${saved} berhasil, ${failed} gagal. Tap ⏳ untuk retry.`);
           } else {
-            // Semua gagal — tampilkan error detail
             const firstErr = uploaded[0]?.errMsg || "unknown error";
             showNotif(`❌ Upload gagal: ${firstErr}. Cek koneksi & coba lagi.`);
           }
@@ -10991,9 +11049,40 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         {laporanFotos.map(f=>(
                           <div key={f.id} style={{position:"relative"}}>
                             <img src={f.data_url} alt={f.label} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:8,border:"1px solid "+cs.border}}/>
-                            <div style={{position:"absolute",top:4,right:4,background:f.url?"#22c55e":"#f59e0b",color:"#fff",fontSize:9,padding:"1px 5px",borderRadius:99,fontWeight:700}}>
-                              {f.url ? "☁️ OK" : "⏳"}
-                            </div>
+                            {f.url ? (
+                              <div style={{position:"absolute",top:4,right:4,background:"#22c55e",color:"#fff",fontSize:9,padding:"1px 5px",borderRadius:99,fontWeight:700,pointerEvents:"none"}}>
+                                {f.restored ? "☁️ Lama" : "☁️ OK"}
+                              </div>
+                            ) : (
+                              <div
+                                title="Tap untuk retry upload"
+                                onClick={async () => {
+                                  showNotif("⏳ Retry upload...");
+                                  const reportId = laporanModal?.id || "tmp";
+                                  try {
+                                    const r = await fetch("/api/upload-foto", {
+                                      method: "POST", headers: _apiHeaders(),
+                                      body: JSON.stringify({
+                                        base64: f.data_url,
+                                        filename: f.hash ? `${f.hash}.jpg` : `retry_${f.id}.jpg`,
+                                        reportId, mimeType: "image/jpeg", hash: f.hash,
+                                      }),
+                                    });
+                                    const d = await r.json();
+                                    if (d.success && d.url) {
+                                      setLaporanFotos(prev => prev.map(x =>
+                                        x.id === f.id ? {...x, url: d.url, errMsg: ""} : x
+                                      ));
+                                      showNotif("✅ Retry berhasil!");
+                                    } else {
+                                      showNotif("❌ Retry gagal: " + (d.error||"unknown"));
+                                    }
+                                  } catch(err) { showNotif("❌ " + err.message); }
+                                }}
+                                style={{position:"absolute",top:4,right:4,background:"#f59e0b",color:"#fff",fontSize:9,padding:"1px 5px",borderRadius:99,fontWeight:700,cursor:"pointer"}}>
+                                ⏳ Retry
+                              </div>
+                            )}
                             <button onClick={()=>setLaporanFotos(p=>p.filter(x=>x.id!==f.id))}
                               style={{position:"absolute",top:4,left:4,background:"#ef4444cc",border:"none",color:"#fff",borderRadius:99,width:18,height:18,cursor:"pointer",fontSize:10,lineHeight:1,padding:0}}>×</button>
                             <input id="field_43" value={f.label} onChange={e=>setLaporanFotos(p=>p.map(x=>x.id===f.id?{...x,label:e.target.value}:x))}
