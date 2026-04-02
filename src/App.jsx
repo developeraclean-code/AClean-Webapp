@@ -435,6 +435,8 @@ export default function ACleanWebApp() {
   // ── Invoice ──
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [invoiceFilter,   setInvoiceFilter]   = useState("Semua");
+  const [invoiceDateFrom, setInvoiceDateFrom] = useState("");
+  const [invoiceDateTo,   setInvoiceDateTo]   = useState("");
   const [invoicePage,     setInvoicePage]     = useState(1);
   const [customerPage,    setCustomerPage]    = useState(1);
   const [schedPage,       setSchedPage]       = useState(1);
@@ -1046,8 +1048,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
 
     // ── Build CSV ──
     const bom = "﻿";
-    const sep = "
-";
+    const sep = "\n";
     const rows = [];
 
     // Header dokumen
@@ -2382,6 +2383,8 @@ ${matRowsHtml}
       customer_id: preExistCust?.id || null,
       service: form.service, type: form.type, units: parseInt(form.units)||1,
       teknisi: form.teknisi, helper: form.helper||null,
+      teknisi2: form.teknisi2||null, helper2: form.helper2||null,
+      teknisi3: form.teknisi3||null, helper3: form.helper3||null,
       date: form.date, time: form.time, time_end: timeEnd, status:"CONFIRMED",
       invoice_id:null, dispatch:false, notes:form.notes||""
     };
@@ -4421,6 +4424,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     } else if (invoiceFilter !== "Semua") {
       filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
     }
+    // Date range filter
+    if (invoiceDateFrom) filteredInv = filteredInv.filter(inv => (inv.created_at||"").slice(0,10) >= invoiceDateFrom);
+    if (invoiceDateTo)   filteredInv = filteredInv.filter(inv => (inv.created_at||"").slice(0,10) <= invoiceDateTo);
     if (searchInvoice.trim()) {
       const q = searchInvoice.trim().toLowerCase();
       filteredInv = filteredInv.filter(inv =>
@@ -4442,45 +4448,56 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"8px 14px", borderRadius:9, cursor:"pointer", fontWeight:600, fontSize:12 }}>
           🔔 Kirim Reminder ({unpaidCnt})
         </button>
-        <button onClick={() => {
-          // Export invoice ke CSV/Excel
-          const rows = filteredInv;
-          const headers = ["No","ID Invoice","Tanggal","Customer","No HP","Layanan","Status","Total","Teknisi","Dibayar"];
-          const csvRows = [headers.join(",")];
-          rows.forEach((inv, idx) => {
-            const tgl = inv.created_at ? new Date(inv.created_at).toLocaleDateString("id-ID") : "-";
-            const paid = inv.paid_at ? new Date(inv.paid_at).toLocaleDateString("id-ID") : "-";
-            csvRows.push([
-              idx+1,
-              inv.id||"-",
-              tgl,
-              `"${(inv.customer||"").replace(/"/g,'""')}"`,
-              inv.phone||"-",
-              `"${(inv.service||"").replace(/"/g,'""')}"`,
-              inv.status||"-",
-              inv.total||0,
-              `"${(inv.teknisi||"").replace(/"/g,'""')}"`,
-              paid,
-            ].join(","));
-          });
-          // Tambah baris total omset
-          const totalOmset = rows.filter(i=>i.status==="PAID").reduce((s,i)=>s+(i.total||0),0);
-          csvRows.push([]);
-          csvRows.push(["","","","","","","TOTAL PAID",""+totalOmset,"",""]);
-          const bom = "﻿"; // UTF-8 BOM agar Excel baca karakter Indonesia
-          const blob = new Blob([bom + csvRows.join("\n")], {type:"text/csv;charset=utf-8;"});
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          const label = invoiceFilter !== "Semua" ? invoiceFilter.replace(" ","_") : "Semua";
-          a.href = url;
-          a.download = `Invoice_${label}_${new Date().toISOString().slice(0,10)}.csv`;
-          a.click(); URL.revokeObjectURL(url);
-          showNotif(`✅ Export ${rows.length} invoice berhasil!`);
+        <button onClick={async () => {
+          try {
+            if (!window.XLSX) {
+              await new Promise((res, rej) => {
+                const s = document.createElement("script");
+                s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+                s.onload = res; s.onerror = rej;
+                document.head.appendChild(s);
+              });
+            }
+            const XLSX = window.XLSX;
+            const rows = filteredInv;
+            const rangeLabel = invoiceDateFrom||invoiceDateTo
+              ? `${invoiceDateFrom||"awal"}_sd_${invoiceDateTo||"skrg"}`
+              : (invoiceFilter !== "Semua" ? invoiceFilter.replace(/\s/g,"_") : "Semua");
+            const data = rows.map((inv, i) => ({
+              "No": i+1, "ID Invoice": inv.id||"-",
+              "Tgl Dibuat": inv.created_at ? new Date(inv.created_at).toLocaleDateString("id-ID") : "-",
+              "Customer": inv.customer||"-", "No HP": inv.phone||"-",
+              "Layanan": inv.service||"-", "Unit": inv.units||1,
+              "Status": inv.status||"-", "Total (Rp)": inv.total||0,
+              "Teknisi": inv.teknisi||"-",
+              "Tgl Bayar": inv.paid_at ? new Date(inv.paid_at).toLocaleDateString("id-ID") : "-",
+              "Metode Bayar": inv.paid_method||"-",
+            }));
+            const totalPaid   = rows.filter(i=>i.status==="PAID").reduce((s,i)=>s+(i.total||0),0);
+            const totalUnpaid = rows.filter(i=>["UNPAID","OVERDUE"].includes(i.status)).reduce((s,i)=>s+(i.total||0),0);
+            const summary = [
+              {"Keterangan":"Total Invoice","Nilai":rows.length},
+              {"Keterangan":"Invoice PAID","Nilai":rows.filter(i=>i.status==="PAID").length},
+              {"Keterangan":"Invoice UNPAID","Nilai":rows.filter(i=>i.status==="UNPAID").length},
+              {"Keterangan":"Invoice OVERDUE","Nilai":rows.filter(i=>i.status==="OVERDUE").length},
+              {"Keterangan":"Omset Terbayar (Rp)","Nilai":totalPaid},
+              {"Keterangan":"Belum Terbayar (Rp)","Nilai":totalUnpaid},
+            ];
+            const wb = XLSX.utils.book_new();
+            const ws1 = XLSX.utils.json_to_sheet(data);
+            ws1["!cols"] = [{wch:4},{wch:22},{wch:13},{wch:20},{wch:14},{wch:16},{wch:5},{wch:15},{wch:13},{wch:12},{wch:12},{wch:12}];
+            const ws2 = XLSX.utils.json_to_sheet(summary);
+            ws2["!cols"] = [{wch:22},{wch:16}];
+            XLSX.utils.book_append_sheet(wb, ws1, "Invoice");
+            XLSX.utils.book_append_sheet(wb, ws2, "Summary");
+            XLSX.writeFile(wb, `Invoice_${rangeLabel}_${new Date().toISOString().slice(0,10)}.xlsx`);
+            showNotif(`✅ Export ${rows.length} invoice → .xlsx berhasil!`);
+          } catch(err) { showNotif("❌ Export gagal: " + err.message); }
         }}
         style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green,
           padding:"8px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:13,
           display:"flex", alignItems:"center", gap:6 }}>
-          📊 Export Excel ({filteredInv.length})
+          📊 Export XLSX ({filteredInv.length})
         </button>
         {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
           <div style={{display:"flex",alignItems:"center",gap:6,
@@ -4504,6 +4521,36 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           </div>
         )}
       </div>
+      {/* ── Date range picker invoice ── */}
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",
+        background:cs.surface,border:"1px solid "+cs.border,borderRadius:10,padding:"8px 12px"}}>
+        <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>📅 Filter Tanggal:</span>
+        <input type="date" value={invoiceDateFrom}
+          onChange={e=>{setInvoiceDateFrom(e.target.value);setInvoicePage(1);}}
+          style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+            padding:"5px 9px",fontSize:12,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+        />
+        <span style={{fontSize:12,color:cs.muted}}>–</span>
+        <input type="date" value={invoiceDateTo}
+          onChange={e=>{setInvoiceDateTo(e.target.value);setInvoicePage(1);}}
+          style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+            padding:"5px 9px",fontSize:12,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+        />
+        {(invoiceDateFrom||invoiceDateTo) && (
+          <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
+            <span style={{fontSize:11,color:cs.accent,fontWeight:600}}>
+              {filteredInv.length} invoice
+            </span>
+            <button onClick={()=>{setInvoiceDateFrom("");setInvoiceDateTo("");setInvoicePage(1);}}
+              style={{fontSize:11,padding:"3px 10px",borderRadius:99,
+                background:cs.red+"22",border:"1px solid "+cs.red+"44",
+                color:cs.red,cursor:"pointer",fontWeight:600}}>
+              ✕ Reset
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Search */}
       <div style={{ position:"relative" }}>
         <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
@@ -8383,6 +8430,68 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   })}
                 </select>
               </div>
+
+              {/* ── Teknisi/Helper Tambahan ── */}
+              <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px"}}>
+                <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span>👥 Tim Tambahan <span style={{fontWeight:400}}>(opsional — 1 job, beberapa orang)</span></span>
+                </div>
+                {/* Teknisi 2 */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Teknisi ke-2</div>
+                    <select value={newOrderForm.teknisi2||""} onChange={e=>setNewOrderForm(f=>({...f,teknisi2:e.target.value}))}
+                      style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12}}>
+                      <option value="">— Tidak ada —</option>
+                      {teknisiData.filter(t=>t.role==="Teknisi"&&t.name!==newOrderForm.teknisi).map(t=>(
+                        <option key={t.id} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Helper ke-2</div>
+                    <select value={newOrderForm.helper2||""} onChange={e=>setNewOrderForm(f=>({...f,helper2:e.target.value}))}
+                      style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12}}>
+                      <option value="">— Tidak ada —</option>
+                      {teknisiData.filter(t=>t.name!==newOrderForm.helper&&t.name!==newOrderForm.teknisi).map(t=>(
+                        <option key={t.id} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {/* Teknisi 3 */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div>
+                    <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Teknisi ke-3</div>
+                    <select value={newOrderForm.teknisi3||""} onChange={e=>setNewOrderForm(f=>({...f,teknisi3:e.target.value}))}
+                      style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12}}>
+                      <option value="">— Tidak ada —</option>
+                      {teknisiData.filter(t=>t.role==="Teknisi"&&t.name!==newOrderForm.teknisi&&t.name!==newOrderForm.teknisi2).map(t=>(
+                        <option key={t.id} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Helper ke-3</div>
+                    <select value={newOrderForm.helper3||""} onChange={e=>setNewOrderForm(f=>({...f,helper3:e.target.value}))}
+                      style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12}}>
+                      <option value="">— Tidak ada —</option>
+                      {teknisiData.filter(t=>t.name!==newOrderForm.helper&&t.name!==newOrderForm.teknisi&&t.name!==newOrderForm.helper2&&t.name!==newOrderForm.teknisi2).map(t=>(
+                        <option key={t.id} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {/* Preview tim */}
+                {(newOrderForm.teknisi2||newOrderForm.helper2||newOrderForm.teknisi3||newOrderForm.helper3) && (
+                  <div style={{marginTop:8,background:cs.accent+"10",borderRadius:7,padding:"6px 10px",fontSize:11,color:cs.muted}}>
+                    Tim: {[newOrderForm.teknisi,newOrderForm.teknisi2,newOrderForm.teknisi3,
+                           newOrderForm.helper,newOrderForm.helper2,newOrderForm.helper3]
+                      .filter(Boolean).join(" · ")}
+                  </div>
+                )}
+              </div>
+
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:6 }}>
                 <button onClick={() => setModalOrder(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
                 {(() => {
