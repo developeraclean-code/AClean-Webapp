@@ -345,6 +345,73 @@ export default async function handler(req, res) {
       }
     }
 
+        // ── FOTO PROXY: serve R2 images via server (bypass CORS & auth) ──
+    if (route === "foto") {
+      const key = req.query?.key || (req.body?.key) || "";
+      if (!key) return res.status(400).json({ error: "key wajib" });
+
+      const accessKeyId     = process.env.R2_ACCESS_KEY;
+      const secretAccessKey = process.env.R2_SECRET_KEY;
+      const accountId       = process.env.R2_ACCOUNT_ID;
+      const bucket          = process.env.R2_BUCKET_NAME || "aclean-files";
+
+      // Jika ada public URL, redirect langsung (lebih cepat, tidak butuh auth)
+      const pubUrl = process.env.R2_PUBLIC_URL;
+      if (pubUrl) {
+        const clean = pubUrl.replace(/\/$/, "");
+        return res.redirect(302, clean + "/" + key);
+      }
+
+      // Fallback: fetch dari R2 dengan AWS Sig V4
+      if (!accessKeyId || !secretAccessKey || !accountId) {
+        return res.status(503).json({ error: "R2 credentials tidak tersedia" });
+      }
+
+      const crypto  = await import("crypto");
+      const host    = accountId + ".r2.cloudflarestorage.com";
+      const now     = new Date();
+      const dateStr = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 8);
+      const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15) + "Z";
+      const region  = "auto";
+      const service = "s3";
+      const payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // empty body
+
+      const canonicalUri  = "/" + bucket + "/" + key;
+      const canonicalHeaders = "host:" + host + "\n" +
+        "x-amz-content-sha256:" + payloadHash + "\n" +
+        "x-amz-date:" + amzDate + "\n";
+      const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+      const canonicalReq  = ["GET", canonicalUri, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
+
+      const credScope = dateStr + "/" + region + "/" + service + "/aws4_request";
+      const reqHash   = crypto.createHash("sha256").update(canonicalReq).digest("hex");
+      const strToSign = ["AWS4-HMAC-SHA256", amzDate, credScope, reqHash].join("\n");
+
+      const hmac = (k, d) => crypto.createHmac("sha256", k).update(d).digest();
+      const signingKey = hmac(hmac(hmac(hmac("AWS4" + secretAccessKey, dateStr), region), service), "aws4_request");
+      const signature  = crypto.createHmac("sha256", signingKey).update(strToSign).digest("hex");
+      const authorization = "AWS4-HMAC-SHA256 Credential=" + accessKeyId + "/" + credScope +
+        ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
+
+      try {
+        const r2res = await fetch("https://" + host + canonicalUri, {
+          headers: {
+            "Authorization": authorization,
+            "x-amz-date": amzDate,
+            "x-amz-content-sha256": payloadHash,
+          },
+        });
+        if (!r2res.ok) return res.status(r2res.status).json({ error: "Foto tidak ditemukan" });
+        const ct = r2res.headers.get("content-type") || "image/jpeg";
+        res.setHeader("Content-Type", ct);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        const buf = await r2res.arrayBuffer();
+        return res.status(200).send(Buffer.from(buf));
+      } catch (err) {
+        return res.status(500).json({ error: "Gagal fetch foto: " + err.message });
+      }
+    }
+
         // ── CRON-REMINDER ──
     if (route === "cron-reminder") {
       const SU=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL, SK=process.env.SUPABASE_SERVICE_KEY, FT=process.env.FONNTE_TOKEN;
