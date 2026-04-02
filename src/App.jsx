@@ -3193,6 +3193,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // GAP-6: Approved belum bayar
     const approvedUnpaid = invoicesData.filter(inv => inv.status === "APPROVED");
     const greeting      = role === "Owner" ? "Owner" : "Admin";
+    // techColors dipakai di omset stats block (IIFE) dan kalender
+    const techColors = Object.fromEntries(
+      [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map((n,i) => [
+        n, ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#ec4899"][i%8]
+      ])
+    );
 
     return (
       <div style={{ display:"grid", gap:20 }}>
