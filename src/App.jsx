@@ -6132,6 +6132,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const sMap = { SUBMITTED:[cs.accent,"Submitted"], VERIFIED:[cs.green,"Terverifikasi"], REVISION:[cs.yellow,"Perlu Revisi"], REJECTED:[cs.red,"Ditolak"] };
     const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,fontWeight:700}}>{lbl}</span>; };
     const statusOrder = { SUBMITTED:0, REVISION:1, VERIFIED:2, REJECTED:3 };
+    // techColors — warna per teknisi (konsisten dengan kalender & dashboard)
+    const techColors = Object.fromEntries(
+      [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map((n,i)=>[
+        n, ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#ec4899"][i%8]
+      ])
+    );
     // ── SIM-8: date + service + status filters + pagination ──
     const todayLap = new Date().toISOString().slice(0,10);
     const weekAgo  = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
