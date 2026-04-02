@@ -3265,10 +3265,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
         {/* ── STATISTIK OMSET PER HARI/MINGGU/BULAN (Owner & Admin) ── */}
         {(() => {
-          const now = new Date();
+          const now      = new Date();
           const todayStr = now.toISOString().slice(0,10);
 
-          // Helper: date range
           const startOf = (mode) => {
             const d = new Date(now);
             if (mode === "hari")   { d.setHours(0,0,0,0); return d; }
@@ -3279,131 +3278,176 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
           const paidInvoices = invoicesData.filter(i => i.status === "PAID" && i.paid_at);
 
-          // Data per mode
           const buildData = (mode) => {
-            const start = startOf(mode);
+            const start    = startOf(mode);
             const filtered = paidInvoices.filter(i => new Date(i.paid_at) >= start);
-
             if (mode === "hari") {
-              // Per jam
               const hours = Array.from({length:24},(_,h)=>({label:`${String(h).padStart(2,"0")}:00`,total:0,count:0}));
-              filtered.forEach(i => {
-                const h = new Date(i.paid_at).getHours();
-                hours[h].total += (i.total||0);
-                hours[h].count++;
-              });
-              return hours.filter(h => h.total > 0 || new Date().getHours() >= parseInt(h.label));
+              filtered.forEach(i => { const h=new Date(i.paid_at).getHours(); hours[h].total+=(i.total||0); hours[h].count++; });
+              return hours.filter((_,h) => h <= new Date().getHours());
             }
             if (mode === "minggu") {
-              // Per hari 7 hari ini
               const days = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
               return Array.from({length:7},(_,i) => {
                 const d = new Date(startOf("minggu")); d.setDate(d.getDate()+i);
                 const dStr = d.toISOString().slice(0,10);
-                const dayInv = paidInvoices.filter(inv => inv.paid_at?.slice(0,10) === dStr);
+                const dayInv = paidInvoices.filter(inv => inv.paid_at?.slice(0,10)===dStr);
                 return { label:days[d.getDay()], date:dStr, total:dayInv.reduce((s,v)=>s+(v.total||0),0), count:dayInv.length };
               });
             }
             if (mode === "bulan") {
-              // Per minggu bulan ini
-              const weeks = [{label:"Minggu 1",total:0,count:0},{label:"Minggu 2",total:0,count:0},{label:"Minggu 3",total:0,count:0},{label:"Minggu 4+",total:0,count:0}];
-              filtered.forEach(i => {
-                const day = new Date(i.paid_at).getDate();
-                const wk = Math.min(Math.floor((day-1)/7), 3);
-                weeks[wk].total += (i.total||0);
-                weeks[wk].count++;
-              });
+              const weeks = [{label:"Mgg 1",total:0,count:0},{label:"Mgg 2",total:0,count:0},{label:"Mgg 3",total:0,count:0},{label:"Mgg 4+",total:0,count:0}];
+              filtered.forEach(i => { const wk=Math.min(Math.floor((new Date(i.paid_at).getDate()-1)/7),3); weeks[wk].total+=(i.total||0); weeks[wk].count++; });
               return weeks;
             }
             return [];
           };
 
-          const data = buildData(omsetView);
-          const maxVal = Math.max(...data.map(d=>d.total), 1);
+          const data        = buildData(omsetView);
+          const maxVal      = Math.max(...data.map(d=>d.total), 1);
           const totalPeriod = data.reduce((s,d)=>s+d.total, 0);
           const totalCount  = data.reduce((s,d)=>s+d.count, 0);
 
-          // Omset per teknisi (periode terpilih)
-          const start = startOf(omsetView);
+          // ── Omset per TEKNISI + HELPER (gabung) ──
+          const start        = startOf(omsetView);
           const paidInPeriod = paidInvoices.filter(i => new Date(i.paid_at) >= start);
-          const byTeknisi = {};
-          paidInPeriod.forEach(i => {
-            const t = i.teknisi || "Tidak diketahui";
-            if (!byTeknisi[t]) byTeknisi[t] = {total:0,count:0};
-            byTeknisi[t].total += (i.total||0);
-            byTeknisi[t].count++;
+          const byPerson     = {};
+
+          paidInPeriod.forEach(inv => {
+            // Teknisi utama
+            const tek = inv.teknisi;
+            if (tek) {
+              if (!byPerson[tek]) byPerson[tek] = {total:0, count:0, role:"Teknisi"};
+              byPerson[tek].total += (inv.total||0);
+              byPerson[tek].count++;
+            }
           });
-          const teamRanking = Object.entries(byTeknisi)
-            .sort((a,b)=>b[1].total-a[1].total).slice(0,5);
+
+          // Job count per orang hari ini (orders, bukan invoice — sudah include helper)
+          const todayOrders2 = ordersData.filter(o => o.date === todayStr);
+          const jobsToday    = {};
+          todayOrders2.forEach(o => {
+            if (o.teknisi) { jobsToday[o.teknisi] = (jobsToday[o.teknisi]||0) + 1; }
+            if (o.helper)  { jobsToday[o.helper]  = (jobsToday[o.helper] ||0) + 1; }
+          });
+
+          // Semua anggota tim (dari teknisiData)
+          const allTeam = teknisiData.filter(t => t.status !== "inactive");
+
+          const teamRanking = Object.entries(byPerson)
+            .sort((a,b) => b[1].total - a[1].total);
 
           return (
           <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:14,padding:20}}>
-            {/* Header + filter */}
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
+
+            {/* Header + filter tabs */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
               <div>
-                <div style={{fontWeight:800,fontSize:15,color:cs.text}}>📈 Statistik Omset</div>
-                <div style={{fontSize:11,color:cs.muted}}>Invoice terbayar · {totalCount} transaksi</div>
+                <div style={{fontWeight:800,fontSize:15,color:cs.text}}>📊 Statistik Tim & Omset</div>
+                <div style={{fontSize:11,color:cs.muted}}>{totalCount} transaksi terbayar</div>
               </div>
               <div style={{display:"flex",gap:6}}>
                 {["hari","minggu","bulan"].map(m=>(
                   <button key={m} onClick={()=>setOmsetView(m)}
-                    style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+(omsetView===m?cs.accent:cs.border),
-                      background:omsetView===m?cs.accent+"22":cs.surface,color:omsetView===m?cs.accent:cs.muted,
-                      fontWeight:omsetView===m?700:400,fontSize:12,cursor:"pointer",textTransform:"capitalize"}}>
+                    style={{padding:"5px 12px",borderRadius:8,fontSize:12,cursor:"pointer",
+                      border:"1px solid "+(omsetView===m?cs.accent:cs.border),
+                      background:omsetView===m?cs.accent+"22":cs.surface,
+                      color:omsetView===m?cs.accent:cs.muted,fontWeight:omsetView===m?700:400}}>
                     {m==="hari"?"Hari Ini":m==="minggu"?"Minggu Ini":"Bulan Ini"}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Total omset badge */}
-            <div style={{background:cs.green+"18",border:"1px solid "+cs.green+"33",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontSize:11,color:cs.muted}}>Total {omsetView==="hari"?"Hari Ini":omsetView==="minggu"?"Minggu Ini":"Bulan Ini"}</div>
-              <div style={{fontWeight:800,fontSize:20,color:cs.green}}>{fmt(totalPeriod)}</div>
+            {/* Total omset */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+              <div style={{background:cs.green+"18",border:"1px solid "+cs.green+"33",borderRadius:10,padding:"10px 14px"}}>
+                <div style={{fontSize:11,color:cs.muted}}>Total Omset</div>
+                <div style={{fontWeight:800,fontSize:18,color:cs.green}}>{fmt(totalPeriod)}</div>
+              </div>
+              <div style={{background:cs.accent+"18",border:"1px solid "+cs.accent+"33",borderRadius:10,padding:"10px 14px"}}>
+                <div style={{fontSize:11,color:cs.muted}}>Job Hari Ini</div>
+                <div style={{fontWeight:800,fontSize:18,color:cs.accent}}>{todayOrders2.length} order</div>
+              </div>
             </div>
 
-            {/* Bar chart */}
-            {data.length > 0 && totalPeriod > 0 ? (
-              <div style={{display:"flex",gap:4,alignItems:"flex-end",height:80,marginBottom:12}}>
+            {/* Bar chart omset */}
+            {data.length > 0 && totalPeriod > 0 && (
+              <div style={{display:"flex",gap:3,alignItems:"flex-end",height:70,marginBottom:12}}>
                 {data.map((d,i)=>(
-                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                    <div style={{fontSize:9,color:cs.muted,fontWeight:d.total===maxVal?700:400}}>
-                      {d.total>0?fmt(d.total).replace("Rp ",""):""}
-                    </div>
+                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                    <div style={{fontSize:8,color:cs.muted}}>{d.total>0?fmt(d.total).replace("Rp ","").replace(".000","rb"):""}</div>
                     <div title={fmt(d.total)+" · "+d.count+" inv"}
-                      style={{width:"100%",background:d.total===maxVal?cs.green:cs.accent+"88",
-                        height:Math.max(4,Math.round(d.total/maxVal*60))+"px",
-                        borderRadius:"4px 4px 0 0",transition:"height .3s",cursor:"default",
-                        border:d.date===todayStr?"2px solid "+cs.green:"none"}} />
-                    <div style={{fontSize:9,color:d.date===todayStr?cs.green:cs.muted,fontWeight:d.date===todayStr?700:400,textAlign:"center",whiteSpace:"nowrap"}}>
+                      style={{width:"100%",background:d.total===maxVal?cs.green:cs.accent+"77",
+                        height:Math.max(3,Math.round(d.total/maxVal*55))+"px",
+                        borderRadius:"3px 3px 0 0",
+                        border:d.date===todayStr?"2px solid "+cs.green:"none"}}/>
+                    <div style={{fontSize:8,color:d.date===todayStr?cs.green:cs.muted,fontWeight:d.date===todayStr?700:400,textAlign:"center"}}>
                       {d.label}
                     </div>
                   </div>
                 ))}
               </div>
-            ) : (
-              <div style={{textAlign:"center",padding:"16px 0",color:cs.muted,fontSize:12}}>
-                Belum ada pembayaran di periode ini
-              </div>
             )}
 
-            {/* Ranking per teknisi */}
-            {teamRanking.length > 0 && (
-              <div style={{marginTop:8}}>
-                <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:8}}>🏆 Omset per Teknisi</div>
-                <div style={{display:"grid",gap:5}}>
-                  {teamRanking.map(([name,stat],idx)=>(
-                    <div key={name} style={{display:"flex",alignItems:"center",gap:10,background:cs.surface,borderRadius:8,padding:"7px 12px"}}>
-                      <div style={{width:22,height:22,borderRadius:6,background:["#f59e0b","#9ca3af","#cd7f32","#6366f1","#06b6d4"][idx]+"33",
-                        display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,
-                        color:["#f59e0b","#9ca3af","#cd7f32","#6366f1","#06b6d4"][idx]}}>
-                        {idx+1}
+            {/* Kartu per anggota tim hari ini */}
+            <div style={{borderTop:"1px solid "+cs.border,paddingTop:12,marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:8}}>👥 Job Hari Ini per Anggota Tim</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:7}}>
+                {allTeam.map(t => {
+                  const jobCnt  = jobsToday[t.name] || 0;
+                  const col     = techColors[t.name] || cs.accent;
+                  const isActive = jobCnt > 0;
+                  return (
+                    <div key={t.name} style={{background:isActive?col+"18":cs.surface,
+                      border:"1px solid "+(isActive?col+"44":cs.border),
+                      borderRadius:10,padding:"8px 10px",textAlign:"center"}}>
+                      <div style={{width:32,height:32,borderRadius:10,background:col+"33",
+                        display:"flex",alignItems:"center",justifyContent:"center",
+                        fontSize:14,fontWeight:800,color:col,margin:"0 auto 6px"}}>
+                        {(t.name||"?")[0]}
                       </div>
-                      <div style={{flex:1,fontSize:12,fontWeight:600,color:cs.text}}>{name}</div>
-                      <div style={{fontSize:11,color:cs.muted}}>{stat.count} inv</div>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.green}}>{fmt(stat.total)}</div>
+                      <div style={{fontSize:11,fontWeight:700,color:cs.text,marginBottom:2}}>{t.name}</div>
+                      <div style={{fontSize:10,color:col,fontWeight:700}}>{jobCnt} job</div>
+                      <div style={{fontSize:9,color:cs.muted}}>{t.role||"Teknisi"}</div>
                     </div>
-                  ))}
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Ranking omset per teknisi periode terpilih */}
+            {teamRanking.length > 0 && (
+              <div style={{borderTop:"1px solid "+cs.border,paddingTop:10}}>
+                <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:8}}>
+                  🏆 Omset {omsetView==="hari"?"Hari Ini":omsetView==="minggu"?"Minggu Ini":"Bulan Ini"} per Teknisi
+                </div>
+                <div style={{display:"grid",gap:5}}>
+                  {teamRanking.map(([name,stat],idx)=>{
+                    const col = techColors[name] || cs.accent;
+                    const pct = totalPeriod > 0 ? Math.round(stat.total/totalPeriod*100) : 0;
+                    return (
+                      <div key={name} style={{display:"flex",alignItems:"center",gap:10,
+                        background:cs.surface,borderRadius:8,padding:"8px 12px"}}>
+                        <div style={{width:22,height:22,borderRadius:6,
+                          background:col+"33",display:"flex",alignItems:"center",
+                          justifyContent:"center",fontSize:11,fontWeight:800,color:col}}>
+                          {idx+1}
+                        </div>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:12,fontWeight:600,color:cs.text}}>{name}</div>
+                          {/* Progress bar */}
+                          <div style={{height:3,background:cs.border,borderRadius:99,marginTop:3,overflow:"hidden"}}>
+                            <div style={{height:"100%",width:pct+"%",background:col,borderRadius:99,transition:"width .3s"}}/>
+                          </div>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:12,fontWeight:700,color:cs.green}}>{fmt(stat.total)}</div>
+                          <div style={{fontSize:10,color:cs.muted}}>{stat.count} inv · {pct}%</div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -5095,7 +5139,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           return (
                             <div key={j.id} style={{ background:col+(isHelper?"10":"22"), border:"1px solid "+col+(isHelper?"33":"44"), borderRadius:5, padding:"3px 5px", marginBottom:2, opacity:isHelper?0.85:1 }}>
                               <div style={{ fontSize:9, fontWeight:800, color:col }}>{j.time} {isHelper?"🤝":""}</div>
-                              <div style={{ fontSize:9, color:cs.text }}>{(j.customer||"").split(" ")[0]}</div>
+                              <div style={{ fontSize:9, color:cs.text }}>{(j.customer||"").slice(0,13)}{(j.customer||"").length>13?"…":""}</div>
                               <div style={{ fontSize:8, color:cs.muted }}>{j.service}</div>
                             </div>
                           );
@@ -8904,7 +8948,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
                 <div style={{ background:"#EFF6FF", borderRadius:8, padding:"12px 14px" }}>
                   <div style={{ fontSize:10, fontWeight:800, color:"#1e40af", marginBottom:8, textTransform:"uppercase" }}>Detail Invoice</div>
-                  {[["Tanggal", liveInv.sent||"—"],["No. Invoice",liveInv.id],["No. Order",liveInv.job_id]].map(([k,v]) => (
+                  {[
+                    ["Tgl Invoice", liveInv.created_at ? new Date(liveInv.created_at).toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"}) : (liveInv.sent_at ? new Date(liveInv.sent_at).toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"}) : "—")],
+                    ["Issued", new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})],
+                    ["No. Invoice", liveInv.id],
+                    ["No. Order", liveInv.job_id||"—"],
+                  ].map(([k,v]) => (
                     <div key={k} style={{ display:"flex", gap:8, marginBottom:4, fontSize:11 }}>
                       <span style={{ color:"#64748b", minWidth:80 }}>{k}</span>
                       <span style={{ color:"#1e293b", fontWeight:600 }}>{v}</span>
