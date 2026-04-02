@@ -1,6 +1,6 @@
 // api/[route].js - AClean Unified API Router
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth"];
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto"];
 
 export default async function handler(req, res) {
   const route = String(req.query.route || "");
