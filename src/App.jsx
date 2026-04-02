@@ -966,22 +966,23 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     r.readAsDataURL(file);
   });
 
-  // Helper: normalize URL foto agar selalu melalui Vercel proxy (SSL aman)
+  // Helper: normalize URL foto
+  // Gunakan R2 public URL langsung — tidak perlu proxy, tidak perlu auth header
+  const R2_PUB = "https://pub-e159d4365c734ed9a6a9c37494df7cb6.r2.dev";
   const fotoSrc = (url) => {
     if (!url) return "";
-    // Sudah pakai proxy → langsung
-    if (url.startsWith("/api/foto")) return url;
-    // URL r2.dev lama → convert ke proxy
-    if (url.includes(".r2.dev/")) {
-      const keyMatch = url.match(/\.r2\.dev\/(.+)$/);
-      if (keyMatch) return `/api/foto?key=${encodeURIComponent(keyMatch[1])}`;
-    }
-    // URL r2.cloudflarestorage.com lama → extract key
+    // Sudah URL r2.dev public → langsung pakai
+    if (url.startsWith("https://pub-") && url.includes(".r2.dev/")) return url;
+    // URL r2.dev bentuk lain → langsung
+    if (url.includes(".r2.dev/")) return url;
+    // URL r2.cloudflarestorage.com (private endpoint) → convert ke public URL
     if (url.includes(".r2.cloudflarestorage.com/")) {
       const keyMatch = url.match(/cloudflarestorage\.com\/[^/]+\/(.+)$/);
-      if (keyMatch) return `/api/foto?key=${encodeURIComponent(keyMatch[1])}`;
+      if (keyMatch) return R2_PUB + "/" + keyMatch[1];
     }
-    // Supabase atau lainnya → pakai langsung
+    // Backward compat: sudah pakai /api/foto proxy → tetap pakai
+    if (url.startsWith("/api/foto")) return url;
+    // Supabase storage atau lainnya → langsung
     return url;
   };
 
