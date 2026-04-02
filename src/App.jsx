@@ -1171,7 +1171,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   <div class="grid2">
     <div class="box box-blue">
       <div class="box-title">Detail Invoice</div>
-      <div class="row"><span class="row-label">Tanggal</span><span class="row-val">${inv.sent === true || inv.sent === false ? new Date().toLocaleDateString("id-ID") : (inv.sent || new Date().toLocaleDateString("id-ID"))}</span></div>
+      <div class="row"><span class="row-label">Tgl Invoice</span><span class="row-val">${inv.created_at ? new Date(inv.created_at).toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"}) : new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})}</span></div>
+      <div class="row"><span class="row-label">Issued</span><span class="row-val" style="font-weight:800;color:#1e40af">${new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})}</span></div>
       <div class="row"><span class="row-label">No. Invoice</span><span class="row-val">${inv.id}</span></div>
       <div class="row"><span class="row-label">No. Order</span><span class="row-val">${inv.job_id || "—"}</span></div>
       <div class="row"><span class="row-label">Jatuh Tempo</span><span class="row-val">${inv.due || "—"}</span></div>
@@ -3257,6 +3258,156 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </div>
           ))}
         </div>
+
+        {/* ── STATISTIK OMSET PER HARI/MINGGU/BULAN (Owner & Admin) ── */}
+        {(() => {
+          const [omsetView, setOmsetView] = React.useState("minggu");
+          const now = new Date();
+          const todayStr = now.toISOString().slice(0,10);
+
+          // Helper: date range
+          const startOf = (mode) => {
+            const d = new Date(now);
+            if (mode === "hari")   { d.setHours(0,0,0,0); return d; }
+            if (mode === "minggu") { d.setDate(d.getDate() - d.getDay()); d.setHours(0,0,0,0); return d; }
+            if (mode === "bulan")  { d.setDate(1); d.setHours(0,0,0,0); return d; }
+            return d;
+          };
+
+          const paidInvoices = invoicesData.filter(i => i.status === "PAID" && i.paid_at);
+
+          // Data per mode
+          const buildData = (mode) => {
+            const start = startOf(mode);
+            const filtered = paidInvoices.filter(i => new Date(i.paid_at) >= start);
+
+            if (mode === "hari") {
+              // Per jam
+              const hours = Array.from({length:24},(_,h)=>({label:`${String(h).padStart(2,"0")}:00`,total:0,count:0}));
+              filtered.forEach(i => {
+                const h = new Date(i.paid_at).getHours();
+                hours[h].total += (i.total||0);
+                hours[h].count++;
+              });
+              return hours.filter(h => h.total > 0 || new Date().getHours() >= parseInt(h.label));
+            }
+            if (mode === "minggu") {
+              // Per hari 7 hari ini
+              const days = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
+              return Array.from({length:7},(_,i) => {
+                const d = new Date(startOf("minggu")); d.setDate(d.getDate()+i);
+                const dStr = d.toISOString().slice(0,10);
+                const dayInv = paidInvoices.filter(inv => inv.paid_at?.slice(0,10) === dStr);
+                return { label:days[d.getDay()], date:dStr, total:dayInv.reduce((s,v)=>s+(v.total||0),0), count:dayInv.length };
+              });
+            }
+            if (mode === "bulan") {
+              // Per minggu bulan ini
+              const weeks = [{label:"Minggu 1",total:0,count:0},{label:"Minggu 2",total:0,count:0},{label:"Minggu 3",total:0,count:0},{label:"Minggu 4+",total:0,count:0}];
+              filtered.forEach(i => {
+                const day = new Date(i.paid_at).getDate();
+                const wk = Math.min(Math.floor((day-1)/7), 3);
+                weeks[wk].total += (i.total||0);
+                weeks[wk].count++;
+              });
+              return weeks;
+            }
+            return [];
+          };
+
+          const data = buildData(omsetView);
+          const maxVal = Math.max(...data.map(d=>d.total), 1);
+          const totalPeriod = data.reduce((s,d)=>s+d.total, 0);
+          const totalCount  = data.reduce((s,d)=>s+d.count, 0);
+
+          // Omset per teknisi (periode terpilih)
+          const start = startOf(omsetView);
+          const paidInPeriod = paidInvoices.filter(i => new Date(i.paid_at) >= start);
+          const byTeknisi = {};
+          paidInPeriod.forEach(i => {
+            const t = i.teknisi || "Tidak diketahui";
+            if (!byTeknisi[t]) byTeknisi[t] = {total:0,count:0};
+            byTeknisi[t].total += (i.total||0);
+            byTeknisi[t].count++;
+          });
+          const teamRanking = Object.entries(byTeknisi)
+            .sort((a,b)=>b[1].total-a[1].total).slice(0,5);
+
+          return (
+          <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:14,padding:20}}>
+            {/* Header + filter */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontWeight:800,fontSize:15,color:cs.text}}>📈 Statistik Omset</div>
+                <div style={{fontSize:11,color:cs.muted}}>Invoice terbayar · {totalCount} transaksi</div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                {["hari","minggu","bulan"].map(m=>(
+                  <button key={m} onClick={()=>setOmsetView(m)}
+                    style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+(omsetView===m?cs.accent:cs.border),
+                      background:omsetView===m?cs.accent+"22":cs.surface,color:omsetView===m?cs.accent:cs.muted,
+                      fontWeight:omsetView===m?700:400,fontSize:12,cursor:"pointer",textTransform:"capitalize"}}>
+                    {m==="hari"?"Hari Ini":m==="minggu"?"Minggu Ini":"Bulan Ini"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Total omset badge */}
+            <div style={{background:cs.green+"18",border:"1px solid "+cs.green+"33",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontSize:11,color:cs.muted}}>Total {omsetView==="hari"?"Hari Ini":omsetView==="minggu"?"Minggu Ini":"Bulan Ini"}</div>
+              <div style={{fontWeight:800,fontSize:20,color:cs.green}}>{fmt(totalPeriod)}</div>
+            </div>
+
+            {/* Bar chart */}
+            {data.length > 0 && totalPeriod > 0 ? (
+              <div style={{display:"flex",gap:4,alignItems:"flex-end",height:80,marginBottom:12}}>
+                {data.map((d,i)=>(
+                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                    <div style={{fontSize:9,color:cs.muted,fontWeight:d.total===maxVal?700:400}}>
+                      {d.total>0?fmt(d.total).replace("Rp ",""):""}
+                    </div>
+                    <div title={fmt(d.total)+" · "+d.count+" inv"}
+                      style={{width:"100%",background:d.total===maxVal?cs.green:cs.accent+"88",
+                        height:Math.max(4,Math.round(d.total/maxVal*60))+"px",
+                        borderRadius:"4px 4px 0 0",transition:"height .3s",cursor:"default",
+                        border:d.date===todayStr?"2px solid "+cs.green:"none"}} />
+                    <div style={{fontSize:9,color:d.date===todayStr?cs.green:cs.muted,fontWeight:d.date===todayStr?700:400,textAlign:"center",whiteSpace:"nowrap"}}>
+                      {d.label}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{textAlign:"center",padding:"16px 0",color:cs.muted,fontSize:12}}>
+                Belum ada pembayaran di periode ini
+              </div>
+            )}
+
+            {/* Ranking per teknisi */}
+            {teamRanking.length > 0 && (
+              <div style={{marginTop:8}}>
+                <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:8}}>🏆 Omset per Teknisi</div>
+                <div style={{display:"grid",gap:5}}>
+                  {teamRanking.map(([name,stat],idx)=>(
+                    <div key={name} style={{display:"flex",alignItems:"center",gap:10,background:cs.surface,borderRadius:8,padding:"7px 12px"}}>
+                      <div style={{width:22,height:22,borderRadius:6,background:["#f59e0b","#9ca3af","#cd7f32","#6366f1","#06b6d4"][idx]+"33",
+                        display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,
+                        color:["#f59e0b","#9ca3af","#cd7f32","#6366f1","#06b6d4"][idx]}}>
+                        {idx+1}
+                      </div>
+                      <div style={{flex:1,fontSize:12,fontWeight:600,color:cs.text}}>{name}</div>
+                      <div style={{fontSize:11,color:cs.muted}}>{stat.count} inv</div>
+                      <div style={{fontSize:12,fontWeight:700,color:cs.green}}>{fmt(stat.total)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          );
+        })()}
+
               {/* ── SLA ALERT WIDGET ── */}
               {(() => {
                 const now3 = new Date();
@@ -4068,8 +4219,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     });
 
     let filteredInv = [...invoicesData];
+    const todayDateStr = new Date().toISOString().slice(0,10);
     if (invoiceFilter === "Garansi") {
       filteredInv = garansiAktif;
+    } else if (invoiceFilter === "Hari Ini") {
+      filteredInv = filteredInv.filter(inv => (inv.created_at||"").slice(0,10) === todayDateStr);
     } else if (invoiceFilter !== "Semua") {
       filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
     }
@@ -4094,6 +4248,47 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"8px 14px", borderRadius:9, cursor:"pointer", fontWeight:600, fontSize:12 }}>
           🔔 Kirim Reminder ({unpaidCnt})
         </button>
+        <button onClick={() => {
+          // Export invoice ke CSV/Excel
+          const rows = filteredInv;
+          const headers = ["No","ID Invoice","Tanggal","Customer","No HP","Layanan","Status","Total","Teknisi","Dibayar"];
+          const csvRows = [headers.join(",")];
+          rows.forEach((inv, idx) => {
+            const tgl = inv.created_at ? new Date(inv.created_at).toLocaleDateString("id-ID") : "-";
+            const paid = inv.paid_at ? new Date(inv.paid_at).toLocaleDateString("id-ID") : "-";
+            csvRows.push([
+              idx+1,
+              inv.id||"-",
+              tgl,
+              `"${(inv.customer||"").replace(/"/g,'""')}"`,
+              inv.phone||"-",
+              `"${(inv.service||"").replace(/"/g,'""')}"`,
+              inv.status||"-",
+              inv.total||0,
+              `"${(inv.teknisi||"").replace(/"/g,'""')}"`,
+              paid,
+            ].join(","));
+          });
+          // Tambah baris total omset
+          const totalOmset = rows.filter(i=>i.status==="PAID").reduce((s,i)=>s+(i.total||0),0);
+          csvRows.push([]);
+          csvRows.push(["","","","","","","TOTAL PAID",""+totalOmset,"",""]);
+          const bom = "﻿"; // UTF-8 BOM agar Excel baca karakter Indonesia
+          const blob = new Blob([bom + csvRows.join("
+")], {type:"text/csv;charset=utf-8;"});
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          const label = invoiceFilter !== "Semua" ? invoiceFilter.replace(" ","_") : "Semua";
+          a.href = url;
+          a.download = `Invoice_${label}_${new Date().toISOString().slice(0,10)}.csv`;
+          a.click(); URL.revokeObjectURL(url);
+          showNotif(`✅ Export ${rows.length} invoice berhasil!`);
+        }}
+        style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green,
+          padding:"8px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:13,
+          display:"flex", alignItems:"center", gap:6 }}>
+          📊 Export Excel ({filteredInv.length})
+        </button>
       </div>
       {/* Search */}
       <div style={{ position:"relative" }}>
@@ -4107,13 +4302,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
         {[
           ["Semua", cs.muted],
+          ["Hari Ini", "#f97316"],
           ["UNPAID", cs.yellow],
           ["OVERDUE", cs.red],
           ["PAID", cs.green],
           ["PENDING_APPROVAL", cs.accent],
           ["Garansi", "#22d3ee"],
         ].map(([s, col]) => {
+          const todayStr = new Date().toISOString().slice(0,10);
           const cnt = s==="Semua" ? invoicesData.length
+            : s==="Hari Ini" ? invoicesData.filter(inv => (inv.created_at||"").slice(0,10) === todayStr).length
             : s==="Garansi" ? garansiAktif.length
             : invoicesData.filter(i=>i.status===s).length;
           const showBadge = s==="Garansi" && garansiKritis.length > 0;
