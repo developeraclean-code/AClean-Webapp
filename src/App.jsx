@@ -469,7 +469,8 @@ export default function ACleanWebApp() {
   const [searchLaporan,   setSearchLaporan]   = useState("");
   const [laporanSvcFilter, setLaporanSvcFilter] = useState("Semua");
   const [laporanStatusFilter, setLaporanStatusFilter] = useState("Semua");
-  const [laporanDateFilter, setLaporanDateFilter] = useState("Semua"); // Semua/Minggu Ini/Bulan Ini
+  const [laporanDateFilter, setLaporanDateFilter] = useState("Semua"); // Semua/Hari Ini/Minggu Ini/Bulan Ini
+  const [laporanTeamFilter, setLaporanTeamFilter] = useState("Semua"); // filter per teknisi
   const [laporanPage,     setLaporanPage]     = useState(1);
   const LAP_PAGE_SIZE = 10;
 
@@ -6132,13 +6133,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,fontWeight:700}}>{lbl}</span>; };
     const statusOrder = { SUBMITTED:0, REVISION:1, VERIFIED:2, REJECTED:3 };
     // ── SIM-8: date + service + status filters + pagination ──
+    const todayLap = new Date().toISOString().slice(0,10);
     const weekAgo  = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
     const monthAgo = new Date(Date.now()-30*86400000).toISOString().slice(0,10);
     let filtered = [...laporanReports];
-    if (laporanDateFilter==="Minggu Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=weekAgo);
+    if (laporanDateFilter==="Hari Ini")  filtered=filtered.filter(r=>(r.date||r.submitted_at||"").slice(0,10)===todayLap);
+    else if (laporanDateFilter==="Minggu Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=weekAgo);
     else if (laporanDateFilter==="Bulan Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=monthAgo);
     if (laporanSvcFilter!=="Semua") filtered=filtered.filter(r=>(r.service||"")===laporanSvcFilter);
     if (laporanStatusFilter!=="Semua") filtered=filtered.filter(r=>r.status===laporanStatusFilter);
+    if (laporanTeamFilter!=="Semua") filtered=filtered.filter(r=>r.teknisi===laporanTeamFilter||r.helper===laporanTeamFilter);
     if (searchLaporan.trim()) {
       const q=searchLaporan.trim().toLowerCase();
       filtered=filtered.filter(r=>
@@ -6171,26 +6175,59 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             ))}
           </div>
         </div>
-        {/* Filters: date + service + status */}
+        {/* Filters: date + service + status + tim */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-          {["Semua","Minggu Ini","Bulan Ini"].map(f=>(
+          {/* Date filter — tambah Hari Ini */}
+          {[["Semua","📋"],["Hari Ini","🔴"],["Minggu Ini","📅"],["Bulan Ini","📅"]].map(([f,ic])=>(
             <button key={f} onClick={()=>{setLaporanDateFilter(f);setLaporanPage(1);}}
-              style={{padding:"5px 12px",borderRadius:99,border:"1px solid "+(laporanDateFilter===f?cs.accent:cs.border),background:laporanDateFilter===f?cs.accent+"22":cs.card,color:laporanDateFilter===f?cs.accent:cs.muted,cursor:"pointer",fontSize:11,fontWeight:laporanDateFilter===f?700:500}}>
-              📅 {f}
+              style={{padding:"5px 12px",borderRadius:99,fontSize:12,cursor:"pointer",
+                border:"1px solid "+(laporanDateFilter===f?cs.accent:cs.border),
+                background:laporanDateFilter===f?cs.accent+"22":cs.surface,
+                color:laporanDateFilter===f?cs.accent:cs.muted,
+                fontWeight:laporanDateFilter===f?700:400}}>
+              {ic} {f}
             </button>
           ))}
           <span style={{width:1,height:16,background:cs.border}}/>
           {["Semua","Cleaning","Install","Repair","Complain"].map(f=>(
             <button key={f} onClick={()=>{setLaporanSvcFilter(f);setLaporanPage(1);}}
-              style={{padding:"5px 12px",borderRadius:99,border:"1px solid "+(laporanSvcFilter===f?cs.accent:cs.border),background:laporanSvcFilter===f?cs.accent+"22":cs.card,color:laporanSvcFilter===f?cs.accent:cs.muted,cursor:"pointer",fontSize:11,fontWeight:laporanSvcFilter===f?700:500}}>
+              style={{padding:"5px 12px",borderRadius:99,fontSize:12,cursor:"pointer",
+                border:"1px solid "+(laporanSvcFilter===f?cs.accent:cs.border),
+                background:laporanSvcFilter===f?cs.accent+"22":cs.surface,
+                color:laporanSvcFilter===f?cs.accent:cs.muted,
+                fontWeight:laporanSvcFilter===f?700:400}}>
               {f}
             </button>
           ))}
           <span style={{width:1,height:16,background:cs.border}}/>
           {["Semua","SUBMITTED","VERIFIED","REVISION","REJECTED"].map(f=>(
             <button key={f} onClick={()=>{setLaporanStatusFilter(f);setLaporanPage(1);}}
-              style={{padding:"5px 12px",borderRadius:99,border:"1px solid "+(laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]:cs.border),background:laporanStatusFilter===f?((sMap[f]||[cs.accent])[0])+"22":cs.card,color:laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]:cs.muted,cursor:"pointer",fontSize:11,fontWeight:laporanStatusFilter===f?700:500}}>
+              style={{padding:"5px 12px",borderRadius:99,fontSize:12,cursor:"pointer",
+                border:"1px solid "+(laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]:cs.border),
+                background:laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]+"22":cs.surface,
+                color:laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]:cs.muted,
+                fontWeight:laporanStatusFilter===f?700:400}}>
               {f==="Semua"?"Semua":f==="SUBMITTED"?"Baru":f==="VERIFIED"?"Verified":f==="REVISION"?"Revisi":"Ditolak"}
+            </button>
+          ))}
+          <span style={{width:1,height:16,background:cs.border}}/>
+          {/* Filter per tim/teknisi */}
+          {["Semua",...[...new Set([
+            ...laporanReports.map(r=>r.teknisi),
+            ...laporanReports.map(r=>r.helper)
+          ].filter(Boolean))].sort()].map(f=>(
+            <button key={f} onClick={()=>{setLaporanTeamFilter(f);setLaporanPage(1);}}
+              style={{padding:"5px 12px",borderRadius:99,fontSize:12,cursor:"pointer",
+                border:"1px solid "+(laporanTeamFilter===f?cs.green:cs.border),
+                background:laporanTeamFilter===f?cs.green+"22":cs.surface,
+                color:laporanTeamFilter===f?cs.green:cs.muted,
+                fontWeight:laporanTeamFilter===f?700:400,
+                display:"flex",alignItems:"center",gap:4}}>
+              {f!=="Semua" && (
+                <span style={{width:8,height:8,borderRadius:"50%",
+                  background:techColors?.[f]||cs.accent,display:"inline-block"}}/>
+              )}
+              {f==="Semua"?"👥 Semua Tim":f}
             </button>
           ))}
         </div>
@@ -6202,6 +6239,79 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px 10px 38px",color:cs.text,fontSize:13,boxSizing:"border-box"}} />
           {searchLaporan && <button onClick={()=>{setSearchLaporan("");setLaporanPage(1);}} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:16}}>✕</button>}
         </div>
+        {/* ── LAPORAN HARI INI — selalu tampil di atas ── */}
+        {(() => {
+          const todayStr  = new Date().toISOString().slice(0,10);
+          const todayReps = laporanReports.filter(r =>
+            (r.date || r.submitted_at || "").slice(0,10) === todayStr
+          );
+          if (todayReps.length === 0 && laporanDateFilter === "Semua") return null;
+          if (laporanDateFilter !== "Semua") return null; // sudah difilter, tidak perlu card ini
+          return (
+            <div style={{background:cs.card,border:"2px solid "+cs.accent+"44",borderRadius:14,padding:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{fontWeight:800,fontSize:13,color:cs.accent}}>
+                  🔴 Laporan Hari Ini — {new Date().toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long"})}
+                </div>
+                <div style={{fontSize:11,color:cs.muted}}>{todayReps.length} laporan</div>
+              </div>
+              {todayReps.length === 0 ? (
+                <div style={{fontSize:12,color:cs.muted,textAlign:"center",padding:"10px 0"}}>
+                  Belum ada laporan masuk hari ini
+                </div>
+              ) : (
+                <div style={{display:"grid",gap:7}}>
+                  {todayReps
+                    .sort((a,b) => (sMap[a.status]?0:1) - (sMap[b.status]?0:1))
+                    .map(r => {
+                      const [col] = sMap[r.status] || [cs.muted];
+                      const tcol  = techColors?.[r.teknisi] || cs.accent;
+                      return (
+                        <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,
+                          background:cs.surface,borderRadius:10,padding:"8px 12px",
+                          border:"1px solid "+col+"33"}}>
+                          {/* Avatar teknisi */}
+                          <div style={{width:30,height:30,borderRadius:8,background:tcol+"33",
+                            display:"flex",alignItems:"center",justifyContent:"center",
+                            fontSize:13,fontWeight:800,color:tcol,flexShrink:0}}>
+                            {(r.teknisi||"?")[0]}
+                          </div>
+                          {/* Info */}
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12,fontWeight:700,color:cs.text,
+                              whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                              {r.customer} · {r.service}
+                            </div>
+                            <div style={{fontSize:11,color:cs.muted}}>
+                              👷 {r.teknisi}{r.helper?" + "+r.helper:""}
+                              {" · "}{r.job_id||r.id}
+                            </div>
+                          </div>
+                          {/* Status badge */}
+                          <div style={{fontSize:10,padding:"3px 9px",borderRadius:99,
+                            background:col+"22",color:col,fontWeight:700,flexShrink:0}}>
+                            {r.status==="SUBMITTED"?"Baru":r.status==="VERIFIED"?"Verified":
+                             r.status==="REVISION"?"Revisi":"Ditolak"}
+                          </div>
+                          {/* Tombol verifikasi cepat */}
+                          {r.status==="SUBMITTED" && (currentUser?.role==="Admin"||currentUser?.role==="Owner") && (
+                            <button onClick={()=>verifyLaporan(r)}
+                              style={{fontSize:11,padding:"4px 10px",borderRadius:7,
+                                background:cs.green+"22",border:"1px solid "+cs.green+"44",
+                                color:cs.green,cursor:"pointer",fontWeight:600,flexShrink:0}}>
+                              ✅ Verify
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* List */}
         {filtered.length===0
           ? <div style={{background:cs.card,borderRadius:14,padding:40,textAlign:"center",color:cs.muted}}>Tidak ada laporan</div>
