@@ -439,6 +439,7 @@ export default function ACleanWebApp() {
   const [customerPage,    setCustomerPage]    = useState(1);
   const [schedPage,       setSchedPage]       = useState(1);
   const [dbHealthData,    setDbHealthData]    = useState([]);
+  const [omsetView,       setOmsetView]       = useState("minggu");
   const [dbHealthLoading, setDbHealthLoading] = useState(false);
   const [vacuumLoading,   setVacuumLoading]   = useState({});
   const INV_PAGE_SIZE = 15;
@@ -3261,7 +3262,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
         {/* ── STATISTIK OMSET PER HARI/MINGGU/BULAN (Owner & Admin) ── */}
         {(() => {
-          const [omsetView, setOmsetView] = React.useState("minggu");
           const now = new Date();
           const todayStr = now.toISOString().slice(0,10);
 
