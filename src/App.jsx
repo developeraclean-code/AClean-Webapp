@@ -4274,8 +4274,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           csvRows.push([]);
           csvRows.push(["","","","","","","TOTAL PAID",""+totalOmset,"",""]);
           const bom = "﻿"; // UTF-8 BOM agar Excel baca karakter Indonesia
-          const blob = new Blob([bom + csvRows.join("
-")], {type:"text/csv;charset=utf-8;"});
+          const blob = new Blob([bom + csvRows.join("\n")], {type:"text/csv;charset=utf-8;"});
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           const label = invoiceFilter !== "Semua" ? invoiceFilter.replace(" ","_") : "Semua";
