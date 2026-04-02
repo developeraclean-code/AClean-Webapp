@@ -469,8 +469,10 @@ export default function ACleanWebApp() {
   const [searchLaporan,   setSearchLaporan]   = useState("");
   const [laporanSvcFilter, setLaporanSvcFilter] = useState("Semua");
   const [laporanStatusFilter, setLaporanStatusFilter] = useState("Semua");
-  const [laporanDateFilter, setLaporanDateFilter] = useState("Semua"); // Semua/Hari Ini/Minggu Ini/Bulan Ini
+  const [laporanDateFilter, setLaporanDateFilter] = useState("Semua"); // Semua/Hari Ini/Minggu Ini/Bulan Ini/Range
   const [laporanTeamFilter, setLaporanTeamFilter] = useState("Semua"); // filter per teknisi
+  const [laporanDateFrom,   setLaporanDateFrom]   = useState(""); // date range: dari
+  const [laporanDateTo,     setLaporanDateTo]     = useState(""); // date range: sampai
   const [laporanPage,     setLaporanPage]     = useState(1);
   const LAP_PAGE_SIZE = 10;
 
@@ -6146,6 +6148,24 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     if (laporanDateFilter==="Hari Ini")  filtered=filtered.filter(r=>(r.date||r.submitted_at||"").slice(0,10)===todayLap);
     else if (laporanDateFilter==="Minggu Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=weekAgo);
     else if (laporanDateFilter==="Bulan Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=monthAgo);
+    else if (laporanDateFilter==="Range" && (laporanDateFrom||laporanDateTo)) {
+      // Convert dd/mm/yyyy → yyyy-mm-dd untuk perbandingan
+      const parseDate = (s) => {
+        if (!s) return "";
+        const parts = s.split("/");
+        if (parts.length===3) return `${parts[2]}-${parts[1].padStart(2,"0")}-${parts[0].padStart(2,"0")}`;
+        return s; // already yyyy-mm-dd
+      };
+      const fromStr = parseDate(laporanDateFrom);
+      const toStr   = parseDate(laporanDateTo);
+      filtered = filtered.filter(r => {
+        const d = (r.date||r.submitted_at||"").slice(0,10);
+        if (fromStr && toStr) return d >= fromStr && d <= toStr;
+        if (fromStr) return d >= fromStr;
+        if (toStr)   return d <= toStr;
+        return true;
+      });
+    }
     if (laporanSvcFilter!=="Semua") filtered=filtered.filter(r=>(r.service||"")===laporanSvcFilter);
     if (laporanStatusFilter!=="Semua") filtered=filtered.filter(r=>r.status===laporanStatusFilter);
     if (laporanTeamFilter!=="Semua") filtered=filtered.filter(r=>r.teknisi===laporanTeamFilter||r.helper===laporanTeamFilter);
@@ -6245,6 +6265,65 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px 10px 38px",color:cs.text,fontSize:13,boxSizing:"border-box"}} />
           {searchLaporan && <button onClick={()=>{setSearchLaporan("");setLaporanPage(1);}} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:16}}>✕</button>}
         </div>
+        {/* ── DATE RANGE PICKER ── */}
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",
+          background:cs.surface,border:"1px solid "+cs.border,borderRadius:10,padding:"8px 12px"}}>
+          <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>📅 Rentang Tanggal:</span>
+          {/* Input dari */}
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:11,color:cs.muted}}>Dari</span>
+            <input
+              type="date"
+              value={laporanDateFrom}
+              onChange={e=>{
+                setLaporanDateFrom(e.target.value);
+                setLaporanDateFilter("Range");
+                setLaporanPage(1);
+              }}
+              style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+                padding:"5px 9px",fontSize:12,color:cs.text,cursor:"pointer",
+                colorScheme:"dark"}}
+            />
+          </div>
+          <span style={{fontSize:12,color:cs.muted}}>–</span>
+          {/* Input sampai */}
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:11,color:cs.muted}}>Sampai</span>
+            <input
+              type="date"
+              value={laporanDateTo}
+              onChange={e=>{
+                setLaporanDateTo(e.target.value);
+                setLaporanDateFilter("Range");
+                setLaporanPage(1);
+              }}
+              style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+                padding:"5px 9px",fontSize:12,color:cs.text,cursor:"pointer",
+                colorScheme:"dark"}}
+            />
+          </div>
+          {/* Info hasil + tombol reset */}
+          {laporanDateFilter==="Range" && (laporanDateFrom||laporanDateTo) && (
+            <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
+              <span style={{fontSize:11,color:cs.accent,fontWeight:600}}>
+                {filtered.length} laporan
+              </span>
+              <button
+                onClick={()=>{
+                  setLaporanDateFrom("");
+                  setLaporanDateTo("");
+                  setLaporanDateFilter("Semua");
+                  setLaporanPage(1);
+                }}
+                style={{fontSize:11,padding:"3px 10px",borderRadius:99,
+                  background:cs.red+"22",border:"1px solid "+cs.red+"44",
+                  color:cs.red,cursor:"pointer",fontWeight:600}}>
+                ✕ Reset
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* ── LAPORAN HARI INI — selalu tampil di atas ── */}
         {(() => {
           const todayStr  = new Date().toISOString().slice(0,10);
@@ -6347,12 +6426,75 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               {safeArr(r.materials).length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
               {safeArr(r.fotos).length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
               {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon Total: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
+              {/* Summary PK + brand semua unit */}
+              {(r.units||[]).length > 0 && (()=>{
+                const unitSummary = (r.units||[]).map((u,i) => {
+                  const pk    = u.pk   || "";
+                  const merk  = u.merk || "";
+                  const label = u.label|| `Unit ${i+1}`;
+                  return { label, pk, merk, tipe: u.tipe||"" };
+                });
+                return (
+                  <div style={{gridColumn:"1/-1"}}>
+                    <span style={{color:cs.muted}}>Detail Unit: </span>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:4}}>
+                      {unitSummary.map((u,i)=>(
+                        <div key={i} style={{display:"flex",alignItems:"center",gap:5,
+                          background:cs.surface,border:"1px solid "+cs.border,
+                          borderRadius:7,padding:"3px 9px",fontSize:11}}>
+                          <span style={{fontWeight:700,color:cs.accent}}>Unit {i+1}</span>
+                          <span style={{color:cs.muted}}>·</span>
+                          {u.merk && <span style={{fontWeight:700,color:cs.text}}>{u.merk}</span>}
+                          {u.pk && (
+                            <span style={{background:cs.accent+"22",color:cs.accent,
+                              fontWeight:800,fontSize:10,padding:"1px 6px",borderRadius:99}}>
+                              {u.pk}
+                            </span>
+                          )}
+                          {u.label && <span style={{color:cs.muted,fontSize:10}}>{u.label}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Per-unit accordion */}
             {(r.units||[]).map((u,ui)=>(
               <div key={ui} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"10px 13px",marginBottom:8,fontSize:12}}>
-                <div style={{fontWeight:700,color:cs.accent,marginBottom:6}}>Unit {u.unit_no} — {u.label} {u.merk?`(${u.merk})`:""}</div>
+                                {/* Unit header: nomor + label + brand + PK badge */}
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:800,color:cs.accent,fontSize:13}}>
+                    Unit {u.unit_no}
+                  </span>
+                  {u.label && (
+                    <span style={{fontSize:12,color:cs.text,fontWeight:600}}>{u.label}</span>
+                  )}
+                  <span style={{color:cs.border}}>·</span>
+                  {u.merk && (
+                    <span style={{fontSize:12,fontWeight:700,color:cs.text,
+                      background:cs.surface,border:"1px solid "+cs.border,
+                      borderRadius:6,padding:"1px 8px"}}>
+                      {u.merk}
+                    </span>
+                  )}
+                  {u.pk && (
+                    <span style={{fontSize:11,fontWeight:800,color:"#fff",
+                      background:cs.accent,borderRadius:99,padding:"2px 9px"}}>
+                      {u.pk}
+                    </span>
+                  )}
+                  {u.tipe && (
+                    <span style={{fontSize:10,color:cs.muted}}>{u.tipe}</span>
+                  )}
+                  {parseFloat(u.freon_ditambah)>0 && (
+                    <span style={{fontSize:10,fontWeight:700,color:"#06b6d4",
+                      background:"#06b6d422",borderRadius:99,padding:"2px 8px"}}>
+                      ❄️ +{u.freon_ditambah} psi
+                    </span>
+                  )}
+                </div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:4}}>
                   {(u.kondisi_sebelum||[]).map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.yellow+"18",color:cs.yellow,padding:"1px 7px",borderRadius:99}}>{k}</span>)}
                 </div>
