@@ -355,14 +355,8 @@ export default async function handler(req, res) {
       const accountId       = process.env.R2_ACCOUNT_ID;
       const bucket          = process.env.R2_BUCKET_NAME || "aclean-files";
 
-      // Jika ada public URL, redirect langsung (lebih cepat, tidak butuh auth)
-      const pubUrl = process.env.R2_PUBLIC_URL;
-      if (pubUrl) {
-        const clean = pubUrl.replace(/\/$/, "");
-        return res.redirect(302, clean + "/" + key);
-      }
-
-      // Fallback: fetch dari R2 dengan AWS Sig V4
+      // Selalu serve via AWS Sig V4 (tidak redirect ke public URL)
+      // karena R2 public access mungkin belum diaktifkan
       if (!accessKeyId || !secretAccessKey || !accountId) {
         return res.status(503).json({ error: "R2 credentials tidak tersedia" });
       }
