@@ -995,6 +995,30 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
 
   // ── Generate & Download Invoice PDF (pakai browser print API) ──
   // ── Download Rekap Harian (Orders + Invoice) ke CSV/Excel ──
+  // ── Trigger auto-rekap manual via Edge Function ──
+  const triggerRekapHarian = async (targetDate) => {
+    const tgl = targetDate || TODAY;
+    showNotif("⏳ Mengirim rekap ke WhatsApp Owner...");
+    try {
+      const res = await fetch(
+        `https://apsbeppcmsxeldnejibz.supabase.co/functions/v1/rekap-harian?date=${tgl}`,
+        { method: "GET", headers: { "Content-Type": "application/json" } }
+      );
+      const data = await res.json();
+      if (data.ok) {
+        showNotif(data.waSent
+          ? `✅ Rekap ${tgl} terkirim ke WA Owner!`
+          : `⚠️ Rekap dibuat tapi WA gagal dikirim`
+        );
+        addAgentLog("MANUAL_REKAP", `Rekap manual ${tgl} dipicu oleh ${currentUser?.name}`, data.waSent?"SUCCESS":"WARNING");
+      } else {
+        showNotif("❌ Gagal generate rekap: " + (data.error || "Unknown error"));
+      }
+    } catch(err) {
+      showNotif("❌ Error: " + err.message);
+    }
+  };
+
   const downloadRekapHarian = (targetDate) => {
     const tgl = targetDate || TODAY;
     const fmt2 = (n) => "Rp " + (Number(n)||0).toLocaleString("id-ID");
@@ -3349,6 +3373,41 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     padding:"5px 12px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,
                     whiteSpace:"nowrap"}}>
                   ⬇️ Download
+                </button>
+              </div>
+            )}
+            {/* ── Download Rekap Harian ── */}
+            {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+              <div style={{display:"flex",alignItems:"center",gap:6,
+                background:cs.surface,border:"1px solid "+cs.border,
+                borderRadius:8,padding:"5px 8px"}}>
+                <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>
+                  📥 Rekap:
+                </span>
+                <input type="date" id="rekapDatePickerOrders"
+                  defaultValue={TODAY}
+                  style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,
+                    padding:"4px 8px",fontSize:12,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+                />
+                <button
+                  onClick={()=>{
+                    const d = document.getElementById("rekapDatePickerOrders")?.value || TODAY;
+                    downloadRekapHarian(d);
+                  }}
+                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
+                    padding:"5px 12px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,
+                    whiteSpace:"nowrap"}}>
+                  ⬇️ Download
+                </button>
+                <button
+                  onClick={()=>{
+                    const d = document.getElementById("rekapDatePickerOrders")?.value || TODAY;
+                    triggerRekapHarian(d);
+                  }}
+                  style={{background:"#25D36622",border:"1px solid #25D36644",color:"#25D366",
+                    padding:"5px 12px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,
+                    whiteSpace:"nowrap"}}>
+                  📲 Kirim WA
                 </button>
               </div>
             )}
