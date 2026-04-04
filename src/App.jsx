@@ -535,6 +535,7 @@ export default function ACleanWebApp() {
   const [matTrackDateFrom, setMatTrackDateFrom] = useState("");
   const [matTrackDateTo,   setMatTrackDateTo]   = useState("");
   const [invTxData,        setInvTxData]        = useState([]);
+  const [invUnitsData,     setInvUnitsData]     = useState([]); // unit fisik per item (tabung/roll)
   const [showAddStock,     setShowAddStock]     = useState(false);
   const [newOrderForm,     setNewOrderForm]     = useState({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
   const [newStokForm,      setNewStokForm]      = useState({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
@@ -1655,7 +1656,7 @@ ${matRowsHtml}
     if (!isLoggedIn) return;
 
     const loadAll = async () => {
-      const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes] = await Promise.all([
+      const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes, invUnitsRes] = await Promise.all([
         supabase.from("orders").select("*").order("date", { ascending: false }),
         supabase.from("invoices").select("*").order("created_at", { ascending: false }),
         supabase.from("customers").select("*").order("name"),
@@ -1663,11 +1664,13 @@ ${matRowsHtml}
         supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }),
         supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(50),
         supabase.from("inventory_transactions").select("*").order("created_at",{ascending:false}).limit(1000),
+        supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label"),
       ]);
       // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
       // Jika error = fallback ke demo data yang sudah di-init
       if (!ordersRes.error   && ordersRes.data)   setOrdersData(ordersRes.data);
       if (!invTxRes?.error && invTxRes?.data)   setInvTxData(invTxRes.data);
+      if (!invUnitsRes?.error && invUnitsRes?.data) setInvUnitsData(invUnitsRes.data);
       if (!invoicesRes.error && invoicesRes.data)  setInvoicesData(invoicesRes.data);
       if (!customersRes.error && customersRes.data) setCustomersData(customersRes.data);
       // [G1 FIXED] laporan load handled below by parseLaporan block
@@ -2396,6 +2399,8 @@ ${matRowsHtml}
         job_date: jobDate || null,
         created_by: currentUser?.id || null,
         created_by_name: currentUser?.name || "",
+        unit_id: mat._unitId || null,
+        unit_label: mat._unitLabel || null,
     }); } catch(e) { console.warn("inv tx skip:", e?.message); }
       if (newStatus === "CRITICAL" || newStatus === "OUT") {
         addAgentLog("STOCK_ALERT", `${item.name}: ${newStatus} (sisa ${newStock} ${item.unit})`, "WARNING");
@@ -7199,11 +7204,47 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const renderMatTrack = () => {
     // Item prioritas yang perlu ditrack (freon, pipa, kabel)
     const TRACK_ITEMS = inventoryData.filter(item =>
-      item.freon_type || // semua freon
-      (item.name||"").toLowerCase().includes("pipa") ||
-      (item.name||"").toLowerCase().includes("kabel") ||
-      (item.category||"") === "Tracked"
+      item.material_type === "freon" ||
+      item.material_type === "pipa"  ||
+      item.material_type === "kabel"
     );
+
+    // Helper: reload units dari DB
+    const reloadUnits = async () => {
+      const { data } = await supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label");
+      if (data) setInvUnitsData(data);
+    };
+
+    // Helper: tambah unit baru
+    const addUnit = async (invCode, label, capacity, minVisible) => {
+      const { error } = await supabase.from("inventory_units").insert({
+        inventory_code: invCode,
+        unit_label:     label,
+        stock:          capacity,   // stok awal = kapasitas penuh
+        capacity:       capacity,
+        min_visible:    minVisible,
+        is_active:      true,
+      });
+      if (!error) { await reloadUnits(); showNotif("✅ Unit " + label + " ditambahkan"); }
+      else showNotif("❌ " + error.message);
+    };
+
+    // Helper: update stok unit
+    const updateUnitStock = async (unitId, newStock) => {
+      const { error } = await supabase.from("inventory_units")
+        .update({ stock: newStock, updated_at: new Date().toISOString() })
+        .eq("id", unitId);
+      if (!error) {
+        setInvUnitsData(prev => prev.map(u => u.id === unitId ? {...u, stock: newStock} : u));
+        showNotif("✅ Stok unit diupdate");
+      }
+    };
+
+    // Helper: toggle aktif/nonaktif unit
+    const toggleUnit = async (unitId, isActive) => {
+      await supabase.from("inventory_units").update({ is_active: isActive }).eq("id", unitId);
+      setInvUnitsData(prev => prev.map(u => u.id === unitId ? {...u, is_active: isActive} : u));
+    };
 
     // Filter inventory_transactions
     let txFiltered = [...invTxData].filter(tx => tx.qty < 0); // hanya keluar (usage)
@@ -7283,6 +7324,101 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div style={{marginTop:6,height:4,background:cs.border,borderRadius:99,overflow:"hidden"}}>
                   <div style={{height:"100%",background:col,borderRadius:99,
                     width:item.min_alert>0?Math.min(100,Math.round(item.stock/item.min_alert*50))+"%":"30%"}}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Unit Fisik per Item (Tabung / Roll) — Owner/Admin only ── */}
+        <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:14,padding:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:14,color:cs.text}}>📦 Unit Fisik (Tabung & Roll)</div>
+              <div style={{fontSize:11,color:cs.muted}}>Stok per unit · Teknisi lihat unit sisa &ge; batas minimum</div>
+            </div>
+          </div>
+          {TRACK_ITEMS.map(item => {
+            const units = invUnitsData.filter(u => u.inventory_code === item.code);
+            const totalStok = units.reduce((s,u)=>s+(u.stock||0),0);
+            return (
+              <div key={item.code} style={{marginBottom:12,background:cs.surface,borderRadius:10,padding:"10px 14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div>
+                    <span style={{fontWeight:700,fontSize:13,color:cs.text}}>{item.name}</span>
+                    <span style={{fontSize:11,color:cs.muted,marginLeft:8}}>[{item.code}]</span>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <span style={{fontSize:12,fontWeight:700,color:cs.green}}>{totalStok} {item.unit} total</span>
+                    <button onClick={()=>{
+                      const label = prompt("Label unit baru (contoh: Roll 1PK-B):");
+                      if (!label) return;
+                      const cap   = parseFloat(prompt("Kapasitas (meter/kg, contoh: 30):") || "0");
+                      const minV  = parseFloat(prompt("Batas minimum untuk teknisi (contoh: 3):") || "3");
+                      if (cap > 0) addUnit(item.code, label, cap, minV);
+                    }}
+                    style={{fontSize:11,padding:"3px 10px",borderRadius:7,background:cs.accent+"22",
+                      border:"1px solid "+cs.accent+"44",color:cs.accent,cursor:"pointer",fontWeight:600}}>
+                      + Tambah Unit
+                    </button>
+                  </div>
+                </div>
+                <div style={{display:"grid",gap:6}}>
+                  {units.length === 0 ? (
+                    <div style={{fontSize:11,color:cs.muted,textAlign:"center",padding:"8px 0"}}>
+                      Belum ada unit fisik. Klik "+ Tambah Unit" untuk menambah.
+                    </div>
+                  ) : units.map(unit => {
+                    const pct = unit.capacity > 0 ? Math.min(100, Math.round(unit.stock/unit.capacity*100)) : 0;
+                    const col = !unit.is_active ? cs.muted
+                      : unit.stock < (unit.min_visible||3) ? cs.red
+                      : unit.stock < (unit.capacity||99)/3 ? cs.yellow
+                      : cs.green;
+                    const hiddenFromTek = unit.stock < (unit.min_visible||3);
+                    return (
+                      <div key={unit.id} style={{display:"flex",alignItems:"center",gap:10,
+                        opacity:unit.is_active?1:0.5,
+                        background:cs.card,borderRadius:8,padding:"7px 10px",
+                        border:"1px solid "+col+"33"}}>
+                        {/* Label + status */}
+                        <div style={{minWidth:120}}>
+                          <div style={{fontSize:12,fontWeight:600,color:cs.text}}>{unit.unit_label}</div>
+                          <div style={{fontSize:10,color:cs.muted}}>
+                            {hiddenFromTek && unit.is_active ? "👁️ Tersembunyi dari teknisi" : ""}
+                            {!unit.is_active ? "⏸️ Nonaktif" : ""}
+                          </div>
+                        </div>
+                        {/* Progress bar */}
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:cs.muted,marginBottom:3}}>
+                            <span>{unit.stock} {item.unit} sisa</span>
+                            <span>{unit.capacity||"?"} {item.unit} kapasitas</span>
+                          </div>
+                          <div style={{height:6,background:cs.border,borderRadius:99,overflow:"hidden"}}>
+                            <div style={{height:"100%",width:pct+"%",background:col,borderRadius:99,transition:"width .3s"}}/>
+                          </div>
+                        </div>
+                        {/* Edit stok */}
+                        <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                          <button onClick={()=>{
+                            const ns = parseFloat(prompt("Stok baru untuk "+unit.unit_label+" ("+item.unit+"):", unit.stock));
+                            if (!isNaN(ns) && ns >= 0) updateUnitStock(unit.id, ns);
+                          }}
+                          style={{fontSize:11,padding:"3px 8px",borderRadius:6,background:cs.yellow+"22",
+                            border:"1px solid "+cs.yellow+"44",color:cs.yellow,cursor:"pointer"}}>
+                            ✏️ Ubah
+                          </button>
+                          <button onClick={()=>toggleUnit(unit.id, !unit.is_active)}
+                          style={{fontSize:11,padding:"3px 8px",borderRadius:6,
+                            background:unit.is_active?cs.red+"22":cs.green+"22",
+                            border:"1px solid "+(unit.is_active?cs.red:cs.green)+"44",
+                            color:unit.is_active?cs.red:cs.green,cursor:"pointer"}}>
+                            {unit.is_active?"⏸️":"▶️"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -11058,28 +11194,47 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // Non-install: deduct dari laporanMaterials (freon/pipa/kabel dipilih via selector)
     const materialsToDeduct = isInstall ? effectiveMaterials : laporanMaterials;
 
-    // Deduct material spesifik: freon (by tabung), pipa, dan kabel
-    // freon_tabung_code = kode item inventori yang dipilih teknisi di card 3/4
-    const freonTabungDeducts = laporanMaterials
+    // Deduct unit fisik: freon (tabung spesifik), pipa (roll), kabel (roll)
+    // freon_tabung_code = UUID dari inventory_units yang dipilih teknisi
+    // freon_inv_code    = inventory.code milik unit itu (untuk update stok di DB)
+    const unitDeducts = laporanMaterials
       .filter(mat => mat.freon_tabung_code && parseFloat(mat.jumlah) > 0)
       .map(mat => {
-        const item = inventoryData.find(i => i.code === mat.freon_tabung_code);
-        if (!item) return null;
-        // Deduct dari tabung yang spesifik (bukan dari nama umum "Freon R-32")
+        const unit = invUnitsData.find(u => u.id === mat.freon_tabung_code);
+        if (!unit) return null;
         return {
-          nama: item.name,  // nama tabung spesifik, e.g. "Freon R-32 Tabung A"
-          jumlah: parseFloat(mat.jumlah),
-          satuan: item.unit,
-          keterangan: "freon",
-          _useCode: item.code,  // flag untuk match by code bukan nama
+          nama:             unit.unit_label,    // label unit fisik, e.g. "Roll 1PK-A"
+          jumlah:           parseFloat(mat.jumlah),
+          satuan:           mat.satuan || "",
+          keterangan:       "unit_fisik",
+          _useCode:         unit.inventory_code,  // untuk deduct inventory parent
+          _unitId:          unit.id,              // untuk update inventory_units.stock
+          _unitLabel:       unit.unit_label,
         };
       }).filter(Boolean);
 
-    // Gabung: material reguler + freon tabung spesifik
-    // Hindari double-deduct: filter material yang punya freon_tabung_code dari materialsToDeduct
-    // Mat yang punya freon_tabung_code = sudah dihandle by specific code → skip deduct by nama
-    const matWithoutFreon = materialsToDeduct.filter(mat => !mat.freon_tabung_code);
-    const allToDeduct = [...matWithoutFreon, ...freonTabungDeducts];
+    // Deduct inventory_units.stock untuk setiap unit fisik yang dipakai
+    for (const ud of unitDeducts) {
+      const unit = invUnitsData.find(u => u.id === ud._unitId);
+      if (!unit) continue;
+      const newStock = Math.max(0, unit.stock - ud.jumlah);
+      // Update local state inventory_units
+      setInvUnitsData(prev => prev.map(u => u.id === ud._unitId
+        ? {...u, stock: newStock}
+        : u
+      ));
+      // Update DB inventory_units
+      supabase.from("inventory_units").update({
+        stock: newStock,
+        updated_at: new Date().toISOString()
+      }).eq("id", ud._unitId).then(({error}) => {
+        if (error) console.warn("inv_units update err:", error.message);
+      });
+    }
+
+    // Material tanpa unit fisik → deduct via inventory biasa (by nama)
+    const matWithoutUnit = materialsToDeduct.filter(mat => !mat.freon_tabung_code);
+    const allToDeduct = [...matWithoutUnit, ...unitDeducts];
 
     if (allToDeduct.length > 0) {
       deductInventory(
@@ -11090,39 +11245,22 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         laporanModal?.teknisi  || null,  // teknisiName
         laporanModal?.date     || null   // jobDate
       );
-      let deductedCount = 0;
-      const lowStockWarnings = [];
-      for (const mat of materialsToDeduct) {
-        const qty = parseFloat(mat.jumlah) || 0;
-        if (!mat.nama || qty <= 0) continue;
-        try {
-          const { data: items } = await supabase.from("inventory")
-            .select("id,name,code,stock,min_alert,reorder,unit")
-            .ilike("name", mat.nama.trim()).limit(1);
-          if (items?.length > 0) {
-            const itm = items[0];
-            const newStk = Math.max(0, (itm.stock || 0) - qty);
-            const newSts = newStk === 0 ? "OUT"
-              : newStk <= (itm.min_alert || 1) ? "CRITICAL"
-              : newStk <= (itm.reorder || 3) ? "WARNING" : "OK";
-            await supabase.from("inventory").update({
-              stock: newStk, status: newSts, updated_at: new Date().toISOString()
-            }).eq("id", itm.id);
-            deductedCount++;
-            addAgentLog("STOCK_DEDUCTED", `${itm.name}: -${qty} (sisa: ${newStk}) — job ${laporanModal.id}`, "SUCCESS");
-            if (newSts === "CRITICAL" || newSts === "OUT") lowStockWarnings.push(`${itm.name} sisa ${newStk}`);
-          }
-        } catch(e) {
-          addAgentLog("STOCK_DEDUCT_ERR", `Gagal deduct ${mat.nama}: ${e?.message}`, "ERROR");
+      // Cek stok kritis setelah deduct (dari inventoryData state yg sudah diupdate deductInventory)
+      setTimeout(() => {
+        const kritisItems = inventoryData.filter(i =>
+          allToDeduct.some(m => m._useCode ? m._useCode === i.code
+            : i.name.toLowerCase().includes((m.nama||"").toLowerCase())) &&
+          (i.status === "CRITICAL" || i.status === "OUT")
+        );
+        if (kritisItems.length > 0) {
+          const warnings = kritisItems.map(i => `${i.name} sisa ${i.stock} ${i.unit}`);
+          showNotif("⚠️ Stok kritis: " + warnings.join(", "));
+          const ownerAccs = userAccounts.filter(u => u.role === "Owner");
+          const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n`
+            + warnings.map(w => "• " + w).join("\n");
+          ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
         }
-      }
-      if (lowStockWarnings.length > 0) {
-        showNotif("⚠️ Stok kritis: " + lowStockWarnings.join(", "));
-        const ownerAccs = userAccounts.filter(u => u.role === "Owner");
-        const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n` +
-          lowStockWarnings.map(w => "• " + w).join("\n");
-        ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
-      }
+      }, 800);
     }
 
     // ── 12. Auto-generate invoice ──
@@ -12123,59 +12261,90 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       {mat.satuan||"pcs"}
                     </div>
                   </div>
-                  {/* ── Material Stock Selector (Freon / Pipa / Kabel) ── */}
+                  {/* ── Unit Fisik Selector (Tabung / Roll) ── */}
                   {(()=>{
                     const n = (mat.nama||"").toLowerCase();
-
-                    // Deteksi kategori item
                     const isFreon = n.includes("freon") || n.includes("kuras vacum") ||
                       n.includes("r-22") || n.includes("r-32") || n.includes("r-410") ||
                       n.includes("r22") || n.includes("r32") || n.includes("r410");
                     const isPipa  = n.includes("pipa") || n.includes("hoda");
                     const isKabel = n.includes("kabel");
-                    const isTracked = isFreon || isPipa || isKabel;
-                    if (!isTracked) return null;
+                    if (!isFreon && !isPipa && !isKabel) return null;
 
-                    // Filter inventori sesuai kategori
-                    const trackedItems = inventoryData.filter(item => {
+                    // Cari inventory item yang paling cocok dengan nama material
+                    const matchedInvItem = inventoryData.find(item => {
                       const nm = (item.name||"").toLowerCase();
-                      if (isFreon) return item.freon_type || nm.includes("freon") || nm.includes("r-22") || nm.includes("r-32") || nm.includes("r-410");
-                      if (isPipa)  return nm.includes("pipa") || nm.includes("hoda");
-                      if (isKabel) return nm.includes("kabel");
+                      return nm.includes(n) || n.includes(nm.replace(/\s+/g,"").substring(0,6));
+                    }) || inventoryData.find(item => {
+                      const nm = (item.name||"").toLowerCase();
+                      if (isFreon) return item.freon_type && n.includes(item.freon_type.toLowerCase().replace("r","r-"));
+                      if (isPipa)  return nm.includes("pipa") && nm.includes(n.replace("pipa","").replace("hoda","").trim().split(" ")[0]);
+                      if (isKabel) return nm.includes("kabel") && n.includes(nm.substring(nm.indexOf("3x"),nm.indexOf("3x")+6));
                       return false;
                     });
 
-                    const icon  = isFreon ? "❄️" : isPipa ? "🔧" : "⚡";
-                    const label = isFreon ? "Pilih Tabung Freon:" : isPipa ? "Pilih Tipe Pipa:" : "Pilih Tipe Kabel:";
+                    // Ambil unit fisik milik item ini dari invUnitsData
+                    // Teknisi hanya lihat unit dengan stock >= min_visible
+                    // Admin/Owner bisa lihat semua (is_active = true)
+                    const isAdminRole = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+                    const availableUnits = invUnitsData.filter(u => {
+                      if (!matchedInvItem) return false;
+                      if (u.inventory_code !== matchedInvItem.code) return false;
+                      if (!u.is_active) return false;
+                      // Teknisi: hide unit dengan sisa < min_visible
+                      if (!isAdminRole && u.stock < (u.min_visible || 3)) return false;
+                      return true;
+                    });
+
+                    const icon      = isFreon ? "❄️" : isPipa ? "🔧" : "⚡";
+                    const unitWord  = isFreon ? "tabung" : isPipa ? "roll pipa" : "roll kabel";
                     const borderCol = isFreon ? cs.accent : isPipa ? "#f59e0b" : "#22c55e";
 
                     return (
                       <div style={{marginTop:6,padding:"8px 10px",
-                        background:borderCol+"0a",border:"1px solid "+borderCol+"33",borderRadius:8}}>
+                        background:borderCol+"08",border:"1px solid "+borderCol+"33",borderRadius:8}}>
                         <div style={{fontSize:10,fontWeight:700,color:borderCol,marginBottom:5}}>
-                          {icon} {label}
+                          {icon} Dari {unitWord} mana?
+                          {matchedInvItem && (
+                            <span style={{fontWeight:400,color:cs.muted,marginLeft:6}}>
+                              ({matchedInvItem.name})
+                            </span>
+                          )}
                         </div>
-                        <select
-                          value={mat.freon_tabung_code||""}
-                          onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id
-                            ?{...m,freon_tabung_code:e.target.value}:m))}
-                          style={{width:"100%",background:cs.surface,
-                            border:"1px solid "+borderCol+"66",borderRadius:7,
-                            padding:"7px 10px",color:cs.text,fontSize:12}}>
-                          <option value="">— Pilih item —</option>
-                          {trackedItems.map(item=>(
-                            <option key={item.id} value={item.code}>
-                              [{item.code}] {item.name} — Sisa: {item.stock} {item.unit}
-                            </option>
-                          ))}
-                        </select>
-                        {mat.freon_tabung_code ? (
-                          <div style={{fontSize:10,color:cs.green,marginTop:4}}>
-                            ✅ Stok [{mat.freon_tabung_code}] terpotong {mat.jumlah} {mat.satuan} saat submit
+                        {availableUnits.length === 0 ? (
+                          <div style={{fontSize:11,color:cs.red,padding:"4px 0"}}>
+                            ⚠️ Tidak ada {unitWord} tersedia (stok habis atau semua &lt; batas minimum).
+                            {isAdminRole && " Tambah unit baru di menu Stok Material."}
                           </div>
                         ) : (
-                          <div style={{fontSize:10,color:cs.yellow,marginTop:4}}>
-                            ⚠️ Pilih item spesifik agar stok terpotong dengan benar
+                          <select
+                            value={mat.freon_tabung_code||""}
+                            onChange={e=>{
+                              const unitId = e.target.value;
+                              const unit   = invUnitsData.find(u => u.id === unitId);
+                              setLaporanMaterials(p=>p.map(m=>m.id===mat.id
+                                ?{...m,
+                                  freon_tabung_code: unitId,
+                                  freon_unit_label:  unit?.unit_label || "",
+                                  freon_inv_code:    unit?.inventory_code || "",
+                                }:m));
+                            }}
+                            style={{width:"100%",background:cs.surface,
+                              border:"1px solid "+borderCol+"55",borderRadius:7,
+                              padding:"7px 10px",color:cs.text,fontSize:12}}>
+                            <option value="">— Pilih {unitWord} —</option>
+                            {availableUnits.map(unit=>(
+                              <option key={unit.id} value={unit.id}>
+                                {unit.unit_label} — Sisa: {unit.stock} {matchedInvItem?.unit||""}
+                                {unit.stock < (unit.min_visible||3)*2 ? " ⚠️" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        {mat.freon_tabung_code && mat.freon_unit_label && (
+                          <div style={{fontSize:10,color:cs.green,marginTop:4,display:"flex",gap:8}}>
+                            <span>✅ {mat.freon_unit_label}</span>
+                            <span style={{color:cs.muted}}>→ stok berkurang {mat.jumlah} {mat.satuan||matchedInvItem?.unit||""} saat submit</span>
                           </div>
                         )}
                       </div>
