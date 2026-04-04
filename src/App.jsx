@@ -3355,90 +3355,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             <div style={{ fontSize:13, color:cs.muted }}>{hariIni} · ARA aktif memantau</div>
           </div>
           <div style={{ display:"flex", gap:10 }}>
+            {/* Rekap Hari Ini — tombol ringkas di dashboard */}
             {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
-              <div style={{display:"flex",alignItems:"center",gap:6,
-                background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"4px 8px"}}>
-                <span style={{fontSize:11,color:cs.muted,whiteSpace:"nowrap"}}>📥 Rekap:</span>
-                <input type="date" id="rekapDatePicker"
-                  defaultValue={TODAY}
-                  style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,
-                    padding:"4px 8px",fontSize:11,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
-                />
-                <button
-                  onClick={()=>{
-                    const d = document.getElementById("rekapDatePicker")?.value || TODAY;
-                    downloadRekapHarian(d);
-                  }}
-                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
-                    padding:"5px 12px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,
-                    whiteSpace:"nowrap"}}>
-                  ⬇️ Download
-                </button>
-              </div>
-            )}
-            {/* ── Download Rekap Harian ── */}
-            {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
-              <div style={{display:"flex",alignItems:"center",gap:6,
-                background:cs.surface,border:"1px solid "+cs.border,
-                borderRadius:8,padding:"5px 8px"}}>
-                <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>
-                  📥 Rekap:
-                </span>
-                <input type="date" id="rekapDatePickerOrders"
-                  defaultValue={TODAY}
-                  style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,
-                    padding:"4px 8px",fontSize:12,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
-                />
-                <button
-                  onClick={()=>{
-                    const d = document.getElementById("rekapDatePickerOrders")?.value || TODAY;
-                    downloadRekapHarian(d);
-                  }}
-                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
-                    padding:"5px 12px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,
-                    whiteSpace:"nowrap"}}>
-                  ⬇️ Download
-                </button>
-                <button
-                  onClick={()=>{
-                    const d = document.getElementById("rekapDatePickerOrders")?.value || TODAY;
-                    triggerRekapHarian(d);
-                  }}
-                  style={{background:"#25D36622",border:"1px solid #25D36644",color:"#25D366",
-                    padding:"5px 12px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,
-                    whiteSpace:"nowrap"}}>
-                  📲 Kirim WA
-                </button>
-              </div>
-            )}
-            {/* ── Download Rekap + Kirim WA (Owner/Admin) ── */}
-            {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
-              <div style={{display:"flex",alignItems:"center",gap:6,
-                background:cs.surface,border:"1px solid "+cs.border,
-                borderRadius:8,padding:"5px 8px",flexWrap:"wrap"}}>
-                <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>📥 Rekap:</span>
-                <input type="date" id="rekapDatePickerOrders"
-                  defaultValue={TODAY}
-                  style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,
-                    padding:"4px 8px",fontSize:12,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
-                />
-                <button onClick={()=>{
-                    const d = document.getElementById("rekapDatePickerOrders")?.value || TODAY;
-                    downloadRekapHarian(d);
-                  }}
-                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
-                    padding:"5px 10px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,whiteSpace:"nowrap"}}>
-                  ⬇️ Download
-                </button>
-                <button onClick={()=>{
-                    const d = document.getElementById("rekapDatePickerOrders")?.value || TODAY;
-                    triggerRekapHarian(d);
-                  }}
-                  style={{background:"#25D36622",border:"1px solid #25D36644",color:"#25D366",
-                    padding:"5px 10px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,whiteSpace:"nowrap"}}>
-                  📲 Kirim WA
-                </button>
-              </div>
+              <button onClick={()=>triggerRekapHarian(TODAY)}
+                style={{background:cs.surface,border:"1px solid "+cs.border,color:cs.muted,
+                  padding:"8px 14px",borderRadius:8,cursor:"pointer",fontWeight:600,fontSize:13,
+                  display:"flex",alignItems:"center",gap:6}}>
+                📊 Rekap Hari Ini
+              </button>
             )}
             <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"10px 20px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
             <button onClick={() => setWaPanel(true)} style={{ position:"relative", background:cs.card, border:"1px solid #25D36644", color:"#25D366", padding:"10px 16px", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:13 }}>
@@ -4334,6 +4258,26 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 </button>
               ) : null;
             })()}
+            {/* ── Rekap Order: Download + Kirim WA ── */}
+            {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+              <div style={{display:"flex",alignItems:"center",gap:5,
+                background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"4px 7px"}}>
+                <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>📥 Rekap</span>
+                <input type="date" id="rekapOrder"
+                  defaultValue={TODAY}
+                  style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,
+                    padding:"3px 7px",fontSize:11,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+                />
+                <button onClick={()=>{const d=document.getElementById("rekapOrder")?.value||TODAY;downloadRekapHarian(d);}}
+                  title="Download rekap ke file"
+                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
+                    padding:"4px 8px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11}}>⬇️</button>
+                <button onClick={()=>{const d=document.getElementById("rekapOrder")?.value||TODAY;triggerRekapHarian(d);}}
+                  title="Kirim rekap via WhatsApp"
+                  style={{background:"#25D36622",border:"1px solid #25D36644",color:"#25D366",
+                    padding:"4px 8px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11}}>📲</button>
+              </div>
+            )}
             <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
           </div>
         </div>
@@ -5242,6 +5186,26 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               </div>
             )}
             {!isTekRole && (
+            {/* ── Rekap Jadwal: Download + Kirim WA ── */}
+            {!isTekRole && (
+              <div style={{display:"flex",alignItems:"center",gap:5,
+                background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"4px 7px"}}>
+                <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>📥 Rekap</span>
+                <input type="date" id="rekapSched"
+                  defaultValue={TODAY}
+                  style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,
+                    padding:"3px 7px",fontSize:11,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+                />
+                <button onClick={()=>{const d=document.getElementById("rekapSched")?.value||TODAY;downloadRekapHarian(d);}}
+                  title="Download rekap ke file"
+                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
+                    padding:"4px 8px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11}}>⬇️</button>
+                <button onClick={()=>{const d=document.getElementById("rekapSched")?.value||TODAY;triggerRekapHarian(d);}}
+                  title="Kirim rekap via WhatsApp"
+                  style={{background:"#25D36622",border:"1px solid #25D36644",color:"#25D366",
+                    padding:"4px 8px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11}}>📲</button>
+              </div>
+            )}
               <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>+ Order</button>
             )}
           </div>
