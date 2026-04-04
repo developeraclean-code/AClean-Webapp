@@ -1157,20 +1157,22 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       if (m.keterangan==="repair") return "repair";
       if (m.keterangan==="freon")  return "freon";
       const n = (m.nama||"").toLowerCase();
-      // Freon / kuras vacum — by nama
-      if (["freon","kuras vacum + isi freon","kuras vacum"].some(k=>n.includes(k))) return "freon";
+      // Freon / kuras vacum — by nama (diperluas)
+      if (["freon","kuras vacum","kuras+vacum","r32","r410","r22"].some(k=>n.includes(k))) return "freon";
+      // Repair/perbaikan — by nama (cek lebih dulu dari jasa)
+      const repairNames = ["repair","perbaikan","kapasitor","kompresor","sparepart","pcb",
+        "modul","overload","sensor","ganti","penggantian","spare part"];
+      if (repairNames.some(k=>n.includes(k))) return "repair";
       // Jasa — by nama pattern
       const jasaNames = ["cleaning","jasa vacum","jasa pemasangan","jasa perbaikan","jasa servis",
-        "pemasangan ac","bongkar ac","biaya pengecekan","service besar","complain"];
+        "jasa","service","servis","pemasangan ac","bongkar ac","biaya pengecekan",
+        "service besar","complain","pasang","instalasi"];
       if (jasaNames.some(k=>n.includes(k))) return "jasa";
-      // Install material — pipa, kabel, breket, insulasi, duct tape masuk ke material
+      // Install material — pipa, kabel, breket, insulasi, duct tape
       const matNames = ["pipa","kabel","insulasi","breket","duct tape","ducttape","selang"];
       if (matNames.some(k=>n.includes(k))) return "mat";
-      // Repair/sparepart
-      const repairNames = ["kapasitor","kompresor","sparepart","pcb","modul","overload","sensor"];
-      if (repairNames.some(k=>n.includes(k))) return "repair";
-      // Default: material
-      return "mat";
+      // Default: jika ada harga dan di invoice jasa — anggap jasa
+      return "jasa";
     };
     const jasaRows   = matDetails.filter(m=>detectKat(m)==="jasa");
     const repairRows = matDetails.filter(m=>detectKat(m)==="repair");
@@ -1345,7 +1347,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       </tr>
     </thead>
     <tbody>
-      ${(inv.labor > 0 && !matDetails.some(m=>m.keterangan==="jasa"||m.keterangan==="repair")) ? '<tr><td>' + ((inv.service || "Jasa Servis AC") + (inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF" ? " (Garansi Jasa Gratis)" : "")) + '</td><td style="text-align:center">' + (inv.units || 1) + '</td><td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td><td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor||0).toLocaleString("id-ID") + '</td></tr>' : ""}
+      ${(inv.labor > 0 && matDetails.length === 0) ? '<tr><td>' + ((inv.service || "Jasa Servis AC") + (inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF" ? " (Garansi Jasa Gratis)" : "")) + '</td><td style="text-align:center">' + (inv.units || 1) + '</td><td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td><td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor||0).toLocaleString("id-ID") + '</td></tr>' : ""}
 ${matRowsHtml}
       ${(inv.dadakan > 0) ? '<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>' : ""}
       <tr class="total-row">
@@ -9575,7 +9577,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </tr>
                 </thead>
                 <tbody>
-                  {liveInv.labor > 0 && !parseMD(liveInv.materials_detail).some(m=>m.keterangan==="jasa"||m.keterangan==="repair") && (
+                  {liveInv.labor > 0 && parseMD(liveInv.materials_detail).length === 0 && (
                   <tr style={{ background:"#fff" }}>
                     <td style={{ padding:"8px 10px", color:"#1e293b" }}>{liveInv.service}</td>
                     <td style={{ padding:"8px 10px", color:"#475569", textAlign:"center" }}>{liveInv.units}</td>
