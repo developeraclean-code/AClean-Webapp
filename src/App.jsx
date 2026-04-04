@@ -3411,6 +3411,35 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 </button>
               </div>
             )}
+            {/* ── Download Rekap + Kirim WA (Owner/Admin) ── */}
+            {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+              <div style={{display:"flex",alignItems:"center",gap:6,
+                background:cs.surface,border:"1px solid "+cs.border,
+                borderRadius:8,padding:"5px 8px",flexWrap:"wrap"}}>
+                <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>📥 Rekap:</span>
+                <input type="date" id="rekapDatePickerOrders"
+                  defaultValue={TODAY}
+                  style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,
+                    padding:"4px 8px",fontSize:12,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+                />
+                <button onClick={()=>{
+                    const d = document.getElementById("rekapDatePickerOrders")?.value || TODAY;
+                    downloadRekapHarian(d);
+                  }}
+                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
+                    padding:"5px 10px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,whiteSpace:"nowrap"}}>
+                  ⬇️ Download
+                </button>
+                <button onClick={()=>{
+                    const d = document.getElementById("rekapDatePickerOrders")?.value || TODAY;
+                    triggerRekapHarian(d);
+                  }}
+                  style={{background:"#25D36622",border:"1px solid #25D36644",color:"#25D366",
+                    padding:"5px 10px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,whiteSpace:"nowrap"}}>
+                  📲 Kirim WA
+                </button>
+              </div>
+            )}
             <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"10px 20px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
             <button onClick={() => setWaPanel(true)} style={{ position:"relative", background:cs.card, border:"1px solid #25D36644", color:"#25D366", padding:"10px 16px", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:13 }}>
               📱 WhatsApp
@@ -4402,21 +4431,35 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,type:o.type||"",units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }}
                           style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
                       )}
-                      {currentUser?.role==="Owner" && (
+                      {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
                         <button onClick={async()=>{
                           if (!await showConfirm({ icon:"🗑️", title:"Hapus Order?", danger:true,
-                            message:`Hapus order ${o.id} — ${o.customer}?\n\nOrder yang sudah ada invoice TIDAK bisa dihapus.`,
-                            confirmText:"Hapus" })) return;
-                          if (o.invoice_id) { showNotif("❌ Tidak bisa hapus: order sudah punya invoice "+o.invoice_id); return; }
+                            message:`Hapus order ${o.id} — ${o.customer}?\n\nTindakan ini tidak bisa dibatalkan.\nOrder yang sudah ada invoice TIDAK bisa dihapus.`,
+                            confirmText:"Ya, Hapus" })) return;
+                          if (o.invoice_id) {
+                            showNotif("❌ Tidak bisa hapus: order sudah punya invoice "+o.invoice_id);
+                            return;
+                          }
+                          // Blok hapus jika status sudah COMPLETED (kecuali Owner)
+                          if (currentUser?.role==="Admin" && ["COMPLETED","REPORT_SUBMITTED","VERIFIED"].includes(o.status)) {
+                            showNotif("❌ Admin tidak bisa hapus order yang sudah selesai. Hubungi Owner.");
+                            return;
+                          }
                           const { error: delErr } = await supabase.from("orders").delete().eq("id", o.id);
-                          if (delErr) { showNotif("❌ Gagal hapus order: "+delErr.message); return; }
-                          // Hapus schedule juga
+                          if (delErr) { showNotif("❌ Gagal hapus: "+delErr.message); return; }
                           try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch(_){}
                           setOrdersData(prev => prev.filter(x => x.id !== o.id));
-                          addAgentLog("ORDER_DELETED", `Owner hapus order ${o.id} — ${o.customer} (${o.service})`, "WARNING");
-                          showNotif("✅ Order "+o.id+" dihapus permanen");
-                        }} title="Hapus order (Owner only)"
-                          style={{ background:"#ef444422", border:"1px solid #ef444444", color:"#ef4444", padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:700 }}>🗑️</button>
+                          addAgentLog("ORDER_DELETED",
+                            `${currentUser?.role} hapus order ${o.id} — ${o.customer} (${o.service}) tgl ${o.date}`,
+                            "WARNING");
+                          showNotif("✅ Order "+o.id+" berhasil dihapus");
+                        }} title={currentUser?.role==="Admin"
+                          ? "Hapus order (tidak bisa jika sudah selesai/ada invoice)"
+                          : "Hapus order (Owner)"}
+                          style={{ background:"#ef444422", border:"1px solid #ef444444", color:"#ef4444",
+                            padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                          🗑️
+                        </button>
                       )}
                     </div>
                   </td>
