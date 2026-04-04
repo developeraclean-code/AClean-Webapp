@@ -703,7 +703,10 @@ export default function ACleanWebApp() {
   const [waMessages,     setWaMessages]     = useState([]);  // chat history conv aktif
 
   // ── Statistik periode filter ──
-  const [statsPeriod, setStatsPeriod] = useState("bulan"); // "hari"|"bulan"|"tahun"
+  const [statsPeriod,    setStatsPeriod]    = useState("bulan"); // "hari"|"minggu"|"bulan"|"tahun"|"custom"
+  const [statsDateFrom,  setStatsDateFrom]  = useState(""); // untuk custom range
+  const [statsDateTo,    setStatsDateTo]    = useState(""); // untuk custom range
+  const [statsMingguOff, setStatsMingguOff] = useState(0);  // 0=minggu ini, -1=minggu lalu, dst
 
   // ── Mobile detection (MUST be before any conditional returns) ──
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
@@ -6187,24 +6190,51 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const renderReports = () => {
     const techColors = Object.fromEntries([...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(n=>[n, getTechColor(n, teknisiData)]))
     // ── Filter helper berdasarkan periode yang dipilih ──
-    // Invoice PAID: filter by paid_at (bukan sent/created_at)
-    // Orders: filter by date
     const tahunIni = TODAY.slice(0,4);
-    const filterInvByPeriod = (inv) => {
-      const tgl = String(inv.paid_at || inv.created_at || "").slice(0,10);
-      if (statsPeriod === "hari")  return tgl === TODAY;
-      if (statsPeriod === "bulan") return tgl.startsWith(bulanIni);
-      return tgl.startsWith(tahunIni);
+
+    // Hitung range minggu sesuai statsMingguOff
+    const getMingguRange = (offset) => {
+      const now = new Date();
+      const dow = now.getDay(); // 0=Sun
+      const diffToMon = dow === 0 ? -6 : 1 - dow;
+      const mon = new Date(now);
+      mon.setDate(now.getDate() + diffToMon + offset * 7);
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+      const fmt = d => d.toISOString().slice(0,10);
+      return { from: fmt(mon), to: fmt(sun) };
     };
-    const filterOrderByPeriod = (o) => {
-      const tgl = String(o.date || "").slice(0,10);
-      if (statsPeriod === "hari")  return tgl === TODAY;
-      if (statsPeriod === "bulan") return tgl.startsWith(bulanIni);
-      return tgl.startsWith(tahunIni);
+    const mingguRange = getMingguRange(statsMingguOff);
+
+    // Label periode
+    const mingguLabel = statsMingguOff === 0 ? "Minggu Ini"
+      : statsMingguOff === -1 ? "Minggu Lalu"
+      : "Minggu " + (statsMingguOff < 0 ? Math.abs(statsMingguOff) + " lalu" : statsMingguOff + " ke depan");
+    const periodLabel = statsPeriod === "hari"   ? "Hari Ini ("+TODAY+")"
+      : statsPeriod === "minggu" ? mingguLabel + " ("+mingguRange.from+" – "+mingguRange.to+")"
+      : statsPeriod === "bulan"  ? "Bulan Ini ("+bulanIni+")"
+      : statsPeriod === "tahun"  ? "Tahun "+tahunIni
+      : statsPeriod === "custom" && statsDateFrom && statsDateTo
+        ? statsDateFrom+" s/d "+statsDateTo
+        : "Semua Waktu";
+
+    // Filter berdasarkan tanggal
+    const inRange = (tgl) => {
+      if (!tgl) return false;
+      const d = tgl.slice(0,10);
+      if (statsPeriod === "hari")   return d === TODAY;
+      if (statsPeriod === "minggu") return d >= mingguRange.from && d <= mingguRange.to;
+      if (statsPeriod === "bulan")  return d.startsWith(bulanIni);
+      if (statsPeriod === "tahun")  return d.startsWith(tahunIni);
+      if (statsPeriod === "custom") {
+        if (statsDateFrom && statsDateTo) return d >= statsDateFrom && d <= statsDateTo;
+        if (statsDateFrom) return d >= statsDateFrom;
+        if (statsDateTo)   return d <= statsDateTo;
+      }
+      return true; // tanpa filter
     };
-    const periodLabel = statsPeriod==="hari" ? "Hari Ini"
-      : statsPeriod==="bulan" ? "Bulan Ini ("+bulanIni+")"
-      : "Tahun "+tahunIni;
+    const filterInvByPeriod  = (inv) => inRange(String(inv.paid_at || inv.created_at || ""));
+    const filterOrderByPeriod = (o)  => inRange(String(o.date || ""));
 
     // ── Revenue & Invoice ──
     const allInv        = invoicesData;
@@ -6253,12 +6283,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // ── Customer metrics ──
     const custTotal = customersData.length;
     const custVip   = customersData.filter(c=>c.is_vip).length;
-    const custBaru  = customersData.filter(c => {
-      const tgl = String(c.joined||c.created_at||"").slice(0,10);
-      return statsPeriod==="hari" ? tgl===TODAY
-        : statsPeriod==="bulan"  ? tgl.startsWith(bulanIni)
-        : tgl.startsWith(tahunIni);
-    }).length;
+    const custBaru  = customersData.filter(c =>
+      inRange(String(c.joined||c.created_at||""))
+    ).length;
 
     const fmtPct = (n,d) => d>0 ? (n/d*100).toFixed(1)+"%" : "—";
     const fmtRp  = (n) => "Rp "+Math.round(n).toLocaleString("id-ID");
@@ -6271,11 +6298,48 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>📊 Laporan Keuangan &amp; Operasional</div>
             <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Profit &amp; Loss · Accounts Receivable · Performa Tim</div>
           </div>
-          <div style={{ display:"flex", gap:6 }}>
-            {[["hari","Hari Ini"],["bulan","Bulan Ini"],["tahun","Tahun Ini"]].map(([v,l])=>(
-              <button key={v} onClick={()=>setStatsPeriod(v)}
-                style={{ background:statsPeriod===v?cs.accent:cs.card, border:"1px solid "+(statsPeriod===v?cs.accent:cs.border), color:statsPeriod===v?"#0a0f1e":cs.muted, padding:"6px 14px", borderRadius:99, cursor:"pointer", fontSize:12, fontWeight:600 }}>{l}</button>
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" }}>
+            {[["hari","Hari Ini"],["minggu","Minggu"],["bulan","Bulan Ini"],["tahun","Tahun Ini"],["custom","Custom"]].map(([v,l])=>(
+              <button key={v} onClick={()=>{ setStatsPeriod(v); if(v!=="minggu") setStatsMingguOff(0); }}
+                style={{ padding:"7px 14px", borderRadius:99, fontSize:12, cursor:"pointer", fontWeight:600,
+                  border:"1px solid "+(statsPeriod===v ? cs.accent : cs.border),
+                  background:statsPeriod===v ? cs.accent+"22" : cs.surface,
+                  color:statsPeriod===v ? cs.accent : cs.muted }}>
+                {l}
+              </button>
             ))}
+            {statsPeriod==="minggu" && (
+              <div style={{ display:"flex", alignItems:"center", gap:4, background:cs.card,
+                border:"1px solid "+cs.border, borderRadius:99, padding:"3px 6px" }}>
+                <button onClick={()=>setStatsMingguOff(w=>w-1)}
+                  style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:14, padding:"0 6px" }}>←</button>
+                <span style={{ fontSize:11, color:cs.muted, minWidth:90, textAlign:"center" }}>
+                  {statsMingguOff===0?"Minggu Ini":statsMingguOff===-1?"Minggu Lalu":Math.abs(statsMingguOff)+" minggu lalu"}
+                </span>
+                <button onClick={()=>setStatsMingguOff(w=>Math.min(0,w+1))}
+                  style={{ background:"none", border:"none",
+                    color:statsMingguOff===0?cs.border:cs.muted,
+                    cursor:statsMingguOff===0?"default":"pointer", fontSize:14, padding:"0 6px" }}>→</button>
+              </div>
+            )}
+            {statsPeriod==="custom" && (
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <input type="date" value={statsDateFrom}
+                  onChange={e=>setStatsDateFrom(e.target.value)}
+                  style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:7,
+                    padding:"5px 8px", fontSize:11, color:cs.text, colorScheme:"dark" }}/>
+                <span style={{ color:cs.muted, fontSize:12 }}>–</span>
+                <input type="date" value={statsDateTo}
+                  onChange={e=>setStatsDateTo(e.target.value)}
+                  style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:7,
+                    padding:"5px 8px", fontSize:11, color:cs.text, colorScheme:"dark" }}/>
+                {(statsDateFrom||statsDateTo) && (
+                  <button onClick={()=>{ setStatsDateFrom(""); setStatsDateTo(""); }}
+                    style={{ fontSize:11, padding:"3px 8px", borderRadius:99, background:cs.red+"22",
+                      border:"1px solid "+cs.red+"44", color:cs.red, cursor:"pointer" }}>✕ Reset</button>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
