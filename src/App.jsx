@@ -5185,7 +5185,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 ))}
               </div>
             )}
-            {!isTekRole && (
             {/* ── Rekap Jadwal: Download + Kirim WA ── */}
             {!isTekRole && (
               <div style={{display:"flex",alignItems:"center",gap:5,
@@ -5206,7 +5205,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     padding:"4px 8px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11}}>📲</button>
               </div>
             )}
+            {!isTekRole && (
               <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>+ Order</button>
+
             )}
           </div>
         </div>
