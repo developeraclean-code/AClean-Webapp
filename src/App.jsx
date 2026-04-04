@@ -529,6 +529,13 @@ export default function ACleanWebApp() {
   const fotoInputRef = useRef();
 
   // ── New order / stok / customer form ──
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false); // anti double submit
+  const [matTrackFilter,   setMatTrackFilter]   = useState("Semua"); // filter kategori material
+  const [matTrackSearch,   setMatTrackSearch]   = useState("");
+  const [matTrackDateFrom, setMatTrackDateFrom] = useState("");
+  const [matTrackDateTo,   setMatTrackDateTo]   = useState("");
+  const [invTxData,        setInvTxData]        = useState([]);
+  const [showAddStock,     setShowAddStock]     = useState(false);
   const [newOrderForm,     setNewOrderForm]     = useState({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
   const [newStokForm,      setNewStokForm]      = useState({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
   const [newTeknisiForm,   setNewTeknisiForm]   = useState({ name:"", role:"Teknisi", phone:"", skills:[], email:"", password:"", buatAkun:false });
@@ -1648,17 +1655,19 @@ ${matRowsHtml}
     if (!isLoggedIn) return;
 
     const loadAll = async () => {
-      const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes] = await Promise.all([
+      const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes] = await Promise.all([
         supabase.from("orders").select("*").order("date", { ascending: false }),
         supabase.from("invoices").select("*").order("created_at", { ascending: false }),
         supabase.from("customers").select("*").order("name"),
         supabase.from("inventory").select("*").order("code"),
         supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }),
         supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(50),
+        supabase.from("inventory_transactions").select("*").order("created_at",{ascending:false}).limit(1000),
       ]);
       // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
       // Jika error = fallback ke demo data yang sudah di-init
       if (!ordersRes.error   && ordersRes.data)   setOrdersData(ordersRes.data);
+      if (!invTxRes?.error && invTxRes?.data)   setInvTxData(invTxRes.data);
       if (!invoicesRes.error && invoicesRes.data)  setInvoicesData(invoicesRes.data);
       if (!customersRes.error && customersRes.data) setCustomersData(customersRes.data);
       // [G1 FIXED] laporan load handled below by parseLaporan block
@@ -2351,7 +2360,7 @@ ${matRowsHtml}
 
   // ── GAP 6: Inventory deduct ──
   // GAP 1.2 + GAP 3: Inventory via transaction table — audit trail + cegah negatif
-  const deductInventory = async (materials, orderId, reportId) => {
+  const deductInventory = async (materials, orderId, reportId, customerName, teknisiName, jobDate) => {
     for (const mat of materials) {
       const item = inventoryData.find(i =>
         i.name.toLowerCase().includes(mat.nama.toLowerCase()) ||
@@ -2376,9 +2385,12 @@ ${matRowsHtml}
         inventory_name: item.name,
         order_id: orderId || null,
         report_id: reportId || null,
-        qty: -qty,                                // negatif = keluar
+        qty: -qty,
         type: "usage",
         notes: mat.keterangan || "",
+        customer_name: customerName || null,
+        teknisi_name: teknisiName || currentUser?.name || null,
+        job_date: jobDate || null,
         created_by: currentUser?.id || null,
         created_by_name: currentUser?.name || "",
     }); } catch(e) { console.warn("inv tx skip:", e?.message); }
@@ -3221,6 +3233,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id:"reports",    icon:"📊",  label:"Statistik"    },
     { id:"agentlog",   icon:"📡",  label:"ARA Log"      },
     { id:"settings",   icon:"⚙️",  label:"Pengaturan"   },
+    { id:"mattrack",   icon:"🧮",  label:"Stok Material" },
     // Teknisi-only menu (not shown to Owner/Admin)
     { id:"myreport",   icon:"📋",  label:"Laporan Saya" },
   ];
@@ -4352,7 +4365,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <span style={{fontSize:11,color:cs.muted,marginLeft:5}}>{o.units}u</span></>
                     ); })()}
                   </td>
-                  <td style={{ padding:"10px 14px", fontSize:12, color:cs.text }}>{o.teknisi}</td>
+                  <td style={{ padding:"10px 14px", fontSize:12 }}>
+                    <div style={{fontWeight:600,color:cs.text}}>{o.teknisi||"—"}</div>
+                    {(o.helper||o.helper2||o.helper3) && (currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+                      <div style={{fontSize:10,color:cs.muted,marginTop:2}}>
+                        🤝 {[o.helper,o.helper2,o.helper3].filter(Boolean).join(" + ")}
+                      </div>
+                    )}
+                    {(o.teknisi2||o.teknisi3) && (
+                      <div style={{fontSize:10,color:cs.accent,marginTop:1}}>
+                        👷 {[o.teknisi2,o.teknisi3].filter(Boolean).join(" + ")}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding:"10px 14px", fontSize:12, color:cs.muted }}>{o.date}<br/>{o.time}</td>
                   <td style={{ padding:"10px 14px" }}>
                     <span style={{ fontSize:10, padding:"3px 8px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", fontWeight:700 }}>{statusLabel[o.status]||o.status.replace("_"," ")}</span>
@@ -7166,6 +7191,190 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   };
 
   // ============================================================
+  // RENDER MATERIAL TRACKING (Stok & Pemakaian Material)
+  // ============================================================
+  const renderMatTrack = () => {
+    // Item prioritas yang perlu ditrack (freon, pipa, kabel)
+    const TRACK_ITEMS = inventoryData.filter(item =>
+      item.freon_type || // semua freon
+      (item.name||"").toLowerCase().includes("pipa") ||
+      (item.name||"").toLowerCase().includes("kabel") ||
+      (item.category||"") === "Tracked"
+    );
+
+    // Filter inventory_transactions
+    let txFiltered = [...invTxData].filter(tx => tx.qty < 0); // hanya keluar (usage)
+    if (matTrackFilter !== "Semua") {
+      if (matTrackFilter === "Freon") txFiltered = txFiltered.filter(tx =>
+        ["R22","R32","R410"].some(f => (tx.inventory_name||"").toUpperCase().includes(f.replace("-","")))
+      );
+      else if (matTrackFilter === "Pipa") txFiltered = txFiltered.filter(tx =>
+        (tx.inventory_name||"").toLowerCase().includes("pipa")
+      );
+      else if (matTrackFilter === "Kabel") txFiltered = txFiltered.filter(tx =>
+        (tx.inventory_name||"").toLowerCase().includes("kabel")
+      );
+      else txFiltered = txFiltered.filter(tx => tx.inventory_code === matTrackFilter);
+    }
+    if (matTrackSearch.trim()) {
+      const q = matTrackSearch.toLowerCase();
+      txFiltered = txFiltered.filter(tx =>
+        (tx.inventory_name||"").toLowerCase().includes(q) ||
+        (tx.customer_name||"").toLowerCase().includes(q) ||
+        (tx.teknisi_name||"").toLowerCase().includes(q) ||
+        (tx.order_id||"").toLowerCase().includes(q)
+      );
+    }
+    if (matTrackDateFrom) txFiltered = txFiltered.filter(tx => (tx.job_date||tx.created_at?.slice(0,10)||"") >= matTrackDateFrom);
+    if (matTrackDateTo)   txFiltered = txFiltered.filter(tx => (tx.job_date||tx.created_at?.slice(0,10)||"") <= matTrackDateTo);
+    txFiltered.sort((a,b) => (b.created_at||"").localeCompare(a.created_at||""));
+
+    // Summary per item (penggunaan total)
+    const usageByItem = {};
+    invTxData.filter(tx => tx.qty < 0).forEach(tx => {
+      const k = tx.inventory_code || tx.inventory_name;
+      if (!usageByItem[k]) usageByItem[k] = { name: tx.inventory_name, code: tx.inventory_code, totalUsed: 0, txCount: 0 };
+      usageByItem[k].totalUsed += Math.abs(tx.qty);
+      usageByItem[k].txCount++;
+    });
+
+    return (
+      <div style={{display:"grid", gap:16}}>
+        {/* Header */}
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8}}>
+          <div>
+            <div style={{fontWeight:800, fontSize:18, color:cs.text}}>🧮 Stok & Tracking Material</div>
+            <div style={{fontSize:12, color:cs.muted}}>Pemakaian material per job · Auto-deduct dari laporan teknisi</div>
+          </div>
+          <button onClick={()=>setModalStok(true)}
+            style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#fff",
+              padding:"9px 16px",borderRadius:10,cursor:"pointer",fontWeight:700,fontSize:13}}>
+            + Stok Material Baru
+          </button>
+        </div>
+
+        {/* Kartu stok item prioritas */}
+        <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:10}}>
+          {TRACK_ITEMS.map(item => {
+            const tot = invTxData.filter(tx=>tx.qty<0 && tx.inventory_code===item.code)
+              .reduce((s,tx)=>s+Math.abs(tx.qty),0);
+            const col = item.status==="OUT"?"#ef4444":item.status==="CRITICAL"?cs.yellow:item.status==="WARNING"?"#f97316":cs.green;
+            return (
+              <div key={item.id}
+                onClick={()=>{setMatTrackFilter(item.code);}}
+                style={{background:cs.card,border:"1px solid "+(matTrackFilter===item.code?cs.accent:col)+"44",
+                  borderRadius:10,padding:"10px 12px",cursor:"pointer",
+                  borderLeft:"3px solid "+col}}>
+                <div style={{fontSize:10,color:cs.muted,marginBottom:2}}>{item.code}</div>
+                <div style={{fontSize:12,fontWeight:700,color:cs.text,marginBottom:6}}>{item.name}</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+                  <div>
+                    <div style={{fontSize:18,fontWeight:800,color:col}}>{item.stock}</div>
+                    <div style={{fontSize:10,color:cs.muted}}>{item.unit} tersisa</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:13,fontWeight:700,color:cs.muted}}>{tot.toFixed(1)}</div>
+                    <div style={{fontSize:9,color:cs.muted}}>{item.unit} terpakai</div>
+                  </div>
+                </div>
+                <div style={{marginTop:6,height:4,background:cs.border,borderRadius:99,overflow:"hidden"}}>
+                  <div style={{height:"100%",background:col,borderRadius:99,
+                    width:item.min_alert>0?Math.min(100,Math.round(item.stock/item.min_alert*50))+"%":"30%"}}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Filter pills */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          {[["Semua","📋"],["Freon","❄️"],["Pipa","🔧"],["Kabel","⚡"]].map(([f,ic])=>(
+            <button key={f} onClick={()=>{setMatTrackFilter(f);}}
+              style={{padding:"5px 12px",borderRadius:99,fontSize:12,cursor:"pointer",
+                border:"1px solid "+(matTrackFilter===f?cs.accent:cs.border),
+                background:matTrackFilter===f?cs.accent+"22":cs.surface,
+                color:matTrackFilter===f?cs.accent:cs.muted,fontWeight:matTrackFilter===f?700:400}}>
+              {ic} {f}
+            </button>
+          ))}
+          <span style={{width:1,height:16,background:cs.border}}/>
+          <input type="date" value={matTrackDateFrom}
+            onChange={e=>{setMatTrackDateFrom(e.target.value);}}
+            style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+              padding:"4px 8px",fontSize:12,color:cs.text,colorScheme:"dark"}}
+          />
+          <span style={{color:cs.muted}}>–</span>
+          <input type="date" value={matTrackDateTo}
+            onChange={e=>{setMatTrackDateTo(e.target.value);}}
+            style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+              padding:"4px 8px",fontSize:12,color:cs.text,colorScheme:"dark"}}
+          />
+          {(matTrackDateFrom||matTrackDateTo) && (
+            <button onClick={()=>{setMatTrackDateFrom("");setMatTrackDateTo("");}}
+              style={{fontSize:11,padding:"3px 10px",borderRadius:99,background:cs.red+"22",
+                border:"1px solid "+cs.red+"44",color:cs.red,cursor:"pointer"}}>✕ Reset</button>
+          )}
+        </div>
+
+        {/* Search */}
+        <div style={{position:"relative"}}>
+          <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:cs.muted}}>🔍</span>
+          <input value={matTrackSearch} onChange={e=>setMatTrackSearch(e.target.value)}
+            placeholder="Cari item, customer, teknisi, job ID..."
+            style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,
+              padding:"10px 14px 10px 36px",color:cs.text,fontSize:13}}/>
+        </div>
+
+        {/* Tabel pemakaian */}
+        {txFiltered.length === 0 ? (
+          <div style={{background:cs.card,borderRadius:14,padding:32,textAlign:"center",color:cs.muted}}>
+            Belum ada data pemakaian{matTrackFilter!=="Semua"?" untuk filter ini":""}
+          </div>
+        ) : (
+          <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:14,overflow:"hidden"}}>
+            <div style={{padding:"10px 16px",borderBottom:"1px solid "+cs.border,
+              display:"grid",gridTemplateColumns:"1fr 1fr 100px 80px 100px",gap:8,
+              fontSize:11,fontWeight:700,color:cs.muted}}>
+              <div>Item</div><div>Customer · Job</div><div>Teknisi</div>
+              <div style={{textAlign:"right"}}>Qty</div><div style={{textAlign:"right"}}>Tanggal</div>
+            </div>
+            {txFiltered.slice(0,100).map((tx,i) => (
+              <div key={tx.id||i}
+                style={{padding:"9px 16px",borderBottom:"1px solid "+cs.border+"55",
+                  display:"grid",gridTemplateColumns:"1fr 1fr 100px 80px 100px",gap:8,
+                  background:i%2===0?"transparent":cs.surface,fontSize:12}}>
+                <div>
+                  <div style={{fontWeight:600,color:cs.text}}>{tx.inventory_name||"—"}</div>
+                  <div style={{fontSize:10,color:cs.muted}}>{tx.inventory_code}</div>
+                </div>
+                <div>
+                  <div style={{color:cs.text}}>{tx.customer_name||"—"}</div>
+                  <div style={{fontSize:10,color:cs.muted}}>{tx.order_id||tx.report_id||"—"}</div>
+                </div>
+                <div style={{color:cs.accent,fontSize:11}}>{tx.teknisi_name||"—"}</div>
+                <div style={{textAlign:"right",fontWeight:700,
+                  color:tx.qty<0?cs.red:cs.green}}>
+                  {tx.qty<0?"-":"+"}
+                  {Math.abs(tx.qty)} {tx.notes?.split(" ").pop()||""}
+                </div>
+                <div style={{textAlign:"right",color:cs.muted,fontSize:11}}>
+                  {(tx.job_date||tx.created_at||"").slice(0,10)}
+                </div>
+              </div>
+            ))}
+            {txFiltered.length > 100 && (
+              <div style={{padding:"8px 16px",textAlign:"center",color:cs.muted,fontSize:11}}>
+                Menampilkan 100 dari {txFiltered.length} transaksi
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+
+  // ============================================================
   // RENDER SETTINGS
   // ============================================================
   const renderSettings = () => {
@@ -7996,6 +8205,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       case "ara":        return renderAra();
       case "reports":    return renderReports();
       case "agentlog":   return renderAgentLog();
+      case "mattrack":   return renderMatTrack();
       case "settings":   return renderSettings();
       default:           return renderDashboard();
     }
@@ -8583,7 +8793,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         </div>
                       )}
                       <button
-                        disabled={isBlocked}
+                        disabled={isBlocked || isSubmittingOrder}
                         onClick={async () => {
                           if (!newOrderForm.customer) { showNotif("Nama customer wajib diisi"); return; }
                           if (!newOrderForm.teknisi)  { showNotif("Pilih teknisi dulu"); return; }
@@ -8593,10 +8803,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             const dbOk = await cekTeknisiAvailableDB(newOrderForm.teknisi, newOrderForm.date, newOrderForm.time, newOrderForm.service, newOrderForm.units);
                             if (!dbOk.ok) { showNotif("🚫 " + (dbOk.reason || "Jadwal bentrok, cek ulang")); return; }
                           }
+                          if (isSubmittingOrder) return;
+                          setIsSubmittingOrder(true);
                           const formCopy = {...newOrderForm};
                           setModalOrder(false);
                           setNewOrderForm({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
-                          await createOrder(formCopy);
+                          try { await createOrder(formCopy); } finally { setIsSubmittingOrder(false); }
                         }}
                         style={{ background: isBlocked ? cs.border : "linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color: isBlocked ? cs.muted : "#0a0f1e", padding:"12px", borderRadius:10, cursor: isBlocked ? "not-allowed" : "pointer", fontWeight:800, fontSize:14, opacity: isBlocked ? 0.6 : 1 }}>
                         {capReached ? "🔴 Teknisi Penuh" : clashDetected ? "🚫 Jadwal Bentrok" : "✓ Buat Order"}
@@ -10823,8 +11035,27 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
     // ── 11. Deduct stok material (non-Install) ──
     const materialsToDeduct = isInstall ? [] : laporanMaterials;
-    if (materialsToDeduct.length > 0) {
-      deductInventory(materialsToDeduct);
+
+    // Tambahkan deduct freon per tabung dari freon_tabung_code di setiap unit
+    const freonTabungDeducts = laporanUnits
+      .filter(u => u.freon_tabung_code && parseFloat(u.freon_ditambah) > 0)
+      .map(u => {
+        const item = inventoryData.find(i => i.code === u.freon_tabung_code);
+        if (!item) return null;
+        return { nama: item.name, jumlah: parseFloat(u.freon_ditambah), satuan: item.unit, keterangan: "freon" };
+      }).filter(Boolean);
+
+    const allToDeduct = [...materialsToDeduct, ...freonTabungDeducts];
+
+    if (allToDeduct.length > 0) {
+      deductInventory(
+        allToDeduct,
+        laporanModal?.id || null,        // orderId
+        null,                            // reportId
+        laporanModal?.customer || null,  // customerName
+        laporanModal?.teknisi  || null,  // teknisiName
+        laporanModal?.date     || null   // jobDate
+      );
       let deductedCount = 0;
       const lowStockWarnings = [];
       for (const mat of materialsToDeduct) {
@@ -11437,6 +11668,35 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Tekanan Freon (psi)</div>
                             <input id="field_number_36" type="number" value={u.freon_ditambah} onChange={e=>upd({freon_ditambah:e.target.value})} placeholder="0" min="0" step="0.1"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+                            {/* Freon tabung selector — hanya muncul jika ada tekanan freon > 0 */}
+                            {parseFloat(u.freon_ditambah) > 0 && (
+                              <div style={{marginTop:6}}>
+                                <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Tabung Freon Dipakai:</div>
+                                <select value={u.freon_tabung_code||""} onChange={e=>upd({freon_tabung_code:e.target.value})}
+                                  style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"66",
+                                    borderRadius:7,padding:"7px 10px",color:cs.text,fontSize:12}}>
+                                  <option value="">— Pilih tabung —</option>
+                                  {inventoryData.filter(item =>
+                                    item.freon_type ||
+                                    (item.name||"").toLowerCase().includes("freon") ||
+                                    (item.name||"").toLowerCase().includes("r-22") ||
+                                    (item.name||"").toLowerCase().includes("r-32") ||
+                                    (item.name||"").toLowerCase().includes("r-410") ||
+                                    (item.name||"").toLowerCase().includes("r32") ||
+                                    (item.name||"").toLowerCase().includes("r410")
+                                  ).map(item => (
+                                    <option key={item.id} value={item.code}>
+                                      [{item.code}] {item.name} — Sisa: {item.stock} {item.unit}
+                                    </option>
+                                  ))}
+                                </select>
+                                {u.freon_tabung_code && (
+                                  <div style={{fontSize:10,color:cs.green,marginTop:3}}>
+                                    ✅ Stok akan terpotong otomatis saat submit laporan
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Ampere Akhir (A)</div>
