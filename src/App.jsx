@@ -2362,10 +2362,13 @@ ${matRowsHtml}
   // GAP 1.2 + GAP 3: Inventory via transaction table — audit trail + cegah negatif
   const deductInventory = async (materials, orderId, reportId, customerName, teknisiName, jobDate) => {
     for (const mat of materials) {
-      const item = inventoryData.find(i =>
-        i.name.toLowerCase().includes(mat.nama.toLowerCase()) ||
-        mat.nama.toLowerCase().includes(i.name.toLowerCase())
-      );
+      // Jika ada _useCode (freon tabung spesifik), match by code dulu
+      const item = mat._useCode
+        ? inventoryData.find(i => i.code === mat._useCode)
+        : inventoryData.find(i =>
+            i.name.toLowerCase().includes(mat.nama.toLowerCase()) ||
+            mat.nama.toLowerCase().includes(i.name.toLowerCase())
+          );
       if (!item) continue;
       const qty = parseFloat(mat.jumlah) || 0;
       // GAP 3: Cek stok cukup sebelum deduct
@@ -11036,16 +11039,27 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // ── 11. Deduct stok material (non-Install) ──
     const materialsToDeduct = isInstall ? [] : laporanMaterials;
 
-    // Tambahkan deduct freon per tabung dari freon_tabung_code di setiap unit
-    const freonTabungDeducts = laporanUnits
-      .filter(u => u.freon_tabung_code && parseFloat(u.freon_ditambah) > 0)
-      .map(u => {
-        const item = inventoryData.find(i => i.code === u.freon_tabung_code);
+    // Tambahkan deduct freon spesifik per tabung dari mat.freon_tabung_code di laporanMaterials
+    // freon_tabung_code dipilih teknisi saat pilih item freon di card 3/4
+    const freonTabungDeducts = laporanMaterials
+      .filter(mat => mat.freon_tabung_code && parseFloat(mat.jumlah) > 0)
+      .map(mat => {
+        const item = inventoryData.find(i => i.code === mat.freon_tabung_code);
         if (!item) return null;
-        return { nama: item.name, jumlah: parseFloat(u.freon_ditambah), satuan: item.unit, keterangan: "freon" };
+        // Deduct dari tabung yang spesifik (bukan dari nama umum "Freon R-32")
+        return {
+          nama: item.name,  // nama tabung spesifik, e.g. "Freon R-32 Tabung A"
+          jumlah: parseFloat(mat.jumlah),
+          satuan: item.unit,
+          keterangan: "freon",
+          _useCode: item.code,  // flag untuk match by code bukan nama
+        };
       }).filter(Boolean);
 
-    const allToDeduct = [...materialsToDeduct, ...freonTabungDeducts];
+    // Gabung: material reguler + freon tabung spesifik
+    // Hindari double-deduct: filter material yang punya freon_tabung_code dari materialsToDeduct
+    const matWithoutFreon = materialsToDeduct.filter(mat => !mat.freon_tabung_code);
+    const allToDeduct = [...matWithoutFreon, ...freonTabungDeducts];
 
     if (allToDeduct.length > 0) {
       deductInventory(
@@ -11668,35 +11682,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Tekanan Freon (psi)</div>
                             <input id="field_number_36" type="number" value={u.freon_ditambah} onChange={e=>upd({freon_ditambah:e.target.value})} placeholder="0" min="0" step="0.1"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
-                            {/* Freon tabung selector — hanya muncul jika ada tekanan freon > 0 */}
-                            {parseFloat(u.freon_ditambah) > 0 && (
-                              <div style={{marginTop:6}}>
-                                <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Tabung Freon Dipakai:</div>
-                                <select value={u.freon_tabung_code||""} onChange={e=>upd({freon_tabung_code:e.target.value})}
-                                  style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"66",
-                                    borderRadius:7,padding:"7px 10px",color:cs.text,fontSize:12}}>
-                                  <option value="">— Pilih tabung —</option>
-                                  {inventoryData.filter(item =>
-                                    item.freon_type ||
-                                    (item.name||"").toLowerCase().includes("freon") ||
-                                    (item.name||"").toLowerCase().includes("r-22") ||
-                                    (item.name||"").toLowerCase().includes("r-32") ||
-                                    (item.name||"").toLowerCase().includes("r-410") ||
-                                    (item.name||"").toLowerCase().includes("r32") ||
-                                    (item.name||"").toLowerCase().includes("r410")
-                                  ).map(item => (
-                                    <option key={item.id} value={item.code}>
-                                      [{item.code}] {item.name} — Sisa: {item.stock} {item.unit}
-                                    </option>
-                                  ))}
-                                </select>
-                                {u.freon_tabung_code && (
-                                  <div style={{fontSize:10,color:cs.green,marginTop:3}}>
-                                    ✅ Stok akan terpotong otomatis saat submit laporan
-                                  </div>
-                                )}
-                              </div>
-                            )}
+
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Ampere Akhir (A)</div>
@@ -12117,6 +12103,52 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       {mat.satuan||"pcs"}
                     </div>
                   </div>
+                  {/* ── Freon Tabung Selector ── */}
+                  {(()=>{
+                    const n = (mat.nama||"").toLowerCase();
+                    const isFreonItem = n.includes("freon") || n.includes("kuras vacum") ||
+                      n.includes("r-22") || n.includes("r-32") || n.includes("r-410") ||
+                      n.includes("r22") || n.includes("r32") || n.includes("r410");
+                    if (!isFreonItem) return null;
+                    const freonItems = inventoryData.filter(item =>
+                      item.freon_type ||
+                      (item.name||"").toLowerCase().includes("freon") ||
+                      (item.name||"").toLowerCase().includes("r-22") ||
+                      (item.name||"").toLowerCase().includes("r-32") ||
+                      (item.name||"").toLowerCase().includes("r-410")
+                    );
+                    return (
+                      <div style={{marginTop:6,padding:"8px 10px",background:cs.accent+"0a",
+                        border:"1px solid "+cs.accent+"33",borderRadius:8}}>
+                        <div style={{fontSize:10,fontWeight:700,color:cs.accent,marginBottom:5}}>
+                          ❄️ Pilih Tabung Freon yang Dipakai:
+                        </div>
+                        <select
+                          value={mat.freon_tabung_code||""}
+                          onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id
+                            ?{...m,freon_tabung_code:e.target.value}:m))}
+                          style={{width:"100%",background:cs.surface,
+                            border:"1px solid "+cs.accent+"66",borderRadius:7,
+                            padding:"7px 10px",color:cs.text,fontSize:12}}>
+                          <option value="">— Pilih tabung —</option>
+                          {freonItems.map(item=>(
+                            <option key={item.id} value={item.code}>
+                              [{item.code}] {item.name} — Sisa: {item.stock} {item.unit}
+                            </option>
+                          ))}
+                        </select>
+                        {mat.freon_tabung_code ? (
+                          <div style={{fontSize:10,color:cs.green,marginTop:4}}>
+                            ✅ Stok tabung terpotong otomatis saat submit laporan
+                          </div>
+                        ) : (
+                          <div style={{fontSize:10,color:cs.yellow,marginTop:4}}>
+                            ⚠️ Pilih tabung agar stok terpotong dengan benar
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
                 );
               })}
