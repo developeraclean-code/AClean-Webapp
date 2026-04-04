@@ -6186,57 +6186,82 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   const renderReports = () => {
     const techColors = Object.fromEntries([...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(n=>[n, getTechColor(n, teknisiData)]))
-    const filterByPeriod = (inv) => {
-      if(statsPeriod==="hari")  return String(inv.sent||inv.created_at||"").startsWith(TODAY);
-      if(statsPeriod==="bulan") return String(inv.sent||inv.created_at||"").startsWith(bulanIni);
-      return String(inv.sent||inv.created_at||"").startsWith(TODAY.slice(0,4));
+    // ── Filter helper berdasarkan periode yang dipilih ──
+    // Invoice PAID: filter by paid_at (bukan sent/created_at)
+    // Orders: filter by date
+    const tahunIni = TODAY.slice(0,4);
+    const filterInvByPeriod = (inv) => {
+      const tgl = String(inv.paid_at || inv.created_at || "").slice(0,10);
+      if (statsPeriod === "hari")  return tgl === TODAY;
+      if (statsPeriod === "bulan") return tgl.startsWith(bulanIni);
+      return tgl.startsWith(tahunIni);
     };
-    const periodLabel = statsPeriod==="hari"?"Hari Ini":statsPeriod==="bulan"?"Bulan Ini ("+bulanIni+")":"Tahun "+TODAY.slice(0,4);
+    const filterOrderByPeriod = (o) => {
+      const tgl = String(o.date || "").slice(0,10);
+      if (statsPeriod === "hari")  return tgl === TODAY;
+      if (statsPeriod === "bulan") return tgl.startsWith(bulanIni);
+      return tgl.startsWith(tahunIni);
+    };
+    const periodLabel = statsPeriod==="hari" ? "Hari Ini"
+      : statsPeriod==="bulan" ? "Bulan Ini ("+bulanIni+")"
+      : "Tahun "+tahunIni;
 
     // ── Revenue & Invoice ──
     const allInv        = invoicesData;
-    const paidInv       = allInv.filter(i=>i.status==="PAID"&&filterByPeriod(i));
-    const unpaidInv     = allInv.filter(i=>i.status==="UNPAID");
-    const overdueInv    = allInv.filter(i=>i.status==="OVERDUE");
-    const pendingInv    = allInv.filter(i=>i.status==="PENDING_APPROVAL");
-    const totalRevenue  = paidInv.reduce((a,b)=>a+(b.total||0),0);
-    const totalLabor    = paidInv.reduce((a,b)=>a+(b.labor||0),0);
-    const totalMaterial = paidInv.reduce((a,b)=>a+(b.material||0),0);
-    const totalDadakan  = paidInv.reduce((a,b)=>a+(b.dadakan||0),0);
-    const totalAR       = unpaidInv.reduce((a,b)=>a+(b.total||0),0) + overdueInv.reduce((a,b)=>a+(b.total||0),0);
-    const totalPending  = pendingInv.reduce((a,b)=>a+(b.total||0),0);
-    // AR Overdue
-    const totalOverdue  = overdueInv.reduce((a,b)=>a+(b.total||0),0);
+    // paidInv: PAID di periode ini (by paid_at)
+    const paidInv       = allInv.filter(i => i.status === "PAID" && filterInvByPeriod(i));
+    // AR: selalu semua outstanding (bukan filter periode)
+    const unpaidInv     = allInv.filter(i => i.status === "UNPAID");
+    const overdueInv    = allInv.filter(i => i.status === "OVERDUE");
+    const pendingInv    = allInv.filter(i => i.status === "PENDING_APPROVAL");
+    const totalRevenue  = paidInv.reduce((a,b) => a+(b.total||0), 0);
+    const totalLabor    = paidInv.reduce((a,b) => a+(b.labor||0), 0);
+    const totalMaterial = paidInv.reduce((a,b) => a+(b.material||0), 0);
+    const totalDadakan  = paidInv.reduce((a,b) => a+(b.dadakan||0), 0);
+    const totalAR       = unpaidInv.reduce((a,b) => a+(b.total||0), 0)
+                        + overdueInv.reduce((a,b) => a+(b.total||0), 0);
+    const totalPending  = pendingInv.reduce((a,b) => a+(b.total||0), 0);
+    const totalOverdue  = overdueInv.reduce((a,b) => a+(b.total||0), 0);
 
-    // ── Orders ──
-    const ordersDone    = ordersData.filter(o=>o.status==="COMPLETED").length;
-    const ordersAll     = ordersData.length;
-    const ordersMonth   = ordersData.filter(o=>(o.date||"").startsWith(bulanIni)).length;
-    const completionRate= ordersAll > 0 ? Math.round(ordersDone/ordersAll*100) : 0;
-    const avgOrderVal   = ordersDone > 0 ? Math.round(totalRevenue/Math.max(paidInv.length,1)) : 0;
+    // ── Orders — filter sesuai periode ──
+    const DONE_STATUSES = ["COMPLETED","REPORT_SUBMITTED","VERIFIED"];
+    const ordersPeriod  = ordersData.filter(filterOrderByPeriod);  // orders di periode ini
+    const ordersDone    = ordersPeriod.filter(o => DONE_STATUSES.includes(o.status)).length;
+    const ordersAll     = ordersPeriod.length;
+    const completionRate = ordersAll > 0 ? Math.round(ordersDone/ordersAll*100) : 0;
+    const avgOrderVal    = paidInv.length > 0 ? Math.round(totalRevenue/paidInv.length) : 0;
 
-    // ── Revenue per layanan ──
+    // ── Revenue per layanan (periode ini) ──
     const revBreakdown = [
-      ["Cleaning", paidInv.filter(i=>(i.service||"").includes("Cleaning")).reduce((a,b)=>a+(b.total||0),0), cs.accent],
-      ["Install",  paidInv.filter(i=>(i.service||"").includes("Install")).reduce((a,b)=>a+(b.total||0),0), cs.green],
-      ["Repair",   paidInv.filter(i=>(i.service||"").includes("Repair")).reduce((a,b)=>a+(b.total||0),0), cs.yellow],
-    ];
+      ["Cleaning", paidInv.filter(i=>(i.service||"").toLowerCase().includes("cleaning")).reduce((a,b)=>a+(b.total||0),0), cs.accent,   paidInv.filter(i=>(i.service||"").toLowerCase().includes("cleaning")).length],
+      ["Install",  paidInv.filter(i=>(i.service||"").toLowerCase().includes("install")).reduce((a,b)=>a+(b.total||0),0),  cs.green,    paidInv.filter(i=>(i.service||"").toLowerCase().includes("install")).length],
+      ["Repair",   paidInv.filter(i=>(i.service||"").toLowerCase().includes("repair")).reduce((a,b)=>a+(b.total||0),0),   cs.yellow,   paidInv.filter(i=>(i.service||"").toLowerCase().includes("repair")).length],
+      ["Complain", paidInv.filter(i=>(i.service||"").toLowerCase().includes("complain")).reduce((a,b)=>a+(b.total||0),0), cs.red,      paidInv.filter(i=>(i.service||"").toLowerCase().includes("complain")).length],
+    ].filter(([,rev,,cnt]) => rev > 0 || cnt > 0);
 
-    // ── Teknisi performance ──
-    const tekPerf = [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(name=>({
-      name,
-      done:  ordersData.filter(o=>o.teknisi===name&&o.status==="COMPLETED").length,
-      total: ordersData.filter(o=>o.teknisi===name).length,
-      rev:   paidInv.filter(i=>(i.service||"")&&ordersData.find(o=>o.teknisi===name&&o.id===i.job_id)).reduce((a,b)=>a+(b.total||0),0),
-    })).sort((a,b)=>b.done-a.done);
+    // ── Teknisi performance — filter sesuai periode ──
+    const tekPerf = [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(name => {
+      const myOrders = ordersPeriod.filter(o => o.teknisi === name);
+      const myDone   = myOrders.filter(o => DONE_STATUSES.includes(o.status)).length;
+      const myRev    = paidInv
+        .filter(i => myOrders.some(o => o.id === i.job_id))
+        .reduce((a,b) => a+(b.total||0), 0);
+      return { name, done: myDone, total: myOrders.length, rev: myRev };
+    }).filter(t => t.total > 0).sort((a,b) => b.done - a.done);
     const maxDone = Math.max(...tekPerf.map(t=>t.done), 1);
 
     // ── Customer metrics ──
     const custTotal = customersData.length;
     const custVip   = customersData.filter(c=>c.is_vip).length;
-    const custBaru  = customersData.filter(c=>(c.joined||"").startsWith(bulanIni)).length;
+    const custBaru  = customersData.filter(c => {
+      const tgl = String(c.joined||c.created_at||"").slice(0,10);
+      return statsPeriod==="hari" ? tgl===TODAY
+        : statsPeriod==="bulan"  ? tgl.startsWith(bulanIni)
+        : tgl.startsWith(tahunIni);
+    }).length;
 
     const fmtPct = (n,d) => d>0 ? (n/d*100).toFixed(1)+"%" : "—";
+    const fmtRp  = (n) => "Rp "+Math.round(n).toLocaleString("id-ID");
 
     return (
       <div style={{ display:"grid", gap:18 }}>
@@ -6327,7 +6352,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           {[
             {label:"Completion Rate",val:completionRate+"%",sub:ordersDone+"/"+ordersAll+" order",color:cs.green,icon:"✅"},
             {label:"Avg. Order Value",val:fmt(avgOrderVal),sub:"per transaksi PAID",color:cs.accent,icon:"📋"},
-            {label:"Order Bulan Ini",val:ordersMonth,sub:custBaru+" customer baru",color:cs.yellow,icon:"🗂️"},
+            {label:"Order "+periodLabel,val:ordersAll,sub:custBaru+" customer baru",color:cs.yellow,icon:"🗂️"},
           ].map(k=>(
             <div key={k.label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:12, padding:16, textAlign:"center" }}>
               <div style={{ fontSize:22, marginBottom:6 }}>{k.icon}</div>
