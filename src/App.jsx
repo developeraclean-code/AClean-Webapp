@@ -10876,6 +10876,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         satuan:r.satuan||"pcs", harga_satuan:r.harga_satuan||0, keterangan:"repair"
       })),
     ];
+    // Mapping INSTALL_ITEMS key → inventory code untuk deduct stok spesifik
+    const INSTALL_INV_MAP = {
+      "pipa_1pk":   "SKU022",  // Pipa AC Hoda 1PK
+      "pipa_2pk":   "SKU023",  // Pipa AC Hoda 2PK
+      "pipa_25pk":  "SKU024",  // Pipa AC Hoda 2,5PK
+      "pipa_3pk":   "SKU057",  // Pipa AC Hoda 3PK
+      "kabel_15":   "SKU025",  // Kabel Eterna 3x1,5
+      "kabel_25":   "SKU026",  // Kabel Eterna 3x2,5
+      "ducttape_biasa": "SKU031",
+      "ducttape_lem":   "SKU030",
+      "dinabolt":       "SKU058",
+      "karet_mounting": "SKU059",
+      "breket_outdoor": "SKU041",
+    };
+
     const effectiveMaterials = isInstall
       ? INSTALL_ITEMS
           .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
@@ -10889,6 +10904,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             return {
               id:item.key, nama:item.label, jumlah:qty, satuan:item.satuan,
               harga_satuan:hargaSat, subtotal:hargaSat*qty, keterangan:"",
+              // _useCode: untuk deduct stok by kode inventori yang spesifik
+              _useCode: INSTALL_INV_MAP[item.key] || null,
             };
           })
       : [...jasaAsMaterials, ...laporanMaterials];
@@ -11037,10 +11054,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     });
 
     // ── 11. Deduct stok material (non-Install) ──
-    const materialsToDeduct = isInstall ? [] : laporanMaterials;
+    // Install: deduct dari effectiveMaterials (sudah punya _useCode untuk pipa/kabel)
+    // Non-install: deduct dari laporanMaterials (freon/pipa/kabel dipilih via selector)
+    const materialsToDeduct = isInstall ? effectiveMaterials : laporanMaterials;
 
-    // Tambahkan deduct freon spesifik per tabung dari mat.freon_tabung_code di laporanMaterials
-    // freon_tabung_code dipilih teknisi saat pilih item freon di card 3/4
+    // Deduct material spesifik: freon (by tabung), pipa, dan kabel
+    // freon_tabung_code = kode item inventori yang dipilih teknisi di card 3/4
     const freonTabungDeducts = laporanMaterials
       .filter(mat => mat.freon_tabung_code && parseFloat(mat.jumlah) > 0)
       .map(mat => {
@@ -11058,6 +11077,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
     // Gabung: material reguler + freon tabung spesifik
     // Hindari double-deduct: filter material yang punya freon_tabung_code dari materialsToDeduct
+    // Mat yang punya freon_tabung_code = sudah dihandle by specific code → skip deduct by nama
     const matWithoutFreon = materialsToDeduct.filter(mat => !mat.freon_tabung_code);
     const allToDeduct = [...matWithoutFreon, ...freonTabungDeducts];
 
@@ -12103,35 +12123,47 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       {mat.satuan||"pcs"}
                     </div>
                   </div>
-                  {/* ── Freon Tabung Selector ── */}
+                  {/* ── Material Stock Selector (Freon / Pipa / Kabel) ── */}
                   {(()=>{
                     const n = (mat.nama||"").toLowerCase();
-                    const isFreonItem = n.includes("freon") || n.includes("kuras vacum") ||
+
+                    // Deteksi kategori item
+                    const isFreon = n.includes("freon") || n.includes("kuras vacum") ||
                       n.includes("r-22") || n.includes("r-32") || n.includes("r-410") ||
                       n.includes("r22") || n.includes("r32") || n.includes("r410");
-                    if (!isFreonItem) return null;
-                    const freonItems = inventoryData.filter(item =>
-                      item.freon_type ||
-                      (item.name||"").toLowerCase().includes("freon") ||
-                      (item.name||"").toLowerCase().includes("r-22") ||
-                      (item.name||"").toLowerCase().includes("r-32") ||
-                      (item.name||"").toLowerCase().includes("r-410")
-                    );
+                    const isPipa  = n.includes("pipa") || n.includes("hoda");
+                    const isKabel = n.includes("kabel");
+                    const isTracked = isFreon || isPipa || isKabel;
+                    if (!isTracked) return null;
+
+                    // Filter inventori sesuai kategori
+                    const trackedItems = inventoryData.filter(item => {
+                      const nm = (item.name||"").toLowerCase();
+                      if (isFreon) return item.freon_type || nm.includes("freon") || nm.includes("r-22") || nm.includes("r-32") || nm.includes("r-410");
+                      if (isPipa)  return nm.includes("pipa") || nm.includes("hoda");
+                      if (isKabel) return nm.includes("kabel");
+                      return false;
+                    });
+
+                    const icon  = isFreon ? "❄️" : isPipa ? "🔧" : "⚡";
+                    const label = isFreon ? "Pilih Tabung Freon:" : isPipa ? "Pilih Tipe Pipa:" : "Pilih Tipe Kabel:";
+                    const borderCol = isFreon ? cs.accent : isPipa ? "#f59e0b" : "#22c55e";
+
                     return (
-                      <div style={{marginTop:6,padding:"8px 10px",background:cs.accent+"0a",
-                        border:"1px solid "+cs.accent+"33",borderRadius:8}}>
-                        <div style={{fontSize:10,fontWeight:700,color:cs.accent,marginBottom:5}}>
-                          ❄️ Pilih Tabung Freon yang Dipakai:
+                      <div style={{marginTop:6,padding:"8px 10px",
+                        background:borderCol+"0a",border:"1px solid "+borderCol+"33",borderRadius:8}}>
+                        <div style={{fontSize:10,fontWeight:700,color:borderCol,marginBottom:5}}>
+                          {icon} {label}
                         </div>
                         <select
                           value={mat.freon_tabung_code||""}
                           onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id
                             ?{...m,freon_tabung_code:e.target.value}:m))}
                           style={{width:"100%",background:cs.surface,
-                            border:"1px solid "+cs.accent+"66",borderRadius:7,
+                            border:"1px solid "+borderCol+"66",borderRadius:7,
                             padding:"7px 10px",color:cs.text,fontSize:12}}>
-                          <option value="">— Pilih tabung —</option>
-                          {freonItems.map(item=>(
+                          <option value="">— Pilih item —</option>
+                          {trackedItems.map(item=>(
                             <option key={item.id} value={item.code}>
                               [{item.code}] {item.name} — Sisa: {item.stock} {item.unit}
                             </option>
@@ -12139,11 +12171,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         </select>
                         {mat.freon_tabung_code ? (
                           <div style={{fontSize:10,color:cs.green,marginTop:4}}>
-                            ✅ Stok tabung terpotong otomatis saat submit laporan
+                            ✅ Stok [{mat.freon_tabung_code}] terpotong {mat.jumlah} {mat.satuan} saat submit
                           </div>
                         ) : (
                           <div style={{fontSize:10,color:cs.yellow,marginTop:4}}>
-                            ⚠️ Pilih tabung agar stok terpotong dengan benar
+                            ⚠️ Pilih item spesifik agar stok terpotong dengan benar
                           </div>
                         )}
                       </div>
