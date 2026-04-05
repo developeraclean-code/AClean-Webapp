@@ -1841,6 +1841,41 @@ ${matRowsHtml}
       startStuckCheck();
     });
 
+      // ── AUTO-VERIFY CLIENT: Cek laporan SUBMITTED > 48 jam saat data selesai load ──
+      setTimeout(async () => {
+        try {
+          const now = Date.now();
+          const LIMIT_MS = 48 * 60 * 60 * 1000; // 48 jam
+          const { data: staleLaporan } = await supabase
+            .from("service_reports")
+            .select("id, job_id, customer, teknisi, submitted_at, status, notes")
+            .eq("status", "SUBMITTED")
+            .lt("submitted_at", new Date(now - LIMIT_MS).toISOString());
+
+          if (staleLaporan && staleLaporan.length > 0) {
+            console.log(`⏱️ Auto-verify: ${staleLaporan.length} laporan > 48 jam ditemukan`);
+            for (const r of staleLaporan) {
+              await supabase.from("service_reports").update({
+                status:      "VERIFIED",
+                verified_by: null,
+                verified_at: new Date().toISOString(),
+                notes:       ((r.notes||"") + " [Auto-verified sistem 48 jam]").trim(),
+              }).eq("id", r.id);
+              setLaporanReports(prev => prev.map(x =>
+                x.id === r.id ? {...x, status: "VERIFIED",
+                  verified_at: new Date().toISOString()} : x
+              ));
+              addAgentLog("AUTO_VERIFIED",
+                `Laporan ${r.job_id} (${r.customer||""}) auto-verified setelah 48 jam — ${r.teknisi||""}`,
+                "INFO"
+              );
+            }
+            showNotif(`⏱️ ${staleLaporan.length} laporan otomatis terverifikasi (>48 jam)`);
+          }
+        } catch(e) { console.warn("Auto-verify check skip:", e?.message); }
+      }, 8000); // jalankan 8 detik setelah data selesai load
+
+
     // ── GAP-08 FIX: Auto-refresh data setiap 30 menit ──
     const _statsTimer = setInterval(() => {
       loadAll().catch(e => console.warn("Auto-refresh skip:", e?.message));
