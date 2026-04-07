@@ -16,7 +16,10 @@ const sb = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-const OWNER_PHONE  = process.env.OWNER_PHONE  || "6281299898937";
+const OWNER_PHONE  = process.env.OWNER_PHONE;
+if (!OWNER_PHONE) {
+  throw new Error("[CRITICAL] OWNER_PHONE environment variable is required but not set");
+}
 const FONNTE_TOKEN = process.env.FONNTE_TOKEN  || "";
 
 async function sendWA(phone, message) {
@@ -39,7 +42,10 @@ async function log(action, detail, status="SUCCESS") {
   await sb.from("agent_logs").insert({
     action, detail, status, actor:"CRON",
     time: new Date().toISOString()
-  }).catch(()=>{});
+  }).catch(err => {
+    console.error("[CRON_LOG_ERROR]", {action, error: err.message});
+    // Silently continue - logging failure should not block cron
+  });
 }
 
 // ══════════════════════════════════════════════════
@@ -133,7 +139,9 @@ async function taskCleanup() {
     const fotos = rep.fotos||[];
     if (!fotos.length) continue;
     // Update record: hapus URL foto (foto sudah lama, hemat storage)
-    await sb.from("service_reports").update({fotos:[]}).eq("id",rep.id).catch(()=>{});
+    await sb.from("service_reports").update({fotos:[]}).eq("id",rep.id).catch(err => {
+      console.error("[CLEANUP_FOTOS_UPDATE_ERROR]", {reportId: rep.id, fotosCount: fotos.length, error: err.message});
+    });
     deleted += fotos.length;
   }
   await log("CLEANUP_FOTOS",`${deleted} foto lama dihapus dari ${old?.length||0} laporan`);

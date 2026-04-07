@@ -77,13 +77,35 @@ export function setCorsHeaders(req, res) {
   ].filter(Boolean);
 
   const origin = req.headers.origin || "";
+  const isProduction = process.env.NODE_ENV === "production";
 
-  // Development: izinkan localhost
-  const isDev = origin.includes("localhost") || origin.includes("127.0.0.1") || !origin;
-  const isAllowed = isDev || allowed.some(a => origin.startsWith(a));
+  // ── SECURITY FIX: Proper origin validation ──
+  let isDev = false;
+  if (!isProduction) {
+    // In development, allow localhost with exact pattern matching
+    isDev = origin === "http://localhost:3000" ||
+            origin === "http://127.0.0.1:3000" ||
+            origin.match(/^http:\/\/localhost:\d+$/) ||
+            origin.match(/^http:\/\/127\.0\.0\.1:\d+$/);
+  }
 
-  res.setHeader("Access-Control-Allow-Origin", isAllowed ? (origin || "*") : "https://a-clean-webapp.vercel.app");
+  // In production, NEVER allow missing origin (blocks CSRF from tools like curl, postman, etc)
+  if (isProduction && !origin) {
+    res.setHeader("Access-Control-Allow-Origin", "null"); // explicitly reject
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Internal-Token,X-Api-Key");
+    res.setHeader("Vary", "Origin");
+    return;
+  }
+
+  const isAllowedOrigin = allowed.some(a => a && origin === a); // exact match only
+  const isAllowed = isDev || isAllowedOrigin;
+
+  // ── SECURITY FIX: Never use wildcard (*) in production ──
+  const allowOrigin = isAllowed ? origin : "null"; // "null" explicitly denies browser from accessing response
+  res.setHeader("Access-Control-Allow-Origin", allowOrigin);
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Internal-Token,X-Api-Key");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Vary", "Origin");
 }

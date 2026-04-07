@@ -1,8 +1,13 @@
 import { useState, useEffect, useRef, useCallback, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-const SUPA_URL = import.meta.env.VITE_SUPABASE_URL  || "https://placeholder.supabase.co";
-const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "placeholder-key";
+const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// ── Enforce required environment variables at startup ──
+if (!SUPA_URL) throw new Error("[CRITICAL] VITE_SUPABASE_URL env var is required but not set. Check your .env.local file.");
+if (!SUPA_KEY) throw new Error("[CRITICAL] VITE_SUPABASE_ANON_KEY env var is required but not set. Check your .env.local file.");
+
 const supabase = createClient(SUPA_URL, SUPA_KEY);
 
 // Error boundary — tangkap crash dan tampilkan pesan error

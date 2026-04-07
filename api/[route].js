@@ -2,6 +2,26 @@
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto"];
 
+// ── VALIDATION HELPERS ──
+function validateAndNormalizePhone(phone) {
+  if (!phone) return null;
+  let normalized = String(phone).replace(/[^0-9+]/g, "");
+  if (normalized.startsWith("+62")) normalized = normalized.substring(1);
+  if (normalized.startsWith("0")) normalized = "62" + normalized.substring(1);
+  if (!normalized.startsWith("62")) normalized = "62" + normalized;
+
+  // Must be valid Indonesian phone: 62 + 9-12 digits (total 11-14 digits)
+  if (!/^62\d{9,12}$/.test(normalized)) return null;
+  return normalized;
+}
+
+function validateMessage(msg, maxLen = 4096) {
+  if (!msg || typeof msg !== "string") return null;
+  const trimmed = msg.trim();
+  if (trimmed.length === 0 || trimmed.length > maxLen) return null;
+  return trimmed;
+}
+
 export default async function handler(req, res) {
   const route = String(req.query.route || "");
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -20,14 +40,22 @@ export default async function handler(req, res) {
     if (route === "send-wa") {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       const b = req.body || {};
-      if (!b.phone || !b.message) return res.status(400).json({ error: "phone dan message wajib" });
+
+      // ── VALIDATION: Phone number ──
+      const target = validateAndNormalizePhone(b.phone);
+      if (!target) return res.status(400).json({ error: "Invalid phone number format" });
+
+      // ── VALIDATION: Message ──
+      const msg = validateMessage(b.message, 4096);
+      if (!msg) return res.status(400).json({ error: "Message is required and must be 1-4096 characters" });
+
       const FT = process.env.FONNTE_TOKEN;
       if (!FT) return res.status(500).json({ error: "FONNTE_TOKEN belum diset", detail: "FONNTE_TOKEN_NOT_SET" });
-      const target = String(b.phone).replace(/^0/, "62").replace(/[^0-9]/g, "");
+
       const r = await fetch("https://api.fonnte.com/send", {
         method: "POST",
         headers: { "Authorization": FT, "Content-Type": "application/json" },
-        body: JSON.stringify({ target, message: b.message, delay: "2", countryCode: "62" })
+        body: JSON.stringify({ target, message: msg, delay: "2", countryCode: "62" })
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || d.status === false) return res.status(502).json({ success: false, error: d.reason || "Fonnte error" });
@@ -39,9 +67,17 @@ export default async function handler(req, res) {
       if (req.method === "GET") return res.status(200).json({ status: "ok", service: "AClean WA Webhook" });
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       const wb = req.body || {};
-      const sender = String(wb.sender || "").replace(/[^0-9]/g, "");
-      const message = String(wb.message || "");
-      if (!sender || !message || wb.isGroup === true || wb.isGroup === "true") return res.status(200).json({ status: "skipped" });
+
+      // ── VALIDATION: Phone number ──
+      const sender = validateAndNormalizePhone(wb.sender);
+      if (!sender) return res.status(400).json({ error: "Invalid phone number format" });
+
+      // ── VALIDATION: Message length & content ──
+      const message = validateMessage(wb.message, 4096);
+      if (!message) return res.status(400).json({ error: "Message is required and must be 1-4096 characters" });
+
+      // ── VALIDATION: Group message check ──
+      if (wb.isGroup === true || wb.isGroup === "true") return res.status(200).json({ status: "skipped" });
 
       const FT = process.env.FONNTE_TOKEN;
       const OP = process.env.OWNER_PHONE;
@@ -71,7 +107,9 @@ export default async function handler(req, res) {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
         body: JSON.stringify({ sender, sender_name: wb.name||null, message, direction: "inbound", received_at: new Date().toISOString() })
-      }).catch(()=>{});
+      }).catch(err => {
+        console.error("[WA_MESSAGE_DB_SAVE_ERROR]", {sender, messageLen: message.length, error: err.message});
+      });
 
       // Auto-reply
       const ml = message.toLowerCase().trim();
@@ -120,7 +158,9 @@ export default async function handler(req, res) {
           method: "POST",
           headers: { Authorization: FT, "Content-Type": "application/json" },
           body: JSON.stringify({ target: sender, message: reply, delay: "1", countryCode: "62" })
-        }).catch(()=>{});
+        }).catch(err => {
+          console.error("[WA_AUTO_REPLY_FAILED]", {target: sender, replyLen: reply.length, error: err.message});
+        });
       }
 
       // Forward to owner — only forward messages that were NOT auto-replied (customer needs attention)
@@ -130,7 +170,9 @@ export default async function handler(req, res) {
           method: "POST",
           headers: { Authorization: FT, "Content-Type": "application/json" },
           body: JSON.stringify({ target: OP, message: fwdMsg, delay: "2", countryCode: "62" })
-        }).catch(()=>{});
+        }).catch(err => {
+          console.error("[WA_FORWARD_TO_OWNER_FAILED]", {ownerPhone: OP, from: sender, msgLen: fwdMsg.length, error: err.message});
+        });
       }
 
       return res.status(200).json({ status: "ok", sender, autoreply: autoOn, replied: !!reply, forwarded: fwdOn });
@@ -499,14 +541,19 @@ export default async function handler(req, res) {
       if (!SU||!SK||!FT) return res.status(200).json({ ok:false, error:"Env vars tidak lengkap" });
       const today = new Date().toISOString().slice(0,10);
       const invR = await fetch(SU+"/rest/v1/invoices?select=*&status=eq.UNPAID&due=lt."+today, { headers:{ apikey:SK, Authorization:"Bearer "+SK } });
-      const invs = await invR.json().catch(()=>[]);
+      const invs = await invR.json().catch(err => {
+        console.error("[CRON_INVOICE_FETCH_ERROR]", {error: err.message});
+        return [];
+      });
       let sent=0, updated=0;
       for (const inv of (invs||[])) {
         await fetch(SU+"/rest/v1/invoices?id=eq."+inv.id, { method:"PATCH", headers:{ "Content-Type":"application/json", apikey:SK, Authorization:"Bearer "+SK, Prefer:"return=minimal" }, body:JSON.stringify({ status:"OVERDUE" }) });
         updated++;
         if (inv.phone) {
           const np = String(inv.phone).replace(/^0/,"62").replace(/[^0-9]/g,"");
-          await fetch("https://api.fonnte.com/send", { method:"POST", headers:{ Authorization:FT, "Content-Type":"application/json" }, body:JSON.stringify({ target:np, message:"Halo "+( inv.customer||"Bapak/Ibu")+", tagihan AClean Rp"+Number(inv.total||0).toLocaleString("id-ID")+" (Invoice "+inv.id+") sudah jatuh tempo. Mohon segera lakukan pembayaran.", delay:"3", countryCode:"62" }) }).catch(()=>{});
+          await fetch("https://api.fonnte.com/send", { method:"POST", headers:{ Authorization:FT, "Content-Type":"application/json" }, body:JSON.stringify({ target:np, message:"Halo "+( inv.customer||"Bapak/Ibu")+", tagihan AClean Rp"+Number(inv.total||0).toLocaleString("id-ID")+" (Invoice "+inv.id+") sudah jatuh tempo. Mohon segera lakukan pembayaran.", delay:"3", countryCode:"62" }) }).catch(err => {
+            console.error("[CRON_OVERDUE_REMINDER_FAILED]", {invoiceId: inv.id, customerPhone: np, error: err.message});
+          });
           sent++;
         }
       }
