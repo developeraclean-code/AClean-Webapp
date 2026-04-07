@@ -86,8 +86,27 @@ export default async function handler(req, res) {
 
         if (SALAM.some(k => ml.startsWith(k) || ml.includes(k + " ")))
           reply = "Halo! 👋 Selamat datang di *AClean Service AC*.\n\nKami melayani:\n✅ Cuci/Service AC\n✅ Perbaikan & Isi Freon\n✅ Pasang AC Baru\n✅ Bongkar & Pindah AC\n\nKetik *HARGA* untuk info tarif, atau *ORDER* untuk pesan layanan. Ada yang bisa kami bantu? 😊";
-        else if (HARGA_KW.some(k => ml.includes(k)))
-          reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru & promo, silakan hubungi admin kami karena harga menyesuaikan jenis & kapasitas AC.\n\nAdmin akan segera membalas! 😊\n\n_Jam operasional: 08.00–17.00 WIB_";
+        else if (HARGA_KW.some(k => ml.includes(k))) {
+          // Fetch dynamic price list from Supabase
+          try {
+            const pR = await fetch(SU + "/rest/v1/harga_layanan?select=service,type,harga&order=service.asc,type.asc", {
+              headers: { apikey: SK, Authorization: "Bearer " + SK }
+            });
+            if (pR.ok) {
+              const prices = await pR.json();
+              if (prices && prices.length > 0) {
+                const priceText = prices.map(p => `  • ${p.service} ${p.type}: Rp${(p.harga||0).toLocaleString("id-ID")}`).join("\n");
+                reply = `💰 *Harga AClean Service AC*\n\n${priceText}\n\nCatatan: Biaya tambahan mungkin berlaku untuk area jauh atau layanan khusus.\n\nKetik *ORDER* untuk pesan! 😊\n\n_Jam operasional: 08.00–17.00 WIB_`;
+              } else {
+                reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru & promo, silakan hubungi admin kami.\n\nAdmin akan segera membalas! 😊\n\n_Jam operasional: 08.00–17.00 WIB_";
+              }
+            } else {
+              reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru & promo, silakan hubungi admin kami.\n\nAdmin akan segera membalas! 😊\n\n_Jam operasional: 08.00–17.00 WIB_";
+            }
+          } catch(_) {
+            reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru & promo, silakan hubungi admin kami.\n\nAdmin akan segera membalas! 😊\n\n_Jam operasional: 08.00–17.00 WIB_";
+          }
+        }
         else if (LOKASI_KW.some(k => ml.includes(k)))
           reply = "📍 *Area Layanan AClean*\n\nKami melayani area:\nAlam Sutera • BSD • Gading Serpong • Graha Raya • Karawaci • Tangerang Selatan\n\nArea lain (Jakarta Barat/Selatan): ada biaya transport tambahan.\n\nKetik *ORDER* untuk pesan layanan! 😊";
         else if (ORDER_KW.some(k => ml.includes(k)) || ml === "order")
@@ -104,15 +123,15 @@ export default async function handler(req, res) {
         }).catch(()=>{});
       }
 
-      // Forward to owner — SELALU forward (termasuk saat auto-reply) agar owner tetap tahu
-      const fwdMsg = reply
-        ? "📲 WA Masuk (auto-replied)\nDari: " + (wb.name||("+" + sender)) + "\nPesan: " + message + "\n---\nBalasan otomatis:\n" + reply
-        : "📲 WA Masuk\nDari: " + (wb.name||("+" + sender)) + "\nPesan: " + message;
-      if (fwdOn && FT && OP) fetch("https://api.fonnte.com/send", {
-        method: "POST",
-        headers: { Authorization: FT, "Content-Type": "application/json" },
-        body: JSON.stringify({ target: OP, message: fwdMsg, delay: "2", countryCode: "62" })
-      }).catch(()=>{});
+      // Forward to owner — only forward messages that were NOT auto-replied (customer needs attention)
+      if (!reply && fwdOn && FT && OP) {
+        const fwdMsg = "📲 WA Masuk\nDari: " + (wb.name||("+" + sender)) + "\nPesan: " + message;
+        fetch("https://api.fonnte.com/send", {
+          method: "POST",
+          headers: { Authorization: FT, "Content-Type": "application/json" },
+          body: JSON.stringify({ target: OP, message: fwdMsg, delay: "2", countryCode: "62" })
+        }).catch(()=>{});
+      }
 
       return res.status(200).json({ status: "ok", sender, autoreply: autoOn, replied: !!reply, forwarded: fwdOn });
     }
@@ -150,20 +169,41 @@ export default async function handler(req, res) {
       if (prov === "minimax") {
         const MK = process.env.MINIMAX_API_KEY || process.env.LLM_API_KEY;
         if (!MK) return res.status(500).json({ error: "MINIMAX_API_KEY belum diset" });
-        const mm = model || "MiniMax-Text-01";
+        // Support Minimax 2.7, 2.5, dan legacy MiniMax-Text-01
+        const mm = model || process.env.MINIMAX_MODEL || "MiniMax-Text-01";
         const mg = process.env.MINIMAX_GROUP_ID || "";
-        const mr = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + MK },
-          body: JSON.stringify({
+
+        try {
+          const mmPayload = {
             model: mm, max_tokens: 2048,
             messages: [{ role:"system", content: sysP }, ...messages.map(m=>({ role:m.role, content:typeof m.content==="string"?m.content:JSON.stringify(m.content) }))],
-            ...(mg ? { group_id: mg } : {})
-          })
-        });
-        const md = await mr.json();
-        if (!mr.ok) return res.status(502).json({ error: (md.base_resp&&md.base_resp.status_msg)||md.error?.message||"Minimax error" });
-        return res.status(200).json({ reply: md.choices?.[0]?.message?.content||"", model: mm, provider: "minimax" });
+          };
+          if (mg) mmPayload.group_id = mg;
+
+          const mr = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + MK },
+            body: JSON.stringify(mmPayload)
+          });
+          const md = await mr.json();
+
+          if (!mr.ok) {
+            const errMsg = md.base_resp?.status_msg || md.error?.message || "Minimax API error";
+            console.error(`Minimax error (${mm}):`, errMsg, "Status:", mr.status);
+            return res.status(502).json({ error: errMsg, detail: md, model: mm });
+          }
+
+          const reply = md.choices?.[0]?.message?.content || "";
+          if (!reply) {
+            console.warn("Minimax returned empty reply:", md);
+            return res.status(502).json({ error: "Minimax returned empty response", model: mm });
+          }
+
+          return res.status(200).json({ reply, model: mm, provider: "minimax" });
+        } catch(e) {
+          console.error("Minimax request error:", e.message);
+          return res.status(502).json({ error: "Minimax request failed: " + e.message, model: mm });
+        }
       }
 
       if (prov === "ollama") {
@@ -217,13 +257,45 @@ export default async function handler(req, res) {
             body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:10, messages:[{ role:"user", content:"ping" }] })
           });
           const d = await r.json().catch(()=>({}));
-          return res.status(200).json({ ok: r.ok, model: d.model||null, error: (d.error&&d.error.message)||null });
-        } catch(e) { return res.status(200).json({ ok:false, error:e.message }); }
+          return res.status(200).json({ ok: r.ok, provider: "claude", model: d.model||null, error: (d.error&&d.error.message)||null });
+        } catch(e) { return res.status(200).json({ ok:false, provider: "claude", error:e.message }); }
+      }
+
+      if (type === "minimax") {
+        const MK = process.env.MINIMAX_API_KEY;
+        if (!MK) return res.status(200).json({ ok: false, error: "MINIMAX_API_KEY tidak diset di env" });
+        try {
+          const mm = process.env.MINIMAX_MODEL || "MiniMax-Text-01";
+          const r = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
+            method:"POST",
+            headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MK },
+            body: JSON.stringify({ model: mm, max_tokens: 10, messages: [{ role:"system", content:"Respond with 'OK'" }, { role:"user", content:"ping" }] })
+          });
+          const d = await r.json().catch(()=>({}));
+          const hasReply = d.choices?.[0]?.message?.content || d.reply || null;
+          return res.status(200).json({ ok: r.ok && !!hasReply, provider: "minimax", model: mm, error: (d.base_resp?.status_msg||d.error?.message)||null, raw: !r.ok?d:null });
+        } catch(e) { return res.status(200).json({ ok:false, provider: "minimax", error:e.message }); }
+      }
+
+      if (type === "groq") {
+        const GK = process.env.GROQ_API_KEY;
+        if (!GK) return res.status(200).json({ ok: false, error: "GROQ_API_KEY tidak diset di env" });
+        try {
+          const gm = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+          const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method:"POST",
+            headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+GK },
+            body: JSON.stringify({ model: gm, max_tokens: 10, messages: [{ role:"system", content:"Respond with 'OK'" }, { role:"user", content:"ping" }] })
+          });
+          const d = await r.json().catch(()=>({}));
+          const hasReply = d.choices?.[0]?.message?.content || null;
+          return res.status(200).json({ ok: r.ok && !!hasReply, provider: "groq", model: gm, error: (d.error?.message)||null });
+        } catch(e) { return res.status(200).json({ ok:false, provider: "groq", error:e.message }); }
       }
 
       return res.status(200).json({
         ok: true, success: true, service: "AClean API",
-        env: { fonnte: !!process.env.FONNTE_TOKEN, llm_key: !!process.env.LLM_API_KEY, cloudflare: !!process.env.CLOUDFLARE_API_TOKEN, owner_phone: !!process.env.OWNER_PHONE, supabase: !!process.env.SUPABASE_SERVICE_KEY }
+        env: { fonnte: !!process.env.FONNTE_TOKEN, llm_key: !!process.env.LLM_API_KEY, minimax: !!process.env.MINIMAX_API_KEY, groq: !!process.env.GROQ_API_KEY, cloudflare: !!process.env.CLOUDFLARE_API_TOKEN, owner_phone: !!process.env.OWNER_PHONE, supabase: !!process.env.SUPABASE_SERVICE_KEY }
       });
     }
 
