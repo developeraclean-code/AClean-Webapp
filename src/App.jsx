@@ -1070,7 +1070,11 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
 
   const mkUnit = (no) => ({ unit_no:no, label:`Unit ${no}`, tipe:"AC Split 0.5-1PK", merk:"", pk:"1PK", kondisi_sebelum:[], kondisi_setelah:[], pekerjaan:[], freon_ditambah:"", ampere_akhir:"", catatan_unit:"" });
-  const isUnitDone = (u) => u.pekerjaan.length > 0 && (u.kondisi_sebelum.length > 0 || u.kondisi_setelah.length > 0);
+  const isUnitDone = (u) =>
+    u.pekerjaan.length > 0 &&
+    (u.kondisi_sebelum.length > 0 || u.kondisi_setelah.length > 0) &&
+    u.tipe && u.tipe.trim() !== "" &&  // REQUIRED: Tipe AC harus diisi
+    u.pk && u.pk.trim() !== "";        // REQUIRED: PK harus diisi
   const compressImg = (file) => new Promise((res) => {
     const r = new FileReader();
     r.onload = (e) => {
@@ -12441,6 +12445,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               {/* ── STEP 2: Detail Per Unit ── */}
               {laporanStep===2&&(
                 <div style={{display:"grid",gap:14}}>
+                  {/* Info banner: Required fields */}
+                  <div style={{background:cs.accent+"08",border:"1px solid "+cs.accent+"33",borderRadius:10,padding:"10px 12px",fontSize:11,color:cs.accent,lineHeight:1.6}}>
+                    <strong>⚠️ Wajib isi:</strong> <strong style={{color:cs.accent}}>Tipe AC</strong> dan <strong style={{color:cs.accent}}>PK</strong> untuk setiap unit. Contoh: Cassette 5PK, Split 1PK, dll. Field ini penting untuk hitung invoice dengan benar!
+                  </div>
                   {/* Tab per unit */}
                   <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4}}>
                     {laporanUnits.map((u,idx)=>{
@@ -12467,9 +12475,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         {/* Tipe & Merk */}
                         <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:8}}>
                           <div>
-                            <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Tipe AC</div>
+                            <div style={{fontSize:11,fontWeight:700,color:u.tipe&&u.tipe.trim()?cs.green:cs.accent,marginBottom:4}}>Tipe AC {!u.tipe||!u.tipe.trim()?<span style={{color:"#ef4444",fontWeight:900}}>*</span>:""}</div>
                             <select value={u.tipe} onChange={e=>upd({tipe:e.target.value})}
-                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
+                              style={{width:"100%",background:cs.surface,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"33":cs.border),borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
                               {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
                             </select>
                           </div>
@@ -12479,9 +12487,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                           <div>
-                            <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>PK</div>
+                            <div style={{fontSize:11,fontWeight:700,color:u.pk&&u.pk.trim()?cs.green:cs.accent,marginBottom:4}}>PK {!u.pk||!u.pk.trim()?<span style={{color:"#ef4444",fontWeight:900}}>*</span>:""}</div>
                             <input id="field_32" value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
-                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
+                              style={{width:"100%",background:cs.surface,border:"1px solid "+(u.pk&&u.pk.trim()?cs.green+"33":cs.border),borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         </div>
                         {/* Kondisi Sebelum */}
@@ -12545,7 +12553,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <button onClick={()=>setLaporanStep(1)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
                     <div style={{textAlign:"center",fontSize:11,color:cs.muted,alignSelf:"center"}}>{laporanUnits.filter(isUnitDone).length}/{laporanUnits.length} unit ✓</div>
                     <button onClick={()=>{
-                      if(!isInstallJob && incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi`);setActiveUnitIdx(laporanUnits.findIndex(u=>!isUnitDone(u)));return;}
+                      if(!isInstallJob && incompleteUnits.length>0){
+                        const incomplete = incompleteUnits.map(u=>`Unit ${u.unit_no}`).join(", ");
+                        showNotif(`⚠️ Lengkapi dulu: ${incomplete} — Pastikan Tipe AC & PK sudah diisi untuk semua unit`);
+                        setActiveUnitIdx(laporanUnits.findIndex(u=>!isUnitDone(u)));
+                        return;
+                      }
                       setLaporanStep(3);
                     }} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>Lanjut →</button>
                   </div>
