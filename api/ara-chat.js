@@ -1,6 +1,6 @@
 // api/ara-chat.js
 // POST /api/ara-chat { messages, bizContext, provider, model, brainMd }
-// Backend proxy ARA — support Claude, OpenAI, Gemini, Groq
+// Backend proxy ARA — support Claude, OpenAI, Minimax, Groq
 
 import { createClient }                                 from "@supabase/supabase-js";
 import { validateInternalToken, checkRateLimit, setCorsHeaders } from "./_auth.js";
@@ -63,20 +63,22 @@ async function callOpenAI(msgs, sys, model) {
   return d.choices?.[0]?.message?.content||"";
 }
 
-async function callGemini(msgs, sys, model) {
-  const key = process.env.GEMINI_API_KEY;
-  const m   = model||"gemini-2.0-flash-lite"; // gemini-2.0-flash-lite = free tier terbaik 2025
-  const r   = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`, {
+async function callMinimax(msgs, sys, model) {
+  const key      = process.env.MINIMAX_API_KEY;
+  const groupId  = process.env.MINIMAX_GROUP_ID || "";
+  const r = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
     method:"POST",
-    headers:{"Content-Type":"application/json"},
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
     body: JSON.stringify({
-      system_instruction:{parts:[{text:sys}]},
-      contents: msgs.map(m=>({role:m.role==="assistant"?"model":"user", parts:[{text:m.content}]}))
+      model: model||"MiniMax-Text-01",
+      max_tokens: 1024,
+      messages: [{role:"system",content:sys}, ...msgs],
+      ...(groupId ? { group_id: groupId } : {})
     })
   });
   const d = await r.json();
-  if (!r.ok) throw new Error(d.error?.message||"Gemini error");
-  return d.candidates?.[0]?.content?.parts?.[0]?.text||"";
+  if (!r.ok) throw new Error(d.base_resp?.status_msg || d.error?.message || "Minimax error");
+  return d.choices?.[0]?.message?.content||"";
 }
 
 async function callGroq(msgs, sys, model) {
@@ -108,11 +110,11 @@ export default async function handler(req, res) {
     if (rawProvider && rawProvider !== "claude") return rawProvider; // frontend memilih non-claude → ikuti
     if (rawProvider === "claude" && process.env.ANTHROPIC_API_KEY) return "claude"; // claude dipilih + key ada
     // Fallback: cek env vars yang tersedia
-    if (process.env.GEMINI_API_KEY)    return "gemini";
-    if (process.env.OPENAI_API_KEY)    return "openai";
-    if (process.env.GROQ_API_KEY)      return "groq";
-    if (process.env.ANTHROPIC_API_KEY) return "claude";
-    return rawProvider || "gemini"; // last resort
+    if (process.env.MINIMAX_API_KEY)    return "minimax";
+    if (process.env.OPENAI_API_KEY)     return "openai";
+    if (process.env.GROQ_API_KEY)       return "groq";
+    if (process.env.ANTHROPIC_API_KEY)  return "claude";
+    return rawProvider || "minimax"; // last resort
   };
   const provider = detectProvider();
   if (!messages?.length) return res.status(400).json({error:"messages wajib diisi"});
@@ -122,10 +124,10 @@ export default async function handler(req, res) {
   try {
     let reply = "";
     switch(provider) {
-      case "openai": reply = await callOpenAI(messages, sys, model); break;
-      case "gemini": reply = await callGemini(messages, sys, model); break;
-      case "groq":   reply = await callGroq(messages, sys, model);   break;
-      default:       reply = await callClaude(messages, sys, model); break;
+      case "openai":  reply = await callOpenAI(messages, sys, model);  break;
+      case "minimax": reply = await callMinimax(messages, sys, model); break;
+      case "groq":    reply = await callGroq(messages, sys, model);    break;
+      default:        reply = await callClaude(messages, sys, model);  break;
     }
 
     const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
@@ -142,9 +144,9 @@ export default async function handler(req, res) {
     const friendlyErr = err.message.includes("quota") || err.message.includes("429")
       ? `Rate limit / quota habis untuk provider ${provider}. Coba ganti provider di Pengaturan → ARA Brain, atau tunggu beberapa menit.`
       : err.message.includes("401") || err.message.includes("403") || err.message.includes("API key")
-      ? `API Key ${provider} tidak valid atau belum diset di Vercel env vars. Cek GEMINI_API_KEY / ANTHROPIC_API_KEY.`
+      ? `API Key ${provider} tidak valid atau belum diset di Vercel env vars. Cek MINIMAX_API_KEY / ANTHROPIC_API_KEY.`
       : err.message.includes("ANTHROPIC_API_KEY") || err.message.includes("credit")
-      ? `Credit Anthropic habis. Ganti provider ke Gemini (gratis) di Pengaturan → ARA Brain.`
+      ? `Credit Anthropic habis. Ganti provider ke Minimax di Pengaturan → ARA Brain.`
       : err.message;
     return res.status(500).json({error: friendlyErr, provider, raw: err.message});
   }
