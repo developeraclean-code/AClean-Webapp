@@ -1953,29 +1953,42 @@ ${matRowsHtml}
         try {
           const now = Date.now();
           const LIMIT_MS = 48 * 60 * 60 * 1000; // 48 jam
-          const { data: staleLaporan } = await supabase
+          const cutoffTime = new Date(now - LIMIT_MS).toISOString();
+
+          // Simplify query - use select(*) to avoid field name issues
+          const { data: staleLaporan, error: qErr } = await supabase
             .from("service_reports")
-            .select("id, job_id, customer, teknisi, submitted_at, status, notes")
+            .select("*")
             .eq("status", "SUBMITTED")
-            .lt("submitted_at", new Date(now - LIMIT_MS).toISOString());
+            .lt("submitted_at", cutoffTime);
+
+          if (qErr) {
+            console.warn("❌ Auto-verify query error:", qErr.message);
+            addAgentLog("AUTO_VERIFY_ERROR", `Query error: ${qErr.message}`, "WARNING");
+            return;
+          }
 
           if (staleLaporan && staleLaporan.length > 0) {
             console.log(`⏱️ Auto-verify: ${staleLaporan.length} laporan > 48 jam ditemukan`);
             for (const r of staleLaporan) {
-              await supabase.from("service_reports").update({
-                status:      "VERIFIED",
-                verified_by: null,
-                verified_at: new Date().toISOString(),
-                notes:       ((r.notes||"") + " [Auto-verified sistem 48 jam]").trim(),
-              }).eq("id", r.id);
-              setLaporanReports(prev => prev.map(x =>
-                x.id === r.id ? {...x, status: "VERIFIED",
-                  verified_at: new Date().toISOString()} : x
-              ));
-              addAgentLog("AUTO_VERIFIED",
-                `Laporan ${r.job_id} (${r.customer||""}) auto-verified setelah 48 jam — ${r.teknisi||""}`,
-                "INFO"
-              );
+              try {
+                await supabase.from("service_reports").update({
+                  status:      "VERIFIED",
+                  verified_by: null,
+                  verified_at: new Date().toISOString(),
+                  notes:       ((r.notes||"") + " [Auto-verified sistem 48 jam]").trim(),
+                }).eq("id", r.id);
+                setLaporanReports(prev => prev.map(x =>
+                  x.id === r.id ? {...x, status: "VERIFIED",
+                    verified_at: new Date().toISOString()} : x
+                ));
+                addAgentLog("AUTO_VERIFIED",
+                  `Laporan ${r.job_id||r.id} auto-verified setelah 48 jam — ${r.teknisi||""}`,
+                  "INFO"
+                );
+              } catch(uErr) {
+                console.warn(`⚠️ Update laporan ${r.id} gagal:`, uErr);
+              }
             }
             showNotif(`⏱️ ${staleLaporan.length} laporan otomatis terverifikasi (>48 jam)`);
           }
