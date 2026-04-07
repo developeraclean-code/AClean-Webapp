@@ -6804,6 +6804,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const weekAgo  = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
     const monthAgo = new Date(Date.now()-30*86400000).toISOString().slice(0,10);
     let filtered = [...laporanReports];
+
+    // ── AUTO-HIDE VERIFIED untuk Teknisi & Helper (hide laporan yang sudah selesai) ──
+    const isTeknisiOrHelper = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
+    if (isTeknisiOrHelper) {
+      filtered = filtered.filter(r => r.status !== "VERIFIED");
+    }
+
     if (laporanDateFilter==="Hari Ini")  filtered=filtered.filter(r=>(r.date||r.submitted_at||"").slice(0,10)===todayLap);
     else if (laporanDateFilter==="Minggu Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=weekAgo);
     else if (laporanDateFilter==="Bulan Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=monthAgo);
@@ -6850,7 +6857,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
           <div>
             <div style={{fontWeight:800,fontSize:18,color:cs.text}}>Laporan Tim Teknisi <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filtered.length})</span></div>
-            <div style={{fontSize:12,color:cs.muted,marginTop:2}}>Verifikasi laporan, cek riwayat edit, tandai sesuai atau minta revisi</div>
+            <div style={{fontSize:12,color:cs.muted,marginTop:2}}>
+              {isTeknisiOrHelper ? "📋 Menampilkan laporan baru & revisi saja. Laporan terverifikasi disembunyikan. " : ""}
+              {!isTeknisiOrHelper ? "Verifikasi laporan, cek riwayat edit, tandai sesuai atau minta revisi" : ""}
+            </div>
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {[["SUBMITTED",cs.accent,"Baru"],["VERIFIED",cs.green,"Verified"],["REVISION",cs.yellow,"Revisi"],["REJECTED",cs.red,"Ditolak"]].map(([s,col,lbl])=>(
