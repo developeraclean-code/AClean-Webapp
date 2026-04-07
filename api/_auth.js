@@ -16,6 +16,29 @@
 //   3. Redeploy Vercel
 // ============================================================
 
+// ── fetchWithTimeout: Fetch with timeout support ──
+export async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch(err) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      const timeoutErr = new Error(`Request timeout after ${timeoutMs}ms`);
+      timeoutErr.code = "ETIMEDOUT";
+      throw timeoutErr;
+    }
+    throw err;
+  }
+}
+
 export function validateInternalToken(req, res) {
   const secret = process.env.INTERNAL_API_SECRET;
 
@@ -36,17 +59,65 @@ export function validateInternalToken(req, res) {
   return true;
 }
 
-// Rate limiter sederhana berbasis memory (per Vercel function instance)
-// Untuk production sebenarnya pakai Redis/Upstash, tapi ini sudah cukup untuk AClean scale
+// ── Rate Limiter: Try KV first, fallback to in-memory ──
+// In production, use Vercel KV (Redis) for distributed rate limiting
+// In development, use in-memory Map (note: not distributed across instances)
 const rateLimitMap = new Map(); // ip → { count, resetAt }
 
-export function checkRateLimit(req, res, maxRequests = 60, windowMs = 60000) {
+export async function checkRateLimit(req, res, maxRequests = 60, windowMs = 60000) {
   const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim()
            || req.headers["x-real-ip"]
            || req.socket?.remoteAddress
            || "unknown";
 
-  const now  = Date.now();
+  const now = Date.now();
+
+  // ── TRY: Use Vercel KV for distributed rate limiting (production) ──
+  try {
+    // Check if KV is available
+    if (process.env.KV_URL && process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+      const keyName = `ratelimit:${ip}`;
+      const kvUrl = process.env.KV_REST_API_URL;
+      const kvToken = process.env.KV_REST_API_TOKEN;
+
+      // Get current count
+      const getRes = await fetch(`${kvUrl}/get/${keyName}`, {
+        headers: { "Authorization": `Bearer ${kvToken}` }
+      });
+      let count = 0;
+      if (getRes.ok) {
+        const data = await getRes.json();
+        count = data.result ? parseInt(data.result) : 0;
+      }
+
+      // Increment count
+      count++;
+
+      // Set with expiry (window time)
+      await fetch(`${kvUrl}/set/${keyName}/${count}`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${kvToken}` },
+        body: JSON.stringify({ ex: Math.ceil(windowMs / 1000) })
+      }).catch(err => console.warn("[KV_SET_ERROR]", err.message));
+
+      if (count > maxRequests) {
+        const retryAfter = Math.ceil(windowMs / 1000);
+        res.setHeader("Retry-After", retryAfter);
+        res.status(429).json({
+          error: "Too Many Requests",
+          message: `Limit ${maxRequests} request per menit. Coba lagi dalam ${retryAfter} detik.`,
+          retryAfter
+        });
+        console.warn(`[RATE_LIMIT_EXCEEDED] IP: ${ip}, count: ${count}, max: ${maxRequests}`);
+        return false;
+      }
+      return true;
+    }
+  } catch(kvErr) {
+    console.warn("[RATE_LIMIT_KV_ERROR]", kvErr.message, "— falling back to in-memory");
+  }
+
+  // ── FALLBACK: In-memory rate limiter (development or KV unavailable) ──
   const data = rateLimitMap.get(ip);
 
   if (!data || now > data.resetAt) {
@@ -63,6 +134,7 @@ export function checkRateLimit(req, res, maxRequests = 60, windowMs = 60000) {
       message: `Limit ${maxRequests} request per menit. Coba lagi dalam ${retryAfter} detik.`,
       retryAfter
     });
+    console.warn(`[RATE_LIMIT_EXCEEDED_INMEM] IP: ${ip}, count: ${data.count}, max: ${maxRequests}`);
     return false;
   }
   return true;

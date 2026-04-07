@@ -63,6 +63,25 @@ const samePhone = (a, b) => {
   return normalizePhone(a) === normalizePhone(b);
 };
 
+// ── safeJsonParse: Parse JSON with error logging (don't silently fail) ──
+const safeJsonParse = (jsonStr, context = "", defaultValue = null) => {
+  if (!jsonStr) return defaultValue;
+  try {
+    return JSON.parse(jsonStr);
+  } catch(err) {
+    console.error(`[JSON_PARSE_ERROR] ${context}:`, {
+      error: err.message,
+      inputLength: String(jsonStr).length,
+      inputPreview: String(jsonStr).slice(0, 100)
+    });
+    // Add to agent logs so we can monitor data corruption
+    if (window.addAgentLog) {
+      window.addAgentLog("JSON_PARSE_ERROR", `${context}: ${err.message}`, "ERROR");
+    }
+    return defaultValue;
+  }
+};
+
 // sameCustomer: unik berdasarkan phone + nama lengkap (case insensitive, trim)
 // "Bapak Dedy Jelita" vs "Bapak Dedy Aruna" = BEDA meski phone sama
 const sameCustomer = (c, phone, name) => {
@@ -1804,15 +1823,15 @@ ${matRowsHtml}
           materials_detail: (() => {
             if (!inv.materials_detail) return [];
             if (Array.isArray(inv.materials_detail)) return inv.materials_detail;
-            try { return JSON.parse(inv.materials_detail); } catch(_) { return []; }
+            return safeJsonParse(inv.materials_detail, `invoice_materials_${inv.id}`, []);
           })(),
         })));
       }
       if (!laporanRes.error && laporanRes.data) {
         const parseLaporan = r => ({
           ...r,
-          units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return r.units    ||[];} })() : (r.units    ||[]),
-          materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return r.materials||[];} })() : (r.materials||[]),
+          units:     r.units_json ? safeJsonParse(r.units_json, `laporan_units_${r.id}`, r.units||[]) : (r.units||[]),
+          materials: r.materials_json ? safeJsonParse(r.materials_json, `laporan_materials_${r.id}`, r.materials||[]) : (r.materials||[]),
           fotos:     r.fotos || (r.foto_urls||[]).map((url,i) => ({id:i, label:`Foto ${i+1}`, url})),
           editLog:   safeArr(r.edit_log ?? r.editLog),
           rekomendasi:    r.rekomendasi    || "",

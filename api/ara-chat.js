@@ -3,7 +3,7 @@
 // Backend proxy ARA — support Claude, OpenAI, Minimax, Groq
 
 import { createClient }                                 from "@supabase/supabase-js";
-import { validateInternalToken, checkRateLimit, setCorsHeaders } from "./_auth.js";
+import { validateInternalToken, checkRateLimit, setCorsHeaders, fetchWithTimeout } from "./_auth.js";
 
 const sb = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
@@ -73,22 +73,24 @@ ${JSON.stringify(bizClean, null, 2)}
 };
 
 async function callClaude(msgs, sys, model) {
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
+  // LLM calls can take up to 30 seconds
+  const r = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method:"POST",
     headers:{"Content-Type":"application/json","x-api-key":process.env.ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01"},
     body: JSON.stringify({model: model||"claude-sonnet-4-6", max_tokens:1024, system:sys, messages:msgs})
-  });
+  }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message||"Claude error");
   return d.content?.map(c=>c.text||"").join("")||"";
 }
 
 async function callOpenAI(msgs, sys, model) {
-  const r = await fetch("https://api.openai.com/v1/chat/completions", {
+  // LLM calls can take up to 30 seconds
+  const r = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+process.env.OPENAI_API_KEY},
     body: JSON.stringify({model:model||"gpt-4o", max_tokens:1024, messages:[{role:"system",content:sys},...msgs]})
-  });
+  }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message||"OpenAI error");
   return d.choices?.[0]?.message?.content||"";
@@ -97,7 +99,8 @@ async function callOpenAI(msgs, sys, model) {
 async function callMinimax(msgs, sys, model) {
   const key      = process.env.MINIMAX_API_KEY;
   const groupId  = process.env.MINIMAX_GROUP_ID || "";
-  const r = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
+  // LLM calls can take up to 30 seconds
+  const r = await fetchWithTimeout("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
     body: JSON.stringify({
@@ -106,18 +109,19 @@ async function callMinimax(msgs, sys, model) {
       messages: [{role:"system",content:sys}, ...msgs],
       ...(groupId ? { group_id: groupId } : {})
     })
-  });
+  }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.base_resp?.status_msg || d.error?.message || "Minimax error");
   return d.choices?.[0]?.message?.content||"";
 }
 
 async function callGroq(msgs, sys, model) {
-  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+  // LLM calls can take up to 30 seconds
+  const r = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+process.env.GROQ_API_KEY},
     body: JSON.stringify({model:model||"llama-3.3-70b-versatile", max_tokens:1024, messages:[{role:"system",content:sys},...msgs]})
-  });
+  }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message||"Groq error");
   return d.choices?.[0]?.message?.content||"";
@@ -130,7 +134,8 @@ export default async function handler(req, res) {
   if (req.method !== "POST")   return res.status(405).json({error:"Method not allowed"});
 
   // ── SEC-02: Rate limit 30 req/menit per IP (ARA lebih ketat karena costly) ──
-  if (!checkRateLimit(req, res, 30, 60000)) return;
+  // Now supports Vercel KV for distributed rate limiting, falls back to in-memory
+  if (!await checkRateLimit(req, res, 30, 60000)) return;
 
   // ── SEC-02: Validasi internal token ──
   if (!validateInternalToken(req, res)) return;
