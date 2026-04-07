@@ -169,8 +169,8 @@ export default async function handler(req, res) {
       if (prov === "minimax") {
         const MK = process.env.MINIMAX_API_KEY || process.env.LLM_API_KEY;
         if (!MK) return res.status(500).json({ error: "MINIMAX_API_KEY belum diset" });
-        // Support Minimax 2.7, 2.5, dan legacy MiniMax-Text-01
-        const mm = model || process.env.MINIMAX_MODEL || "MiniMax-Text-01";
+        // Support Minimax 2.5, 2.7-highspeed
+        const mm = model || process.env.MINIMAX_MODEL || "MiniMax-M2.5";
         const mg = process.env.MINIMAX_GROUP_ID || "";
 
         try {
@@ -265,7 +265,7 @@ export default async function handler(req, res) {
         const MK = process.env.MINIMAX_API_KEY;
         if (!MK) return res.status(200).json({ ok: false, error: "MINIMAX_API_KEY tidak diset di env" });
         try {
-          const mm = process.env.MINIMAX_MODEL || "MiniMax-Text-01";
+          const mm = process.env.MINIMAX_MODEL || "MiniMax-M2.5";
           const r = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
             method:"POST",
             headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MK },
