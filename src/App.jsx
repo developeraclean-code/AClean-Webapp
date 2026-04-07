@@ -530,11 +530,33 @@ export default function ACleanWebApp() {
 
   // ── New order / stok / customer form ──
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false); // anti double submit
+  const _orderSubmitLock = useRef(false); // ref-level lock (state updates batch, ref updates instantly)
   const [matTrackFilter,   setMatTrackFilter]   = useState("Semua"); // filter kategori material
   const [matTrackSearch,   setMatTrackSearch]   = useState("");
   const [matTrackDateFrom, setMatTrackDateFrom] = useState("");
   const [matTrackDateTo,   setMatTrackDateTo]   = useState("");
   const [invTxData,        setInvTxData]        = useState([]);
+
+  // ── Biaya / Expenses ──
+  const [expensesData,     setExpensesData]     = useState([]);
+  const [expenseTab,       setExpenseTab]       = useState("petty_cash"); // "petty_cash" | "material_purchase"
+  const [expenseFilter,    setExpenseFilter]    = useState("Semua");
+  const [expenseSearch,    setExpenseSearch]    = useState("");
+  const [expenseDateFrom,  setExpenseDateFrom]  = useState("");
+  const [expenseDateTo,    setExpenseDateTo]    = useState("");
+  const [expensePage,      setExpensePage]      = useState(1);
+  const [modalExpense,     setModalExpense]     = useState(false);
+  const [editExpenseItem,  setEditExpenseItem]  = useState(null);
+  const [newExpenseForm,   setNewExpenseForm]   = useState({
+    category:"petty_cash", subcategory:"", amount:"", date:"",
+    description:"", teknisi_name:"", item_name:"", freon_type:""
+  });
+  const EXPENSE_PAGE_SIZE = 20;
+
+  // ── ARA Log filters ──
+  const [logDateFilter,    setLogDateFilter]    = useState("Semua");
+  const [logActionFilter,  setLogActionFilter]  = useState("Semua");
+  const [schedListFilter,  setSchedListFilter]  = useState("minggu_ini"); // "hari_ini" | "minggu_ini" | "semua"
   const [invUnitsData,     setInvUnitsData]     = useState([]); // unit fisik per item (tabung/roll)
   const [showAddStock,     setShowAddStock]     = useState(false);
   const [newOrderForm,     setNewOrderForm]     = useState({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
@@ -654,10 +676,10 @@ export default function ACleanWebApp() {
   const [waDevice,        setWaDevice]        = useState(() => _ls("waDevice",   ""));
   const [waStatus,        setWaStatus]        = useState("not_connected");
 
-  const [llmProvider,     setLlmProvider]     = useState(() => _ls("llmProvider", "gemini")); // default gemini (free tier)
+  const [llmProvider,     setLlmProvider]     = useState(() => _ls("llmProvider", "minimax"));
   const [llmApiKey,       setLlmApiKey]       = useState(() => {
     // Load key per-provider yang aktif — selalu sync dengan llmProvider
-    const prov = _ls("llmProvider", "gemini"); // sama dengan default llmProvider
+    const prov = _ls("llmProvider", "minimax"); // sama dengan default llmProvider
     return _ls("llmApiKey_" + prov, "") || _ls("llmApiKey", "");
   });
   const [llmModel,        setLlmModel]        = useState(() => _ls("llmModel", "claude-sonnet-4-6"));
@@ -1706,6 +1728,18 @@ ${matRowsHtml}
       }
       // Jika DB error total, keep demo data (already in useState init)
       if (!logsRes.error && logsRes.data && logsRes.data.length > 0) setAgentLogs(logsRes.data);
+
+      // ── Load Expenses ──
+      try {
+        const expRes = await supabase.from("expenses").select("*").order("date", { ascending: false });
+        if (!expRes.error && expRes.data) setExpensesData(expRes.data);
+      } catch(e) { /* tabel belum ada, skip */ }
+
+      // ── Auto-cleanup: hapus agent_logs > 90 hari ──
+      try {
+        const d90 = new Date(Date.now() - 90*24*60*60*1000).toISOString();
+        await supabase.from("agent_logs").delete().lt("created_at", d90);
+      } catch(e) { /* skip jika gagal */ }
 
       // GAP 3: Load payments summary & dispatch recent (untuk dashboard)
       try {
@@ -2794,143 +2828,23 @@ ${matRowsHtml}
           if (!fr.ok) throw new Error(fd.error?.message || "OpenAI API error " + fr.status);
           fullText = fd.choices?.[0]?.message?.content || "";
 
-        } else if (llmProvider === "gemini") {
-          // ── Google Gemini API dengan Function Calling ──
-          const model = llmModel || "gemini-2.5-flash";
-
-          // Definisi tools untuk Gemini function calling
-          const geminiTools = [{
-            functionDeclarations: [
-              { name:"create_order", description:"Buat order baru",
-                parameters:{ type:"OBJECT", properties:{
-                  customer:{type:"STRING"}, phone:{type:"STRING"}, address:{type:"STRING"},
-                  service:{type:"STRING",enum:["Cleaning","Repair","Install","Complain","Pasang AC Baru","Bongkar AC","Service AC"]},
-                  units:{type:"NUMBER"}, teknisi:{type:"STRING"}, helper:{type:"STRING"},
-                  date:{type:"STRING",description:"YYYY-MM-DD"}, time:{type:"STRING",description:"HH:MM"},
-                  notes:{type:"STRING"}
-                }, required:["customer","service","date"]}
-              },
-              { name:"update_order_status", description:"Update status order",
-                parameters:{ type:"OBJECT", properties:{
-                  id:{type:"STRING"}, status:{type:"STRING",enum:["PENDING","CONFIRMED","IN_PROGRESS","COMPLETED","CANCELLED"]}
-                }, required:["id","status"]}
-              },
-              { name:"reschedule_order", description:"Jadwal ulang order",
-                parameters:{ type:"OBJECT", properties:{
-                  id:{type:"STRING"}, date:{type:"STRING"}, time:{type:"STRING"}, teknisi:{type:"STRING"}
-                }, required:["id","date"]}
-              },
-              { name:"cancel_order", description:"Batalkan order",
-                parameters:{ type:"OBJECT", properties:{
-                  id:{type:"STRING"}, reason:{type:"STRING"}
-                }, required:["id"]}
-              },
-              { name:"create_invoice", description:"Buat invoice dari order yang sudah selesai",
-                parameters:{ type:"OBJECT", properties:{ order_id:{type:"STRING"} }, required:["order_id"]}
-              },
-              { name:"mark_invoice_paid", description:"Tandai invoice lunas",
-                parameters:{ type:"OBJECT", properties:{ id:{type:"STRING"} }, required:["id"]}
-              },
-              { name:"approve_invoice", description:"Approve invoice",
-                parameters:{ type:"OBJECT", properties:{ id:{type:"STRING"} }, required:["id"]}
-              },
-              { name:"update_stock", description:"Update stok material",
-                parameters:{ type:"OBJECT", properties:{
-                  code:{type:"STRING"}, name:{type:"STRING"},
-                  delta:{type:"NUMBER",description:"positif=tambah, negatif=kurangi"},
-                  reason:{type:"STRING"}
-                }, required:["delta"]}
-              },
-              { name:"dispatch_wa", description:"Kirim dispatch WA ke teknisi",
-                parameters:{ type:"OBJECT", properties:{ order_id:{type:"STRING"} }, required:["order_id"]}
-              },
-              { name:"send_wa", description:"Kirim pesan WhatsApp ke nomor tertentu",
-                parameters:{ type:"OBJECT", properties:{
-                  phone:{type:"STRING"}, message:{type:"STRING"}
-                }, required:["phone","message"]}
-              },
-              { name:"send_reminder", description:"Kirim reminder WA untuk invoice belum lunas",
-                parameters:{ type:"OBJECT", properties:{ invoice_id:{type:"STRING"} }, required:["invoice_id"]}
-              },
-              { name:"update_invoice", description:"Edit field invoice (labor/material/dadakan/discount/notes)",
-                parameters:{ type:"OBJECT", properties:{
-                  id:{type:"STRING"},
-                  field:{type:"STRING", enum:["labor","material","dadakan","discount","notes","due"]},
-                  value:{type:"STRING"}
-                }, required:["id","field","value"]}
-              },
-              { name:"mark_invoice_overdue", description:"Tandai semua invoice UNPAID yang melewati due date menjadi OVERDUE",
-                parameters:{ type:"OBJECT", properties:{} }
-              },
-            ]
-          }];
-
-          // Normalize pesan untuk Gemini (harus alternating user/model)
-          const rawMsgs = newMessages.map(m => ({
-            role: m.role === "assistant" ? "model" : "user",
-            parts: [{ text: m.content }]
-          }));
-          const geminiContents = rawMsgs.reduce((acc, msg) => {
-            if (acc.length === 0 && msg.role !== "user") return acc;
-            const prev = acc[acc.length - 1];
-            if (prev && prev.role === msg.role) {
-              return [...acc.slice(0,-1), { role: prev.role, parts: [...prev.parts, ...msg.parts] }];
-            }
-            return [...acc, msg];
-          }, []);
-
-          const fr = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${llmApiKey}`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                system_instruction: { parts: [{ text: sysP }] },
-                contents: geminiContents,
-                tools: geminiTools,
-                generationConfig: { maxOutputTokens: 1500 }
-              })
-            }
-          );
+        } else if (llmProvider === "minimax") {
+          // ── Minimax API ──
+          const model = llmModel || "MiniMax-Text-01";
+          const minimaxGroupId = localStorage.getItem("llmGroupId") || "";
+          const fr = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
+            method: "POST",
+            headers: { "Content-Type":"application/json", "Authorization":"Bearer "+llmApiKey },
+            body: JSON.stringify({
+              model,
+              max_tokens: 1500,
+              messages: [{ role:"system", content: sysP }, ...newMessages.map(m=>({ role:m.role, content:m.content }))],
+              ...(minimaxGroupId ? { group_id: minimaxGroupId } : {})
+            })
+          });
           const fd = await fr.json();
-          if (!fr.ok) throw new Error(fd.error?.message || "Gemini API error " + fr.status);
-
-          // Handle function call response dari Gemini
-          const candidate = fd.candidates?.[0];
-          const parts = candidate?.content?.parts || [];
-          const funcCall = parts.find(p => p.functionCall);
-
-          if (funcCall) {
-            // Gemini ingin eksekusi function — konversi ke ACTION format
-            const fn = funcCall.functionCall;
-            const args = fn.args || {};
-            const textPart = parts.find(p => p.text)?.text || "";
-
-            // Map Gemini function call → ACTION object
-            const actionMap = {
-              create_order:         { type:"CREATE_ORDER",          ...args },
-              update_order_status:  { type:"UPDATE_ORDER_STATUS",   ...args },
-              reschedule_order:     { type:"RESCHEDULE_ORDER",      ...args },
-              cancel_order:         { type:"CANCEL_ORDER",          ...args },
-              create_invoice:       { type:"CREATE_INVOICE",        ...args },
-              mark_invoice_paid:    { type:"MARK_PAID",             ...args },
-              approve_invoice:      { type:"APPROVE_INVOICE",       ...args },
-              update_stock:         { type:"UPDATE_STOCK",          ...args },
-              dispatch_wa:          { type:"DISPATCH_WA",           ...args },
-              send_wa:              { type:"SEND_WA",               ...args },
-              send_reminder:        { type:"SEND_REMINDER",         ...args },
-              update_invoice:       { type:"UPDATE_INVOICE",        ...args },
-              mark_invoice_overdue: { type:"MARK_INVOICE_OVERDUE"           },
-            };
-            const action = actionMap[fn.name];
-            if (action) {
-              fullText = (textPart ? textPart + "\n" : "") + "[ACTION]" + JSON.stringify(action) + "[/ACTION]";
-            } else {
-              fullText = textPart || "Aksi tidak dikenali: " + fn.name;
-            }
-          } else {
-            fullText = parts.map(p => p.text || "").join("") || "";
-          }
+          if (!fr.ok) throw new Error(fd.base_resp?.status_msg || fd.error?.message || "Minimax API error " + fr.status);
+          fullText = fd.choices?.[0]?.message?.content || "";
 
         } else {
           // ── Anthropic Claude API (default) ──
@@ -3280,6 +3194,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id:"agentlog",   icon:"📡",  label:"ARA Log"      },
     { id:"settings",   icon:"⚙️",  label:"Pengaturan"   },
     { id:"mattrack",   icon:"🧮",  label:"Stok Material" },
+    { id:"biaya",      icon:"💸",  label:"Biaya"         },
     // Teknisi-only menu (not shown to Owner/Admin)
     { id:"myreport",   icon:"📋",  label:"Laporan Saya" },
   ];
@@ -4860,11 +4775,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                         <button onClick={() => { setEditStokItem({...item}); setNewStokForm({name:item.name,unit:item.unit,price:item.price,stock:item.stock,reorder:item.reorder,min_alert:item.min_alert}); setModalEditStok(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
                       )}
-                      {currentUser?.role === "Owner" && (
+                      {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                         <button onClick={async () => {
                           if (!await showConfirm({ icon:"🗑️", title:"Hapus Material?", danger:true,
   message:"Hapus material "+item.name+"? Tidak bisa dibatalkan.",
-
   confirmText:"Hapus" })) return;
                           // Delete pakai id (UUID) jika ada, fallback ke code
                           const delQuery = item.id && !String(item.id).startsWith("INV")
@@ -5508,12 +5422,37 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         ) : (
           /* LIST VIEW */
           <div style={{ display:"grid", gap:10 }}>
+            {/* Filter bar — Hari Ini / Minggu Ini / Semua */}
+            <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+              <span style={{ fontSize:11, color:cs.muted, fontWeight:600 }}>Tampilkan:</span>
+              {[["hari_ini","🔴 Hari Ini"],["minggu_ini","📅 Minggu Ini"],["semua","📋 Semua"]].map(([v,lbl]) => (
+                <button key={v} onClick={() => { setSchedListFilter(v); setSchedPage(1); }}
+                  style={{ padding:"5px 12px", borderRadius:99, border:"1px solid "+(schedListFilter===v?cs.accent:cs.border),
+                    background:schedListFilter===v?cs.accent+"22":"transparent", color:schedListFilter===v?cs.accent:cs.muted,
+                    cursor:"pointer", fontSize:11, fontWeight:schedListFilter===v?700:400 }}>{lbl}</button>
+              ))}
+              {_sqSched && <span style={{ fontSize:10, color:cs.yellow, background:cs.yellow+"15", padding:"3px 10px", borderRadius:99, border:"1px solid "+cs.yellow+"33" }}>🔍 Hasil pencarian — menampilkan semua periode</span>}
+            </div>
             {(() => {
+              const cutoff30 = new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10);
+              // Saat ada pencarian aktif, tampilkan semua (tidak tersembunyi)
+              const preFiltered = _sqSched ? filteredOrders : filteredOrders.filter(o => {
+                if (schedListFilter === "hari_ini")  return (o.date||"") === TODAY;
+                if (schedListFilter === "minggu_ini") return (o.date||"") >= (weekDays[0]?.date||TODAY) && (o.date||"") <= (weekDays[6]?.date||TODAY);
+                // "semua" — sembunyikan >30 hari lalu
+                return (o.date||"") >= cutoff30;
+              });
+              if (preFiltered.length === 0) {
+                return <div style={{ background:cs.card, borderRadius:12, padding:32, textAlign:"center", color:cs.muted }}>
+                  {schedListFilter==="hari_ini" ? "Tidak ada jadwal hari ini" : schedListFilter==="minggu_ini" ? "Tidak ada jadwal minggu ini" : "Tidak ada jadwal dalam 30 hari terakhir"}
+                  {!_sqSched && schedListFilter !== "semua" && <div style={{ fontSize:11, color:cs.muted, marginTop:6 }}>Klik <b style={{color:cs.accent}}>Semua</b> atau gunakan pencarian untuk melihat jadwal lama</div>}
+                </div>;
+              }
               if (filteredOrders.length === 0) {
                 return <div style={{ background:cs.card, borderRadius:12, padding:32, textAlign:"center", color:cs.muted }}>Tidak ada jadwal untuk {activeTek}</div>;
               }
               const dayNames2 = ["Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"];
-              const sorted2 = [...filteredOrders].sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
+              const sorted2 = [...preFiltered].sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
               const totPgSched = Math.ceil(sorted2.length / SCHED_PAGE_SIZE) || 1;
               const curPgSched = Math.min(schedPage, totPgSched);
               const pagedSched = sorted2.slice((curPgSched-1)*SCHED_PAGE_SIZE, curPgSched*SCHED_PAGE_SIZE);
@@ -6200,24 +6139,61 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     );
   };
 
-  const renderAgentLog = () => (
-    <div style={{ display:"grid", gap:16 }}>
-      <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>🤖 ARA Agent Log</div>
-      <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
-        {agentLogs.map((log,i) => {
-          const lC = log.status==="ERROR"?cs.red:log.status==="WARNING"?cs.yellow:cs.green;
-          return (
-            <div key={i} style={{ display:"flex", gap:14, padding:"12px 18px", borderBottom:"1px solid "+cs.border, alignItems:"flex-start" }}>
-              <span style={{ fontFamily:"monospace", fontSize:11, color:cs.muted, whiteSpace:"nowrap", flexShrink:0 }}>{log.time || (log.created_at ? new Date(log.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "-")}</span>
-              <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:lC+"22", color:lC, border:"1px solid "+lC+"33", fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.status}</span>
-              <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:cs.accent+"18", color:cs.accent, fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.action}</span>
-              <span style={{ fontSize:12, color:cs.muted }}>{log.user_name ? `[${log.user_name}] ` : ""}{log.detail}</span>
-            </div>
-          );
-        })}
+  const renderAgentLog = () => {
+    // Collect unique dates from logs for filter dropdown
+    const logDates = [...new Set(agentLogs.map(l => (l.created_at||"").slice(0,10)).filter(Boolean))].sort().reverse();
+    const filteredLogs = agentLogs.filter(l => {
+      const dayMatch = logDateFilter === "Semua" || (l.created_at||"").slice(0,10) === logDateFilter;
+      const actMatch = logActionFilter === "Semua" || l.action === logActionFilter;
+      return dayMatch && actMatch;
+    });
+    const logActions = [...new Set(agentLogs.map(l => l.action).filter(Boolean))].sort();
+    return (
+      <div style={{ display:"grid", gap:16 }}>
+        <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>🤖 ARA Agent Log</div>
+        {/* Filter bar */}
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <span style={{ fontSize:11, color:cs.muted, fontWeight:600 }}>Tanggal:</span>
+            <select value={logDateFilter} onChange={e => setLogDateFilter(e.target.value)}
+              style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"5px 10px", fontSize:12, cursor:"pointer" }}>
+              <option value="Semua">Semua</option>
+              {logDates.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <span style={{ fontSize:11, color:cs.muted, fontWeight:600 }}>Action:</span>
+            <select value={logActionFilter} onChange={e => setLogActionFilter(e.target.value)}
+              style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"5px 10px", fontSize:12, cursor:"pointer" }}>
+              <option value="Semua">Semua</option>
+              {logActions.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+          <span style={{ fontSize:11, color:cs.muted, marginLeft:"auto" }}>
+            {filteredLogs.length} / {agentLogs.length} log • auto-hapus &gt;90 hari
+          </span>
+        </div>
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
+          {filteredLogs.length === 0
+            ? <div style={{ padding:"32px", textAlign:"center", color:cs.muted, fontSize:13 }}>Tidak ada log untuk filter ini.</div>
+            : filteredLogs.map((log,i) => {
+              const lC = log.status==="ERROR"?cs.red:log.status==="WARNING"?cs.yellow:cs.green;
+              return (
+                <div key={i} style={{ display:"flex", gap:14, padding:"12px 18px", borderBottom:"1px solid "+cs.border, alignItems:"flex-start" }}>
+                  <span style={{ fontFamily:"monospace", fontSize:11, color:cs.muted, whiteSpace:"nowrap", flexShrink:0 }}>
+                    {log.created_at ? new Date(log.created_at).toLocaleString("id-ID",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}) : (log.time||"-")}
+                  </span>
+                  <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:lC+"22", color:lC, border:"1px solid "+lC+"33", fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.status}</span>
+                  <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:cs.accent+"18", color:cs.accent, fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.action}</span>
+                  <span style={{ fontSize:12, color:cs.muted }}>{log.user_name ? `[${log.user_name}] ` : ""}{log.detail}</span>
+                </div>
+              );
+            })
+          }
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // ============================================================
   // RENDER REPORTS
@@ -7638,6 +7614,312 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
 
   // ============================================================
+  // RENDER EXPENSES (BIAYA)
+  // ============================================================
+  const renderExpenses = () => {
+    const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+
+    const PETTY_CASH_SUBS = ["Bensin Motor","Perbaikan Motor","Parkir","Kasbon Karyawan","Lembur","Bonus","Lain-lain"];
+    const MATERIAL_SUBS   = ["Pipa AC","Kabel","Freon","Material Lain"];
+    // Quick-filter chips (for petty_cash tab only)
+    const QUICK_FILTERS = ["Semua","Bensin Motor","Parkir","Kasbon Karyawan"];
+
+    // Apply filters
+    const filtered = expensesData.filter(e => {
+      if (expenseTab === "petty_cash"    && e.category !== "petty_cash")    return false;
+      if (expenseTab === "material_purchase" && e.category !== "material_purchase") return false;
+      if (expenseTab === "petty_cash" && expenseFilter !== "Semua" && e.subcategory !== expenseFilter) return false;
+      if (expenseDateFrom && (e.date||"") < expenseDateFrom) return false;
+      if (expenseDateTo   && (e.date||"") > expenseDateTo)   return false;
+      if (expenseSearch) {
+        const q = expenseSearch.toLowerCase();
+        if (!(e.description||"").toLowerCase().includes(q) &&
+            !(e.subcategory||"").toLowerCase().includes(q) &&
+            !(e.teknisi_name||"").toLowerCase().includes(q) &&
+            !(e.item_name||"").toLowerCase().includes(q)) return false;
+      }
+      return true;
+    }).sort((a,b) => (b.date||"").localeCompare(a.date||""));
+
+    const totalPage = Math.ceil(filtered.length / EXPENSE_PAGE_SIZE) || 1;
+    const pageData  = filtered.slice((expensePage-1)*EXPENSE_PAGE_SIZE, expensePage*EXPENSE_PAGE_SIZE);
+    const grandTotal = filtered.reduce((s,e) => s + Number(e.amount||0), 0);
+
+    const resetForm = () => {
+      setNewExpenseForm({ category: expenseTab === "material_purchase" ? "material_purchase" : "petty_cash",
+        subcategory:"", amount:"", date:TODAY, description:"", teknisi_name:"", item_name:"", freon_type:"" });
+      setEditExpenseItem(null);
+    };
+
+    const openAdd = () => { resetForm(); setModalExpense(true); };
+    const openEdit = (item) => {
+      setEditExpenseItem(item);
+      setNewExpenseForm({ category:item.category, subcategory:item.subcategory, amount:String(item.amount||""),
+        date:item.date||TODAY, description:item.description||"", teknisi_name:item.teknisi_name||"",
+        item_name:item.item_name||"", freon_type:item.freon_type||"" });
+      setModalExpense(true);
+    };
+
+    const saveExpense = async () => {
+      const f = newExpenseForm;
+      if (!f.subcategory || !f.amount || !f.date) { alert("Isi subkategori, jumlah, dan tanggal."); return; }
+      const payload = { category:f.category, subcategory:f.subcategory, amount:Number(f.amount),
+        date:f.date, description:f.description, teknisi_name:f.teknisi_name||null,
+        item_name:f.item_name||null, freon_type:f.freon_type||null,
+        created_by: currentUser?.name || currentUser?.email || "unknown" };
+      if (editExpenseItem) {
+        const { error } = await supabase.from("expenses").update(payload).eq("id", editExpenseItem.id);
+        if (error) { alert("Gagal update: " + error.message); return; }
+        setExpensesData(prev => prev.map(x => x.id === editExpenseItem.id ? { ...x, ...payload } : x));
+      } else {
+        const { data, error } = await supabase.from("expenses").insert(payload).select().single();
+        if (error) { alert("Gagal simpan: " + error.message); return; }
+        setExpensesData(prev => [data, ...prev]);
+      }
+      setModalExpense(false);
+      resetForm();
+    };
+
+    const deleteExpense = async (item) => {
+      if (!window.confirm(`Hapus biaya "${item.subcategory}" Rp ${Number(item.amount).toLocaleString("id-ID")}?`)) return;
+      const { error } = await supabase.from("expenses").delete().eq("id", item.id);
+      if (error) { alert("Gagal hapus: " + error.message); return; }
+      setExpensesData(prev => prev.filter(x => x.id !== item.id));
+    };
+
+    return (
+      <div style={{ display:"grid", gap:16 }}>
+        {/* Header */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
+          <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>💸 Biaya</div>
+          {isOwnerAdmin && (
+            <button onClick={openAdd}
+              style={{ background:"linear-gradient(135deg,"+cs.accent+","+cs.ara+")", border:"none", color:"#fff",
+                padding:"9px 18px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+              + Tambah Biaya
+            </button>
+          )}
+        </div>
+
+        {/* Tab bar */}
+        <div style={{ display:"flex", gap:6 }}>
+          {[["petty_cash","💰 Petty Cash"],["material_purchase","🔧 Pembelian Material"]].map(([v,lbl]) => (
+            <button key={v} onClick={() => { setExpenseTab(v); setExpensePage(1); setExpenseFilter("Semua"); }}
+              style={{ padding:"8px 16px", borderRadius:10, border:"1px solid "+(expenseTab===v?cs.accent:cs.border),
+                background: expenseTab===v ? cs.accent+"22" : cs.card,
+                color: expenseTab===v ? cs.accent : cs.muted, fontWeight: expenseTab===v?700:400,
+                cursor:"pointer", fontSize:13 }}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+
+        {/* Quick-filter chips (petty_cash only) */}
+        {expenseTab === "petty_cash" && (
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+            {QUICK_FILTERS.map(f => (
+              <button key={f} onClick={() => { setExpenseFilter(f); setExpensePage(1); }}
+                style={{ padding:"5px 12px", borderRadius:20, border:"1px solid "+(expenseFilter===f?cs.accent:cs.border),
+                  background: expenseFilter===f ? cs.accent+"22" : "transparent",
+                  color: expenseFilter===f ? cs.accent : cs.muted,
+                  cursor:"pointer", fontSize:12, fontWeight: expenseFilter===f?700:400 }}>
+                {f}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Search + date range */}
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+          <input value={expenseSearch} onChange={e => { setExpenseSearch(e.target.value); setExpensePage(1); }}
+            placeholder="🔍 Cari keterangan / nama..."
+            style={{ flex:1, minWidth:140, background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+              color:cs.text, padding:"8px 12px", fontSize:13 }} />
+          <input type="date" value={expenseDateFrom} onChange={e => { setExpenseDateFrom(e.target.value); setExpensePage(1); }}
+            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"7px 10px", fontSize:12 }} />
+          <span style={{ color:cs.muted, fontSize:12 }}>—</span>
+          <input type="date" value={expenseDateTo} onChange={e => { setExpenseDateTo(e.target.value); setExpensePage(1); }}
+            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"7px 10px", fontSize:12 }} />
+          {(expenseSearch||expenseDateFrom||expenseDateTo) && (
+            <button onClick={() => { setExpenseSearch(""); setExpenseDateFrom(""); setExpenseDateTo(""); setExpensePage(1); }}
+              style={{ background:"transparent", border:"1px solid "+cs.border, borderRadius:8, color:cs.muted, padding:"7px 12px", fontSize:12, cursor:"pointer" }}>
+              ✕ Reset
+            </button>
+          )}
+        </div>
+
+        {/* Summary bar */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:12, padding:"12px 18px",
+          display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+          <span style={{ fontSize:13, color:cs.muted }}>{filtered.length} transaksi</span>
+          <span style={{ fontWeight:700, fontSize:16, color:cs.red }}>Total: Rp {grandTotal.toLocaleString("id-ID")}</span>
+        </div>
+
+        {/* Table */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
+          {pageData.length === 0
+            ? <div style={{ padding:"40px", textAlign:"center", color:cs.muted }}>Tidak ada data biaya.</div>
+            : pageData.map((item, i) => (
+              <div key={item.id||i} style={{ display:"flex", gap:12, padding:"12px 16px",
+                borderBottom:"1px solid "+cs.border, alignItems:"center", flexWrap:"wrap" }}>
+                <div style={{ minWidth:80, fontSize:11, color:cs.muted, fontFamily:"monospace" }}>{item.date||"-"}</div>
+                <div style={{ flex:1, minWidth:120 }}>
+                  <div style={{ fontWeight:600, fontSize:13, color:cs.text }}>{item.subcategory||"-"}</div>
+                  {item.description && <div style={{ fontSize:11, color:cs.muted }}>{item.description}</div>}
+                  {item.teknisi_name && <div style={{ fontSize:11, color:cs.accent }}>👤 {item.teknisi_name}</div>}
+                  {item.item_name && <div style={{ fontSize:11, color:cs.muted }}>📦 {item.item_name}{item.freon_type?" ("+item.freon_type+")":""}</div>}
+                </div>
+                <div style={{ fontWeight:700, fontSize:14, color:cs.red, whiteSpace:"nowrap" }}>
+                  Rp {Number(item.amount||0).toLocaleString("id-ID")}
+                </div>
+                {isOwnerAdmin && (
+                  <div style={{ display:"flex", gap:6 }}>
+                    <button onClick={() => openEdit(item)}
+                      style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent,
+                        borderRadius:8, padding:"5px 10px", cursor:"pointer", fontSize:12 }}>✏️</button>
+                    <button onClick={() => deleteExpense(item)}
+                      style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red,
+                        borderRadius:8, padding:"5px 10px", cursor:"pointer", fontSize:12 }}>🗑️</button>
+                  </div>
+                )}
+              </div>
+            ))
+          }
+        </div>
+
+        {/* Pagination */}
+        {totalPage > 1 && (
+          <div style={{ display:"flex", gap:6, justifyContent:"center", flexWrap:"wrap" }}>
+            {Array.from({length:totalPage},(_,i)=>i+1).map(p => (
+              <button key={p} onClick={() => setExpensePage(p)}
+                style={{ padding:"6px 12px", borderRadius:8,
+                  border:"1px solid "+(expensePage===p?cs.accent:cs.border),
+                  background: expensePage===p ? cs.accent+"22" : "transparent",
+                  color: expensePage===p ? cs.accent : cs.muted, cursor:"pointer", fontSize:12 }}>
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Modal Add/Edit */}
+        {modalExpense && (
+          <div style={{ position:"fixed", inset:0, background:"#00000099", zIndex:1000,
+            display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}
+            onClick={e => { if(e.target===e.currentTarget){setModalExpense(false);resetForm();} }}>
+            <div style={{ background:cs.bg, border:"1px solid "+cs.border, borderRadius:16,
+              padding:24, width:"100%", maxWidth:460, maxHeight:"90vh", overflowY:"auto" }}>
+              <div style={{ fontWeight:700, fontSize:16, color:cs.text, marginBottom:16 }}>
+                {editExpenseItem ? "✏️ Edit Biaya" : "➕ Tambah Biaya"}
+              </div>
+              {/* Category */}
+              <div style={{ marginBottom:12 }}>
+                <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Kategori</label>
+                <select value={newExpenseForm.category}
+                  onChange={e => setNewExpenseForm(p => ({...p, category:e.target.value, subcategory:""}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                    color:cs.text, padding:"9px 12px", fontSize:13 }}>
+                  <option value="petty_cash">💰 Petty Cash</option>
+                  <option value="material_purchase">🔧 Pembelian Material</option>
+                </select>
+              </div>
+              {/* Subcategory */}
+              <div style={{ marginBottom:12 }}>
+                <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Sub-kategori *</label>
+                <select value={newExpenseForm.subcategory}
+                  onChange={e => setNewExpenseForm(p => ({...p, subcategory:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                    color:cs.text, padding:"9px 12px", fontSize:13 }}>
+                  <option value="">-- Pilih --</option>
+                  {(newExpenseForm.category==="material_purchase" ? MATERIAL_SUBS : PETTY_CASH_SUBS).map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              {/* Amount */}
+              <div style={{ marginBottom:12 }}>
+                <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Jumlah (Rp) *</label>
+                <input type="number" value={newExpenseForm.amount}
+                  onChange={e => setNewExpenseForm(p => ({...p, amount:e.target.value}))}
+                  placeholder="50000"
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                    color:cs.text, padding:"9px 12px", fontSize:13, boxSizing:"border-box" }} />
+              </div>
+              {/* Date */}
+              <div style={{ marginBottom:12 }}>
+                <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Tanggal *</label>
+                <input type="date" value={newExpenseForm.date}
+                  onChange={e => setNewExpenseForm(p => ({...p, date:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                    color:cs.text, padding:"9px 12px", fontSize:13, boxSizing:"border-box" }} />
+              </div>
+              {/* Teknisi name (for petty_cash like Kasbon/Lembur/Bonus) */}
+              {newExpenseForm.category === "petty_cash" && ["Kasbon Karyawan","Lembur","Bonus"].includes(newExpenseForm.subcategory) && (
+                <div style={{ marginBottom:12 }}>
+                  <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Nama Karyawan</label>
+                  <input value={newExpenseForm.teknisi_name}
+                    onChange={e => setNewExpenseForm(p => ({...p, teknisi_name:e.target.value}))}
+                    placeholder="Nama teknisi/helper..."
+                    style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                      color:cs.text, padding:"9px 12px", fontSize:13, boxSizing:"border-box" }} />
+                </div>
+              )}
+              {/* Item name + freon type for material */}
+              {newExpenseForm.category === "material_purchase" && (
+                <>
+                  <div style={{ marginBottom:12 }}>
+                    <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Nama / Spesifikasi Barang</label>
+                    <input value={newExpenseForm.item_name}
+                      onChange={e => setNewExpenseForm(p => ({...p, item_name:e.target.value}))}
+                      placeholder="misal: Pipa 3/8 × 5/8 — 15m"
+                      style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                        color:cs.text, padding:"9px 12px", fontSize:13, boxSizing:"border-box" }} />
+                  </div>
+                  {newExpenseForm.subcategory === "Freon" && (
+                    <div style={{ marginBottom:12 }}>
+                      <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Jenis Freon</label>
+                      <select value={newExpenseForm.freon_type}
+                        onChange={e => setNewExpenseForm(p => ({...p, freon_type:e.target.value}))}
+                        style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                          color:cs.text, padding:"9px 12px", fontSize:13 }}>
+                        <option value="">-- Pilih --</option>
+                        {["R22","R32","R410A","R134a","R404A","Lainnya"].map(f => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </>
+              )}
+              {/* Description */}
+              <div style={{ marginBottom:20 }}>
+                <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Keterangan</label>
+                <textarea value={newExpenseForm.description}
+                  onChange={e => setNewExpenseForm(p => ({...p, description:e.target.value}))}
+                  placeholder="Keterangan tambahan..."
+                  rows={3}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                    color:cs.text, padding:"9px 12px", fontSize:13, resize:"vertical", boxSizing:"border-box" }} />
+              </div>
+              {/* Actions */}
+              <div style={{ display:"flex", gap:10 }}>
+                <button onClick={() => { setModalExpense(false); resetForm(); }}
+                  style={{ flex:1, background:"transparent", border:"1px solid "+cs.border, borderRadius:10,
+                    color:cs.muted, padding:"10px", cursor:"pointer", fontSize:13 }}>
+                  Batal
+                </button>
+                <button onClick={saveExpense}
+                  style={{ flex:2, background:"linear-gradient(135deg,"+cs.accent+","+cs.ara+")", border:"none",
+                    color:"#fff", padding:"10px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+                  {editExpenseItem ? "Simpan Perubahan" : "Simpan"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ============================================================
   // RENDER SETTINGS
   // ============================================================
   const renderSettings = () => {
@@ -7662,10 +7944,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         fields:[{k:"key",label:"API Key",ph:"sk-proj-...",t:"password"}],
         guide:["Buka platform.openai.com","Settings → API Keys → Create","Copy key, paste di sini"],
         note:"GPT-4o-mini: lebih hemat, cocok volume tinggi" },
-      { id:"gemini",  label:"Gemini (Google)",    icon:"🔵", rec:false, models:["gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.5-pro","gemini-1.5-flash"],
-        fields:[{k:"key",label:"API Key",ph:"AIzaSy...",t:"password"}],
-        guide:["Buka aistudio.google.com","Klik Get API Key → Create API key","Copy key, paste di sini — GRATIS"],
-        note:"✅ Rekomendasi: gemini-2.5-flash (gratis ~15 RPM, 1500 RPD)" },
+      { id:"minimax", label:"Minimax",             icon:"🟦", rec:false, models:["MiniMax-Text-01","abab6.5s-chat","abab6.5g-chat","abab5.5s-chat"],
+        fields:[{k:"key",label:"API Key",ph:"eyJhbGci...",t:"password"},{k:"group_id",label:"Group ID",ph:"1234567890"}],
+        guide:["Buka platform.minimaxi.com","API → API Keys → Create","Copy API Key & Group ID, paste di sini"],
+        note:"Rekomendasi: MiniMax-Text-01 — multimodal, mendukung konteks panjang" },
       { id:"ollama",  label:"Ollama (Lokal/Free)", icon:"🦙", rec:false, models:["llama3","llama3.1","llama3.2","mistral","gemma2","qwen2.5","deepseek-r1"],
         fields:[{k:"url",label:"URL Server Ollama",ph:"http://localhost:11434 atau https://xxxx.ngrok-free.app"}],
         guide:["Install: curl -fsSL https://ollama.com/install.sh | sh","Pull model: ollama pull llama3","Jalankan: OLLAMA_ORIGINS='*' ollama serve","Expose publik: ngrok http 11434","Copy URL ngrok ke kolom URL di atas"],
@@ -7699,12 +7981,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const FieldList = ({ fields, isLLM }) => (
       <div style={{ display:"grid", gap:8, marginBottom:12 }}>
         {fields.map(f => {
-          const isUrlField  = isLLM && f.k === "url";
-          const isKeyField  = isLLM && f.k === "key";
-          const isWAField   = !isLLM && waFieldMap[f.k];
-          const val    = isUrlField ? ollamaUrl : isKeyField ? llmApiKey : isWAField ? waFieldMap[f.k].val : "";
+          const isUrlField     = isLLM && f.k === "url";
+          const isKeyField     = isLLM && f.k === "key";
+          const isGroupIdField = isLLM && f.k === "group_id";
+          const isWAField      = !isLLM && waFieldMap[f.k];
+          const val    = isUrlField ? ollamaUrl : isKeyField ? llmApiKey
+                       : isGroupIdField ? (localStorage.getItem("llmGroupId")||"")
+                       : isWAField ? waFieldMap[f.k].val : "";
           const setter = isUrlField ? (e=>setOllamaUrl(e.target.value))
                        : isKeyField ? (e=>setLlmApiKey(e.target.value))
+                       : isGroupIdField ? (e=>{ localStorage.setItem("llmGroupId", e.target.value); })
                        : isWAField  ? waFieldMap[f.k].set
                        : undefined;
           const isSet  = !!val;
@@ -7951,20 +8237,22 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     body:JSON.stringify({model:llmModel||"gpt-4o-mini",max_tokens:10,messages:[{role:"user",content:"Hi"}]})
                   });
                   ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"OpenAI error "+r.status);}
-                } else if (llmProvider === "gemini") {
-                  const testModel = llmModel || "gemini-2.5-flash";
+                } else if (llmProvider === "minimax") {
+                  const minimaxGroupId = localStorage.getItem("llmGroupId") || "";
+                  const testModel = llmModel || "MiniMax-Text-01";
                   const r = await fetch(
-                    `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent?key=${llmApiKey}`,
-                    { method:"POST", headers:{"Content-Type":"application/json"},
-                      body:JSON.stringify({ contents:[{role:"user",parts:[{text:"Hi, reply with just OK"}]}], generationConfig:{maxOutputTokens:5} })
+                    `https://api.minimaxi.chat/v1/text/chatcompletion_v2`,
+                    { method:"POST",
+                      headers:{"Content-Type":"application/json","Authorization":"Bearer "+llmApiKey},
+                      body:JSON.stringify({ model:testModel, max_tokens:5,
+                        messages:[{role:"user",content:"Hi"}],
+                        ...(minimaxGroupId ? { group_id: minimaxGroupId } : {}) })
                     }
                   );
                   const rd = await r.json();
                   if (!r.ok) {
-                    const errMsg = rd.error?.message || ("Gemini error " + r.status);
-                    // Common errors:
-                    if (r.status === 400) throw new Error("API Key tidak valid atau model '"+testModel+"' tidak ditemukan. Coba: gemini-2.5-flash atau gemini-1.5-flash");
-                    if (r.status === 403) throw new Error("API Key tidak punya akses. Aktifkan Generative Language API di Google Cloud Console.");
+                    const errMsg = rd.base_resp?.status_msg || rd.error?.message || ("Minimax error " + r.status);
+                    if (r.status === 401) throw new Error("API Key tidak valid.");
                     throw new Error(errMsg);
                   }
                   ok = true;
@@ -8469,6 +8757,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       case "reports":    return renderReports();
       case "agentlog":   return renderAgentLog();
       case "mattrack":   return renderMatTrack();
+      case "biaya":      return renderExpenses();
       case "settings":   return renderSettings();
       default:           return renderDashboard();
     }
@@ -9058,6 +9347,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <button
                         disabled={isBlocked || isSubmittingOrder}
                         onClick={async () => {
+                          // Anti double-submit: guard HARUS di awal sebelum async call
+                          // Ref-level lock: prevents double-click race condition before re-render
+                          if (_orderSubmitLock.current) return;
+                          _orderSubmitLock.current = true;
+                          setIsSubmittingOrder(true);
+                          try {
                           if (!newOrderForm.customer) { showNotif("Nama customer wajib diisi"); return; }
                           if (!newOrderForm.teknisi)  { showNotif("Pilih teknisi dulu"); return; }
                           if (!newOrderForm.date)     { showNotif("Pilih tanggal dulu"); return; }
@@ -9066,12 +9361,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             const dbOk = await cekTeknisiAvailableDB(newOrderForm.teknisi, newOrderForm.date, newOrderForm.time, newOrderForm.service, newOrderForm.units);
                             if (!dbOk.ok) { showNotif("🚫 " + (dbOk.reason || "Jadwal bentrok, cek ulang")); return; }
                           }
-                          if (isSubmittingOrder) return;
-                          setIsSubmittingOrder(true);
                           const formCopy = {...newOrderForm};
                           setModalOrder(false);
                           setNewOrderForm({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
-                          try { await createOrder(formCopy); } finally { setIsSubmittingOrder(false); }
+                          await createOrder(formCopy);
+                          } finally { _orderSubmitLock.current = false; setIsSubmittingOrder(false); }
                         }}
                         style={{ background: isBlocked ? cs.border : "linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color: isBlocked ? cs.muted : "#0a0f1e", padding:"12px", borderRadius:10, cursor: isBlocked ? "not-allowed" : "pointer", fontWeight:800, fontSize:14, opacity: isBlocked ? 0.6 : 1 }}>
                         {capReached ? "🔴 Teknisi Penuh" : clashDetected ? "🚫 Jadwal Bentrok" : "✓ Buat Order"}
