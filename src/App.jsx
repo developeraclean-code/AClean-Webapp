@@ -781,6 +781,7 @@ export default function ACleanWebApp() {
   const [llmConfig,       setLlmConfig]       = useState(null); // stores backend response
   const [availableProviders, setAvailableProviders] = useState([]);
   const [ollamaUrl,       setOllamaUrl]       = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
+  const [llmApiKey,       setLlmApiKey]       = useState(""); // session-only, NEVER persisted to localStorage
   const [llmStatus,       setLlmStatus]       = useState(() => _ls("llmStatus", "not_connected"));
   const [storageProvider, setStorageProvider] = useState("r2");
   const [storageStatus,   setStorageStatus]   = useState("not_connected");
@@ -1713,7 +1714,7 @@ ${matRowsHtml}
   // ── Auto-save settings ke localStorage saat berubah ──
   // ── Startup cleanup: fix nilai lama yang tersimpan sebagai array ──
   useEffect(() => {
-    const stringKeys = ["brainMd","waProvider","llmProvider","llmApiKey","llmModel","ollamaUrl","llmStatus","fonnteKey","wapiToken","wapiUrl"];
+    const stringKeys = ["brainMd","waProvider","llmProvider","llmModel","ollamaUrl","llmStatus","fonnteKey","wapiToken","wapiUrl"];
     stringKeys.forEach(key => {
       try {
         const raw = localStorage.getItem("aclean_"+key);
