@@ -3449,6 +3449,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id:"ara",        icon:"🤖",  label:"ARA Chat"     },
     { id:"reports",    icon:"📊",  label:"Statistik"    },
     { id:"agentlog",   icon:"📡",  label:"ARA Log"      },
+    { id:"monitoring", icon:"🔍",  label:"Monitoring"   },
     { id:"settings",   icon:"⚙️",  label:"Pengaturan"   },
     { id:"mattrack",   icon:"🧮",  label:"Stok Material" },
     { id:"biaya",      icon:"💸",  label:"Biaya"         },
