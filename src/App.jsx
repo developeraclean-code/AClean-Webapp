@@ -755,7 +755,7 @@ export default function ACleanWebApp() {
     const prov = _ls("llmProvider", "minimax"); // sama dengan default llmProvider
     return _ls("llmApiKey_" + prov, "") || _ls("llmApiKey", "");
   });
-  const [llmModel,        setLlmModel]        = useState(() => _ls("llmModel", "claude-sonnet-4-6"));
+  const [llmModel,        setLlmModel]        = useState(() => _ls("llmModel", "MiniMax-M2.5"));
   const [ollamaUrl,       setOllamaUrl]       = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
   const [llmStatus,       setLlmStatus]       = useState(() => _ls("llmStatus", "not_connected"));
   const [storageProvider, setStorageProvider] = useState("r2");
