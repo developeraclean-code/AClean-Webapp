@@ -289,7 +289,7 @@ const WA_CONVERSATIONS = [
 const AGENT_LOGS = [
 ];
 
-const BRAIN_MD_DEFAULT = `# ARA BRAIN v4.0 — AClean Service
+const BRAIN_MD_DEFAULT = `# ARA BRAIN v5.0 — AClean Service
 
 ## IDENTITAS
 - Nama: ARA (Aclean Response Agent)
@@ -304,12 +304,17 @@ Harga di-update langsung oleh Owner via UI — jangan gunakan angka lain.
 Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal)
 - Minimal 1 unit per order
 - Biaya dadakan (booking H-0): +Rp50.000 (tetap, bukan dari price list)
+- Service type yang valid: Cleaning | Install | Repair | Complain
+  * Cleaning = cuci AC, service rutin
+  * Install = pasang AC baru, bongkar + pindah
+  * Repair = perbaikan, isi freon, troubleshoot
+  * Complain = garansi, follow-up keluhan
 
 ## SOP ORDER
 1. Cek jadwal teknisi sebelum assign (gunakan teknisiWorkload dari data live)
 2. Jam operasional: 08:00–17:00, kecuali ada konfirmasi khusus
 3. Prioritas assign: teknisi dengan slot kosong terbanyak hari ini
-4. Helper wajib untuk order 3+ unit atau Pasang AC Baru
+4. Helper WAJIB untuk: order 3+ unit APAPUN servicenya, atau service Install
 5. Dispatch WA otomatis setelah order CONFIRMED
 6. Status flow: PENDING → CONFIRMED → IN_PROGRESS → COMPLETED
 
@@ -321,17 +326,29 @@ Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal)
    - Contoh: order Cleaning AC Split 85rb TAPI laporan ada "Deep Cleaning (Service Besar)"
      → invoice labor harus pakai "Jasa Service Besar 0,5PK - 1PK" = 400rb
    - Selalu KONFIRMASI ke Owner sebelum apply harga berbeda dari order awal
-3. Invoice otomatis baca material + freon dari laporan → masuk ke field "material"
-4. Due date: H+3 dari tanggal selesai
-5. Kirim reminder WA jika H-1 due dan belum PAID
-6. OVERDUE: tandai otomatis jika lewat due date
-7. Hanya Owner yang bisa APPROVE invoice
-8. Setelah laporan masuk → langsung tawarkan buat invoice: "Ada laporan baru masuk untuk [order]. Buat invoice sekarang?"
+4. Invoice otomatis baca material + freon dari laporan → masuk ke field "material"
+5. Due date: H+3 dari tanggal selesai
+6. Kirim reminder WA jika H-1 due dan belum PAID
+7. OVERDUE: tandai otomatis jika lewat due date
+8. Hanya Owner yang bisa APPROVE invoice
+9. Complain dalam garansi aktif → invoice GRATIS (jasa=0, material tetap dicharge)
+10. Complain tidak ada garansi + teknisi tidak input apapun → biaya cek 100rb
+11. Setelah laporan masuk → langsung tawarkan buat invoice
 
 ## SOP STOK
 1. Alert jika stok <= reorder point
 2. Freon R22 & R32: reorder jika < 5 kg
 3. Catat penggunaan setiap selesai service (UPDATE_STOCK dengan delta negatif)
+
+## SOP BIAYA / PENGELUARAN
+1. Gunakan CREATE_EXPENSE untuk catat pengeluaran harian
+2. Kategori utama:
+   - petty_cash: Bensin Motor, Perbaikan Motor, Parkir, Kasbon Karyawan, Lembur, Bonus, Lain-lain
+   - material_purchase: Pipa AC, Kabel, Freon, Material Lain
+3. Jika user dump pengeluaran per tanggal → parse setiap item → CREATE_EXPENSE satu per satu atau BULK
+4. Format yang dikenali:
+   "Bensin 50rb, parkir 15rb, kasbon Andi 200rb — 7 April" → 3 CREATE_EXPENSE terpisah
+   "Beli pipa AC 3/8 15m = 250rb" → CREATE_EXPENSE category=material_purchase
 
 ## TIM TEKNISI & HELPER
 > Data tim diambil LIVE dari bizContext.teknisiWorkload dan bizContext.helperList
@@ -345,7 +362,7 @@ Cara baca data:
 Rules assign teknisi:
 1. Cek field skills teknisi — cocokkan dengan jenis layanan yang diminta
 2. Cek field jobsToday — pilih yang paling sedikit job hari ini
-3. Helper wajib untuk order 3+ unit atau Pasang AC Baru
+3. Helper wajib untuk order 3+ unit (semua service) atau Install
 4. Jika nama teknisi tidak ada di list = tolak dan tampilkan daftar yang tersedia
 
 ## RULES EKSEKUSI
@@ -353,10 +370,12 @@ Rules assign teknisi:
 - Jangan eksekusi CANCEL atau hapus data tanpa alasan jelas dari user
 - Jika ada konflik jadwal: WAJIB tanyakan ke user dulu, jangan auto-assign
 - ACTION per response: maks 1 untuk operasi tunggal; maks 3 untuk workflow chain standar
-- Workflow chain yang diizinkan (berurutan dalam 1 response):
+- Workflow chain yang diizinkan:
   * CREATE_ORDER → DISPATCH_WA (setelah konfirmasi user)
-  * UPDATE_ORDER_STATUS(COMPLETED) → CREATE_INVOICE (langsung)
+  * UPDATE_ORDER_STATUS(COMPLETED) → CREATE_INVOICE
   * MARK_PAID → SEND_WA (konfirmasi bayar ke customer)
+  * RESCHEDULE_ORDER → SEND_WA (notif customer & teknisi — sudah otomatis)
+  * CANCEL_ORDER → SEND_WA (opsional, jika user minta notif customer)
 - Gunakan data live (bizContext) untuk semua keputusan, bukan asumsi
 - Jika data tidak lengkap: tanya user, jangan mengarang
 - Saat ada order PENDING baru: proaktif tawarkan konfirmasi + assign teknisi
@@ -364,20 +383,73 @@ Rules assign teknisi:
 - Selalu sebut nomor order dan nama customer dalam setiap konfirmasi aksi
 - Gunakan bizContext.slotRekomendasi.teknisiDisarankan untuk rekomendasi teknisi terbaik
 
-## FITUR PARSE JOB DARI TEKS
-Jika user paste teks berisi info order (dari WA, form, dll):
-1. Ekstrak: nama customer, alamat, no telepon, jenis layanan, jumlah unit, tanggal/jam
-2. Jika ada info tidak jelas: tandai dengan [?]
-3. WAJIB tampilkan ringkasan konfirmasi ke user SEBELUM eksekusi:
-   "📋 Saya baca info berikut — mohon konfirmasi sebelum dibuat:
-   👤 Customer: [nama] ([status: BARU/EXISTING])
-   📱 No. HP: [phone]
-   📍 Alamat: [address]
-   🔧 Layanan: [service] — [units] unit
-   📅 Jadwal: [date] jam [time]
-   👷 Teknisi disarankan: [dari slotRekomendasi]
-   ✅ Ketik OK untuk buat order, atau koreksi bagian yang salah"
-4. Setelah user konfirmasi → eksekusi CREATE_ORDER + DISPATCH_WA
+## FITUR PARSE JOB DARI TEKS (Dump Order Harian)
+Jika user paste list order per hari (dari WA grup, catatan, dll):
+
+FORMAT YANG DIKENALI:
+  Budi / Jl. Mawar 5, Alam Sutera / 08111222333 / Cleaning 2 unit / Andi + Reza / 8 April 09.00
+  Siti / Jl. Melati 3, BSD / 08222333444 / Pasang AC baru 1 unit / Bowo / 8 April 13.00
+
+LANGKAH:
+1. Parse setiap baris → ekstrak: customer, alamat, phone, service, units, teknisi, helper, date, time
+2. Alias service yang dikenali:
+   - "cuci", "cleaning", "service rutin" → Cleaning
+   - "pasang", "install", "baru" → Install
+   - "perbaikan", "repair", "freon", "isi freon", "bongkar" → Repair
+   - "complain", "komplain", "garansi" → Complain
+3. Tampilkan ringkasan SEMUA order yang akan dibuat:
+   "📋 Saya baca [N] order untuk [tanggal]:
+   1. Budi — Cleaning 2 unit — Andi + Reza — 09.00
+   2. Siti — Install 1 unit — Bowo — 13.00
+   ...
+   ✅ Ketik OK untuk buat semua, atau sebutkan nomor yang perlu dikoreksi"
+4. Setelah konfirmasi → gunakan BULK_CREATE_ORDER untuk create semuanya
+
+## FITUR RESCHEDULE MASSAL (Teknisi Tidak Masuk)
+Jika user info "teknisi X tidak masuk hari ini":
+1. Tampilkan semua order hari ini yang menggunakan teknisi X
+2. Tanyakan: opsi reschedule (tanggal/jam baru) atau ganti teknisi lain
+3. Setelah user jawab → eksekusi RESCHEDULE_ORDER atau UPDATE_ORDER per order
+4. Setiap reschedule → otomatis kirim WA ke customer DAN teknisi baru
+
+## FITUR PARSE PENGELUARAN DARI TEKS
+Jika user dump pengeluaran:
+  "Bensin 50rb, parkir 15rb, kasbon Andi 200rb — 7 April"
+  "Beli pipa 3/8 15m = 250rb, freon R32 2kg = 900rb — 8 April"
+
+LANGKAH:
+1. Parse setiap item → subcategory, amount, date
+2. Detect kategori otomatis dari konteks (bensin=Bensin Motor, parkir=Parkir, dll)
+3. Tampilkan ringkasan konfirmasi sebelum create
+4. Setelah konfirmasi → CREATE_EXPENSE satu per satu untuk setiap item
+
+## REFERENSI ACTION LENGKAP
+Gunakan tag [ACTION]...[/ACTION] untuk eksekusi. Satu response = max 1 action.
+Untuk bulk/chain, eksekusi berurutan dalam 1 response (max 3).
+
+**Order:**
+- Buat 1 order:   [ACTION]{"type":"CREATE_ORDER","customer":"Nama","phone":"08xxx","address":"Alamat","service":"Cleaning","units":1,"teknisi":"Nama","helper":"Nama","date":"2025-04-08","time":"09:00","notes":""}[/ACTION]
+- Bulk order:     [ACTION]{"type":"BULK_CREATE_ORDER","orders":[{"customer":"...","service":"Cleaning","units":1,"teknisi":"...","date":"2025-04-08","time":"09:00"},{...}]}[/ACTION]
+- Update status:  [ACTION]{"type":"UPDATE_ORDER_STATUS","id":"ORD-xxx","status":"CONFIRMED"}[/ACTION]
+- Reschedule:     [ACTION]{"type":"RESCHEDULE_ORDER","id":"ORD-xxx","date":"2025-04-10","time":"10:00","teknisi":"Nama"}[/ACTION]
+- Cancel:         [ACTION]{"type":"CANCEL_ORDER","id":"ORD-xxx","reason":"Alasan cancel"}[/ACTION]
+- Dispatch WA:    [ACTION]{"type":"DISPATCH_WA","order_id":"ORD-xxx"}[/ACTION]
+
+**Invoice:**
+- Buat invoice:   [ACTION]{"type":"CREATE_INVOICE","order_id":"ORD-xxx"}[/ACTION]
+- Update field:   [ACTION]{"type":"UPDATE_INVOICE","id":"INV-xxx","field":"dadakan","value":50000}[/ACTION]
+- Mark lunas:     [ACTION]{"type":"MARK_PAID","id":"INV-xxx"}[/ACTION]
+- Approve:        [ACTION]{"type":"APPROVE_INVOICE","id":"INV-xxx"}[/ACTION]
+- Reminder WA:    [ACTION]{"type":"SEND_REMINDER","invoice_id":"INV-xxx"}[/ACTION]
+- Mark overdue:   [ACTION]{"type":"MARK_INVOICE_OVERDUE"}[/ACTION]
+
+**Biaya/Pengeluaran:**
+- Catat biaya:    [ACTION]{"type":"CREATE_EXPENSE","category":"petty_cash","subcategory":"Bensin Motor","amount":50000,"date":"2025-04-08","description":"opsional","teknisi_name":"opsional"}[/ACTION]
+- Pembelian mat:  [ACTION]{"type":"CREATE_EXPENSE","category":"material_purchase","subcategory":"Freon","amount":900000,"date":"2025-04-08","item_name":"R32 2kg","freon_type":"R32"}[/ACTION]
+
+**Stok & WA:**
+- Update stok:    [ACTION]{"type":"UPDATE_STOCK","code":"KODE","name":"Nama","delta":-2,"reason":"Dipakai job ORD-xxx"}[/ACTION]
+- Kirim WA:       [ACTION]{"type":"SEND_WA","phone":"08xxx","message":"Pesan..."}[/ACTION]
 
 ## FORMAT JAWABAN
 - Gunakan Bahasa Indonesia
@@ -389,6 +461,7 @@ Jika user paste teks berisi info order (dari WA, form, dll):
 Jika user upload gambar bersamaan dengan pesan:
 - Gambar bukti bayar/transfer → ekstrak: nama bank, nominal, tanggal, nama pengirim → tawarkan MARK_PAID jika cocok dengan invoice
 - Gambar complain (AC rusak, bocor, dll) → deskripsikan kondisi dan rekomendasikan jenis service
+- Gambar nota/struk belanja → baca item + harga → tawarkan CREATE_EXPENSE untuk setiap item
 - Gambar dokumen/nota → baca informasi relevan dan masukkan ke konteks percakapan
 - Jika gambar tidak jelas → minta user kirim ulang dengan resolusi lebih baik
 `.trim();
@@ -2934,14 +3007,30 @@ ${matRowsHtml}
             const today = new Date().toISOString().slice(0,10);
             const seq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
             const newId = "ORD-" + (act.date||today).replace(/-/g,"").slice(2,8) + "-" + seq;
+            // Normalize service type — handle case insensitive + alias dari bahasa natural
+            const _normSvc = (s) => {
+              const sl = (s||"").toLowerCase().trim();
+              if (sl.includes("install")||sl.includes("pasang")||sl.includes("baru")) return "Install";
+              if (sl.includes("repair")||sl.includes("perbaikan")||sl.includes("servis")) return "Repair";
+              if (sl.includes("complain")||sl.includes("komplain")||sl.includes("garansi")||sl.includes("complain")) return "Complain";
+              if (sl.includes("bongkar")) return "Repair"; // bongkar = repair category
+              return "Cleaning"; // default
+            };
+            // Validate teknisi ada di DB
+            const _tekValid = (nm) => !nm || teknisiData.some(t => t.name.toLowerCase() === (nm||"").toLowerCase());
+            const _helperValid = (nm) => !nm || teknisiData.some(t => t.role==="Helper" && t.name.toLowerCase() === (nm||"").toLowerCase());
+            const normService = _normSvc(act.service);
+            const normTeknisi = act.teknisi
+              ? (teknisiData.find(t=>t.role==="Teknisi"&&t.name.toLowerCase()===(act.teknisi||"").toLowerCase())?.name || act.teknisi)
+              : "";
             const newOrd = {
               id: newId,
               customer: act.customer || "?",
               phone: act.phone || "",
               address: act.address || "",
-              service: act.service || "Cleaning",
+              service: normService,
               units: parseInt(act.units)||1,
-              teknisi: act.teknisi || "",
+              teknisi: normTeknisi,
               helper: act.helper || "",
               date: act.date || today,
               time: act.time || "09:00",
@@ -2950,7 +3039,7 @@ ${matRowsHtml}
               dispatch: false,
               created_at: new Date().toISOString(),
             };
-            // ── Auto-enforce helper rule (units>=3 atau Install) ──
+            // ── Auto-enforce helper rule: 3+ unit ATAU Install untuk SEMUA service ──
             if ((parseInt(newOrd.units)||1) >= 3 || newOrd.service === "Install") {
               if (!newOrd.helper) {
                 const availHelper = teknisiData.find(t => t.role==="Helper" && t.status!=="inactive");
@@ -3159,6 +3248,103 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             const cnt = invoicesData.filter(i=>i.status==="UNPAID"&&i.due&&i.due<TODAY).length;
             await supabase.from("invoices").update({status:"OVERDUE"}).eq("status","UNPAID").lt("due",TODAY);
             ar=`\n✅ *${cnt} invoice ditandai OVERDUE*`;
+
+          } else if (act.type==="CREATE_EXPENSE") {
+            // ── ARA create pengeluaran/biaya ──
+            const _expCat = (cat) => {
+              const c = (cat||"").toLowerCase();
+              if (c.includes("material")||c.includes("pipa")||c.includes("kabel")||c.includes("freon")) return "material_purchase";
+              return "petty_cash";
+            };
+            const _expSub = (sub) => {
+              const s = (sub||"").toLowerCase();
+              if (s.includes("bensin")||s.includes("bbm")||s.includes("solar")) return "Bensin Motor";
+              if (s.includes("parkir")) return "Parkir";
+              if (s.includes("kasbon")||s.includes("pinjam")||s.includes("utang")) return "Kasbon Karyawan";
+              if (s.includes("lembur")||s.includes("overtime")) return "Lembur";
+              if (s.includes("bonus")) return "Bonus";
+              if (s.includes("perbaikan motor")||s.includes("servis motor")||s.includes("motor")) return "Perbaikan Motor";
+              if (s.includes("pipa")) return "Pipa AC";
+              if (s.includes("kabel")) return "Kabel";
+              if (s.includes("freon")) return "Freon";
+              if (s.includes("material")) return "Material Lain";
+              return sub || "Lain-lain";
+            };
+            const expPayload = {
+              category:    act.category    ? _expCat(act.category) : _expCat(act.subcategory),
+              subcategory: act.subcategory ? _expSub(act.subcategory) : (act.category||"Lain-lain"),
+              amount:      Number(act.amount)||0,
+              date:        act.date || TODAY,
+              description: act.description || act.keterangan || "",
+              teknisi_name:act.teknisi_name || act.nama_karyawan || null,
+              item_name:   act.item_name || act.nama_barang || null,
+              freon_type:  act.freon_type || null,
+              created_by:  currentUser?.name || "ARA",
+            };
+            if (!expPayload.amount) {
+              ar = "\n⚠️ *Jumlah biaya (amount) wajib diisi*";
+            } else {
+              const {data:expData, error:expErr} = await supabase.from("expenses").insert(expPayload).select().single();
+              if (expErr) {
+                ar = `\n⚠️ *Gagal catat biaya: ${expErr.message}*`;
+              } else {
+                setExpensesData(prev => [expData || expPayload, ...prev]);
+                addAgentLog("ARA_EXPENSE",`ARA create expense: ${expPayload.subcategory} — Rp${expPayload.amount.toLocaleString("id-ID")} (${expPayload.date})`,"SUCCESS");
+                ar = `\n✅ *Biaya dicatat:*\n📂 ${expPayload.category==="material_purchase"?"Pembelian Material":"Petty Cash"} — ${expPayload.subcategory}\n💰 Rp${expPayload.amount.toLocaleString("id-ID")}\n📅 ${expPayload.date}${expPayload.description?" — "+expPayload.description:""}`;
+              }
+            }
+
+          } else if (act.type==="BULK_CREATE_ORDER") {
+            // ── ARA bulk create order dari dump teks ──
+            const orders = Array.isArray(act.orders) ? act.orders : [];
+            if (orders.length === 0) {
+              ar = "\n⚠️ *BULK_CREATE_ORDER membutuhkan field `orders` berupa array*";
+            } else if (orders.length > 20) {
+              ar = "\n⚠️ *Maksimal 20 order sekaligus — pisah menjadi beberapa batch*";
+            } else {
+              const today = new Date().toISOString().slice(0,10);
+              const _normSvcBulk = (s) => {
+                const sl = (s||"").toLowerCase().trim();
+                if (sl.includes("install")||sl.includes("pasang")||sl.includes("baru")) return "Install";
+                if (sl.includes("repair")||sl.includes("perbaikan")||sl.includes("servis")||sl.includes("bongkar")) return "Repair";
+                if (sl.includes("complain")||sl.includes("komplain")||sl.includes("garansi")) return "Complain";
+                return "Cleaning";
+              };
+              const results = [];
+              for (const o of orders) {
+                const seq2 = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
+                const bId  = "ORD-" + (o.date||today).replace(/-/g,"").slice(2,8) + "-" + seq2;
+                const bOrd = {
+                  id: bId,
+                  customer: o.customer || "?",
+                  phone: o.phone || "",
+                  address: o.address || "",
+                  service: _normSvcBulk(o.service),
+                  units: parseInt(o.units)||1,
+                  teknisi: o.teknisi || "",
+                  helper: o.helper || "",
+                  date: o.date || today,
+                  time: o.time || "09:00",
+                  status: "PENDING",
+                  notes: o.notes || "",
+                  dispatch: false,
+                  created_at: new Date().toISOString(),
+                };
+                // Auto helper
+                if ((bOrd.units >= 3 || bOrd.service === "Install") && !bOrd.helper) {
+                  const avH = teknisiData.find(t=>t.role==="Helper"&&t.status!=="inactive");
+                  if (avH) bOrd.helper = avH.name;
+                }
+                setOrdersData(prev => [...prev, bOrd]);
+                const {error:bErr} = await supabase.from("orders").insert(bOrd);
+                results.push({id:bId, customer:bOrd.customer, service:bOrd.service, date:bOrd.date, ok:!bErr});
+                // Small delay agar ID unik
+                await new Promise(r => setTimeout(r, 60));
+              }
+              addAgentLog("ARA_BULK_ORDER",`ARA bulk create ${results.length} orders`,"SUCCESS");
+              ar = `\n✅ *${results.length} order berhasil dibuat:*\n` +
+                results.map((r,i)=>`${i+1}. \`${r.id}\` — ${r.customer} | ${r.service} | ${r.date} ${r.ok?"✅":"❌"}`).join("\n");
+            }
           }
         } catch(e){ console.warn("Action parse",e); }
       }
@@ -9118,16 +9304,31 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       "Bongkar Pasang Outdoor AC","Bongkar Unit AC 0.5-1PK","Bongkar Unit AC 1.5-2.5PK",
                       "Flushing Pipa","Jasa Instalasi Pipa AC"
                     ];
-                    // Exclude dari Cleaning juga: jasa besar dan transport
+                    // Exclude dari Cleaning: jasa besar dan transport (dipilih otomatis dari laporan)
                     const CLEANING_EXCLUDE = [
                       "Jasa Service Besar 0,5PK - 1PK","Jasa Service Besar 1,5PK - 2,5PK",
                       "Biaya Transport Bila 1 Unit"
+                    ];
+                    // Exclude dari Repair: jasa install dan cleaning besar
+                    const REPAIR_EXCLUDE = [
+                      "Jasa Service Besar 0,5PK - 1PK","Jasa Service Besar 1,5PK - 2,5PK",
+                      "Biaya Transport Bila 1 Unit","Jasa Penarikan Pipa AC","Jasa Penarikan Pipa Ruko",
+                      "Jasa Vacum AC 0,5PK - 2,5PK","Jasa Instalasi Pipa AC"
+                    ];
+                    // Complain: hanya tipe pengecekan/garansi — exclude sub-jasa
+                    const COMPLAIN_EXCLUDE = [
+                      "Jasa Service Besar 0,5PK - 1PK","Jasa Service Besar 1,5PK - 2,5PK",
+                      "Biaya Transport Bila 1 Unit","Jasa Penarikan Pipa AC","Jasa Penarikan Pipa Ruko",
+                      "Jasa Vacum AC 0,5PK - 2,5PK","Jasa Instalasi Pipa AC","Flushing Pipa",
+                      "Jasa Bobok Tembok","Jasa Instalasi Listrik"
                     ];
                     const types = priceListData
                       .filter(r => r.service === svc && r.is_active !== false)
                       .filter(r => {
                         if (svc === "Install")  return !INSTALL_EXCLUDE.includes(r.type);
                         if (svc === "Cleaning") return !CLEANING_EXCLUDE.includes(r.type);
+                        if (svc === "Repair")   return !REPAIR_EXCLUDE.includes(r.type);
+                        if (svc === "Complain") return !COMPLAIN_EXCLUDE.includes(r.type);
                         return true;
                       })
                       .map(r => r.type);
