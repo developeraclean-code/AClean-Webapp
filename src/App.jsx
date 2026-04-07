@@ -6791,8 +6791,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   const renderLaporanTim = () => {
     const sMap = { SUBMITTED:[cs.accent,"Submitted"], VERIFIED:[cs.green,"Terverifikasi"], REVISION:[cs.yellow,"Perlu Revisi"], REJECTED:[cs.red,"Ditolak"] };
-    const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,fontWeight:700}}>{lbl}</span>; };
+    const badge = (s) => {
+      // Case insensitive status lookup
+      const statusKey = (s || "").toUpperCase();
+      const [col,lbl] = sMap[statusKey] || [cs.muted, s];
+      return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,fontWeight:700}}>{lbl}</span>;
+    };
     const statusOrder = { SUBMITTED:0, REVISION:1, VERIFIED:2, REJECTED:3 };
+    // Fix sort to handle case-insensitive status
+    const getStatusOrder = (status) => statusOrder[(status || "").toUpperCase()] || 9;
     // techColors — warna per teknisi (konsisten dengan kalender & dashboard)
     const techColors = Object.fromEntries(
       [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map((n,i)=>[
@@ -6808,10 +6815,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // ── AUTO-HIDE VERIFIED untuk Teknisi & Helper (hide laporan yang sudah selesai) ──
     const userRole = currentUser?.role?.toLowerCase() || "";
     const isTeknisiOrHelper = userRole === "teknisi" || userRole === "helper";
-    console.log("[Laporan Filter] currentUser:", currentUser?.name, "role:", currentUser?.role, "isTeknisiOrHelper:", isTeknisiOrHelper, "filtered before:", filtered.length);
+
+    // Debug: log all status values
+    if (isTeknisiOrHelper && filtered.length > 0) {
+      const statusCounts = {};
+      filtered.forEach(r => {
+        const s = r.status || "unknown";
+        statusCounts[s] = (statusCounts[s] || 0) + 1;
+      });
+      console.log("[Laporan Filter] Status breakdown BEFORE filter:", statusCounts);
+    }
+
     if (isTeknisiOrHelper) {
-      filtered = filtered.filter(r => r.status !== "VERIFIED");
-      console.log("[Laporan Filter] After hide VERIFIED:", filtered.length);
+      const beforeCount = filtered.length;
+      // Filter out VERIFIED — case insensitive
+      filtered = filtered.filter(r => {
+        const status = (r.status || "").toUpperCase();
+        return status !== "VERIFIED";
+      });
+      console.log(`[Laporan Filter] teknisi=${currentUser?.name}, before=${beforeCount}, after=${filtered.length}, hidden=${beforeCount - filtered.length}`);
     }
 
     if (laporanDateFilter==="Hari Ini")  filtered=filtered.filter(r=>(r.date||r.submitted_at||"").slice(0,10)===todayLap);
@@ -6836,7 +6858,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       });
     }
     if (laporanSvcFilter!=="Semua") filtered=filtered.filter(r=>(r.service||"")===laporanSvcFilter);
-    if (laporanStatusFilter!=="Semua") filtered=filtered.filter(r=>r.status===laporanStatusFilter);
+    if (laporanStatusFilter!=="Semua") filtered=filtered.filter(r=>(r.status||"").toUpperCase()===laporanStatusFilter.toUpperCase());
     if (laporanTeamFilter!=="Semua") filtered=filtered.filter(r=>r.teknisi===laporanTeamFilter||r.helper===laporanTeamFilter);
     if (searchLaporan.trim()) {
       const q=searchLaporan.trim().toLowerCase();
@@ -6850,7 +6872,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         (r.rekomendasi||"").toLowerCase().includes(q)
       );
     }
-    filtered.sort((a,b)=>{const dA=a.submitted_at||a.date||"",dB=b.submitted_at||b.date||"";if(dB!==dA)return dB.localeCompare(dA);return (statusOrder[a.status]||9)-(statusOrder[b.status]||9);});
+    filtered.sort((a,b)=>{const dA=a.submitted_at||a.date||"",dB=b.submitted_at||b.date||"";if(dB!==dA)return dB.localeCompare(dA);return getStatusOrder(a.status)-getStatusOrder(b.status);});
     const totPgL=Math.ceil(filtered.length/LAP_PAGE_SIZE)||1;
     const curPgL=Math.min(laporanPage,totPgL);
     const pageLap=filtered.slice((curPgL-1)*LAP_PAGE_SIZE,curPgL*LAP_PAGE_SIZE);
@@ -6868,7 +6890,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {[["SUBMITTED",cs.accent,"Baru"],["VERIFIED",cs.green,"Verified"],["REVISION",cs.yellow,"Revisi"],["REJECTED",cs.red,"Ditolak"]].map(([s,col,lbl])=>(
               <span key={s} style={{fontSize:11,padding:"5px 11px",borderRadius:99,background:col+"18",color:col,border:"1px solid "+col+"33",fontWeight:700}}>
-                {laporanReports.filter(r=>r.status===s).length} {lbl}
+                {laporanReports.filter(r=>(r.status||"").toUpperCase()===s).length} {lbl}
               </span>
             ))}
           </div>
