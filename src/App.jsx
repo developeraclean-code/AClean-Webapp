@@ -6806,9 +6806,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     let filtered = [...laporanReports];
 
     // ── AUTO-HIDE VERIFIED untuk Teknisi & Helper (hide laporan yang sudah selesai) ──
-    const isTeknisiOrHelper = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
+    const userRole = currentUser?.role?.toLowerCase() || "";
+    const isTeknisiOrHelper = userRole === "teknisi" || userRole === "helper";
+    console.log("[Laporan Filter] currentUser:", currentUser?.name, "role:", currentUser?.role, "isTeknisiOrHelper:", isTeknisiOrHelper, "filtered before:", filtered.length);
     if (isTeknisiOrHelper) {
       filtered = filtered.filter(r => r.status !== "VERIFIED");
+      console.log("[Laporan Filter] After hide VERIFIED:", filtered.length);
     }
 
     if (laporanDateFilter==="Hari Ini")  filtered=filtered.filter(r=>(r.date||r.submitted_at||"").slice(0,10)===todayLap);
@@ -7070,31 +7073,31 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         {filtered.length===0
           ? <div style={{background:cs.card,borderRadius:14,padding:40,textAlign:"center",color:cs.muted}}>Tidak ada laporan</div>
           : pageLap.map(r=>(
-          <div key={r.id} style={{background:cs.card,border:"1px solid "+(sMap[r.status]?sMap[r.status][0]:cs.border)+"33",borderRadius:16,padding:20}}>
-            {/* Card header */}
-            <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                <span style={{fontFamily:"monospace",fontWeight:800,color:cs.accent,fontSize:14}}>{r.job_id}</span>
+          <div key={r.id} style={{background:cs.card,border:"1px solid "+(sMap[r.status]?sMap[r.status][0]:cs.border)+"33",borderRadius:12,padding:"14px 16px"}}>
+            {/* Card header — responsive */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",flex:1,minWidth:0}}>
+                <span style={{fontFamily:"monospace",fontWeight:700,color:cs.accent,fontSize:13}}>{r.job_id}</span>
                 {badge(r.status)}
                 {safeArr(r.editLog).length>0 && (
-                  <span style={{fontSize:10,color:cs.yellow,background:cs.yellow+"15",padding:"2px 8px",borderRadius:99,border:"1px solid "+cs.yellow+"33"}}>
-                    Diedit {safeArr(r.editLog).length}x
+                  <span style={{fontSize:9,color:cs.yellow,background:cs.yellow+"15",padding:"2px 6px",borderRadius:99,border:"1px solid "+cs.yellow+"33",whiteSpace:"nowrap"}}>
+                    ✏️ {safeArr(r.editLog).length}x
                   </span>
                 )}
               </div>
-              <div style={{fontSize:11,color:cs.muted}}>Submit: {r.submitted}</div>
+              <div style={{fontSize:10,color:cs.muted,whiteSpace:"nowrap"}}>{r.submitted}</div>
             </div>
 
-            {/* Info grid */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px 24px",fontSize:12,marginBottom:14}}>
+            {/* Info grid — responsive: 1 col mobile, 2 col desktop */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))",gap:"6px 24px",fontSize:12,marginBottom:14}}>
               <div><span style={{color:cs.muted}}>Customer: </span><span style={{fontWeight:700,color:cs.text}}>{r.customer}</span></div>
               <div><span style={{color:cs.muted}}>Teknisi: </span><span style={{fontWeight:700,color:cs.accent}}>{r.teknisi}{r.helper?" + "+r.helper+" (Helper)":""}</span></div>
               <div><span style={{color:cs.muted}}>Layanan: </span><span style={{color:cs.text}}>{r.service}</span></div>
               <div><span style={{color:cs.muted}}>Tanggal: </span><span style={{color:cs.text}}>{r.date}</span></div>
-              <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit AC</span></div>
+              <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit</span></div>
               {safeArr(r.materials).length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
               {safeArr(r.fotos).length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
-              {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon Total: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
+              {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
               {/* Summary PK + brand semua unit */}
               {(r.units||[]).length > 0 && (()=>{
                 const unitSummary = (r.units||[]).map((u,i) => {
@@ -7129,38 +7132,34 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               })()}
             </div>
 
-            {/* Per-unit accordion */}
+            {/* Per-unit accordion — compact mobile layout */}
             {(r.units||[]).map((u,ui)=>(
-              <div key={ui} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"10px 13px",marginBottom:8,fontSize:12}}>
-                                {/* Unit header: nomor + label + brand + PK badge */}
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-                  <span style={{fontWeight:800,color:cs.accent,fontSize:13}}>
+              <div key={ui} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"10px 12px",marginBottom:6,fontSize:11}}>
+                {/* Unit header: compact mobile */}
+                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:6,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:700,color:cs.accent,fontSize:12,minWidth:"50px"}}>
                     Unit {u.unit_no}
                   </span>
                   {u.label && (
-                    <span style={{fontSize:12,color:cs.text,fontWeight:600}}>{u.label}</span>
+                    <span style={{fontSize:11,color:cs.text,fontWeight:600}}>{u.label}</span>
                   )}
-                  <span style={{color:cs.border}}>·</span>
                   {u.merk && (
-                    <span style={{fontSize:12,fontWeight:700,color:cs.text,
+                    <span style={{fontSize:10,fontWeight:700,color:cs.text,
                       background:cs.surface,border:"1px solid "+cs.border,
-                      borderRadius:6,padding:"1px 8px"}}>
+                      borderRadius:4,padding:"1px 6px"}}>
                       {u.merk}
                     </span>
                   )}
                   {u.pk && (
-                    <span style={{fontSize:11,fontWeight:800,color:"#fff",
-                      background:cs.accent,borderRadius:99,padding:"2px 9px"}}>
+                    <span style={{fontSize:10,fontWeight:700,color:"#fff",
+                      background:cs.accent,borderRadius:99,padding:"2px 7px"}}>
                       {u.pk}
                     </span>
                   )}
-                  {u.tipe && (
-                    <span style={{fontSize:10,color:cs.muted}}>{u.tipe}</span>
-                  )}
                   {parseFloat(u.freon_ditambah)>0 && (
-                    <span style={{fontSize:10,fontWeight:700,color:"#06b6d4",
-                      background:"#06b6d422",borderRadius:99,padding:"2px 8px"}}>
-                      ❄️ +{u.freon_ditambah} psi
+                    <span style={{fontSize:9,fontWeight:700,color:"#06b6d4",
+                      background:"#06b6d422",borderRadius:99,padding:"1px 6px"}}>
+                      ❄️{u.freon_ditambah}psi
                     </span>
                   )}
                 </div>
