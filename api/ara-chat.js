@@ -154,30 +154,56 @@ export default async function handler(req, res) {
 
   try {
     let reply = "";
-    switch(provider) {
-      case "openai":  reply = await callOpenAI(messages, sys, model);  break;
-      case "minimax": reply = await callMinimax(messages, sys, model); break;
-      case "groq":    reply = await callGroq(messages, sys, model);    break;
-      default:        reply = await callClaude(messages, sys, model);  break;
+    let usedProvider = provider;
+
+    try {
+      switch(provider) {
+        case "openai":  reply = await callOpenAI(messages, sys, model);  break;
+        case "minimax": reply = await callMinimax(messages, sys, model); break;
+        case "groq":    reply = await callGroq(messages, sys, model);    break;
+        default:        reply = await callClaude(messages, sys, model);  break;
+      }
+    } catch(primErr) {
+      console.warn(`⚠️ ${provider} failed, trying fallback...`, primErr.message);
+      // Fallback chain: try other providers if primary fails
+      const fallbackOrder = provider==="minimax" ? ["claude","openai","groq"] : ["minimax","claude","openai","groq"];
+      for (const fbProvider of fallbackOrder) {
+        if (fbProvider === provider) continue; // skip primary
+        try {
+          usedProvider = fbProvider;
+          switch(fbProvider) {
+            case "openai":  reply = await callOpenAI(messages, sys, model);  break;
+            case "minimax": reply = await callMinimax(messages, sys, model); break;
+            case "groq":    reply = await callGroq(messages, sys, model);    break;
+            default:        reply = await callClaude(messages, sys, model);  break;
+          }
+          console.log(`✅ Fallback to ${fbProvider} success`);
+          break;
+        } catch(fbErr) {
+          console.warn(`❌ ${fbProvider} also failed:`, fbErr.message);
+          continue;
+        }
+      }
+      if (!reply) throw primErr; // re-throw if all fallbacks fail
     }
 
     const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
     await sb.from("agent_logs").insert({
       time: now, action:"ARA_CHAT",
-      detail:`ARA (${provider}) — "${messages.at(-1)?.content?.slice(0,50)}..."`,
+      detail:`ARA (${usedProvider}${usedProvider!==provider?" [fallback dr "+provider+"]":""}) — "${messages.at(-1)?.content?.slice(0,50)}..."`,
       status:"SUCCESS"
     });
 
-    return res.status(200).json({reply, provider});
+    return res.status(200).json({reply, provider: usedProvider, primaryProvider: provider});
   } catch(err) {
     const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
     await sb.from("agent_logs").insert({time:now,action:"ARA_ERROR",detail:err.message.slice(0,100),status:"ERROR"});
     const friendlyErr = err.message.includes("quota") || err.message.includes("429")
-      ? `Rate limit / quota habis untuk provider ${provider}. Coba ganti provider di Pengaturan → ARA Brain, atau tunggu beberapa menit.`
+      ? `Rate limit / quota habis untuk semua provider. Tunggu beberapa menit dan coba lagi.`
       : err.message.includes("401") || err.message.includes("403") || err.message.includes("API key")
-      ? `API Key ${provider} tidak valid atau belum diset di Vercel env vars. Cek MINIMAX_API_KEY / ANTHROPIC_API_KEY.`
+      ? `API Key ${provider} tidak valid atau belum diset di Vercel env vars.`
       : err.message.includes("ANTHROPIC_API_KEY") || err.message.includes("credit")
-      ? `Credit Anthropic habis. Ganti provider ke Minimax di Pengaturan → ARA Brain.`
+      ? `Credit Anthropic habis. Setup provider lain di Vercel Environment Variables.`
       : err.message;
     return res.status(500).json({error: friendlyErr, provider, raw: err.message});
   }
