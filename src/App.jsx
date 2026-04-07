@@ -7171,9 +7171,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
                   const verifiedById = isRealUUID(currentUser?.id) ? currentUser.id : null;
                   const {error:vErr} = await supabase.from("service_reports").update({
-                    status:"VERIFIED", verified_by:verifiedById, verified_at:new Date().toISOString()
+                    status:"VERIFIED", verified_at:new Date().toISOString(),
+                    ...(verifiedById ? {verified_by:verifiedById} : {})
                   }).eq("id",r.id);
-                  if(vErr) await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
+                  if(vErr) {
+                    console.warn("❌ verify laporan failed:", vErr.message);
+                    await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id).catch(e=>console.warn("retry also failed:", e.message));
+                  }
                   addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi`,"SUCCESS");
 
                   // Cek apakah invoice sudah ada
@@ -7259,7 +7263,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>✅ Verifikasi</button>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));
-                  await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
+                  const {error:revErr} = await supabase.from("service_reports").update({status:"REVISION",updated_at:new Date().toISOString()}).eq("id",r.id);
+                  if(revErr) {
+                    console.warn("❌ update REVISION failed:", revErr.message);
+                    addAgentLog("LAPORAN_UPDATE_ERROR",`Update status REVISION gagal: ${revErr.message.slice(0,80)}`,"WARNING");
+                    showNotif("❌ Gagal update status — "+revErr.message.slice(0,50));
+                    return;
+                  }
                   addAgentLog("LAPORAN_REVISION",`Laporan ${r.job_id} diminta revisi oleh ${currentUser?.name}`,"WARNING");
                   showNotif("⚠️ Revisi diminta untuk laporan "+r.job_id);
                   // SIM-11: WA notif ke teknisi saat laporan REVISION
@@ -7271,7 +7281,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>Minta Revisi</button>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REJECTED"}:x));
-                  await supabase.from("service_reports").update({status:"REJECTED"}).eq("id",r.id);
+                  const {error:rejErr} = await supabase.from("service_reports").update({status:"REJECTED",updated_at:new Date().toISOString()}).eq("id",r.id);
+                  if(rejErr) {
+                    console.warn("❌ update REJECTED failed:", rejErr.message);
+                    addAgentLog("LAPORAN_UPDATE_ERROR",`Update status REJECTED gagal: ${rejErr.message.slice(0,80)}`,"WARNING");
+                    showNotif("❌ Gagal update status — "+rejErr.message.slice(0,50));
+                    return;
+                  }
                   addAgentLog("LAPORAN_REJECTED",`Laporan ${r.job_id} ditolak oleh ${currentUser?.name}`,"ERROR");
                   showNotif("❌ Laporan "+r.job_id+" ditolak");
                 }} style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",color:cs.red,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>Tolak</button>
@@ -7286,7 +7302,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   });
                   if(!ok) return;
                   // Hapus laporan
-                  await supabase.from("service_reports").delete().eq("id",r.id);
+                  const {error:delErr} = await supabase.from("service_reports").delete().eq("id",r.id);
+                  if(delErr) {
+                    console.warn("❌ delete laporan failed:", delErr.message);
+                    showNotif("❌ Gagal hapus laporan: "+delErr.message.slice(0,50));
+                    return;
+                  }
                   setLaporanReports(p=>p.filter(x=>x.id!==r.id));
                   // Hapus invoice terkait jika ada
                   const relInv = invoicesData.filter(i=>i.job_id===r.job_id);
@@ -11389,21 +11410,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const newStatus = selectedLaporan.status==="REVISION"?"SUBMITTED":selectedLaporan.status;
                     setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id
                       ?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,status:newStatus,editLog:allLogs}:r));
-                    // Save ke Supabase
-                    // Simpan edit ke Supabase
-                    const {error:elErr} = await supabase.from("service_reports").update({
-                      rekomendasi: editLaporanForm.rekomendasi,
-                      catatan_global: editLaporanForm.catatan_global,
+                    // Save ke Supabase — try with available fields only
+                    const updatePayload = {
                       status: newStatus,
-                      edit_log: JSON.stringify(allLogs),
-                    }).eq("id", selectedLaporan.id);
+                      notes: (editLaporanForm.catatan_global || editLaporanForm.rekomendasi || "").slice(0, 500),
+                      updated_at: new Date().toISOString(),
+                    };
+                    // Optional: add custom fields jika ada di schema
+                    if (editLaporanForm.rekomendasi) updatePayload.rekomendasi = editLaporanForm.rekomendasi.slice(0, 500);
+                    if (editLaporanForm.catatan_global) updatePayload.catatan_global = editLaporanForm.catatan_global.slice(0, 500);
+
+                    const {error:elErr} = await supabase.from("service_reports").update(updatePayload).eq("id", selectedLaporan.id);
                     if(elErr) {
-                      console.warn("update with edit_log failed:", elErr.message);
-                      await supabase.from("service_reports").update({
-                        rekomendasi: editLaporanForm.rekomendasi,
-                        catatan_global: editLaporanForm.catatan_global,
-                        status: newStatus,
-                      }).eq("id", selectedLaporan.id);
+                      console.warn("❌ update service_reports failed:", elErr.message, "payload:", updatePayload);
+                      addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0,100)}`, "WARNING");
                     }
                     addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name} (${newLogs.length} perubahan)`,"SUCCESS");
                     showNotif("✅ Laporan "+selectedLaporan.job_id+" diupdate ("+newLogs.length+" perubahan dicatat)");
@@ -11731,52 +11751,56 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       +"\n\nSilakan cek invoice di menu Invoice.";
     adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
 
-    // ── 7. Simpan laporan ke Supabase (3 attempt) ──
+    // ── 7. Simpan laporan ke Supabase (multi-attempt with fallback fields) ──
     showNotif("⏳ Menyimpan laporan ke server...");
     const basePayload = {
-      id:             newReport.id,
-      job_id:         newReport.job_id,
-      teknisi:        newReport.teknisi,
-      helper:         newReport.helper,
-      customer:       newReport.customer,
-      service:        newReport.service,
-      date:           newReport.date,
-      status:         "SUBMITTED",
-      total_units:    newReport.total_units,
-      total_freon:    newReport.total_freon,
-      rekomendasi:    newReport.rekomendasi,
-      catatan_global: newReport.catatan_global,
-      submitted_at:   new Date().toISOString(),
-      foto_urls:      (laporanFotos||[]).filter(f => f.url).map(f => f.url),
+      id:           newReport.id,
+      job_id:       newReport.job_id,
+      teknisi:      newReport.teknisi,
+      helper:       newReport.helper||null,
+      customer:     newReport.customer,
+      service:      newReport.service,
+      date:         newReport.date,
+      status:       "SUBMITTED",
+      total_units:  newReport.total_units,
+      total_freon:  newReport.total_freon,
+      submitted_at: new Date().toISOString(),
+      notes:        (newReport.catatan_global || newReport.rekomendasi || "").slice(0,500),
     };
 
     let savedOk = false;
-    { // Attempt 1: full payload dengan JSON cols
-      const { error: e1 } = await supabase.from("service_reports").upsert({
-        ...basePayload,
-        materials_json: JSON.stringify(effectiveMaterials),
-        units_json:     JSON.stringify(laporanUnits),
-      }, { onConflict: "id" });
-      if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
-      else console.warn("Attempt 1 failed:", e1.message);
+    { // Attempt 1: dengan materials_json & units_json
+      try {
+        const { error: e1 } = await supabase.from("service_reports").upsert({
+          ...basePayload,
+          materials_json: JSON.stringify(effectiveMaterials),
+          units_json:     JSON.stringify(laporanUnits),
+        }, { onConflict: "id" });
+        if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
+        else console.warn("❌ Attempt 1 failed:", e1.message);
+      } catch(ex) { console.warn("❌ Attempt 1 error:", ex.message); }
     }
-    if (!savedOk) { // Attempt 2: tanpa JSON cols
-      const { error: e2 } = await supabase.from("service_reports").upsert(
-        basePayload, { onConflict: "id" }
-      );
-      if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
-      else console.warn("Attempt 2 failed:", e2.message);
+    if (!savedOk) { // Attempt 2: tanpa JSON cols (core fields only)
+      try {
+        const { error: e2 } = await supabase.from("service_reports").upsert(
+          basePayload, { onConflict: "id" }
+        );
+        if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
+        else console.warn("❌ Attempt 2 failed:", e2.message);
+      } catch(ex) { console.warn("❌ Attempt 2 error:", ex.message); }
     }
     if (!savedOk) { // Attempt 3: minimal
-      const { error: e3 } = await supabase.from("service_reports").upsert({
-        id: newReport.id, job_id: newReport.job_id,
-        teknisi: newReport.teknisi, customer: newReport.customer,
-        service: newReport.service, date: newReport.date,
-        status: "SUBMITTED", total_units: newReport.total_units,
-        submitted_at: new Date().toISOString(),
-      }, { onConflict: "id" });
-      if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
-      else { console.error("All upsert attempts failed:", e3.message); showNotif("❌ Gagal simpan: " + e3.message); }
+      try {
+        const { error: e3 } = await supabase.from("service_reports").upsert({
+          id: newReport.id, job_id: newReport.job_id,
+          teknisi: newReport.teknisi, customer: newReport.customer,
+          service: newReport.service, date: newReport.date,
+          status: "SUBMITTED", total_units: newReport.total_units,
+          submitted_at: new Date().toISOString(),
+        }, { onConflict: "id" });
+        if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
+        else { console.error("❌ All upsert attempts failed:", e3.message); showNotif("❌ Gagal simpan: " + e3.message); }
+      } catch(ex) { console.error("❌ Attempt 3 error:", ex.message); showNotif("❌ Gagal simpan: "+ex.message); }
     }
 
     // ── 8. Reload laporan (backup, realtime juga akan trigger) ──
