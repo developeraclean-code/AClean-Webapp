@@ -1070,11 +1070,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
 
   const mkUnit = (no) => ({ unit_no:no, label:`Unit ${no}`, tipe:"AC Split 0.5-1PK", merk:"", pk:"1PK", kondisi_sebelum:[], kondisi_setelah:[], pekerjaan:[], freon_ditambah:"", ampere_akhir:"", catatan_unit:"" });
-  const isUnitDone = (u) =>
-    u.pekerjaan.length > 0 &&
-    (u.kondisi_sebelum.length > 0 || u.kondisi_setelah.length > 0) &&
-    u.tipe && u.tipe.trim() !== "" &&  // REQUIRED: Tipe AC harus diisi
-    u.pk && u.pk.trim() !== "";        // REQUIRED: PK harus diisi
+  // isUnitDone untuk Step 2: cek pekerjaan + kondisi (tipe & pk sudah di Step 1)
+  const isUnitDone = (u) => u.pekerjaan.length > 0 && (u.kondisi_sebelum.length > 0 || u.kondisi_setelah.length > 0);
   const compressImg = (file) => new Promise((res) => {
     const r = new FileReader();
     r.onload = (e) => {
@@ -3143,19 +3140,37 @@ ${matRowsHtml}
               const today = new Date().toISOString().slice(0,10);
               const seq2  = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
               const invId = "INV-" + today.replace(/-/g,"").slice(2,8) + "-" + seq2;
-        // Cek pekerjaan aktual dari laporan teknisi
+        // Cek pekerjaan aktual + tipe AC dari laporan teknisi
         const lapRepForLabor = laporanReports.find(r => r.job_id === ord.id);
         const hasServiceBesar = lapRepForLabor?.units
           ? lapRepForLabor.units.some(u => (u.pekerjaan||[]).some(p =>
               p.toLowerCase().includes("besar") || p.toLowerCase().includes("deep")))
           : false;
-        // Jika service besar → gunakan harga service besar
-        let effectiveType = ord.type || "default";
+
+        // ── BUILD EFFECTIVE TYPE untuk invoice ──
+        // Priority: 1) Laporan tipe AC+PK detail, 2) Service besar detection, 3) Order type, 4) Default
+        let effectiveType = "default";
+        if (lapRepForLabor?.units && lapRepForLabor.units.length > 0) {
+          // Build type dari tipe AC + PK di laporan (Step 1 detail)
+          const typeList = lapRepForLabor.units
+            .filter(u => u.tipe && u.pk)
+            .map(u => `${u.tipe} ${u.pk}`)
+            .join(", ");
+          if (typeList) effectiveType = typeList; // Contoh: "Cassette 5PK, Split 1PK"
+        }
+
+        // Jika service besar → gunakan harga service besar (override tipe jika ada)
         if (hasServiceBesar && ord.service === "Cleaning") {
           effectiveType = (ord.units||1) > 1
             ? "Jasa Service Besar 1,5PK - 2,5PK"
             : "Jasa Service Besar 0,5PK - 1PK";
         }
+
+        // Fallback ke order type jika laporan tidak ada
+        if (effectiveType === "default" && ord.type) {
+          effectiveType = ord.type;
+        }
+
         const labor = PRICE_LIST[ord.service]?.[effectiveType] ||
           PRICE_LIST[ord.service]?.["default"] || 85000;
               const laborTotal = labor * (ord.units || 1);
@@ -12408,18 +12423,37 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   })()}
 
                   <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:12,padding:14}}>
-                    <div style={{fontSize:12,color:cs.muted,marginBottom:10}}>Order tercatat <b style={{color:cs.text}}>{laporanModal.units||1} unit</b> AC. Sesuaikan dengan kondisi aktual.</div>
+                    <div style={{fontSize:12,color:cs.muted,marginBottom:10}}>Order tercatat <b style={{color:cs.text}}>{laporanModal.units||1} unit</b> AC. Isi detail tipe & PK untuk setiap unit — penting untuk invoice!</div>
+
+                    {/* Info banner */}
+                    <div style={{background:cs.accent+"08",border:"1px solid "+cs.accent+"33",borderRadius:8,padding:"8px 10px",marginBottom:10,fontSize:10,color:cs.accent}}>
+                      ⚠️ <strong>Wajib isi Tipe AC & PK</strong> — Contoh: Cassette 5PK, Split 1PK, Window 0.5PK. Data ini langsung masuk invoice!
+                    </div>
+
                     <div style={{display:"grid",gap:8}}>
                       {laporanUnits.map((u,idx)=>(
-                        <div key={idx} style={{display:"flex",alignItems:"center",gap:8}}>
-                          <div style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 12px",fontSize:12,color:cs.text}}>
-                            <span style={{color:cs.accent,fontWeight:700}}>Unit {u.unit_no}</span>
-                          </div>
-                          <input id="field_30" value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Lokasi/nama unit..."
-                            style={{width:140,background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
+                        <div key={idx} style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr auto",gap:6,alignItems:"center",background:cs.surface,borderRadius:8,padding:"10px 12px",border:"1px solid "+(u.tipe&&u.tipe.trim()&&u.pk&&u.pk.trim()?cs.green+"33":cs.border)}}>
+                          {/* Unit number */}
+                          <div style={{fontSize:11,fontWeight:700,color:cs.accent,minWidth:50}}>Unit {u.unit_no}</div>
+
+                          {/* Label/lokasi */}
+                          <input id="field_30" value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Ruang/lokasi..."
+                            style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
+
+                          {/* Tipe AC — Required */}
+                          <select value={u.tipe} onChange={e=>updateUnit(idx,{...u,tipe:e.target.value})}
+                            style={{background:cs.card,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.tipe&&u.tipe.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.tipe&&u.tipe.trim()?600:400}}>
+                            {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
+                          </select>
+
+                          {/* PK — Required */}
+                          <input value={u.pk} onChange={e=>updateUnit(idx,{...u,pk:e.target.value})} placeholder="PK"
+                            style={{background:cs.card,border:"1px solid "+(u.pk&&u.pk.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.pk&&u.pk.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.pk&&u.pk.trim()?600:400,textAlign:"center"}}/>
+
+                          {/* Delete button */}
                           {laporanUnits.length>1&&(
                             <button onClick={()=>{const nu=laporanUnits.filter((_,i)=>i!==idx).map((u2,i)=>({...u2,unit_no:i+1}));setLaporanUnits(nu);setActiveUnitIdx(Math.max(0,idx-1));}}
-                              style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:8,padding:"8px 10px",cursor:"pointer",fontSize:13,lineHeight:1}}>×</button>
+                              style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700,lineHeight:1}}>×</button>
                           )}
                         </div>
                       ))}
@@ -12436,7 +12470,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       ⚠ Jumlah unit berbeda dari order. Admin akan dinotifikasi untuk verifikasi.
                     </div>
                   )}
-                  <button onClick={()=>setLaporanStep(laporanModal?.service==="Install" ? 3 : 2)} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"13px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
+
+                  {/* Validate Tipe AC & PK untuk semua unit */}
+                  {(() => {
+                    const incompleteUnits = laporanUnits.filter(u => !u.tipe || !u.tipe.trim() || !u.pk || !u.pk.trim());
+                    return incompleteUnits.length > 0 ? (
+                      <div style={{background:"#ef444410",border:"1px solid #ef444430",borderRadius:9,padding:"10px 13px",fontSize:11,color:"#ef4444",fontWeight:600}}>
+                        ❌ Lengkapi dulu: {incompleteUnits.map(u=>`Unit ${u.unit_no}`).join(", ")} — Pastikan Tipe AC & PK terisi!
+                      </div>
+                    ) : null;
+                  })()}
+
+                  <button onClick={()=>{
+                    const incomplete = laporanUnits.filter(u => !u.tipe || !u.tipe.trim() || !u.pk || !u.pk.trim());
+                    if (incomplete.length > 0) {
+                      showNotif(`⚠️ Lengkapi: ${incomplete.map(u=>`Unit ${u.unit_no}`).join(", ")} — Tipe AC & PK wajib diisi!`);
+                      return;
+                    }
+                    setLaporanStep(laporanModal?.service==="Install" ? 3 : 2);
+                  }} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"13px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
                     Lanjut — Isi Detail Unit →
                   </button>
                 </div>
@@ -12445,9 +12497,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               {/* ── STEP 2: Detail Per Unit ── */}
               {laporanStep===2&&(
                 <div style={{display:"grid",gap:14}}>
-                  {/* Info banner: Required fields */}
-                  <div style={{background:cs.accent+"08",border:"1px solid "+cs.accent+"33",borderRadius:10,padding:"10px 12px",fontSize:11,color:cs.accent,lineHeight:1.6}}>
-                    <strong>⚠️ Wajib isi:</strong> <strong style={{color:cs.accent}}>Tipe AC</strong> dan <strong style={{color:cs.accent}}>PK</strong> untuk setiap unit. Contoh: Cassette 5PK, Split 1PK, dll. Field ini penting untuk hitung invoice dengan benar!
+                  {/* Info banner: Step 2 adalah untuk detail kondisi & pekerjaan */}
+                  <div style={{background:cs.green+"08",border:"1px solid "+cs.green+"33",borderRadius:10,padding:"10px 12px",fontSize:11,color:cs.green,lineHeight:1.6}}>
+                    ✅ <strong>Step 1 selesai!</strong> Sekarang isi detail kondisi & pekerjaan untuk setiap unit. Step 3 (Material) opsional — hanya jika ada tambahan biaya.
                   </div>
                   {/* Tab per unit */}
                   <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4}}>
@@ -12472,12 +12524,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     return(
                       <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:12,padding:14,display:"grid",gap:12}}>
                         <div style={{fontSize:11,fontWeight:700,color:cs.accent,marginBottom:2}}>Unit {u.unit_no} — {u.label}</div>
-                        {/* Tipe & Merk */}
+                        {/* Tipe & Merk — Tipe AC sudah diisi di Step 1, cuma display + bisa edit */}
                         <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:8}}>
                           <div>
-                            <div style={{fontSize:11,fontWeight:700,color:u.tipe&&u.tipe.trim()?cs.green:cs.accent,marginBottom:4}}>Tipe AC {!u.tipe||!u.tipe.trim()?<span style={{color:"#ef4444",fontWeight:900}}>*</span>:""}</div>
+                            <div style={{fontSize:11,fontWeight:700,color:cs.text,marginBottom:4}}>Tipe AC (dari Step 1)</div>
                             <select value={u.tipe} onChange={e=>upd({tipe:e.target.value})}
-                              style={{width:"100%",background:cs.surface,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"33":cs.border),borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
+                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
                               {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
                             </select>
                           </div>
@@ -12487,9 +12539,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                           <div>
-                            <div style={{fontSize:11,fontWeight:700,color:u.pk&&u.pk.trim()?cs.green:cs.accent,marginBottom:4}}>PK {!u.pk||!u.pk.trim()?<span style={{color:"#ef4444",fontWeight:900}}>*</span>:""}</div>
+                            <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>PK (dari Step 1)</div>
                             <input id="field_32" value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
-                              style={{width:"100%",background:cs.surface,border:"1px solid "+(u.pk&&u.pk.trim()?cs.green+"33":cs.border),borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
+                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         </div>
                         {/* Kondisi Sebelum */}
