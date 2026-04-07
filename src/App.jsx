@@ -763,7 +763,12 @@ export default function ACleanWebApp() {
   });
   const [llmModel,        setLlmModel]        = useState(() => {
     const stored = _ls("llmModel", "MiniMax-M2.5");
-    // Validasi model — minimal harus non-empty string
+    // Reject gemini atau model tidak valid — reset ke default minimax
+    if (typeof stored === "string" && stored.includes("gemini")) {
+      console.warn("[App Init] Rejecting gemini model from localStorage:", stored, "→ reset to MiniMax-M2.5");
+      return "MiniMax-M2.5";
+    }
+    // Reject empty atau non-string
     if (typeof stored === "string" && stored.trim().length > 0) return stored;
     console.warn("[App Init] Invalid model in localStorage:", stored, "→ reset to MiniMax-M2.5");
     return "MiniMax-M2.5";
@@ -1850,9 +1855,12 @@ ${matRowsHtml}
           } else if (sMap.llm_provider) {
             console.warn("[Settings] Invalid provider di DB:", sMap.llm_provider, "→ skip, pakai default minimax");
           }
-          if (sMap.llm_model) {
+          // Validasi model — reject gemini atau yang tidak sesuai
+          if (sMap.llm_model && !sMap.llm_model.includes("gemini")) {
             console.log("[Settings] Loading model dari DB:", sMap.llm_model);
             setLlmModel(sMap.llm_model);
+          } else if (sMap.llm_model && sMap.llm_model.includes("gemini")) {
+            console.warn("[Settings] Rejecting gemini model dari DB:", sMap.llm_model, "→ pakai default MiniMax-M2.5");
           }
         // Load bank & phone settings dari DB
         if (sMap.bank_number) setAppSettings(prev=>({...prev,

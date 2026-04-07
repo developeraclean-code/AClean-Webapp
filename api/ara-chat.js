@@ -218,16 +218,27 @@ export default async function handler(req, res) {
     }
 
     const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-    await sb.from("agent_logs").insert({
-      time: now, action:"ARA_CHAT",
-      detail:`ARA (${usedProvider}${usedProvider!==provider?" [fallback dr "+provider+"]":""}) — "${messages.at(-1)?.content?.slice(0,50)}..."`,
-      status:"SUCCESS"
-    });
+    // Log ke agent_logs (tidak critical — fail silently jika RLS error)
+    try {
+      await sb.from("agent_logs").insert({
+        time: now, action:"ARA_CHAT",
+        detail:`ARA (${usedProvider}${usedProvider!==provider?" [fallback dr "+provider+"]":""}) — "${messages.at(-1)?.content?.slice(0,50)}..."`,
+        status:"SUCCESS"
+      });
+    } catch(logErr) {
+      console.warn("[ARA-CHAT] agent_logs insert failed (RLS?):", logErr.message);
+      // Continue anyway — logging bukan critical
+    }
 
     return res.status(200).json({reply, provider: usedProvider, primaryProvider: provider});
   } catch(err) {
     const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-    await sb.from("agent_logs").insert({time:now,action:"ARA_ERROR",detail:err.message.slice(0,100),status:"ERROR"});
+    // Log error (tidak critical — fail silently jika RLS error)
+    try {
+      await sb.from("agent_logs").insert({time:now,action:"ARA_ERROR",detail:err.message.slice(0,100),status:"ERROR"});
+    } catch(logErr) {
+      console.warn("[ARA-CHAT] agent_logs insert failed on error (RLS?):", logErr.message);
+    }
     const friendlyErr = err.message.includes("quota") || err.message.includes("429")
       ? `Rate limit / quota habis untuk semua provider. Tunggu beberapa menit dan coba lagi.`
       : err.message.includes("401") || err.message.includes("403") || err.message.includes("API key")
