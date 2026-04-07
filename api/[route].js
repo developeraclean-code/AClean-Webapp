@@ -1,6 +1,6 @@
 // api/[route].js - AClean Unified API Router
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto"];
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "monitor", "get-llm-config"];
 
 // ── VALIDATION HELPERS ──
 function validateAndNormalizePhone(phone) {
@@ -544,20 +544,26 @@ export default async function handler(req, res) {
       try {
         // Get recent errors and warnings from agent_logs (last 24 hours)
         const since24h = new Date(Date.now() - 24*60*60*1000).toISOString();
-        const { data: logs } = await fetch(SU+"/rest/v1/agent_logs?select=action,status,detail,created_at&status=in.(ERROR,WARNING)&created_at=gte."+since24h+"&order=created_at.desc&limit=100", {
+        // Status values: SUCCESS, WARNING, ERROR
+        const response = await fetch(SU+"/rest/v1/agent_logs?select=action,status,detail,created_at&or=(status.eq.ERROR,status.eq.WARNING)&created_at=gte."+encodeURIComponent(since24h)+"&order=created_at.desc&limit=100", {
           headers: { apikey: SK, Authorization: "Bearer " + SK }
-        }).then(r => r.json()).then(d => ({data: d || []})).catch(e => ({data: [], error: e.message}));
+        });
+        const logs = response.ok ? await response.json() : [];
 
         // Calculate metrics
+        const logsArray = Array.isArray(logs) ? logs : [];
+        const errorCount = logsArray.filter(l => l.status === "ERROR").length;
+        const warningCount = logsArray.filter(l => l.status === "WARNING").length;
         const metrics = {
-          totalErrors: logs?.filter(l => l.status === "ERROR").length || 0,
-          totalWarnings: logs?.filter(l => l.status === "WARNING").length || 0,
-          errorRate: (logs?.filter(l => l.status === "ERROR").length || 0) / (logs?.length || 1),
-          recentErrors: (logs || []).slice(0, 10).map(l => ({
-            action: l.action,
-            status: l.status,
-            detail: l.detail?.slice(0, 100),
-            time: l.created_at
+          totalErrors: errorCount,
+          totalWarnings: warningCount,
+          errorRate: logsArray.length > 0 ? errorCount / logsArray.length : 0,
+          totalLogsChecked: logsArray.length,
+          recentErrors: logsArray.slice(0, 10).map(l => ({
+            action: l.action || "UNKNOWN",
+            status: l.status || "UNKNOWN",
+            detail: (l.detail || "").slice(0, 100),
+            time: l.created_at || new Date().toISOString()
           }))
         };
 
