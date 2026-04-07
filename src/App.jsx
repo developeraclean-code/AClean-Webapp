@@ -773,30 +773,13 @@ export default function ACleanWebApp() {
   const [waDevice,        setWaDevice]        = useState(() => _ls("waDevice",   ""));
   const [waStatus,        setWaStatus]        = useState("not_connected");
 
-  const [llmProvider,     setLlmProvider]     = useState(() => {
-    const VALID_PROVIDERS = ["minimax", "claude", "openai", "groq", "ollama"];
-    const stored = _ls("llmProvider", "minimax");
-    if (VALID_PROVIDERS.includes(stored)) return stored;
-    console.warn("[App Init] Invalid provider in localStorage:", stored, "→ reset to minimax");
-    return "minimax"; // fallback ke minimax jika invalid
-  });
-  const [llmApiKey,       setLlmApiKey]       = useState(() => {
-    // Load key per-provider yang aktif — selalu sync dengan llmProvider
-    const prov = _ls("llmProvider", "minimax"); // sama dengan default llmProvider
-    return _ls("llmApiKey_" + prov, "") || _ls("llmApiKey", "");
-  });
-  const [llmModel,        setLlmModel]        = useState(() => {
-    const stored = _ls("llmModel", "MiniMax-M2.5");
-    // Reject gemini atau model tidak valid — reset ke default minimax
-    if (typeof stored === "string" && stored.includes("gemini")) {
-      console.warn("[App Init] Rejecting gemini model from localStorage:", stored, "→ reset to MiniMax-M2.5");
-      return "MiniMax-M2.5";
-    }
-    // Reject empty atau non-string
-    if (typeof stored === "string" && stored.trim().length > 0) return stored;
-    console.warn("[App Init] Invalid model in localStorage:", stored, "→ reset to MiniMax-M2.5");
-    return "MiniMax-M2.5";
-  });
+  // ── LLM Settings: Load from backend endpoint instead of localStorage ──
+  // SECURITY FIX: Never store API keys in localStorage
+  // Backend endpoint /api/get-llm-config returns available providers & default
+  const [llmProvider,     setLlmProvider]     = useState("minimax"); // default while loading
+  const [llmModel,        setLlmModel]        = useState("MiniMax-M2.5"); // default while loading
+  const [llmConfig,       setLlmConfig]       = useState(null); // stores backend response
+  const [availableProviders, setAvailableProviders] = useState([]);
   const [ollamaUrl,       setOllamaUrl]       = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
   const [llmStatus,       setLlmStatus]       = useState(() => _ls("llmStatus", "not_connected"));
   const [storageProvider, setStorageProvider] = useState("r2");
@@ -1640,8 +1623,14 @@ ${matRowsHtml}
 
       if (!error && data?.user) {
         // Login Supabase Auth berhasil — load profil dari user_profiles
-        const { data: profile } = await supabase
+        const { data: profile, error: profileErr } = await supabase
           .from("user_profiles").select("*").eq("id", data.user.id).single();
+        if (profileErr) {
+          console.error("[LOGIN_PROFILE_LOAD_ERROR]", profileErr.message);
+          setLoginError("Gagal load profil pengguna. Silakan coba lagi. (Err: " + profileErr.code + ")");
+          await supabase.auth.signOut();
+          return;
+        }
         if (!profile || !profile.active) {
           setLoginError("Akun tidak aktif. Hubungi Owner.");
           await supabase.auth.signOut(); return;
@@ -1741,10 +1730,7 @@ ${matRowsHtml}
   }, []);
 
   useEffect(() => { _lsSave("llmProvider", llmProvider); }, [llmProvider]);
-  useEffect(() => {
-    _lsSave("llmApiKey",              llmApiKey);            // generik (backward compat)
-    _lsSave("llmApiKey_" + llmProvider, llmApiKey);          // per-provider
-  }, [llmApiKey, llmProvider]);
+  // SECURITY: Never store API keys in localStorage — keys are managed on backend only
   useEffect(() => { _lsSave("llmModel",    llmModel);    }, [llmModel]);
   useEffect(() => { _lsSave("ollamaUrl",   ollamaUrl);   }, [ollamaUrl]);
   useEffect(() => { _lsSave("brainMd",        brainMd);           }, [brainMd]);
@@ -1778,8 +1764,13 @@ ${matRowsHtml}
         if (error) { console.warn("Auth session check:", error.message); return; }
         const session = data?.session;
         if (session?.user) {
-          const { data: profile } = await supabase
+          const { data: profile, error: profileErr } = await supabase
             .from("user_profiles").select("*").eq("id", session.user.id).single();
+          if (profileErr) {
+            console.warn("[AUTH_RESTORE_PROFILE_ERROR]", profileErr.message);
+            // Continue silently — user will need to login manually
+            return;
+          }
           if (profile && profile.active) {
             setCurrentUser({ ...session.user, ...profile });
             setIsLoggedIn(true);
@@ -1789,6 +1780,30 @@ ${matRowsHtml}
       } catch(e) { console.warn("Auth restore skip:", e.message); }
     };
     restoreSession();
+  }, []);
+
+  // ── Load LLM Configuration from Backend (independent of login) ──
+  useEffect(() => {
+    const loadLlmConfig = async () => {
+      try {
+        const headers = _apiHeaders();
+        const resp = await fetch("/api/get-llm-config", { headers });
+        if (resp.ok) {
+          const config = await resp.json();
+          setLlmConfig(config);
+          setAvailableProviders(config.providers || []);
+          // Set default provider from backend (server knows which keys are available)
+          if (config.defaultProvider) {
+            setLlmProvider(config.defaultProvider);
+            console.log("[LLM Config] Using provider:", config.defaultProvider, "Available:", config.providers?.map(p => p.name));
+          }
+        }
+      } catch(err) {
+        console.warn("[LLM Config Load Error]", err.message, "— will use default minimax");
+        // Fallback: keep defaults set above
+      }
+    };
+    loadLlmConfig();
   }, []);
 
   // ── Supabase: Load data + Realtime saat login ──
@@ -2926,9 +2941,11 @@ ${matRowsHtml}
         } catch(je) {
           throw new Error(je.message || "ara-chat server error " + backendRes.status);
         }
-      } else if (!backendRes && (llmApiKey || llmProvider === "ollama")) {
-        // ── Fallback HANYA jika /api/ara-chat tidak tersedia (localhost dev) ──
-        // Di production Vercel: proxy selalu ada, API key AMAN di server
+      } else if (!backendRes && llmProvider === "ollama") {
+        // ── Ollama ONLY: Fallback jika /api/ara-chat tidak tersedia (localhost dev) ──
+        // SECURITY NOTE: Direct API calls with keys are NOT supported anymore
+        // Production: always use backend /api/ara-chat endpoint (keys are safe on server)
+        // Development: use /api/ara-chat or local Ollama
         const sysP = (typeof brainMd==="string"?brainMd:BRAIN_MD_DEFAULT)+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000} (field: labor/material/dadakan/notes. Detail material ada di invoices[].materials_detail)\\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"material","value":200000} (ubah total material)\\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}
 - {"type":"CREATE_INVOICE","order_id":"ORD-xxx"}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
 
@@ -2953,53 +2970,11 @@ ${matRowsHtml}
           }
           const fd = await fr.json();
           fullText = fd.message?.content || fd.response || "";
-
-        } else if (llmProvider === "openai") {
-          // ── OpenAI / ChatGPT API ──
-          const fr = await fetch("https://api.openai.com/v1/chat/completions", {
-            method:"POST",
-            headers:{"Content-Type":"application/json","Authorization":"Bearer "+llmApiKey},
-            body:JSON.stringify({
-              model: llmModel || "gpt-4o-mini",
-              max_tokens: 1000,
-              messages: [
-                {role:"system", content:sysP},
-                ...newMessages.map(m=>({role:m.role, content:m.content}))
-              ]
-            })
-          });
-          const fd = await fr.json();
-          if (!fr.ok) throw new Error(fd.error?.message || "OpenAI API error " + fr.status);
-          fullText = fd.choices?.[0]?.message?.content || "";
-
-        } else if (llmProvider === "minimax") {
-          // ── Minimax API ──
-          const model = llmModel || "MiniMax-Text-01";
-          const minimaxGroupId = localStorage.getItem("llmGroupId") || "";
-          const fr = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
-            method: "POST",
-            headers: { "Content-Type":"application/json", "Authorization":"Bearer "+llmApiKey },
-            body: JSON.stringify({
-              model,
-              max_tokens: 1500,
-              messages: [{ role:"system", content: sysP }, ...newMessages.map(m=>({ role:m.role, content:m.content }))],
-              ...(minimaxGroupId ? { group_id: minimaxGroupId } : {})
-            })
-          });
-          const fd = await fr.json();
-          if (!fr.ok) throw new Error(fd.base_resp?.status_msg || fd.error?.message || "Minimax API error " + fr.status);
-          fullText = fd.choices?.[0]?.message?.content || "";
-
         } else {
-          // ── Anthropic Claude API (default) ──
-          const fr = await fetch("https://api.anthropic.com/v1/messages", {
-            method:"POST",
-            headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-            body:JSON.stringify({model:llmModel||"claude-sonnet-4-6",max_tokens:1000,system:sysP,messages:newMessages.map(m=>({role:m.role,content:m.content}))})
-          });
-          const fd = await fr.json();
-          if (!fr.ok) throw new Error(fd.error?.message || "Claude API error");
-          fullText = fd.content?.map(c=>c.text||"").join("")||"";
+          // ── SECURITY: No direct API calls from frontend ──
+          // All LLM calls must go through /api/ara-chat backend endpoint
+          // This ensures API keys are never exposed in browser
+          throw new Error(`Provider "${llmProvider}" requires backend /api/ara-chat endpoint. Is your API server running?`);
         }
       } else {
         const needKey = llmProvider !== "ollama";
@@ -3160,6 +3135,12 @@ ${matRowsHtml}
             // Buat invoice dari order yang sudah COMPLETED
             const ord = ordersData.find(o => o.id === act.order_id);
             if (!ord) { ar = "\n⚠️ *Order " + act.order_id + " tidak ditemukan*"; }
+            else if (invoicesData.find(inv => inv.job_id === act.order_id && inv.status !== "CANCELLED")) {
+              // ── PREVENT DUPLICATE: Jika invoice sudah ada untuk order ini, skip ──
+              const existing = invoicesData.find(inv => inv.job_id === act.order_id && inv.status !== "CANCELLED");
+              ar = `\n⚠️ *Invoice untuk order ini sudah ada: ${existing.id}* (status: ${existing.status})`;
+              addAgentLog("ARA_DUPLICATE_INVOICE", `Duplicate invoice attempt for order ${act.order_id} — existing: ${existing.id}`, "WARNING");
+            }
             else {
               const today = new Date().toISOString().slice(0,10);
               const seq2  = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();

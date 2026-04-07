@@ -535,7 +535,31 @@ export default async function handler(req, res) {
       }
     }
 
-        // ── CRON-REMINDER ──
+        // ── GET-LLM-CONFIG (secure backend config endpoint) ──
+    if (route === "get-llm-config") {
+      if (req.method !== "GET") return res.status(405).json({error: "Method not allowed"});
+      // ── Security: Only return safe config, never expose API keys ──
+      // Determines which provider is available based on env vars
+      const providers = [];
+      if (process.env.ANTHROPIC_API_KEY) providers.push({name: "claude", label: "Claude (Anthropic)", disabled: false});
+      if (process.env.OPENAI_API_KEY) providers.push({name: "openai", label: "OpenAI (GPT-4)", disabled: false});
+      if (process.env.MINIMAX_API_KEY) providers.push({name: "minimax", label: "MiniMax 2.5", disabled: false});
+      if (process.env.GROQ_API_KEY) providers.push({name: "groq", label: "Groq (Llama)", disabled: false});
+
+      // Determine default provider based on what's available
+      let defaultProvider = "claude"; // preferred default
+      if (!process.env.ANTHROPIC_API_KEY && providers.length > 0) {
+        defaultProvider = providers[0].name; // use first available
+      }
+
+      return res.status(200).json({
+        providers,
+        defaultProvider,
+        message: "Use 'defaultProvider' to determine initial LLM choice"
+      });
+    }
+
+    // ── CRON-REMINDER ──
     if (route === "cron-reminder") {
       const SU=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL, SK=process.env.SUPABASE_SERVICE_KEY, FT=process.env.FONNTE_TOKEN;
       if (!SU||!SK||!FT) return res.status(200).json({ ok:false, error:"Env vars tidak lengkap" });
