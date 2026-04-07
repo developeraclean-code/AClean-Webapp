@@ -535,7 +535,48 @@ export default async function handler(req, res) {
       }
     }
 
-        // ── GET-LLM-CONFIG (secure backend config endpoint) ──
+        // ── MONITORING: Get health metrics and recent errors ──
+    if (route === "monitor") {
+      if (req.method !== "GET") return res.status(405).json({error: "Method not allowed"});
+      const SU=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL, SK=process.env.SUPABASE_SERVICE_KEY;
+      if (!SU||!SK) return res.status(200).json({ status: "limited", message: "Supabase not configured" });
+
+      try {
+        // Get recent errors and warnings from agent_logs (last 24 hours)
+        const since24h = new Date(Date.now() - 24*60*60*1000).toISOString();
+        const { data: logs } = await fetch(SU+"/rest/v1/agent_logs?select=action,status,detail,created_at&status=in.(ERROR,WARNING)&created_at=gte."+since24h+"&order=created_at.desc&limit=100", {
+          headers: { apikey: SK, Authorization: "Bearer " + SK }
+        }).then(r => r.json()).then(d => ({data: d || []})).catch(e => ({data: [], error: e.message}));
+
+        // Calculate metrics
+        const metrics = {
+          totalErrors: logs?.filter(l => l.status === "ERROR").length || 0,
+          totalWarnings: logs?.filter(l => l.status === "WARNING").length || 0,
+          errorRate: (logs?.filter(l => l.status === "ERROR").length || 0) / (logs?.length || 1),
+          recentErrors: (logs || []).slice(0, 10).map(l => ({
+            action: l.action,
+            status: l.status,
+            detail: l.detail?.slice(0, 100),
+            time: l.created_at
+          }))
+        };
+
+        return res.status(200).json({
+          status: "ok",
+          timestamp: new Date().toISOString(),
+          health: metrics.errorRate < 0.05 ? "healthy" : metrics.errorRate < 0.1 ? "degraded" : "unhealthy",
+          metrics
+        });
+      } catch(err) {
+        return res.status(200).json({
+          status: "error",
+          message: err.message,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    // ── GET-LLM-CONFIG (secure backend config endpoint) ──
     if (route === "get-llm-config") {
       if (req.method !== "GET") return res.status(405).json({error: "Method not allowed"});
       // ── Security: Only return safe config, never expose API keys ──
