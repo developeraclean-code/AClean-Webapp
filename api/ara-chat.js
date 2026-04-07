@@ -101,7 +101,7 @@ async function callMinimax(msgs, sys, model) {
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
     body: JSON.stringify({
-      model: model||"MiniMax-Text-01",
+      model: model||"MiniMax-M2.5",
       max_tokens: 1024,
       messages: [{role:"system",content:sys}, ...msgs],
       ...(groupId ? { group_id: groupId } : {})

@@ -1973,10 +1973,8 @@ ${matRowsHtml}
             for (const r of staleLaporan) {
               try {
                 await supabase.from("service_reports").update({
-                  status:      "VERIFIED",
-                  verified_by: null,
-                  verified_at: new Date().toISOString(),
-                  notes:       ((r.notes||"") + " [Auto-verified sistem 48 jam]").trim(),
+                  status: "VERIFIED",
+                  notes:  ((r.notes||"") + " [Auto-verified sistem 48 jam]").trim(),
                 }).eq("id", r.id);
                 setLaporanReports(prev => prev.map(x =>
                   x.id === r.id ? {...x, status: "VERIFIED",
@@ -7169,10 +7167,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <button onClick={async()=>{
                   // ── SIM-10: Verify laporan + AUTO-CREATE invoice ──
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
-                  const verifiedById = isRealUUID(currentUser?.id) ? currentUser.id : null;
                   const {error:vErr} = await supabase.from("service_reports").update({
-                    status:"VERIFIED", verified_at:new Date().toISOString(),
-                    ...(verifiedById ? {verified_by:verifiedById} : {})
+                    status:"VERIFIED"
                   }).eq("id",r.id);
                   if(vErr) {
                     console.warn("❌ verify laporan failed:", vErr.message);
@@ -7263,7 +7259,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>✅ Verifikasi</button>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));
-                  const {error:revErr} = await supabase.from("service_reports").update({status:"REVISION",updated_at:new Date().toISOString()}).eq("id",r.id);
+                  const {error:revErr} = await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
                   if(revErr) {
                     console.warn("❌ update REVISION failed:", revErr.message);
                     addAgentLog("LAPORAN_UPDATE_ERROR",`Update status REVISION gagal: ${revErr.message.slice(0,80)}`,"WARNING");
@@ -7281,7 +7277,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>Minta Revisi</button>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REJECTED"}:x));
-                  const {error:rejErr} = await supabase.from("service_reports").update({status:"REJECTED",updated_at:new Date().toISOString()}).eq("id",r.id);
+                  const {error:rejErr} = await supabase.from("service_reports").update({status:"REJECTED"}).eq("id",r.id);
                   if(rejErr) {
                     console.warn("❌ update REJECTED failed:", rejErr.message);
                     addAgentLog("LAPORAN_UPDATE_ERROR",`Update status REJECTED gagal: ${rejErr.message.slice(0,80)}`,"WARNING");
