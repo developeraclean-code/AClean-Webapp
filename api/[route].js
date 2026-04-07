@@ -77,16 +77,25 @@ export default async function handler(req, res) {
       const ml = message.toLowerCase().trim();
       let reply = null;
       if (autoOn) {
-        if (["halo","hi","hello","hai","pagi","siang","sore","malam"].some(k => ml.includes(k)))
-          reply = "Halo! Selamat datang di AClean Service AC. Kami melayani Cuci AC, Perbaikan AC, Isi Freon, dan Pasang AC Baru. Ketik HARGA untuk info tarif atau ORDER untuk pesan layanan.";
-        else if (ml.includes("harga") || ml.includes("tarif") || ml.includes("biaya"))
-          reply = "Harga AClean: Cuci AC 0.5-1PK Rp85.000, Cuci 1.5-2.5PK Rp100.000, Perbaikan mulai Rp100.000, Freon R32 Rp450.000, Pasang AC mulai Rp350.000.";
-        else if (ml === "order" || ml.includes("pesan") || ml.includes("booking"))
-          reply = "Untuk pesan layanan: 1) Nama, 2) Alamat, 3) Jenis layanan, 4) Jumlah unit, 5) Tanggal & jam. Admin akan konfirmasi jadwal.";
-        else if (ml.includes("status") || ml.includes("jadwal"))
-          reply = "Sebutkan nama dan nomor order Anda. Admin akan segera membantu.";
-        else if (ml.includes("bayar") || ml.includes("transfer"))
-          reply = "Setelah transfer, kirim bukti bayar ke sini. Admin konfirmasi dalam 30 menit.";
+        const SALAM = ["halo","hi","hello","hai","pagi","siang","sore","malam","selamat","assalamu","permisi"];
+        const HARGA_KW = ["harga","tarif","biaya","berapa","rate","pricelist","price","harganya"];
+        const ORDER_KW = ["order","pesan","booking","buat","jadwal","service","cuci","cleaning","install","pasang","perbaikan","repair","complain","garansi","bongkar"];
+        const STATUS_KW = ["status","cek order","cek jadwal","kapan","sudah","selesai","belum","progress"];
+        const BAYAR_KW  = ["bayar","transfer","lunas","pembayaran","invoice","tagihan","dp","uang"];
+        const LOKASI_KW = ["alamat","lokasi","dimana","area","jangkauan","coverage","bisa ke"];
+
+        if (SALAM.some(k => ml.startsWith(k) || ml.includes(k + " ")))
+          reply = "Halo! 👋 Selamat datang di *AClean Service AC*.\n\nKami melayani:\n✅ Cuci/Service AC\n✅ Perbaikan & Isi Freon\n✅ Pasang AC Baru\n✅ Bongkar & Pindah AC\n\nKetik *HARGA* untuk info tarif, atau *ORDER* untuk pesan layanan. Ada yang bisa kami bantu? 😊";
+        else if (HARGA_KW.some(k => ml.includes(k)))
+          reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru & promo, silakan hubungi admin kami karena harga menyesuaikan jenis & kapasitas AC.\n\nAdmin akan segera membalas! 😊\n\n_Jam operasional: 08.00–17.00 WIB_";
+        else if (LOKASI_KW.some(k => ml.includes(k)))
+          reply = "📍 *Area Layanan AClean*\n\nKami melayani area:\nAlam Sutera • BSD • Gading Serpong • Graha Raya • Karawaci • Tangerang Selatan\n\nArea lain (Jakarta Barat/Selatan): ada biaya transport tambahan.\n\nKetik *ORDER* untuk pesan layanan! 😊";
+        else if (ORDER_KW.some(k => ml.includes(k)) || ml === "order")
+          reply = "📋 *Pesan Layanan AClean*\n\nSilakan kirim info berikut:\n1️⃣ Nama lengkap\n2️⃣ Alamat lengkap\n3️⃣ Jenis layanan (Cuci AC / Perbaikan / Pasang / dll)\n4️⃣ Jumlah unit AC\n5️⃣ Tanggal & jam yang diinginkan\n\nAdmin akan konfirmasi jadwal & harga segera! ⚡";
+        else if (STATUS_KW.some(k => ml.includes(k)))
+          reply = "🔍 Untuk cek status order, sebutkan *nama* dan *nomor order* (contoh: ORD-240401-XXX) atau nomor HP yang didaftarkan.\n\nAdmin akan segera membantu! 😊";
+        else if (BAYAR_KW.some(k => ml.includes(k)))
+          reply = "💳 *Info Pembayaran AClean*\n\nSetelah transfer, kirim bukti pembayaran ke sini beserta:\n📌 Nama & nomor order\n💰 Nominal transfer\n\nAdmin konfirmasi dalam 30 menit. Terima kasih! 🙏";
 
         if (reply && FT) fetch("https://api.fonnte.com/send", {
           method: "POST",
@@ -95,14 +104,17 @@ export default async function handler(req, res) {
         }).catch(()=>{});
       }
 
-      // Forward to owner
-      if (fwdOn && !reply && FT && OP) fetch("https://api.fonnte.com/send", {
+      // Forward to owner — SELALU forward (termasuk saat auto-reply) agar owner tetap tahu
+      const fwdMsg = reply
+        ? "📲 WA Masuk (auto-replied)\nDari: " + (wb.name||("+" + sender)) + "\nPesan: " + message + "\n---\nBalasan otomatis:\n" + reply
+        : "📲 WA Masuk\nDari: " + (wb.name||("+" + sender)) + "\nPesan: " + message;
+      if (fwdOn && FT && OP) fetch("https://api.fonnte.com/send", {
         method: "POST",
         headers: { Authorization: FT, "Content-Type": "application/json" },
-        body: JSON.stringify({ target: OP, message: "Pesan WA Masuk\nDari: " + (wb.name||("+" + sender)) + "\nPesan: " + message, delay: "1", countryCode: "62" })
+        body: JSON.stringify({ target: OP, message: fwdMsg, delay: "2", countryCode: "62" })
       }).catch(()=>{});
 
-      return res.status(200).json({ status: "ok", sender, autoreply: autoOn, replied: !!reply, forwarded: fwdOn && !reply });
+      return res.status(200).json({ status: "ok", sender, autoreply: autoOn, replied: !!reply, forwarded: fwdOn });
     }
 
     // ── ARA-CHAT ──
