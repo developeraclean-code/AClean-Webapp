@@ -1978,8 +1978,7 @@ ${matRowsHtml}
             for (const r of staleLaporan) {
               try {
                 await supabase.from("service_reports").update({
-                  status: "VERIFIED",
-                  notes:  ((r.notes||"") + " [Auto-verified sistem 48 jam]").trim(),
+                  status: "VERIFIED"
                 }).eq("id", r.id);
                 setLaporanReports(prev => prev.map(x =>
                   x.id === r.id ? {...x, status: "VERIFIED",
@@ -11411,15 +11410,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const newStatus = selectedLaporan.status==="REVISION"?"SUBMITTED":selectedLaporan.status;
                     setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id
                       ?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,status:newStatus,editLog:allLogs}:r));
-                    // Save ke Supabase — try with available fields only
+                    // Save ke Supabase — only use valid fields that exist in schema
                     const updatePayload = {
                       status: newStatus,
                       notes: (editLaporanForm.catatan_global || editLaporanForm.rekomendasi || "").slice(0, 500),
-                      updated_at: new Date().toISOString(),
                     };
-                    // Optional: add custom fields jika ada di schema
-                    if (editLaporanForm.rekomendasi) updatePayload.rekomendasi = editLaporanForm.rekomendasi.slice(0, 500);
-                    if (editLaporanForm.catatan_global) updatePayload.catatan_global = editLaporanForm.catatan_global.slice(0, 500);
 
                     const {error:elErr} = await supabase.from("service_reports").update(updatePayload).eq("id", selectedLaporan.id);
                     if(elErr) {
