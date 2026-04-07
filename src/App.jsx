@@ -1714,7 +1714,12 @@ ${matRowsHtml}
   // ── Auto-save settings ke localStorage saat berubah ──
   // ── Startup cleanup: fix nilai lama yang tersimpan sebagai array ──
   useEffect(() => {
-    const stringKeys = ["brainMd","waProvider","llmProvider","llmModel","ollamaUrl","llmStatus","fonnteKey","wapiToken","wapiUrl"];
+    // Delete any stored API credentials (security: never persist keys in localStorage)
+    ["fonnteKey","wapiToken","wapiUrl","llmApiKey"].forEach(k => {
+      try { localStorage.removeItem("aclean_"+k); } catch(_) {}
+    });
+
+    const stringKeys = ["brainMd","waProvider","llmProvider","llmModel","ollamaUrl"];
     stringKeys.forEach(key => {
       try {
         const raw = localStorage.getItem("aclean_"+key);
@@ -1739,7 +1744,6 @@ ${matRowsHtml}
   useEffect(() => { _lsSave("waProvider",  waProvider);  }, [waProvider]);
   useEffect(() => { _lsSave("waToken",     waToken);     }, [waToken]);
   useEffect(() => { _lsSave("waDevice",    waDevice);    }, [waDevice]);
-  useEffect(() => { _lsSave("llmStatus",   llmStatus);   }, [llmStatus]);
 
   useEffect(() => {
     // ── Restore session saat refresh ──
@@ -1812,7 +1816,7 @@ ${matRowsHtml}
     if (!isLoggedIn) return;
 
     const loadAll = async () => {
-      const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes, invUnitsRes] = await Promise.all([
+      const results = await Promise.allSettled([
         supabase.from("orders").select("*").order("date", { ascending: false }),
         supabase.from("invoices").select("*").order("created_at", { ascending: false }),
         supabase.from("customers").select("*").order("name"),
@@ -1822,6 +1826,7 @@ ${matRowsHtml}
         supabase.from("inventory_transactions").select("*").order("created_at",{ascending:false}).limit(1000),
         supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label"),
       ]);
+      const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
       // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
       // Jika error = fallback ke demo data yang sudah di-init
       if (!ordersRes.error   && ordersRes.data)   setOrdersData(ordersRes.data);
@@ -2649,8 +2654,8 @@ ${matRowsHtml}
         return null;
       }
     }
-    // GAP 4: ID aman — timestamp ms + random 3 digit, tidak bergantung array.length
-    const newId = "JOB" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
+    // Higher entropy order ID to prevent collisions on simultaneous submissions
+    const newId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2,5).toUpperCase();
     const timeEnd = hitungJamSelesai(form.time||"09:00", form.service||"Cleaning", form.units||1);
     // Cek customer existing by phone ATAU name (untuk customer_id)
     const preExistCust = findCustomer(customersData, form.phone, form.customer);
@@ -8561,37 +8566,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   setLlmStatus("connected");
                   showNotif("✅ Ollama terkoneksi! Model tersedia: " + (models||"(kosong — jalankan: ollama pull llama3)"));
                   return; // done for ollama
-                } else if (llmProvider === "openai") {
-                  const r = await fetch("https://api.openai.com/v1/chat/completions", {
-                    method:"POST", headers:{"Content-Type":"application/json","Authorization":"Bearer "+llmApiKey},
-                    body:JSON.stringify({model:llmModel||"gpt-4o-mini",max_tokens:10,messages:[{role:"user",content:"Hi"}]})
-                  });
-                  ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"OpenAI error "+r.status);}
-                } else if (llmProvider === "minimax") {
-                  const minimaxGroupId = localStorage.getItem("llmGroupId") || "";
-                  const testModel = llmModel || "MiniMax-Text-01";
-                  const r = await fetch(
-                    `https://api.minimaxi.chat/v1/text/chatcompletion_v2`,
-                    { method:"POST",
-                      headers:{"Content-Type":"application/json","Authorization":"Bearer "+llmApiKey},
-                      body:JSON.stringify({ model:testModel, max_tokens:5,
-                        messages:[{role:"user",content:"Hi"}],
-                        ...(minimaxGroupId ? { group_id: minimaxGroupId } : {}) })
-                    }
-                  );
-                  const rd = await r.json();
-                  if (!r.ok) {
-                    const errMsg = rd.base_resp?.status_msg || rd.error?.message || ("Minimax error " + r.status);
-                    if (r.status === 401) throw new Error("API Key tidak valid.");
-                    throw new Error(errMsg);
-                  }
-                  ok = true;
                 } else {
-                  const r = await fetch("https://api.anthropic.com/v1/messages", {
-                    method:"POST", headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-                    body:JSON.stringify({model:llmModel||"claude-sonnet-4-6",max_tokens:10,messages:[{role:"user",content:"Hi"}]})
+                  // Test via backend using environment variables (no keys exposed in browser)
+                  const type = llmProvider === "minimax" ? "minimax"
+                             : llmProvider === "groq"    ? "groq"
+                             : llmProvider === "openai"  ? "llm"   // openai uses /api/test-connection?type=llm
+                             : "llm";                               // claude default
+                  const r = await fetch("/api/test-connection?type=" + type, {
+                    headers: { "X-Internal-Token": internalToken }
                   });
-                  ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"Claude error");}
+                  const d = await r.json();
+                  if (!r.ok || !d.ok) throw new Error(d.error || d.message || "Test gagal");
+                  ok = true;
                 }
                 setLlmStatus("connected");
                 const modelInfo = llmModel ? " ("+llmModel+")" : "";
@@ -9075,6 +9061,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const [monitorLoading, setMonitorLoading] = useState(false);
 
   useEffect(() => {
+    if (activeMenu !== "monitoring" || !currentUser) return;
+
     const loadMonitor = async () => {
       try {
         setMonitorLoading(true);
@@ -9091,10 +9079,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // Load immediately
     loadMonitor();
 
-    // Auto-refresh every 30 seconds
+    // Auto-refresh every 30 seconds (only when monitoring is active)
     const interval = setInterval(loadMonitor, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [activeMenu, currentUser]);
 
   const renderMonitoring = () => {
     const data = monitorData;

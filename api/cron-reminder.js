@@ -55,6 +55,15 @@ async function taskReminder() {
   const today = new Date().toISOString().slice(0,10);
   const res = { reminder1:0, reminder2:0, reminder3:0, escalated:0, autoapproved:0 };
 
+  // Fetch bank details from app_settings (with env var fallback)
+  const { data: bankData } = await sb.from("app_settings")
+    .select("key,value")
+    .in("key", ["bank_name","bank_number","bank_holder","company_name"]);
+  const bankMap = Object.fromEntries((bankData||[]).map(s=>[s.key, s.value]));
+  const BANK_NAME   = bankMap.bank_name   || process.env.BANK_NAME   || "BCA";
+  const BANK_NUMBER = bankMap.bank_number || process.env.BANK_NUMBER || "8830883011";
+  const BANK_HOLDER = bankMap.bank_holder || process.env.BANK_HOLDER || "Malda Retta";
+
   const { data: invs } = await sb.from("invoices").select("*").in("status",["UNPAID","OVERDUE"]);
   for (const inv of invs||[]) {
     const daysOverdue = daysSince(inv.due || inv.sent);
@@ -63,8 +72,8 @@ async function taskReminder() {
     }
     if (!inv.phone) continue;
     let msg = null;
-    if (daysOverdue>=1  && daysOverdue<=7)  { msg=`Halo ${inv.customer} 🙏\n\nPengingat invoice *${inv.id}* — ${fmt(inv.total)}, jatuh tempo ${inv.due}.\n\nTransfer ke: *BCA 8830883011* a.n. Malda Retta\nTerima kasih! — AClean`; res.reminder1++; }
-    else if (daysOverdue>=8  && daysOverdue<=14) { msg=`Halo ${inv.customer},\n\nInvoice *${inv.id}* belum dibayar (${daysOverdue} hari). Total: ${fmt(inv.total)}.\n\nTransfer ke *BCA 8830883011* a.n. Malda Retta.\n\n— AClean`; res.reminder2++; }
+    if (daysOverdue>=1  && daysOverdue<=7)  { msg=`Halo ${inv.customer} 🙏\n\nPengingat invoice *${inv.id}* — ${fmt(inv.total)}, jatuh tempo ${inv.due}.\n\nTransfer ke: *${BANK_NAME} ${BANK_NUMBER}* a.n. ${BANK_HOLDER}\nTerima kasih! — AClean`; res.reminder1++; }
+    else if (daysOverdue>=8  && daysOverdue<=14) { msg=`Halo ${inv.customer},\n\nInvoice *${inv.id}* belum dibayar (${daysOverdue} hari). Total: ${fmt(inv.total)}.\n\nTransfer ke *${BANK_NAME} ${BANK_NUMBER}* a.n. ${BANK_HOLDER}.\n\n— AClean`; res.reminder2++; }
     else if (daysOverdue>=15 && daysOverdue<=21) { msg=`Halo ${inv.customer},\n\nInvoice *${inv.id}* sudah ${daysOverdue} hari lewat jatuh tempo (${fmt(inv.total)}).\n\nAda kendala? Balas pesan ini. — AClean`; res.reminder3++; await sendWA(OWNER_PHONE,`⚠️ OVERDUE ${inv.id} — ${inv.customer} — ${daysOverdue}h — ${fmt(inv.total)}`); }
     else if (daysOverdue>=22) { res.escalated++; await sendWA(OWNER_PHONE,`🚨 ESKALASI ${inv.id} — ${inv.customer} — ${daysOverdue}h — ${fmt(inv.total)}`); continue; }
     if (msg) { await sendWA(inv.phone, msg); await log("REMINDER_SENT",`${inv.id} — ${daysOverdue}d`); }
@@ -127,32 +136,98 @@ async function taskStock() {
   return { out:out.length, critical:crit.length };
 }
 
+// ──────────────────────────────────────────────────
+// AWS Sig V4 Delete for R2 Objects
+// ──────────────────────────────────────────────────
+async function deleteR2Object(key) {
+  const { createHmac, createHash } = await import("crypto");
+  const accessKeyId = process.env.R2_ACCESS_KEY;
+  const secretAccessKey = process.env.R2_SECRET_KEY;
+  const accountId = process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_ACCOUNT_ID;
+  const bucket = process.env.R2_BUCKET_NAME || "aclean-files";
+
+  if (!accessKeyId || !secretAccessKey || !accountId) {
+    console.warn("[CLEANUP_R2] R2 credentials not configured, skipping delete");
+    return false;
+  }
+
+  try {
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0,10).replace(/-/g,"");
+    const timeStr = now.toISOString().replace(/[-:\.]/g,"").slice(0,15) + "Z";
+    const host = accountId + ".r2.cloudflarestorage.com";
+    const region = "auto", service = "s3";
+
+    const canonicalUri = "/" + bucket + "/" + key;
+    const payloadHash = createHash("sha256").update("").digest("hex");
+    const canonicalHeaders = `host:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${timeStr}\n`;
+    const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+    const canonicalRequest = ["DELETE", canonicalUri, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
+
+    const credScope = [dateStr, region, service, "aws4_request"].join("/");
+    const strToSign = ["AWS4-HMAC-SHA256", timeStr, credScope,
+      createHash("sha256").update(canonicalRequest).digest("hex")].join("\n");
+
+    const hmac = (k, d) => createHmac("sha256", k).update(d).digest();
+    const signingKey = hmac(hmac(hmac(hmac("AWS4"+secretAccessKey, dateStr), region), service), "aws4_request");
+    const signature = createHmac("sha256", signingKey).update(strToSign).digest("hex");
+    const authorization = `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+    const r = await fetch("https://" + host + canonicalUri, {
+      method: "DELETE",
+      headers: {
+        "Host": host,
+        "x-amz-date": timeStr,
+        "x-amz-content-sha256": payloadHash,
+        "Authorization": authorization
+      }
+    });
+    return r.ok || r.status === 204 || r.status === 404;
+  } catch(e) {
+    console.error("[CLEANUP_R2_DELETE_ERROR]", {key, error: e.message});
+    return false;
+  }
+}
+
 // ══════════════════════════════════════════════════
-// TASK 4: Cleanup foto lama (>12 bulan) dari R2
+// TASK 4: Cleanup foto lama (>360 hari) dari R2
 // ══════════════════════════════════════════════════
 async function taskCleanup() {
-  // Ambil laporan > 12 bulan lalu
-  const cutoff = new Date(Date.now()-365*86400000).toISOString();
+  // Ambil laporan > 360 hari lalu
+  const cutoff = new Date(Date.now()-360*86400000).toISOString();
   const { data: old } = await sb.from("service_reports").select("id,fotos").lt("created_at",cutoff);
-  let deleted = 0;
+  let deleted = 0, r2deleted = 0;
   for (const rep of old||[]) {
     const fotos = rep.fotos||[];
     if (!fotos.length) continue;
-    // Update record: hapus URL foto (foto sudah lama, hemat storage)
+
+    // Delete actual R2 objects
+    for (const url of fotos) {
+      try {
+        // Extract key from URL: either after bucket/ or after .r2.dev
+        const match = url.match(/(?:r2\.cloudflarestorage\.com\/[^/]+\/|\.r2\.dev\/)(.+)/);
+        if (match) {
+          const ok = await deleteR2Object(match[1]);
+          if (ok) r2deleted++;
+        }
+      } catch(e) { console.error("[CLEANUP_R2_EXTRACT_ERROR]", {url, error: e.message}); }
+    }
+
+    // Clear URL references from DB
     await sb.from("service_reports").update({fotos:[]}).eq("id",rep.id).catch(err => {
       console.error("[CLEANUP_FOTOS_UPDATE_ERROR]", {reportId: rep.id, fotosCount: fotos.length, error: err.message});
     });
     deleted += fotos.length;
   }
-  await log("CLEANUP_FOTOS",`${deleted} foto lama dihapus dari ${old?.length||0} laporan`);
-  return { deleted, reports: old?.length||0 };
+  await log("CLEANUP_FOTOS",`${deleted} foto ref dihapus, ${r2deleted} file R2 deleted dari ${old?.length||0} laporan`);
+  return { deleted, r2deleted, reports: old?.length||0 };
 }
 
 // ══════════════════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════════════════
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin","*");
+  res.setHeader("Access-Control-Allow-Origin", process.env.ALLOWED_ORIGIN || "https://a-clean-webapp.vercel.app");
   if (req.method !== "GET" && req.method !== "POST") return res.status(405).end();
 
   const auth   = req.headers.authorization || "";

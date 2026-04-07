@@ -250,7 +250,7 @@ export default async function handler(req, res) {
       ? `API Key ${provider} tidak valid atau belum diset di Vercel env vars.`
       : err.message.includes("ANTHROPIC_API_KEY") || err.message.includes("credit")
       ? `Credit Anthropic habis. Setup provider lain di Vercel Environment Variables.`
-      : err.message;
-    return res.status(500).json({error: friendlyErr, provider, raw: err.message});
+      : `Terjadi kesalahan internal. Coba lagi atau hubungi support.`;
+    return res.status(500).json({error: friendlyErr, provider});
   }
 }

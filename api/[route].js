@@ -1,4 +1,5 @@
 // api/[route].js - AClean Unified API Router
+import { setCorsHeaders, checkRateLimit, validateInternalToken } from "./_auth.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "monitor", "get-llm-config"];
 
@@ -22,11 +23,13 @@ function validateMessage(msg, maxLen = 4096) {
   return trimmed;
 }
 
+function sanitizeName(s) {
+  return (s||"").replace(/[\r\n\t]/g, " ").slice(0, 100);
+}
+
 export default async function handler(req, res) {
   const route = String(req.query.route || "");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Internal-Token, X-Api-Key, Authorization");
+  setCorsHeaders(req, res);
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const token = process.env.VITE_INTERNAL_API_SECRET || process.env.INTERNAL_API_SECRET;
@@ -66,6 +69,7 @@ export default async function handler(req, res) {
     if (route === "receive-wa") {
       if (req.method === "GET") return res.status(200).json({ status: "ok", service: "AClean WA Webhook" });
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      if (!await checkRateLimit(req, res, 60, 60000)) return;
       const wb = req.body || {};
 
       // ── VALIDATION: Phone number ──
@@ -99,7 +103,9 @@ export default async function handler(req, res) {
             if (sMap.wa_autoreply_enabled !== undefined) autoOn = sMap.wa_autoreply_enabled === "true";
             if (sMap.wa_forward_to_owner  !== undefined) fwdOn  = sMap.wa_forward_to_owner  !== "false";
           }
-        } catch(_) {}
+        } catch(sErr) {
+          console.warn("[receive-wa] settings fetch failed, using defaults:", sErr.message);
+        }
       }
 
       // Save to DB
@@ -165,7 +171,7 @@ export default async function handler(req, res) {
 
       // Forward to owner — only forward messages that were NOT auto-replied (customer needs attention)
       if (!reply && fwdOn && FT && OP) {
-        const fwdMsg = "📲 WA Masuk\nDari: " + (wb.name||("+" + sender)) + "\nPesan: " + message;
+        const fwdMsg = "📲 WA Masuk\nDari: " + sanitizeName(wb.name||("+" + sender)) + "\nPesan: " + message;
         fetch("https://api.fonnte.com/send", {
           method: "POST",
           headers: { Authorization: FT, "Content-Type": "application/json" },

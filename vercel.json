@@ -7,7 +7,7 @@
   ],
   "crons": [
     {
-      "path": "/api/cron-reminder",
+      "path": "/api/cron-reminder?task=stock",
       "schedule": "0 1 * * *"
     },
     {

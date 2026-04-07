@@ -42,10 +42,16 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
 export function validateInternalToken(req, res) {
   const secret = process.env.INTERNAL_API_SECRET;
 
-  // Kalau env belum diset, log warning tapi jangan block (agar tidak break saat development)
+  // Kalau env belum diset, block di production
   if (!secret) {
-    console.warn("[SEC-02] INTERNAL_API_SECRET belum diset di Vercel env — skip auth check");
-    return true; // allow in dev mode
+    if (process.env.NODE_ENV === "production") {
+      console.error("[SEC-02] CRITICAL: INTERNAL_API_SECRET belum diset di Vercel env");
+      res.status(500).json({ error: "Server misconfiguration: INTERNAL_API_SECRET not set" });
+      return false;
+    }
+    // Dev mode: allow in development
+    console.warn("[SEC-02] INTERNAL_API_SECRET belum diset — dev mode only");
+    return true;
   }
 
   const token = req.headers["x-internal-token"] || req.headers["x-api-key"];
