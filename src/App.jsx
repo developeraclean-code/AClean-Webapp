@@ -7447,7 +7447,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       status:"PENDING", kondisi_sebelum:"", kondisi_setelah:"", pekerjaan:[],
       rekomendasi:"", catatan:"", freon:"0", ampere:"", editLog:[]
     }));
-    const myReps = [...submittedReps, ...pendingAsDraft]
+    let myReps = [...submittedReps, ...pendingAsDraft]
       .sort((a,b)=>{
         const da=a.date||a.submitted?.slice(0,10)||"";
         const db=b.date||b.submitted?.slice(0,10)||"";
@@ -7455,24 +7455,46 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         if(db===TODAY&&da!==TODAY) return 1;
         return db.localeCompare(da);
       });
+
+    // ── AUTO-HIDE VERIFIED untuk Teknisi & Helper (hide laporan yang sudah selesai) ──
+    const userRole = currentUser?.role?.toLowerCase() || "";
+    const isTeknisiOrHelper = userRole === "teknisi" || userRole === "helper";
+    if (isTeknisiOrHelper) {
+      const beforeCount = myReps.length;
+      // Filter out VERIFIED — case insensitive
+      myReps = myReps.filter(r => (r.status || "").toUpperCase() !== "VERIFIED");
+      console.log(`[MyReport Filter] user=${myName}, before=${beforeCount}, after=${myReps.length}, hidden=${beforeCount - myReps.length}`);
+    }
+
     const filtReps = myReps.filter(r =>
       !searchLaporan ||
       r.customer.toLowerCase().includes(searchLaporan.toLowerCase()) ||
       r.job_id.toLowerCase().includes(searchLaporan.toLowerCase())
     );
     const sMap = { SUBMITTED:[cs.accent,"Submitted"], VERIFIED:[cs.green,"Terverifikasi"], REVISION:[cs.yellow,"Perlu Revisi"], REJECTED:[cs.red,"Ditolak"], PENDING:[cs.muted,"Belum Dibuat"] };
-    const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,border:"1px solid "+col+"44",fontWeight:700}}>{lbl}</span>; };
+    const badge = (s) => {
+      // Make badge case-insensitive for status lookup
+      const normalizedStatus = (s || "").toUpperCase();
+      const [col,lbl] = sMap[normalizedStatus] || [cs.muted, s];
+      return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,border:"1px solid "+col+"44",fontWeight:700}}>{lbl}</span>;
+    };
 
     return (
       <div style={{display:"grid",gap:16}}>
         <div>
           <div style={{fontWeight:800,fontSize:18,color:cs.text}}>Laporan Saya</div>
-          <div style={{fontSize:12,color:cs.muted,marginTop:3}}>Semua job kamu — buat laporan untuk job yang belum dilaporkan, edit yang sudah masuk</div>
+          <div style={{fontSize:12,color:cs.muted,marginTop:3}}>
+            {isTeknisiOrHelper ? "📋 Menampilkan laporan baru & revisi saja. Laporan terverifikasi disembunyikan. " : ""}
+            {!isTeknisiOrHelper ? "Semua job kamu — buat laporan untuk job yang belum dilaporkan, edit yang sudah masuk" : ""}
+          </div>
         </div>
 
         {/* Stats */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
-          {[["Belum Laporan",pendingAsDraft.length,cs.muted],["Submitted",submittedReps.filter(r=>r.status==="SUBMITTED").length,cs.accent],["Terverifikasi",submittedReps.filter(r=>r.status==="VERIFIED").length,cs.green]].map(([lbl,val,col])=>(
+        <div style={{display:"grid",gridTemplateColumns:`repeat(${isTeknisiOrHelper?2:3},1fr)`,gap:10}}>
+          {(isTeknisiOrHelper
+            ? [["Belum Laporan",pendingAsDraft.length,cs.muted],["Submitted",submittedReps.filter(r=>(r.status||"").toUpperCase()==="SUBMITTED").length,cs.accent]]
+            : [["Belum Laporan",pendingAsDraft.length,cs.muted],["Submitted",submittedReps.filter(r=>(r.status||"").toUpperCase()==="SUBMITTED").length,cs.accent],["Terverifikasi",submittedReps.filter(r=>(r.status||"").toUpperCase()==="VERIFIED").length,cs.green]]
+          ).map(([lbl,val,col])=>(
             <div key={lbl} style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:12,padding:16,textAlign:"center"}}>
               <div style={{fontWeight:800,fontSize:26,color:col}}>{val}</div>
               <div style={{fontSize:11,color:cs.muted,marginTop:4}}>{lbl}</div>
