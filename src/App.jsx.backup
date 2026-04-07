@@ -749,25 +749,13 @@ export default function ACleanWebApp() {
   const [waDevice,        setWaDevice]        = useState(() => _ls("waDevice",   ""));
   const [waStatus,        setWaStatus]        = useState("not_connected");
 
-  const [llmProvider,     setLlmProvider]     = useState(() => {
-    const VALID_PROVIDERS = ["minimax", "claude", "openai", "groq", "ollama"];
-    const stored = _ls("llmProvider", "minimax");
-    if (VALID_PROVIDERS.includes(stored)) return stored;
-    console.warn("[App Init] Invalid provider in localStorage:", stored, "→ reset to minimax");
-    return "minimax"; // fallback ke minimax jika invalid
-  });
+  const [llmProvider,     setLlmProvider]     = useState(() => _ls("llmProvider", "minimax"));
   const [llmApiKey,       setLlmApiKey]       = useState(() => {
     // Load key per-provider yang aktif — selalu sync dengan llmProvider
     const prov = _ls("llmProvider", "minimax"); // sama dengan default llmProvider
     return _ls("llmApiKey_" + prov, "") || _ls("llmApiKey", "");
   });
-  const [llmModel,        setLlmModel]        = useState(() => {
-    const stored = _ls("llmModel", "MiniMax-M2.5");
-    // Validasi model — minimal harus non-empty string
-    if (typeof stored === "string" && stored.trim().length > 0) return stored;
-    console.warn("[App Init] Invalid model in localStorage:", stored, "→ reset to MiniMax-M2.5");
-    return "MiniMax-M2.5";
-  });
+  const [llmModel,        setLlmModel]        = useState(() => _ls("llmModel", "claude-sonnet-4-6"));
   const [ollamaUrl,       setOllamaUrl]       = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
   const [llmStatus,       setLlmStatus]       = useState(() => _ls("llmStatus", "not_connected"));
   const [storageProvider, setStorageProvider] = useState("r2");
@@ -1842,18 +1830,8 @@ ${matRowsHtml}
         if (!setRes.error && setRes.data) {
           const sMap = Object.fromEntries(setRes.data.map(s=>[s.key, s.value]));
           // ── FIXED: selalu sync dari DB (override localStorage jika DB punya nilai) ──
-          // Validasi provider sebelum apply agar tidak pakai stale/invalid value dari DB
-          const VALID_PROVIDERS = ["minimax", "claude", "openai", "groq", "ollama"];
-          if (sMap.llm_provider && VALID_PROVIDERS.includes(sMap.llm_provider)) {
-            console.log("[Settings] Loading provider dari DB:", sMap.llm_provider);
-            setLlmProvider(sMap.llm_provider);
-          } else if (sMap.llm_provider) {
-            console.warn("[Settings] Invalid provider di DB:", sMap.llm_provider, "→ skip, pakai default minimax");
-          }
-          if (sMap.llm_model) {
-            console.log("[Settings] Loading model dari DB:", sMap.llm_model);
-            setLlmModel(sMap.llm_model);
-          }
+          if (sMap.llm_provider) setLlmProvider(sMap.llm_provider);
+          if (sMap.llm_model)    setLlmModel(sMap.llm_model);
         // Load bank & phone settings dari DB
         if (sMap.bank_number) setAppSettings(prev=>({...prev,
           bank_name:   sMap.bank_name   || prev.bank_name,
@@ -1948,15 +1926,10 @@ ${matRowsHtml}
         const brainRes = await supabase.from("ara_brain").select("key,value");
         if (!brainRes.error && brainRes.data && brainRes.data.length > 0) {
           const brainMap = Object.fromEntries(brainRes.data.map(r => [r.key, r.value]));
-          // Load dari DB, TAPI skip jika v4.0 (use hardcoded v5.1 instead)
+          // Override localStorage dengan nilai dari DB (DB = sumber kebenaran)
           if (brainMap.brain_md && typeof brainMap.brain_md === "string" && brainMap.brain_md.length > 10) {
-            const isOldVersion = brainMap.brain_md.includes("v4.0");
-            if (!isOldVersion) {
-              setBrainMd(brainMap.brain_md);
-              _lsSave("brainMd", brainMap.brain_md);
-            } else {
-              console.log("⚠️ DB brain_md is v4.0 (old), using hardcoded v5.1 instead");
-            }
+            setBrainMd(brainMap.brain_md);
+            _lsSave("brainMd", brainMap.brain_md);
           }
           if (brainMap.brain_customer && typeof brainMap.brain_customer === "string" && brainMap.brain_customer.length > 10) {
             setBrainMdCustomer(brainMap.brain_customer);
@@ -2000,7 +1973,8 @@ ${matRowsHtml}
             for (const r of staleLaporan) {
               try {
                 await supabase.from("service_reports").update({
-                  status: "VERIFIED"
+                  status: "VERIFIED",
+                  notes:  ((r.notes||"") + " [Auto-verified sistem 48 jam]").trim(),
                 }).eq("id", r.id);
                 setLaporanReports(prev => prev.map(x =>
                   x.id === r.id ? {...x, status: "VERIFIED",
@@ -2869,7 +2843,6 @@ ${matRowsHtml}
       let fullText = "";
 
       // ── Coba backend proxy dulu (API key aman di server) ──
-      console.log("[ARA-CHAT Frontend] Sending request:", { provider: llmProvider, model: llmModel, hasMessage: newMessages.length > 0 });
       const backendRes = await fetch("/api/ara-chat", {
         method:"POST", headers:_apiHeaders(),
         body: JSON.stringify({
@@ -11433,11 +11406,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const newStatus = selectedLaporan.status==="REVISION"?"SUBMITTED":selectedLaporan.status;
                     setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id
                       ?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,status:newStatus,editLog:allLogs}:r));
-                    // Save ke Supabase — only use valid fields that exist in schema
+                    // Save ke Supabase — try with available fields only
                     const updatePayload = {
                       status: newStatus,
                       notes: (editLaporanForm.catatan_global || editLaporanForm.rekomendasi || "").slice(0, 500),
+                      updated_at: new Date().toISOString(),
                     };
+                    // Optional: add custom fields jika ada di schema
+                    if (editLaporanForm.rekomendasi) updatePayload.rekomendasi = editLaporanForm.rekomendasi.slice(0, 500);
+                    if (editLaporanForm.catatan_global) updatePayload.catatan_global = editLaporanForm.catatan_global.slice(0, 500);
 
                     const {error:elErr} = await supabase.from("service_reports").update(updatePayload).eq("id", selectedLaporan.id);
                     if(elErr) {

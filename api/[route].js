@@ -142,9 +142,11 @@ export default async function handler(req, res) {
       const { messages, bizContext, brainMd, provider, model, ollamaUrl, imageData, imageType } = req.body || {};
       if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "messages array wajib" });
 
+      console.log("[ROUTE.JS ara-chat] Received:", { provider, model, hasMessages: messages.length });
       const sysP = (brainMd || "Kamu adalah ARA, asisten AI untuk AClean Service AC.") +
         (bizContext ? "\n\n## DATA BISNIS LIVE\n" + JSON.stringify(bizContext) : "");
       const prov = provider || "claude";
+      console.log("[ROUTE.JS ara-chat] Provider detection: requested=", provider, "=> using=", prov);
 
       if (prov === "claude" || prov === "anthropic") {
         const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;

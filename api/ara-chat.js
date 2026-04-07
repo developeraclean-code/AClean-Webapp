@@ -138,14 +138,44 @@ export default async function handler(req, res) {
   const { messages, bizContext={}, provider: rawProvider, model, brainMd="" } = req.body||{};
   // ── Smart provider fallback: pakai provider dari frontend, tapi fallback ke env yang tersedia ──
   const detectProvider = () => {
-    if (rawProvider && rawProvider !== "claude") return rawProvider; // frontend memilih non-claude → ikuti
-    if (rawProvider === "claude" && process.env.ANTHROPIC_API_KEY) return "claude"; // claude dipilih + key ada
+    // ── DEBUG: Log provider detection flow ──
+    console.log("[ARA-CHAT] Provider detection:", {
+      rawProvider,
+      model,
+      hasMinimaxKey: !!process.env.MINIMAX_API_KEY,
+      hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
+      hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+      hasGroqKey: !!process.env.GROQ_API_KEY
+    });
+
+    if (rawProvider && rawProvider !== "claude") {
+      console.log(`[ARA-CHAT] Using frontend provider: ${rawProvider}`);
+      return rawProvider; // frontend memilih non-claude → ikuti
+    }
+    if (rawProvider === "claude" && process.env.ANTHROPIC_API_KEY) {
+      console.log("[ARA-CHAT] Using frontend Claude + key exists");
+      return "claude"; // claude dipilih + key ada
+    }
     // Fallback: cek env vars yang tersedia
-    if (process.env.MINIMAX_API_KEY)    return "minimax";
-    if (process.env.OPENAI_API_KEY)     return "openai";
-    if (process.env.GROQ_API_KEY)       return "groq";
-    if (process.env.ANTHROPIC_API_KEY)  return "claude";
-    return rawProvider || "minimax"; // last resort
+    if (process.env.MINIMAX_API_KEY) {
+      console.log("[ARA-CHAT] Fallback: Using Minimax (env var available)");
+      return "minimax";
+    }
+    if (process.env.OPENAI_API_KEY) {
+      console.log("[ARA-CHAT] Fallback: Using OpenAI (env var available)");
+      return "openai";
+    }
+    if (process.env.GROQ_API_KEY) {
+      console.log("[ARA-CHAT] Fallback: Using Groq (env var available)");
+      return "groq";
+    }
+    if (process.env.ANTHROPIC_API_KEY) {
+      console.log("[ARA-CHAT] Fallback: Using Claude (env var available)");
+      return "claude";
+    }
+    const lastResort = rawProvider || "minimax";
+    console.log(`[ARA-CHAT] Last resort provider: ${lastResort}`);
+    return lastResort;
   };
   const provider = detectProvider();
   if (!messages?.length) return res.status(400).json({error:"messages wajib diisi"});
