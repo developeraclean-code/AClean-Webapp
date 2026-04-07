@@ -135,22 +135,23 @@ export default async function handler(req, res) {
         return res.status(200).json({ reply: (cd.content||[]).map(c => c.text||"").join(""), model: mdl, provider: "claude" });
       }
 
-      if (prov === "gemini") {
-        const GK = process.env.GEMINI_API_KEY || process.env.LLM_API_KEY;
-        if (!GK) return res.status(500).json({ error: "GEMINI_API_KEY belum diset" });
-        const gm = model || "gemini-2.0-flash";
-        const gr = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + gm + ":generateContent?key=" + GK, {
+      if (prov === "minimax") {
+        const MK = process.env.MINIMAX_API_KEY || process.env.LLM_API_KEY;
+        if (!MK) return res.status(500).json({ error: "MINIMAX_API_KEY belum diset" });
+        const mm = model || "MiniMax-Text-01";
+        const mg = process.env.MINIMAX_GROUP_ID || "";
+        const mr = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + MK },
           body: JSON.stringify({
-            contents: messages.map(m => ({ role: m.role==="assistant"?"model":"user", parts:[{ text: typeof m.content==="string"?m.content:JSON.stringify(m.content) }]})),
-            systemInstruction: { parts:[{ text: sysP }]}, generationConfig:{ maxOutputTokens:2048 }
+            model: mm, max_tokens: 2048,
+            messages: [{ role:"system", content: sysP }, ...messages.map(m=>({ role:m.role, content:typeof m.content==="string"?m.content:JSON.stringify(m.content) }))],
+            ...(mg ? { group_id: mg } : {})
           })
         });
-        const gd = await gr.json();
-        if (!gr.ok) return res.status(502).json({ error: (gd.error&&gd.error.message)||"Gemini error" });
-        const gc = (gd.candidates||[])[0];
-        return res.status(200).json({ reply: gc?(gc.content&&gc.content.parts||[]).map(p=>p.text||"").join(""):""  , model: gm, provider: "gemini" });
+        const md = await mr.json();
+        if (!mr.ok) return res.status(502).json({ error: (md.base_resp&&md.base_resp.status_msg)||md.error?.message||"Minimax error" });
+        return res.status(200).json({ reply: md.choices?.[0]?.message?.content||"", model: mm, provider: "minimax" });
       }
 
       if (prov === "ollama") {
