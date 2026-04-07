@@ -72,8 +72,8 @@ async function taskReminder() {
       const due = new Date(Date.now()+7*86400000).toISOString().slice(0,10);
       await sb.from("invoices").update({status:"UNPAID",sent:true,due,approved_by:"CRON_AUTO",approved_at:new Date().toISOString()}).eq("id",inv.id);
       res.autoapproved++;
-      await sendWA(OWNER_PHONE,`ℹ️ Invoice *${inv.id}* (${inv.customer}) auto-approved setelah ${Math.round(hrs)}j. Total: ${fmt(inv.total)}`);
-      if (inv.phone) await sendWA(inv.phone,`Halo ${inv.customer} 😊\n\nInvoice *${inv.id}* — ${fmt(inv.total)} sudah dikirim.\nJatuh tempo: ${due}\nTransfer ke *BCA 8830883011* a.n. Malda Retta 🙏`);
+      // Hanya notif owner — pengiriman invoice ke customer = manual via frontend
+      await sendWA(OWNER_PHONE,`ℹ️ Invoice *${inv.id}* (${inv.customer}) auto-approved setelah ${Math.round(hrs)}j. Total: ${fmt(inv.total)} — kirim manual dari app.`);
     }
   }
 
