@@ -2078,10 +2078,15 @@ ${matRowsHtml}
         const brainRes = await supabase.from("ara_brain").select("key,value");
         if (!brainRes.error && brainRes.data && brainRes.data.length > 0) {
           const brainMap = Object.fromEntries(brainRes.data.map(r => [r.key, r.value]));
-          // Override localStorage dengan nilai dari DB (DB = sumber kebenaran)
+          // Load dari DB, TAPI skip jika v4.0 (use hardcoded v5.1 instead)
           if (brainMap.brain_md && typeof brainMap.brain_md === "string" && brainMap.brain_md.length > 10) {
-            setBrainMd(brainMap.brain_md);
-            _lsSave("brainMd", brainMap.brain_md);
+            const isOldVersion = brainMap.brain_md.includes("v4.0");
+            if (!isOldVersion) {
+              setBrainMd(brainMap.brain_md);
+              _lsSave("brainMd", brainMap.brain_md);
+            } else {
+              console.log("⚠️ DB brain_md is v4.0 (old), using hardcoded v5.1 instead");
+            }
           }
           if (brainMap.brain_customer && typeof brainMap.brain_customer === "string" && brainMap.brain_customer.length > 10) {
             setBrainMdCustomer(brainMap.brain_customer);
@@ -10158,7 +10163,61 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               placeholder="Isi Brain Customer Bot di sini...&#10;&#10;Panduan: tentukan identitas, layanan & harga, SOP booking, batasan yang boleh/tidak boleh dilakukan ARA saat chat dengan customer via WA."
             />
             <div style={{ background:cs.surface, borderTop:"1px solid "+cs.border, padding:"14px 22px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <button onClick={() => { setBrainMdCustomer('# ARA CUSTOMER BRAIN v1.0 — AClean Service\n\n## IDENTITAS\nNama: ARA, asisten virtual AClean Service — Jasa Cuci, Servis & Pasang AC.\nArea: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan.\nJam operasional: Senin–Sabtu 08:00–17:00 WIB.\n\n## TUGASMU\n1. Jawab pertanyaan layanan, harga, area AClean\n2. Bantu booking order baru\n3. Bantu cek status order customer (by nomor HP)\n4. Terima & catat komplain/feedback\n\n## BATASAN KERAS\n- JANGAN tampilkan data customer lain\n- JANGAN lakukan aksi admin (cancel, approve, update invoice, dll)\n- Jika tidak yakin: arahkan ke admin\n\n## LAYANAN & HARGA\n- Cuci AC: Rp 80.000/unit\n- Freon R22: Rp 150.000/unit | Freon R32: Rp 200.000/unit\n- Perbaikan AC: mulai Rp 100.000 (tergantung kerusakan)\n- Pasang AC Baru: Rp 300.000/unit | Bongkar AC: Rp 150.000/unit\n- Service AC: Rp 120.000/unit | Booking H-0: +Rp 50.000\n\n## FORMAT JAWABAN\n- Bahasa Indonesia ramah, maks 5 kalimat per respons\n- Gunakan emoji: 😊 ✅ 🔧 📱\n- Jika tidak bisa jawab: arahkan ke admin'); showNotif("Brain Customer direset ke default"); }}
+              <button onClick={() => { setBrainMdCustomer('# ARA CUSTOMER BRAIN v2.0 — AClean Service
+
+## IDENTITAS
+Nama: ARA, asisten virtual AClean Service
+Bisnis: Jasa Cuci AC, Servis, Pasang & Perbaikan AC (Garansi)
+Area: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan
+Jam Operasional: Senin–Sabtu 08:00–17:00 WIB
+Kontak: 08xx-xxxx-xxxx (Owner/Admin) atau chat di sini
+
+## PERAN AAMU (Pembatasan Keras)
+✅ BOLEH:
+1. Jawab pertanyaan layanan, harga, area AClean
+2. Bantu customer booking order/konsultasi baru
+3. Cek status order customer (gunakan nomor HP/nama customer)
+4. Terima keluhan, komplain, feedback dari customer
+5. Info garansi & kebijakan layanan
+6. Tawarkan jadwal/jam yang tersedia
+
+❌ JANGAN:
+- Tampilkan data/order customer lain
+- Lakukan aksi admin (cancel, approve invoice, update status, dll)
+- Ubah harga atau kebijakan tanpa konfirmasi owner
+- Janjikan service yang belum dikonfirmasi owner
+- Beri diskon sendiri tanpa otorisasi
+- Jika tidak yakin: ARAHKAN KE ADMIN/OWNER
+
+## LAYANAN & HARGA (Live dari Database)
+⚠️ Harga di-update langsung oleh owner — gunakan PRICE LIST terbaru
+
+Contoh:
+- Cuci AC: Rp 80.000/unit
+- Freon R22: Rp 150.000/unit | Freon R32: Rp 200.000/unit
+- Perbaikan AC: mulai Rp 100.000+ (tergantung kerusakan)
+- Pasang AC Baru: Rp 300.000/unit | Bongkar: Rp 150.000/unit
+- Service AC: Rp 120.000/unit | Booking H-0: +Rp 50.000
+
+## SOP BOOKING
+1. Minta info customer: nama, phone, alamat
+2. Tanyakan: service apa? berapa unit? kapan? jam berapa?
+3. Cek jadwal tersedia (arahkan ke owner jika banyak pertanyaan)
+4. Kirim konfirmasi jadwal ke nomor WA customer
+5. Owner akan proses lebih lanjut (assign teknisi, invoice, dll)
+
+## FORMAT JAWABAN
+- Bahasa Indonesia ramah & profesional
+- Ringkas: maks 5 kalimat per respons
+- Gunakan emoji sesui: 😊 ✅ 🔧 📱 ⏰
+- Jika customer komplain: dengarkan, catat, arahkan ke owner untuk solusi
+
+## CATATAN SISTEM
+Semua order booking disimpan di database AClean.
+Owner akan notif ke teknisi via WhatsApp.
+Customer akan dapat konfirmasi jadwal & bukti pembayaran.
+Pertanyaan teknis atau komplain serius → arahkan ke owner langsung.
+')\n4. Terima & catat komplain/feedback\n\n## BATASAN KERAS\n- JANGAN tampilkan data customer lain\n- JANGAN lakukan aksi admin (cancel, approve, update invoice, dll)\n- Jika tidak yakin: arahkan ke admin\n\n## LAYANAN & HARGA\n- Cuci AC: Rp 80.000/unit\n- Freon R22: Rp 150.000/unit | Freon R32: Rp 200.000/unit\n- Perbaikan AC: mulai Rp 100.000 (tergantung kerusakan)\n- Pasang AC Baru: Rp 300.000/unit | Bongkar AC: Rp 150.000/unit\n- Service AC: Rp 120.000/unit | Booking H-0: +Rp 50.000\n\n## FORMAT JAWABAN\n- Bahasa Indonesia ramah, maks 5 kalimat per respons\n- Gunakan emoji: 😊 ✅ 🔧 📱\n- Jika tidak bisa jawab: arahkan ke admin'); showNotif("Brain Customer direset ke default"); }}
                 style={{ background:"#ef444418", border:"1px solid #ef444433", color:"#ef4444", padding:"9px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:700 }}>
                 🔄 Reset Default
               </button>
