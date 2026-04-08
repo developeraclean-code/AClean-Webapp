@@ -7454,7 +7454,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div><span style={{color:cs.muted}}>Tanggal: </span><span style={{color:cs.text}}>{r.date}</span></div>
               <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit</span></div>
               {safeArr(r.materials).length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
-              {safeArr(r.fotos).length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
+              {(() => {const fotoCnt=(r.fotos||r.foto_urls||[]).length; return fotoCnt>0?<div><span style={{color:cs.green}}>📸 {fotoCnt} foto</span></div>:null;})()}
               {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
               {/* Summary PK + brand semua unit */}
               {(r.units||[]).length > 0 && (()=>{
@@ -7548,20 +7548,28 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               </div>
             )}
 
-            {/* ── GAP-11 FIX: Foto grid untuk Admin/Owner ── */}
-            {safeArr(r.fotos).filter(f=>f.url).length>0&&(
-              <div style={{marginBottom:8}}>
-                <div style={{fontSize:11,fontWeight:700,color:cs.green,marginBottom:6}}>📸 Foto Laporan ({safeArr(r.fotos).filter(f=>f.url).length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:6}}>
-                  {safeArr(r.fotos).filter(f=>f.url).map((f,fi)=>(
-                    <div key={fi} style={{position:"relative",cursor:"pointer"}} onClick={()=>window.open(fotoSrc(f.url),"_blank")}>
-                      <img src={fotoSrc(f.url)} alt={f.label||`Foto ${fi+1}`} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:7,border:"1px solid "+cs.border}} />
-                      <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#000a",borderRadius:"0 0 7px 7px",padding:"2px 4px",fontSize:9,color:"#fff",textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{f.label||`Foto ${fi+1}`}</div>
-                    </div>
-                  ))}
+            {/* ── Foto grid untuk Admin/Owner ── */}
+            {(() => {
+              const fotoArray = r.fotos || (r.foto_urls||[]).map((url,i)=>({id:i,label:`Foto ${i+1}`,url})) || [];
+              const fotoWithUrl = safeArr(fotoArray).filter(f=>f.url||typeof f==="string");
+              return fotoWithUrl.length > 0 ? (
+                <div style={{marginBottom:8}}>
+                  <div style={{fontSize:11,fontWeight:700,color:cs.green,marginBottom:6}}>📸 Foto Laporan ({fotoWithUrl.length})</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:6}}>
+                    {fotoWithUrl.map((f,fi)=>{
+                      const url = typeof f==="string"?f:f.url;
+                      const label = typeof f==="string"?`Foto ${fi+1}`:f.label||`Foto ${fi+1}`;
+                      return (
+                        <div key={fi} style={{position:"relative",cursor:"pointer"}} onClick={()=>window.open(fotoSrc(url),"_blank")}>
+                          <img src={fotoSrc(url)} alt={label} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:7,border:"1px solid "+cs.border}} />
+                          <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#000a",borderRadius:"0 0 7px 7px",padding:"2px 4px",fontSize:9,color:"#fff",textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{label}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              ) : null;
+            })()}
             {r.rekomendasi&&<div style={{fontSize:11,marginBottom:6}}><span style={{color:cs.muted}}>Rekomendasi: </span><span style={{color:cs.text}}>{r.rekomendasi}</span></div>}
             {r.catatan_global&&<div style={{fontSize:11,marginBottom:8}}><span style={{color:cs.muted}}>Catatan: </span><span style={{color:cs.text}}>{r.catatan_global}</span></div>}
 
