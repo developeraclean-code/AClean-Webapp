@@ -12446,6 +12446,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       total_freon:  newReport.total_freon,
       submitted_at: new Date().toISOString(),
       notes:        (newReport.catatan_global || newReport.rekomendasi || "").slice(0,500),
+      foto_urls:    laporanFotos.filter(f=>f.url).map(f=>f.url) || [],
+      fotos:        laporanFotos.map(f => ({ id: f.id, label: f.label })) || [],
     };
 
     let savedOk = false;
