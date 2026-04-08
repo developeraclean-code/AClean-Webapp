@@ -637,6 +637,116 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok:true, overdue_found:(invs||[]).length, updated, reminders_sent:sent });
     }
 
+    // ── SYNC-FOTOS: Auto-populate foto_urls from R2 files ──
+    if (route === "sync-fotos") {
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+      const SU = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (!SU || !SK) return res.status(500).json({ error: "Supabase tidak configured" });
+
+      const accessKeyId = process.env.R2_ACCESS_KEY;
+      const secretAccessKey = process.env.R2_SECRET_KEY;
+      const accountId = process.env.R2_ACCOUNT_ID;
+      const bucket = process.env.R2_BUCKET_NAME || "aclean-files";
+      if (!accessKeyId || !secretAccessKey || !accountId) {
+        return res.status(500).json({ error: "R2 credentials tidak lengkap" });
+      }
+
+      try {
+        // Step 1: Fetch laporan yang foto_urls kosong/null
+        const lapRes = await fetch(SU + "/rest/v1/service_reports?select=id,job_id,foto_urls&foto_urls=is.null,eq.{}", {
+          headers: { apikey: SK, Authorization: "Bearer " + SK }
+        });
+        const laporan = lapRes.ok ? await lapRes.json() : [];
+        console.log(`[sync-fotos] Found ${laporan.length} laporan with empty foto_urls`);
+
+        const crypto = await import("crypto");
+        const synced = [];
+        const errors = [];
+
+        // Step 2: Untuk setiap laporan, list files di R2
+        for (const lap of laporan) {
+          try {
+            const host = accountId + ".r2.cloudflarestorage.com";
+            const now = new Date();
+            const dateStr = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 8);
+            const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15) + "Z";
+            const region = "auto";
+            const service = "s3";
+            const prefix = `laporan/${lap.job_id}/`;
+            const payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+            const canonicalUri = "/" + bucket + "/";
+            const queryString = "list-type=2&prefix=" + encodeURIComponent(prefix);
+
+            const canonicalHeaders = "host:" + host + "\n" + "x-amz-content-sha256:" + payloadHash + "\n" + "x-amz-date:" + amzDate + "\n";
+            const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+            const canonicalReq = ["GET", canonicalUri, queryString, canonicalHeaders, signedHeaders, payloadHash].join("\n");
+
+            const credScope = dateStr + "/" + region + "/" + service + "/aws4_request";
+            const reqHash = crypto.createHash("sha256").update(canonicalReq).digest("hex");
+            const strToSign = ["AWS4-HMAC-SHA256", amzDate, credScope, reqHash].join("\n");
+
+            const hmac = (k, d) => crypto.createHmac("sha256", k).update(d).digest();
+            const signingKey = hmac(hmac(hmac(hmac("AWS4" + secretAccessKey, dateStr), region), service), "aws4_request");
+            const signature = crypto.createHmac("sha256", signingKey).update(strToSign).digest("hex");
+            const authorization = "AWS4-HMAC-SHA256 Credential=" + accessKeyId + "/" + credScope + ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
+
+            // Query R2 list objects
+            const r2Url = "https://" + host + "/" + bucket + "/?prefix=" + encodeURIComponent(prefix) + "&list-type=2";
+            const r2res = await fetch(r2Url, {
+              headers: { "Authorization": authorization, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash }
+            });
+
+            if (!r2res.ok) {
+              errors.push({ job_id: lap.job_id, error: "R2 list failed: " + r2res.status });
+              continue;
+            }
+
+            const xmlBody = await r2res.text();
+            // Simple XML parsing: extract <Key> tags
+            const keyRegex = /<Key>([^<]+)<\/Key>/g;
+            const matches = [...xmlBody.matchAll(keyRegex)];
+            const files = matches
+              .map(m => m[1])
+              .filter(k => k !== prefix) // Exclude folder itself
+              .map(k => k.replace(prefix, "")); // Remove prefix, keep only filename
+
+            console.log(`[sync-fotos] ${lap.job_id}: found ${files.length} files`);
+
+            // Build foto_urls array with full paths
+            const fotoUrls = files.map(f => prefix + f);
+
+            // Update database
+            const upRes = await fetch(SU + "/rest/v1/service_reports?id=eq." + lap.id, {
+              method: "PATCH",
+              headers: { apikey: SK, Authorization: "Bearer " + SK, "Content-Type": "application/json" },
+              body: JSON.stringify({ foto_urls: fotoUrls })
+            });
+
+            if (upRes.ok) {
+              synced.push({ job_id: lap.job_id, fotos: files.length });
+            } else {
+              const err = await upRes.text();
+              errors.push({ job_id: lap.job_id, error: "Update failed: " + err.slice(0, 100) });
+            }
+          } catch (e) {
+            errors.push({ job_id: lap.job_id, error: e.message });
+          }
+        }
+
+        return res.status(200).json({
+          ok: true,
+          synced: synced.length,
+          errors: errors.length,
+          details: { synced, errors }
+        });
+      } catch (err) {
+        console.error("[sync-fotos] Exception:", err.message);
+        return res.status(500).json({ error: "Sync failed: " + err.message });
+      }
+    }
+
     return res.status(404).json({ error: "Route tidak ditemukan: /api/" + route });
 
   } catch(err) {
