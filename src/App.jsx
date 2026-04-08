@@ -3104,6 +3104,44 @@ ${matRowsHtml}
     return newId;
   };
 
+  // ── Connect ARA Brain dari Supabase ──
+  const connectAraBrain = async () => {
+    setAraLoading(true);
+    try {
+      const { data: brainData } = await supabase.from("ara_brain").select("key,value");
+      const brainMap = Object.fromEntries((brainData||[]).map(row => [row.key, row.value]));
+
+      if (!brainMap.brain_md || brainMap.brain_md.length < 10) {
+        throw new Error("Brain data not found in database");
+      }
+
+      // Test connection with Minimax
+      const testPayload = {
+        provider: "minimax",
+        message: "Test koneksi brain ARA",
+        brain_md: brainMap.brain_md.slice(0, 500) // Send first 500 chars for test
+      };
+
+      const r = await fetch("/api/ara-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Internal-Token": internalToken },
+        body: JSON.stringify(testPayload)
+      });
+
+      if (!r.ok) throw new Error("Connection test failed: " + r.status);
+
+      setBrainMd(brainMap.brain_md);
+      _lsSave("brainMd", brainMap.brain_md);
+
+      showNotif("✅ ARA Brain berhasil terhubung dengan Minimax 2.5!");
+    } catch(e) {
+      console.error("[connectAraBrain]", e);
+      showNotif("❌ Gagal koneksi brain: " + e.message);
+    } finally {
+      setAraLoading(false);
+    }
+  };
+
   // ── GAP 8: ARA Chat dengan LLM + Tool Calls ──
   const sendToARA = async (userMsg) => {
     if (!userMsg.trim() || araLoading) return;
@@ -6602,6 +6640,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             <span style={{ fontSize:11, color:cs.muted }}>{araLoading?"Berpikir...":"Online"}</span>
             <button onClick={() => setAraMessages([{ role:"assistant", content:"Halo! Saya ARA 🤖 — AI Agent AClean. Ada yang bisa saya bantu?" }])}
               style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"5px 12px", borderRadius:6, cursor:"pointer", fontSize:11 }}>🗑 Reset</button>
+            <button onClick={connectAraBrain} disabled={araLoading}
+              title="Hubungkan ARA Brain dengan Minimax 2.5"
+              style={{ background:cs.ara+"18", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"5px 12px", borderRadius:6, cursor:araLoading?"not-allowed":"pointer", fontSize:11, fontWeight:700, opacity:araLoading?0.6:1 }}>🧠 Konek Brain</button>
           </div>
         </div>
         {/* Harga sync status banner */}
