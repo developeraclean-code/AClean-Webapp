@@ -2048,7 +2048,7 @@ ${matRowsHtml}
         const parseLaporan = r => ({
           ...r,
           units:     r.units_json ? safeJsonParse(r.units_json, `laporan_units_${r.id}`, r.units||[]) : (r.units||[]),
-          materials: r.materials_json ? safeJsonParse(r.materials_json, `laporan_materials_${r.id}`, r.materials||[]) : (r.materials||[]),
+          materials: r.materials_json ? safeJsonParse(r.materials_json, `laporan_materials_${r.id}`, r.materials_used||[]) : (r.materials_used||[]),
           fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:(r.fotos||[])[i]?.id||i,label:(r.fotos||[])[i]?.label||`Foto ${i+1}`,url})) : (r.fotos||[]).filter(f=>f.url),
           editLog:   safeArr(r.edit_log ?? r.editLog),
           rekomendasi:    r.rekomendasi    || "",
@@ -2361,7 +2361,7 @@ ${matRowsHtml}
                       setLaporanReports(data.map(r => ({
                         ...r,
                         units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
-                        materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials || []; } })() : (r.materials || []),
+                        materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials_used || []; } })() : (r.materials_used || []),
                         fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:(r.fotos||[])[i]?.id||i,label:(r.fotos||[])[i]?.label||`Foto ${i+1}`,url})) : (r.fotos||[]).filter(f=>f.url),
                         editLog:   safeArr(r.edit_log ?? r.editLog),
                       })));
@@ -2376,7 +2376,7 @@ ${matRowsHtml}
                   .order("submitted_at",{ascending:false}).limit(200)
                   .then(({data}) => { if(data) setLaporanReports(data.map(r => ({...r,
                     units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return [];} })() : (r.units||[]),
-                    materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return [];} })() : (r.materials||[]),
+                    materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return [];} })() : (r.materials_used||[]),
                     fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:(r.fotos||[])[i]?.id||i,label:(r.fotos||[])[i]?.label||`Foto ${i+1}`,url})) : (r.fotos||[]).filter(f=>f.url),
                     editLog:   safeArr(r.edit_log??r.editLog),
                   }))); }), 30000);
@@ -12492,17 +12492,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       submitted_at: new Date().toISOString(),
       notes:        (newReport.catatan_global || newReport.rekomendasi || "").slice(0,500),
       foto_urls:    laporanFotos.filter(f=>f.url).map(f=>f.url) || [],
-      fotos:        laporanFotos.map(f => ({ id: f.id, label: f.label, url: f.url })) || [],
+      rekomendasi:  newReport.rekomendasi || "",
+      catatan_global: newReport.catatan_global || "",
+      submitted:    new Date().toLocaleString("id-ID"),
     };
 
     let savedOk = false;
     let lastError = null;
-    { // Attempt 1: dengan materials_json & units_json
+    { // Attempt 1: dengan materials_json & units_json & units (jsonb)
       try {
         const { error: e1 } = await supabase.from("service_reports").upsert({
           ...basePayload,
           materials_json: JSON.stringify(effectiveMaterials),
           units_json:     JSON.stringify(laporanUnits),
+          units:          laporanUnits,
         }, { onConflict: "id" });
         if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
         else { lastError = e1; console.warn("❌ Attempt 1 failed:", e1.message); }
@@ -12568,8 +12571,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         setLaporanReports(data.map(r => ({
           ...r,
           units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
-          materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials || []; } })() : (r.materials || []),
-          fotos:     r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i+1}`, url })),
+          materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials_used || []; } })() : (r.materials_used || []),
+          fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:i,label:`Foto ${i+1}`,url})) : [],
           editLog:   safeArr(r.edit_log ?? r.editLog),
         })));
       }
