@@ -42,63 +42,11 @@ const CUSTOMERS_DATA = [
 
 // ── buildCustomerHistory: LIVE dari ordersData + laporanReports + invoicesData
 // Dipanggil di: renderCustomers(), laporan step-1, order detail
-// ── normalizePhone: 08xxx / +62xxx / 628xxx → 628xxx ──────────────
-const normalizePhone = (p) => {
-  if (!p) return "";
-  const d = p.toString().replace(/[\s\-().+]/g, ""); // hapus spasi, strip, plus, kurung
-  if (d.startsWith("08"))  return "62" + d.slice(1);   // 08xxx → 628xxx
-  if (d.startsWith("62"))  return d;                    // 628xxx → tetap
-  if (d.startsWith("8"))   return "62" + d;             // 8xxx → 628xxx (tanpa 0)
-  return d;
-};
-
-// samePhone: bandingkan 2 nomor, dianggap sama jika normalisasi sama
-const samePhone = (a, b) => {
-  if (!a || !b) return false;
-  return normalizePhone(a) === normalizePhone(b);
-};
-
-// sameCustomer: unik berdasarkan phone + nama lengkap (case insensitive, trim)
-// "Bapak Dedy Jelita" vs "Bapak Dedy Aruna" = BEDA meski phone sama
-const sameCustomer = (c, phone, name) => {
-  if (!c || !phone || !name) return false;
-  return samePhone(c.phone, phone) &&
-         c.name.trim().toLowerCase() === name.trim().toLowerCase();
-};
-
-// findCustomer: cari customer paling tepat — prioritas (phone+name) > phone saja
-const findCustomer = (customers, phone, name) => {
-  if (!phone && !name) return null;
-  // 1. Exact match phone + nama lengkap
-  if (phone && name) {
-    const exact = customers.find(c => sameCustomer(c, phone, name));
-    if (exact) return exact;
-  }
-  // 2. Phone sama + nama depan sama (misal "Bapak Dedy" match "Bapak Dedy Jelita")
-  if (phone && name) {
-    const firstName = name.trim().toLowerCase().split(" ").slice(0,2).join(" ");
-    const partial = customers.find(c =>
-      samePhone(c.phone, phone) &&
-      c.name.trim().toLowerCase().startsWith(firstName)
-    );
-    if (partial) return partial;
-  }
-  // 3. Phone saja (fallback — hanya jika nama tidak disediakan)
-  if (phone && !name) {
-    return customers.find(c => samePhone(c.phone, phone)) || null;
-  }
-  // 4. Nama saja (fallback terakhir)
-  if (name && !phone) {
-    return customers.find(c => c.name.trim().toLowerCase() === name.trim().toLowerCase()) || null;
-  }
-  return null;
-};
-
 const buildCustomerHistory = (customer, ordersData, laporanReports, invoicesData) => {
   if (!customer) return [];
   const nm = (s) => (s||"").trim().toLowerCase();
   const matchName  = (o) => nm(o.customer) === nm(customer.name);
-  const matchPhone = (o) => customer.phone && o.phone && samePhone(o.phone, customer.phone);
+  const matchPhone = (o) => customer.phone && o.phone && o.phone === customer.phone;
 
   return ordersData
     .filter(o => matchName(o) || matchPhone(o))
@@ -152,118 +100,48 @@ const INVOICES_DATA = [
 
 // GAP 13 — Price list untuk auto-hitung invoice dari laporan
 // ── PRICE_LIST: default fallback (akan di-override oleh DB price_list tabel) ──
-  const PRICE_LIST_DEFAULT = {
+const PRICE_LIST_DEFAULT = {
   "Cleaning": {
-    "AC Split 0.5-1PK":              85000,
-    "AC Split 1.5-2.5PK":           100000,
-    "AC Cassette 2-2.5PK":          250000,
-    "AC Cassette 3PK":              300000,
-    "AC Cassette 4PK":              400000,
-    "AC Cassette 5PK":              500000,
-    "AC Cassette 6PK":              600000,
-    "AC Standing":                  100000,
-    "AC Split Duct":                100000,
-    "Jasa Service Besar 0,5PK - 1PK":   400000,
-    "Jasa Service Besar 1,5PK - 2,5PK": 450000,
-    "default":                       85000,
+    "AC Split 0.5-1PK":   85000,
+    "AC Split 1.5-2.5PK": 100000,
+    "AC Cassette 2-2.5PK":250000,
+    "AC Cassette 3PK":    300000,
+    "AC Cassette 4PK":    350000,
+    "AC Standing":        200000,
+    "AC Duct":            400000,
+    "default":             85000,
   },
   "Install": {
-    "Pemasangan AC Baru 0,5PK - 1PK":       350000,
-    "Pemasangan AC Baru 1,5PK - 2PK":       400000,
-    "Pasang AC Split 3PK":                   450000,
-    "Bongkar Pasang AC Split 1/2 - 1PK":    500000,
-    "Bongkar Pasang AC Split 1,5 - 2,5PK":  550000,
-    "Bongkar Unit AC 0.5-1PK":               150000,
-    "Bongkar Unit AC 1.5-2.5PK":             200000,
-    "Bongkar Pasang Indoor AC":              200000,
-    "Bongkar Pasang Outdoor AC":             200000,
-    "Jasa Vacum AC 0,5PK - 2,5PK":           50000,
-    "Jasa Vacum Unit AC >3PK":               150000,
-    "Jasa Penarikan Pipa AC":                 25000,
-    "Jasa Penarikan Pipa Ruko":               35000,
-    "Pasang AC Cassette":                    900000,
-    "Pasang AC Standing":                    600000,
-    "Pemasangan AC Baru Apartemen":          350000,
-    "Jasa Instalasi Pipa AC":                200000,
-    "Jasa Instalasi Listrik":                150000,
-    "Flaring Pipa":                          100000,
-    "Flushing Pipa":                         200000,
-    "Jasa Bobok Tembok":                     150000,
-    "Jasa Pengelasan Pipa AC":               100000,
-    "Jasa Pembuatan Saluran Pembuangan":     150000,
-    "default":                               350000,
+    "Pasang AC 0.5-1PK":  500000,
+    "Pasang AC 1PK":      500000,
+    "Pasang AC 1.5-2PK":  600000,
+    "Pasang AC 2.5PK":    700000,
+    "default":            500000,
   },
   "Repair": {
-    "Biaya Pengecekan AC":                   100000,
-    "Perbaikan Hermaplex":                   150000,
-    "Jasa Pemasangan Sparepart":             250000,
-    "Perbaikan PCB/Elektrik":                250000,
-    "Pergantian Kapasitor Fan Indoor":       250000,
-    "Pergantian Sensor Indoor":              250000,
-    "Pergantian Overload Outdoor":           300000,
-    "Jasa Pemasangan Sparepart Daikin":      330000,
-    "Kapasitor AC 0.5-1.5PK":               350000,
-    "Pergantian Kapasitor Outdoor 1PK":      350000,
-    "Pergantian Modul Indoor Standart":      400000,
-    "Kapasitor AC 2-2.5PK":                  450000,
-    "Pergantian Kapasitor Outdoor 1,5-2,5PK":450000,
-    "Test Press Unit":                       450000,
-    "Jasa Pemasangan Kompresor":             500000,
-    "Pergantian Modul Indoor Inverter":      500000,
-    "Kuras Vacum + Isi Freon R32/R410":      600000,
-    "Kuras Vacum Freon R22":                 600000,
-    "default":                               100000,
+    "Pengecekan AC":       75000,
+    "Pengecekan AC Panas/Bocor": 75000,
+    "Perbaikan Freon Bocor": 150000,
+    "Perbaikan Kompresor":  250000,
+    "Perbaikan PCB/Elektrik": 175000,
+    "Ganti Kapasitor":     125000,
+    "Ganti Freon":         150000,
+    "default":              75000,
   },
   "Complain": {
-    "Garansi Servis (gratis)":          0,
-    "Komplain AC Tidak Dingin":         0,
-    "Komplain Bising/Berisik":          0,
-    "Komplain Bocor Air":               0,
-    "Komplain Garansi":                 0,
-    "Komplain Setelah Servis":          0,
-    "Pengecekan AC Gratis":             0,
-    "Pengecekan Ulang":                 0,
-    "default":                          0,
+    "Komplain AC Tidak Dingin": 50000,
+    "Komplain Bising/Berisik":  50000,
+    "Komplain Setelah Service":      0,
+    "Komplain Garansi":              0,
+    "Pengecekan Ulang":         50000,
+    "default":                       0,
   },
-  "freon_R22":   450000,
-  "freon_R410A": 450000,
-  "freon_R32":   450000,
+  "freon_R22":   150000,
+  "freon_R410A": 180000,
+  "freon_R32":   160000,
 };
 // PRICE_LIST akan di-replace oleh data DB setelah loadAll() — jangan edit langsung
 let PRICE_LIST = { ...PRICE_LIST_DEFAULT };
-// ── buildPriceListFromDB: bangun PRICE_LIST dari data DB ──
-// Menggantikan 5 loader duplikat yang tersebar di kode
-// Normalisasi: service/type key dari DB di-trim & lowercase untuk match
-const buildPriceListFromDB = (rows) => {
-  const pl = { ...PRICE_LIST_DEFAULT };
-  const active = rows.filter(r => r.is_active !== false);
-  active.forEach(row => {
-    const price = Number(row.price) || 0;
-    const notes = (row.notes || "").trim().toLowerCase();
-    const svc   = (row.service || "").trim();
-    const type  = (row.type    || "").trim();
-
-    // Freon: identifikasi via notes field
-    if (notes === "freon_r22"   || notes === "freon_r22")   { pl["freon_R22"]   = price; return; }
-    if (notes === "freon_r410a" || notes === "freon_r410")  { pl["freon_R410A"] = price; return; }
-    if (notes === "freon_r32")                               { pl["freon_R32"]   = price; return; }
-
-    // Freon via service name (kalau ada row khusus freon di price_list)
-    if (svc.toLowerCase().includes("freon")) {
-      if (svc.toLowerCase().includes("r22"))  { pl["freon_R22"]   = price; return; }
-      if (svc.toLowerCase().includes("r32"))  { pl["freon_R32"]   = price; return; }
-      if (svc.toLowerCase().includes("r410")) { pl["freon_R410A"] = price; return; }
-    }
-
-    // Service/type normal
-    if (svc) {
-      if (!pl[svc]) pl[svc] = {};
-      if (type) pl[svc][type] = price;
-    }
-  });
-  return pl;
-};
-
 
 // ── Dynamic tech color — deterministik berdasarkan hash nama ──
 const TECH_PALETTE = [
@@ -298,12 +176,18 @@ const BRAIN_MD_DEFAULT = `# ARA BRAIN v4.0 — AClean Service
 - Area Perlu Konfirmasi: Jakarta Barat, Jakarta Selatan (ongkir tambah)
 - Peran: Asisten AI eksekutif untuk Owner/Admin
 
-## LAYANAN & HARGA
-⚠️ WAJIB: Selalu gunakan harga dari seksi "PRICE LIST LIVE" yang ada di system prompt.
-Harga di-update langsung oleh Owner via UI — jangan gunakan angka lain.
-Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal)
+## LAYANAN & HARGA STANDAR
+| Layanan | Harga/unit |
+|---------|-----------|
+| Cuci AC | 80.000 |
+| Freon AC (R22) | 150.000 |
+| Freon AC (R32) | 200.000 |
+| Perbaikan AC | 100.000–500.000 (estimasi) |
+| Pasang AC Baru | 300.000 |
+| Bongkar AC | 150.000 |
+| Service AC | 120.000 |
+- Biaya dadakan (booking H-0): +50.000
 - Minimal 1 unit per order
-- Biaya dadakan (booking H-0): +Rp50.000 (tetap, bukan dari price list)
 
 ## SOP ORDER
 1. Cek jadwal teknisi sebelum assign (gunakan teknisiWorkload dari data live)
@@ -316,11 +200,6 @@ Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal)
 ## SOP INVOICE
 1. Invoice dibuat setelah laporan teknisi masuk (status SUBMITTED/COMPLETED)
 2. WAJIB gunakan action CREATE_INVOICE — jangan hitung manual
-3. CEK PEKERJAAN AKTUAL: Sebelum buat invoice, baca bizContext.laporan[].pekerjaan_aktual
-   - Jika has_service_besar = true → gunakan service_besar_type sebagai type invoice
-   - Contoh: order Cleaning AC Split 85rb TAPI laporan ada "Deep Cleaning (Service Besar)"
-     → invoice labor harus pakai "Jasa Service Besar 0,5PK - 1PK" = 400rb
-   - Selalu KONFIRMASI ke Owner sebelum apply harga berbeda dari order awal
 3. Invoice otomatis baca material + freon dari laporan → masuk ke field "material"
 4. Due date: H+3 dari tanggal selesai
 5. Kirim reminder WA jika H-1 due dan belum PAID
@@ -405,16 +284,14 @@ export default function ACleanWebApp() {
   const [loginError,    setLoginError]    = useState("");
   const [loginEmail,    setLoginEmail]    = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-
   const [modalAddUser,  setModalAddUser]  = useState(false);
   const [newUserForm,   setNewUserForm]   = useState({ name:"", email:"", role:"Admin", password:"", phone:"" });
   const [userAccounts,  setUserAccounts]  = useState([
-    { id:"USR001", name:"Malda Retta",   email:"owner@aclean.id",   role:"Owner",   phone:"6281299898937", password:"owner@2026",   avatar:"M", color:"#f59e0b", active:true, lastLogin:"-" },
-    { id:"USR002", name:"Admin AClean",  email:"admin@aclean.id",   role:"Admin",   phone:"6281200000001", password:"admin@2026",   avatar:"A", color:"#38bdf8", active:true, lastLogin:"-" },
-    { id:"USR003", name:"Mulyadi",       email:"mulyadi@aclean.id", role:"Teknisi", phone:"6288225633768", password:"mly@2026",     avatar:"Y", color:"#22c55e", active:true, lastLogin:"-" },
-    { id:"USR004", name:"Albana Niji",   email:"albana@aclean.id",  role:"Helper",  phone:"6281200000002", password:"abn@2026",     avatar:"A", color:"#a78bfa", active:true, lastLogin:"-" },
-    { id:"USR005", name:"Budi Santoso",  email:"budi@aclean.id",    role:"Teknisi", phone:"6281200000003", password:"budi@2026",    avatar:"B", color:"#22c55e", active:true, lastLogin:"-" },
-    { id:"USR006", name:"Reza Firmansyah",email:"reza@aclean.id",   role:"Teknisi", phone:"6281200000004", password:"reza@2026",    avatar:"R", color:"#22c55e", active:true, lastLogin:"-" },
+    { id:"USR001", name:"Malda Retta",  email:"owner@aclean.id",  role:"Owner",   phone:"6281299898937", avatar:"M", color:"#f59e0b", active:true,  password:"owner123",  lastLogin:"2026-03-03 08:15" },
+    { id:"USR002", name:"Admin AClean", email:"admin@aclean.id",  role:"Admin",   phone:"6281200000001", avatar:"A", color:"#38bdf8", active:true,  password:"admin123",  lastLogin:"2026-03-03 07:30" },
+    { id:"USR003", name:"Mulyadi",      email:"mulyadi@aclean.id",role:"Teknisi", phone:"6288225633768", avatar:"Y", color:"#22c55e", active:true,  password:"mly2026",   lastLogin:"2026-03-02 17:45" },
+    { id:"USR004", name:"Usaeri",       email:"usaeri@aclean.id", role:"Teknisi", phone:"6287786870189", avatar:"U", color:"#a78bfa", active:true,  password:"usr2026",   lastLogin:"2026-03-01 16:20" },
+    { id:"USR005", name:"Albana Niji",  email:"albana@aclean.id", role:"Teknisi", phone:"6287815496845", avatar:"B", color:"#34d399", active:false, password:"abn2026",   lastLogin:"2026-02-28 12:10" },
   ]);
 
   // ── Tim Teknisi state (reactive) ──
@@ -431,10 +308,7 @@ export default function ACleanWebApp() {
   // ── Orders ──
   const [orderFilter,    setOrderFilter]    = useState("Semua");
   const [searchOrder,    setSearchOrder]    = useState("");
-  const [orderTekFilter,  setOrderTekFilter]  = useState("Semua");
-  const [orderDateFrom,   setOrderDateFrom]   = useState("");
-  const [orderDateTo,     setOrderDateTo]     = useState("");
-  const [orderServiceFilter, setOrderServiceFilter] = useState("Semua"); // GAP-9
+  const [orderTekFilter, setOrderTekFilter] = useState("Semua");
   const [orderPage,      setOrderPage]      = useState(1);
   const ORDER_PAGE_SIZE = 20;
 
@@ -444,8 +318,6 @@ export default function ACleanWebApp() {
   const [invoicePage,     setInvoicePage]     = useState(1);
   const INV_PAGE_SIZE = 15;
   const [modalPDF,        setModalPDF]        = useState(false);
-  const [modalApproveInv, setModalApproveInv] = useState(false); // popup pilihan approve
-  const [pendingApproveInv, setPendingApproveInv] = useState(null); // invoice yang menunggu approve
 
   // ── Schedule ──
   const [scheduleView,   setScheduleView]   = useState("week");
@@ -459,11 +331,8 @@ export default function ACleanWebApp() {
   const [searchPriceList,  setSearchPriceList]  = useState("");
   const [priceListSvcTab, setPriceListSvcTab]  = useState("Semua");
   const [priceListData,   setPriceListData]    = useState([]);
-  const [priceListSyncedAt, setPriceListSyncedAt] = useState(null); // timestamp terakhir sync harga
   const [plEditItem,      setPlEditItem]       = useState(null);
   const [plEditForm,      setPlEditForm]       = useState({});
-  const [plAddModal,      setPlAddModal]       = useState(false);
-  const [plNewForm,       setPlNewForm]        = useState({ service:"Cleaning", type:"", code:"", price:"", unit:"unit", notes:"" });
   const [searchLaporan,   setSearchLaporan]   = useState("");
   const [laporanSvcFilter, setLaporanSvcFilter] = useState("Semua");
   const [laporanStatusFilter, setLaporanStatusFilter] = useState("Semua");
@@ -472,7 +341,29 @@ export default function ACleanWebApp() {
   const LAP_PAGE_SIZE = 10;
 
   // ── Laporan Tim ──
-  const [laporanReports,  setLaporanReports]  = useState([]);
+  const [laporanReports,  setLaporanReports]  = useState([
+    { id:"LPR001", job_id:"JOB10002", teknisi:"Usaeri", helper:null, customer:"Maria Thomson",
+      service:"Repair", date:"2026-03-01", submitted:"2026-03-01 15:30", status:"SUBMITTED",
+      total_units:1,
+      units:[{ unit_no:1, label:"Unit 1 - Ruang Tengah", tipe:"AC Split 0.5-1PK", merk:"Daikin", pk:"1PK",
+        kondisi_sebelum:["AC tidak dingin","Kapasitor rusak"], kondisi_setelah:["Normal, dingin optimal","Semua fungsi normal"],
+        pekerjaan:["Ganti kapasitor","Cek instalasi"], freon_ditambah:"0", ampere_akhir:"4.5", catatan_unit:"Kapasitor 25uF diganti" }],
+      materials:[{id:1,nama:"Kapasitor",jumlah:"1",satuan:"pcs",keterangan:"25uF"}],
+      fotos:[], rekomendasi:"Cek freon 6 bulan lagi", catatan_global:"Kapasitor sudah aus", editLog:[] },
+    { id:"LPR002", job_id:"JOB10001", teknisi:"Mulyadi", helper:"Samsul", customer:"Eddy Limanto",
+      service:"Cleaning", date:"2026-03-01", submitted:"2026-03-01 11:45", status:"VERIFIED",
+      total_units:2,
+      units:[
+        { unit_no:1, label:"Unit 1 - Kamar Utama", tipe:"AC Split 0.5-1PK", merk:"Daikin", pk:"1PK",
+          kondisi_sebelum:["AC tidak dingin","Bau tidak sedap"], kondisi_setelah:["Normal, dingin optimal","Filter bersih"],
+          pekerjaan:["Deep cleaning","Cuci filter","Semprot evaporator"], freon_ditambah:"0", ampere_akhir:"3.8", catatan_unit:"" },
+        { unit_no:2, label:"Unit 2 - Ruang Tamu", tipe:"AC Split 0.5-1PK", merk:"Panasonic", pk:"1PK",
+          kondisi_sebelum:["Bau tidak sedap"], kondisi_setelah:["Filter bersih","Semua fungsi normal"],
+          pekerjaan:["Deep cleaning","Cuci filter"], freon_ditambah:"0", ampere_akhir:"3.9", catatan_unit:"" }
+      ],
+      materials:[], fotos:[], rekomendasi:"Jadwalkan Mei 2026", catatan_global:"2 unit selesai",
+      editLog:[{ by:"Mulyadi", at:"2026-03-01 12:00", field:"catatan_global", old:"selesai", new:"2 unit selesai" }] },
+  ]);
   const [selectedLaporan, setSelectedLaporan] = useState(null);
   const [modalLaporanDetail, setModalLaporanDetail] = useState(false);
   const [editLaporanMode, setEditLaporanMode] = useState(false);
@@ -486,8 +377,6 @@ export default function ACleanWebApp() {
   // ── Modals ──
   const [modalOrder,   setModalOrder]   = useState(false);
   const [modalStok,    setModalStok]    = useState(false);
-  const [modalWaTek,   setModalWaTek]   = useState(false); // popup pilihan pesan WA teknisi ke customer
-  const [waTekTarget,  setWaTekTarget]  = useState(null);  // { phone, customer, service, time, address }
   const [modalTeknisi, setModalTeknisi] = useState(false);
   const [editTeknisi,  setEditTeknisi]  = useState(null);
   const [modalEditStok, setModalEditStok] = useState(false);
@@ -500,29 +389,17 @@ export default function ACleanWebApp() {
   const [laporanSubmitted,   setLaporanSubmitted]   = useState(false);
   const [laporanUnits,       setLaporanUnits]       = useState([]);
   const [laporanMaterials,   setLaporanMaterials]   = useState([]);
-  const [laporanJasaItems,   setLaporanJasaItems]   = useState([]);  // Jasa section A
-  const [laporanRepairItems, setLaporanRepairItems] = useState([]);  // Repair/Sparepart B
-  const [showJasaSearch,     setShowJasaSearch]     = useState(false);
-  const [jasaSearchQ,        setJasaSearchQ]        = useState("");
-  const [showRepairSearch,   setShowRepairSearch]   = useState(false);
-  const [repairSearchQ,      setRepairSearchQ]      = useState("");
-  const [showMatSearch,      setShowMatSearch]      = useState(false);
-  const [matSearchQ2,        setMatSearchQ2]        = useState("");
   const [laporanFotos,       setLaporanFotos]       = useState([]);
   const [laporanRekomendasi, setLaporanRekomendasi] = useState("");
   const [laporanCatatan,     setLaporanCatatan]     = useState("");
-  const [laporanInstallItems, setLaporanInstallItems] = useState({}); // key→qty untuk Report Install
-  const [historyPreview, setHistoryPreview] = useState(null); // customer untuk preview history
-  const [matSearchId, setMatSearchId] = useState(null); // id material yang sedang di-search
-  const [matSearchQuery, setMatSearchQuery] = useState(""); // query search per baris
   const [activeUnitIdx,      setActiveUnitIdx]      = useState(0);
   const [showMatPreset,      setShowMatPreset]      = useState(false);
   const fotoInputRef = useRef();
 
   // ── New order / stok / customer form ──
-  const [newOrderForm,     setNewOrderForm]     = useState({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
+  const [newOrderForm,     setNewOrderForm]     = useState({ customer:"", phone:"", address:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
   const [newStokForm,      setNewStokForm]      = useState({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
-  const [newTeknisiForm,   setNewTeknisiForm]   = useState({ name:"", role:"Teknisi", phone:"", skills:[], email:"", password:"", buatAkun:false });
+  const [newTeknisiForm,   setNewTeknisiForm]   = useState({ name:"", role:"Teknisi", phone:"", skills:[] });
   const [modalAddCustomer, setModalAddCustomer] = useState(false);
   const [newCustomerForm,  setNewCustomerForm]  = useState({ name:"", phone:"", address:"", area:"", notes:"", is_vip:false });
   const [customersData,    setCustomersData]    = useState(CUSTOMERS_DATA);
@@ -539,23 +416,6 @@ export default function ACleanWebApp() {
   const [modalEditInvoice, setModalEditInvoice] = useState(false);
   const [editInvoiceData,  setEditInvoiceData]  = useState(null);
   const [editInvoiceForm,  setEditInvoiceForm]  = useState({});
-  const [editInvoiceItems, setEditInvoiceItems] = useState([]); // per-item edit
-  // ── Confirm Modal (ganti window.confirm) ──
-  const [confirmModal, setConfirmModal] = useState(null);
-  // confirmModal = { title, message, icon, danger, onConfirm, onCancel, confirmText, cancelText }
-  const showConfirm = (opts) => new Promise(resolve => {
-    setConfirmModal({ ...opts,
-      onConfirm: () => { setConfirmModal(null); resolve(true);  },
-      onCancel:  () => { setConfirmModal(null); resolve(false); },
-    });
-  });
-
-  const [modalEditPwd, setModalEditPwd] = useState(false);
-  const [editPwdTarget, setEditPwdTarget] = useState(null); // {id, name}
-  const [editPwdForm, setEditPwdForm] = useState({newPwd:"", confirmPwd:""});
-  const [editAddType,  setEditAddType]  = useState(''); // 'jasa' | 'material'
-  const [editAddSearch,setEditAddSearch]= useState('');
-  const [editJasaItems, setEditJasaItems] = useState([]); // jasa items per-row
 
   // GAP 7/8 — ARA Chat state (live LLM)
   const [araPanel,         setAraPanel]         = useState(false);
@@ -572,37 +432,10 @@ export default function ACleanWebApp() {
   // GAP 7 — Reactive agent logs
   const [agentLogs,        setAgentLogs]        = useState(AGENT_LOGS);
   const addAgentLog = async (action, detail, status="SUCCESS") => {
-    const now       = new Date();
-    const timeStr   = now.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-    const createdAt = now.toISOString();
-    const userName  = currentUser?.name || "System";
-    const userId    = currentUser?.id   || null;
-    // Update local state
-    setAgentLogs(prev => [{ time:timeStr, action, detail, status,
-      user_name:userName, created_at:createdAt }, ...prev].slice(0,200));
-    // Persist ke Supabase
-    try {
-      const { error: alErr } = await supabase.from("agent_logs").insert({
-        action, detail, status,
-        time:       timeStr,
-        created_at: createdAt,
-        user_name:  userName,
-        user_id:    userId,
-      });
-      if (alErr) console.warn("agent_logs insert:", alErr.message, alErr.hint);
-    } catch(e) { console.warn("agent_logs catch:", e.message); }
+    const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+    setAgentLogs(prev => [{ time:now, action, detail, status }, ...prev].slice(0,50));
+    try { await supabase.from("agent_logs").insert({ time:now, action, detail, status }); } catch(e) {}
   };
-
-  // ── App Settings: bank, phone, nama — load dari DB tabel app_settings ──
-  const [appSettings, setAppSettings] = useState({
-    bank_name:   "BCA",
-    bank_number: "8830883011",
-    bank_holder: "Malda Retta",
-    owner_phone: "6281299898937",
-    company_name:"AClean Service",
-    company_addr:"Alam Sutera, Tangerang Selatan",
-    wa_number:   "62812-8989-8937",
-  });
 
   // ── Settings: _ls HARUS dideklarasi SEBELUM useState yang memakainya ──
   const _ls = (key, def) => {
@@ -617,16 +450,6 @@ export default function ACleanWebApp() {
   } catch { return def; }
 };
   const _lsSave = (key, val) => { try { localStorage.setItem("aclean_"+key, JSON.stringify(val)); } catch {} };
-  // SEC-02: internal token untuk API calls (dibaca dari Vite env, TIDAK disimpan di localStorage)
-  const _apiHeaders = () => ({
-    "Content-Type": "application/json",
-    ...(import.meta.env.VITE_INTERNAL_API_SECRET
-      ? { "X-Internal-Token": import.meta.env.VITE_INTERNAL_API_SECRET }
-      : {})
-  });
-  // SEC-07: brute force states — harus setelah _ls didefinisikan
-  const [loginAttempts, setLoginAttempts] = useState(() => _ls("loginAttempts", 0));
-  const [lockoutUntil,  setLockoutUntil]  = useState(() => _ls("lockoutUntil",  0));
 
   // ── Settings state ──
   const [waProvider,      setWaProvider]      = useState(() => _ls("waProvider", "fonnte"));
@@ -676,7 +499,6 @@ export default function ACleanWebApp() {
   const hariIni = todayDate.toLocaleDateString("id-ID", { weekday:"long", day:"numeric", month:"long", year:"numeric" });
   const bulanIni = todayDate.toISOString().slice(0,7); // "2026-03"
   const [weekOffset, setWeekOffset] = useState(0); // 0=minggu ini, -1=minggu lalu, +1=minggu depan
-  const [searchSchedule, setSearchSchedule] = useState(""); // BUG-4: search jadwal
 
   // ── WA Conversations reaktif ──
   const [waConversations, setWaConversations] = useState(WA_CONVERSATIONS);
@@ -704,14 +526,6 @@ export default function ACleanWebApp() {
       await Notification.requestPermission();
     }
   };
-  // GAP-7: jalankan check stuck jobs setiap 15 menit
-  const stuckCheckTimer = useRef(null);
-  const startStuckCheck = () => {
-    if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
-    stuckCheckTimer.current = setInterval(() => {
-      checkStuckJobs();
-    }, 15 * 60 * 1000); // 15 menit
-  };
   const pushNotif = (title, body, icon = "⬡") => {
     if ("Notification" in window && Notification.permission === "granted") {
       try {
@@ -724,92 +538,6 @@ export default function ACleanWebApp() {
     clearTimeout(notifTimer.current);
     notifTimer.current = setTimeout(() => setNotification(null), 3000);
     if (push) pushNotif("AClean", msg.replace(/[🔔📋✅❌⚠️💰]/g, "").trim());
-  };
-
-  // ── FORCE RELOAD PRICE LIST: dipanggil dari tombol "Sync Harga" di panel ARA ──
-  const forceReloadPriceList = async () => {
-    try {
-      const { data, error } = await supabase.from("price_list").select("*").order("service").order("type");
-      if (error) { showNotif("❌ Gagal sync harga: " + error.message); return; }
-      if (!data || data.length === 0) { showNotif("⚠️ Tabel price_list kosong di Supabase"); return; }
-      setPriceListData(data);
-      const activePL = data.filter(r => r.is_active !== false);
-      PRICE_LIST = buildPriceListFromDB(activePL);
-      setPriceListSyncedAt(new Date());
-      showNotif("✅ Harga berhasil di-sync dari Supabase (" + data.length + " item)");
-      addAgentLog("PRICELIST_SYNC", "Force reload price list: " + data.length + " item", "SUCCESS");
-    } catch(e) {
-      showNotif("❌ Error sync: " + e.message);
-    }
-  };
-
-  // ── GAP-7: Cek job stuck — kirim reminder ke teknisi jika laporan belum masuk 1 jam setelah selesai ──
-  const checkStuckJobs = async () => {
-  // ── SLA CHECK: alert jika teknisi belum ON_SITE 30 menit setelah jam booking ──
-  const now2 = new Date();
-  const slaAlerts = ordersData.filter(o => {
-    if (o.status !== "DISPATCHED" && o.status !== "CONFIRMED") return false;
-    if (!o.date || !o.time || o.date > TODAY) return false;
-    const bookingMs = (o.date && o.time ? new Date(o.date + "T" + o.time + ":00").getTime() : 0);
-    const menit30 = 30 * 60 * 1000;
-    // Sudah lebih dari 30 menit dari jam booking tapi belum ON_SITE
-    return (now2.getTime() > bookingMs + menit30) && o.date === TODAY;
-  });
-  if (slaAlerts.length > 0) {
-    slaAlerts.forEach(o => {
-      const alreadyAlerted = agentLogs.some(l =>
-        l.action === "SLA_ALERT" && (l.detail||"").includes(o.id)
-        && (Date.now() - new Date(l.created_at||0).getTime()) < 2*60*60*1000
-      );
-      if (!alreadyAlerted) {
-        addAgentLog("SLA_ALERT",
-          `⚠️ SLA: ${o.teknisi} belum konfirmasi tiba — ${o.id} ${o.customer} jam ${o.time}`,
-          "WARNING"
-        );
-        showNotif(`⚠️ SLA: ${o.teknisi} belum di lokasi ${o.customer} (booking ${o.time})`, true);
-        // Kirim WA Owner
-        const owners = [...(teknisiData||[]),...(userAccounts||[])].filter(u=>u.role==="Owner"&&u.phone);
-        const slaMsg = `⚠️ *SLA ALERT*\n📋 ${o.id}\n👤 ${o.customer}\n👷 ${o.teknisi||"-"}\n⏰ Booking: ${o.time} — belum konfirmasi tiba`;
-        owners.forEach(ow=>sendWA(ow.phone, slaMsg));
-      }
-    });
-  }
-    const nowMs = Date.now();
-    const stuckOrders = ordersData.filter(o => {
-      if (!["DISPATCHED","ON_SITE"].includes(o.status)) return false;
-      if (!o.date || !o.time_end) return false;
-      // Sudah lewat tanggal job
-      if (o.date > TODAY) return false;
-      // Hitung estimasi selesai
-      const [h, m] = (o.time_end || "17:00").split(":").map(Number);
-      const jobEndMs = (o.date && o.time_end ? new Date(o.date + "T" + o.time_end + ":00").getTime() : 0);
-      const satu_jam = 60 * 60 * 1000;
-      // Sudah lebih dari 1 jam setelah selesai
-      return nowMs > (jobEndMs + satu_jam);
-    });
-
-    for (const o of stuckOrders) {
-      // Cek apakah sudah ada laporan
-      const sudahAda = laporanReports.find(r => r.job_id === o.id);
-      if (sudahAda) continue;
-      // Cek apakah reminder sudah dikirim (pakai agent_logs)
-      const sudahReminder = agentLogs.find(l =>
-        l.action === "LAPORAN_REMINDER" && l.detail?.includes(o.id)
-      );
-      if (sudahReminder) continue;
-
-      // Kirim WA reminder ke teknisi
-      const tek = teknisiData.find(t => t.name === o.teknisi);
-      if (tek?.phone) {
-        const msg = `⏰ *Reminder Laporan*
-
-Halo ${o.teknisi}, job *${o.id}* (${o.customer} — ${o.service}) sudah selesai lebih dari 1 jam.
-
-Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
-        if (tek?.phone) sendWA(tek.phone, msg);
-      }
-      addAgentLog("LAPORAN_REMINDER", `Reminder laporan dikirim ke ${o.teknisi} — ${o.id}`, "WARNING");
-    }
   };
 
   // ── Laporan Helper Constants — sesuai standar AClean ──
@@ -880,57 +608,12 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     ],
   };
     const PEKERJAAN_OPT = (svc) => PEKERJAAN_BY_SERVICE[svc] || PEKERJAAN_BY_SERVICE["Cleaning"];
-  // ── MATERIAL_PRESET: quick-add di STEP 3 (Service/Repair/Complain) ──
   const MATERIAL_PRESET = {
-  Cleaning: [
-    {nama:"Freon R-22",              satuan:"KG"},
-    {nama:"Freon R-32",              satuan:"KG"},
-    {nama:"Freon R-410A",            satuan:"KG"},
-    {nama:"Sparepart Kapasitor Fan", satuan:"Piece"},
-    {nama:"Thermis Indoor",          satuan:"Piece"},
-  ],
-    Repair: [
-      {nama:"Freon R-22",              satuan:"KG"},
-      {nama:"Freon R-32",              satuan:"KG"},
-      {nama:"Freon R-410A",            satuan:"KG"},
-      {nama:"Sparepart Kapasitor Fan", satuan:"Piece"},
-      {nama:"Thermis Indoor",          satuan:"Piece"},
-      {nama:"Remote AC Multi",         satuan:"Unit"},
-      {nama:"REMOTE AC DAIKIN",        satuan:"Piece"},
-      {nama:"Steker Colokan",          satuan:"Piece"},
-    ],
-    Complain: [
-      {nama:"Freon R-22",              satuan:"KG"},
-      {nama:"Freon R-32",              satuan:"KG"},
-      {nama:"Freon R-410A",            satuan:"KG"},
-    ],
+    Cleaning:  ["Freon R22","Freon R410A","Filter Udara","Kompressor Oil","Pembersih Evaporator","Plastik Cuci AC"],
+    Install:   ["Pipa AC Hoda 1/4 3/8","Kabel Listrik 3x1.5","Kabel Listrik 3x2.5","Bracket Outdoor","Duct Tape","Stop Kontak","Paralon Pembuangan AC"],
+    Repair:    ["Kapasitor","Thermostat","Sensor Indoor","Freon R22","Freon R410A","Relay","PCB Module","Kipas Motor"],
+    Complain:  [],
   };
-  // ── INSTALL_ITEMS: preset form instalasi ──
-  const INSTALL_ITEMS = [
-    { key:"pasang_05_1pk",   label:"Pemasangan AC Baru 0,5PK - 1PK",      satuan:"Unit",  default:0 },
-    { key:"pasang_15_2pk",   label:"Pemasangan AC Baru 1,5PK - 2PK",      satuan:"Unit",  default:0 },
-    { key:"bongkar_05_1pk",  label:"Bongkar Unit AC 0.5-1PK",             satuan:"Unit",  default:0 },
-    { key:"bongkar_15_25pk", label:"Bongkar Unit AC 1.5-2.5PK",           satuan:"Unit",  default:0 },
-    { key:"vacum_05_25pk",   label:"Jasa Vacum AC 0,5PK - 2,5PK",         satuan:"Unit",  default:0 },
-    { key:"pipa_1pk",        label:"Pipa AC Hoda 1PK",                    satuan:"Meter", default:0 },
-    { key:"pipa_2pk",        label:"Pipa AC Hoda 2PK",                    satuan:"Meter", default:0 },
-    { key:"pipa_25pk",       label:"Pipa AC Hoda 2,5PK",                  satuan:"Meter", default:0 },
-    { key:"pipa_3pk",        label:"Pipa AC Hoda 3PK",                    satuan:"Meter", default:0 },
-    { key:"kabel_15",        label:"Kabel Eterna 3x1,5",                  satuan:"Meter", default:0 },
-    { key:"kabel_25",        label:"Kabel Eterna 3x2,5",                  satuan:"Meter", default:0 },
-    { key:"ducttape_biasa",  label:"Duct Tape Non Lem",                   satuan:"Piece", default:0 },
-    { key:"ducttape_lem",    label:"Duct Tape Lem",                       satuan:"Piece", default:0 },
-    { key:"jasa_pipa_ac",    label:"Jasa Penarikan Pipa AC",              satuan:"Meter", default:0 },
-    { key:"jasa_pipa_ruko",  label:"Jasa Penarikan Pipa Ruko",            satuan:"Meter", default:0 },
-    { key:"dinabolt",        label:"DINABOLT Set",                        satuan:"Set",   default:0 },
-    { key:"karet_mounting",  label:"KARET MOUNTING",                      satuan:"Set",   default:0 },
-    { key:"breket_outdoor",  label:"Breket Outdoor",                      satuan:"Piece", default:0 },
-  { key:"kuras_vacum_r32",  label:"Kuras Vacum + Isi Freon R32/R410", satuan:"Unit",  default:0 },
-  { key:"kuras_vacum_r22",  label:"Kuras Vacum Freon R22",            satuan:"Unit",  default:0 },
-  { key:"freon_r22",        label:"Freon R-22",                       satuan:"KG",    default:0 },
-  { key:"freon_r32",        label:"Freon R-32",                       satuan:"KG",    default:0 },
-  { key:"freon_r410",       label:"Freon R-410A",                     satuan:"KG",    default:0 },
-  ];
   const TIPE_AC_OPT = ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"];
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
 
@@ -959,226 +642,6 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     r.readAsDataURL(file);
   });
 
-  // Helper: normalize URL foto agar selalu melalui Vercel proxy (SSL aman)
-  const fotoSrc = (url) => {
-    if (!url) return "";
-    // Sudah pakai proxy → langsung
-    if (url.startsWith("/api/foto")) return url;
-    // URL r2.dev lama → convert ke proxy
-    if (url.includes(".r2.dev/")) {
-      const keyMatch = url.match(/\.r2\.dev\/(.+)$/);
-      if (keyMatch) return `/api/foto?key=${encodeURIComponent(keyMatch[1])}`;
-    }
-    // URL r2.cloudflarestorage.com lama → extract key
-    if (url.includes(".r2.cloudflarestorage.com/")) {
-      const keyMatch = url.match(/cloudflarestorage\.com\/[^/]+\/(.+)$/);
-      if (keyMatch) return `/api/foto?key=${encodeURIComponent(keyMatch[1])}`;
-    }
-    // Supabase atau lainnya → pakai langsung
-    return url;
-  };
-
-  // ── Generate & Download Invoice PDF (pakai browser print API) ──
-  const downloadInvoicePDF = (inv) => {
-    const fmt2 = (n) => "Rp " + (Number(n)||0).toLocaleString("id-ID");
-    const perUnit = inv.units > 0 ? Math.round((inv.labor||0) / inv.units) : (inv.labor||0);
-
-    // Build material rows HTML (di luar template literal agar tidak ada backtick conflict)
-  // Build material rows HTML (di luar template literal agar tidak ada backtick conflict)
-  // Parse materials_detail — bisa array (sudah parsed) atau string JSON dari DB
-  const matDetails = (() => {
-    const md = inv.materials_detail;
-    if (!md) return [];
-    if (Array.isArray(md)) return md;
-    try { return JSON.parse(md); } catch(_) { return []; }
-  })();
-  let matRowsHtml = "";
-  if (matDetails.length > 0) {
-    // Per-item: setiap material = 1 baris di tabel
-    matDetails.forEach(m => {
-      const hSatStr = m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—";
-      const subStr  = m.subtotal     > 0 ? m.subtotal.toLocaleString("id-ID")     : "—";
-      const label   = m.nama + (m.keterangan ? ' <span style="color:#64748b;font-size:10px">(' + m.keterangan + ")</span>" : "");
-      matRowsHtml +=
-        "<tr>" +
-        '<td>' + label + "</td>" +
-        '<td style="text-align:center">' + m.jumlah + " " + (m.satuan||"") + "</td>" +
-        '<td style="text-align:right;font-family:monospace">' + hSatStr + "</td>" +
-        '<td style="text-align:right;font-family:monospace;font-weight:600">' + subStr + "</td>" +
-        "</tr>";
-    });
-  } else if ((inv.material||0) > 0) {
-    // Fallback invoice lama: materials_detail belum tersimpan
-    // Tampilkan total material dalam 1 baris
-    matRowsHtml =
-      '<tr style="background:#f8fafc">' +
-      '<td style="color:#475569;font-style:italic">Material &amp; Spare Part</td>' +
-      '<td style="text-align:center;color:#94a3b8">—</td>' +
-      '<td style="text-align:right;color:#94a3b8">—</td>' +
-      '<td style="text-align:right;font-family:monospace;font-weight:600">' +
-      (inv.material||0).toLocaleString("id-ID") + "</td></tr>";
-  }
-  const html = `<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8">
-<title>Invoice ${inv.id} — AClean</title>
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: Arial, sans-serif; font-size: 12px; color: #1e293b; background: #fff; }
-  .page { width: 794px; min-height: 1123px; margin: 0 auto; padding: 40px; }
-  .header { background: #1E3A5F; border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
-  .header-top { padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; }
-  .brand { font-size: 22px; font-weight: 800; color: #fff; }
-  .brand span { color: #60a5fa; }
-  .brand-sub { font-size: 11px; color: #93c5fd; margin-top: 2px; }
-  .inv-badge { background: #2563EB; color: #fff; padding: 6px 14px; border-radius: 6px; font-family: monospace; font-weight: 800; font-size: 15px; }
-  .inv-label { font-size: 10px; color: #93c5fd; font-weight: 600; text-align: right; margin-bottom: 4px; }
-  .header-sub { background: #0f2744; padding: 8px 24px; font-size: 10px; color: #94a3b8; display: flex; gap: 24px; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-  .box { border-radius: 8px; padding: 14px 16px; }
-  .box-blue { background: #EFF6FF; }
-  .box-white { background: #fff; border: 1px solid #e2e8f0; }
-  .box-title { font-size: 10px; font-weight: 800; color: #1e40af; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
-  .row { display: flex; gap: 8px; margin-bottom: 4px; }
-  .row-label { color: #64748b; min-width: 90px; }
-  .row-val { color: #1e293b; font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12px; }
-  thead tr { background: #1E3A5F; }
-  thead th { padding: 9px 12px; text-align: left; color: #fff; font-weight: 700; font-size: 10px; }
-  tbody tr:nth-child(even) { background: #f8fafc; }
-  tbody td { padding: 9px 12px; color: #1e293b; border-bottom: 1px solid #f1f5f9; }
-  .total-row { background: #1E3A5F !important; }
-  .total-row td { color: #fff !important; font-weight: 800; font-size: 14px; border: none; }
-  .footer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-  .bank-box { background: #EFF6FF; border-radius: 8px; padding: 14px 16px; }
-  .bank-num { font-weight: 800; font-size: 16px; color: #1e293b; margin: 4px 0; }
-  .status-box { border-radius: 8px; padding: 14px 16px; }
-  .footer-note { text-align: center; padding-top: 16px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 11px; }
-  .status-paid { background: #F0FDF4; border: 1px solid #86efac; }
-  .status-unpaid { background: #FFFBEB; border: 1px solid #fde68a; }
-  .status-overdue { background: #FEF2F2; border: 1px solid #fca5a5; }
-  .garansi-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 10px 16px; margin-bottom: 16px; font-size: 11px; color: #166534; }
-  @media print {
-    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .page { padding: 20px; }
-  }
-</style>
-</head>
-<body>
-<div class="page">
-  <!-- Header -->
-  <div class="header">
-    <div class="header-top">
-      <div>
-        <div class="brand"><span>AC</span>lean Service</div>
-        <div class="brand-sub">Jasa Servis AC Profesional · Tangerang Selatan</div>
-      </div>
-      <div>
-        <div class="inv-label">INVOICE</div>
-        <div class="inv-badge">${inv.id}</div>
-      </div>
-    </div>
-    <div class="header-sub">
-      <span>📍 ${appSettings.company_addr}</span>
-      <span>📞 +62812-8989-8937</span>
-      <span>🏦 ${appSettings.bank_name} ${appSettings.bank_number} a.n. ${appSettings.bank_holder}</span>
-    </div>
-  </div>
-
-  <!-- Detail Grid -->
-  <div class="grid2">
-    <div class="box box-blue">
-      <div class="box-title">Detail Invoice</div>
-      <div class="row"><span class="row-label">Tanggal</span><span class="row-val">${inv.sent === true || inv.sent === false ? new Date().toLocaleDateString("id-ID") : (inv.sent || new Date().toLocaleDateString("id-ID"))}</span></div>
-      <div class="row"><span class="row-label">No. Invoice</span><span class="row-val">${inv.id}</span></div>
-      <div class="row"><span class="row-label">No. Order</span><span class="row-val">${inv.job_id || "—"}</span></div>
-      <div class="row"><span class="row-label">Jatuh Tempo</span><span class="row-val">${inv.due || "—"}</span></div>
-    </div>
-    <div class="box box-white">
-      <div class="box-title">Tagihan Kepada</div>
-      <div style="font-weight:700;font-size:14px;color:#1e293b;margin-bottom:6px">${inv.customer}</div>
-      <div style="color:#64748b">📱 ${inv.phone || "—"}</div>
-      <div style="color:#64748b;margin-top:4px">🔧 ${inv.service || "—"}</div>
-    </div>
-  </div>
-
-  <!-- Table -->
-  <table>
-    <thead>
-      <tr>
-        <th>Deskripsi</th>
-        <th style="text-align:center">Unit</th>
-        <th style="text-align:right">Harga/Unit</th>
-        <th style="text-align:right">Subtotal</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${(inv.labor > 0 && matDetails.length === 0) ?
-        '<tr><td>' + (inv.service || "Jasa Servis AC") + '</td>'
-        + '<td style="text-align:center">' + (inv.units || 1) + '</td>'
-        + '<td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td>'
-        + '<td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor||0).toLocaleString("id-ID") + '</td></tr>'
-      : ""}
-${matRowsHtml}
-      ${(inv.dadakan > 0) ? `<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>` : ""}
-      <tr class="total-row">
-        <td colspan="3">TOTAL TAGIHAN</td>
-        <td style="text-align:right;font-family:monospace">Rp ${(inv.total||0).toLocaleString("id-ID")}</td>
-      </tr>
-    </tbody>
-  </table>
-
-  ${inv.garansi_expires ? `<div class="garansi-box">🛡️ <strong>Garansi Servis ${inv.garansi_days || 30} Hari</strong> — berlaku sampai ${inv.garansi_expires}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</div>` : ""}
-
-  <!-- Footer -->
-  <div class="footer-grid">
-    <div class="bank-box">
-      <div class="box-title">Informasi Pembayaran</div>
-      <div style="color:#475569;font-size:11px">Transfer Bank BCA</div>
-    <div class="bank-num">${appSettings.bank_number}</div>
-    <div style="color:#475569;font-size:11px">a.n. ${appSettings.bank_holder}</div>
-      <div style="margin-top:8px;font-size:11px;color:#64748b">Kirim bukti transfer via WhatsApp ke nomor di atas</div>
-    </div>
-    <div class="status-box ${inv.status==="PAID"?"status-paid":inv.status==="OVERDUE"?"status-overdue":"status-unpaid"}">
-      <div class="box-title">Status Pembayaran</div>
-      <div style="font-weight:700;font-size:15px;color:#1e293b;margin-bottom:4px">
-        ${inv.status==="PAID" ? "✅ LUNAS" : inv.status==="OVERDUE" ? "⚠️ JATUH TEMPO" : "⏳ MENUNGGU PEMBAYARAN"}
-      </div>
-      <div style="font-size:11px;color:#64748b">Jatuh tempo: ${inv.due || "—"}</div>
-      ${inv.paid_at ? `<div style="font-size:11px;color:#16a34a;margin-top:4px">Dibayar: ${new Date(inv.paid_at).toLocaleDateString("id-ID")}</div>` : ""}
-    </div>
-  </div>
-
-  <div class="footer-note">
-    <p>Pertanyaan? Hubungi kami via WhatsApp: +62812-8989-8937</p>
-    <p style="font-style:italic;margin-top:4px;color:#94a3b8">Terima kasih telah mempercayakan perawatan AC Anda kepada ${appSettings.company_name} 🙏</p>
-  </div>
-</div>
-<script>window.onload = () => { window.print(); }</script>
-</body>
-</html>`;
-
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url  = URL.createObjectURL(blob);
-    // SEC-09: Audit log setiap kali invoice dicetak/download
-    addAgentLog("INVOICE_PRINT",
-      `Invoice ${inv.id} (${inv.customer}) dicetak oleh ${currentUser?.name || "Unknown"} — Rp${fmt(inv.total)}`,
-      "SUCCESS"
-    );
-    const win  = window.open(url, "_blank", "width=860,height=1000,scrollbars=yes");
-    if (!win) {
-      // Fallback jika popup diblokir browser
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Invoice_${inv.id}_${inv.customer.replace(/\s+/g,"_")}.html`;
-      a.click();
-      showNotif("PDF disimpan sebagai file HTML — buka lalu Ctrl+P untuk cetak");
-    } else {
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-    }
-  };
-
   const openLaporanModal = (order) => {
     // ANTI-DUPLIKAT: cek apakah sudah ada laporan untuk job ini
     const existingReport = laporanReports.find(r => r.job_id === (order._rewriteId ? order.id : order.id) && r.status !== "PENDING");
@@ -1198,22 +661,7 @@ ${matRowsHtml}
     const count = Math.min(order.units||1, 10);
     setLaporanUnits(Array.from({length:count},(_,i)=>mkUnit(i+1)));
     setLaporanMaterials([]);
-    setLaporanJasaItems([]);
-    setLaporanRepairItems([]);
-    setShowJasaSearch(false);  setJasaSearchQ("");
-    setShowRepairSearch(false); setRepairSearchQ("");
-    setShowMatSearch(false);   setMatSearchQ2("");
     setLaporanFotos([]);
-  // Auto-fill install items berdasarkan jumlah unit order
-  const _installDefaults = {};
-  if (order.service === "Install") {
-    const _u = Math.min(order.units||1, 10);
-    // Auto-fill pasang AC berdasarkan jumlah unit
-    _installDefaults.pasang_05_1pk  = String(_u);
-    _installDefaults.vacum_unit = String(_u);
-    _installDefaults.vacum_unit = String(_u);
-  }
-  setLaporanInstallItems(_installDefaults);
     setLaporanRekomendasi("");
     setLaporanCatatan("");
     setActiveUnitIdx(0);
@@ -1224,16 +672,6 @@ ${matRowsHtml}
   };
   const doLogin = async (email, pass) => {
     setLoginError("");
-
-    // ── SEC-07: Cek lockout brute force ──
-    const _now = Date.now();
-    const _lockout = _ls("lockoutUntil", 0);
-    if (_lockout > _now) {
-      const sisa = Math.ceil((_lockout - _now) / 1000);
-      setLoginError(`⛔ Terlalu banyak percobaan. Coba lagi dalam ${sisa} detik.`);
-      return;
-    }
-
     try {
       // ── Coba Supabase Auth dulu (untuk akun real dengan UUID) ──
       const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
@@ -1246,18 +684,13 @@ ${matRowsHtml}
           setLoginError("Akun tidak aktif. Hubungi Owner.");
           await supabase.auth.signOut(); return;
         }
-        // SEC-08: Tambah expiry 8 jam ke session
-        const userObj = { ...data.user, ...profile, _exp: Date.now() + 8*60*60*1000 };
+        const userObj = { ...data.user, ...profile };
         setCurrentUser(userObj);
         setIsLoggedIn(true);
         setActiveRole(profile.role.toLowerCase());
         setActiveMenu("dashboard");
         _lsSave("localSession", userObj);
-        // SEC-07: Reset counter setelah login berhasil
-        setLoginAttempts(0); setLockoutUntil(0);
-        _lsSave("loginAttempts", 0); _lsSave("lockoutUntil", 0);
         showNotif("Selamat datang, " + profile.name + "!");
-        addAgentLog("LOGIN", `${profile.name} (${profile.role}) login via Supabase Auth`, "SUCCESS");
         requestPushPermission();
         return;
       }
@@ -1267,34 +700,19 @@ ${matRowsHtml}
         u.email.toLowerCase() === email.toLowerCase() && u.password === pass && u.active !== false
       );
       if (localUser) {
-        // SEC-08: Tambah expiry 8 jam ke session
-        const userObj = { ...localUser, id: localUser.id, _exp: Date.now() + 8*60*60*1000 };
+        const userObj = { ...localUser, id: localUser.id };
         setCurrentUser(userObj);
         setIsLoggedIn(true);
         setActiveRole(localUser.role.toLowerCase());
         setActiveMenu("dashboard");
+        // Simpan session lokal agar tidak hilang saat refresh
         _lsSave("localSession", userObj);
-        // SEC-07: Reset counter
-        setLoginAttempts(0); setLockoutUntil(0);
-        _lsSave("loginAttempts", 0); _lsSave("lockoutUntil", 0);
         showNotif("Selamat datang, " + localUser.name + "! (mode lokal)");
-          addAgentLog("LOGIN", `${localUser.name} (${localUser.role}) login lokal`, "SUCCESS");
         requestPushPermission();
         return;
       }
 
-      // SEC-07: increment attempt counter
-      const newAttempts = loginAttempts + 1;
-      setLoginAttempts(newAttempts);
-      _lsSave("loginAttempts", newAttempts);
-      if (newAttempts >= 5) {
-        const lockUntil = Date.now() + 5 * 60 * 1000; // 5 menit
-        setLockoutUntil(lockUntil);
-        _lsSave("lockoutUntil", lockUntil);
-        setLoginError("⛔ 5 percobaan gagal. Akun dikunci 5 menit.");
-      } else {
-        setLoginError(`Email atau password salah. (${newAttempts}/5 percobaan)`);
-      }
+      setLoginError("Email atau password salah, atau akun tidak aktif.");
     } catch (err) {
       setLoginError("Terjadi kesalahan: " + err.message);
     }
@@ -1303,7 +721,6 @@ ${matRowsHtml}
   const doLogout = async () => {
     await supabase.auth.signOut();
     _lsSave("localSession", null);
-    addAgentLog("LOGOUT", `${currentUser?.name||"User"} (${currentUser?.role||""}) keluar`, "SUCCESS");
     setIsLoggedIn(false);
     setCurrentUser(null);
     setLoginEmail("");
@@ -1331,7 +748,7 @@ ${matRowsHtml}
     }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
     if (role === "Teknisi" || role === "Helper")
-    return menu === "dashboard" || menu === "schedule" || menu === "myreport";
+      return menu === "dashboard" || menu === "schedule" || menu === "myreport";
     return false;
   };
 
@@ -1378,17 +795,10 @@ ${matRowsHtml}
       // 1. Coba restore dari localStorage dulu (akun lokal/demo) — tidak butuh auth
       const saved = _ls("localSession", null);
       if (saved && saved.id && saved.role) {
-        // SEC-08: Cek expiry session — auto logout setelah 8 jam
-        if (saved._exp && Date.now() > saved._exp) {
-          _lsSave("localSession", null);
-          console.warn("SEC-08: Session expired, auto-logout");
-          // jatuh ke Supabase auth check
-        } else {
-          setCurrentUser(saved);
-          setIsLoggedIn(true);
-          setActiveRole(saved.role.toLowerCase());
-          return;
-        }
+        setCurrentUser(saved);
+        setIsLoggedIn(true);
+        setActiveRole(saved.role.toLowerCase());
+        return; // sudah restore, skip Supabase auth check
       }
       // 2. Fallback: Supabase Auth session (akun real) — wrapped try/catch agar tidak spam 400
       try {
@@ -1420,7 +830,7 @@ ${matRowsHtml}
         supabase.from("customers").select("*").order("name"),
         supabase.from("inventory").select("*").order("code"),
         supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }),
-        supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(50),
+        supabase.from("agent_logs").select("*").order("time", { ascending: false }).limit(50),
       ]);
       // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
       // Jika error = fallback ke demo data yang sudah di-init
@@ -1430,17 +840,6 @@ ${matRowsHtml}
       // [G1 FIXED] laporan load handled below by parseLaporan block
       if (!inventoryRes.error && inventoryRes.data) setInventoryData(inventoryRes.data);
       // Load laporan — single clean parse, always run (even empty = clear demo data)
-      // Parse materials_detail JSON di invoices
-      if (!invoicesRes.error && invoicesRes.data) {
-        setInvoicesData(invoicesRes.data.map(inv => ({
-          ...inv,
-          materials_detail: (() => {
-            if (!inv.materials_detail) return [];
-            if (Array.isArray(inv.materials_detail)) return inv.materials_detail;
-            try { return JSON.parse(inv.materials_detail); } catch(_) { return []; }
-          })(),
-        })));
-      }
       if (!laporanRes.error && laporanRes.data) {
         const parseLaporan = r => ({
           ...r,
@@ -1476,21 +875,6 @@ ${matRowsHtml}
           // ── FIXED: selalu sync dari DB (override localStorage jika DB punya nilai) ──
           if (sMap.llm_provider) setLlmProvider(sMap.llm_provider);
           if (sMap.llm_model)    setLlmModel(sMap.llm_model);
-        // Load bank & phone settings dari DB
-        if (sMap.bank_number) setAppSettings(prev=>({...prev,
-          bank_name:   sMap.bank_name   || prev.bank_name,
-          bank_number: sMap.bank_number || prev.bank_number,
-          bank_holder: sMap.bank_holder || prev.bank_holder,
-          owner_phone: sMap.owner_phone || prev.owner_phone,
-          company_name:sMap.company_name|| prev.company_name,
-          company_addr:sMap.company_addr|| prev.company_addr,
-          wa_number:   sMap.wa_number   || prev.wa_number,
-        }));
-        if (sMap.cron_jobs) {
-          try { const s=JSON.parse(sMap.cron_jobs);
-            if(Array.isArray(s)&&s.length>0) setCronJobs(s);
-          } catch(e){}
-        }
           // Sync apiKey sesuai provider dari DB
           if (sMap.llm_provider) {
             const dbProv = sMap.llm_provider;
@@ -1522,26 +906,6 @@ ${matRowsHtml}
         }
       } catch(e) { console.warn("Load teknisi failed:", e); }
 
-      // Load Owner & Admin → userAccounts (dari user_profiles yang sama)
-      try {
-        const uaRes = await supabase.from("user_profiles").select("*")
-          .in("role",["Owner","Admin","owner","admin"]).order("name");
-        if (!uaRes.error && uaRes.data && uaRes.data.length > 0) {
-          const roleColors = { owner:"#f59e0b", admin:"#38bdf8" };
-          const normalized = uaRes.data.map(u => ({
-            ...u,
-            role: (u.role||"").charAt(0).toUpperCase() + (u.role||"").slice(1).toLowerCase(),
-            color: u.color || roleColors[(u.role||"").toLowerCase()] || "#94a3b8",
-            avatar: u.avatar || (u.name||"").charAt(0).toUpperCase(),
-            active: u.active !== false,
-            lastLogin: u.last_login
-              ? new Date(u.last_login).toLocaleString("id-ID",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})
-              : "-",
-          }));
-          setUserAccounts(normalized);
-        }
-      } catch(e) { console.warn("Load userAccounts failed:", e); }
-
       // Load WA conversations dari Supabase (tabel opsional)
       try {
         const waRes = await supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false }).limit(50);
@@ -1556,38 +920,22 @@ ${matRowsHtml}
           setPriceListData(plRes.data);
           // Build PRICE_LIST map untuk kalkulasi invoice
           const activePL = plRes.data.filter(r => r.is_active !== false);
-          PRICE_LIST = buildPriceListFromDB(activePL);
-          setPriceListSyncedAt(new Date());
+          const newPL = { ...PRICE_LIST_DEFAULT };
+          activePL.forEach(row => {
+            if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
+            if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
+            if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
+            if (!newPL[row.service]) newPL[row.service] = {};
+            newPL[row.service][row.type] = Number(row.price) || 0;
+          });
+          PRICE_LIST = newPL;
           console.log("✅ PRICE_LIST loaded from DB:", plRes.data.length, "rows");
         }
       } catch(e) { console.warn("price_list DB fallback to default:", e?.message); }
-
-      // ── BRAIN LOAD: Baca brain.md & brain_customer dari Supabase ara_brain ──
-      try {
-        const brainRes = await supabase.from("ara_brain").select("key,value");
-        if (!brainRes.error && brainRes.data && brainRes.data.length > 0) {
-          const brainMap = Object.fromEntries(brainRes.data.map(r => [r.key, r.value]));
-          // Override localStorage dengan nilai dari DB (DB = sumber kebenaran)
-          if (brainMap.brain_md && typeof brainMap.brain_md === "string" && brainMap.brain_md.length > 10) {
-            setBrainMd(brainMap.brain_md);
-            _lsSave("brainMd", brainMap.brain_md);
-          }
-          if (brainMap.brain_customer && typeof brainMap.brain_customer === "string" && brainMap.brain_customer.length > 10) {
-            setBrainMdCustomer(brainMap.brain_customer);
-            _lsSave("brainMdCustomer", brainMap.brain_customer);
-          }
-          console.log("✅ ARA Brain loaded from Supabase — sync ke semua device");
-        }
-      } catch(e) { console.warn("ara_brain DB load failed, pakai localStorage:", e?.message); }
     };
 
     setDataLoading(true);
-    loadAll().finally(() => {
-      setDataLoading(false);
-      // GAP-7: Jalankan check stuck jobs segera setelah data load, lalu setiap 15 menit
-      setTimeout(() => checkStuckJobs(), 5000); // delay 5 detik agar state ready
-      startStuckCheck();
-    });
+    loadAll().finally(() => setDataLoading(false));
 
     // ── GAP-08 FIX: Auto-refresh data setiap 30 menit ──
     const _statsTimer = setInterval(() => {
@@ -1599,188 +947,108 @@ ${matRowsHtml}
       loadAll().catch(e => console.warn("Auto-refresh error:", e));
     }, 30 * 60 * 1000); // 30 menit
 
-          // ══ Supabase Realtime Channels ══
-          // Hanya 4 channel kritis (Supabase free tier: max concurrent realtime)
-          // WA tables (wa_conversations, wa_messages) di-skip jika tidak ada
+    // Realtime — data update otomatis di semua device
+    // ── SIM-7 FIX: debounce timer agar realtime tidak flood query ──
+    const _rtDebounce = {};
+    const rtDebounced = (key, fn, delay=600) => {
+      clearTimeout(_rtDebounce[key]);
+      _rtDebounce[key] = setTimeout(fn, delay);
+    };
 
-          const _rtDebounce = {};
-          const rtDebounced = (key, fn, delay=800) => {
-            clearTimeout(_rtDebounce[key]);
-            _rtDebounce[key] = setTimeout(fn, delay);
-          };
-
-          // CH1: Orders — kritis
-          const ch1 = supabase.channel("rt-orders")
-            .on("postgres_changes", { event:"*", schema:"public", table:"orders" }, () =>
-              rtDebounced("orders", () =>
-                supabase.from("orders").select("*").order("date",{ascending:false}).limit(500)
-                  .then(({data}) => { if(data) setOrdersData(data); })
-              ))
-            .subscribe((status) => {
-              if (status === "SUBSCRIBED") console.log("✅ RT orders connected");
-              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT orders error — akan polling manual");
-            });
-
-          // CH2: Invoices — kritis
-          const ch2 = supabase.channel("rt-invoices")
-            .on("postgres_changes", { event:"*", schema:"public", table:"invoices" }, () =>
-              rtDebounced("invoices", () =>
-                supabase.from("invoices").select("*").order("created_at",{ascending:false}).limit(300)
-                  .then(({data}) => { if(data) setInvoicesData(data.map(inv => ({
-                    ...inv,
-                    materials_detail: (() => {
-                      const md = inv.materials_detail;
-                      if (!md) return [];
-                      if (Array.isArray(md)) return md;
-                      try { return JSON.parse(md); } catch(_){ return []; }
-                    })()
-                  }))); })
-              ))
-            .subscribe((status) => {
-              if (status === "CHANNEL_ERROR") {
-                console.warn("⚠️ RT invoices error — fallback polling aktif");
-                // Polling manual setiap 30 detik
-                if (window._rtPoll_1617) clearInterval(window._rtPoll_1617);
-                window._rtPoll_1617 = setInterval(() => supabase.from("invoices").select("*")
-                  .order("created_at",{ascending:false}).limit(300)
-                  .then(({data}) => { if(data) setInvoicesData(data.map(inv => ({...inv,
-                    materials_detail: (() => { const md=inv.materials_detail; if(!md) return []; if(Array.isArray(md)) return md; try{return JSON.parse(md);}catch(_){return [];} })()
-                  }))); }), 30000);
+    const ch1 = supabase.channel("rt-orders")
+      .on("postgres_changes", { event:"*", schema:"public", table:"orders" }, () =>
+        rtDebounced("orders", () =>
+          supabase.from("orders").select("*").order("date",{ascending:false}).limit(500)
+            .then(({data}) => {
+              if(data) {
+                setOrdersData(data);
+                pushNotif("AClean — Order Update", "Ada perubahan status order");
               }
-            });
+            })
+        ))
+      .subscribe();
+    const ch2 = supabase.channel("rt-invoices")
+      .on("postgres_changes", { event:"*", schema:"public", table:"invoices" }, () =>
+        rtDebounced("invoices", () =>
+          supabase.from("invoices").select("*").order("created_at",{ascending:false}).limit(300)
+            .then(({data}) => { if(data) setInvoicesData(data); })
+        ))
+      .subscribe();
+    const ch3 = supabase.channel("rt-inventory")
+      .on("postgres_changes", { event:"*", schema:"public", table:"inventory" }, () =>
+        supabase.from("inventory").select("*").order("code")
+          .then(({data}) => { if(data) setInventoryData(data); }))
+      .subscribe();
+    const ch4 = supabase.channel("rt-customers")
+      .on("postgres_changes", { event:"*", schema:"public", table:"customers" }, () =>
+        supabase.from("customers").select("*").order("name")
+          .then(({data}) => { if(data) setCustomersData(data); }))
+      .subscribe();
+    const ch5 = supabase.channel("rt-laporan")
+      .on("postgres_changes", { event:"*", schema:"public", table:"service_reports" }, () =>
+        rtDebounced("laporan", () =>
+        supabase.from("service_reports").select("*").order("submitted_at",{ascending:false}).limit(200)
+          .then(({data}) => {
+            if (data && data.length > 0) {
+              pushNotif("AClean — Laporan Masuk", "Teknisi baru submit laporan");
+              setLaporanReports(data.map(r => ({
+                ...r,
+                units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){return r.units    ||[];} })() : (r.units    ||[]),
+                materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })() : (r.materials||[]),
+                fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
+                editLog:   safeArr(r.edit_log ?? r.editLog),
+              })));
+            }
+          })))
+      .subscribe();
 
-          // CH3: Laporan teknisi — kritis
-          const ch3 = supabase.channel("rt-laporan")
-            .on("postgres_changes", { event:"*", schema:"public", table:"service_reports" }, () =>
-              rtDebounced("laporan", () =>
-                supabase.from("service_reports").select("*").order("submitted_at",{ascending:false}).limit(200)
-                  .then(({data}) => {
-                    if (data && data.length > 0) {
-                      setLaporanReports(data.map(r => ({
-                        ...r,
-                        units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
-                        materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials || []; } })() : (r.materials || []),
-                        fotos:     r.fotos || (r.foto_urls||[]).map((u,idx)=>({id:idx,label:`Foto ${idx+1}`,url:u})),
-                        editLog:   safeArr(r.edit_log ?? r.editLog),
-                      })));
-                    }
-                  })
-              ))
-            .subscribe((status) => {
-              if (status === "CHANNEL_ERROR") {
-                console.warn("⚠️ RT laporan error — fallback polling aktif");
-                if (window._rtPoll_1645) clearInterval(window._rtPoll_1645);
-                window._rtPoll_1645 = setInterval(() => supabase.from("service_reports").select("*")
-                  .order("submitted_at",{ascending:false}).limit(200)
-                  .then(({data}) => { if(data) setLaporanReports(data.map(r => ({...r,
-                    units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return [];} })() : (r.units||[]),
-                    materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return [];} })() : (r.materials||[]),
-                    fotos:     r.fotos||(r.foto_urls||[]).map((u,idx)=>({id:idx,label:`Foto ${idx+1}`,url:u})),
-                    editLog:   safeArr(r.edit_log??r.editLog),
-                  }))); }), 30000);
-              }
-            });
+    // WA Conversations realtime
+    const ch6 = supabase.channel("rt-wa-conv")
+      .on("postgres_changes", { event:"*", schema:"public", table:"wa_conversations" }, () =>
+        supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
+          .then(({data}) => { if(data) setWaConversations(data); }))
+      .subscribe();
 
-          // CH4: Price list — kritis untuk ARA
-          const ch4 = supabase.channel("rt-pricelist")
-            .on("postgres_changes", { event:"*", schema:"public", table:"price_list" }, () =>
-              rtDebounced("pricelist", () =>
-                supabase.from("price_list").select("*").order("service").order("type")
-                  .then(({data}) => {
-                    if (data) {
-                      setPriceListData(data);
-                      const activePL = data.filter(r => r.is_active !== false);
-                      PRICE_LIST = buildPriceListFromDB(activePL);
-                      setPriceListSyncedAt(new Date());
-                    }
-                  })
-              ))
-            .subscribe((status) => {
-              if (status === "CHANNEL_ERROR") {
-                console.warn("⚠️ RT pricelist error — fallback polling aktif");
-                if (window._rtPoll_1673) clearInterval(window._rtPoll_1673);
-                window._rtPoll_1673 = setInterval(() => supabase.from("price_list").select("*")
-                  .order("service").order("type")
-                  .then(({data}) => { if(data) {
-                    setPriceListData(data);
-                    PRICE_LIST = buildPriceListFromDB(data.filter(r=>r.is_active!==false));
-                  }}), 60000);
-              }
-            });
-
-          // CH5: Inventory — polling manual lebih aman (tidak perlu realtime ketat)
-          const ch5 = supabase.channel("rt-inventory")
-            .on("postgres_changes", { event:"*", schema:"public", table:"inventory" }, () =>
-              rtDebounced("inventory", () =>
-                supabase.from("inventory").select("*").order("code")
-                  .then(({data}) => { if(data) setInventoryData(data); })
-              ))
-            .subscribe((status) => {
-              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT inventory error — skip");
-            });
-
-          // CH6: Customers
-          const ch6 = supabase.channel("rt-customers")
-            .on("postgres_changes", { event:"*", schema:"public", table:"customers" }, () =>
-              rtDebounced("customers", () =>
-                supabase.from("customers").select("*").order("name")
-                  .then(({data}) => { if(data) setCustomersData(data); })
-              ))
-            .subscribe((status) => {
-              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT customers error — skip");
-            });
-
-          // CH7 & CH8: WA tables — opsional, skip gracefully jika tabel tidak ada
-          let ch7 = null, ch8 = null;
-          try {
-            ch7 = supabase.channel("rt-wa-conv")
-              .on("postgres_changes", { event:"*", schema:"public", table:"wa_conversations" }, () =>
-                supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
-                  .then(({data, error}) => { if(data && !error) setWaConversations(data); }))
-              .subscribe((status) => {
-                if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
-              });
-
-            ch8 = supabase.channel("rt-wa-msg")
-              .on("postgres_changes", { event:"INSERT", schema:"public", table:"wa_messages" }, (payload) => {
-                setWaMessages(prev => {
-                  if (prev.length === 0) return prev;
-                  const phone = payload.new?.phone;
-                  if (!phone) return prev;
-                  if (prev[0]?.phone === phone) return [...prev, payload.new];
-                  return prev;
-                });
-                supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
-                  .then(({data, error}) => { if(data && !error) setWaConversations(data); });
-              })
-              .subscribe((status) => {
-                if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_messages — tabel mungkin belum ada");
-              });
-          } catch(e) {
-            console.warn("WA realtime channels skip:", e?.message);
+    // WA Messages realtime — reload history saat ada pesan baru
+    const ch7 = supabase.channel("rt-wa-msg")
+      .on("postgres_changes", { event:"INSERT", schema:"public", table:"wa_messages" }, (payload) => {
+        // Reload messages jika phone = selectedConv yang sedang dibuka
+        setWaMessages(prev => {
+          if (prev.length === 0) return prev; // tidak ada conv aktif
+          const phone = payload.new?.phone;
+          if (!phone) return prev;
+          // Append message baru jika milik conv yang sedang dibuka
+          if (prev[0]?.phone === phone || (prev.length > 0 && prev[0].phone === phone)) {
+            return [...prev, payload.new];
           }
+          return prev;
+        });
+        // Juga reload wa_conversations untuk update last_message
+        supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
+          .then(({data}) => { if(data) setWaConversations(data); });
+      })
+      .subscribe();
 
-          return () => {
-            clearInterval(_statsTimer);
-            if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
-            [ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8].forEach(ch => {
-              try { if(ch) supabase.removeChannel(ch); } catch(_) {}
-            });
-          };
+    return () => {
+    const ch8 = supabase.channel("rt-pricelist")
+      .on("postgres_changes", { event:"*", schema:"public", table:"price_list" }, () =>
+        rtDebounced("pricelist", () =>
+          supabase.from("price_list").select("*").order("service").order("type")
+            .then(({data}) => { if(data) setPriceListData(data); })
+        ))
+      .subscribe();
+
+      clearInterval(_statsTimer);
+      supabase.removeChannel(ch1);
+      supabase.removeChannel(ch2);
+      supabase.removeChannel(ch3);
+      supabase.removeChannel(ch4);
+      supabase.removeChannel(ch5);
+      supabase.removeChannel(ch6);
+      supabase.removeChannel(ch7);
+      supabase.removeChannel(ch8);
+    };
   }, [isLoggedIn]);
-  // ── Helper: parse materials_detail JSON safely ──
-  // Nama prefix yang menandakan item adalah JASA (bukan material)
-  const jasaSvcNames = ["Cleaning /","Install /","Repair /","Complain /","Jasa ","Pemasangan ","Bongkar ","Vacum ","Flaring","Flushing"];
-
-  const parseMD = (md) => {
-    if (!md) return [];
-    if (Array.isArray(md)) return md;
-    if (typeof md === "string" && md) {
-      try { return JSON.parse(md); } catch(e) { return []; }
-    }
-    return [];
-  };
-
   // ── Colors ──
   const cs = {
     bg:      "#0a0f1e",
@@ -1828,52 +1096,23 @@ ${matRowsHtml}
   // ── Helpers ──
   // ── WA: kirim via Fonnte backend, fallback wa.me ──
   const sendWA = async (phone, message) => {
-    if (!phone || !message) {
-      console.warn("sendWA skip: phone/message kosong", {phone, message: message?.slice(0,30)});
-      return false;
-    }
+    if (!phone) return false;
     try {
       const r = await fetch("/api/send-wa", {
-        method:"POST", headers:_apiHeaders(),
+        method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({phone, message})
       });
-      const d = await r.json().catch(()=>({}));
+      const d = await r.json();
       if (r.ok && d.success) return true;
-      // Log error detail — informasi berguna untuk debugging
-      const errMsg = d.error || d.detail || String(r.status);
-      console.warn("sendWA failed:", errMsg, "| target:", phone);
-      // Tampilkan notif hanya untuk error kritis (bukan quota/device)
-      if (errMsg.includes("FONNTE_TOKEN") || errMsg.includes("belum diset")) {
-        showNotif("⚠️ WA tidak terkirim: FONNTE_TOKEN belum diset di Vercel");
-      } else if (errMsg.includes("offline") || errMsg.includes("device")) {
-        showNotif("⚠️ WA tidak terkirim: Device Fonnte offline — scan ulang QR");
-      }
-      return false;
-    } catch(err) {
-      console.warn("sendWA error:", err.message);
-      return false;
-    }
+    } catch(_) {}
+    // Fallback: buka wa.me manual (jika FONNTE_TOKEN belum diset)
+    window.open("https://wa.me/"+phone+"?text="+encodeURIComponent(message),"_blank");
+    return false;
   };
 
-  const openWA = async (phone, msg) => {
-    if (!phone) { showNotif("❌ Nomor HP tidak tersedia"); return; }
-    // Normalisasi nomor — pastikan format 628xxx
-    const normPhone = String(phone).replace(/^0/, "62").replace(/[^0-9]/g, "");
-    if (msg) {
-      // Coba kirim via Fonnte dulu
-      const sent = await sendWA(normPhone, msg);
-      if (sent) {
-        showNotif("✅ Pesan WA terkirim ke " + normPhone);
-      } else {
-        // Fonnte gagal → fallback buka wa.me agar teknisi tetap bisa kirim manual
-        showNotif("⚠️ Kirim otomatis gagal — membuka WhatsApp manual...");
-        const waUrl = "https://wa.me/" + normPhone + "?text=" + encodeURIComponent(msg);
-        window.open(waUrl, "_blank");
-      }
-    } else {
-      // Tidak ada pesan — langsung buka wa.me
-      window.open("https://wa.me/" + normPhone, "_blank");
-    }
+  const openWA = (phone, msg) => {
+    if (msg) sendWA(phone, msg);
+    else window.open("https://wa.me/"+phone,"_blank");
   };
 
   // ── Dispatch: update status saja (tanpa WA) ──
@@ -1894,26 +1133,53 @@ ${matRowsHtml}
   const sendDispatchWA = async (order) => {
     const tek = teknisiData.find(t => t.name === order.teknisi);
     if (!tek?.phone) return showNotif("⚠️ No. HP teknisi tidak ditemukan");
-    const msg = "DISPATCH JOB "+order.id+"\nCustomer: "+order.customer+"\nAlamat: "+order.address+"\nService: "+order.service+" - "+order.units+" unit\nJadwal: "+order.date+" jam "+order.time+(order.time_end?" - "+order.time_end:"")+"\n\nSegera konfirmasi kehadiran. — AClean";
+    const msg = `📋 *DISPATCH JOB ${order.id}*
+👤 Customer: *${order.customer}*
+📍 Alamat: ${order.address}
+🔧 Service: ${order.service} — ${order.units} unit
+📅 Jadwal: ${order.date} jam ${order.time}${order.time_end?"–"+order.time_end:""}
+
+Segera konfirmasi kehadiran. — AClean`;
     const ok = await sendWA(tek.phone, msg);
     if (order.helper) {
       const helperData = teknisiData.find(t => t.name === order.helper);
       if (helperData?.phone) {
-        const helperMsg = "ASSIST JOB "+order.id+"\nCustomer: "+order.customer+"\nAlamat: "+order.address+"\nService: "+order.service+" - "+order.units+" unit\nJadwal: "+order.date+" jam "+order.time+"\nTeknisi: "+order.teknisi+"\n\nKamu ditugaskan sebagai Helper. — AClean";
+        const helperMsg = `📋 *ASSIST JOB ${order.id}*
+👤 Customer: *${order.customer}*
+📍 Alamat: ${order.address}
+🔧 Service: ${order.service} — ${order.units} unit
+📅 Jadwal: ${order.date} jam ${order.time}
+👷 Teknisi: ${order.teknisi}
+
+Kamu ditugaskan sebagai Helper. — AClean`;
         await sendWA(helperData.phone, helperMsg);
       }
     }
     if (ok) {
-      try {
-        await supabase.from("dispatch_logs").insert({
-          order_id: order.id, teknisi: order.teknisi,
-          assigned_by_name: currentUser?.name||"",
-          wa_message: msg, status:"SENT"
-        });
-      } catch(e) { /* dispatch_logs opsional */ }
+      await supabase.from("dispatch_logs").insert({
+        order_id: order.id, teknisi: order.teknisi,
+        assigned_by_name: currentUser?.name||"",
+        wa_message: msg, status:"SENT"
+      }).catch(()=>{});
       addAgentLog("DISPATCH_WA_SENT", `WA dispatch ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
       showNotif(`✅ WA Dispatch terkirim ke ${order.teknisi}${order.helper?" + "+order.helper:""}`);
-      // WA ke customer TIDAK dikirim saat dispatch — teknisi belum tentu langsung berangkat
+      // ── GAP-12 FIX: Auto WA ke Customer — teknisi sedang dalam perjalanan ──
+      if (order.phone) {
+        const custDispatchMsg = `Halo ${order.customer} 👋
+
+Teknisi *${order.teknisi}* dari AClean sedang dalam perjalanan menuju lokasi Anda.
+
+📋 Job: ${order.id}
+🔧 Service: ${order.service} — ${order.units} unit
+📅 Jadwal: ${order.date} jam ${order.time}
+
+Estimasi tiba ±30 menit. Mohon pastikan ada di lokasi ya! 🙏
+
+_AClean Service_`;
+        sendWA(order.phone, custDispatchMsg).then(custOk => {
+          if(custOk) addAgentLog("CUST_NOTIF_DISPATCH", `WA on-the-way ke customer ${order.customer}`, "SUCCESS");
+        });
+      }
     } else {
       showNotif("📱 WA dibuka manual di browser");
     }
@@ -1926,15 +1192,12 @@ ${matRowsHtml}
   };
 
   const invoiceReminderWA = (inv) => {
-  if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
     const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
     sendWA(inv.phone, msg);
   };
 
   // ── GAP 2: Hitung labor dari price list ──
   const hitungLabor = (service, type, units) => {
-    const plItem = priceListData.find(r => r.service === service && r.type === type);
-    if (plItem && plItem.price > 0) return plItem.price * (units || 1);
     const svcMap = PRICE_LIST[service] || PRICE_LIST["Cleaning"];
     const hargaPerUnit = svcMap[type] || svcMap["default"] || 85000;
     return hargaPerUnit * (units || 1);
@@ -1942,55 +1205,17 @@ ${matRowsHtml}
 
   const hitungMaterialTotal = (materials) => {
     return materials.reduce((sum, m) => {
-      const raw  = (m.nama||"").toLowerCase().trim();
-      const norm = raw
-        .replace(/,/g, ".")         
-        .replace(/eterna\s*/g, "")  
-        .replace(/[-\s]/g, "")      
-        .replace(/r410a?$/, "r410") 
-        .replace(/r22a?$/,  "r22")
-        .replace(/r32a?$/,  "r32");
-      const isJasaItem = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama||"").trim());
-      // 1. Cari di inventory (skip jasa)
-      const invItem = isJasaItem ? null : inventoryData.find(inv => {
-        const n = inv.name.toLowerCase()
-          .replace(/,/g, ".").replace(/eterna\s*/g, "")
-          .replace(/[-\s]/g, "").replace(/r410a?$/, "r410")
-          .replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
-        if (n === norm) return true;
-        if (norm.length > 6 && n.includes(norm)) return true;
-        if (n.length > 6 && norm.includes(n)) return true;
-        return false;
-      });
-      let harga = invItem ? invItem.price : 0;
-      // 2. Fallback ke PRICE_LIST (semua service: Install, Material, Repair, dll)
-      if (!harga) {
-        const mNama = m.nama || "";
-        for (const svc of ["Repair","Install","Material","Cleaning","Complain"]) {
-          if (PRICE_LIST[svc] && PRICE_LIST[svc][mNama]) {
-            harga = PRICE_LIST[svc][mNama];
-            break;
-          }
-        }
-      }
-      // 2b. Fallback priceListData DB exact
-      if (!harga) {
-        const plIt = priceListData.find(r => r.type && r.type.trim() === (m.nama||"").trim());
-        if (plIt) harga = plIt.price || 0;
-      }
-      // 3. Fallback freon spesifik — skip jika isJasaItem
-      if (!harga && !isJasaItem) {
-        if      (raw.includes("r-22")||raw.includes("r22"))  harga = PRICE_LIST["freon_R22"]   || 450000;
-        else if (raw.includes("r-32")||raw.includes("r32"))  harga = PRICE_LIST["freon_R32"]   || 450000;
-        else if (raw.includes("r-410")||raw.includes("r410")) harga = PRICE_LIST["freon_R410A"] || 450000;
-      }
+      const invItem = inventoryData.find(i =>
+        i.name.toLowerCase().includes(m.nama.toLowerCase()) ||
+        m.nama.toLowerCase().includes(i.name.toLowerCase())
+      );
+      const harga = invItem ? invItem.price : 0;
       return sum + (harga * (parseFloat(m.jumlah) || 0));
     }, 0);
   };
 
   // ── GAP 3: Approve invoice (real state mutation) ──
-  // ── Approve invoice (core) — tanpa kirim WA ──
-  const approveInvoiceCore = async (inv) => {
+  const approveInvoice = async (inv) => {
     const today = new Date().toISOString().slice(0,10);
     const due = new Date(Date.now() + 14*24*60*60*1000).toISOString().slice(0,10);
     const approvedAt = new Date().toISOString();
@@ -2004,7 +1229,7 @@ ${matRowsHtml}
     // Update invoice — try full, fallback minimal
     {
       const {error:apErr} = await supabase.from("invoices").update({
-        status:"UNPAID", sent:true, due,
+        status:"UNPAID", sent:today, due,
         approved_by: currentUser?.name || null,
         approved_at: approvedAt,
       }).eq("id", inv.id);
@@ -2025,31 +1250,10 @@ ${matRowsHtml}
         await supabase.from("orders").update({ status:"COMPLETED" }).eq("id", inv.job_id);
       }
     }
-    addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} approve oleh ${currentUser?.name||"—"} — ${inv.customer} ${fmt(inv.total)}`, "SUCCESS");
-    return due; // kembalikan due date untuk dipakai caller
-  };
-
-  // ── approveInvoice: buka popup pilihan (Kirim ke Customer / Simpan Dahulu) ──
-  const approveInvoice = (inv) => {
-    setPendingApproveInv(inv);
-    setModalApproveInv(true);
-  };
-
-  // ── Approve + kirim WA ke customer ──
-  const approveAndSend = async (inv) => {
-    const due = await approveInvoiceCore(inv);
     const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service||"Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
-    const sent = await sendWA(inv.phone, waMsg);
-    if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}`);
-    else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
-    setModalApproveInv(false); setPendingApproveInv(null);
-  };
-
-  // ── Approve saja tanpa kirim WA ──
-  const approveSaveOnly = async (inv) => {
-    await approveInvoiceCore(inv);
-    showNotif(`✅ Invoice ${inv.id} diapprove — belum dikirim ke customer`);
-    setModalApproveInv(false); setPendingApproveInv(null);
+    sendWA(inv.phone, waMsg);
+    addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} approve oleh ${currentUser?.name||"—"} — ${inv.customer} ${fmt(inv.total)}`, "SUCCESS");
+    showNotif(`✅ Invoice ${inv.id} diapprove & dikirim ke ${inv.customer}`);
   };
 
   // ── GAP 1.6: Mark Paid → simpan ke payments table ──
@@ -2071,18 +1275,25 @@ ${matRowsHtml}
 
     // Notif WA ke customer — hanya jika admin/owner menyetujui (sendCustNotif=true)
     const shouldNotif = sendCustNotif === true ||
-      (sendCustNotif === null && await showConfirm({
-        icon:"📱", title:"Kirim Notif WA?",
-        message:"Kirim konfirmasi WA ke "+inv.customer+"?",
-        confirmText:"Kirim WA"
-      }));
+      (sendCustNotif === null && window.confirm(
+        `Kirim konfirmasi pembayaran ke WhatsApp customer?
+
+${inv.customer} — Rp ${(inv.total||0).toLocaleString("id-ID")}`
+      ));
     if (shouldNotif && inv.phone) {
       sendWA(inv.phone,
-        "Pembayaran invoice "+inv.id+" Rp "+(inv.total||0).toLocaleString("id-ID")+" diterima. Terima kasih telah menggunakan AClean Service!"
+        `✅ *Pembayaran Diterima!*
+
+Yth. ${inv.customer},
+
+Pembayaran untuk invoice *${inv.id}* sebesar *Rp ${(inv.total||0).toLocaleString("id-ID")}* telah kami terima dan dikonfirmasi.
+
+Terima kasih telah menggunakan layanan *AClean Service* 🙏
+
+_Simpan pesan ini sebagai bukti pelunasan._`
       );
     }
     // GAP 1.6: Catat ke payments table untuk history + partial payment support
-    try {
     await supabase.from("payments").insert({
       invoice_id: inv.id,
       amount: inv.total,
@@ -2092,7 +1303,7 @@ ${matRowsHtml}
       verified: true,
       verified_by: currentUser?.id || null,
       verified_at: paidAt,
-    }); } catch(e) { console.warn("payments insert skip:", e?.message); }
+    }).catch(()=>{});
     // Update customer last_service
     if (inv.phone) await supabase.from("customers").update({last_service:paidAt.slice(0,10)}).eq("phone",inv.phone);
     addAgentLog("PAYMENT_CONFIRMED", `Invoice ${inv.id} LUNAS — ${inv.customer} ${fmt(inv.total)} via ${method}`, "SUCCESS");
@@ -2120,8 +1331,7 @@ ${matRowsHtml}
       // Update local state
       setInventoryData(prev => prev.map(i => i.code === item.code ? {...i, stock:newStock, status:newStatus} : i));
       // Insert transaksi ke DB (trigger Supabase akan update stock otomatis)
-    try {
-    await supabase.from("inventory_transactions").insert({
+      await supabase.from("inventory_transactions").insert({
         inventory_code: item.code,
         inventory_name: item.name,
         order_id: orderId || null,
@@ -2131,7 +1341,7 @@ ${matRowsHtml}
         notes: mat.keterangan || "",
         created_by: currentUser?.id || null,
         created_by_name: currentUser?.name || "",
-    }); } catch(e) { console.warn("inv tx skip:", e?.message); }
+      }).catch(e => console.warn("inv tx:", e.message));
       if (newStatus === "CRITICAL" || newStatus === "OUT") {
         addAgentLog("STOCK_ALERT", `${item.name}: ${newStatus} (sisa ${newStock} ${item.unit})`, "WARNING");
       }
@@ -2140,175 +1350,69 @@ ${matRowsHtml}
 
   // ── GAP 9: Create order (real state mutation) ──
   const createOrder = async (form) => {
-    // GAP-1&2: DB-level conflict check (real-time, anti race condition)
+    // G3 FIX: Hard conflict check — block overbooking even if 2 admin input simultaneously
     if (form.teknisi && form.date && form.time) {
-      const dbCheck = await cekTeknisiAvailableDB(form.teknisi, form.date, form.time, form.service, form.units);
-      if (!dbCheck.ok) {
-        showNotif("⚠️ " + (dbCheck.reason || form.teknisi + " tidak tersedia di jam tersebut"));
+      const isAvail = cekTeknisiAvailable(form.teknisi, form.date, form.time, form.service, form.units);
+      if (!isAvail) {
+        showNotif("⚠️ " + form.teknisi + " sudah ada job di jam " + form.time + " tanggal " + form.date + ". Pilih jam lain.");
         return null;
       }
     }
     // GAP 4: ID aman — timestamp ms + random 3 digit, tidak bergantung array.length
     const newId = "JOB" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
     const timeEnd = hitungJamSelesai(form.time||"09:00", form.service||"Cleaning", form.units||1);
-    // Cek customer existing by phone ATAU name (untuk customer_id)
-    const preExistCust = findCustomer(customersData, form.phone, form.customer);
     const newOrder = {
       id:newId,
-      customer: form.customer, phone: normalizePhone(form.phone), address: form.address,
-      customer_id: preExistCust?.id || null,
+      customer: form.customer, phone: form.phone, address: form.address,
+      customer_id: customersData.find(c=>c.name===form.customer)?.id || null,
       service: form.service, type: form.type, units: parseInt(form.units)||1,
       teknisi: form.teknisi, helper: form.helper||null,
       date: form.date, time: form.time, time_end: timeEnd, status:"CONFIRMED",
       invoice_id:null, dispatch:false, notes:form.notes||""
     };
     setOrdersData(prev => [...prev, newOrder]);
-
-    // ── Fallback insert: coba full → minimal ──
-    let orderSaved = false;
-
-    // Attempt 1: full payload
-    { const { error: e1 } = await supabase.from("orders").insert(newOrder);
-      if (!e1) { orderSaved = true; console.log("✅ Order saved full:", newOrder.id); }
-      else console.warn("❌ A1 full:", e1.message, "| hint:", e1.hint, "| detail:", e1.details); }
-
-    // Attempt 2: kolom aman saja
-    if (!orderSaved) {
-      const safe2 = {
-        id: newOrder.id, date: newOrder.date, status: newOrder.status,
-        service: newOrder.service, units: newOrder.units,
-        customer: newOrder.customer, teknisi: newOrder.teknisi,
-        helper: newOrder.helper, time: newOrder.time, time_end: newOrder.time_end,
-        customer_id: newOrder.customer_id,
-      };
-      const { error: e2 } = await supabase.from("orders").insert(safe2);
-      if (!e2) { orderSaved = true; console.log("✅ Order saved safe2:", newOrder.id); }
-      else console.warn("❌ A2 safe:", e2.message, "| hint:", e2.hint); }
-
-    // Attempt 3: hanya id + date + service + units + status
-    if (!orderSaved) {
-      const minimal = { id: newOrder.id, date: newOrder.date,
-        service: newOrder.service, units: newOrder.units, status: newOrder.status };
-      const { error: e3 } = await supabase.from("orders").insert(minimal);
-      if (!e3) { orderSaved = true; console.log("✅ Order saved minimal:", newOrder.id); }
-      else {
-        console.error("❌ A3 minimal:", e3.message, "| hint:", e3.hint, "| detail:", e3.details);
-        showNotif("❌ Gagal simpan order: " + e3.message + (e3.hint ? " — " + e3.hint : ""));
-        return null;
-      }
-    }
-    if (!orderSaved) return null;
+    const { error } = await supabase.from("orders").insert(newOrder);
+  // ── GAP-06: parent_job_id tersimpan di newOrder jika diisi di form ──
+    if (error) { showNotif("❌ Gagal simpan order: " + error.message); return null; }
 
     // GAP 1.5: Simpan ke technician_schedule untuk cegah double booking
     if (form.teknisi && form.date && form.time && timeEnd) {
-      // Insert ke technician_schedule — field minimal agar kompatibel berbagai schema
-      try {
-        const schedPayload = {
-          order_id:  newId,
-          teknisi:   form.teknisi,
-          date:      form.date,
-          time_start: form.time||"09:00",
-          time_end:   timeEnd,
-          status:    "ACTIVE",
-        };
-        const { error: se } = await supabase.from("technician_schedule").insert(schedPayload);
-        if (se) console.error("technician_schedule 400:", se.message, "|", se.hint, "|", se.details, "| payload:", JSON.stringify(schedPayload));
-      } catch(e) { /* technician_schedule opsional */ }
+      const tek = teknisiData.find(t => t.name === form.teknisi);
+      if (tek?.id) {
+        const [h1,m1] = (form.time||"09:00").split(":");
+        const [h2,m2] = (timeEnd||"17:00").split(":");
+        await supabase.from("technician_schedule").insert({
+          teknisi_id: tek.id,
+          teknisi: form.teknisi,
+          order_id: newId,
+          date: form.date,
+          start_time: `${h1}:${m1}:00`,
+          end_time: `${h2}:${m2}:00`,
+          status: "ACTIVE"
+        }).catch(e => addAgentLog("SCHEDULE_WARNING", `Schedule insert: ${e.message}`, "WARNING"));
+      }
     }
 
     addAgentLog("ORDER_CREATED", `Order baru ${newId} — ${form.customer} (${form.service} ${form.units} unit)`, "SUCCESS");
+    showNotif(`✅ Order ${newId} berhasil dibuat! Klik 📤 di daftar order untuk kirim WA ke teknisi.`);
 
-    // ── AUTO-DISPATCH: Owner/Admin buat order → langsung dispatch ke teknisi ──
-    // Teknisi tidak perlu menunggu tombol dispatch manual
-    if (form.teknisi && (currentUser?.role === "Owner" || currentUser?.role === "Admin")) {
-      // Update status ke DISPATCHED dulu
-      setOrdersData(prev => prev.map(o =>
-        o.id === newId ? { ...o, status: "DISPATCHED", dispatch: true, dispatch_at: new Date().toISOString() } : o
-      ));
-      await supabase.from("orders").update({
-        status: "DISPATCHED", dispatch: true, dispatch_at: new Date().toISOString()
-      }).eq("id", newId);
+    // Dispatch WA tidak lagi otomatis — gunakan tombol 📤 di daftar order
 
-      // Kirim WA ke teknisi (dan helper jika ada) + customer
-      await sendDispatchWA(newOrder);
-      showNotif(`✅ Order ${newId} dibuat & WA dispatch dikirim ke ${form.teknisi}!`);
-      addAgentLog("AUTO_DISPATCH", `Auto-dispatch ${newId} → ${form.teknisi}`, "SUCCESS");
-    } else {
-      showNotif(`✅ Order ${newId} berhasil dibuat!`);
-    }
-
-    // (komentar lama dihapus)
-
-    // ── AUTO-SAVE CUSTOMER: tambah/update customer saat order dibuat ──
+    // GAP 5: Auto-upsert customer jika nomor HP baru
     if (form.phone && form.customer) {
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const orderDate = form.date || todayStr;
-      const existing = findCustomer(customersData, form.phone, form.customer);
-
+      const existing = customersData.find(c => c.phone === form.phone);
       if (!existing) {
-        // ── Customer BARU ──
-        if (!form.phone || form.phone.trim().length < 5) {
-          // Phone kosong — skip insert, hanya log
-          addAgentLog("CUSTOMER_SKIP", "Customer " + form.customer + " tidak disimpan: no HP kosong", "WARNING");
-        } else {
-          const insertPayload = {
-            name:         form.customer.trim(),
-            phone:        normalizePhone(form.phone),
-            address:      (form.address || "").trim(),
-            area:         (form.area    || "").trim(),
-            notes:        "",
-            is_vip:       false,
-            total_orders: 1,
-            joined_date:  orderDate,
-            last_service: orderDate,
-          };
-          const { data: savedCust, error: custErr } = await supabase
-            .from("customers")
-            .insert(insertPayload)
-            .select()
-            .single();
-
-          if (custErr) {
-            // Fallback: upsert jika insert gagal (misal phone sudah ada di DB tapi belum di state)
-            const { data: upsertedCust, error: upsertErr } = await supabase
-              .from("customers")
-              .upsert(insertPayload, { onConflict: "phone", ignoreDuplicates: false })
-              .select()
-              .single();
-            if (upsertErr) {
-              addAgentLog("CUSTOMER_SAVE_ERROR",
-                "Gagal simpan customer " + form.customer + ": " + custErr.message, "ERROR");
-              showNotif("⚠️ Customer gagal ke DB: " + custErr.message + " — tambah manual di menu Customer");
-              setCustomersData(prev => [...prev, { ...insertPayload, id: "CUST_LOCAL_" + Date.now() }]);
-            } else {
-              const c2 = upsertedCust || { ...insertPayload, id: "CUST_" + Date.now() };
-              setCustomersData(prev => [...prev, c2]);
-              addAgentLog("CUSTOMER_AUTO_ADDED", "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
-              showNotif("✅ Order + Customer baru " + form.customer + " tersimpan!");
-            }
-          } else {
-            const c1 = savedCust || { ...insertPayload, id: "CUST_" + Date.now() };
-            setCustomersData(prev => [...prev, c1]);
-            addAgentLog("CUSTOMER_AUTO_ADDED", "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
-            showNotif("✅ Order + Customer baru " + form.customer + " tersimpan ke database!");
-          }
-        }
-      } else {
-        // ── Customer EXISTING: update total_orders & last_service ──
-        const updatedOrders = (existing.total_orders || 0) + 1;
-        setCustomersData(prev => prev.map(c =>
-          sameCustomer(c, form.phone, form.customer)
-            ? { ...c, total_orders: updatedOrders, last_service: orderDate }
-            : c
-        ));
-        try {
-          await supabase.from("customers")
-            .update({ total_orders: updatedOrders, last_service: orderDate })
-            .eq("phone", normalizePhone(form.phone))
-            .eq("name", form.customer.trim());
-        } catch(e) {
-          addAgentLog("CUSTOMER_UPDATE_WARN", "Gagal update total_orders: " + (e?.message||""), "WARNING");
-        }
+        const newCust = {
+          id: "CUST" + Date.now(),
+          name: form.customer, phone: form.phone,
+          address: form.address||"", area: form.area||"",
+          total_orders: 1, joined: form.date, last_service: form.date
+        };
+        setCustomersData(prev => [...prev, newCust]);
+        await supabase.from("customers").upsert(
+          {name:form.customer, phone:form.phone, address:form.address||"", area:form.area||""},
+          {onConflict:"phone", ignoreDuplicates:false}
+        ).catch(()=>{});
       }
     }
     return newId;
@@ -2328,19 +1432,10 @@ ${matRowsHtml}
     const bizContext = {
       today: TODAY,
       orders:    ordersData.map(o=>({id:o.id,customer:o.customer,service:o.service,type:o.type,units:o.units,status:o.status,date:o.date,time:o.time,teknisi:o.teknisi,helper:o.helper,dispatch:o.dispatch,invoice_id:o.invoice_id})),
-      invoices:  invoicesData.map(i=>({id:i.id,customer:i.customer,phone:i.phone,total:i.total,status:i.status,due:i.due,labor:i.labor,material:i.material,dadakan:i.dadakan,materials_detail:(i.materials_detail||[]).map(m=>({nama:m.nama,jumlah:m.jumlah,satuan:m.satuan,harga_satuan:m.harga_satuan,subtotal:m.subtotal}))})),
+      invoices:  invoicesData.map(i=>({id:i.id,customer:i.customer,phone:i.phone,total:i.total,status:i.status,due:i.due,labor:i.labor,material:i.material,dadakan:i.dadakan})),
       inventory: inventoryData.map(i=>({code:i.code,name:i.name,stock:i.stock,unit:i.unit,status:i.status,price:i.price,reorder:i.reorder})),
       customers: customersData.map(c=>({id:c.id,name:c.name,phone:c.phone,area:c.area,total_orders:c.total_orders,is_vip:c.is_vip})),
-      laporan: laporanReports.map(r=>({
-        id:r.id, job_id:r.job_id, teknisi:r.teknisi, customer:r.customer,
-        service:r.service, status:r.status, date:r.date, submitted:r.submitted,
-        is_install: r.service==="Install",
-        pekerjaan_aktual: (r.units||[]).flatMap(u=>u.pekerjaan||[]),
-        has_service_besar: (r.units||[]).some(u=>(u.pekerjaan||[]).some(p=>p.toLowerCase().includes("besar")||p.toLowerCase().includes("deep"))),
-        service_besar_type: (r.units||[]).some(u=>(u.pekerjaan||[]).some(p=>p.toLowerCase().includes("besar")||p.toLowerCase().includes("deep"))) ? (r.total_units > 1 ? "Jasa Service Besar 1,5PK - 2,5PK" : "Jasa Service Besar 0,5PK - 1PK") : null,
-        materials: (r.materials||[]).map(m=>({nama:m.nama,jumlah:m.jumlah,satuan:m.satuan})),
-        total_units: r.total_units||0,
-      })),
+      laporan: laporanReports.map(r=>({id:r.id,job_id:r.job_id,teknisi:r.teknisi,customer:r.customer,service:r.service,status:r.status,date:r.date,submitted:r.submitted})),
       laporanPending: laporanReports.filter(r=>r.status==="SUBMITTED").length,
       laporanRevisi:  laporanReports.filter(r=>r.status==="REVISION").length,
       teknisiWorkload: teknisiData.filter(t=>t.role==="Teknisi"||t.role==="teknisi").map(t=>({
@@ -2385,30 +1480,6 @@ ${matRowsHtml}
         totalUnpaid: invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").reduce((a,b)=>a+(b.total||0),0),
         stokKritis: inventoryData.filter(i=>i.status==="OUT"||i.status==="CRITICAL").map(i=>i.name),
       },
-      // ── PRICE LIST LIVE: baca dari priceListData (React state — reactive) ──
-      // priceListData di-update setiap kali ada perubahan di Supabase via realtime
-      hargaLayanan: (() => {
-        const src = priceListData.filter(r => r.is_active !== false);
-        if (src.length === 0) {
-          // Fallback ke PRICE_LIST var jika state belum load
-          const rows = [];
-          Object.entries(PRICE_LIST).forEach(([svc, types]) => {
-            if (typeof types === "object" && !Array.isArray(types)) {
-              Object.entries(types).forEach(([tipe, harga]) => {
-                if (tipe !== "default") rows.push({ service: svc, type: tipe, harga, formatted: "Rp" + Number(harga).toLocaleString("id-ID") });
-              });
-            }
-          });
-          return rows;
-        }
-        return src.map(r => ({
-          service: r.service,
-          type: r.type,
-          harga: Number(r.price)||0,
-          formatted: "Rp" + Number(r.price||0).toLocaleString("id-ID"),
-          notes: r.notes||null,
-        }));
-      })(),
     };
 
     try {
@@ -2416,7 +1487,7 @@ ${matRowsHtml}
 
       // ── Coba backend proxy dulu (API key aman di server) ──
       const backendRes = await fetch("/api/ara-chat", {
-        method:"POST", headers:_apiHeaders(),
+        method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
           messages: newMessages.map(m=>({role:m.role, content:m.content})),
           bizContext, brainMd, provider:llmProvider, model:llmModel, ollamaUrl,
@@ -2441,7 +1512,7 @@ ${matRowsHtml}
       } else if (!backendRes && (llmApiKey || llmProvider === "ollama")) {
         // ── Fallback HANYA jika /api/ara-chat tidak tersedia (localhost dev) ──
         // Di production Vercel: proxy selalu ada, API key AMAN di server
-        const sysP = (typeof brainMd==="string"?brainMd:BRAIN_MD_DEFAULT)+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000} (field: labor/material/dadakan/notes. Detail material ada di invoices[].materials_detail)\\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"material","value":200000} (ubah total material)\\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}
+        const sysP = (typeof brainMd==="string"?brainMd:BRAIN_MD_DEFAULT)+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}
 - {"type":"CREATE_INVOICE","order_id":"ORD-xxx"}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
 
         if (llmProvider === "ollama") {
@@ -2733,32 +1804,28 @@ ${matRowsHtml}
 
             // ── Auto-upsert customer (new vs existing detection) ──
             if (newOrd.phone && newOrd.customer) {
-              const existingCust = findCustomer(customersData, newOrd.phone, newOrd.customer);
+              const existingCust = customersData.find(c => c.phone === newOrd.phone || c.name === newOrd.customer);
               if (!existingCust) {
                 const newCust = {
                   id: "CUST" + Date.now(),
                   name: newOrd.customer, phone: newOrd.phone,
                   address: newOrd.address || "", area: "",
-                  total_orders: 1, joined_date: newOrd.date, last_service: newOrd.date, is_vip: false
+                  total_orders: 1, joined: newOrd.date, last_service: newOrd.date, is_vip: false
                 };
                 setCustomersData(prev => [...prev, newCust]);
-                try {
-                  await supabase.from("customers").upsert(
-                    { name: newOrd.customer, phone: newOrd.phone, address: newOrd.address||"", joined_date: newOrd.date },
-                    { onConflict: "phone", ignoreDuplicates: false }
-                  );
-                } catch(e) { console.warn("Customer upsert:", e?.message); }
+                await supabase.from("customers").upsert(
+                  { name: newOrd.customer, phone: newOrd.phone, address: newOrd.address||"", joined: newOrd.date },
+                  { onConflict: "phone", ignoreDuplicates: false }
+                ).catch(e => console.warn("Customer upsert:", e.message));
                 ar += "\n👤 *Customer baru ditambahkan: " + newOrd.customer + "*";
               } else {
                 // Update total_orders untuk customer existing
                 setCustomersData(prev => prev.map(c =>
-                  sameCustomer(c, newOrd.phone, newOrd.customer) ? { ...c, total_orders: (c.total_orders||0)+1, last_service: newOrd.date } : c
+                  c.phone === newOrd.phone ? { ...c, total_orders: (c.total_orders||0)+1, last_service: newOrd.date } : c
                 ));
-                try {
-                  await supabase.from("customers").update({
-                    total_orders: (existingCust.total_orders||0)+1, last_service: newOrd.date
-                  }).eq("phone", newOrd.phone);
-                } catch(e) { console.warn("Customer update skip:", e?.message); }
+                await supabase.from("customers").update({
+                  total_orders: (existingCust.total_orders||0)+1, last_service: newOrd.date
+                }).eq("phone", newOrd.phone).catch(()=>{});
                 ar += "\n👤 *Customer existing: " + newOrd.customer + " (order ke-" + ((existingCust.total_orders||0)+1) + ")*";
               }
             }
@@ -2772,51 +1839,28 @@ ${matRowsHtml}
               const today = new Date().toISOString().slice(0,10);
               const seq2  = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
               const invId = "INV-" + today.replace(/-/g,"").slice(2,8) + "-" + seq2;
-        // Cek pekerjaan aktual dari laporan teknisi
-        const lapRepForLabor = laporanReports.find(r => r.job_id === ord.id);
-        const hasServiceBesar = lapRepForLabor?.units
-          ? lapRepForLabor.units.some(u => (u.pekerjaan||[]).some(p =>
-              p.toLowerCase().includes("besar") || p.toLowerCase().includes("deep")))
-          : false;
-        // Jika service besar → gunakan harga service besar
-        let effectiveType = ord.type || "default";
-        if (hasServiceBesar && ord.service === "Cleaning") {
-          effectiveType = (ord.units||1) > 1
-            ? "Jasa Service Besar 1,5PK - 2,5PK"
-            : "Jasa Service Besar 0,5PK - 1PK";
-        }
-        const labor = PRICE_LIST[ord.service]?.[effectiveType] ||
-          PRICE_LIST[ord.service]?.["default"] || 85000;
+              const labor = PRICE_LIST[ord.service]?.[ord.type || "default"] || PRICE_LIST[ord.service]?.["default"] || 80000;
               const laborTotal = labor * (ord.units || 1);
 
               // ── Baca material + freon dari laporan teknisi ──
               const lapRep = laporanReports.find(r => r.job_id === ord.id);
               const materialCost = lapRep?.materials
                 ? lapRep.materials.reduce((sum, m) => {
-          // Lookup harga dari inventory (sama seperti hitungMaterialTotal)
-          const _mNama = (m.nama||"").toLowerCase();
-          const _invItem = inventoryData.find(inv =>
-            inv.name.toLowerCase().includes(_mNama) || _mNama.includes(inv.name.toLowerCase())
-          );
-          let harga = _invItem?.price || m.harga || m.price || 0;
-          // Fallback ke PRICE_LIST freon jika tidak ada di inventory
-          if (!harga) {
-            if (_mNama.includes("r-22")||_mNama.includes("r22")) harga = PRICE_LIST["freon_R22"]||150000;
-            else if (_mNama.includes("r-32")||_mNama.includes("r32")) harga = PRICE_LIST["freon_R32"]||450000;
-            else if (_mNama.includes("r-410")||_mNama.includes("r410")) harga = PRICE_LIST["freon_R410A"]||450000;
-          }
-          const qty = parseFloat(m.jumlah || m.qty || m.quantity || 1);
+                    // Support both old field names (price/qty) and new names (harga/jumlah)
+                    const harga = m.harga || m.price || 0;
+                    const qty   = parseFloat(m.jumlah || m.qty || m.quantity || 1);
                     return sum + (harga * qty);
                   }, 0)
                 : 0;
-          // [OPSI A] Freon tidak dihitung dari total_freon (psi data)
-          const freonCost  = 0; // freon masuk via material manual
               // Freon: hitung dari total_freon × harga freon (R32=200rb, R22=150rb default R32)
+              const freonType  = ord.type?.includes("R22") ? 150000 : 200000;
+              const freonCost  = lapRep?.total_freon ? Math.round(lapRep.total_freon * freonType) : 0;
+              const materialTotal = materialCost + freonCost;
 
               // Dadakan jika booking H-0
               const isToday = ord.date === today;
               const dadakanFee = isToday ? 50000 : 0;
-              const totalInv = laborTotal + materialCost + dadakanFee;
+              const totalInv = laborTotal + materialTotal + dadakanFee;
 
               const newInv = {
                 id: invId, job_id: ord.id,
@@ -2840,7 +1884,7 @@ ${matRowsHtml}
               setOrdersData(prev => prev.map(o => o.id===ord.id ? {...o, invoice_id:invId} : o));
               await supabase.from("orders").update({invoice_id:invId}).eq("id",ord.id);
               addAgentLog("ARA_CREATE_INVOICE","ARA buat invoice "+invId+" dari "+ord.id+" — "+newInv.customer,"SUCCESS");
-              ar = "\n✅ *Invoice " + invId + " dibuat untuk " + newInv.customer + " — Total: " + (newInv.total||0).toLocaleString("id-ID") + "*";
+              ar = "\n✅ *Invoice " + invId + " dibuat untuk " + newInv.customer + " — Total: " + newInv.total.toLocaleString("id-ID") + "*";
             }
           } else if (act.type==="CANCEL_ORDER") {
             setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,status:"CANCELLED"}:o));
@@ -2855,10 +1899,10 @@ ${matRowsHtml}
             // ── Cek konflik di hari & jam baru sebelum reschedule ──
             let rescheduleConflict = null;
             if (tekForReschedule && act.date && act.time && rOrdCheck) {
-              // GAP-1/2: Cek dari DB langsung, bukan state lokal
-              const dbConflict = await cekTeknisiAvailableDB(tekForReschedule, act.date, act.time, rOrdCheck.service, rOrdCheck.units);
-              if (!dbConflict.ok && !dbConflict.reason?.includes(act.id)) {
-                rescheduleConflict = dbConflict.reason || "Ada order lain di waktu tersebut";
+              const conflictResult = cekTeknisiAvailable(tekForReschedule, act.date, act.time, rOrdCheck.service, rOrdCheck.units);
+              // conflictResult = null jika tersedia, atau string alasan konflik
+              if (conflictResult && conflictResult !== true) {
+                rescheduleConflict = conflictResult;
               }
             }
 
@@ -2874,11 +1918,29 @@ ${matRowsHtml}
               const tekData = teknisiData.find(t=>t.name===(act.teknisi||rOrd.teknisi));
               // Notif customer
               if (rOrd.phone) {
-                const custMsg = "Info Perubahan Jadwal\n\nYth. "+rOrd.customer+",\nJadwal AC "+act.id+" telah diubah:\nTanggal baru: "+act.date+"\nJam: "+(act.time||"09:00")+"\nLayanan: "+rOrd.service+"\n\nMohon pastikan ada di lokasi. Terima kasih — AClean";
-                if (rOrd?.phone) sendWA(rOrd.phone, custMsg);
+                const custMsg = `📅 *Info Perubahan Jadwal*
+
+Yth. ${rOrd.customer},
+Jadwal layanan AC Anda *${act.id}* telah diubah:
+📅 Tanggal baru: *${act.date}*
+⏰ Jam: ${act.time||"09:00"}
+🔧 Layanan: ${rOrd.service}
+
+Mohon pastikan ada di lokasi pada waktu tersebut.
+Terima kasih — *AClean Service* 😊`;
+                sendWA(rOrd.phone, custMsg);
               }
               if (tekData?.phone) {
-                const rMsg = "Jadwal Diubah\n\nHalo "+tekData.name+", jadwal order "+act.id+" telah diubah:\nCustomer: "+rOrd.customer+"\nLayanan: "+rOrd.service+"\nTanggal baru: "+act.date+"\nJam: "+(act.time||"09:00")+"\n\nMohon sesuaikan jadwal Anda. Terima kasih!";
+                const rMsg = `📅 *Jadwal Diubah*
+
+Halo ${tekData.name}, jadwal order *${act.id}* telah diubah:
+👤 Customer: ${rOrd.customer}
+📍 Alamat: ${rOrd.address||"-"}
+🔧 Layanan: ${rOrd.service}
+📅 Tanggal baru: ${act.date}
+⏰ Jam: ${act.time||"09:00"}
+
+Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 sendWA(tekData.phone, rMsg);
               }
             }
@@ -2987,7 +2049,7 @@ ${matRowsHtml}
                   <div style={{ fontSize:11, color:cs.muted }}>📍 {o.address}</div>
                   {o.helper && <div style={{ fontSize:11, color:cs.accent, marginTop:3 }}>🤝 Helper: {o.helper}</div>}
                   <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
-                    <button onClick={() => { setWaTekTarget({phone:o.phone,customer:o.customer,service:o.service,time:o.time,address:o.address}); setModalWaTek(true); }}
+                    <button onClick={() => openWA(o.phone, "Halo "+o.customer+", saya "+myName+" dari AClean Service. Saya akan datang pkl "+o.time+" untuk "+o.service+". Terima kasih.")}
                       style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:600 }}>💬 Chat WA</button>
                     <button onClick={() => { const url="https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(o.address); window.open(url,"_blank"); }}
                       style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:600 }}>🗺 Maps</button>
@@ -3007,11 +2069,11 @@ ${matRowsHtml}
                 <div key={o.id} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px", marginBottom:8, display:"flex", alignItems:"center", gap:12 }}>
                   <div style={{ background:myColor+"22", border:"1px solid "+myColor+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:44, flexShrink:0 }}>
                     <div style={{ fontSize:14, fontWeight:800, color:myColor }}>{o.time}</div>
-                    <div style={{ fontSize:9, color:cs.muted }}>{(o.date||"").slice(5)}</div>
+                    <div style={{ fontSize:9, color:cs.muted }}>{o.date.slice(5)}</div>
                   </div>
                   <div style={{ flex:1 }}>
                     <div style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{o.customer}</div>
-                    <div style={{ fontSize:11, color:cs.muted }}>{o.service} · {o.units} unit · {(o.address||"-").slice(0,35)}...</div>
+                    <div style={{ fontSize:11, color:cs.muted }}>{o.service} · {o.units} unit · {o.address.slice(0,35)}...</div>
                   </div>
                 </div>
               ))}
@@ -3026,16 +2088,6 @@ ${matRowsHtml}
     const unpaidCount   = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
     const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && (i.sent||"").startsWith(bulanIni)).reduce((a,b) => a+b.total, 0);
     const lowStock      = inventoryData.filter(i => i.status === "CRITICAL" || i.status === "OUT").length;
-    const garansiKritisD = invoicesData.filter(inv => {
-      if (!inv.garansi_expires) return false;
-      const d = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
-      return d >= 0 && d <= 7;
-    });
-    const garansiExpireSoon = invoicesData.filter(inv => {
-      if (!inv.garansi_expires) return false;
-      const d = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
-      return d >= 0 && d <= 30;
-    }).sort((a,b) => a.garansi_expires.localeCompare(b.garansi_expires));
     const greeting      = role === "Owner" ? "Owner" : "Admin";
 
     return (
@@ -3061,12 +2113,12 @@ ${matRowsHtml}
         {/* KPI Cards */}
         <div style={{ display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:14 }}>
           {[
-            { label:"Order Hari Ini",      value:todayOrders.length,          sub:`${todayOrders.filter(o=>o.status==="IN_PROGRESS").length} aktif · ${todayOrders.filter(o=>o.status==="COMPLETED").length} selesai`, color:cs.accent, icon:"📋", onClick:()=>setActiveMenu("orders") },
-            { label:"Invoice Unpaid",       value:unpaidCount,                 sub:"Perlu follow-up",     color:cs.yellow, icon:"🧾", onClick:()=>{setActiveMenu("invoice");setInvoiceFilter("UNPAID");} },
-            { label:"Pendapatan Bln Ini",   value:fmt(totalRevBulanIni),        sub:"Invoice terbayar",    color:cs.green,  icon:"💰", onClick:()=>{setActiveMenu("invoice");setInvoiceFilter("PAID");} },
-            { label:"Stok Kritis",          value:lowStock,                    sub:"Perlu restock",       color:cs.red,    icon:"📦", onClick:()=>setActiveMenu("inventory") },
+            { label:"Order Hari Ini",      value:todayOrders.length,          sub:`${todayOrders.filter(o=>o.status==="IN_PROGRESS").length} aktif · ${todayOrders.filter(o=>o.status==="COMPLETED").length} selesai`, color:cs.accent, icon:"📋" },
+            { label:"Invoice Unpaid",       value:unpaidCount,                 sub:"Perlu follow-up",     color:cs.yellow, icon:"🧾" },
+            { label:"Pendapatan Bln Ini",   value:fmt(totalRevBulanIni),        sub:"Invoice terbayar",    color:cs.green,  icon:"💰" },
+            { label:"Stok Kritis",          value:lowStock,                    sub:"Perlu restock",       color:cs.red,    icon:"📦" },
           ].map(kpi => (
-            <div key={kpi.label} onClick={kpi.onClick} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18, cursor:"pointer" }}>
+            <div key={kpi.label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
                 <span style={{ fontSize:24 }}>{kpi.icon}</span>
                 <span style={{ fontSize:11, color:cs.muted }}>{kpi.sub}</span>
@@ -3076,79 +2128,6 @@ ${matRowsHtml}
             </div>
           ))}
         </div>
-              {/* ── SLA ALERT WIDGET ── */}
-              {(() => {
-                const now3 = new Date();
-                const slaOrders = ordersData.filter(o => {
-                  if (o.status !== "DISPATCHED" && o.status !== "CONFIRMED") return false;
-                  if (!o.date || !o.time || o.date !== TODAY) return false;
-                  const bMs = (o.date && o.time ? new Date(o.date+"T"+o.time+":00").getTime() : 0);
-                  return now3.getTime() > bMs + 30*60*1000;
-                });
-                if (slaOrders.length === 0) return null;
-                return (
-                <div style={{ background:"#ef444412", border:"1px solid #ef444433", borderRadius:12, padding:"14px 16px", marginBottom:12 }}>
-                  <div style={{ fontWeight:700, fontSize:14, color:"#ef4444", marginBottom:8 }}>⚠️ SLA Alert — {slaOrders.length} order belum konfirmasi tiba</div>
-                  {slaOrders.map(o=>(
-                    <div key={o.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px", background:"#ef444408", borderRadius:8, marginBottom:4 }}>
-                      <div>
-                        <div style={{ fontSize:12, fontWeight:700, color:cs.text }}>{o.customer}</div>
-                        <div style={{ fontSize:11, color:cs.muted }}>👷 {o.teknisi||"-"} · ⏰ booking {o.time}</div>
-                      </div>
-                      <span style={{ fontSize:10, background:"#ef444420", color:"#ef4444", padding:"3px 8px", borderRadius:99, fontWeight:700 }}>BELUM TIBA</span>
-                    </div>
-                  ))}
-                </div>
-                );
-              })()}
-
-        {/* ══ GAP 7: Garansi akan berakhir (≤30 hari) ══ */}
-        {garansiExpireSoon.length > 0 && (
-          <div style={{ background:cs.card, border:"1px solid #22d3ee44", borderRadius:14, padding:20 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
-              <div style={{ fontWeight:700, fontSize:15, color:cs.text }}>🛡️ Monitor Garansi — {garansiExpireSoon.length} aktif</div>
-              <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("Garansi");}}
-                style={{ background:"#22d3ee22", border:"1px solid #22d3ee44", color:"#22d3ee", padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>Lihat Semua →</button>
-            </div>
-            <div style={{ display:"grid", gap:8 }}>
-              {garansiExpireSoon.slice(0,5).map(inv => {
-                const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
-                const col = daysLeft <= 3 ? "#ef4444" : daysLeft <= 7 ? cs.yellow : "#22d3ee";
-                return (
-                  <div key={inv.id} style={{ background:cs.surface, border:"1px solid "+col+"33", borderRadius:10, padding:"10px 14px", display:"flex", alignItems:"center", gap:12 }}>
-                    <span style={{ fontSize:18 }}>{daysLeft<=3?"🚨":daysLeft<=7?"⚠️":"🛡️"}</span>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontWeight:700, fontSize:13, color:cs.text }}>{inv.customer}</div>
-                      <div style={{ fontSize:11, color:cs.muted }}>{inv.service} · {inv.id}</div>
-                    </div>
-                    <div style={{ textAlign:"right" }}>
-                      <div style={{ fontWeight:800, fontSize:13, color:col }}>{daysLeft}h lagi</div>
-                      <div style={{ fontSize:10, color:cs.muted }}>{inv.garansi_expires}</div>
-                    </div>
-                    {daysLeft <= 7 && (
-                      <button onClick={()=>{
-                        const custPhone = inv.phone || customersData.find(c=>c.name===inv.customer)?.phone;
-                        if (!custPhone) { showNotif("⚠️ No HP customer tidak ditemukan"); return; }
-                        sendWA(custPhone,
-                          "Halo "+inv.customer+". Garansi "+inv.service+" dari AClean berakhir "+daysLeft+" hari lagi ("+inv.garansi_expires+"). Hubungi kami jika ada kendala. — AClean"
-                        );
-                        addAgentLog("GARANSI_REMINDER", `WA garansi dikirim ke ${inv.customer} (${daysLeft}h lagi)`, "SUCCESS");
-                        showNotif("✅ WA reminder garansi terkirim ke "+inv.customer);
-                      }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>
-                        📱 Ingatkan
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-              {garansiExpireSoon.length > 5 && (
-                <div style={{ textAlign:"center", fontSize:12, color:cs.muted, padding:8 }}>
-                  +{garansiExpireSoon.length-5} garansi lainnya — <span style={{color:cs.accent,cursor:"pointer"}} onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("Garansi");}}>lihat semua</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Today orders */}
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
@@ -3162,7 +2141,7 @@ ${matRowsHtml}
                   <div style={{ fontSize:11, color:cs.muted }}>{o.service} · {o.units} unit · 👷 {o.teknisi} · {o.time}</div>
                 </div>
                 <div style={{ display:"flex", gap:6 }}>
-                  <button onClick={() => { const cu=findCustomer(customersData, o.phone, o.customer); if(cu){setSelectedCustomer(cu);setCustomerTab("history");setActiveMenu("customers");} }}
+                  <button onClick={() => { const cu=customersData.find(cu=>cu.phone===o.phone); if(cu){setSelectedCustomer(cu);setCustomerTab("history");setActiveMenu("customers");} }}
                     style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>History</button>
                   {!o.dispatch && <button onClick={() => dispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>Dispatch WA</button>}
                 </div>
@@ -3259,17 +2238,11 @@ ${matRowsHtml}
     const history = selectedCustomer
       ? buildCustomerHistory(selectedCustomer, ordersData, laporanReports, invoicesData)
       : [];
-    const _scq = searchCustomer.trim().toLowerCase();
-    const filteredCusts = customersData.filter(cu => {
-      if (!_scq) return true;
-      return (
-        (cu.name||"").toLowerCase().includes(_scq) ||
-        (cu.phone||"").includes(searchCustomer.trim()) ||
-        (cu.address||"").toLowerCase().includes(_scq) ||
-        (cu.area||"").toLowerCase().includes(_scq) ||
-        (cu.notes||"").toLowerCase().includes(_scq)
-      );
-    });
+    const filteredCusts = customersData.filter(cu =>
+      !searchCustomer ||
+      cu.name.toLowerCase().includes(searchCustomer.toLowerCase()) ||
+      cu.phone.includes(searchCustomer)
+    );
     return (
       <div style={{ display:"grid", gap:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -3295,7 +2268,7 @@ ${matRowsHtml}
             {/* Search bar */}
             <div style={{ position:"relative" }}>
               <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-              <input id="searchCustomer" value={searchCustomer} onChange={e=>setSearchCustomer(e.target.value)}
+              <input value={searchCustomer} onChange={e=>setSearchCustomer(e.target.value)}
                 placeholder="Cari nama customer atau nomor telepon..."
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
               {searchCustomer && <button onClick={()=>setSearchCustomer("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
@@ -3307,72 +2280,40 @@ ${matRowsHtml}
               const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
               const lastSvc = cHist[0]; // sudah sorted by date desc
               return (
-                <div key={cu.id} style={{ background:cs.card, border:"1px solid "+cs.border,
-                  borderRadius:10, padding:"10px 12px",
-                  display:"flex", alignItems:"center", gap:10 }}>
-                  {/* Avatar */}
-                  <div style={{ width:38, height:38, borderRadius:"50%",
-                    background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:15, fontWeight:800, color:"#fff", flexShrink:0 }}>
-                    {(cu.name||"?").charAt(0).toUpperCase()}
-                  </div>
-                  {/* Info */}
+                <div key={cu.id} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20, display:"flex", gap:16, alignItems:"flex-start" }}>
+                  <div style={{ width:48, height:48, borderRadius:12, background:"linear-gradient(135deg,"+(cu.is_vip?cs.yellow:cs.accent)+",#3b82f6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>{cu.name.charAt(0)}</div>
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:5 }}>
-                      <span style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{cu.name}</span>
-                      {cu.is_vip && <span style={{ fontSize:9, background:"#f59e0b22", color:"#f59e0b", padding:"1px 5px", borderRadius:99, fontWeight:700 }}>⭐VIP</span>}
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+                      <span style={{ fontWeight:700, color:cs.text, fontSize:15 }}>{cu.name}</span>
+                      {cu.is_vip && <span style={{ background:cs.yellow+"22", color:cs.yellow, fontSize:10, fontWeight:800, padding:"2px 7px", borderRadius:99, border:"1px solid "+cs.yellow+"44" }}>⭐ VIP</span>}
+                      <span style={{ fontSize:10, color:cs.muted, fontFamily:"monospace" }}>{cu.id}</span>
                     </div>
-                    <div style={{ fontSize:11, color:cs.muted }}>📱 {cu.phone||"-"}</div>
-                    <div style={{ fontSize:11, color:cs.muted, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:180 }}>📍 {cu.address||cu.area||"-"}</div>
+                    <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:"3px 20px", fontSize:12, color:cs.muted, marginBottom:8 }}>
+                      <span>📱 {cu.phone}</span><span>📍 {cu.area}</span>
+                      <span>🏠 {cu.address.slice(0,32)}...</span><span>📅 {cu.joined}</span>
+                    </div>
+                    {/* ── BONUS: Last service summary di customer card ── */}
+                    {lastSvc ? (
+                      <div style={{ fontSize:11, background:cs.surface, borderRadius:7, padding:"6px 10px", marginBottom:6, display:"flex", gap:10, flexWrap:"wrap" }}>
+                        <span style={{ color:cs.muted }}>🕐 Terakhir:</span>
+                        <span style={{ color:cs.text, fontWeight:600 }}>{lastSvc.date}</span>
+                        <span style={{ color:cs.accent }}>{lastSvc.service}</span>
+                        <span style={{ color:cs.muted }}>{lastSvc.units} unit · {lastSvc.teknisi}</span>
+                        {lastSvc.rekomendasi&&(
+                          <span style={{ color:"#7dd3fc", fontStyle:"italic" }}>💡 {lastSvc.rekomendasi.slice(0,50)}{lastSvc.rekomendasi.length>50?"...":""}</span>
+                        )}
+                        <span style={{ color:cHist.length>1?cs.green:cs.muted, fontWeight:700 }}>({cHist.length}x servis)</span>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize:11, color:cs.muted, marginBottom:6 }}>Belum ada riwayat servis</div>
+                    )}
+                    {cu.notes && <div style={{ fontSize:12, color:"#7dd3fc", background:"#0ea5e910", padding:"6px 10px", borderRadius:7, border:"1px solid #0ea5e922" }}>💡 {cu.notes}</div>}
                   </div>
-                  {/* Tombol — role-aware */}
-                  {(currentUser?.role === "Teknisi" || currentUser?.role === "Helper") ? (
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, flexShrink:0 }}>
-                    <button onClick={()=>{ setSelectedCustomer(cu); setCustomerTab("history"); }}
-                      style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent,
-                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
-                      📋 Riwayat
-                    </button>
-                    <button onClick={()=>cu.phone && openWA(cu.phone,"")}
-                      style={{ background:"#25D36618", border:"1px solid #25D36633", color:"#25D366",
-                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
-                      💬 WA
-                    </button>
+                  <div style={{ display:"flex", flexDirection:"column", gap:8, flexShrink:0 }}>
+                    <button onClick={() => { setSelectedCustomer(cu); setCustomerTab("history"); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600, whiteSpace:"nowrap" }}>📋 Riwayat ({cHist.length})</button>
+                    <button onClick={() => { setNewOrderForm(f=>({...f,customer:cu.name,phone:cu.phone,address:cu.address})); setModalOrder(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>+ Order</button>
+                    <button onClick={() => openWA(cu.phone, "")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 WA</button>
                   </div>
-                  ) : (
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, flexShrink:0 }}>
-                    <button onClick={()=>{ setSelectedCustomer(cu); setCustomerTab("history"); }}
-                      style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent,
-                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
-                      📋 Riwayat
-                    </button>
-                    <button onClick={()=>{ setNewOrderForm(f=>({...f,customer:cu.name,phone:normalizePhone(cu.phone)||cu.phone,address:cu.address||"",service:"Cleaning"})); setModalOrder(true); }}
-                      style={{ background:cs.green+"18", border:"1px solid "+cs.green+"33", color:cs.green,
-                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
-                      📦 Order
-                    </button>
-                    <button onClick={()=>cu.phone && openWA(cu.phone,"")}
-                      style={{ background:"#25D36618", border:"1px solid #25D36633", color:"#25D366",
-                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
-                      💬 WA
-                    </button>
-                    {currentUser?.role === "Owner" ? (
-                      <button onClick={async()=>{
-                        if(!await showConfirm({ icon:"🗑️", title:"Hapus Customer?", danger:true,
-                          message:`Hapus "${cu.name}"?\nHistory order tetap ada.`,
-                          confirmText:"Hapus" })) return;
-                        setCustomersData(prev=>prev.filter(c=>c.id!==cu.id));
-                        const {error}=await supabase.from("customers").delete().eq("id",cu.id);
-                        if(error) showNotif("⚠️ "+error.message);
-                        else { addAgentLog("CUSTOMER_DELETED",cu.name+" dihapus","WARNING"); showNotif("🗑️ Dihapus"); }
-                      }} style={{ background:"#ef444418", border:"1px solid #ef444433", color:"#ef4444",
-                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
-                        🗑️ Hapus
-                      </button>
-                    ) : <div/>}
-                  </div>
-                  )}
                 </div>
               );
             })}
@@ -3527,8 +2468,8 @@ ${matRowsHtml}
                     {safeArr(svc.foto_urls).length > 0 && (
                       <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:8 }}>
                         {safeArr(svc.foto_urls).slice(0,5).map((url, fi) => (
-                          <img key={fi} src={fotoSrc(url)} alt={`Foto ${fi+1}`}
-                            onClick={() => window.open(fotoSrc(url), "_blank")}
+                          <img key={fi} src={url} alt={`Foto ${fi+1}`}
+                            onClick={() => window.open(url, "_blank")}
                             style={{ width:56, height:56, objectFit:"cover", borderRadius:8,
                               cursor:"pointer", border:"1px solid "+cs.border,
                               transition:"opacity .15s" }}
@@ -3539,7 +2480,7 @@ ${matRowsHtml}
                           <div style={{ width:56, height:56, borderRadius:8, background:cs.surface,
                             border:"1px solid "+cs.border, display:"flex", alignItems:"center",
                             justifyContent:"center", fontSize:11, color:cs.muted, cursor:"pointer" }}
-                            onClick={() => window.open(fotoSrc(svc.foto_urls[5]), "_blank")}>
+                            onClick={() => window.open(svc.foto_urls[5], "_blank")}>
                             +{safeArr(svc.foto_urls).length - 5}
                           </div>
                         )}
@@ -3598,14 +2539,12 @@ ${matRowsHtml}
                       style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Data Customer</button>
                     <button onClick={()=>{ openWA(selectedCustomer.phone, ""); }}
                       style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 Hubungi WA</button>
-                    <button onClick={async ()=>{ if(await showConfirm({ icon:"⭐", title:"Ubah Status VIP?",
-                      message:`Tandai ${selectedCustomer.name} sebagai ${selectedCustomer.is_vip?"Regular":"VIP"}?`,
-                      confirmText:"Ya, Ubah" }))
+                    <button onClick={()=>{ if(window.confirm&&window.confirm("Tandai "+selectedCustomer.name+" sebagai "+(selectedCustomer.is_vip?"Regular":"VIP")+"?")){
                       setCustomersData(prev=>prev.map(cu=>cu.id===selectedCustomer.id?{...cu,is_vip:!cu.is_vip}:cu));
                       setSelectedCustomer(prev=>({...prev,is_vip:!prev.is_vip}));
                       supabase.from("customers").update({is_vip:!selectedCustomer.is_vip}).eq("id",selectedCustomer.id);
                       showNotif(selectedCustomer.name+(selectedCustomer.is_vip?" diturunkan ke Regular":" dijadikan VIP ⭐"));
-                    }}
+                    }}}
                       style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"8px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>{selectedCustomer.is_vip?"⭐ Hapus VIP":"⭐ Jadikan VIP"}</button>
                   </div>
                 )}
@@ -3628,20 +2567,12 @@ ${matRowsHtml}
     if (orderFilter === "Hari Ini") filtered = filtered.filter(o => o.date === TODAY);
     else if (orderFilter !== "Semua") filtered = filtered.filter(o => o.status === (sMap2[orderFilter]||orderFilter));
     if (orderTekFilter !== "Semua") filtered = filtered.filter(o => o.teknisi === orderTekFilter || o.helper === orderTekFilter);
-    if (orderDateFrom) filtered = filtered.filter(o => (o.date||"") >= orderDateFrom);
-    if (orderServiceFilter !== "Semua") filtered = filtered.filter(o => o.service === orderServiceFilter); // GAP-9
-    if (orderDateTo)   filtered = filtered.filter(o => (o.date||"") <= orderDateTo);
     if (searchOrder.trim()) {
       const q = searchOrder.trim().toLowerCase();
       filtered = filtered.filter(o =>
-        (o.customer||"").toLowerCase().includes(q) ||
-        (o.id||"").toLowerCase().includes(q) ||
-        (o.phone||"").toLowerCase().includes(q) ||
-        (o.teknisi||"").toLowerCase().includes(q) ||
-        (o.helper||"").toLowerCase().includes(q) ||
-        (o.address||"").toLowerCase().includes(q) ||
-        (o.service||"").toLowerCase().includes(q) ||
-        (o.notes||"").toLowerCase().includes(q)
+        (o.customer||"").toLowerCase().includes(q) || (o.id||"").toLowerCase().includes(q) ||
+        (o.phone||"").includes(searchOrder.trim()) || (o.teknisi||"").toLowerCase().includes(q) ||
+        (o.address||"").toLowerCase().includes(q)
       );
     }
     filtered.sort((a,b) => (b.date+(b.time||"")).localeCompare(a.date+(a.time||"")));
@@ -3651,54 +2582,15 @@ ${matRowsHtml}
     return (
       <div style={{ display:"grid", gap:14 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-          <div style={{ fontWeight:700, fontSize:18, color:cs.text, display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>
             📋 Order Masuk <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filtered.length})</span>
-            {(() => {
-              const stuck = ordersData.filter(o =>
-                ["DISPATCHED","ON_SITE"].includes(o.status) && o.date < TODAY
-              ).length;
-              return stuck > 0 ? (
-                <span title="Job belum ada laporan (sudah lewat hari)" style={{ fontSize:11, background:cs.red+"22", color:cs.red, border:"1px solid "+cs.red+"44", borderRadius:99, padding:"2px 8px", fontWeight:700, cursor:"pointer" }}
-                  onClick={()=>{setOrderFilter("Semua");setOrderTekFilter("Semua");}}>
-                  ⚠️ {stuck} stuck
-                </span>
-              ) : null;
-            })()}
           </div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (() => {
-              const todayUndispatched = ordersData.filter(o =>
-                o.date === TODAY && !o.dispatch &&
-                ["PENDING","CONFIRMED","DISPATCHED"].includes(o.status)
-              );
-              return todayUndispatched.length > 0 ? (
-                <button onClick={async () => {
-                  if (!await showConfirm({ icon:"📤", title:"Bulk Dispatch WA?",
-  message:"Kirim WA ke "+todayUndispatched.length+" teknisi untuk job hari ini?",
-  confirmText:"Ya, Kirim Semua" })) return;
-                  let sukses = 0, gagal = 0;
-                  showNotif(`⏳ Mengirim WA ke ${todayUndispatched.length} teknisi...`);
-                  for (const o of todayUndispatched) {
-                    try {
-                      await sendDispatchWA(o);
-                      sukses++;
-                      await new Promise(r => setTimeout(r, 500)); // jeda 0.5s antar WA
-                    } catch(e) { gagal++; }
-                  }
-                  addAgentLog("BULK_DISPATCH", `Bulk dispatch: ${sukses} sukses, ${gagal} gagal — ${TODAY}`, sukses>0?"SUCCESS":"ERROR");
-                  showNotif(`✅ Bulk dispatch selesai: ${sukses} WA terkirim${gagal>0?", "+gagal+" gagal":""}`);
-                }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"9px 14px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12, display:"flex", alignItems:"center", gap:6 }}>
-                  📤 Dispatch Hari Ini <span style={{background:"#25D366",color:"#fff",borderRadius:99,padding:"1px 7px",fontSize:11}}>{todayUndispatched.length}</span>
-                </button>
-              ) : null;
-            })()}
-            <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
-          </div>
+          <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
         </div>
         {/* Search bar */}
         <div style={{ position:"relative" }}>
           <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:14, pointerEvents:"none" }}>🔍</span>
-          <input id="searchOrder" value={searchOrder} onChange={e=>{setSearchOrder(e.target.value);setOrderPage(1);}}
+          <input value={searchOrder} onChange={e=>{setSearchOrder(e.target.value);setOrderPage(1);}}
             placeholder="Cari nama customer, Job ID, telepon, atau teknisi..."
             style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
           {searchOrder && <button onClick={()=>{setSearchOrder("");setOrderPage(1);}} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
@@ -3715,31 +2607,6 @@ ${matRowsHtml}
             style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"6px 10px", fontSize:12, cursor:"pointer" }}>
             {allTekOrd.map(t=><option key={t} value={t}>👷 {t}</option>)}
           </select>
-          <span style={{width:1,height:16,background:cs.border,display:"inline-block",marginLeft:4}} />
-          <input id="orderDateFrom" type="date" value={orderDateFrom} onChange={e=>{setOrderDateFrom(e.target.value);setOrderPage(1);}}
-            title="Dari tanggal"
-            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:orderDateFrom?cs.text:cs.muted, padding:"5px 8px", fontSize:11, cursor:"pointer", width:130 }} />
-          <span style={{color:cs.muted,fontSize:11}}>–</span>
-          <input id="orderDateTo" type="date" value={orderDateTo} onChange={e=>{setOrderDateTo(e.target.value);setOrderPage(1);}}
-            title="Sampai tanggal"
-            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:orderDateTo?cs.text:cs.muted, padding:"5px 8px", fontSize:11, cursor:"pointer", width:130 }} />
-          {(orderDateFrom||orderDateTo) && (
-            <button onClick={()=>{setOrderDateFrom("");setOrderDateTo("");setOrderPage(1);}}
-              style={{background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:14,padding:"2px 4px"}} title="Reset tanggal">✕</button>
-          )}
-          {/* GAP-9: Filter service type */}
-          <span style={{width:1,height:16,background:cs.border,display:"inline-block",marginLeft:4}} />
-          <select value={orderServiceFilter} onChange={e=>{setOrderServiceFilter(e.target.value);setOrderPage(1);}}
-            style={{ background:cs.card, border:"1px solid "+(orderServiceFilter!="Semua"?cs.yellow:cs.border), borderRadius:8, color:orderServiceFilter!="Semua"?cs.yellow:cs.text, padding:"6px 10px", fontSize:12, cursor:"pointer" }}>
-            {["Semua","Cleaning","Install","Repair","Complain"].map(s=><option key={s} value={s}>🔧 {s}</option>)}
-          </select>
-          {/* GAP-9: Reset Semua filter */}
-          {(orderFilter!=="Semua"||orderTekFilter!=="Semua"||orderDateFrom||orderDateTo||orderServiceFilter!=="Semua"||searchOrder) && (
-            <button onClick={()=>{setOrderFilter("Semua");setOrderTekFilter("Semua");setOrderDateFrom("");setOrderDateTo("");setOrderServiceFilter("Semua");setSearchOrder("");setOrderPage(1);}}
-              style={{ background:cs.red+"18", border:"1px solid "+cs.red+"44", color:cs.red, padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700 }}>
-              ✕ Reset Semua
-            </button>
-          )}
         </div>
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
           <table style={{ width:"100%", borderCollapse:"collapse" }}>
@@ -3756,7 +2623,7 @@ ${matRowsHtml}
                   <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:12, color:cs.accent, fontWeight:700 }}>{o.id}</td>
                   <td style={{ padding:"10px 14px" }}>
                     <div style={{ fontSize:13, fontWeight:600, color:cs.text }}>{o.customer}</div>
-                    <div style={{ fontSize:11, color:cs.muted }}>{(o.address||"-").slice(0,28)}...</div>
+                    <div style={{ fontSize:11, color:cs.muted }}>{o.address.slice(0,28)}...</div>
                   </td>
                   <td style={{ padding:"10px 14px" }}>
                     {(() => { const sCol={Cleaning:"#22c55e",Install:"#3b82f6",Repair:"#f59e0b",Complain:"#ef4444"}[o.service]||cs.muted; return (
@@ -3788,22 +2655,6 @@ ${matRowsHtml}
                       {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
                         <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,type:o.type||"",units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }}
                           style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
-                      )}
-                      {currentUser?.role==="Owner" && (
-                        <button onClick={async()=>{
-                          if (!await showConfirm({ icon:"🗑️", title:"Hapus Order?", danger:true,
-                            message:`Hapus order ${o.id} — ${o.customer}?\n\nOrder yang sudah ada invoice TIDAK bisa dihapus.`,
-                            confirmText:"Hapus" })) return;
-                          if (o.invoice_id) { showNotif("❌ Tidak bisa hapus: order sudah punya invoice "+o.invoice_id); return; }
-                          const { error: delErr } = await supabase.from("orders").delete().eq("id", o.id);
-                          if (delErr) { showNotif("❌ Gagal hapus order: "+delErr.message); return; }
-                          // Hapus schedule juga
-                          try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch(_){}
-                          setOrdersData(prev => prev.filter(x => x.id !== o.id));
-                          addAgentLog("ORDER_DELETED", `Owner hapus order ${o.id} — ${o.customer} (${o.service})`, "WARNING");
-                          showNotif("✅ Order "+o.id+" dihapus permanen");
-                        }} title="Hapus order (Owner only)"
-                          style={{ background:"#ef444422", border:"1px solid #ef444444", color:"#ef4444", padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:700 }}>🗑️</button>
                       )}
                     </div>
                   </td>
@@ -3850,23 +2701,8 @@ ${matRowsHtml}
   // ============================================================
   const renderInvoice = () => {
     // ── SIM-3+2: status filter + search + pagination ──
-    // ══ GAP 7: Warranty tracker — filter garansi aktif ══
-    const garansiAktif = invoicesData.filter(inv => {
-      if (!inv.garansi_expires) return false;
-      const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
-      return daysLeft >= 0;
-    }).sort((a,b) => a.garansi_expires.localeCompare(b.garansi_expires));
-    const garansiKritis = garansiAktif.filter(inv => {
-      const d = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
-      return d <= 7;
-    });
-
     let filteredInv = [...invoicesData];
-    if (invoiceFilter === "Garansi") {
-      filteredInv = garansiAktif;
-    } else if (invoiceFilter !== "Semua") {
-      filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
-    }
+    if (invoiceFilter !== "Semua") filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
     if (searchInvoice.trim()) {
       const q = searchInvoice.trim().toLowerCase();
       filteredInv = filteredInv.filter(inv =>
@@ -3892,7 +2728,7 @@ ${matRowsHtml}
       {/* Search */}
       <div style={{ position:"relative" }}>
         <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-        <input id="searchInvoice" value={searchInvoice} onChange={e=>{setSearchInvoice(e.target.value);setInvoicePage(1);}}
+        <input value={searchInvoice} onChange={e=>{setSearchInvoice(e.target.value);setInvoicePage(1);}}
           placeholder="Cari nama customer, no. telepon, atau ID invoice..."
           style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
         {searchInvoice && <button onClick={()=>{setSearchInvoice("");setInvoicePage(1);}} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
@@ -3905,19 +2741,14 @@ ${matRowsHtml}
           ["OVERDUE", cs.red],
           ["PAID", cs.green],
           ["PENDING_APPROVAL", cs.accent],
-          ["Garansi", "#22d3ee"],
         ].map(([s, col]) => {
-          const cnt = s==="Semua" ? invoicesData.length
-            : s==="Garansi" ? garansiAktif.length
-            : invoicesData.filter(i=>i.status===s).length;
-          const showBadge = s==="Garansi" && garansiKritis.length > 0;
+          const cnt = s==="Semua" ? invoicesData.length : invoicesData.filter(i=>i.status===s).length;
           return (
             <button key={s} onClick={()=>{setInvoiceFilter(s);setInvoicePage(1);}}
               style={{ padding:"6px 14px", borderRadius:99, border:"1px solid "+(invoiceFilter===s?col:cs.border),
                 background:invoiceFilter===s?col+"22":cs.card, color:invoiceFilter===s?col:cs.muted,
-                cursor:"pointer", fontSize:12, fontWeight:invoiceFilter===s?700:500, position:"relative" }}>
-              {s==="Semua"?"Semua":s==="PENDING_APPROVAL"?"Approval":s==="Garansi"?"🛡️ Garansi":s} ({cnt})
-              {showBadge && <span style={{position:"absolute",top:-4,right:-4,background:"#ef4444",color:"#fff",borderRadius:99,fontSize:9,padding:"1px 5px",fontWeight:800}}>{garansiKritis.length}</span>}
+                cursor:"pointer", fontSize:12, fontWeight:invoiceFilter===s?700:500 }}>
+              {s==="Semua"?"Semua":s==="PENDING_APPROVAL"?"Approval":s} ({cnt})
             </button>
           );
         })}
@@ -3930,13 +2761,6 @@ ${matRowsHtml}
                 <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:14 }}>{inv.id}</span>
                 <span style={{ fontSize:10, padding:"3px 8px", borderRadius:99, background:(statusColor[inv.status]||cs.muted)+"22", color:statusColor[inv.status]||cs.muted, border:"1px solid "+(statusColor[inv.status]||cs.muted)+"44", fontWeight:700 }}>{inv.status.replace(/_/g," ")}</span>
                 {inv.follow_up > 0 && <span style={{ fontSize:10, color:cs.yellow }}>Follow-up: {inv.follow_up}x</span>}
-                {inv.garansi_expires && (() => {
-                  const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
-                  if (daysLeft < 0) return <span style={{fontSize:10,color:cs.muted,background:cs.surface,padding:"1px 6px",borderRadius:4}}>🔒 Garansi selesai</span>;
-                  if (daysLeft <= 7) return <span style={{fontSize:10,color:"#ef4444",background:"#ef444418",padding:"1px 6px",borderRadius:4,fontWeight:700}}>⚠️ Garansi {daysLeft}h lagi</span>;
-                  if (daysLeft <= 30) return <span style={{fontSize:10,color:cs.yellow,background:cs.yellow+"18",padding:"1px 6px",borderRadius:4}}>🛡️ Garansi {daysLeft}h</span>;
-                  return <span style={{fontSize:10,color:cs.green,background:cs.green+"18",padding:"1px 6px",borderRadius:4}}>✅ Garansi {daysLeft}h</span>;
-                })()}
               </div>
               <div style={{ fontWeight:800, fontSize:18, color:cs.text, fontFamily:"monospace" }}>{fmt(inv.total)}</div>
             </div>
@@ -3954,15 +2778,8 @@ ${matRowsHtml}
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
               <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>👁 Preview</button>
               {/* Edit invoice — Owner bisa edit semua status kecuali PAID */}
-              {/* Edit invoice */}
-              {inv.status !== "PAID" &&
-               (currentUser?.role === "Owner" ||
-                (currentUser?.role === "Admin" && inv.status === "PENDING_APPROVAL")) && (
-                <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); const _allItems = parseMD(inv.materials_detail).map((m,idx)=>({...m,_idx:idx}));
-          const _jasaItems = _allItems.filter(m => jasaSvcNames.some(s => (m.nama||"").includes(s)));
-          const _matItems  = _allItems.filter(m => !jasaSvcNames.some(s => (m.nama||"").includes(s)));
-          setEditJasaItems(_jasaItems);
-          setEditInvoiceItems(_matItems); setModalEditInvoice(true); }}
+              {inv.status !== "PAID" && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); setModalEditInvoice(true); }}
                   style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
               {inv.status === "PENDING_APPROVAL" && (
@@ -3975,9 +2792,7 @@ ${matRowsHtml}
               {inv.status === "UNPAID" && (
                 <>
                   <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>📤 Kirim ke Customer</button>
-                  <button onClick={async () => { if(await showConfirm({ icon:"💰", title:"Tandai Lunas?",
-  message:`Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`,
-  confirmText:"Ya, Lunas" })) { const pp = invoicesData.find(i=>i.id===inv.id); markPaid(pp||inv); }}} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12 }}>💰 Tandai Lunas</button>
+                  <button onClick={() => { if(!window.confirm||window.confirm(`Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`)) { const pp = invoicesData.find(i=>i.id===inv.id); markPaid(pp||inv); }}} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12 }}>💰 Tandai Lunas</button>
                   <button onClick={() => invoiceReminderWA(inv)} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>🔔 Reminder</button>
                 </>
               )}
@@ -3986,20 +2801,6 @@ ${matRowsHtml}
                   <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>📤 Kirim ke Customer</button>
                   <button onClick={() => invoiceReminderWA(inv)} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>⚠️ Reminder OVERDUE</button>
                 </>
-              )}
-              {/* Hapus Invoice — Owner only, hanya status PENDING_APPROVAL */}
-              {currentUser?.role === "Owner" && inv.status === "PENDING_APPROVAL" && (
-                <button onClick={async () => {
-                  if (!await showConfirm({ icon:"🗑️", title:"Hapus Invoice?", danger:true,
-                    message:`Hapus invoice ${inv.id}?\n\nInvoice akan dihapus permanen dari database.\nOrder terkait akan kembali ke status COMPLETED.`,
-                    confirmText:"Hapus Permanen" })) return;
-                  setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
-                  const { error } = await supabase.from("invoices").delete().eq("id", inv.id);
-                  if (error) { showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message); return; }
-                  if (inv.job_id) await supabase.from("orders").update({ status:"COMPLETED", invoice_id:null }).eq("id", inv.job_id);
-                  addAgentLog("INVOICE_DELETED", `Invoice ${inv.id} (${inv.customer}) dihapus oleh ${currentUser?.name}`, "WARNING");
-                  showNotif("🗑️ Invoice " + inv.id + " berhasil dihapus");
-                }} style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>🗑️ Hapus Invoice</button>
               )}
             </div>
           </div>
@@ -4026,12 +2827,8 @@ ${matRowsHtml}
   const renderInventory = () => {
     const filteredInvt = inventoryData.filter(item =>
       !searchInventory ||
-      (item.name||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
-      (item.code||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
-      (item.unit||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
-      (item.status||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
-      String(item.price||"").includes(searchInventory) ||
-      String(item.stock||"").includes(searchInventory)
+      item.name.toLowerCase().includes(searchInventory.toLowerCase()) ||
+      item.code.toLowerCase().includes(searchInventory.toLowerCase())
     );
     return (
     <div style={{ display:"grid", gap:16 }}>
@@ -4042,12 +2839,12 @@ ${matRowsHtml}
       {/* Search bar */}
       <div style={{ position:"relative" }}>
         <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-        <input id="searchInventory" value={searchInventory} onChange={e=>setSearchInventory(e.target.value)}
+        <input value={searchInventory} onChange={e=>setSearchInventory(e.target.value)}
           placeholder="Cari nama barang atau kode material..."
           style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
         {searchInventory && <button onClick={()=>setSearchInventory("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
       </div>
-      <div style={{ fontSize:12, color:cs.muted }}>{searchInventory ? <>Ditemukan <b style={{ color:cs.accent }}>{filteredInvt.length}</b> dari {inventoryData.length} item</> : <><b style={{ color:cs.accent }}>{inventoryData.length}</b> item total</>}</div>
+      {searchInventory && <div style={{ fontSize:12, color:cs.muted }}>Ditemukan <b style={{ color:cs.accent }}>{filteredInvt.length}</b> item</div>}
       <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead>
@@ -4058,7 +2855,7 @@ ${matRowsHtml}
             </tr>
           </thead>
           <tbody>
-            {filteredInvt.map((item,i) => {
+            {inventoryData.map((item,i) => {
               const stC = item.status==="OUT"?cs.red:item.status==="CRITICAL"?cs.red:item.status==="WARNING"?cs.yellow:cs.green;
               return (
                 <tr key={item.code} style={{ borderTop:"1px solid "+cs.border, background:i%2===0?"transparent":cs.surface+"80" }}>
@@ -4078,9 +2875,7 @@ ${matRowsHtml}
                       )}
                       {currentUser?.role === "Owner" && (
                         <button onClick={async () => {
-                          if (!await showConfirm({ icon:"🗑️", title:"Hapus Material?", danger:true,
-  message:"Hapus material "+item.name+"? Tidak bisa dibatalkan.",
-  confirmText:"Hapus" })) return;
+                          if (!window.confirm(`Hapus material "${item.name}"?`)) return;
                           // Delete pakai id (UUID) jika ada, fallback ke code
                           const delQuery = item.id && !String(item.id).startsWith("INV")
                             ? supabase.from("inventory").delete().eq("id", item.id)
@@ -4122,8 +2917,7 @@ ${matRowsHtml}
         (r.type||"").toLowerCase().includes(q) ||
         (r.service||"").toLowerCase().includes(q) ||
         (r.code||"").toLowerCase().includes(q) ||
-        (r.notes||"").toLowerCase().includes(q) ||
-        String(r.price||"").includes(searchPriceList.trim())
+        (r.notes||"").toLowerCase().includes(q)
       );
     }
 
@@ -4138,15 +2932,18 @@ ${matRowsHtml}
         is_active:   updated.is_active !== false,
       }).eq("id", updated.id);
       if (error) { showNotif("❌ Gagal update: "+error.message); return; }
-      // Update local state & rebuild PRICE_LIST dari data terbaru
-      const freshList = priceListData.map(r => r.id===updated.id ? {...r,...updated} : r);
-      setPriceListData(freshList);
-      // Rebuild PRICE_LIST dari freshList (bukan priceListData yang stale)
-      PRICE_LIST = buildPriceListFromDB(data.filter(r => r.is_active !== false));
-      setPriceListSyncedAt(new Date());
-      console.log("✅ PRICE_LIST updated after save:", Object.keys(newPL));
+      // Update local state
+      setPriceListData(prev => prev.map(r => r.id===updated.id ? {...r,...updated} : r));
+      // Rebuild PRICE_LIST map
+      const newPL = { ...PRICE_LIST_DEFAULT };
+      priceListData.filter(r=>r.is_active!==false).forEach(row => {
+        if (row.id===updated.id) row = {...row,...updated};
+        if (!newPL[row.service]) newPL[row.service] = {};
+        newPL[row.service][row.type] = Number(row.price)||0;
+      });
+      PRICE_LIST = newPL;
       setPlEditItem(null);
-      showNotif("✅ Harga diperbarui — ARA langsung pakai harga baru");
+      showNotif("✅ Harga diperbarui di DB — ARA & Invoice otomatis pakai harga baru");
       addAgentLog("PRICELIST_UPDATE", `Harga "${updated.type}" diupdate → Rp${fmt(updated.price)}`, "SUCCESS");
     };
 
@@ -4164,25 +2961,20 @@ ${matRowsHtml}
             </div>
           </div>
           {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
-            <div style={{ display:"flex", gap:8 }}>
             <button onClick={async()=>{
+              // Reload fresh dari DB
               const { data } = await supabase.from("price_list").select("*").order("service").order("type");
               if (data) { setPriceListData(data); showNotif("✅ Price list di-refresh dari DB"); }
             }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"8px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
-              🔄 Refresh
+              🔄 Refresh dari DB
             </button>
-            <button onClick={()=>{ setPlNewForm({ service:"Cleaning", type:"", code:"", price:"", unit:"unit", notes:"" }); setPlAddModal(true); }}
-              style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"8px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
-              + Tambah Item
-            </button>
-            </div>
           )}
         </div>
 
         {/* Search */}
         <div style={{ position:"relative" }}>
           <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:14, pointerEvents:"none" }}>🔍</span>
-          <input id="searchPriceList" value={searchPriceList} onChange={e=>setSearchPriceList(e.target.value)}
+          <input value={searchPriceList} onChange={e=>setSearchPriceList(e.target.value)}
             placeholder="Cari nama layanan, tipe AC, kode..."
             style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
           {searchPriceList && <button onClick={()=>setSearchPriceList("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
@@ -4232,7 +3024,7 @@ ${matRowsHtml}
                       </td>
                       <td style={{ padding:"10px 14px" }}>
                         {isEdit ? (
-                          <input id="field_1" value={plEditForm.type||""} onChange={e=>setPlEditForm(f=>({...f,type:e.target.value}))}
+                          <input value={plEditForm.type||""} onChange={e=>setPlEditForm(f=>({...f,type:e.target.value}))}
                             style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"6px 10px", color:cs.text, fontSize:12, width:"100%" }} />
                         ) : (
                           <div>
@@ -4243,7 +3035,7 @@ ${matRowsHtml}
                       </td>
                       <td style={{ padding:"10px 14px" }}>
                         {isEdit ? (
-                          <input id="field_number_2" type="number" value={plEditForm.price||""} onChange={e=>setPlEditForm(f=>({...f,price:e.target.value}))}
+                          <input type="number" value={plEditForm.price||""} onChange={e=>setPlEditForm(f=>({...f,price:e.target.value}))}
                             style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"6px 10px", color:cs.text, fontSize:13, fontWeight:700, width:110 }} />
                         ) : (
                           <div style={{ fontWeight:700, fontSize:13, color:cs.text, fontFamily:"monospace" }}>{fmt(r.price)}</div>
@@ -4252,7 +3044,7 @@ ${matRowsHtml}
                       <td style={{ padding:"10px 14px" }}>
                         {isEdit ? (
                           <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, cursor:"pointer" }}>
-                            <input id="field_checkbox_3" type="checkbox" checked={plEditForm.is_active!==false} onChange={e=>setPlEditForm(f=>({...f,is_active:e.target.checked}))} />
+                            <input type="checkbox" checked={plEditForm.is_active!==false} onChange={e=>setPlEditForm(f=>({...f,is_active:e.target.checked}))} />
                             Aktif
                           </label>
                         ) : (
@@ -4266,7 +3058,7 @@ ${matRowsHtml}
                           {/* Edit: Admin & Owner */}
                           {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
                             isEdit ? (
-                              <div style={{display:"flex",gap:6}}>
+                              <>
                                 <button onClick={handleSavePrice}
                                   style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
                                   💾 Simpan
@@ -4275,24 +3067,27 @@ ${matRowsHtml}
                                   style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>
                                   Batal
                                 </button>
-                              </div>
+                              </>
                             ) : (
-                              <div style={{display:"flex",gap:6}}>
+                              <>
                                 <button onClick={()=>{ setPlEditItem(r); setPlEditForm({type:r.type,price:r.price,service:r.service,notes:r.notes||"",is_active:r.is_active!==false}); }}
                                   style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                                   ✏️ Edit
                                 </button>
+                                {/* Delete — Owner ONLY */}
                                 {currentUser?.role==="Owner" && (
                                   <button onClick={async()=>{
-                                    if (await showConfirm({ icon:"🗑️", title:"Hapus Price List?", danger:true,
-  message:"Hapus "+r.type+"? Tidak bisa dibatalkan.",
-  confirmText:"Hapus" })) {
+                                    if (!window.confirm || window.confirm(`Hapus harga "${r.type}"? Tidak bisa dibatalkan.`)) {
                                       const { error: delErr } = await supabase.from("price_list").delete().eq("id", r.id);
-                                      if (delErr) { showNotif("❌ Gagal hapus: "+delErr.message); }
-                                      else {
+                                      if (delErr) {
+                                        showNotif("❌ Gagal hapus: "+delErr.message);
+                                      } else {
                                         setPriceListData(prev => prev.filter(p => p.id !== r.id));
-                                        PRICE_LIST = buildPriceListFromDB(data.filter(r => r.is_active !== false));
-                                        addAgentLog("PRICELIST_DELETE",`Hapus "${r.type}" (${r.service})`,"WARNING");
+                                        const remaining = priceListData.filter(p => p.id !== r.id && p.is_active !== false);
+                                        const newPL = { ...PRICE_LIST_DEFAULT };
+                                        remaining.forEach(row => { if (!newPL[row.service]) newPL[row.service] = {}; newPL[row.service][row.type] = Number(row.price)||0; });
+                                        PRICE_LIST = newPL;
+                                        addAgentLog("PRICELIST_DELETE", `Hapus "${r.type}" (${r.service})`, "WARNING");
                                         showNotif("✅ Item dihapus dari database");
                                       }
                                     }
@@ -4300,9 +3095,8 @@ ${matRowsHtml}
                                     🗑️
                                   </button>
                                 )}
-                              </div>
+                              </>
                             )
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -4326,67 +3120,7 @@ ${matRowsHtml}
             ))}
           </div>
         </div>
-
-      {/* ── Modal Tambah Item PriceList ── */}
-      {plAddModal && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
-          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:16, padding:24, width:"100%", maxWidth:420 }}>
-          <div style={{ fontWeight:800, fontSize:16, color:cs.text, marginBottom:16 }}>➕ Tambah Item Harga Baru</div>
-          {[
-            { label:"Jenis Layanan", key:"service", type:"select", opts:["Cleaning","Install","Repair","Complain"] },
-            { label:"Tipe AC / Nama Item", key:"type", type:"text", ph:"contoh: AC 1 PK, AC 2 PK" },
-            { label:"Kode", key:"code", type:"text", ph:"contoh: CLN-1PK" },
-            { label:"Harga (Rp)", key:"price", type:"number", ph:"contoh: 150000" },
-            { label:"Satuan", key:"unit", type:"text", ph:"contoh: unit, set, meter" },
-            { label:"Catatan", key:"notes", type:"text", ph:"opsional" },
-          ].map(({ label, key, type, ph, opts }) => (
-            <div key={key} style={{ marginBottom:10 }}>
-              <div style={{ fontSize:11, color:cs.muted, marginBottom:4 }}>{label}</div>
-              {type === "select" ? (
-                <select value={plNewForm[key]} onChange={e => setPlNewForm(f=>({...f,[key]:e.target.value}))}
-                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13 }}>
-                  {opts.map(o => <option key={o} value={o}>{o}</option>)}
-                </select>
-              ) : (
-                <input id="field_4" type={type} value={plNewForm[key]} placeholder={ph||""}
-                  onChange={e => setPlNewForm(f=>({...f,[key]:e.target.value}))}
-                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
-              )}
-            </div>
-          ))}
-          <div style={{ display:"flex", gap:8, marginTop:16 }}>
-            <button onClick={()=>setPlAddModal(false)}
-              style={{ flex:1, background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:600 }}>
-              Batal
-            </button>
-            <button onClick={async()=>{
-              if (!plNewForm.type.trim()) { showNotif("❌ Tipe/Nama item wajib diisi"); return; }
-              if (!plNewForm.price || isNaN(Number(plNewForm.price))) { showNotif("❌ Harga harus berupa angka"); return; }
-              const newItem = {
-                service: plNewForm.service,
-                type: plNewForm.type.trim(),
-                code: plNewForm.code.trim() || (plNewForm.service.slice(0,3).toUpperCase()+"-"+Date.now().toString().slice(-4)),
-                price: Number(plNewForm.price),
-                unit: plNewForm.unit.trim() || "unit",
-                notes: plNewForm.notes.trim(),
-                is_active: true,
-              };
-              const { data, error } = await supabase.from("price_list").insert(newItem).select().single();
-              if (error) { showNotif("❌ Gagal simpan: "+error.message); return; }
-              setPriceListData(prev => [...prev, data||newItem]);
-              setPriceListSyncedAt(new Date());
-              addAgentLog("PRICELIST_ADD", `Item baru "${newItem.type}" (${newItem.service}) Rp${fmt(newItem.price)} ditambah oleh ${currentUser?.name}`, "SUCCESS");
-              showNotif("✅ Item harga baru berhasil ditambah!");
-              setPlAddModal(false);
-            }}
-              style={{ flex:2, background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:700 }}>
-              💾 Simpan Item
-            </button>
-          </div>
-        </div>
       </div>
-      )}
-    </div>
     );
   };
 
@@ -4420,22 +3154,11 @@ ${matRowsHtml}
     const allTekNames = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
     // Helper: lihat jadwal via field o.helper, bukan o.teknisi
     const isHelperRole = currentUser?.role === "Helper";
-    const _sqSched = searchSchedule.trim().toLowerCase();
-    const _baseOrders = activeTek === "Semua"
-      ? ordersData
-      : ordersData.filter(o => isHelperRole
+    const filteredOrders = activeTek === "Semua" 
+      ? ordersData 
+      : ordersData.filter(o => isHelperRole 
           ? (o.helper === activeTek || o.teknisi === activeTek)
           : o.teknisi === activeTek);
-    // BUG-4: tambah search text filter di jadwal
-    const filteredOrders = !_sqSched ? _baseOrders : _baseOrders.filter(o =>
-      (o.customer||"").toLowerCase().includes(_sqSched) ||
-      (o.id||"").toLowerCase().includes(_sqSched) ||
-      (o.teknisi||"").toLowerCase().includes(_sqSched) ||
-      (o.helper||"").toLowerCase().includes(_sqSched) ||
-      (o.address||"").toLowerCase().includes(_sqSched) ||
-      (o.service||"").toLowerCase().includes(_sqSched) ||
-      (o.phone||"").includes(searchSchedule.trim())
-    );
     const teknisiList = activeTek === "Semua" ? allTekNames : [activeTek];
     // Untuk teknisi/helper: filter hanya hari ini
     const todayOrdersTek = isTekRole ? filteredOrders.filter(o => o.date === TODAY) : filteredOrders;
@@ -4497,23 +3220,6 @@ ${matRowsHtml}
                 </button>
               );
             })}
-          </div>
-        )}
-
-        {/* Search bar di Jadwal — Owner & Admin */}
-        {!isTekRole && (
-          <div style={{ position:"relative", marginTop:4 }}>
-            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:13, pointerEvents:"none" }}>🔍</span>
-            <input id="searchSchedule"
-              value={searchSchedule}
-              onChange={e => setSearchSchedule(e.target.value)}
-              placeholder="Cari customer, teknisi, alamat, Job ID..."
-              style={{ width:"100%", background:cs.card, border:"1px solid "+(searchSchedule?cs.accent:cs.border), borderRadius:10, padding:"9px 36px", color:cs.text, fontSize:12, boxSizing:"border-box", outline:"none" }}
-            />
-            {searchSchedule && (
-              <button onClick={() => setSearchSchedule("")}
-                style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:15 }}>✕</button>
-            )}
           </div>
         )}
 
@@ -4610,16 +3316,7 @@ ${matRowsHtml}
                         style={{ background:"#3b82f622", border:"1px solid #3b82f644", color:"#3b82f6", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                         🗺️ Maps
                       </button>
-                       <button onClick={()=>{
-                         const cu = customersData.find(c=>c.name===o.customer);
-                         setHistoryPreview(cu||{name:o.customer,phone:o.phone,address:o.address});
-                       }}
-                         style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"44",
-                           color:cs.accent, borderRadius:8, padding:"6px 12px",
-                           cursor:"pointer", fontWeight:600, fontSize:12 }}>
-                         📋 History
-                       </button>
-                      <button onClick={() => { setWaTekTarget({phone:o.phone,customer:o.customer,service:o.service,time:o.time,address:o.address}); setModalWaTek(true); }}
+                      <button onClick={() => openWA(o.phone,"Halo "+o.customer+", saya "+myTekName+" dari AClean, sedang menuju lokasi Anda.")}
                         style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                         📱 WA
                       </button>
@@ -4627,12 +3324,13 @@ ${matRowsHtml}
                         <>
                           {o.status !== "ON_SITE" && (
                             <button onClick={async () => {
-                              await supabase.from("orders").update({status:"ON_SITE"}).eq("id",o.id);
+                              await supabase.from("orders").update({status:"ON_SITE", confirmed_at: new Date().toISOString()}).eq("id",o.id);
                               setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
                               showNotif("✅ Status → On Site!");
-        const admins = teknisiData.filter(u=>u.role==="Admin"||u.role==="Owner")
-          .concat((userAccounts||[]).filter(u=>u.role==="Admin"||u.role==="Owner"));
-                              const msg = "Teknisi di Lokasi\n" + o.id + " - " + o.customer + "\nTeknisi: " + myTekName;
+                              const admins = userAccounts.filter(u=>u.role==="Admin"||u.role==="Owner");
+                              const msg = `✅ *Teknisi di Lokasi*
+📋 ${o.id} — ${o.customer}
+👷 ${myTekName}`;
                               admins.forEach(adm=>{if(adm?.phone) sendWA(adm.phone,msg);});
                             }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700 }}>
                               ✅ On Site
@@ -4726,7 +3424,7 @@ ${matRowsHtml}
                         <div style={{ background:(techColors[o.teknisi]||cs.accent)+"22", border:"1px solid "+(techColors[o.teknisi]||cs.accent)+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:54, flexShrink:0 }}>
                           <div style={{ fontSize:15, fontWeight:800, color:techColors[o.teknisi]||cs.accent }}>{o.time}</div>
                           <div style={{ fontSize:9, color:cs.muted }}>–{o.time_end||hitungJamSelesai(o.time,o.service,o.units)}</div>
-                          <div style={{ fontSize:9, color:cs.muted }}>{(o.date||"").slice(5)}</div>
+                          <div style={{ fontSize:9, color:cs.muted }}>{o.date.slice(5)}</div>
                         </div>
                         <div style={{ flex:1 }}>
                           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
@@ -4737,7 +3435,7 @@ ${matRowsHtml}
                           <div style={{ fontSize:12, color:cs.muted, display:"grid", gridTemplateColumns:"1fr 1fr", gap:"2px 14px" }}>
                             <span>🔧 {o.service} · {o.units} unit</span>
                             <span style={{ color:techColors[o.teknisi]||cs.muted }}>👷 {o.teknisi}{o.helper?" + "+o.helper:""}</span>
-                            <span>📍 {(o.address||"-").slice(0,32)}...</span>
+                            <span>📍 {o.address.slice(0,32)}...</span>
                           </div>
                         </div>
                         <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
@@ -4755,72 +3453,55 @@ ${matRowsHtml}
                           {!isTekRole && (
                             <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
                           )}
-                          {currentUser?.role==="Owner" && !(["COMPLETED","PAID"].includes(o.status)) && (
-                            <button onClick={async()=>{
-                              if(!await showConfirm({ icon:"🗑️", title:"Hapus Order?", danger:true,
-                                message:`Hapus order ${o.id} — ${o.customer}?\nOrder COMPLETED/PAID tidak bisa dihapus.`,
-                                confirmText:"Hapus" })) return;
-                              const { error: delOrdErr } = await supabase.from("orders").delete().eq("id", o.id);
-                              if (delOrdErr) { showNotif("❌ Gagal hapus order: "+delOrdErr.message); return; }
-                              // Hapus schedule terkait
-                              try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch(_){}
-                              setOrdersData(prev => prev.filter(ord => ord.id !== o.id));
-                              addAgentLog("ORDER_DELETED", `Owner hapus order ${o.id} — ${o.customer} (${o.service})`, "WARNING");
-                              showNotif("🗑️ Order "+o.id+" berhasil dihapus");
-                            }} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }} title="Hapus order (Owner only)">🗑️</button>
-                          )}
                           {isTekRole && (
                             <button onClick={() => { window.open("https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(o.address),"_blank"); }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>🗺 Maps</button>
                           )}
                           {isTekRole && (
-                            <button onClick={()=>{
-                              const cu = customersData.find(c=>c.name===o.customer);
-                              setHistoryPreview(cu||{name:o.customer,phone:o.phone,address:o.address});
-                            }}
-                            style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"44",
-                              color:cs.accent, borderRadius:8, padding:"7px 10px",
-                              cursor:"pointer", fontWeight:600, fontSize:12 }}>
-                              📋 History
-                            </button>
-                          )}
-                          {isTekRole && (
-                            <button onClick={() => { if(o.phone) openWA(o.phone,"Halo "+(o.customer||"Bapak/Ibu")+", saya "+myTekName+" dari AClean. Saya akan tiba pkl "+(o.time||"-")+" untuk "+(o.service||"servis AC")+". Terima kasih!"); else showNotif("❌ Nomor HP customer tidak tersedia"); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>💬 Chat WA</button>
+                            <button onClick={() => openWA(o.phone,"Halo "+o.customer+", saya "+myTekName+" dari AClean. Saya akan tiba pkl "+o.time+" untuk "+o.service+". Terima kasih!")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>💬 Chat WA</button>
                           )}
                           {isTekRole && o.dispatch && !["COMPLETED","CANCELLED","PAID"].includes(o.status) && (<>
-                            {/* ── Konfirmasi Tiba: 1 tombol, update status ON_SITE, tanpa WA Admin ── */}
+                            {/* Konfirmasi Hadir — update status SAJA */}
                             {o.status !== "ON_SITE" && (
                               <button onClick={async () => {
-                                await supabase.from("orders").update({status:"ON_SITE", on_site_at:new Date().toISOString()}).eq("id",o.id);
+                                await supabase.from("orders").update({status:"ON_SITE", confirmed_at: new Date().toISOString()}).eq("id",o.id);
                                 setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
-                                showNotif("✅ Status → Sudah di Lokasi!");
-                                addAgentLog("ON_SITE", `${currentUser?.name} tiba di lokasi — ${o.id}`, "SUCCESS");
-        // Notif Owner via WA saat teknisi konfirmasi tiba
-        const ownerContacts = [...(teknisiData||[]),...(userAccounts||[])]
-          .filter(u=>u.role==="Owner"&&u.phone);
-        const konfMsg = `✅ *Teknisi di Lokasi*\n📋 ${o.id}\n👤 ${o.customer}\n📍 ${o.address||"-"}\n👷 ${currentUser?.name}\n⏰ ${new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"})}`;
-        ownerContacts.forEach(ow=>sendWA(ow.phone, konfMsg));
+                                showNotif("✅ Status → On Site! Notif otomatis ke Admin...");
+                                // ── GAP-04 FIX: Auto WA ke semua Admin saat ON_SITE ──
+                                const admins04 = userAccounts.filter(u => u.role==="Admin"||u.role==="Owner");
+                                const msg04 = `✅ *Teknisi Sudah di Lokasi*
+
+📋 Job: *${o.id}*
+👤 Customer: ${o.customer}
+📍 Alamat: ${o.address}
+👷 Teknisi: ${currentUser?.name||o.teknisi}
+🕐 Tiba: ${new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"})} WIB
+
+_Laporan masuk setelah pekerjaan selesai._`;
+                                admins04.forEach(adm => { if(adm?.phone) sendWA(adm.phone, msg04); });
+                                addAgentLog("ON_SITE_AUTO_NOTIF", `Auto notif ke ${admins04.length} Admin — ${o.id}`, "SUCCESS");
                               }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", borderRadius:8, padding:"7px 12px", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
-                                ✅ Konfirmasi Tiba
-                              </button>
+                              ✅ Konfirmasi Hadir
+                            </button>
                             )}
-                            {/* ── WA Customer: manual, teknisi isi estimasi jam tiba ── */}
-                            {o.phone && (() => {
-                              const jamSkrg = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
-                              const [h,m] = jamSkrg.split(":").map(Number);
-                              const etaDate = new Date(); etaDate.setMinutes(etaDate.getMinutes()+30);
-                              const jamEta = etaDate.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
-                              return (
-                                <button onClick={() => {
-                                  const eta = jamEta; // window.prompt disabled
-                                  if (!eta) return;
-                                  const msg = `Halo ${o.customer} 👋\n\nKami dari *AClean Service* akan segera tiba di lokasi Anda.\n\n📋 Job: ${o.id}\n🔧 Service: ${o.service} — ${o.units} unit\n⏰ Estimasi tiba: *${eta} WIB*\n\nMohon pastikan ada di lokasi ya! 🙏\n\n_${currentUser?.name} — AClean_`;
-                                  if (o.phone) sendWA(o.phone, msg);
-                                  else showNotif("⚠️ No. HP customer tidak tersedia");
-                                }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
-                                  📱 WA Customer
-                                </button>
+                            {/* WA Notif ke Admin — terpisah */}
+                            <button onClick={() => {
+                              const adm = userAccounts.find(u=>u.role==="Admin"||u.role==="Owner");
+                              if(adm?.phone) sendWA(adm.phone,
+                                `✅ *Konfirmasi Kehadiran*
+👷 ${currentUser?.name} sudah tiba di lokasi
+📋 Job: ${o.id}
+👤 Customer: ${o.customer}
+📍 ${o.address}
+🔧 ${o.service} ${o.units} unit`
                               );
-                            })()}
+                            }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                              📱 Notif Admin
+                            </button>
+                            {/* WA ke Customer */}
+                            <button onClick={() => openWA(o.phone, `Halo ${o.customer}, saya ${currentUser?.name} dari AClean. Sudah tiba di lokasi, siap mulai pengerjaan. 🔧`)}
+                              style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                              📱 WA Customer
+                            </button>
                           </>)}
                           <button onClick={() => openLaporanModal(o)} style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📝 Laporan</button>
                         </div>
@@ -4834,77 +3515,14 @@ ${matRowsHtml}
         )}
           </>
         )}
-      </div>
-    );
   };
 
 
   // ============================================================
   // RENDER TEKNISI ADMIN
   // ============================================================
-  const renderTeknisiAdmin = () => {
-    // GAP-11: Rekap performa per teknisi
-    const weekAgo  = new Date(Date.now()-7*24*60*60*1000).toISOString().slice(0,10);
-    const monthAgo = new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10);
-    const perfMap = {};
-    teknisiData.forEach(t => {
-      const jobsMinggu = ordersData.filter(o =>
-        (o.teknisi===t.name||o.helper===t.name) && (o.date||"") >= weekAgo
-      );
-      const jobsBulan = ordersData.filter(o =>
-        (o.teknisi===t.name||o.helper===t.name) && (o.date||"") >= monthAgo
-      );
-      const laporanMinggu = laporanReports.filter(r =>
-        (r.teknisi===t.name||r.helper===t.name) && (r.submitted_at||r.submitted||"") >= weekAgo
-      );
-      const revisi = laporanReports.filter(r =>
-        (r.teknisi===t.name||r.helper===t.name) && r.status==="REVISION"
-      ).length;
-      // Job stuck: DISPATCHED/ON_SITE tapi belum ada laporan & sudah lewat jam selesai
-      const stuck = ordersData.filter(o =>
-        (o.teknisi===t.name||o.helper===t.name) &&
-        ["DISPATCHED","ON_SITE"].includes(o.status) &&
-        o.date < TODAY
-      ).length;
-      const selesai = jobsMinggu.filter(o =>
-        ["COMPLETED","REPORT_SUBMITTED","INVOICE_APPROVED","INVOICE_CREATED","PAID"].includes(o.status)
-      ).length;
-      // GAP-11: Hitung laporan terlambat (ada laporan tapi > 2 jam setelah time_end)
-      const laporanTerlambat = laporanMinggu.filter(r => {
-        const order = ordersData.find(o => o.id === r.job_id || o.id === r.order_id);
-        if (!order || !order.time_end || !r.submitted_at) return false;
-        const endMs  = new Date((order.date||"")+"T"+(order.time_end||"17:00")+":00").getTime();
-        const subMs  = new Date(r.submitted_at).getTime();
-        return subMs > (endMs + 2*60*60*1000); // > 2 jam setelah selesai
-      }).length;
-      perfMap[t.name] = {
-        jobsMinggu: jobsMinggu.length, selesai, revisi, stuck,
-        jobsBulan: jobsBulan.length,
-        laporanMinggu: laporanMinggu.length,
-        onTime: laporanMinggu.length - laporanTerlambat,
-        terlambat: laporanTerlambat,
-        avgJobPerDay: +(jobsMinggu.length / 7).toFixed(1),
-      };
-    });
-
-    return (
+  const renderTeknisiAdmin = () => (
     <div style={{ display:"grid", gap:16 }}>
-      {/* GAP-7: Banner stuck jobs */}
-      {(() => {
-        const stuckList = ordersData.filter(o =>
-          ["DISPATCHED","ON_SITE"].includes(o.status) && o.date < TODAY
-        );
-        if (stuckList.length === 0) return null;
-        return (
-          <div style={{ background:cs.red+"15", border:"1px solid "+cs.red+"33", borderRadius:10, padding:"10px 14px", display:"flex", gap:10, alignItems:"center" }}>
-            <span style={{fontSize:16}}>⚠️</span>
-            <div>
-              <div style={{fontWeight:700, color:cs.red, fontSize:13}}>{stuckList.length} job belum ada laporan (sudah lewat hari)</div>
-              <div style={{fontSize:11, color:cs.muted}}>{stuckList.map(o=>`${o.id} (${o.teknisi})`).join(", ")}</div>
-            </div>
-          </div>
-        );
-      })()}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>👷 Tim Teknisi</div>
         <button onClick={() => { setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[]}); setModalTeknisi(true); }} style={{ background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Tambah Anggota</button>
@@ -4912,7 +3530,6 @@ ${matRowsHtml}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
         {teknisiData.map(t => {
           const stC = t.status==="on-job"?cs.green:t.status==="active"?cs.accent:cs.muted;
-          const perf = perfMap[t.name] || {};
           return (
             <div key={t.id} style={{ background:cs.card, border:"1px solid "+stC+"33", borderRadius:14, padding:16 }}>
               <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
@@ -4930,26 +3547,12 @@ ${matRowsHtml}
                   {t.skills.map(s => <span key={s} style={{ background:cs.accent+"18", color:cs.accent, fontSize:9, padding:"2px 6px", borderRadius:4, fontWeight:600 }}>{s}</span>)}
                 </div>
               </div>
-              {/* GAP-11: Rekap performa minggu ini */}
-              <div style={{ borderTop:"1px solid "+cs.border, paddingTop:8, marginBottom:10, display:"grid", gridTemplateColumns:"1fr 1fr", gap:4 }}>
-                <div style={{ fontSize:10, color:cs.muted }}>📅 7 hari</div>
-                <div style={{ fontSize:10, color:cs.muted }}>📅 30 hari</div>
-                <div style={{ fontSize:13, fontWeight:700, color:cs.text }}>{perf.jobsMinggu||0} job</div>
-                <div style={{ fontSize:13, fontWeight:700, color:cs.text }}>{perf.jobsBulan||0} job</div>
-                <div style={{ fontSize:10, color:cs.green }}>✅ {perf.selesai||0} selesai</div>
-                <div style={{ fontSize:10, color:perf.revisi>0?cs.yellow:cs.muted }}>🔄 {perf.revisi||0} revisi</div>
-                {(perf.stuck||0) > 0 && (
-                  <div style={{ fontSize:10, color:cs.red, gridColumn:"1/-1" }}>⚠️ {perf.stuck} job stuck (laporan belum masuk)</div>
-                )}
-              </div>
               <div style={{ display:"flex", gap:6 }}>
                 <button onClick={() => { setEditTeknisi(t); setNewTeknisiForm({...t}); setModalTeknisi(true); }} style={{ flex:1, background:cs.accent+"18", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
-                <button onClick={() => { if(t.phone) openWA(t.phone, "Halo " + (t.name||"Teknisi") + ", ada info dari AClean:"); else showNotif("❌ No. HP teknisi tidak ada"); }} style={{ flex:1, background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 WA</button>
+                <button onClick={() => openWA(t.phone, "Halo " + t.name + ", ada info dari AClean:")} style={{ flex:1, background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 WA</button>
                 {currentUser?.role === "Owner" && (
                   <button onClick={async () => {
-                    if (!await showConfirm({ icon:"👷", title:"Hapus dari Tim?", danger:true,
-  message:"Hapus "+t.name+" dari tim? Data order tidak terpengaruh.",
-  confirmText:"Hapus" })) return;
+                    if (window.confirm && !window.confirm(`Hapus ${t.name} dari tim?`)) return;
                     setTeknisiData(prev => prev.filter(x => x.id !== t.id));
                     if (!String(t.id).startsWith("Tech")) {
                       await supabase.from("user_profiles").delete().eq("id", t.id);
@@ -4963,97 +3566,8 @@ ${matRowsHtml}
           );
         })}
       </div>
-
-      {/* GAP-11: Tabel Rekap Performa Mingguan — Enhanced */}
-      {(() => {
-        // Hitung ranking: siapa top performer minggu ini
-        const perfList = teknisiData.map(t => ({ ...t, p: perfMap[t.name]||{} }));
-        const maxJobs = Math.max(...perfList.map(t => t.p.jobsMinggu||0), 1);
-        const rankedByJob = [...perfList].sort((a,b)=>(b.p.jobsMinggu||0)-(a.p.jobsMinggu||0));
-        const topName = rankedByJob[0]?.name;
-        return (
-        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:16, marginTop:4 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-            <div style={{ fontWeight:700, fontSize:14, color:cs.text }}>📊 Rekap Performa Tim — 7 Hari Terakhir</div>
-            <div style={{ fontSize:11, color:cs.muted }}>
-              Total job: <strong style={{color:cs.accent}}>{perfList.reduce((a,t)=>a+(t.p.jobsMinggu||0),0)}</strong>
-              &nbsp;·&nbsp;Stuck: <strong style={{color:cs.red}}>{perfList.reduce((a,t)=>a+(t.p.stuck||0),0)}</strong>
-            </div>
-          </div>
-          <div style={{ overflowX:"auto" }}>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-              <thead>
-                <tr style={{ background:cs.surface }}>
-                  {["#","Teknisi","Role","Job 7hr","Selesai","Rate","Bar","Revisi","Laporan","Stuck","Status"].map(h => (
-                    <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:cs.muted, borderBottom:"1px solid "+cs.border }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rankedByJob.map((t,i) => {
-                  const p = t.p;
-                  const completionRate = (p.jobsMinggu||0)>0 ? Math.round(((p.selesai||0)/(p.jobsMinggu||1))*100) : 0;
-                  const barPct = maxJobs>0 ? Math.round(((p.jobsMinggu||0)/maxJobs)*100) : 0;
-                  const isTop = t.name===topName && (p.jobsMinggu||0)>0;
-                  const hasIssue = (p.stuck||0)>0 || (p.revisi||0)>2;
-                  const rowBg = isTop ? cs.green+"0d" : hasIssue ? cs.red+"0d" : "transparent";
-                  const rateColor = completionRate>=80?cs.green:completionRate>=50?cs.yellow:cs.red;
-                  return (
-                    <tr key={t.id} style={{ borderBottom:"1px solid "+cs.border+"55", background:rowBg }}>
-                      <td style={{ padding:"8px 10px", color:cs.muted, fontWeight:700 }}>
-                        {isTop ? "🥇" : i===1 ? "🥈" : i===2 ? "🥉" : (i+1)}
-                      </td>
-                      <td style={{ padding:"8px 10px", fontWeight:700, color:cs.text }}>
-                        {t.name}
-                        {isTop && <span style={{fontSize:9,background:cs.green+"22",color:cs.green,borderRadius:99,padding:"1px 6px",marginLeft:4,fontWeight:700}}>TOP</span>}
-                      </td>
-                      <td style={{ padding:"8px 10px", color:cs.muted, fontSize:11 }}>{t.role}</td>
-                      <td style={{ padding:"8px 10px", fontWeight:700, color:cs.accent, fontSize:14 }}>{p.jobsMinggu||0}</td>
-                      <td style={{ padding:"8px 10px", color:cs.green }}>{p.selesai||0}</td>
-                      <td style={{ padding:"8px 10px" }}>
-                        <span style={{fontWeight:700,color:rateColor}}>{completionRate}%</span>
-                      </td>
-                      <td style={{ padding:"8px 10px", minWidth:80 }}>
-                        <div style={{ background:cs.surface, borderRadius:99, height:6, overflow:"hidden" }}>
-                          <div style={{ height:"100%", width:barPct+"%", background:isTop?cs.green:cs.accent, borderRadius:99, transition:"width 0.5s" }} />
-                        </div>
-                      </td>
-                      <td style={{ padding:"8px 10px", color:(p.revisi||0)>0?cs.yellow:cs.muted }}>
-                        {(p.revisi||0)>0 ? "🔄 "+(p.revisi||0) : "—"}
-                      </td>
-                      <td style={{ padding:"8px 10px", color:cs.muted }}>{p.laporanMinggu||0}</td>
-                      <td style={{ padding:"8px 10px", color:(p.stuck||0)>0?cs.red:cs.muted, fontWeight:(p.stuck||0)>0?700:400 }}>
-                        {(p.stuck||0)>0 ? <span style={{background:cs.red+"22",color:cs.red,borderRadius:99,padding:"2px 7px",fontSize:10}}>⚠️ {p.stuck} stuck</span> : "—"}
-                      </td>
-                      <td style={{ padding:"8px 10px" }}>
-                        {(p.stuck||0)>0
-                          ? <span style={{fontSize:10,color:cs.red,fontWeight:700}}>⚡ Perlu Perhatian</span>
-                          : completionRate>=80
-                            ? <span style={{fontSize:10,color:cs.green}}>✅ Baik</span>
-                            : completionRate>0
-                              ? <span style={{fontSize:10,color:cs.yellow}}>📈 Berkembang</span>
-                              : <span style={{fontSize:10,color:cs.muted}}>—</span>
-                        }
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {/* Legend */}
-          <div style={{ marginTop:10, display:"flex", gap:14, fontSize:10, color:cs.muted, flexWrap:"wrap" }}>
-            <span>🥇 Top performer</span>
-            <span style={{color:cs.green}}>■ Rate ≥80% = Baik</span>
-            <span style={{color:cs.yellow}}>■ Rate 50-79% = Berkembang</span>
-            <span style={{color:cs.red}}>■ Rate &lt;50% atau ada stuck</span>
-          </div>
-        </div>
-        );
-      })()}
     </div>
-    );
-  };
+  );
 
   // ============================================================
   // RENDER AGENT LOG
@@ -5096,29 +3610,26 @@ ${matRowsHtml}
   };
 
   // Cek apakah teknisi AVAILABLE di slot waktu tertentu (tidak overlap)
-  const MAX_LOKASI_PER_HARI = 6; // GAP-3: max 6 lokasi berbeda per teknisi per hari
-
   const cekTeknisiAvailable = (teknisiName, date, timeStart, service, units, checkAsHelper = false) => {
     const durBaru = hitungDurasi(service, units);
     const startBaru = (timeStart || "09:00").split(":").map(Number);
     const startMinBaru = startBaru[0] * 60 + startBaru[1];
     const endMinBaru   = startMinBaru + Math.round(durBaru * 60);
 
-    const activeOrders = ordersData.filter(o =>
+    // Cek konflik sebagai teknisi ATAU sebagai helper
+    const conflicts = ordersData.filter(o =>
       (checkAsHelper ? o.helper === teknisiName : (o.teknisi === teknisiName || o.helper === teknisiName)) &&
       o.date === date &&
-      ["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS","ON_SITE"].includes(o.status)
+      // COMPLETED & SUBMITTED (laporan masuk) = pekerjaan sudah selesai → tidak block slot baru
+      ["PENDING","CONFIRMED","IN_PROGRESS","ON_SITE"].includes(o.status)
     );
 
-    // GAP-3: Hard cap — max 6 lokasi per hari (tidak ada batasan unit)
-    if (activeOrders.length >= MAX_LOKASI_PER_HARI) return false;
-
-    // Cek overlap jam
-    for (const o of activeOrders) {
+    for (const o of conflicts) {
       const durExist = hitungDurasi(o.service || "Cleaning", o.units || 1);
       const startExist = (o.time || "09:00").split(":").map(Number);
       const startMinExist = startExist[0] * 60 + startExist[1];
       const endMinExist   = startMinExist + Math.round(durExist * 60);
+      // Overlap check
       if (startMinBaru < endMinExist && endMinBaru > startMinExist) return false;
     }
     return true;
@@ -5135,49 +3646,6 @@ ${matRowsHtml}
       }
     }
     return null; // penuh
-  };
-
-  // ── GAP-1 & GAP-2: Real-time availability check ke Supabase (anti race condition) ──
-  const cekTeknisiAvailableDB = async (teknisiName, date, timeStart, service, units) => {
-    try {
-      const durMenit = Math.round(hitungDurasi(service, units) * 60);
-      const startParts = (timeStart || "09:00").split(":").map(Number);
-      const startMin = startParts[0] * 60 + startParts[1];
-      const endMin   = startMin + durMenit;
-
-      // Query langsung ke Supabase — bukan state lokal
-      const { data: dbOrders, error } = await supabase
-        .from("orders")
-        .select("id, time, time_end, service, units, status")
-        .eq("teknisi", teknisiName)
-        .eq("date", date)
-        .in("status", ["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS","ON_SITE"]);
-
-      if (error) {
-        console.warn("cekAvailDB error:", error.message, "— fallback ke state lokal");
-        return cekTeknisiAvailable(teknisiName, date, timeStart, service, units);
-      }
-
-      // Hard cap: max 6 lokasi
-      if ((dbOrders||[]).length >= MAX_LOKASI_PER_HARI) {
-        return { ok: false, reason: `${teknisiName} sudah mencapai batas 6 job di tanggal ${date}` };
-      }
-
-      // Cek overlap jam
-      for (const o of (dbOrders||[])) {
-        const oStart = (o.time||"09:00").split(":").map(Number);
-        const oStartMin = oStart[0]*60 + oStart[1];
-        const oDur = Math.round(hitungDurasi(o.service||"Cleaning", o.units||1) * 60);
-        const oEndMin = oStartMin + oDur;
-        if (startMin < oEndMin && endMin > oStartMin) {
-          return { ok: false, reason: `${teknisiName} bentrok dengan job ${o.id} jam ${o.time}–${o.time_end||"?"}` };
-        }
-      }
-      return { ok: true };
-    } catch(e) {
-      console.warn("cekAvailDB catch:", e.message);
-      return { ok: true }; // fallback allow jika error network
-    }
   };
 
   // AREA PELAYANAN
@@ -5231,11 +3699,8 @@ ${matRowsHtml}
       "Invoice mana yang belum dibayar?",
       "Stok material apa yang kritis?",
       "Buat ringkasan order hari ini",
-      "Tampilkan semua harga layanan terbaru",
+      "Update dadakan INV-20260301-001 jadi Rp 50000",
     ];
-    const syncLabel = priceListSyncedAt
-      ? "Harga terakhir sync: " + priceListSyncedAt.toLocaleString("id-ID",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})
-      : "Harga belum di-sync dari Supabase";
     return (
       <div style={{ display:"grid", gap:0, height:"calc(100vh - 120px)", maxHeight:700 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
@@ -5243,38 +3708,12 @@ ${matRowsHtml}
             <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>🤖 ARA — AI Agent AClean</div>
             <div style={{ fontSize:12, color:cs.muted }}>Chat langsung · Bisa update data invoice, cek stok, analisa bisnis</div>
           </div>
-          <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-            {/* Sync status indicator */}
-            <div style={{ display:"flex", alignItems:"center", gap:5, background:cs.surface, border:"1px solid "+cs.border, borderRadius:7, padding:"4px 10px" }}>
-              <div style={{ width:7, height:7, borderRadius:"50%", background:priceListSyncedAt?cs.green:cs.yellow }} />
-              <span style={{ fontSize:10, color:cs.muted }}>
-                Harga: {priceListSyncedAt
-                  ? priceListSyncedAt.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"})
-                  : "belum sync"}
-              </span>
-            </div>
-            <button
-              onClick={forceReloadPriceList}
-              title="Sync harga terbaru dari Supabase"
-              style={{ background:cs.green+"18", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 12px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:700 }}>
-              🔄 Sync Harga
-            </button>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
             <div style={{ width:8, height:8, borderRadius:"50%", background:araLoading?cs.yellow:cs.green }} />
             <span style={{ fontSize:11, color:cs.muted }}>{araLoading?"Berpikir...":"Online"}</span>
             <button onClick={() => setAraMessages([{ role:"assistant", content:"Halo! Saya ARA 🤖 — AI Agent AClean. Ada yang bisa saya bantu?" }])}
               style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"5px 12px", borderRadius:6, cursor:"pointer", fontSize:11 }}>🗑 Reset</button>
           </div>
-        </div>
-        {/* Harga sync status banner */}
-        <div style={{ background:priceListSyncedAt?cs.green+"12":cs.yellow+"18", border:"1px solid "+(priceListSyncedAt?cs.green:cs.yellow)+"33", borderRadius:8, padding:"6px 12px", marginBottom:8, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <span style={{ fontSize:11, color:priceListSyncedAt?cs.green:cs.yellow }}>
-            {priceListSyncedAt ? "✅ " : "⚠️ "}{syncLabel}
-          </span>
-          {!priceListSyncedAt && (
-            <button onClick={forceReloadPriceList} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"3px 10px", borderRadius:5, cursor:"pointer", fontSize:10, fontWeight:700 }}>
-              Sync Sekarang
-            </button>
-          )}
         </div>
         {/* Quick prompts */}
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
@@ -5320,7 +3759,7 @@ ${matRowsHtml}
           </div>
         )}
         <div style={{ display:"flex", gap:8, marginTop:8 }}>
-          <input id="araInput"
+          <input
             value={araInput} onChange={e=>setAraInput(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendToARA(araInput); } }}
             placeholder="Tanya ARA atau minta update data... (Enter untuk kirim)"
@@ -5368,10 +3807,10 @@ ${matRowsHtml}
           const lC = log.status==="ERROR"?cs.red:log.status==="WARNING"?cs.yellow:cs.green;
           return (
             <div key={i} style={{ display:"flex", gap:14, padding:"12px 18px", borderBottom:"1px solid "+cs.border, alignItems:"flex-start" }}>
-              <span style={{ fontFamily:"monospace", fontSize:11, color:cs.muted, whiteSpace:"nowrap", flexShrink:0 }}>{log.time || (log.created_at ? new Date(log.created_at).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "-")}</span>
+              <span style={{ fontFamily:"monospace", fontSize:11, color:cs.muted, whiteSpace:"nowrap", flexShrink:0 }}>{log.time}</span>
               <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:lC+"22", color:lC, border:"1px solid "+lC+"33", fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.status}</span>
               <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:cs.accent+"18", color:cs.accent, fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.action}</span>
-              <span style={{ fontSize:12, color:cs.muted }}>{log.user_name ? `[${log.user_name}] ` : ""}{log.detail}</span>
+              <span style={{ fontSize:12, color:cs.muted }}>{log.detail}</span>
             </div>
           );
         })}
@@ -5650,15 +4089,7 @@ ${matRowsHtml}
     if (laporanStatusFilter!=="Semua") filtered=filtered.filter(r=>r.status===laporanStatusFilter);
     if (searchLaporan.trim()) {
       const q=searchLaporan.trim().toLowerCase();
-      filtered=filtered.filter(r=>
-        (r.customer||"").toLowerCase().includes(q)||
-        (r.teknisi||"").toLowerCase().includes(q)||
-        (r.job_id||r.id||"").toLowerCase().includes(q)||
-        (r.helper||"").toLowerCase().includes(q)||
-        (r.service||"").toLowerCase().includes(q)||
-        (r.catatan_global||r.catatan||"").toLowerCase().includes(q)||
-        (r.rekomendasi||"").toLowerCase().includes(q)
-      );
+      filtered=filtered.filter(r=>(r.customer||"").toLowerCase().includes(q)||(r.teknisi||"").toLowerCase().includes(q)||(r.job_id||"").toLowerCase().includes(q)||(r.helper||"").toLowerCase().includes(q)||(r.service||"").toLowerCase().includes(q));
     }
     filtered.sort((a,b)=>{const dA=a.submitted_at||a.date||"",dB=b.submitted_at||b.date||"";if(dB!==dA)return dB.localeCompare(dA);return (statusOrder[a.status]||9)-(statusOrder[b.status]||9);});
     const totPgL=Math.ceil(filtered.length/LAP_PAGE_SIZE)||1;
@@ -5670,7 +4101,7 @@ ${matRowsHtml}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
           <div>
             <div style={{fontWeight:800,fontSize:18,color:cs.text}}>Laporan Tim Teknisi <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filtered.length})</span></div>
-            <div style={{fontSize:12,color:cs.muted,marginTop:2}}>Verifikasi laporan teknisi · Invoice otomatis sudah dibuat saat submit</div>
+            <div style={{fontSize:12,color:cs.muted,marginTop:2}}>Verifikasi laporan, cek riwayat edit, tandai sesuai atau minta revisi</div>
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {[["SUBMITTED",cs.accent,"Baru"],["VERIFIED",cs.green,"Verified"],["REVISION",cs.yellow,"Revisi"],["REJECTED",cs.red,"Ditolak"]].map(([s,col,lbl])=>(
@@ -5706,7 +4137,7 @@ ${matRowsHtml}
         {/* Search */}
         <div style={{position:"relative"}}>
           <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:cs.muted,fontSize:14,pointerEvents:"none"}}>🔍</span>
-          <input id="searchLaporan" value={searchLaporan} onChange={e=>{setSearchLaporan(e.target.value);setLaporanPage(1);}}
+          <input value={searchLaporan} onChange={e=>{setSearchLaporan(e.target.value);setLaporanPage(1);}}
             placeholder="Cari nama teknisi, customer, ID job, atau layanan..."
             style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px 10px 38px",color:cs.text,fontSize:13,boxSizing:"border-box"}} />
           {searchLaporan && <button onClick={()=>{setSearchLaporan("");setLaporanPage(1);}} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:16}}>✕</button>}
@@ -5738,7 +4169,7 @@ ${matRowsHtml}
               <div><span style={{color:cs.muted}}>Tanggal: </span><span style={{color:cs.text}}>{r.date}</span></div>
               <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit AC</span></div>
               {safeArr(r.materials).length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
-              {safeArr(r.fotos).length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
+              {r.fotos&&r.fotos.length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
               {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon Total: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
             </div>
 
@@ -5757,7 +4188,7 @@ ${matRowsHtml}
                 </div>
                 <div style={{fontSize:11,color:cs.muted}}>
                   {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}{u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
-                  {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
+                  {parseFloat(u.freon_ditambah)>0?`Freon +${u.freon_ditambah}kg`:""}
                   {u.catatan_unit?` · ${u.catatan_unit}`:""}
                 </div>
               </div>
@@ -5779,8 +4210,8 @@ ${matRowsHtml}
                 <div style={{fontSize:11,fontWeight:700,color:cs.green,marginBottom:6}}>📸 Foto Laporan ({safeArr(r.fotos).filter(f=>f.url).length})</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:6}}>
                   {safeArr(r.fotos).filter(f=>f.url).map((f,fi)=>(
-                    <div key={fi} style={{position:"relative",cursor:"pointer"}} onClick={()=>window.open(fotoSrc(f.url),"_blank")}>
-                      <img src={fotoSrc(f.url)} alt={f.label||`Foto ${fi+1}`} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:7,border:"1px solid "+cs.border}} />
+                    <div key={fi} style={{position:"relative",cursor:"pointer"}} onClick={()=>window.open(f.url,"_blank")}>
+                      <img src={f.url} alt={f.label||`Foto ${fi+1}`} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:7,border:"1px solid "+cs.border}} />
                       <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#000a",borderRadius:"0 0 7px 7px",padding:"2px 4px",fontSize:9,color:"#fff",textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{f.label||`Foto ${fi+1}`}</div>
                     </div>
                   ))}
@@ -5807,119 +4238,83 @@ ${matRowsHtml}
               </div>
             )}
 
-            {/* ── Invoice info bar ── */}
-            {(() => {
-              const inv = invoicesData.find(i => i.job_id === r.job_id);
-              if (!inv) return (
-                <div style={{fontSize:12,color:cs.muted,padding:"7px 12px",
-                  background:cs.surface,borderRadius:8}}>
-                  Invoice otomatis dibuat saat teknisi submit laporan
-                </div>
-              );
-              const iC = inv.status==="PAID"    ? cs.green  :
-                         inv.status==="APPROVED" ? cs.accent :
-                         inv.status==="OVERDUE"  ? cs.red    : cs.yellow;
-              const iL = {PENDING_APPROVAL:"Menunggu Approve",APPROVED:"Disetujui",
-                          PAID:"Lunas",OVERDUE:"Jatuh Tempo"}[inv.status] || inv.status;
-              return (
-                <div style={{background:iC+"10",border:"1px solid "+iC+"33",borderRadius:9,
-                  padding:"9px 13px",display:"flex",justifyContent:"space-between",
-                  alignItems:"center",flexWrap:"wrap",gap:8}}>
-                  <div>
-                    <div style={{fontSize:12,fontWeight:700,color:iC,marginBottom:2}}>
-                      {inv.id}
-                    </div>
-                    <div style={{fontSize:11,color:cs.muted,display:"flex",
-                      alignItems:"center",gap:6}}>
-                      <span style={{fontWeight:600}}>{fmt(inv.total)}</span>
-                      <span style={{padding:"1px 8px",borderRadius:99,fontSize:10,
-                        fontWeight:700,background:iC+"22",color:iC}}>{iL}</span>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => { setSelectedInvoice(inv); setActiveMenu("invoice"); }}
-                    style={{fontSize:11,padding:"5px 13px",borderRadius:7,
-                      border:"1px solid "+iC+"55",background:iC+"18",
-                      color:iC,cursor:"pointer",fontWeight:700}}>
-                    Buka Invoice
-                  </button>
-                </div>
-              );
-            })()}
-
-            {/* ── Action buttons ── */}
+            {/* Actions */}
             <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-              {r.status === "SUBMITTED" && (
-                <>
-                  <button
-                    onClick={async () => {
-                      const inv = invoicesData.find(i => i.job_id === r.job_id);
-                      setLaporanReports(p =>
-                        p.map(x => x.id === r.id ? {...x, status:"VERIFIED"} : x)
-                      );
-                      const uid = isRealUUID(currentUser?.id) ? currentUser.id : null;
-                      const { error: vErr } = await supabase
-                        .from("service_reports")
-                        .update({
-                          status: "VERIFIED",
-                          verified_by: uid,
-                          verified_at: new Date().toISOString()
-                        })
-                        .eq("id", r.id);
-                      if (vErr) {
-                        await supabase.from("service_reports")
-                          .update({ status: "VERIFIED" }).eq("id", r.id);
-                      }
-                      addAgentLog("LAPORAN_VERIFIED",
-                        "Laporan " + r.job_id + " diverifikasi", "SUCCESS");
-                      showNotif(inv
-                        ? "Verified! Invoice " + inv.id + " (" + inv.status + ")"
-                        : "Laporan " + r.job_id + " diverifikasi");
-                    }}
-                    style={{padding:"7px 18px",borderRadius:8,border:"none",
-                      background:"linear-gradient(135deg,"+cs.green+",#059669)",
-                      color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
-                    Verifikasi
-                  </button>
-                  <button
-                    onClick={async () => {
-                      setLaporanReports(p =>
-                        p.map(x => x.id === r.id ? {...x, status:"REVISION"} : x)
-                      );
-                      await supabase.from("service_reports")
-                        .update({ status: "REVISION" }).eq("id", r.id);
-                      addAgentLog("LAPORAN_REVISION",
-                        "Laporan " + r.job_id + " minta revisi", "WARNING");
-                      showNotif("Revisi diminta: " + r.job_id);
-                      const tek = userAccounts.find(u => u.name === r.teknisi && u.phone);
-                      if (tek?.phone) sendWA(tek.phone,
-                        "Laporan Perlu Direvisi\nJob: " + r.job_id +
-                        "\nCustomer: " + r.customer +
-                        "\n\nAdmin meminta revisi. Silakan perbaiki laporan. — AClean");
-                    }}
-                    style={{padding:"7px 14px",borderRadius:8,
-                      border:"1px solid "+cs.yellow+"55",background:cs.yellow+"12",
-                      color:cs.yellow,fontWeight:700,fontSize:12,cursor:"pointer"}}>
-                    Revisi
-                  </button>
-                </>
-              )}
-              {r.status === "REVISION" && (
-                <span style={{fontSize:12,color:cs.yellow}}>
-                  Menunggu revisi dari {r.teknisi}
-                </span>
-              )}
-              {r.status === "VERIFIED" && (
-                <span style={{fontSize:12,color:cs.green}}>
-                  {"Diverifikasi" + (invoicesData.find(i=>i.job_id===r.job_id)
-                    ? " · Invoice: " + invoicesData.find(i=>i.job_id===r.job_id).status
-                    : "")}
-                </span>
-              )}
-              {r.status === "REJECTED" && (
-                <span style={{fontSize:12,color:cs.red}}>Ditolak</span>
-              )}
-            </div>
+              {r.status==="SUBMITTED" && (<>
+                <button onClick={async()=>{
+                  // ── SIM-10: Verify laporan + AUTO-CREATE invoice ──
+                  setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
+                  const verifiedById = isRealUUID(currentUser?.id) ? currentUser.id : null;
+                  const {error:vErr} = await supabase.from("service_reports").update({
+                    status:"VERIFIED", verified_by:verifiedById, verified_at:new Date().toISOString()
+                  }).eq("id",r.id);
+                  if(vErr) await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
+                  addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi`,"SUCCESS");
+
+                  // Cek apakah invoice sudah ada
+                  const existInv = invoicesData.find(i => i.job_id === r.job_id);
+                  if (existInv) {
+                    showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
+                  } else {
+                    // AUTO-CREATE invoice PENDING_APPROVAL (tidak langsung kirim ke customer)
+                    const ord = ordersData.find(o => o.id === r.job_id);
+                    const invId = "INV" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
+                    const labor = PRICE_LIST[r.service]?.[ord?.type||"default"] || PRICE_LIST[r.service]?.["default"] || 85000;
+                    const laborTotal = labor * (r.units || ord?.units || 1);
+                    const matCost = safeArr(r.materials).reduce((s,m) => s + ((m.harga||m.price||0)*parseFloat(m.jumlah||m.qty||1)), 0);
+                    const freonCost = (r.total_freon||0) > 0 ? Math.round((r.total_freon||0) * (PRICE_LIST["freon_R32"]||200000)) : 0;
+                    const dadakan = ord?.date === new Date().toISOString().slice(0,10) ? 50000 : 0;
+                    const totalInv = laborTotal + matCost + freonCost + dadakan;
+                    const newInv = {
+                      id:invId, job_id:r.job_id, laporan_id:r.id,
+                      customer:r.customer, phone:r.phone||ord?.phone||"",
+                      service:r.service+(ord?.type?" - "+ord.type:""), units:r.units||ord?.units||1,
+                      teknisi:r.teknisi||"",
+                      labor:laborTotal, material:matCost+freonCost, dadakan, discount:0,
+                      total:totalInv,
+                      status:"PENDING_APPROVAL",  // ⚠ harus approve dulu sebelum dikirim
+                      due: new Date(Date.now()+3*86400000).toISOString().slice(0,10),
+                      sent:false, created_at:new Date().toISOString()
+                    };
+                    setInvoicesData(prev => [...prev, newInv]);
+                    const {error:iErr} = await supabase.from("invoices").insert(newInv);
+                    if(iErr) showNotif("⚠️ Invoice gagal simpan: "+iErr.message);
+                    else {
+                      await supabase.from("orders").update({invoice_id:invId}).eq("id",r.job_id);
+                      setOrdersData(prev=>prev.map(o=>o.id===r.job_id?{...o,invoice_id:invId}:o));
+                      addAgentLog("AUTO_INVOICE",`Invoice ${invId} auto-dibuat dari laporan ${r.job_id}`,"SUCCESS");
+                      showNotif(`✅ Invoice ${invId} dibuat (${fmt(totalInv)}) — tunggu approval Owner/Admin`);
+                      // Notif Owner
+                      const owners = userAccounts.filter(u=>u.role==="Owner"||u.role==="Admin");
+                      owners.forEach(o => { if(o?.phone) sendWA(o.phone, `⚡ *Invoice Auto-Generated*\n\nJob: *${r.job_id}*\nCustomer: ${r.customer}\nService: ${r.service}\nTotal: *${fmt(totalInv)}*\n\nMohon cek dan approve invoice di menu Invoice. — AClean`); });
+                    }
+                  }
+                }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>✅ Verifikasi + Buat Invoice</button>
+                <button onClick={async()=>{
+                  setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));
+                  await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
+                  addAgentLog("LAPORAN_REVISION",`Laporan ${r.job_id} diminta revisi oleh ${currentUser?.name}`,"WARNING");
+                  showNotif("⚠️ Revisi diminta untuk laporan "+r.job_id);
+                  // SIM-11: WA notif ke teknisi saat laporan REVISION
+                  const tekAccRev = userAccounts.find(u=>u.name===r.teknisi&&u.phone);
+                  if(tekAccRev?.phone) sendWA(tekAccRev.phone, `⚠️ *Laporan Perlu Direvisi*
+
+Job: *${r.job_id}*
+Customer: ${r.customer}
+Service: ${r.service}
+
+Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
+                }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>Minta Revisi</button>
+                <button onClick={async()=>{
+                  setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REJECTED"}:x));
+                  await supabase.from("service_reports").update({status:"REJECTED"}).eq("id",r.id);
+                  addAgentLog("LAPORAN_REJECTED",`Laporan ${r.job_id} ditolak oleh ${currentUser?.name}`,"ERROR");
+                  showNotif("❌ Laporan "+r.job_id+" ditolak");
+                }} style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",color:cs.red,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>Tolak</button>
+              </>)}
+              {r.status==="REVISION" && <span style={{fontSize:12,color:cs.yellow}}>Menunggu revisi dari {r.teknisi}</span>}
+              {r.status==="VERIFIED" && <span style={{fontSize:12,color:cs.green}}>Laporan sudah terverifikasi</span>}
+              {r.status==="REJECTED" && <span style={{fontSize:12,color:cs.red}}>Laporan ditolak</span>}
             </div>
           </div>
         ))}
@@ -5948,23 +4343,14 @@ ${matRowsHtml}
     // Get my ORDERS_DATA jobs that don't have a report yet — show as pending
     const myJobs = ordersData.filter(o => o.teknisi===myName || o.helper===myName);
     const reportedJobIds = submittedReps.map(r => r.job_id);
-    const pendingJobs = myJobs.filter(o =>
-      !reportedJobIds.includes(o.id) && (o.date||"") <= TODAY
-    );
+    const pendingJobs = myJobs.filter(o => !reportedJobIds.includes(o.id));
     const pendingAsDraft = pendingJobs.map(o => ({
       id:"PENDING_"+o.id, job_id:o.id, teknisi:o.teknisi, helper:o.helper||null,
       customer:o.customer, service:o.service, date:o.date, submitted:"Belum dibuat",
       status:"PENDING", kondisi_sebelum:"", kondisi_setelah:"", pekerjaan:[],
       rekomendasi:"", catatan:"", freon:"0", ampere:"", editLog:[]
     }));
-    const myReps = [...submittedReps, ...pendingAsDraft]
-      .sort((a,b)=>{
-        const da=a.date||a.submitted?.slice(0,10)||"";
-        const db=b.date||b.submitted?.slice(0,10)||"";
-        if(da===TODAY&&db!==TODAY) return -1;
-        if(db===TODAY&&da!==TODAY) return 1;
-        return db.localeCompare(da);
-      });
+    const myReps = [...submittedReps, ...pendingAsDraft];
     const filtReps = myReps.filter(r =>
       !searchLaporan ||
       r.customer.toLowerCase().includes(searchLaporan.toLowerCase()) ||
@@ -5993,7 +4379,7 @@ ${matRowsHtml}
         {/* Search */}
         <div style={{position:"relative"}}>
           <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:cs.muted,fontSize:14,pointerEvents:"none"}}>&#128269;</span>
-          <input id="searchLaporan" value={searchLaporan} onChange={e=>setSearchLaporan(e.target.value)}
+          <input value={searchLaporan} onChange={e=>setSearchLaporan(e.target.value)}
             placeholder="Cari customer atau ID job..."
             style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px 10px 38px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
           {searchLaporan && <button onClick={()=>setSearchLaporan("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:20,lineHeight:1}}>x</button>}
@@ -6183,7 +4569,7 @@ ${matRowsHtml}
           return (
             <div key={f.k}>
               <div style={{ fontSize:11, color:cs.muted, marginBottom:3 }}>{f.label}</div>
-              <input id="val" type={f.t||"text"} placeholder={f.ph}
+              <input type={f.t||"text"} placeholder={f.ph}
                 value={val}
                 onChange={setter}
                 style={{ width:"100%", background:cs.surface, border:"1px solid "+(isSet?cs.green:cs.border), borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
@@ -6242,7 +4628,7 @@ ${matRowsHtml}
           <FieldList fields={activeWA.fields} />
           <GuideBox guide={activeWA.guide} title={"Setup " + activeWA.label} />
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={async () => { setWaStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:_apiHeaders(),body:JSON.stringify({type:"wa",provider:waProvider,token:waToken,device:waDevice})}); const d=await r.json(); setWaStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setWaStatus("not_connected"); showNotif("❌ "+e.message); } }}
+            <button onClick={async () => { setWaStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"wa",provider:waProvider,token:waToken,device:waDevice})}); const d=await r.json(); setWaStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setWaStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {waStatus==="testing" ? "⏳ Testing..." : "🔌 Test &amp; Simpan Koneksi"}
             </button>
@@ -6289,7 +4675,7 @@ ${matRowsHtml}
             {llmProvider === "ollama" && (
               <div style={{ marginTop:8 }}>
                 <div style={{ fontSize:11, color:cs.muted, marginBottom:4 }}>Atau ketik nama model custom (harus sama dengan <code style={{background:cs.surface,padding:"1px 5px",borderRadius:3}}>ollama list</code>):</div>
-                <input id="llmModel" value={llmModel} onChange={e=>setLlmModel(e.target.value)} placeholder="contoh: llama3, mistral, qwen2.5:7b ..."
+                <input value={llmModel} onChange={e=>setLlmModel(e.target.value)} placeholder="contoh: llama3, mistral, qwen2.5:7b ..."
                   style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.accent+"44", borderRadius:7, padding:"8px 11px", color:cs.text, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }} />
               </div>
             )}
@@ -6436,7 +4822,7 @@ ${matRowsHtml}
           <FieldList fields={activeSTO.fields} />
           <GuideBox guide={activeSTO.guide} title={"Setup " + activeSTO.label} />
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={async () => { setStorageStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:_apiHeaders(),body:JSON.stringify({type:"storage"})}); const d=await r.json(); setStorageStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setStorageStatus("not_connected"); showNotif("❌ "+e.message); } }}
+            <button onClick={async () => { setStorageStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"storage"})}); const d=await r.json(); setStorageStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setStorageStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {storageStatus==="testing" ? "⏳ Testing..." : "🔌 Test &amp; Simpan Koneksi"}
             </button>
@@ -6467,8 +4853,8 @@ ${matRowsHtml}
             ))}
           </div>
           <div style={{ display:"grid", gap:8 }}>
-            <input id="field_5" placeholder={dbProvider==="supabase"?"Supabase URL":"Host / Connection String"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
-            <input id="field_password_6" type="password" placeholder={dbProvider==="supabase"?"Supabase Anon Key":"Password / Secret Key"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
+            <input placeholder={dbProvider==="supabase"?"Supabase URL":"Host / Connection String"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
+            <input type="password" placeholder={dbProvider==="supabase"?"Supabase Anon Key":"Password / Secret Key"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
             <button onClick={() => { showNotif("Mencoba koneksi database..."); setTimeout(() => showNotif("Database terkoneksi! Tables: 15"), 2000); }}
               style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"9px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:700 }}>🔌 Test Koneksi</button>
           </div>
@@ -6490,12 +4876,7 @@ ${matRowsHtml}
           <div style={{ display:"grid", gap:8 }}>
             {cronJobs.map((job,idx) => (
               <div key={job.id} style={{ background:cs.surface, border:"1px solid "+(job.active?cs.green:cs.border), borderRadius:10, padding:"12px 14px", display:"flex", gap:12, alignItems:"center" }}>
-                <div onClick={async () => {
-                  const upd=cronJobs.map((j,ii)=>ii===idx?{...j,active:!j.active}:j);
-                  setCronJobs(upd);
-                  await supabase.from("app_settings").upsert(
-                    {key:"cron_jobs",value:JSON.stringify(upd)},{onConflict:"key"});
-                }}
+                <div onClick={() => setCronJobs(prev => prev.map((j,i) => i===idx ? {...j,active:!j.active} : j))}
                   style={{ width:34, height:20, borderRadius:99, background:job.active?cs.green:cs.border, cursor:"pointer", position:"relative", flexShrink:0 }}>
                   <div style={{ position:"absolute", width:14, height:14, borderRadius:"50%", background:"#fff", top:3, left:job.active?17:3, transition:"left 0.2s" }} />
                 </div>
@@ -6503,12 +4884,7 @@ ${matRowsHtml}
                   <div style={{ fontWeight:700, color:job.active?cs.text:cs.muted, fontSize:13 }}>{job.name}</div>
                   <div style={{ fontSize:11, color:cs.muted }}>{job.time} · {job.days} · {job.task}</div>
                 </div>
-                <button onClick={async () => {
-                  const upd=cronJobs.filter((_,ii)=>ii!==idx);
-                  setCronJobs(upd);
-                  await supabase.from("app_settings").upsert(
-                    {key:"cron_jobs",value:JSON.stringify(upd)},{onConflict:"key"});
-                }} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
+                <button onClick={() => setCronJobs(prev => prev.filter((_,i) => i!==idx))} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
               </div>
             ))}
           </div>
@@ -6536,7 +4912,7 @@ ${matRowsHtml}
           </div>
           {/* User list — hanya Owner & Admin (Teknisi/Helper dikelola di Tim Teknisi) */}
           <div style={{ display:"grid", gap:8 }}>
-            {userAccounts.map(u => (
+            {userAccounts.filter(u => u.role === "Owner" || u.role === "Admin").map(u => (
               <div key={u.id} style={{ background:cs.surface, border:"1px solid "+(u.active?cs.border:cs.red+"33"), borderRadius:10, padding:"12px 16px", display:"flex", alignItems:"center", gap:12 }}>
                 <div style={{ width:38, height:38, borderRadius:10, background:"linear-gradient(135deg,"+u.color+","+u.color+"66)", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:16, color:"#fff", flexShrink:0 }}>
                   {u.avatar}
@@ -6545,7 +4921,7 @@ ${matRowsHtml}
                   <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:2 }}>
                     <span style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{u.name}</span>
                     <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:u.color+"22", color:u.color, fontWeight:700, border:"1px solid "+u.color+"44" }}>
-                      {u.role === "Owner" ? "👑" : u.role === "Admin" ? "🛠️" : u.role === "Helper" ? "🤝" : "👷"} {u.role}
+                      {u.role === "Owner" ? "👑" : u.role === "Admin" ? "🛠️" : "👷"} {u.role}
                     </span>
                     {!u.active && <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:cs.red+"22", color:cs.red, fontWeight:700 }}>Nonaktif</span>}
                   </div>
@@ -6558,16 +4934,6 @@ ${matRowsHtml}
                     <button onClick={() => { setNewUserForm({...u, password:""}); setModalAddUser(true); }}
                       style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent, padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
                   )}
-              {currentUser?.role === "Owner" && (
-                <button onClick={() => {
-                  setEditPwdTarget({id:u.id, name:u.name});
-                  setEditPwdForm({newPwd:"", confirmPwd:""});
-                  setModalEditPwd(true);
-                }} style={{ fontSize:11, background:"#f59e0b20", border:"1px solid #f59e0b44",
-                  color:"#f59e0b", borderRadius:6, padding:"4px 10px", cursor:"pointer", fontWeight:600 }}>
-                  🔑 Password
-                </button>
-              )}
                   {u.role !== "Owner" && (
                     <button onClick={() => { setUserAccounts(prev => prev.map(acc => acc.id===u.id ? {...acc, active:!acc.active} : acc)); showNotif((u.active?"Akun ":"Akun ")+(u.name)+(u.active?" dinonaktifkan":" diaktifkan")); }}
                       style={{ background:(u.active?cs.red:cs.green)+"18", border:"1px solid "+(u.active?cs.red:cs.green)+"33", color:u.active?cs.red:cs.green, padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>
@@ -6612,12 +4978,11 @@ ${matRowsHtml}
   // ============================================================
   // ─────────────── LOGIN SCREEN ───────────────
   if (!isLoggedIn) {
-    // Quick login hints dihapus — gunakan email & password dari Supabase
-    const quickLogins = [
-      { role:"Owner",   icon:"👑", email:"owner@aclean.id",   hint:"owner@2026"   },
-      { role:"Admin",   icon:"🛠️", email:"admin@aclean.id",   hint:"admin@2026"   },
-      { role:"Teknisi", icon:"👷", email:"mulyadi@aclean.id", hint:"mly@2026"     },
-      { role:"Helper",  icon:"🤝", email:"albana@aclean.id",  hint:"abn@2026"     },
+    const DEMO_ACCOUNTS = [
+      { role:"Owner",   color:"#f59e0b", icon:"👑", email:"owner@aclean.id",   password:"owner123",  name:"Malda Retta",  desc:"Akses penuh semua menu & pengaturan" },
+      { role:"Admin",   color:"#38bdf8", icon:"🛠️", email:"admin@aclean.id",   password:"admin123",  name:"Admin AClean", desc:"Semua menu kecuali Pengaturan"       },
+      { role:"Teknisi", color:"#22c55e", icon:"👷", email:"mulyadi@aclean.id", password:"mly2026",   name:"Mulyadi",      desc:"Jadwal & Laporan Saya saja"          },
+      { role:"Helper",  color:"#a78bfa", icon:"🤝", email:"albana@aclean.id",  password:"abn2026",   name:"Albana Niji",  desc:"Jadwal & Laporan Saya saja"          },
     ];
     return (
       <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
@@ -6634,23 +4999,20 @@ ${matRowsHtml}
             <div style={{ fontSize:12, color:cs.muted, marginBottom:22 }}>Login dengan akun yang diberikan oleh Owner</div>
 
             {loginError && (
-              <div style={{ background: loginError.startsWith("⛔") ? "#f9731620" : "#ef444418",
-                            border: "1px solid " + (loginError.startsWith("⛔") ? "#f97316" : "#ef444433"),
-                            borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:12,
-                            color: loginError.startsWith("⛔") ? "#f97316" : cs.red }}>
-                {loginError.startsWith("⛔") ? loginError : "⚠️ " + loginError}
+              <div style={{ background:"#ef444418", border:"1px solid #ef444433", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:12, color:cs.red }}>
+                ⚠️ {loginError}
               </div>
             )}
 
             <div style={{ marginBottom:12 }}>
               <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Email</div>
-              <input id="loginEmail" type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
+              <input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
                 placeholder="email@aclean.id"
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"11px 14px", color:cs.text, fontSize:14, outline:"none", boxSizing:"border-box" }} />
             </div>
             <div style={{ marginBottom:20 }}>
               <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Password</div>
-              <input id="loginPassword" type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
+              <input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && doLogin(loginEmail, loginPassword)}
                 placeholder="••••••••"
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"11px 14px", color:cs.text, fontSize:14, outline:"none", boxSizing:"border-box" }} />
@@ -6868,65 +5230,29 @@ ${matRowsHtml}
               <button onClick={() => setModalOrder(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
             </div>
             <div style={{ display:"grid", gap:12 }}>
-              {[["Nama Customer","customer","text"],["Nomor HP","phone","text"],["Alamat Lengkap","address","text"],["Area / Kota","area","text"],["Catatan","notes","text"]].map(([label,key,type]) => (
+              {[["Nama Customer","customer","text"],["Nomor HP","phone","text"],["Alamat Lengkap","address","text"],["Catatan","notes","text"]].map(([label,key,type]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                  <input id="field_7" type={type} value={newOrderForm[key]||""} onChange={e => {
-                    const val = e.target.value;
-                    if (key === "phone") {
-                      const normVal = normalizePhone(val);
-                      const matches = customersData.filter(c => samePhone(c.phone, val));
-                      if (matches.length === 1) {
-                        // 1 match → auto-fill langsung
-                        setNewOrderForm(f => ({...f, phone:normVal, customer:matches[0].name, address:matches[0].address||f.address, area:matches[0].area||f.area}));
-                      } else if (matches.length > 1) {
-                        // Multiple match (phone sama, beda lokasi) → JANGAN auto-fill nama/alamat
-                        // Biarkan user pilih sendiri atau ketik nama berbeda
-                        setNewOrderForm(f => ({...f, phone:normVal}));
-                      } else {
-                        setNewOrderForm(f => ({...f, phone:normVal}));
-                      }
-                    } else { setNewOrderForm(f => ({...f, [key]:val})); }
-                  }}
+                  <input type={type} value={newOrderForm[key]||""} onChange={e => setNewOrderForm(f=>({...f,[key]:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
               {/* Customer auto-detect badge */}
               {newOrderForm.phone && newOrderForm.phone.length >= 6 && (() => {
-                const phoneMatches = customersData.filter(c => samePhone(c.phone, newOrderForm.phone));
-                const exactMatch  = findCustomer(customersData, newOrderForm.phone, newOrderForm.customer);
-                if (phoneMatches.length > 1) {
-                  // Phone sama, beda nama/lokasi → tampilkan pilihan
-                  return (
-                    <div style={{ borderRadius:8, overflow:"hidden", border:"1px solid #f59e0b44" }}>
-                      <div style={{ padding:"7px 12px", background:"#f59e0b18", fontSize:12, fontWeight:700, color:"#d97706" }}>
-                        📍 {phoneMatches.length} lokasi ditemukan dengan nomor ini — pilih atau isi nama baru:
-                      </div>
-                      {phoneMatches.map(m => (
-                        <div key={m.id} onClick={() => setNewOrderForm(f=>({...f, customer:m.name, address:m.address||f.address, area:m.area||f.area}))}
-                          style={{ padding:"7px 12px", background: newOrderForm.customer===m.name ? "#16a34a22" : cs.card,
-                            borderTop:"1px solid "+cs.border, cursor:"pointer", fontSize:12,
-                            color: newOrderForm.customer===m.name ? "#16a34a" : cs.text, display:"flex", justifyContent:"space-between" }}>
-                          <span>{newOrderForm.customer===m.name?"✅ ":""}<strong>{m.name}</strong></span>
-                          <span style={{color:cs.muted,fontSize:11}}>{m.address||m.area||"—"}</span>
-                        </div>
-                      ))}
-                      <div style={{padding:"6px 12px",background:cs.surface,fontSize:11,color:cs.muted}}>
-                        Atau ketik nama baru di atas untuk lokasi berbeda
-                      </div>
-                    </div>
-                  );
-                }
+                const existCust = customersData.find(c =>
+                  c.phone === newOrderForm.phone ||
+                  (newOrderForm.customer && c.name.toLowerCase() === newOrderForm.customer.toLowerCase())
+                );
                 return (
                   <div style={{ padding:"8px 12px", borderRadius:8, fontSize:12, fontWeight:700,
-                    background: exactMatch ? "#16a34a18" : "#f59e0b18",
-                    border: "1px solid " + (exactMatch ? "#16a34a44" : "#f59e0b44"),
-                    color: exactMatch ? "#16a34a" : "#d97706",
+                    background: existCust ? "#16a34a18" : "#f59e0b18",
+                    border: "1px solid " + (existCust ? "#16a34a44" : "#f59e0b44"),
+                    color: existCust ? "#16a34a" : "#d97706",
                     display:"flex", alignItems:"center", gap:8
                   }}>
-                    {exactMatch ? "✅" : "🆕"}
-                    {exactMatch
-                      ? `Customer EXISTING: ${exactMatch.name} — ${exactMatch.total_orders||0} order sebelumnya`
+                    {existCust ? "✅" : "🆕"}
+                    {existCust
+                      ? `Customer EXISTING: ${existCust.name} — ${existCust.total_orders||0} order sebelumnya`
                       : "Customer BARU — akan otomatis ditambahkan ke menu Customer"}
                   </div>
                 );
@@ -6941,92 +5267,33 @@ ${matRowsHtml}
                 </div>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Jumlah Unit</div>
-                  <input id="field_number_8" type="number" min="1" max="20" value={newOrderForm.units} onChange={e => setNewOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
+                  <input type="number" min="1" max="20" value={newOrderForm.units} onChange={e => setNewOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               </div>
               {/* Tipe AC */}
               <div>
                 <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Tipe AC</div>
-                <select value={newOrderForm.type||""}  onChange={e => setNewOrderForm(f=>({...f,type:e.target.value}))}
-                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13 }}>
-                  <option value="">Pilih tipe...</option>
-                  {(() => {
-                    // DYNAMIC dari priceListData — auto update saat price_list DB berubah
-                    const svc = newOrderForm.service;
-                    // Filter tipe dari DB, exclude sub-jasa Install (Jasa Penarikan, Flaring, dll)
-                    const INSTALL_EXCLUDE = [
-                      "Jasa Penarikan Pipa AC","Jasa Penarikan Pipa Ruko","Jasa Vacum AC 0,5PK - 2,5PK",
-                      "Flaring Pipa","Jasa Pengelasan Pipa AC","Jasa Bobok Tembok","Jasa Instalasi Listrik",
-                      "Jasa Pembuatan Saluran Pembuangan","Jasa Vacum Unit AC >3PK","Bongkar Pasang Indoor AC",
-                      "Bongkar Pasang Outdoor AC","Bongkar Unit AC 0.5-1PK","Bongkar Unit AC 1.5-2.5PK",
-                      "Flushing Pipa","Jasa Instalasi Pipa AC"
-                    ];
-                    // Exclude dari Cleaning juga: jasa besar dan transport
-                    const CLEANING_EXCLUDE = [
-                      "Jasa Service Besar 0,5PK - 1PK","Jasa Service Besar 1,5PK - 2,5PK",
-                      "Biaya Transport Bila 1 Unit"
-                    ];
-                    const types = priceListData
-                      .filter(r => r.service === svc && r.is_active !== false)
-                      .filter(r => {
-                        if (svc === "Install")  return !INSTALL_EXCLUDE.includes(r.type);
-                        if (svc === "Cleaning") return !CLEANING_EXCLUDE.includes(r.type);
-                        return true;
-                      })
-                      .map(r => r.type);
-                    return types.length > 0
-                      ? types.map(t => <option key={t} value={t}>{t}</option>)
-                      : <option disabled>Loading...</option>;
-                  })()}
+                <select value={newOrderForm.type||"AC Split 0.5-1PK"} onChange={e => setNewOrderForm(f=>({...f,type:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
+                  {newOrderForm.service==="Cleaning" && ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Install"  && ["Pasang AC 0.5-1PK","Pasang AC 1PK","Pasang AC 1.5-2PK","Pasang AC 2.5PK"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Repair"   && ["Pengecekan AC","Pengecekan AC Panas/Bocor","Ganti Freon","Ganti Kompressor","Ganti Kapasitor","Bocor Refrigerant","Perbaikan PCB","Perbaikan Motor Fan"].map(t=><option key={t}>{t}</option>)}
+                  {newOrderForm.service==="Complain" && ["Komplain AC Tidak Dingin","Komplain Bising/Berisik","Komplain Setelah Service","Komplain Garansi","Pengecekan Ulang"].map(t=><option key={t}>{t}</option>)}
                 </select>
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Teknisi</div>
-                  {(() => {
-                    const tgl = newOrderForm.date || "";
-                    return (
-                      <select value={newOrderForm.teknisi} onChange={e => setNewOrderForm(f=>({...f,teknisi:e.target.value,helper:""}))}
-                        style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
-                        <option value="">Pilih teknisi...</option>
-                        {teknisiData.filter(t=>t.role==="Teknisi").map(t => {
-                          const jobHariIni = tgl ? ordersData.filter(o =>
-                            o.teknisi===t.name && o.date===tgl &&
-                            ["PENDING","CONFIRMED","DISPATCHED","ON_SITE","IN_PROGRESS"].includes(o.status)
-                          ).length : 0;
-                          const penuh = jobHariIni >= MAX_LOKASI_PER_HARI;
-                          return (
-                            <option key={t.id} value={t.name} disabled={penuh}>
-                              {penuh ? "🔴" : jobHariIni >= 4 ? "🟡" : "🟢"} {t.name} — {jobHariIni}/6 job{penuh ? " (PENUH)" : ""}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    );
-                  })()}
-                  {/* GAP-3: Warning cap 6 lokasi */}
-                  {newOrderForm.teknisi && newOrderForm.date && (() => {
-                    const jobCount = ordersData.filter(o =>
-                      o.teknisi===newOrderForm.teknisi && o.date===newOrderForm.date &&
-                      ["PENDING","CONFIRMED","DISPATCHED","ON_SITE","IN_PROGRESS"].includes(o.status)
-                    ).length;
-                    if (jobCount >= MAX_LOKASI_PER_HARI) return (
-                      <div style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", borderRadius:7, padding:"7px 10px", fontSize:11, color:cs.red, marginTop:4 }}>
-                        🔴 <b>{newOrderForm.teknisi}</b> sudah {jobCount} job di {newOrderForm.date} — batas 6 lokasi tercapai. Pilih teknisi lain atau tanggal lain.
-                      </div>
-                    );
-                    if (jobCount >= 4) return (
-                      <div style={{ background:cs.yellow+"18", border:"1px solid "+cs.yellow+"33", borderRadius:7, padding:"7px 10px", fontSize:11, color:cs.yellow, marginTop:4 }}>
-                        🟡 <b>{newOrderForm.teknisi}</b> sudah {jobCount}/6 job di tanggal ini.
-                      </div>
-                    );
-                    return null;
-                  })()}
+                  <select value={newOrderForm.teknisi} onChange={e => setNewOrderForm(f=>({...f,teknisi:e.target.value,helper:""}))}
+                    style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
+                    <option value="">Pilih teknisi...</option>
+                    {teknisiData.filter(t=>t.role==="Teknisi").map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                  </select>
                 </div>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Tanggal</div>
-                  <input id="field_date_9" type="date" value={newOrderForm.date} onChange={e => setNewOrderForm(f=>({...f,date:e.target.value}))}
+                  <input type="date" value={newOrderForm.date} onChange={e => setNewOrderForm(f=>({...f,date:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               </div>
@@ -7063,7 +5330,7 @@ ${matRowsHtml}
                         );
                       })}
                     </div>
-                    <input id="field_time_10" type="time" min="09:00" max="17:00" value={newOrderForm.time||"09:00"} onChange={e=>setNewOrderForm(f=>({...f,time:e.target.value}))}
+                    <input type="time" min="09:00" max="17:00" value={newOrderForm.time||"09:00"} onChange={e=>setNewOrderForm(f=>({...f,time:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                     {/* Estimasi durasi & jam selesai */}
                     <div style={{ marginTop:8, background:avail?cs.green+"10":cs.red+"10", border:"1px solid "+(avail?cs.green:cs.red)+"22", borderRadius:8, padding:"8px 12px", display:"flex", gap:12, flexWrap:"wrap", fontSize:12 }}>
@@ -7107,33 +5374,8 @@ ${matRowsHtml}
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:6 }}>
                 <button onClick={() => setModalOrder(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
-                {(() => {
-                  const capReached = newOrderForm.teknisi && newOrderForm.date && ordersData.filter(o =>
-                    o.teknisi===newOrderForm.teknisi && o.date===newOrderForm.date &&
-                    ["PENDING","CONFIRMED","DISPATCHED","ON_SITE","IN_PROGRESS"].includes(o.status)
-                  ).length >= MAX_LOKASI_PER_HARI;
-                  return (
-                    <button
-                      disabled={capReached}
-                      onClick={async () => {
-                        if (!newOrderForm.customer) { showNotif("Nama customer wajib diisi"); return; }
-                        if (!newOrderForm.teknisi)  { showNotif("Pilih teknisi dulu"); return; }
-                        if (!newOrderForm.date)     { showNotif("Pilih tanggal dulu"); return; }
-                        // GAP-1&2: DB-level check sebelum submit (anti race condition)
-                        if (newOrderForm.teknisi && newOrderForm.date && newOrderForm.time) {
-                          const dbOk = await cekTeknisiAvailableDB(newOrderForm.teknisi, newOrderForm.date, newOrderForm.time, newOrderForm.service, newOrderForm.units);
-                          if (!dbOk.ok) { showNotif("⚠️ " + (dbOk.reason || "Jadwal bentrok, cek ulang")); return; }
-                        }
-                        const formCopy = {...newOrderForm};
-                        setModalOrder(false);
-                        setNewOrderForm({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
-                        await createOrder(formCopy);
-                      }}
-                      style={{ background: capReached ? cs.border : "linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color: capReached ? cs.muted : "#0a0f1e", padding:"12px", borderRadius:10, cursor: capReached ? "not-allowed" : "pointer", fontWeight:800, fontSize:14, opacity: capReached ? 0.6 : 1 }}>
-                      {capReached ? "🔴 Teknisi Penuh" : "✓ Buat Order"}
-                    </button>
-                  );
-                })()}
+                <button onClick={() => { if(!newOrderForm.customer){showNotif("Nama customer wajib diisi");return;} if(!newOrderForm.teknisi){showNotif("Pilih teknisi dulu");return;} if(!newOrderForm.date){showNotif("Pilih tanggal dulu");return;} createOrder(newOrderForm); setModalOrder(false); setNewOrderForm({ customer:"", phone:"", address:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" }); }}
+                  style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>✓ Buat Order</button>
               </div>
             </div>
           </div>
@@ -7154,7 +5396,7 @@ ${matRowsHtml}
               {[["Nama Material","name","text"],["Satuan","unit","text"],["Harga/Unit","price","number"],["Stok Awal","stock","number"],["Reorder Point","reorder","number"],["Min Alert","min_alert","number"]].map(([label,key,type]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>{label}</div>
-                  <input id="field_11" type={type} value={newStokForm[key]||""} onChange={e => setNewStokForm(f=>({...f,[key]:e.target.value}))}
+                  <input type={type} value={newStokForm[key]||""} onChange={e => setNewStokForm(f=>({...f,[key]:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
@@ -7169,14 +5411,7 @@ ${matRowsHtml}
                   const stokStatus= stokAwal===0?"OUT":stokAwal<=minAlert?"CRITICAL":stokAwal<=reorderPt?"WARNING":"OK";
                   const newItem   = { code:newCode, name:newStokForm.name, unit:newStokForm.unit||"pcs", price:parseInt(newStokForm.price)||0, stock:stokAwal, reorder:reorderPt, min_alert:minAlert, status:stokStatus };
                   setInventoryData(prev=>[...prev,newItem]);
-                  // Insert tanpa status — biarkan DB default, lalu update stock untuk trigger auto-status
-                  const insertPayload = { ...newItem };
-                  delete insertPayload.status; // hindari check constraint — trigger set otomatis
-                  const {error:invErr} = await supabase.from("inventory").insert(insertPayload);
-                  if (!invErr && stokAwal > 0) {
-                    // Trigger inventory_auto_status hanya jalan saat UPDATE stock
-                    await supabase.from("inventory").update({stock:stokAwal}).eq("code",newCode);
-                  }
+                  const {error:invErr} = await supabase.from("inventory").insert(newItem);
                   if(invErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+invErr.message);
                   else { addAgentLog("STOCK_ADDED",`Material baru: ${newStokForm.name} (stok: ${newStokForm.stock} ${newStokForm.unit||"pcs"})`,"SUCCESS"); showNotif("✅ Material " + (newStokForm.name||"baru") + " berhasil ditambah"); }
                   setModalStok(false); setNewStokForm({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
@@ -7208,24 +5443,24 @@ ${matRowsHtml}
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Stok Saat Ini</div>
-                    <input id="field_number_12" type="number" value={newStokForm.stock ?? editStokItem.stock} onChange={e=>setNewStokForm(f=>({...f,stock:e.target.value}))}
+                    <input type="number" value={newStokForm.stock ?? editStokItem.stock} onChange={e=>setNewStokForm(f=>({...f,stock:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Tambah (+)</div>
-                    <input id="field_number_13" type="number" min="0" placeholder="0" value={newStokForm.tambah||""} onChange={e=>setNewStokForm(f=>({...f,tambah:e.target.value}))}
+                    <input type="number" min="0" placeholder="0" value={newStokForm.tambah||""} onChange={e=>setNewStokForm(f=>({...f,tambah:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                 </div>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Harga/Unit</div>
-                    <input id="field_number_14" type="number" value={newStokForm.price ?? editStokItem.price} onChange={e=>setNewStokForm(f=>({...f,price:e.target.value}))}
+                    <input type="number" value={newStokForm.price ?? editStokItem.price} onChange={e=>setNewStokForm(f=>({...f,price:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Reorder Point</div>
-                    <input id="field_number_15" type="number" value={newStokForm.reorder ?? editStokItem.reorder} onChange={e=>setNewStokForm(f=>({...f,reorder:e.target.value}))}
+                    <input type="number" value={newStokForm.reorder ?? editStokItem.reorder} onChange={e=>setNewStokForm(f=>({...f,reorder:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                 </div>
@@ -7248,10 +5483,9 @@ ${matRowsHtml}
                         notes: `Update manual oleh ${currentUser?.name||"Admin"}`,
                         created_by: currentUser?.id||null,
                         created_by_name: currentUser?.name||"",
-                      });
-                      // ignore inventory_transactions error (tabel opsional)
+                      }).catch(()=>{});
                     }
-                    const {error:eErr} = await supabase.from("inventory").update({stock:stokFinal, price:hargaBaru, reorder:reorderBaru, updated_at:new Date().toISOString()}).eq("code",editStokItem.code);
+                    const {error:eErr} = await supabase.from("inventory").update({stock:stokFinal,price:hargaBaru,reorder:reorderBaru,status:statusBaru}).eq("code",editStokItem.code);
                     if(eErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
                     else { addAgentLog("STOCK_UPDATED",`Stok ${editStokItem.name}: ${editStokItem.stock}→${stokFinal} ${editStokItem.unit} (${statusBaru})`,"SUCCESS"); showNotif("✅ Stok "+editStokItem.name+" diupdate → "+stokFinal+" "+editStokItem.unit); }
                     setModalEditStok(false); setEditStokItem(null); setNewStokForm({name:"",unit:"pcs",price:"",stock:"",reorder:"",min_alert:"",tambah:""});
@@ -7277,7 +5511,7 @@ ${matRowsHtml}
               {[["Nama Lengkap","name"],["Nomor WA","phone"]].map(([label,key]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>{label}</div>
-                  <input id="field_16" value={newTeknisiForm[key]||""} onChange={e => setNewTeknisiForm(f=>({...f,[key]:e.target.value}))}
+                  <input value={newTeknisiForm[key]||""} onChange={e => setNewTeknisiForm(f=>({...f,[key]:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
@@ -7288,47 +5522,14 @@ ${matRowsHtml}
                   {["Teknisi","Helper","Supervisor"].map(r => <option key={r}>{r}</option>)}
                 </select>
               </div>
-
-              {/* ── Toggle: Buat Akun Login (hanya saat tambah baru) ── */}
-              {!editTeknisi && (
-                <div style={{background:cs.card,border:"1px solid "+(newTeknisiForm.buatAkun?cs.accent:cs.border),borderRadius:10,padding:"12px 14px"}}>
-                  <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-                    <input id="field_checkbox_17" type="checkbox" checked={!!newTeknisiForm.buatAkun}
-                      onChange={e=>setNewTeknisiForm(f=>({...f,buatAkun:e.target.checked,email:"",password:""}))}
-                      style={{width:16,height:16,accentColor:cs.accent}} />
-                    <div>
-                      <div style={{fontSize:13,fontWeight:700,color:newTeknisiForm.buatAkun?cs.accent:cs.text}}>🔑 Buat Akun Login</div>
-                      <div style={{fontSize:11,color:cs.muted,marginTop:1}}>Teknisi bisa login ke app untuk submit laporan</div>
-                    </div>
-                  </label>
-                  {newTeknisiForm.buatAkun && (
-                    <div style={{marginTop:12,display:"grid",gap:8}}>
-                      <div>
-                        <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Email Login</div>
-                        <input id="field_email_18" type="email" value={newTeknisiForm.email||""} placeholder="contoh: mulyadi@aclean.id"
-                          onChange={e=>setNewTeknisiForm(f=>({...f,email:e.target.value}))}
-                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"44",borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,boxSizing:"border-box",outline:"none"}} />
-                      </div>
-                      <div>
-                        <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Password</div>
-                        <input id="field_password_19" type="password" value={newTeknisiForm.password||""} placeholder="min. 6 karakter"
-                          onChange={e=>setNewTeknisiForm(f=>({...f,password:e.target.value}))}
-                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"44",borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,boxSizing:"border-box",outline:"none"}} />
-                      </div>
-                      <div style={{fontSize:11,color:cs.muted,background:cs.accent+"10",borderRadius:7,padding:"8px 10px"}}>
-                        💡 Email & password ini dipakai teknisi untuk login di halaman utama app
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {editTeknisi && currentUser?.role === "Owner" && (
+              {editTeknisi && (
                 <div style={{ display:"grid", gap:6 }}>
                   <button onClick={async () => {
-                    if (!await showConfirm({ icon:"🗑️", title:"Hapus dari Tim & Database?", danger:true,
-                      message:`Hapus ${editTeknisi.name} dari tim dan database?\n\nPerhatian: Tindakan ini tidak bisa dibatalkan.\nOrder yang sudah ada tidak terpengaruh.`,
-                      confirmText:"Hapus Permanen" })) return;
+                    if (!window.confirm) { /* skip confirm in some envs */ }
+                    else if (!window.confirm(`Hapus ${editTeknisi.name} dari tim dan database?
+
+Perhatian: Tindakan ini tidak bisa dibatalkan.
+Order yang sudah ada tidak terpengaruh.`)) return;
                     // Hapus dari local state
                     setTeknisiData(prev => prev.filter(t => t.id !== editTeknisi.id));
                     // Hapus dari Supabase (jika punya UUID id)
@@ -7378,54 +5579,19 @@ ${matRowsHtml}
                     if(tErr) showNotif("⚠️ Update lokal saja, DB gagal");
                     else { addAgentLog("TEKNISI_UPDATED","Data "+newTeknisiForm.name+" diupdate","SUCCESS"); showNotif("✅ "+newTeknisiForm.name+" berhasil diupdate"); }
                   } else {
-                    // ── Add new teknisi ──
-                    let profileId = null;
-
-                    // Step 1: Buat akun Auth dulu (kalau diminta)
-                    if (newTeknisiForm.buatAkun) {
-                      if (!newTeknisiForm.email || !newTeknisiForm.password) {
-                        showNotif("❌ Email dan password wajib diisi untuk buat akun login"); return;
-                      }
-                      if (newTeknisiForm.password.length < 6) {
-                        showNotif("❌ Password minimal 6 karakter"); return;
-                      }
-                      const { data: authData, error: authErr } = await supabase.auth.admin
-                        ? supabase.auth.admin.createUser({ email: newTeknisiForm.email, password: newTeknisiForm.password, email_confirm: true })
-                        : await (async () => {
-                            // Fallback: pakai signUp biasa (kirim email konfirmasi)
-                            const r = await supabase.auth.signUp({ email: newTeknisiForm.email, password: newTeknisiForm.password });
-                            return r;
-                          })();
-                      if (authErr) { showNotif("❌ Gagal buat akun: "+authErr.message); return; }
-                      profileId = authData?.user?.id || null;
-                    }
-
-                    // Step 2: Insert ke user_profiles
-                    const newTek = {
-                      ...(profileId ? {id: profileId} : {}),
-                      name: newTeknisiForm.name,
-                      phone: newTeknisiForm.phone,
-                      role: newTeknisiForm.role,
-                      skills: newTeknisiForm.skills||[],
-                      status: "active",
-                      jobs_today: 0,
-                      ...(newTeknisiForm.email ? {email: newTeknisiForm.email} : {}),
-                    };
+                    // Add new
+                    const newTek = {name:newTeknisiForm.name,phone:newTeknisiForm.phone,role:newTeknisiForm.role,skills:newTeknisiForm.skills||[],status:"active",jobs_today:0};
                     const {error:tErr,data:tData} = await supabase.from("user_profiles").insert(newTek).select().single();
                     if(tErr) {
                       showNotif("⚠️ Tersimpan lokal, DB gagal: "+tErr.message);
-                      setTeknisiData(prev=>[...prev,{...newTek,id:"TMP_"+Date.now()}]);
+                      setTeknisiData(prev=>[...prev,{...newTek,id:"TMP_"+Date.now()}]); // Reload dari DB saat refresh (normal)
                     } else {
                       setTeknisiData(prev=>[...prev,tData||newTek]);
-                      addAgentLog("TEKNISI_ADDED","Anggota baru: "+newTeknisiForm.name+" ("+newTeknisiForm.role+")"+(newTeknisiForm.buatAkun?" + akun login":""),"SUCCESS");
-                      if (newTeknisiForm.buatAkun) {
-                        showNotif("✅ "+newTeknisiForm.name+" ditambahkan + akun login dibuat! Cek email untuk konfirmasi.");
-                      } else {
-                        showNotif("✅ "+newTeknisiForm.name+" berhasil ditambahkan (tanpa akun login)");
-                      }
+                      addAgentLog("TEKNISI_ADDED","Anggota baru: "+newTeknisiForm.name+" ("+newTeknisiForm.role+")","SUCCESS");
+                      showNotif("✅ "+newTeknisiForm.name+" berhasil ditambahkan");
                     }
                   }
-                  setModalTeknisi(false); setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[],email:"",password:"",buatAkun:false});
+                  setModalTeknisi(false); setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[]});
                 }}
                   style={{ background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>
                   ✓ {editTeknisi?"Update":"Tambah"} Anggota
@@ -7445,10 +5611,7 @@ ${matRowsHtml}
             <div style={{ background:cs.ara+"15", borderBottom:"1px solid "+cs.ara+"33", padding:"16px 22px", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
               <div>
                 <div style={{ fontWeight:800, color:cs.ara, fontSize:16 }}>🧠 Edit Brain.md — Memori Permanen ARA</div>
-                <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>
-                  {localStorage.getItem("aclean_brainMd") ? "💾 Backup lokal: ✅" : "💾 Backup lokal: ✗"}&nbsp;·&nbsp;
-                  ☁️ Supabase: tersimpan permanen · Sync semua device
-                </div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>Tersimpan di sistem · Otomatis terbaca oleh semua LLM yang terkoneksi</div>
               </div>
               <button onClick={() => setModalBrainEdit(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:24, cursor:"pointer" }}>×</button>
             </div>
@@ -7471,41 +5634,7 @@ ${matRowsHtml}
                 style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"9px 16px", borderRadius:8, cursor:"pointer", fontSize:12 }}>🔄 Reset ke Default</button>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setModalBrainEdit(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"9px 18px", borderRadius:8, cursor:"pointer", fontWeight:600 }}>Batal</button>
-                <button onClick={async () => {
-                    showNotif("⏳ Menyimpan Brain.md ke Supabase...");
-                    // Selalu simpan ke localStorage dulu sebagai backup instan
-                    _lsSave("brainMd", brainMd);
-                    let dbOk = false;
-                    // Attempt 1: upsert (insert or update on conflict)
-                    try {
-                      const payload = { key: "brain_md", value: brainMd, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() };
-                      const { error: e1 } = await supabase.from("ara_brain").upsert(payload, { onConflict: "key" });
-                      if (!e1) { dbOk = true; }
-                      else {
-                        // Attempt 2: coba UPDATE saja (jika row sudah ada)
-                        const { error: e2 } = await supabase.from("ara_brain")
-                          .update({ value: brainMd, updated_by: currentUser?.name||"Owner", updated_at: new Date().toISOString() })
-                          .eq("key", "brain_md");
-                        if (!e2) { dbOk = true; }
-                        else {
-                          // Attempt 3: INSERT baru (jika row belum ada)
-                          const { error: e3 } = await supabase.from("ara_brain")
-                            .insert({ key: "brain_md", value: brainMd, updated_by: currentUser?.name||"Owner" });
-                          if (!e3) dbOk = true;
-                          else throw new Error("Upsert: "+e1.message+" | Update: "+e2.message+" | Insert: "+e3.message);
-                        }
-                      }
-                    } catch(e) {
-                      showNotif("⚠️ DB error: " + (e?.message||"") + " — Tersimpan di localStorage saja. Jalankan fix_ara_brain_table.sql di Supabase.");
-                      addAgentLog("BRAIN_SAVE_ERROR", "Brain.md gagal ke DB: "+(e?.message||""), "ERROR");
-                      setModalBrainEdit(false); return;
-                    }
-                    if (dbOk) {
-                      addAgentLog("BRAIN_SAVED", "Brain.md disimpan ke Supabase (" + brainMd.length + " karakter)", "SUCCESS");
-                      showNotif("✅ Brain.md tersimpan permanen di Supabase + localStorage!");
-                    }
-                    setModalBrainEdit(false);
-                  }}
+                <button onClick={() => { showNotif("Brain.md tersimpan — ARA akan gunakan memori terbaru"); setModalBrainEdit(false); }}
                   style={{ background:"linear-gradient(135deg,"+cs.ara+",#7c3aed)", border:"none", color:"#fff", padding:"9px 22px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>💾 Simpan Brain.md</button>
               </div>
             </div>
@@ -7542,37 +5671,7 @@ ${matRowsHtml}
               </button>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setModalBrainCustomerEdit(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"9px 18px", borderRadius:8, cursor:"pointer", fontSize:13 }}>Batal</button>
-                <button onClick={async () => {
-                    showNotif("⏳ Menyimpan Brain Customer ke Supabase...");
-                    _lsSave("brainMdCustomer", brainMdCustomer);
-                    let dbOk = false;
-                    try {
-                      const payload = { key: "brain_customer", value: brainMdCustomer, updated_by: currentUser?.name||"Owner", updated_at: new Date().toISOString() };
-                      const { error: e1 } = await supabase.from("ara_brain").upsert(payload, { onConflict: "key" });
-                      if (!e1) { dbOk = true; }
-                      else {
-                        const { error: e2 } = await supabase.from("ara_brain")
-                          .update({ value: brainMdCustomer, updated_by: currentUser?.name||"Owner", updated_at: new Date().toISOString() })
-                          .eq("key", "brain_customer");
-                        if (!e2) { dbOk = true; }
-                        else {
-                          const { error: e3 } = await supabase.from("ara_brain")
-                            .insert({ key: "brain_customer", value: brainMdCustomer, updated_by: currentUser?.name||"Owner" });
-                          if (!e3) dbOk = true;
-                          else throw new Error("Upsert: "+e1.message+" | Update: "+e2.message+" | Insert: "+e3.message);
-                        }
-                      }
-                    } catch(e) {
-                      showNotif("⚠️ DB error: " + (e?.message||"") + " — Tersimpan lokal. Jalankan fix_ara_brain_table.sql di Supabase.");
-                      addAgentLog("BRAIN_CUST_SAVE_ERROR", "Brain Customer gagal ke DB: "+(e?.message||""), "ERROR");
-                      setModalBrainCustomerEdit(false); return;
-                    }
-                    if (dbOk) {
-                      addAgentLog("BRAIN_CUSTOMER_SAVED", "Brain Customer disimpan ke Supabase (" + brainMdCustomer.length + " karakter)", "SUCCESS");
-                      showNotif("✅ Brain Customer tersimpan permanen di Supabase + localStorage!");
-                    }
-                    setModalBrainCustomerEdit(false);
-                  }}
+                <button onClick={() => { showNotif("Brain Customer tersimpan ✅"); setModalBrainCustomerEdit(false); }}
                   style={{ background:"linear-gradient(135deg,#22c55e,#16a34a)", border:"none", color:"#fff", padding:"9px 22px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
                   💾 Simpan Brain Customer
                 </button>
@@ -7586,449 +5685,71 @@ ${matRowsHtml}
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — EDIT INVOICE (GAP 3) */}
       {/* ══════════════════════════════════════════════════════ */}
-      {/* ══ MODAL HISTORY PREVIEW — Teknisi view-only ══ */}
-      {historyPreview && (() => {
-        const cu = historyPreview;
-        const hist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
-        return (
-        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:9998,
-          display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:cs.surface, border:"1px solid "+cs.border,
-            borderRadius:18, width:"100%", maxWidth:500, maxHeight:"88vh",
-            display:"flex", flexDirection:"column", overflow:"hidden" }}>
-            {/* Header */}
-            <div style={{ background:cs.card, padding:"14px 18px",
-              borderBottom:"1px solid "+cs.border,
-              display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+      {modalEditInvoice && editInvoiceData && (
+        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:450, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={()=>setModalEditInvoice(false)}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:20, width:"100%", maxWidth:460, padding:28 }} onClick={e=>e.stopPropagation()}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
               <div>
-                <div style={{ fontWeight:800, fontSize:15, color:cs.text }}>📋 Riwayat Pekerjaan</div>
-                <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>{cu.name} · {hist.length}x servis</div>
-              </div>
-              <button onClick={()=>setHistoryPreview(null)}
-                style={{ background:"none", border:"none", color:cs.muted, fontSize:24, cursor:"pointer" }}>×</button>
-            </div>
-            {/* Info lokasi */}
-            <div style={{ padding:"7px 18px", background:cs.accent+"08",
-              borderBottom:"1px solid "+cs.border+"44", fontSize:11, color:cs.muted }}>
-              📍 {(cu.address||cu.area||"-").slice(0,50)}
-              {hist[0] && <span style={{marginLeft:12}}>🕐 Terakhir: {hist[0].date}</span>}
-            </div>
-            {/* List history */}
-            <div style={{ overflowY:"auto", flex:1 }}>
-              {hist.length === 0
-                ? <div style={{ padding:"32px", textAlign:"center", color:cs.muted, fontSize:13 }}>Belum ada riwayat servis</div>
-                : hist.map((h, hi) => (
-                <div key={hi} style={{ borderBottom:"1px solid "+cs.border+"33" }}>
-                  {/* Job header */}
-                  <div style={{ padding:"10px 18px", background:hi===0?cs.accent+"08":"transparent",
-                    display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                    <div>
-                      <div style={{ fontWeight:700, fontSize:13, color:cs.text }}>
-                        {h.service}{h.type?" — "+h.type:""}
-                      </div>
-                      <div style={{ fontSize:11, color:cs.muted, marginTop:2, display:"flex", gap:10 }}>
-                        <span>📅 {h.date}</span>
-                        <span>👷 {h.teknisi||"-"}</span>
-                        <span>🔧 {h.units} unit</span>
-                      </div>
-                    </div>
-                    <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, flexShrink:0,
-                      background:(h.status==="COMPLETED"||h.status==="PAID"?cs.green:cs.yellow)+"22",
-                      color:(h.status==="COMPLETED"||h.status==="PAID"?cs.green:cs.yellow), fontWeight:700 }}>
-                      {statusLabel?.[h.status]||h.status||"-"}
-                    </span>
-                  </div>
-                  {/* Detail per unit AC */}
-                  {(h.unit_detail||[]).length > 0 && (
-                    <div style={{ margin:"0 18px 8px", background:cs.card, borderRadius:8, padding:"8px 10px" }}>
-                      {(h.unit_detail||[]).map((u, ui) => (
-                        <div key={ui} style={{ marginBottom:ui<h.unit_detail.length-1?6:0,
-                          paddingBottom:ui<h.unit_detail.length-1?5:0,
-                          borderBottom:ui<h.unit_detail.length-1?"1px solid "+cs.border+"33":"none" }}>
-                          <div style={{ fontSize:11, fontWeight:700, color:cs.accent }}>
-                            Unit {u.unit_no||ui+1}: {u.tipe||u.label||"-"}{u.merk?" · "+u.merk:""}
-                          </div>
-                          {(u.pekerjaan||[]).length>0 && (
-                            <div style={{ fontSize:10, color:cs.muted, marginTop:1 }}>🔨 {u.pekerjaan.join(", ")}</div>
-                          )}
-                          {(u.kondisi_setelah||[]).length>0 && (
-                            <div style={{ fontSize:10, color:cs.green, marginTop:1 }}>✅ {u.kondisi_setelah.join(", ")}</div>
-                          )}
-                          {u.freon_ditambah>0 && (
-                            <div style={{ fontSize:10, color:"#38bdf8", marginTop:1 }}>❄️ Tekanan: {u.freon_ditambah} psi</div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {/* Catatan & Rekomendasi */}
-                  {(h.rekomendasi||h.catatan) && (
-                    <div style={{ margin:"0 18px 8px", fontSize:11 }}>
-                      {h.catatan && <div style={{ color:cs.muted, marginBottom:3 }}>📝 {h.catatan.slice(0,100)}</div>}
-                      {h.rekomendasi && (
-                        <div style={{ color:"#7dd3fc", background:"#0ea5e910",
-                          borderRadius:6, padding:"4px 8px", fontStyle:"italic" }}>
-                          💡 {h.rekomendasi.slice(0,120)}{h.rekomendasi.length>120?"...":""}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {/* Foto dokumentasi */}
-                  {(h.foto_urls||[]).length > 0 && (
-                    <div style={{ padding:"0 18px 12px" }}>
-                      <div style={{ fontSize:10, color:cs.muted, marginBottom:5, fontWeight:600 }}>📸 Foto ({h.foto_urls.length})</div>
-                      <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:4 }}>
-                        {(h.foto_urls||[]).map((url, fi) => (
-                          <img key={fi} src={url} alt={"Foto "+(fi+1)}
-                            onClick={()=>window.open(url,"_blank")}
-                            onError={e=>{ e.target.style.display="none"; }}
-                            style={{ width:90, height:90, objectFit:"cover", flexShrink:0,
-                              borderRadius:8, cursor:"pointer", border:"1px solid "+cs.border }}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-            {/* Footer */}
-            <div style={{ padding:"10px 18px", borderTop:"1px solid "+cs.border, background:cs.card }}>
-              <button onClick={()=>setHistoryPreview(null)}
-                style={{ width:"100%", padding:"10px", background:cs.surface,
-                  border:"1px solid "+cs.border, borderRadius:10,
-                  color:cs.text, cursor:"pointer", fontWeight:600, fontSize:13 }}>Tutup</button>
-            </div>
-          </div>
-        </div>
-        );
-      })()}
-
-      {/* ══ CONFIRM MODAL — ganti semua window.confirm() ══ */}
-      {confirmModal && (
-        <div style={{ position:"fixed", inset:0, background:"#000000cc", zIndex:9999,
-          display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
-          <div style={{ background:cs.surface, border:"1px solid "+(confirmModal.danger?cs.red:cs.border),
-            borderRadius:16, width:"100%", maxWidth:400, padding:24, boxShadow:"0 20px 60px #000a" }}>
-            {/* Icon + Title */}
-            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
-              <div style={{ fontSize:28 }}>{confirmModal.icon||(confirmModal.danger?"⚠️":"❓")}</div>
-              <div style={{ fontWeight:800, fontSize:16, color:confirmModal.danger?cs.red:cs.text }}>
-                {confirmModal.title}
-              </div>
-            </div>
-            {/* Message */}
-            <div style={{ fontSize:13, color:cs.muted, lineHeight:1.6, marginBottom:20,
-              whiteSpace:"pre-line", background:cs.card, borderRadius:10, padding:"12px 14px" }}>
-              {confirmModal.message}
-            </div>
-            {/* Buttons */}
-            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
-              <button onClick={confirmModal.onCancel}
-                style={{ padding:"9px 20px", background:cs.surface, border:"1px solid "+cs.border,
-                  borderRadius:10, color:cs.text, cursor:"pointer", fontWeight:600, fontSize:13 }}>
-                {confirmModal.cancelText||"Batal"}
-              </button>
-              <button onClick={confirmModal.onConfirm}
-                style={{ padding:"9px 20px", border:"none", borderRadius:10, cursor:"pointer",
-                  fontWeight:700, fontSize:13, color:"#fff",
-                  background: confirmModal.danger
-                    ? "linear-gradient(135deg,#ef4444,#dc2626)"
-                    : "linear-gradient(135deg,"+cs.accent+",#3b82f6)" }}>
-                {confirmModal.confirmText||(confirmModal.danger?"Ya, Hapus":"Ya, Lanjutkan")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ══ MODAL EDIT PASSWORD (Owner only) ══ */}
-      {modalEditPwd && editPwdTarget && (
-        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:500,
-          display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:cs.surface, border:"1px solid "+cs.border,
-            borderRadius:16, width:"100%", maxWidth:380, padding:24 }}>
-            <div style={{ fontWeight:800, fontSize:15, color:cs.text, marginBottom:4 }}>🔑 Ganti Password</div>
-            <div style={{ fontSize:12, color:cs.muted, marginBottom:20 }}>Akun: <strong style={{color:cs.accent}}>{editPwdTarget.name}</strong></div>
-            <div style={{ display:"grid", gap:12 }}>
-              <div>
-                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Password Baru</div>
-                <input id="epwd_new" type="password" value={editPwdForm.newPwd}
-                  onChange={e=>setEditPwdForm(f=>({...f,newPwd:e.target.value}))}
-                  placeholder="Minimal 8 karakter"
-                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border,
-                    borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13 }}/>
-              </div>
-              <div>
-                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Konfirmasi Password</div>
-                <input id="epwd_confirm" type="password" value={editPwdForm.confirmPwd}
-                  onChange={e=>setEditPwdForm(f=>({...f,confirmPwd:e.target.value}))}
-                  placeholder="Ulangi password baru"
-                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border,
-                    borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13 }}/>
-              </div>
-              {editPwdForm.newPwd && editPwdForm.confirmPwd && editPwdForm.newPwd !== editPwdForm.confirmPwd && (
-                <div style={{ fontSize:11, color:cs.red }}>⚠️ Password tidak cocok</div>
-              )}
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
-                <button onClick={()=>{ setModalEditPwd(false); setEditPwdTarget(null); }}
-                  style={{ padding:"10px", background:cs.surface, border:"1px solid "+cs.border,
-                    borderRadius:10, color:cs.text, cursor:"pointer", fontWeight:600 }}>Batal</button>
-                <button onClick={()=>{
-                  const p = editPwdForm.newPwd.trim();
-                  const c = editPwdForm.confirmPwd.trim();
-                  if (!p || p.length < 8) { showNotif("⚠️ Password minimal 8 karakter"); return; }
-                  if (p !== c) { showNotif("⚠️ Password tidak cocok"); return; }
-                  // Update di userAccounts state
-                  setUserAccounts(prev=>prev.map(u=>u.id===editPwdTarget.id?{...u,password:p}:u));
-                  // Jika user punya UUID Supabase → update di DB juga
-                  const isUUID = /^[0-9a-f-]{36}$/.test(String(editPwdTarget.id||"").toLowerCase());
-                  if (isUUID) {
-                    supabase.from("user_profiles").update({password:p}).eq("id",editPwdTarget.id)
-                      .then(({error})=>{
-                        if (!error) addAgentLog("PWD_CHANGED",`Password ${editPwdTarget.name} diubah oleh Owner`,"SUCCESS");
-                        else showNotif("✅ Tersimpan lokal. DB sync: "+error.message);
-                      });
-                  } else {
-                    addAgentLog("PWD_CHANGED",`Password ${editPwdTarget.name} diubah (lokal)`,"SUCCESS");
-                  }
-                  showNotif("✅ Password "+editPwdTarget.name+" berhasil diubah");
-                  setModalEditPwd(false); setEditPwdTarget(null);
-                }} style={{ padding:"10px", background:"linear-gradient(135deg,#f59e0b,#f97316)",
-                  border:"none", borderRadius:10, color:"#fff", cursor:"pointer", fontWeight:700 }}>
-                  💾 Simpan Password
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {modalEditInvoice && editInvoiceData && (() => {
-        // Build lookup lists dari priceListData + inventoryData
-        const jasaLookup = priceListData
-          .filter(r => r.service !== 'Material' && (r.price||0) > 0)
-          .map(r => ({ label: r.service + ' / ' + r.type, harga: r.price||0, satuan: r.unit||'Unit' }));
-        const matLookup = inventoryData
-          .map(r => ({ label: r.name, harga: r.price||0, satuan: r.unit||'pcs' }));
-
-        const filteredJasa = jasaLookup.filter(x =>
-          x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
-        const filteredMat  = matLookup.filter(x =>
-          x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
-
-        const jasaTotal = editJasaItems.reduce((s,m)=>s+(m.subtotal||0), 0);
-        const matTotal = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0), 0);
-        const newTotal = jasaTotal + matTotal;
-        return (
-        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:450, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:20, width:"100%", maxWidth:560, maxHeight:"90vh", overflowY:"auto", padding:20 }}>
-
-            {/* Header */}
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-              <div>
-                <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>✏️ Edit Invoice</div>
+                <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>✏️ Edit Nilai Invoice</div>
                 <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>{editInvoiceData.id} · {editInvoiceData.customer}</div>
               </div>
-              <button onClick={()=>{ setModalEditInvoice(false); setEditAddType(''); setEditAddSearch(''); }}
-                style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
+              <button onClick={()=>setModalEditInvoice(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
             </div>
-
-            <div style={{ display:"grid", gap:14 }}>
-
-              {/* ── JASA / LABOR section ── */}
-              {/* ── JASA / LABOR section ── */}
-              <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"12px 14px" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-                  <div style={{ fontSize:12, fontWeight:700, color:cs.accent }}>🔧 Jasa / Labor</div>
-                  <button onClick={()=>{ setEditAddType(editAddType==='jasa'?'':'jasa'); setEditAddSearch(''); }}
-                    style={{ fontSize:11, background:cs.accent+"20", border:"1px solid "+cs.accent+"44", color:cs.accent, borderRadius:6, padding:"4px 10px", cursor:"pointer", fontWeight:700 }}>
-                    {editAddType==='jasa' ? '✕ Tutup' : '+ Tambah Jasa'}
-                  </button>
+            <div style={{ display:"grid", gap:12 }}>
+              {[["Jasa / Labor (Rp)","labor"],["Material (Rp)","material"],["Pekerjaan Tambahan / Dadakan (Rp)","dadakan"]].map(([label,key]) => (
+                <div key={key}>
+                  <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
+                  <input type="number" min="0" value={editInvoiceForm[key]||0}
+                    onChange={e=>setEditInvoiceForm(f=>({...f,[key]:parseInt(e.target.value)||0}))}
+                    style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
-                {editAddType === 'jasa' && (
-                  <div style={{ marginBottom:10 }}>
-                    <input id="ei_search_jasa" autoFocus value={editAddSearch}
-                      onChange={e=>setEditAddSearch(e.target.value)}
-                      placeholder="Cari jasa... (Cleaning, Install, Repair...)"
-                      style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 10px", color:cs.text, fontSize:12, marginBottom:6 }}
-                    />
-                    <div style={{ maxHeight:180, overflowY:"auto", background:cs.surface, borderRadius:8, border:"1px solid "+cs.border }}>
-                      {filteredJasa.slice(0,25).map((item,idx) => (
-                        <div key={idx} onClick={()=>{
-                          setEditJasaItems(prev=>[...prev,{
-                            nama:item.label, jumlah:1, satuan:item.satuan||'Unit',
-                            harga_satuan:item.harga, subtotal:item.harga, _idx:Date.now()+idx
-                          }]);
-                          setEditAddType(''); setEditAddSearch('');
-                        }}
-                          style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:cs.text,
-                            borderBottom:"1px solid "+cs.border+"44", display:"flex", justifyContent:"space-between" }}
-                          onMouseEnter={e=>e.currentTarget.style.background=cs.accent+"15"}
-                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-                        >
-                          <span>{item.label}</span>
-                          <span style={{ fontFamily:"monospace", color:cs.accent, fontWeight:700 }}>{fmt(item.harga)}</span>
-                        </div>
-                      ))}
-                      {filteredJasa.length === 0 && <div style={{ padding:"10px 12px", color:cs.muted, fontSize:12 }}>Tidak ada hasil</div>}
-                    </div>
-                  </div>
-                )}
-                {editJasaItems.length > 0 && (
-                  <div style={{ marginBottom:8 }}>
-                    {editJasaItems.map((m, mi) => (
-                      <div key={m._idx||mi} style={{ display:"grid", gridTemplateColumns:"1fr 55px 30px 100px 28px", gap:5, alignItems:"center", marginBottom:6, padding:"6px 8px", background:cs.surface, borderRadius:8 }}>
-                        <input id={"ej_name_"+mi} value={m.nama||''} onChange={e=>setEditJasaItems(prev=>prev.map((x,xi)=>xi===mi?{...x,nama:e.target.value}:x))}
-                          style={{ background:"transparent", border:"none", borderBottom:"1px solid "+cs.border, color:cs.text, fontSize:12, padding:"2px 4px" }} />
-                        <input id={"ej_qty_"+mi} type="number" min="0" step="0.1" value={m.jumlah||1}
-                          onChange={e=>setEditJasaItems(prev=>prev.map((x,xi)=>xi===mi?{...x,jumlah:parseFloat(e.target.value)||0,subtotal:(parseFloat(e.target.value)||0)*(x.harga_satuan||0)}:x))}
-                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, textAlign:"center" }} />
-                        <span style={{ fontSize:10, color:cs.muted, textAlign:"center" }}>{m.satuan}</span>
-                        <input id={"ej_harga_"+mi} type="number" min="0" value={m.harga_satuan||0}
-                          onChange={e=>setEditJasaItems(prev=>prev.map((x,xi)=>xi===mi?{...x,harga_satuan:parseInt(e.target.value)||0,subtotal:(parseInt(e.target.value)||0)*(x.jumlah||0)}:x))}
-                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, fontFamily:"monospace", textAlign:"right" }} />
-                        <button onClick={()=>setEditJasaItems(prev=>prev.filter((_x,xi)=>xi!==mi))}
-                          style={{ background:"#ef444420", border:"none", color:"#ef4444", borderRadius:5, padding:"4px 6px", cursor:"pointer", fontSize:12, fontWeight:700 }}>×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div style={{ fontSize:11, color:cs.muted, textAlign:"right" }}>
-                  Subtotal jasa: <strong style={{color:cs.accent,fontFamily:"monospace"}}>{fmt(editJasaItems.reduce((s,m)=>s+(m.subtotal||0),0))}</strong>
-                </div>
-              </div>
-
-              {/* ── MATERIAL section ── */}
-              <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"12px 14px" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-                  <div style={{ fontSize:12, fontWeight:700, color:cs.green }}>📦 Material</div>
-                  <button onClick={()=>{ setEditAddType(editAddType==='material'?'':'material'); setEditAddSearch(''); }}
-                    style={{ fontSize:11, background:cs.green+"20", border:"1px solid "+cs.green+"44", color:cs.green, borderRadius:6, padding:"4px 10px", cursor:"pointer", fontWeight:700 }}>
-                    {editAddType==='material' ? '✕ Tutup' : '+ Tambah Material'}
-                  </button>
-                </div>
-
-                {/* Lookup material */}
-                {editAddType === 'material' && (
-                  <div style={{ marginBottom:10 }}>
-                    <input id="ei_search_mat" autoFocus value={editAddSearch}
-                      onChange={e=>setEditAddSearch(e.target.value)}
-                      placeholder="Cari material... (Freon, Pipa, Kabel...)"
-                      style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 10px", color:cs.text, fontSize:12, marginBottom:6 }}
-                    />
-                    <div style={{ maxHeight:160, overflowY:"auto", background:cs.surface, borderRadius:8, border:"1px solid "+cs.border }}>
-                      {filteredMat.slice(0,20).map((item,idx) => (
-                        <div key={idx} onClick={()=>{
-                          setEditInvoiceItems(prev=>[...prev,{
-                            nama:item.label, jumlah:1, satuan:item.satuan,
-                            harga_satuan:item.harga, subtotal:item.harga, _idx:Date.now()+idx
-                          }]);
-                          setEditAddType(''); setEditAddSearch('');
-                        }}
-                          style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:cs.text, borderBottom:"1px solid "+cs.border+"44",
-                            display:"flex", justifyContent:"space-between", alignItems:"center" }}
-                          onMouseEnter={e=>e.currentTarget.style.background=cs.green+"10"}
-                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-                        >
-                          <span>{item.label} <span style={{fontSize:10,color:cs.muted}}>/ {item.satuan}</span></span>
-                          <span style={{ fontFamily:"monospace", color:cs.green, fontWeight:700 }}>{fmt(item.harga)}</span>
-                        </div>
-                      ))}
-                      {filteredMat.length === 0 && (
-                        <div style={{ padding:"10px 12px", color:cs.muted, fontSize:12 }}>Tidak ada hasil</div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Item list — editable */}
-                {editInvoiceItems.length > 0 && (
-                  <div style={{ marginBottom:8 }}>
-                    {editInvoiceItems.map((m, mi) => (
-                      <div key={m._idx||mi} style={{ display:"grid", gridTemplateColumns:"1fr 60px 30px 100px 28px", gap:5, alignItems:"center", marginBottom:6, padding:"6px 8px", background:cs.surface, borderRadius:8 }}>
-                        <input id={"ei_name_"+mi} value={m.nama||''} onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,nama:e.target.value}:x))}
-                          style={{ background:"transparent", border:"none", borderBottom:"1px solid "+cs.border, color:cs.text, fontSize:12, padding:"2px 4px" }} />
-                        <input id={"ei_qty_"+mi} type="number" min="0" step="0.1" value={m.jumlah||1}
-                          onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,jumlah:parseFloat(e.target.value)||0,subtotal:(parseFloat(e.target.value)||0)*(x.harga_satuan||0)}:x))}
-                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, textAlign:"center" }} />
-                        <span style={{ fontSize:10, color:cs.muted, textAlign:"center" }}>{m.satuan}</span>
-                        <input id={"ei_harga_"+mi} type="number" min="0" value={m.harga_satuan||0}
-                          onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,harga_satuan:parseInt(e.target.value)||0,subtotal:(parseInt(e.target.value)||0)*(x.jumlah||0)}:x))}
-                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, fontFamily:"monospace", textAlign:"right" }} />
-                        <button onClick={()=>setEditInvoiceItems(prev=>prev.filter((_,xi)=>xi!==mi))}
-                          style={{ background:"#ef444420", border:"none", color:"#ef4444", borderRadius:5, padding:"4px 6px", cursor:"pointer", fontSize:12, fontWeight:700 }}>×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div style={{ fontSize:11, color:cs.muted, textAlign:"right" }}>
-                  Subtotal material: <strong style={{color:cs.green, fontFamily:"monospace"}}>{fmt(matTotal)}</strong>
-                </div>
-              </div>
-
-              {/* ── Total preview ── */}
+              ))}
               <div style={{ background:cs.accent+"12", border:"1px solid "+cs.accent+"33", borderRadius:10, padding:14 }}>
-                <div style={{ fontSize:12, color:cs.muted, marginBottom:4 }}>Total Invoice Baru</div>
-                <div style={{ fontWeight:800, fontSize:22, color:cs.accent, fontFamily:"monospace" }}>{fmt(newTotal)}</div>
-                {newTotal !== editInvoiceData.total && (
+                <div style={{ fontSize:12, color:cs.muted, marginBottom:4 }}>Total Baru</div>
+                <div style={{ fontWeight:800, fontSize:20, color:cs.accent, fontFamily:"monospace" }}>
+                  {fmt((editInvoiceForm.labor||0)+(editInvoiceForm.material||0)+(editInvoiceForm.dadakan||0))}
+                </div>
+                {(editInvoiceForm.labor||0)+(editInvoiceForm.material||0)+(editInvoiceForm.dadakan||0) !== editInvoiceData.total && (
                   <div style={{ fontSize:11, color:cs.yellow, marginTop:4 }}>
-                    Perubahan: {fmt(newTotal - editInvoiceData.total)} dari sebelumnya {fmt(editInvoiceData.total)}
+                    Perubahan: {fmt(((editInvoiceForm.labor||0)+(editInvoiceForm.material||0)+(editInvoiceForm.dadakan||0))-editInvoiceData.total)}
                   </div>
                 )}
               </div>
-
-              {/* ── Catatan ── */}
-              <div>
+              <div key="notes">
                 <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Catatan Perubahan</div>
-                <input id="ei_notes" value={editInvoiceForm.notes||''}
-                  onChange={e=>setEditInvoiceForm(f=>({...f,notes:e.target.value}))}
+                <input value={editInvoiceForm.notes||""} onChange={e=>setEditInvoiceForm(f=>({...f,notes:e.target.value}))}
                   placeholder="Alasan perubahan nilai..."
-                  style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13 }}
-                />
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
               </div>
-
-              {/* ── Action buttons ── */}
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10 }}>
-                <button onClick={()=>{ setModalEditInvoice(false); setEditAddType(''); setEditAddSearch(''); }}
-                  style={{ padding:"11px", background:cs.surface, border:"1px solid "+cs.border, borderRadius:10, color:cs.text, cursor:"pointer", fontWeight:600, fontSize:13 }}>
-                  Batal
-                </button>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
+                <button onClick={()=>setModalEditInvoice(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
                 <button onClick={async()=>{
-                  const jasaTotal3    = editJasaItems.reduce((s,m)=>s+(m.subtotal||0),0);
-                  const matTotal3     = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0),0);
-                  const labor         = jasaTotal3;
-                  const newTotalFinal = jasaTotal3 + matTotal3;
-                  if(newTotalFinal <= 0){ showNotif("⚠️ Total tidak boleh 0"); return; }
-                  const newMD = [
-                    ...editJasaItems.filter(m=>m.nama&&(m.jumlah||0)>0),
-                    ...editInvoiceItems.filter(m=>m.nama&&(m.jumlah||0)>0)
-                  ];
-                  setInvoicesData(prev=>prev.map(i=>i.id===editInvoiceData.id
-                    ?{...i,labor,material:matTotal3,dadakan:0,total:newTotalFinal,materials_detail:newMD}:i));
-                  let saved=false;
-                  {const {error:e1}=await supabase.from("invoices").update({
-                    labor, material:matTotal3, dadakan:0, total:newTotalFinal,
-                    materials_detail:JSON.stringify(newMD)
-                  }).eq("id",editInvoiceData.id); if(!e1)saved=true; else console.warn("editInv e1:",e1.message);}
-                  if(!saved){const {error:e2}=await supabase.from("invoices").update({labor,material:matTotal3,total:newTotalFinal}).eq("id",editInvoiceData.id);
-                    if(!e2)saved=true;}
-                  if(!saved) await supabase.from("invoices").update({total:newTotalFinal}).eq("id",editInvoiceData.id);
-                  addAgentLog("INVOICE_EDITED",`Invoice ${editInvoiceData.id} diedit → ${fmt(newTotalFinal)}`+(editInvoiceForm.notes?` (${editInvoiceForm.notes})`:"")+` by Owner`,"SUCCESS");
-                  showNotif(`✅ Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotalFinal)}`);
+                  const labor = Math.max(0, parseInt(editInvoiceForm.labor)||0);
+                  const material = Math.max(0, parseInt(editInvoiceForm.material)||0);
+                  const dadakan = Math.max(0, parseInt(editInvoiceForm.dadakan)||0);
+                  const newTotal = labor + material + dadakan;
+                  if(newTotal <= 0){ showNotif("⚠️ Total invoice tidak boleh 0 atau negatif"); return; }
+                  setInvoicesData(prev=>prev.map(i=>i.id===editInvoiceData.id?{...i,labor,material,dadakan,total:newTotal}:i));
+                  // Try update with all cols → fallback to known-safe cols
+                  let editSaved = false;
+                  // Attempt 1: full cols
+                  { const {error:e1} = await supabase.from("invoices").update({labor,material,dadakan,total:newTotal}).eq("id",editInvoiceData.id);
+                    if(!e1){ editSaved=true; } else console.warn("editInv attempt1:", e1.message); }
+                  // Attempt 2: without dadakan  
+                  if(!editSaved){ const {error:e2} = await supabase.from("invoices").update({labor,material,total:newTotal}).eq("id",editInvoiceData.id);
+                    if(!e2){ editSaved=true; } else console.warn("editInv attempt2:", e2.message); }
+                  // Attempt 3: total only
+                  if(!editSaved){ const {error:e3} = await supabase.from("invoices").update({total:newTotal}).eq("id",editInvoiceData.id);
+                    if(!e3){ editSaved=true; } else showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+e3.message); }
+                  else { addAgentLog("INVOICE_EDITED",`Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotal)}${editInvoiceForm.notes?" ("+editInvoiceForm.notes+")":""}`, "SUCCESS"); }
+                  showNotif(`✅ Invoice ${editInvoiceData.id} berhasil diupdate → ${fmt(newTotal)}`);
                   setModalEditInvoice(false); setEditInvoiceData(null);
-                  setEditAddType(''); setEditAddSearch('');
-                }} style={{ padding:"11px", background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", borderRadius:10, color:"#fff", cursor:"pointer", fontWeight:700, fontSize:13 }}>
-                  💾 Simpan Perubahan
-                </button>
+                }} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>💾 Simpan Perubahan</button>
               </div>
-
             </div>
           </div>
         </div>
-        );
-      })()}
+      )}
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — INVOICE PREVIEW */}
@@ -8047,8 +5768,8 @@ ${matRowsHtml}
               </div>
               <div style={{ display:"flex", gap:8 }}>
                 {liveInv.status === "PENDING_APPROVAL" && (
-                  <button onClick={() => { setModalPDF(false); setTimeout(()=>approveInvoice(liveInv),100); }}
-                    style={{ background:"#22c55e", border:"none", color:"#fff", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>✓ Approve Invoice</button>
+                  <button onClick={() => { approveInvoice(liveInv); setModalPDF(false); }}
+                    style={{ background:"#22c55e", border:"none", color:"#fff", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>✓ Approve &amp; Kirim PDF</button>
                 )}
                 <button onClick={() => setModalPDF(false)} style={{ background:"none", border:"1px solid #ffffff44", color:"#fff", padding:"6px 14px", borderRadius:8, cursor:"pointer", fontSize:13 }}>× Tutup</button>
               </div>
@@ -8071,8 +5792,8 @@ ${matRowsHtml}
                   </div>
                 </div>
                 <div style={{ background:"#0f2744", padding:"8px 20px", display:"flex", gap:20, fontSize:10, color:"#94a3b8" }}>
-                  <span>📍 ${appSettings.company_addr}</span>
-                  <span>🏦 ${appSettings.bank_name} ${appSettings.bank_number} a.n. ${appSettings.bank_holder}</span>
+                  <span>📍 Alam Sutera, Tangerang Selatan</span>
+                  <span>🏦 BCA 8830883011 a.n. Malda Retta</span>
                 </div>
               </div>
               {/* Detail Grid */}
@@ -8102,51 +5823,20 @@ ${matRowsHtml}
                   </tr>
                 </thead>
                 <tbody>
-                  {liveInv.labor > 0 && parseMD(liveInv.materials_detail).length === 0 && (
                   <tr style={{ background:"#fff" }}>
                     <td style={{ padding:"8px 10px", color:"#1e293b" }}>{liveInv.service}</td>
                     <td style={{ padding:"8px 10px", color:"#475569", textAlign:"center" }}>{liveInv.units}</td>
-                    <td style={{ padding:"8px 10px", color:"#475569", fontFamily:"monospace" }}>{((liveInv.labor||0)/(liveInv.units||1)).toLocaleString("id-ID")}</td>
+                    <td style={{ padding:"8px 10px", color:"#475569", fontFamily:"monospace" }}>{(liveInv.labor/liveInv.units).toLocaleString("id-ID")}</td>
                     <td style={{ padding:"8px 10px", color:"#1e293b", fontFamily:"monospace", fontWeight:600 }}>{liveInv.labor.toLocaleString("id-ID")}</td>
                   </tr>
+                  {liveInv.material > 0 && (
+                    <tr style={{ background:"#f0f9ff" }}>
+                      <td style={{ padding:"8px 10px", color:"#1e293b" }}>Material &amp; Spare Part</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center" }}>—</td>
+                      <td style={{ padding:"8px 10px" }}>—</td>
+                      <td style={{ padding:"8px 10px", color:"#1e293b", fontFamily:"monospace", fontWeight:600 }}>{liveInv.material.toLocaleString("id-ID")}</td>
+                    </tr>
                   )}
-                  {/* Per-item material dari materials_detail */}
-                  {(() => {
-                    const md = liveInv.materials_detail;
-                    const mArr = Array.isArray(md) ? md
-                      : (typeof md === "string" && md)
-                        ? (() => { try { return JSON.parse(md); } catch(_){ return []; } })()
-                        : [];
-                    if (mArr.length > 0) {
-                      return mArr.map((m, mi) => (
-                        <tr key={mi} style={{ background: mi%2===0 ? "#f0f9ff" : "#fff" }}>
-                          <td style={{ padding:"8px 10px", color:"#1e293b" }}>
-                            {m.nama}
-                            {m.keterangan && <span style={{ fontSize:10, color:"#64748b", marginLeft:4 }}>({m.keterangan})</span>}
-                          </td>
-                          <td style={{ padding:"8px 10px", textAlign:"center", color:"#475569" }}>{m.jumlah} {m.satuan}</td>
-                          <td style={{ padding:"8px 10px", fontFamily:"monospace", color:"#475569", textAlign:"right" }}>
-                            {m.harga_satuan > 0 ? m.harga_satuan.toLocaleString("id-ID") : "—"}
-                          </td>
-                          <td style={{ padding:"8px 10px", fontFamily:"monospace", fontWeight:600, color:"#1e293b", textAlign:"right" }}>
-                            {m.subtotal > 0 ? m.subtotal.toLocaleString("id-ID") : "—"}
-                          </td>
-                        </tr>
-                      ));
-                    }
-                    // Fallback: materials_detail kosong → tampil 1 baris total
-                    if ((liveInv.material||0) > 0) return (
-                      <tr style={{ background:"#f0f9ff" }}>
-                        <td style={{ padding:"8px 10px", color:"#64748b", fontStyle:"italic" }}>Material &amp; Spare Part</td>
-                        <td style={{ padding:"8px 10px", textAlign:"center" }}>—</td>
-                        <td style={{ padding:"8px 10px" }}>—</td>
-                        <td style={{ padding:"8px 10px", fontFamily:"monospace", fontWeight:600, color:"#1e293b", textAlign:"right" }}>
-                          {(liveInv.material||0).toLocaleString("id-ID")}
-                        </td>
-                      </tr>
-                    );
-                    return null;
-                  })()}
                   {liveInv.dadakan > 0 && (
                     <tr style={{ background:"#fffbeb" }}>
                       <td style={{ padding:"8px 10px", color:"#92400e" }}>Pekerjaan Tambahan</td>
@@ -8166,8 +5856,8 @@ ${matRowsHtml}
                 <div style={{ background:"#EFF6FF", borderRadius:8, padding:"12px 14px" }}>
                   <div style={{ fontSize:10, fontWeight:800, color:"#1e40af", marginBottom:6 }}>Informasi Pembayaran</div>
                   <div style={{ fontSize:11, color:"#475569" }}>Transfer Bank BCA</div>
-                  <div style={{ fontWeight:800, color:"#1e293b", fontSize:13, marginTop:4 }}>{appSettings.bank_number}</div>
-                  <div style={{ fontSize:11, color:"#475569" }}>a.n. {appSettings.bank_holder}</div>
+                  <div style={{ fontWeight:800, color:"#1e293b", fontSize:13, marginTop:4 }}>8830883011</div>
+                  <div style={{ fontSize:11, color:"#475569" }}>a.n. Malda Retta</div>
                 </div>
                 <div style={{ background:liveInv.status==="OVERDUE"?"#FEF2F2":liveInv.status==="PAID"?"#F0FDF4":"#FFFBEB", borderRadius:8, padding:"12px 14px", border:"1px solid "+(liveInv.status==="OVERDUE"?"#fca5a5":liveInv.status==="PAID"?"#86efac":"#fde68a") }}>
                   <div style={{ fontSize:10, fontWeight:800, color:"#64748b", marginBottom:6 }}>Jatuh Tempo</div>
@@ -8177,182 +5867,24 @@ ${matRowsHtml}
                 </div>
               </div>
               <div style={{ textAlign:"center", padding:"10px 0", borderTop:"1px solid #e2e8f0" }}>
-                <div style={{ fontSize:11, color:"#64748b" }}>Pertanyaan? Hubungi kami via WA: ${appSettings.wa_number}</div>
-                <div style={{ fontSize:11, color:"#94a3b8", fontStyle:"italic", marginTop:4 }}>Terima kasih telah mempercayakan perawatan AC Anda kepada ${appSettings.company_name}</div>
+                <div style={{ fontSize:11, color:"#64748b" }}>Pertanyaan? Hubungi kami via WA: +62812-8989-8937</div>
+                <div style={{ fontSize:11, color:"#94a3b8", fontStyle:"italic", marginTop:4 }}>Terima kasih telah mempercayakan perawatan AC Anda kepada AClean Service</div>
               </div>
             </div>
             {/* Action bar */}
             <div style={{ background:"#f1f5f9", padding:"12px 20px", borderTop:"1px solid #e2e8f0", display:"flex", gap:10, justifyContent:"flex-end", borderRadius:"0 0 20px 20px", flexShrink:0 }}>
-              <button onClick={() => downloadInvoicePDF(liveInv)} style={{ background:"#EFF6FF", border:"1px solid #bfdbfe", color:"#1d4ed8", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📥 Download PDF</button>
+              <button onClick={() => showNotif("PDF digenerate — siap download")} style={{ background:"#EFF6FF", border:"1px solid #bfdbfe", color:"#1d4ed8", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📥 Download PDF</button>
               {liveInv.status === "UNPAID" && (
                 <button onClick={() => { invoiceReminderWA(liveInv); setModalPDF(false); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📱 Kirim via WA</button>
               )}
-              {liveInv.status === "PENDING_APPROVAL" &&
-               (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-                <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); const _aLv=parseMD(liveInv.materials_detail).map((m,idx)=>({...m,_idx:idx})); const _jLv=_aLv.filter(m=>jasaSvcNames.some(s=>(m.nama||"").includes(s))); const _mLv=_aLv.filter(m=>!jasaSvcNames.some(s=>(m.nama||"").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
+              {liveInv.status === "PENDING_APPROVAL" && (
+                <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
             </div>
           </div>
         </div>
         );
       })()}
-
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* MODAL — APPROVE INVOICE (pilihan kirim/simpan) */}
-      {/* ══════════════════════════════════════════════════════ */}
-      {modalApproveInv && pendingApproveInv && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:500,
-          display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
-          onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}>
-          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:18,
-            padding:28, width:"100%", maxWidth:420, boxShadow:"0 20px 60px rgba(0,0,0,0.4)" }}
-            onClick={e => e.stopPropagation()}>
-
-            {/* Header */}
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
-              <div>
-                <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>✅ Approve Invoice</div>
-                <div style={{ fontSize:12, color:cs.muted, marginTop:4 }}>Setelah approve, invoice tidak bisa diedit lagi</div>
-              </div>
-              <button onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}
-                style={{ background:"none", border:"none", color:cs.muted, fontSize:20, cursor:"pointer", lineHeight:1 }}>×</button>
-            </div>
-
-            {/* Info invoice */}
-            <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:12, padding:"14px 16px", marginBottom:20 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-                <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:14 }}>{pendingApproveInv.id}</span>
-                <span style={{ fontWeight:800, color:cs.green, fontSize:14 }}>{fmt(pendingApproveInv.total)}</span>
-              </div>
-              <div style={{ fontSize:12, color:cs.muted }}>👤 {pendingApproveInv.customer}</div>
-              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>🔧 {pendingApproveInv.service}</div>
-              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>📱 {pendingApproveInv.phone}</div>
-            </div>
-
-            {/* Pilihan */}
-            <div style={{ display:"grid", gap:10 }}>
-              {/* Opsi 1 — Kirim ke Customer */}
-              <button onClick={() => approveAndSend(pendingApproveInv)}
-                style={{ display:"flex", alignItems:"center", gap:14, background:"linear-gradient(135deg,"+cs.green+",#059669)",
-                  border:"none", borderRadius:12, padding:"14px 18px", cursor:"pointer", textAlign:"left" }}>
-                <span style={{ fontSize:24 }}>📤</span>
-                <div>
-                  <div style={{ fontWeight:800, fontSize:14, color:"#fff" }}>Approve & Kirim ke Customer</div>
-                  <div style={{ fontSize:11, color:"rgba(255,255,255,0.8)", marginTop:2 }}>Invoice langsung dikirim via WA ke {pendingApproveInv.phone}</div>
-                </div>
-              </button>
-
-              {/* Opsi 2 — Simpan Dahulu */}
-              <button onClick={() => approveSaveOnly(pendingApproveInv)}
-                style={{ display:"flex", alignItems:"center", gap:14, background:cs.card,
-                  border:"1px solid "+cs.border, borderRadius:12, padding:"14px 18px", cursor:"pointer", textAlign:"left" }}>
-                <span style={{ fontSize:24 }}>💾</span>
-                <div>
-                  <div style={{ fontWeight:800, fontSize:14, color:cs.text }}>Approve & Simpan Dahulu</div>
-                  <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>Invoice diapprove tapi belum dikirim — kirim manual nanti dari halaman Invoice</div>
-                </div>
-              </button>
-
-              <button onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}
-                style={{ background:"none", border:"none", color:cs.muted, fontSize:12, cursor:"pointer", padding:"6px 0" }}>
-                Batal
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* MODAL — WA TEKNISI KE CUSTOMER (pilihan pesan) */}
-      {/* ══════════════════════════════════════════════════════ */}
-      {modalWaTek && waTekTarget && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:600,
-          display:"flex", alignItems:"flex-end", justifyContent:"center", padding:"0 0 0 0" }}
-          onClick={() => { setModalWaTek(false); setWaTekTarget(null); }}>
-          <div style={{ background:cs.surface, borderRadius:"18px 18px 0 0", width:"100%", maxWidth:480,
-            padding:"24px 20px 32px", border:"1px solid "+cs.border }}
-            onClick={e => e.stopPropagation()}>
-
-            {/* Handle bar */}
-            <div style={{ width:40, height:4, background:cs.border, borderRadius:99, margin:"0 auto 18px" }} />
-
-            {/* Header */}
-            <div style={{ marginBottom:16 }}>
-              <div style={{ fontWeight:800, fontSize:15, color:cs.text }}>📱 WA ke Customer</div>
-              <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>
-                {waTekTarget.customer} · {waTekTarget.phone}
-              </div>
-              <div style={{ fontSize:11, color:cs.muted, marginTop:1 }}>🔧 {waTekTarget.service}</div>
-            </div>
-
-            {/* Pilihan pesan */}
-            <div style={{ display:"grid", gap:8 }}>
-              {[
-                {
-                  icon:"🚗",
-                  label:"Konfirmasi sedang menuju",
-                  msg:`Halo ${waTekTarget.customer}, saya dari AClean Service sedang dalam perjalanan menuju lokasi Anda. Estimasi tiba pkl ${waTekTarget.time||"sebentar lagi"}. Mohon ditunggu ya! 🙏`
-                },
-                {
-                  icon:"📍",
-                  label:"Tanya patokan / lokasi",
-                  msg:`Halo ${waTekTarget.customer}, saya teknisi AClean yang akan servis hari ini. Boleh minta patokan lokasi rumah Bapak/Ibu? Alamat yang tercatat: ${waTekTarget.address||"—"}. Terima kasih 🙏`
-                },
-                {
-                  icon:"✅",
-                  label:"Konfirmasi jadwal hari ini",
-                  msg:`Halo ${waTekTarget.customer}, kami konfirmasi jadwal servis AC dari AClean hari ini pkl ${waTekTarget.time||"—"} untuk ${waTekTarget.service||"servis AC"}. Apakah masih bisa? 🙏`
-                },
-                {
-                  icon:"⏰",
-                  label:"Info terlambat / minta reschedule",
-                  msg:`Halo ${waTekTarget.customer}, mohon maaf kami dari AClean ada keterlambatan. Kami akan tiba sedikit lebih lama dari jadwal. Terima kasih atas pengertiannya 🙏`
-                },
-                {
-                  icon:"✔️",
-                  label:"Pekerjaan selesai — terima kasih",
-                  msg:`Halo ${waTekTarget.customer}, pekerjaan servis AC (${waTekTarget.service||"—"}) telah selesai. Terima kasih sudah mempercayakan ke AClean Service. Semoga AC-nya nyaman kembali! 😊`
-                },
-              ].map(({ icon, label, msg }) => (
-                <button key={label} onClick={async () => {
-                  setModalWaTek(false);
-                  setWaTekTarget(null);
-                  await openWA(waTekTarget.phone, msg);
-                }}
-                  style={{ display:"flex", alignItems:"center", gap:12, background:cs.card,
-                    border:"1px solid "+cs.border, borderRadius:12, padding:"12px 14px",
-                    cursor:"pointer", textAlign:"left", width:"100%" }}>
-                  <span style={{ fontSize:20, flexShrink:0 }}>{icon}</span>
-                  <div>
-                    <div style={{ fontSize:13, fontWeight:700, color:cs.text }}>{label}</div>
-                    <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>{msg.slice(0,60)}...</div>
-                  </div>
-                </button>
-              ))}
-
-              {/* Ketik manual */}
-              <button onClick={() => {
-                setModalWaTek(false); setWaTekTarget(null);
-                window.open("https://wa.me/" + String(waTekTarget.phone).replace(/^0/,"62").replace(/[^0-9]/g,""), "_blank");
-              }}
-                style={{ display:"flex", alignItems:"center", gap:12, background:"#25D36615",
-                  border:"1px solid #25D36633", borderRadius:12, padding:"12px 14px",
-                  cursor:"pointer", textAlign:"left", width:"100%" }}>
-                <span style={{ fontSize:20 }}>💬</span>
-                <div>
-                  <div style={{ fontSize:13, fontWeight:700, color:"#25D366" }}>Ketik pesan sendiri</div>
-                  <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>Buka WhatsApp — tulis pesan bebas</div>
-                </div>
-              </button>
-
-              <button onClick={() => { setModalWaTek(false); setWaTekTarget(null); }}
-                style={{ background:"none", border:"none", color:cs.muted, fontSize:12, cursor:"pointer", padding:"6px 0", marginTop:4 }}>
-                Batal
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* WA PANEL */}
@@ -8410,7 +5942,7 @@ ${matRowsHtml}
                       ))}
                     </div>
                     <div style={{ padding:"10px 14px", borderTop:"1px solid "+cs.border, display:"flex", gap:8, flexShrink:0 }}>
-                      <input id="waInput" value={waInput} onChange={e => setWaInput(e.target.value)}
+                      <input value={waInput} onChange={e => setWaInput(e.target.value)}
                         onKeyDown={async e => { if(e.key==="Enter" && waInput.trim() && selectedConv){
                           const ok = await sendWA(selectedConv.phone, waInput);
                           addAgentLog("WA_SENT_MANUAL",`Manual reply ke ${selectedConv.name}: "${waInput.slice(0,40)}"`,"SUCCESS");
@@ -8487,13 +6019,11 @@ ${matRowsHtml}
             if (error) { showNotif("❌ Gagal buat akun: " + error.message); return; }
 
             if (data.user) {
-              try {
-                await supabase.from("user_profiles").upsert({
-                  id: data.user.id,
-                  name: newUserForm.name, role: newUserForm.role,
-                  phone: newUserForm.phone||"", avatar, color, active: true,
-                });
-              } catch(e) { console.warn("user_profiles upsert:", e?.message); }
+              await supabase.from("user_profiles").upsert({
+                id: data.user.id,
+                name: newUserForm.name, role: newUserForm.role,
+                phone: newUserForm.phone||"", avatar, color, active: true,
+              }).catch(()=>{});
             }
 
             const newAcc = {
@@ -8512,9 +6042,9 @@ ${matRowsHtml}
         // Handle delete user
         const handleDeleteUser = async () => {
           if (!newUserForm.id || newUserForm.role === "Owner") return;
-          if (!await showConfirm({ icon:"🗑️", title:"Hapus Akun?", danger:true,
-            message:`Hapus akun ${newUserForm.name}?\n\nAkun tidak bisa dipulihkan. Data order/laporan tetap ada.`,
-            confirmText:"Hapus Akun" })) return;
+          if (window.confirm && !window.confirm(`Hapus akun ${newUserForm.name}?
+
+Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
           const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
           if (isUUID(newUserForm.id)) {
             // Nonaktifkan di DB (tidak hapus permanen — jaga data historis)
@@ -8561,7 +6091,7 @@ ${matRowsHtml}
                 {[["Nama Lengkap","name","text","Nama lengkap anggota"],["Email Login","email","email","nama@aclean.id"],["Nomor HP","phone","text","628812xxx"]].map(([label,key,type,ph]) => (
                   <div key={key}>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                    <input id="field_22" type={type} value={newUserForm[key]||""} onChange={e => setNewUserForm(f=>({...f,[key]:e.target.value}))}
+                    <input type={type} value={newUserForm[key]||""} onChange={e => setNewUserForm(f=>({...f,[key]:e.target.value}))}
                       placeholder={ph}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
@@ -8579,7 +6109,7 @@ ${matRowsHtml}
                       </div>
                     </div>
                   ) : (
-                    <input id="field_password_23" type="password" value={newUserForm.password||""} onChange={e => setNewUserForm(f=>({...f,password:e.target.value}))}
+                    <input type="password" value={newUserForm.password||""} onChange={e => setNewUserForm(f=>({...f,password:e.target.value}))}
                       placeholder="min 8 karakter"
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   )}
@@ -8626,7 +6156,7 @@ ${matRowsHtml}
               {[["Nama Lengkap","name","text","Nama customer"],["Nomor HP","phone","text","628xxx"],["Alamat Lengkap","address","text","Jl. ..."],["Area/Kecamatan","area","text","Alam Sutera, BSD, dll"]].map(([lbl,key,type,ph])=>(
                 <div key={key}>
                   <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>{lbl}</div>
-                  <input id="field_24" type={type} value={newCustomerForm[key]||""} onChange={e=>setNewCustomerForm(f=>({...f,[key]:e.target.value}))}
+                  <input type={type} value={newCustomerForm[key]||""} onChange={e=>setNewCustomerForm(f=>({...f,[key]:e.target.value}))}
                     placeholder={ph} style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"10px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                 </div>
               ))}
@@ -8644,56 +6174,33 @@ ${matRowsHtml}
                 <button onClick={async ()=>{
                   if(!newCustomerForm.name||!newCustomerForm.phone){showNotif("Nama dan nomor HP wajib diisi");return;}
                   // GAP 6: cek duplikat phone sebelum submit
-                  const existPhone = customersData.find(cu => samePhone(cu.phone, newCustomerForm.phone) && cu.id !== (selectedCustomer?.id||""));
+                  const existPhone = customersData.find(cu => cu.phone === newCustomerForm.phone && cu.id !== (selectedCustomer?.id||""));
                   if(existPhone){showNotif(`⚠️ Nomor HP sudah terdaftar atas nama "${existPhone.name}". Tidak bisa duplikat.`);return;}
                   if(selectedCustomer && selectedCustomer.id){
                     // UPDATE existing customer
                     setCustomersData(prev=>prev.map(cu=>cu.id===selectedCustomer.id?{...cu,...newCustomerForm}:cu));
                     setSelectedCustomer(prev=>({...prev,...newCustomerForm}));
                     // Hanya kolom yang ada di DB schema
-                    const dbUpdate = {name:newCustomerForm.name, phone:normalizePhone(newCustomerForm.phone), address:newCustomerForm.address, area:newCustomerForm.area, notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false};
+                    const dbUpdate = {name:newCustomerForm.name, phone:newCustomerForm.phone, address:newCustomerForm.address, area:newCustomerForm.area, notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false};
                     const {error:cErr} = await supabase.from("customers").update(dbUpdate).eq("id",selectedCustomer.id);
                     if(cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
                     else { addAgentLog("CUSTOMER_UPDATED","Customer "+newCustomerForm.name+" diupdate","SUCCESS"); showNotif("✅ Data "+newCustomerForm.name+" berhasil diupdate"); }
                   } else {
-                    // INSERT new customer — tanpa kirim `id`, biarkan DB generate
+                    // INSERT new customer
+                    const newId = "CUST" + String(Date.now()).slice(-6);
                     const today = new Date().toISOString().slice(0,10);
-                    const dbCust = {
-                      name:         newCustomerForm.name.trim(),
-                      phone:        normalizePhone(newCustomerForm.phone),
-                      address:      newCustomerForm.address||"",
-                      area:         newCustomerForm.area||"",
-                      notes:        newCustomerForm.notes||"",
-                      is_vip:       newCustomerForm.is_vip||false,
-                      joined_date:  today,
-                      total_orders: 0,
-                      last_service: null,
-                    };
-                    const { data: savedCust, error: cErr } = await supabase
-                      .from("customers")
-                      .insert(dbCust)
-                      .select()
-                      .single();
-                    if (cErr) {
-                      // Fallback upsert jika phone sudah ada di DB
-                      const { data: upsertCust, error: cErr2 } = await supabase
-                        .from("customers")
-                        .upsert(dbCust, { onConflict: "phone", ignoreDuplicates: false })
-                        .select().single();
-                      if (cErr2) {
-                        showNotif("⚠️ Gagal simpan ke DB: " + cErr.message);
-                        // Tetap tampil di state lokal
-                        setCustomersData(prev => [...prev, { ...dbCust, id: "CUST_L_"+Date.now(), last_service:"-", ac_units:0 }]);
-                      } else {
-                        setCustomersData(prev => [...prev, upsertCust || { ...dbCust, id: "CUST_"+Date.now() }]);
-                        addAgentLog("CUSTOMER_ADDED", "Customer baru: "+newCustomerForm.name, "SUCCESS");
-                        showNotif("✅ Customer "+newCustomerForm.name+" berhasil ditambahkan");
-                      }
-                    } else {
-                      setCustomersData(prev => [...prev, savedCust || { ...dbCust, id: "CUST_"+Date.now() }]);
-                      addAgentLog("CUSTOMER_ADDED", "Customer baru: "+newCustomerForm.name+" ("+newCustomerForm.area+")", "SUCCESS");
-                      showNotif("✅ Customer "+newCustomerForm.name+" berhasil ditambahkan");
+                    const dbCust = {id:newId, name:newCustomerForm.name, phone:newCustomerForm.phone, address:newCustomerForm.address||"", area:newCustomerForm.area||"", notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false, joined:today};
+                    const localCust = {...dbCust, last_service:"-", ac_units:0, total_orders:0};
+                    setCustomersData(prev=>[...prev,localCust]);
+                    // GAP 5: upsert dengan onConflict phone — cegah duplikat
+                    const {error:cErr} = await supabase.from("customers").upsert(
+                      dbCust, {onConflict:"phone", ignoreDuplicates:false}
+                    );
+                    if(cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+cErr.message);
+                    else if(customersData.find(cu=>cu.phone===newCustomerForm.phone&&cu.id!==newId)) {
+                      showNotif("ℹ️ Customer dengan nomor ini sudah ada — data digabung.");
                     }
+                    else { addAgentLog("CUSTOMER_ADDED","Customer baru: "+newCustomerForm.name+" ("+newCustomerForm.area+")","SUCCESS"); showNotif("✅ Customer "+newCustomerForm.name+" berhasil ditambahkan"); }
                   }
                   setModalAddCustomer(false); setNewCustomerForm({name:"",phone:"",address:"",area:"",notes:"",is_vip:false});
                 }}
@@ -8726,7 +6233,7 @@ ${matRowsHtml}
                   {[["Nama Customer","customer","text"],["No. HP","phone","text"],["Alamat Lengkap","address","text"]].map(([lbl,key,type])=>(
                     <div key={key}>
                       <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>{lbl}</div>
-                      <input id="field_25" type={type} value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
+                      <input type={type} value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
                         style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                     </div>
                   ))}
@@ -8746,7 +6253,7 @@ ${matRowsHtml}
                   </div>
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Jumlah Unit</div>
-                    <input id="field_number_26" type="number" min="1" max="20" value={editOrderForm.units||1} onChange={e=>setEditOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
+                    <input type="number" min="1" max="20" value={editOrderForm.units||1} onChange={e=>setEditOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                   </div>
                 </div>
@@ -8758,12 +6265,12 @@ ${matRowsHtml}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Tanggal</div>
-                    <input id="field_date_27" type="date" value={editOrderForm.date||""} onChange={e=>setEditOrderForm(f=>({...f,date:e.target.value}))}
+                    <input type="date" value={editOrderForm.date||""} onChange={e=>setEditOrderForm(f=>({...f,date:e.target.value}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                   </div>
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Jam Mulai</div>
-                    <input id="field_time_28" type="time" min="09:00" max="17:00" value={editOrderForm.time||"09:00"} onChange={e=>setEditOrderForm(f=>({...f,time:e.target.value}))}
+                    <input type="time" min="09:00" max="17:00" value={editOrderForm.time||"09:00"} onChange={e=>setEditOrderForm(f=>({...f,time:e.target.value}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                   </div>
                 </div>
@@ -8811,7 +6318,7 @@ ${matRowsHtml}
                 </div>
                 <div>
                   <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Catatan Perubahan</div>
-                  <input id="field_29" value={editOrderForm.notes||""} onChange={e=>setEditOrderForm(f=>({...f,notes:e.target.value}))}
+                  <input value={editOrderForm.notes||""} onChange={e=>setEditOrderForm(f=>({...f,notes:e.target.value}))}
                     placeholder="Alasan perubahan..." style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                 </div>
               </div>
@@ -8819,23 +6326,6 @@ ${matRowsHtml}
               <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
                 <button onClick={()=>{setModalEditOrder(false);setEditOrderItem(null);}} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
                 <button onClick={async()=>{
-                  // GAP-1 & GAP-2: Cek ketersediaan teknisi di DB sebelum simpan edit
-                  const tekChanged = editOrderForm.teknisi !== editOrderItem.teknisi;
-                  const dateChanged = editOrderForm.date !== editOrderItem.date;
-                  const timeChanged = editOrderForm.time !== editOrderItem.time;
-                  if (editOrderForm.teknisi && (tekChanged || dateChanged || timeChanged)) {
-                    const dbCheck = await cekTeknisiAvailableDB(
-                      editOrderForm.teknisi, editOrderForm.date||editOrderItem.date,
-                      editOrderForm.time||editOrderItem.time||"09:00",
-                      editOrderForm.service||editOrderItem.service||"Cleaning",
-                      editOrderForm.units||editOrderItem.units||1
-                    );
-                    // Exclude order yang sedang diedit dari conflict check
-                    if (!dbCheck.ok && !dbCheck.reason?.includes(editOrderItem.id)) {
-                      showNotif("⚠️ " + (dbCheck.reason || editOrderForm.teknisi + " tidak tersedia di jadwal tersebut"));
-                      return;
-                    }
-                  }
                   const timeEnd = hitungJamSelesai(editOrderForm.time||"09:00", editOrderForm.service||"Cleaning", editOrderForm.units||1);
                   const updated = {...editOrderItem,...editOrderForm,time_end:timeEnd};
                   setOrdersData(prev=>prev.map(o=>o.id===editOrderItem.id?updated:o));
@@ -8843,23 +6333,19 @@ ${matRowsHtml}
                   const {error:eoErr} = await supabase.from("orders").update(dbUpd).eq("id",editOrderItem.id);
           // ── GAP-10 FIX: Hapus schedule lama & insert baru setelah edit order ──
           if (!eoErr) {
-            // Hapus schedule lama — gunakan try/catch, bukan .catch() langsung
-            try {
-              await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id);
-            } catch(e) { /* schedule tabel opsional, skip jika belum ada */ }
+            await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id).catch(()=>{});
             if (editOrderForm.teknisi && editOrderForm.date) {
-              const timeEnd2 = hitungJamSelesai(editOrderForm.time||"09:00", editOrderForm.service||"Cleaning", editOrderForm.units||1);
-              try {
-                await supabase.from("technician_schedule").insert({
-                  order_id: editOrderItem.id,
-                  teknisi:   editOrderForm.teknisi,
-                  date:      editOrderForm.date,
-                  time_start: editOrderForm.time||"09:00",
-                  time_end:   timeEnd2,
-                  status:    "ACTIVE",
-                });
-                addAgentLog("SCHEDULE_SYNCED", `Schedule diupdate untuk ${editOrderItem.id} setelah edit`, "SUCCESS");
-              } catch(e) { /* skip */ }
+              const dur = editOrderForm.service==="Install" ? 240 : editOrderForm.service==="Repair" ? 120 : 60;
+              await supabase.from("technician_schedule").insert({
+                order_id: editOrderItem.id,
+                teknisi: editOrderForm.teknisi,
+                date: editOrderForm.date,
+                time_start: editOrderForm.time||"09:00",
+                time_end: editOrderForm.time_end||(editOrderForm.time||"09:00"),
+                duration_min: dur * (parseInt(editOrderForm.units)||1),
+                status: "ACTIVE",
+              }).catch(()=>{});
+              addAgentLog("SCHEDULE_SYNCED", `Schedule diupdate untuk ${editOrderItem.id} setelah edit`, "SUCCESS");
             }
           }
                   if(eoErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+eoErr.message);
@@ -8983,7 +6469,7 @@ ${matRowsHtml}
                           <div style={{fontSize:11,color:cs.muted}}>
                             {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}
                             {u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
-                            {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
+                            {parseFloat(u.freon_ditambah)>0?`Freon +${u.freon_ditambah}kg`:""}
                           </div>
                         )}
                       </div>
@@ -9046,541 +6532,319 @@ ${matRowsHtml}
       {laporanModal && !laporanSubmitted && (() => {
         const incompleteUnits = laporanUnits.filter(u=>!isUnitDone(u));
         const totalFreon = laporanUnits.reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0);
-        const presets = MATERIAL_PRESET[laporanModal?.service] || MATERIAL_PRESET.Cleaning;
-        const isInstallJob = laporanModal?.service === "Install";
-        const jasaNamesSet=new Set(priceListData.filter(r=>r.service!=="Material").map(r=>r.type&&r.type.trim()));
-        const jasaPresetBySvc={
-          Cleaning:priceListData.filter(r=>r.service==="Cleaning").sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Cleaning"})),
-          Repair:priceListData.filter(r=>r.service==="Repair").sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Repair"})),
-          Complain:[...priceListData.filter(r=>r.service==="Complain").map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Complain"})),...priceListData.filter(r=>r.service==="Repair"&&r.price>0).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Repair"}))].filter((v,i,a)=>a.findIndex(x=>x.t===v.t)===i),
-          Install:priceListData.filter(r=>r.service==="Install").sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",svc:"Install"})),
-        };
-        const _repairAll=[...priceListData.filter(r=>r.service==="Repair"&&(r.price||0)>=0).sort((a,b)=>a.type.localeCompare(b.type)).map(r=>({t:r.type,p:r.price||0,sat:r.unit||"unit",src:"pl"})),...inventoryData.sort((a,b)=>a.name.localeCompare(b.name)).map(r=>({t:r.name,p:r.price||0,sat:r.unit||"pcs",src:"inv"}))].filter((v,i,a)=>a.findIndex(x=>x.t===v.t)===i);
-        const repairPresetBySvc={Cleaning:_repairAll,Repair:_repairAll,Complain:_repairAll};
-        const _allInvMat=[...inventoryData].sort((a,b)=>{const aF=/freon/i.test(a.name);const bF=/freon/i.test(b.name);if(aF&&!bF)return -1;if(bF&&!aF)return 1;return a.name.localeCompare(b.name);}).map(r=>({nama:r.name,satuan:r.unit||"pcs",p:r.price||0}));
-        const matPresetBySvc={Cleaning:_allInvMat,Repair:_allInvMat,Complain:_allInvMat,Install:_allInvMat};
-        const installItemsDB=INSTALL_ITEMS.map(item=>{const pl=priceListData.find(r=>r.type&&r.type.trim()===item.label.trim());const iv=inventoryData.find(r=>r.name&&r.name.trim()===item.label.trim());return{...item,price:pl?.price||iv?.price||PRICE_LIST["Install"]?.[item.label]||PRICE_LIST["Repair"]?.[item.label]||0};});
-        const STEP_LABELS=["","Konfirmasi Unit",
-          isInstallJob?"(skip)":"Detail Per Unit",
-          isInstallJob?"Form Instalasi":"Jasa & Material",
-          "Ringkasan"];
+        const presets = MATERIAL_PRESET[laporanModal.service] || MATERIAL_PRESET.Cleaning;
+        const STEP_LABELS = ["","Konfirmasi Unit","Detail Per Unit","Material & Foto","Submit"];
 
         const updateUnit = (idx, updated) => setLaporanUnits(prev=>prev.map((u,i)=>i===idx?updated:u));
         const toggleArr = (arr, val) => arr.includes(val)?arr.filter(x=>x!==val):[...arr,val];
 
         const handleFotoUpload = async (e) => {
-          const files = Array.from(e.target.files||[]).slice(0, 10 - laporanFotos.length);
-          if (files.length === 0) return;
-          showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2...`);
+          const files = Array.from(e.target.files||[]).slice(0,10-laporanFotos.length);
+          showNotif(`⏳ Mengkompresi ${files.length} foto...`);
           const compressed = await Promise.all(files.map(compressImg));
           const reportId = laporanModal?.id || "tmp";
 
-          // Upload satu per satu (bukan parallel) agar tidak timeout
-          const uploaded = [];
-          for (let i = 0; i < compressed.length; i++) {
-            const dataUrl  = compressed[i];
-            const localId  = Date.now() + i;
-            const label    = `Foto ${laporanFotos.length + i + 1}`;
-            let url        = null;
-            let errMsg     = "";
+          const uploaded = await Promise.all(compressed.map(async (dataUrl, i) => {
+            const localId = Date.now()+i;
+            const label = `Foto ${laporanFotos.length+i+1}`;
+            let url = null;
 
-            // ── SATU JALUR: R2 via /api/upload-foto ──
+            // ── Coba R2 via backend dulu ──
             try {
               const r = await fetch("/api/upload-foto", {
-                method:  "POST",
-                headers: _apiHeaders(),
-                body:    JSON.stringify({
-                  base64:   dataUrl,
-                  filename: `foto_${localId}.jpg`,
-                  reportId,
-                  mimeType: "image/jpeg",
-                }),
+                method:"POST", headers:{"Content-Type":"application/json"},
+                body: JSON.stringify({base64:dataUrl, filename:`foto_${localId}.jpg`, reportId})
               });
               const d = await r.json();
-              if (d.success && d.url) {
-                url = d.url;
-              } else {
-                errMsg = d.error || "Upload gagal";
-                console.error("R2 upload error:", errMsg);
-              }
-            } catch (err) {
-              errMsg = err.message;
-              console.error("R2 fetch error:", err);
+              if (d.success && d.url) { url = d.url; }
+            } catch(_) {}
+
+            // ── Fallback: Supabase Storage (jika R2 belum dikonfigurasi) ──
+            if (!url) {
+              try {
+                const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+                const byteStr = atob(base64Data);
+                const arr = new Uint8Array(byteStr.length);
+                for (let j=0; j<byteStr.length; j++) arr[j] = byteStr.charCodeAt(j);
+                const blob = new Blob([arr], {type:"image/jpeg"});
+                const path = `reports/${reportId}/${localId}.jpg`;
+                const { data: upData, error: upErr } = await supabase.storage
+                  .from("laporan-fotos")
+                  .upload(path, blob, {contentType:"image/jpeg", upsert:true});
+                if (!upErr && upData) {
+                  const { data: { publicUrl } } = supabase.storage
+                    .from("laporan-fotos")
+                    .getPublicUrl(path);
+                  url = publicUrl;
+                }
+              } catch(_) {}
             }
 
-            uploaded.push({ id: localId, label, data_url: dataUrl, url, errMsg });
-          }
+            return { id:localId, label, data_url:dataUrl, url };
+          }));
 
-          setLaporanFotos(prev => [...prev, ...uploaded]);
-          const saved  = uploaded.filter(f => f.url).length;
-          const failed = uploaded.filter(f => !f.url).length;
-
-          if (saved === uploaded.length) {
-            showNotif(`✅ ${saved} foto tersimpan di Cloudflare R2!`);
-          } else if (saved > 0) {
-            showNotif(`⚠️ ${saved} foto berhasil, ${failed} gagal. Hapus foto ⏳ lalu upload ulang.`);
-          } else {
-            // Semua gagal — tampilkan error detail
-            const firstErr = uploaded[0]?.errMsg || "unknown error";
-            showNotif(`❌ Upload gagal: ${firstErr}. Cek koneksi & coba lagi.`);
-          }
-          e.target.value = "";
+          setLaporanFotos(prev=>[...prev,...uploaded]);
+          const saved = uploaded.filter(f=>f.url).length;
+          showNotif(`✅ ${files.length} foto dikompresi (70%). ${saved} tersimpan ke cloud.`);
+          e.target.value="";
         };
 
-  const submitLaporan = async () => {
-    if (submitLaporan._running) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
-    submitLaporan._running = true;
-    // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
-    const isInstall = laporanModal?.service === "Install";
+        const submitLaporan = async () => {
+          if(incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);return;}
+          // Cek foto gagal upload — warn tapi tidak block (sesuai keputusan: teknisi bisa reupload manual)
+          const fotoGagal = laporanFotos.filter(f=>!f.url).length;
+          if(fotoGagal > 0) {
+            const lanjut = window.confirm(`⚠️ ${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).
 
-    // ── 2. Validasi unit untuk non-Install ──
-    if (!isInstall && incompleteUnits.length > 0) {
-      showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);
-      return;
-    }
+Lanjutkan submit laporan tanpa foto tersebut?
 
-    // ── 3. Cek foto gagal upload ──
-    const fotoGagal = laporanFotos.filter(f => !f.url).length;
-    if (fotoGagal > 0) {
-      const lanjut = await showConfirm({ icon:"⚠️", title:"Ada Foto Belum Tersimpan",
-        message:`${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).\n\nLanjutkan submit laporan tanpa foto tersebut?`,
-        confirmText:"Lanjutkan Submit" });
-      if (!lanjut) return;
-    }
-
-    // ── 4. Siapkan materials yang efektif ──
-    // Install: pakai laporanInstallItems, lainnya: pakai laporanMaterials
-    const jasaAsMaterials = [
-      ...laporanJasaItems.map(j => ({
-        id:"jasa_"+j.id, nama:j.nama, jumlah:j.jumlah||1,
-        satuan:j.satuan||"pcs", harga_satuan:j.harga_satuan||0, keterangan:"jasa"
-      })),
-      ...laporanRepairItems.map(r => ({
-        id:"repair_"+(r.id||r.nama), nama:r.nama, jumlah:r.jumlah||1,
-        satuan:r.satuan||"pcs", harga_satuan:r.harga_satuan||0, keterangan:"repair"
-      })),
-    ];
-    const effectiveMaterials = isInstall
-      ? INSTALL_ITEMS
-          .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
-          .map(item => {
-            const plItem = priceListData.find(r => r.type && r.type.trim() === item.label.trim());
-            const inv2   = inventoryData.find(r => r.name && r.name.trim() === item.label.trim());
-            const hargaSat = plItem?.price || inv2?.price
-              || PRICE_LIST["Install"]?.[item.label]
-              || PRICE_LIST["Repair"]?.[item.label] || 0;
-            const qty = parseFloat(laporanInstallItems[item.key] || 0);
-            return {
-              id:item.key, nama:item.label, jumlah:qty, satuan:item.satuan,
-              harga_satuan:hargaSat, subtotal:hargaSat*qty, keterangan:"",
-            };
-          })
-      : [...jasaAsMaterials, ...laporanMaterials];
-
-    const now = new Date().toLocaleString("id-ID", {
-      year:"numeric", month:"2-digit", day:"2-digit",
-      hour:"2-digit", minute:"2-digit"
-    });
-    const totalFreonLocal = laporanUnits.reduce((s, u) => s + (parseFloat(u.freon_ditambah) || 0), 0);
-
-    // ── 5. Buat objek laporan ──
-    const newReport = {
-      id: laporanModal._rewriteId || ("LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase()),
-      job_id:   laporanModal.id,
-      teknisi:  laporanModal.teknisi,
-      helper:   laporanModal.helper || null,
-      is_substitute: (currentUser?.role === "Helper" &&
-        currentUser?.name === laporanModal.helper &&
-        !teknisiData.find(t => t.role === "Teknisi" && t.name === laporanModal.helper)),
-      customer: laporanModal.customer,
-      service:  laporanModal?.service,
-      date:     laporanModal.date,
-      submitted: now,
-      status:   "SUBMITTED",
-      total_units: laporanUnits.length,
-      units:    laporanUnits,
-      materials: effectiveMaterials,
-      fotos:    laporanFotos.map(f => ({ id: f.id, label: f.label })),
-      total_freon: totalFreonLocal,
-      rekomendasi: laporanRekomendasi,
-      catatan_global: laporanCatatan,
-      unit_mismatch: laporanUnits.length !== (laporanModal.units || 1),
-      editLog: laporanModal._rewriteId ? [{
-        by: currentUser?.name || "Teknisi",
-        at: new Date().toLocaleString("id-ID"),
-        field: "full_rewrite",
-        old: "(laporan lama)",
-        new: "Laporan ditulis ulang dari awal",
-      }] : [],
-    };
-
-    setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), newReport]);
-
-    // ── 6. WA notif ke Admin/Owner ──
-    const adminUsers = userAccounts.filter(u => u.role === "Admin" || u.role === "Owner");
-    const matCount = isInstall
-      ? INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length
-      : laporanMaterials.length;
-    const notifMsg =
-      "Laporan Selesai\n\n"
-      +"Job: "+laporanModal.id+"\n"
-      +"Customer: "+laporanModal.customer+"\n"
-      +"Teknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")+"\n"
-      +"Layanan: "+laporanModal?.service+" - "+laporanUnits.length+" unit\n"
-      +"Material: "+matCount+" item\n"
-      +"Foto: "+laporanFotos.filter(f=>f.url).length+" foto\n\n"
-      +"Silakan cek invoice di menu Invoice.";
-    adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
-
-    // ── 7. Simpan laporan ke Supabase (3 attempt) ──
-    showNotif("⏳ Menyimpan laporan ke server...");
-    const basePayload = {
-      id:             newReport.id,
-      job_id:         newReport.job_id,
-      teknisi:        newReport.teknisi,
-      helper:         newReport.helper,
-      customer:       newReport.customer,
-      service:        newReport.service,
-      date:           newReport.date,
-      status:         "SUBMITTED",
-      total_units:    newReport.total_units,
-      total_freon:    newReport.total_freon,
-      rekomendasi:    newReport.rekomendasi,
-      catatan_global: newReport.catatan_global,
-      submitted_at:   new Date().toISOString(),
-      foto_urls:      (laporanFotos||[]).filter(f => f.url).map(f => f.url),
-    };
-
-    let savedOk = false;
-    { // Attempt 1: full payload dengan JSON cols
-      const { error: e1 } = await supabase.from("service_reports").upsert({
-        ...basePayload,
-        materials_json: JSON.stringify(effectiveMaterials),
-        units_json:     JSON.stringify(laporanUnits),
-      }, { onConflict: "id" });
-      if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
-      else console.warn("Attempt 1 failed:", e1.message);
-    }
-    if (!savedOk) { // Attempt 2: tanpa JSON cols
-      const { error: e2 } = await supabase.from("service_reports").upsert(
-        basePayload, { onConflict: "id" }
-      );
-      if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
-      else console.warn("Attempt 2 failed:", e2.message);
-    }
-    if (!savedOk) { // Attempt 3: minimal
-      const { error: e3 } = await supabase.from("service_reports").upsert({
-        id: newReport.id, job_id: newReport.job_id,
-        teknisi: newReport.teknisi, customer: newReport.customer,
-        service: newReport.service, date: newReport.date,
-        status: "SUBMITTED", total_units: newReport.total_units,
-        submitted_at: new Date().toISOString(),
-      }, { onConflict: "id" });
-      if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
-      else { console.error("All upsert attempts failed:", e3.message); showNotif("❌ Gagal simpan: " + e3.message); }
-    }
-
-    // ── 8. Reload laporan (backup, realtime juga akan trigger) ──
-    const reloadLaporan = async () => {
-      const { data } = await supabase.from("service_reports")
-        .select("*").order("submitted_at", { ascending: false });
-      if (data?.length > 0) {
-        setLaporanReports(data.map(r => ({
-          ...r,
-          units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
-          materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials || []; } })() : (r.materials || []),
-          fotos:     r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i+1}`, url })),
-          editLog:   safeArr(r.edit_log ?? r.editLog),
-        })));
-      }
-    };
-    setTimeout(reloadLaporan, 800);
-    setTimeout(reloadLaporan, 3000);
-
-    // ── 9. Update order status ──
-    setOrdersData(prev => prev.map(o =>
-      o.id === laporanModal.id ? { ...o, status: "REPORT_SUBMITTED" } : o
-    ));
-    {
-      const { error: ordErr } = await supabase.from("orders")
-        .update({ status: "REPORT_SUBMITTED" }).eq("id", laporanModal.id);
-      if (ordErr) {
-        console.warn("REPORT_SUBMITTED rejected — fallback COMPLETED:", ordErr.message);
-        await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", laporanModal.id);
-      }
-    }
-
-    // ── 10. Update status teknisi → active ──
-    ["teknisi","helper"].forEach(role => {
-      const name = role === "teknisi" ? laporanModal.teknisi : laporanModal.helper;
-      if (!name) return;
-      const tek = teknisiData.find(t => t.name === name);
-      if (!tek?.id) return;
-      setTeknisiData(prev => prev.map(t => t.name === name ? { ...t, status: "active" } : t));
-      if (/^[0-9a-f-]{36}$/.test(tek.id)) {
-        supabase.from("user_profiles").update({ status: "active" }).eq("id", tek.id);
-      }
-    });
-
-    // ── 11. Deduct stok material (non-Install) ──
-    const materialsToDeduct = isInstall ? [] : laporanMaterials;
-    if (materialsToDeduct.length > 0) {
-      deductInventory(materialsToDeduct);
-      let deductedCount = 0;
-      const lowStockWarnings = [];
-      for (const mat of materialsToDeduct) {
-        const qty = parseFloat(mat.jumlah) || 0;
-        if (!mat.nama || qty <= 0) continue;
-        try {
-          const { data: items } = await supabase.from("inventory")
-            .select("id,name,code,stock,min_alert,reorder,unit")
-            .ilike("name", mat.nama.trim()).limit(1);
-          if (items?.length > 0) {
-            const itm = items[0];
-            const newStk = Math.max(0, (itm.stock || 0) - qty);
-            const newSts = newStk === 0 ? "OUT"
-              : newStk <= (itm.min_alert || 1) ? "CRITICAL"
-              : newStk <= (itm.reorder || 3) ? "WARNING" : "OK";
-            await supabase.from("inventory").update({
-              stock: newStk, status: newSts, updated_at: new Date().toISOString()
-            }).eq("id", itm.id);
-            deductedCount++;
-            addAgentLog("STOCK_DEDUCTED", `${itm.name}: -${qty} (sisa: ${newStk}) — job ${laporanModal.id}`, "SUCCESS");
-            if (newSts === "CRITICAL" || newSts === "OUT") lowStockWarnings.push(`${itm.name} sisa ${newStk}`);
+• OK = lanjut submit
+• Batal = kembali & hapus foto gagal lalu upload ulang`);
+            if(!lanjut) return;
           }
-        } catch(e) {
-          addAgentLog("STOCK_DEDUCT_ERR", `Gagal deduct ${mat.nama}: ${e?.message}`, "ERROR");
-        }
-      }
-      if (lowStockWarnings.length > 0) {
-        showNotif("⚠️ Stok kritis: " + lowStockWarnings.join(", "));
-        const ownerAccs = userAccounts.filter(u => u.role === "Owner");
-        const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n` +
-          lowStockWarnings.map(w => "• " + w).join("\n");
-        ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
-      }
-    }
+          const now = new Date().toLocaleString("id-ID",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).replace(/\//g,"-");
+          const newReport = {
+            // If rewriting existing report, reuse same ID (upsert overwrites)
+            id: laporanModal._rewriteId || ("LPR_"+laporanModal.id+"_"+Date.now().toString(36).slice(-4).toUpperCase()),
+            job_id:laporanModal.id, teknisi:laporanModal.teknisi, helper:laporanModal.helper||null,
+            // ── GAP-07 FIX: is_substitute = true jika helper lapor sebagai pengganti teknisi utama ──
+            is_substitute: (currentUser?.role==="Helper" && currentUser?.name===laporanModal.helper && !teknisiData.find(t=>t.name===laporanModal.teknisi&&t.status!=="standby")) || false,
+            customer:laporanModal.customer, service:laporanModal.service, date:laporanModal.date,
+            submitted:now, status:"SUBMITTED", total_units:laporanUnits.length,
+            units:laporanUnits, materials:laporanMaterials,
+            fotos:laporanFotos.map(f=>({id:f.id,label:f.label})),
+            total_freon:totalFreon, rekomendasi:laporanRekomendasi, catatan_global:laporanCatatan,
+            unit_mismatch: laporanUnits.length!==(laporanModal.units||1),
+            editLog: laporanModal._rewriteId ? [{
+              by: currentUser?.name||"Teknisi", at: new Date().toLocaleString("id-ID"),
+              field:"full_rewrite", old:"(laporan lama)", new:"Laporan ditulis ulang dari awal"
+            }] : []
+          };
+          setLaporanReports(prev=>[...prev.filter(r=>r.job_id!==laporanModal.id),newReport]);
 
-    // ── 12. Auto-generate invoice — 1 JOB = 1 INVOICE MUTLAK ──
-    const existingInv=invoicesData.find(i=>i.job_id===laporanModal.id);
-    const invId=existingInv?.id||("INV-"+(laporanModal.date||"").replace(/-/g,"")+"-"+Math.random().toString(36).slice(-4).toUpperCase());
-    // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST
-    // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
-    // Untuk service lain: hitung dari PRICE_LIST
-    const isInstallSvc = laporanModal.service === "Install";
-    const jasaNamesSet2 = new Set(
-      priceListData.filter(r=>r.service!=="Material").map(r=>r.type&&r.type.trim())
-    );
-    const repairNamesInMat = new Set(laporanRepairItems.map(r=>r.nama));
-    const jasaFromMat = laporanMaterials.filter(m=>
-      m.nama && jasaNamesSet2.has(m.nama.trim())
-    );
-    const matOnly = laporanMaterials.filter(m=>
-      m.nama && !jasaNamesSet2.has(m.nama.trim()) &&
-      !repairNamesInMat.has(m.nama) && parseFloat(m.jumlah||0)>0
-    );
-    const laborTotalInv = isInstallSvc ? 0 : (() => {
-      const jasaPilihan = [
-        ...laporanJasaItems.filter(j=>j.nama),
-        ...laporanRepairItems.filter(r=>r.nama),
-      ];
-      if (jasaPilihan.length > 0)
-        return jasaPilihan.reduce((s,j)=>s+((j.harga_satuan||0)*(parseFloat(j.jumlah)||1)),0);
-      if (jasaFromMat.length > 0)
-        return jasaFromMat.reduce((s,m)=>{
-          const pl=priceListData.find(r=>r.type&&r.type.trim()===m.nama.trim());
-          return s+(pl?.price||0)*(parseFloat(m.jumlah)||1);
-        },0);
-      const isComplainJob = laporanModal?.service==="Complain";
-      const hasAnyJasa = jasaPilihan.length>0||jasaFromMat.length>0;
-      if (isComplainJob||!hasAnyJasa) return 0;
-      return hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
-    })();
-    const matTotalInv = isInstallSvc
-      ? hitungMaterialTotal(effectiveMaterials)
-      : hitungMaterialTotal(matOnly);
-    const invoiceTotal  = laborTotalInv + matTotalInv;
-    const todayInv      = new Date().toISOString().slice(0, 10);
-    const isComplainSvc = laporanModal.service === "Complain";
-    const isZeroTotal   = invoiceTotal === 0;
+          // ── Notifikasi Admin/Owner via WA saat laporan masuk ──
+          const adminUsers = userAccounts.filter(u => u.role==="Admin"||u.role==="Owner");
+          const notifMsg = `📋 *Laporan Selesai*
 
-    // Cek garansi aktif (untuk skip invoice Complain Rp 0)
-    const prevGaransiActive = isComplainSvc && isZeroTotal
-      ? invoicesData
-          .filter(inv =>
-            inv.customer === laporanModal.customer &&
-            inv.service  !== "Complain" &&
-            inv.garansi_expires &&
-            inv.garansi_expires >= todayInv &&
-            ["PAID","UNPAID","APPROVED"].includes(inv.status)
-          )
-          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
-      : null;
+Job: *${laporanModal.id}*
+Customer: ${laporanModal.customer}
+Teknisi: ${laporanModal.teknisi}${laporanModal.helper?" + "+laporanModal.helper:""}
+Layanan: ${laporanModal.service} — ${laporanUnits.length} unit
+Material: ${laporanMaterials.length} item
+Foto: ${laporanFotos.filter(f=>f.url).length} foto
 
-    // Cek garansi expired (untuk biaya pengecekan Rp 100.000)
-    const prevGaransiExpired = isComplainSvc && isZeroTotal && !prevGaransiActive
-      ? invoicesData
-          .filter(inv =>
-            inv.customer === laporanModal.customer &&
-            inv.service  !== "Complain" &&
-            inv.garansi_expires &&
-            inv.garansi_expires < todayInv &&
-            ["PAID","UNPAID","APPROVED"].includes(inv.status)
-          )
-          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
-      : null;
+Silakan buat invoice dari ARA Chat 👆`;
+          adminUsers.forEach(u => { if(u.phone) sendWA(u.phone, notifMsg); });
 
-    const BIAYA_CEK = (() => {
-      const pl = priceListData.find(r=>r.service==="Repair"&&r.type==="Biaya Pengecekan AC");
-      return (pl&&pl.price>0) ? pl.price : 100000;
-    })();
-    const finalLabor = (isComplainSvc && isZeroTotal && prevGaransiExpired)
-      ? BIAYA_CEK : laborTotalInv;
-    const finalTotal = (isComplainSvc && isZeroTotal && prevGaransiExpired)
-      ? BIAYA_CEK : invoiceTotal;
+          // Simpan laporan ke Supabase — AWAIT + fallback jika kolom JSON belum ada di schema
+          showNotif("⏳ Menyimpan laporan ke server...");
+          const basePayload = {
+            id: newReport.id, job_id: newReport.job_id, teknisi: newReport.teknisi,
+            helper: newReport.helper, customer: newReport.customer,
+            service: newReport.service, date: newReport.date,
+            status: "SUBMITTED", total_units: newReport.total_units,
+            total_freon: newReport.total_freon, rekomendasi: newReport.rekomendasi,
+            catatan_global: newReport.catatan_global,
+            submitted_at: new Date().toISOString(),
+            foto_urls: laporanFotos.filter(f=>f.url).map(f=>f.url),
+          };
 
-    if (isComplainSvc && isZeroTotal && prevGaransiActive) {
-      // SKIP invoice — dalam garansi
-      setOrdersData(prev => prev.map(o =>
-        o.id === laporanModal.id ? { ...o, status: "COMPLETED" } : o
-      ));
-      try { await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", laporanModal.id); } catch(_) {}
-      addAgentLog("GARANSI_SKIP_INVOICE",
-        `Complain ${laporanModal.id} — dalam garansi s/d ${prevGaransiActive.garansi_expires} ` +
-        `(ref: ${prevGaransiActive.id}) → invoice di-skip`, "SUCCESS");
+          // Simpan ke Supabase — bertahap dari lengkap ke minimal
+          let savedOk = false;
 
-    } else {
-      // BUAT invoice
-      const invSeq     = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
-      const invId      = "INV-" + todayInv.replace(/-/g, "").slice(0, 8) + "-" + invSeq;
-      const gDays      = laporanModal.service === "Install" ? 90 : laporanModal.service === "Repair" ? 60 : 30;
-      const gExpires   = new Date(Date.now() + gDays * 86400000).toISOString().slice(0, 10);
+          // Attempt 1: full payload dengan JSON cols
+          {
+            const { error: e1 } = await supabase.from("service_reports").upsert({
+              ...basePayload,
+              materials_json: JSON.stringify(laporanMaterials),
+              units_json:     JSON.stringify(laporanUnits),
+            }, { onConflict: "id" });
+            if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
+            else console.warn("Attempt 1 failed:", e1.message);
+          }
 
-      // Build materials_detail dengan harga dari inventory
-      const mDetail = effectiveMaterials
-        .filter(m => m.nama && (parseFloat(m.jumlah) || 0) > 0)
-        .map(m => {
-          const nama2   = (m.nama || "").toLowerCase();
-          const normNama2 = nama2
-            .replace(/,/g,".")
-            .replace(/eterna\s*/g,"")
-            .replace(/[-\s]/g,"")
-            .replace(/r410a?$/,"r410")
-            .replace(/r22a?$/,"r22")
-            .replace(/r32a?$/,"r32");
-          const invItem = inventoryData.find(inv => {
-            const n = inv.name.toLowerCase()
-              .replace(/,/g,".")
-              .replace(/eterna\s*/g,"")
-              .replace(/[-\s]/g,"")
-              .replace(/r410a?$/,"r410")
-              .replace(/r22a?$/,"r22")
-              .replace(/r32a?$/,"r32");
-            return n === normNama2 || n.includes(normNama2) || normNama2.includes(n);
-          });
-          let hSat = invItem?.price || 0;
-          // Fallback ke PRICE_LIST jika tidak ada di inventory (untuk Install jasa)
-          if (!hSat) {
-            const mNama = m.nama || "";
-            for (const svc of ["Material","Install","Repair","Cleaning","Complain"]) {
-              if (PRICE_LIST[svc] && PRICE_LIST[svc][mNama]) {
-                hSat = PRICE_LIST[svc][mNama];
-                break;
+          // Attempt 2: tanpa JSON cols
+          if (!savedOk) {
+            const { error: e2 } = await supabase.from("service_reports").upsert(
+              basePayload, { onConflict: "id" }
+            );
+            if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
+            else console.warn("Attempt 2 failed:", e2.message);
+          }
+
+          // Attempt 3: minimal — hanya kolom wajib
+          if (!savedOk) {
+            const minimal = {
+              id: newReport.id, job_id: newReport.job_id,
+              teknisi: newReport.teknisi, customer: newReport.customer,
+              service: newReport.service, date: newReport.date,
+              status: "SUBMITTED", total_units: newReport.total_units,
+              submitted_at: new Date().toISOString(),
+            };
+            const { error: e3 } = await supabase.from("service_reports").upsert(
+              minimal, { onConflict: "id" }
+            );
+            if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
+            else {
+              console.error("All upsert attempts failed:", e3.message);
+              showNotif("❌ Gagal simpan ke server: " + e3.message);
+            }
+          }
+
+          // Reload laporan untuk semua user setelah submit (realtime akan trigger, ini backup)
+          const reloadLaporan = async () => {
+            const { data, error } = await supabase
+              .from("service_reports")
+              .select("*")
+              .order("submitted_at", { ascending: false });
+            if (error) {
+              console.warn("Reload laporan error:", error.message);
+              return;
+            }
+            if (data && data.length > 0) {
+              setLaporanReports(data.map(r => ({
+                ...r,
+                units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){return r.units    ||[];} })() : (r.units    ||[]),
+                materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })() : (r.materials||[]),
+                fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
+                editLog:   safeArr(r.edit_log ?? r.editLog),
+              })));
+            }
+          };
+          setTimeout(reloadLaporan, 800);
+          setTimeout(reloadLaporan, 3000); // double-check setelah 3 detik
+
+          // Update order status ke REPORT_SUBMITTED — menunggu Admin/Owner buat & approve invoice
+          setOrdersData(prev => prev.map(o =>
+            o.id === laporanModal.id ? {...o, status:"REPORT_SUBMITTED"} : o
+          ));
+          // Update order status — after schema migration REPORT_SUBMITTED works
+          // Fallback chain: REPORT_SUBMITTED → COMPLETED (always in schema)
+          {
+            const { error: ordErr } = await supabase.from("orders")
+              .update({status:"REPORT_SUBMITTED"}).eq("id", laporanModal.id);
+            if (ordErr) {
+              console.warn("REPORT_SUBMITTED rejected:", ordErr.message, "— using COMPLETED");
+              await supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id);
+            }
+          }
+
+          // ── Teknisi SELESAI → status kembali "active" (siap terima job baru) ──
+          // Patokan: laporan disubmit = pekerjaan selesai secara aktual
+          const finTeknisi = teknisiData.find(t => t.name === laporanModal.teknisi);
+          if (finTeknisi?.id) {
+            setTeknisiData(prev => prev.map(t =>
+              t.name === laporanModal.teknisi ? {...t, status:"active"} : t
+            ));
+            // Only update if ID is a real Supabase UUID (not local demo ID like USR001)
+            if (finTeknisi.id && /^[0-9a-f-]{36}$/.test(finTeknisi.id)) {
+              supabase.from("user_profiles").update({status:"active"}).eq("id", finTeknisi.id);
+            }
+          }
+          // Helper juga kembali active
+          if (laporanModal.helper) {
+            const finHelper = teknisiData.find(t => t.name === laporanModal.helper);
+            if (finHelper?.id) {
+              setTeknisiData(prev => prev.map(t =>
+                t.name === laporanModal.helper ? {...t, status:"active"} : t
+              ));
+              if (finHelper.id && /^[0-9a-f-]{36}$/.test(finHelper.id)) {
+                supabase.from("user_profiles").update({status:"active"}).eq("id", finHelper.id);
               }
             }
           }
-          if (!hSat) {
-            if      (nama2.includes("r-22")  || nama2.includes("r22"))  hSat = PRICE_LIST["freon_R22"]   || 450000;
-            else if (nama2.includes("r-32")  || nama2.includes("r32"))  hSat = PRICE_LIST["freon_R32"]   || 450000;
-            else if (nama2.includes("r-410") || nama2.includes("r410")) hSat = PRICE_LIST["freon_R410A"] || 450000;
+
+          // GAP 6 — Auto-deduct inventory dari material yang dipakai
+          if (laporanMaterials.length > 0) {
+            deductInventory(laporanMaterials);
+            // Deduct di Supabase juga
+            laporanMaterials.forEach(mat => {
+              // ── GAP-02 FIX: deduct_inventory RPC + manual fallback jika RPC belum ada ──
+            supabase.rpc("deduct_inventory", {item_name: mat.nama, qty: parseFloat(mat.jumlah)||0})
+              .then(({error:rpcErr}) => {
+                if (rpcErr) {
+                  // RPC belum dibuat di Supabase — fallback ke update manual
+                  supabase.from("inventory").select("id,code,stock,min_alert,reorder")
+                    .ilike("name", mat.nama).limit(1)
+                    .then(({data:items}) => {
+                      if (items && items.length > 0) {
+                        const itm = items[0];
+                        const newStk = Math.max(0, (itm.stock||0) - (parseFloat(mat.jumlah)||0));
+                        const newSts = newStk===0?"OUT":newStk<=(itm.min_alert||1)?"CRITICAL":newStk<=(itm.reorder||3)?"WARNING":"OK";
+                        supabase.from("inventory").update({stock:newStk, status:newSts}).eq("id", itm.id)
+                          .then(()=>{ addAgentLog("STOCK_DEDUCTED", `${mat.nama}: -${mat.jumlah} (manual fallback, sisa ${newStk})`, "SUCCESS"); });
+                      }
+                    });
+                }
+              });
+            });
+            addAgentLog("MATERIAL_DEDUCT", `${laporanMaterials.length} material dipakai di ${laporanModal.id}`, "SUCCESS");
           }
-          const rawQty = parseFloat(m.jumlah) || 0;
-          const isF    = ["freon","r-22","r-32","r-410"].some(k => nama2.includes(k));
-          const qty    = isF ? Math.max(1, Math.ceil(rawQty)) : rawQty;
-          return {
-            nama: m.nama, jumlah: qty,
-            satuan: m.satuan || (isF ? "kg" : "pcs"),
-            harga_satuan: hSat, subtotal: hSat * qty,
-            keterangan: m.keterangan || (isF && rawQty !== qty ? `Aktual: ${rawQty} kg → dibulatkan ${qty} kg` : ""),
+
+          // GAP 2 — Auto-generate invoice dengan price list
+          const laborTotal = hitungLabor(laporanModal.service, laporanModal.type, laporanUnits.length);
+          const freonTotal2 = laporanUnits.reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0);
+          const freonType = laporanModal.type?.includes("R410")||laporanModal.type?.includes("inverter") ? "freon_R410A" : "freon_R22";
+          const freonValue = freonTotal2 * (PRICE_LIST[freonType]||150000);
+          const matTotal = hitungMaterialTotal(laporanMaterials) + freonValue;
+          const today2 = new Date().toISOString().slice(0,10);
+          const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
+          const newInvoiceId = "INV-" + today2.replace(/-/g,"").slice(0,8) + "-" + invSeq;
+          const newInvoice = {
+            id: newInvoiceId,
+            job_id: laporanModal.id,
+            customer: laporanModal.customer,
+            phone: laporanModal.phone || customersData.find(c=>c.name===laporanModal.customer)?.phone || "",
+            service: laporanModal.service + " - " + laporanModal.type,
+            units: laporanUnits.length,
+            labor: laborTotal,
+            material: matTotal,
+            dadakan: 0,
+            total: laborTotal + matTotal,
+            status: "PENDING_APPROVAL",
           };
-        });
+          // ── GAP-13 FIX: Auto-approve invoice Rp 0 (Complain garansi) ──
+          if (newInvoice.total === 0 && laporanModal?.service === "Complain") {
+            newInvoice.status = "UNPAID"; // skip PENDING_APPROVAL — langsung UNPAID (atau PAID jika Rp0)
+            newInvoice.status = "PAID";   // Complain garansi = langsung PAID karena Rp 0
+            newInvoice.paid_at = new Date().toISOString();
+            // Update order juga
+            supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id).catch(()=>{});
+            addAgentLog("GARANSI_AUTO_APPROVE", `Invoice ${newInvoice.id} Rp 0 (Complain garansi) auto-approved`, "SUCCESS");
+          }
+          setInvoicesData(prev => [...prev, newInvoice]);
+          // Simpan invoice ke Supabase
+          // Insert invoice — try full object, fallback to minimal columns if schema mismatch
+          {
+            const { error: invErr } = await supabase.from("invoices").insert(newInvoice);
+            if (invErr) {
+              console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
+              // status fallback: try PENDING_APPROVAL → UNPAID (schema constraint)
+              const tryStatuses = ["PENDING_APPROVAL", "UNPAID"];
+              for (const st of tryStatuses) {
+                const minimalInv = {
+                  id: newInvoice.id, job_id: newInvoice.job_id,
+                  customer: newInvoice.customer, service: newInvoice.service,
+                  units: newInvoice.units, labor: newInvoice.labor,
+                  material: newInvoice.material, total: newInvoice.total,
+                  status: st,
+                };
+                const { error: invErr2 } = await supabase.from("invoices").insert(minimalInv);
+                if (!invErr2) { console.log("✅ Invoice inserted with status:", st); break; }
+                console.warn("Invoice status", st, "rejected:", invErr2.message);
+              }
+            }
+          }
+          addAgentLog("INVOICE_CREATED", `Invoice ${newInvoiceId} dibuat dari laporan ${laporanModal.id} — ${fmt(newInvoice.total)} — menunggu approval Owner`, "SUCCESS");
 
-      const newInvoice = {
-        id: invId, job_id: laporanModal.id,
-        customer: laporanModal.customer,
-        phone:    laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
-        service:  laporanModal.service + (laporanModal.type ? " - " + laporanModal.type : ""),
-        units:    laporanUnits.length,
-        labor:    finalLabor,
-        material: matTotalInv,
-        materials_detail: mDetail,
-        dadakan:  0,
-        total:    finalTotal,
-        status:existingInv&&["APPROVED","PAID"].includes(existingInv.status)?existingInv.status:"PENDING_APPROVAL",
-        garansi_days:    gDays,
-        garansi_expires: gExpires,
-        created_at: new Date().toISOString(),
-      };
+          // Notif WA ke Owner bahwa laporan + invoice menunggu approval
+          const ownerMsg = `📝 Laporan baru masuk dari ${laporanModal.teknisi}\n\n🔧 ${laporanModal.service} - ${laporanModal.customer}\n💰 Invoice: ${fmt(newInvoice.total)}\n\nMohon approve invoice ${newInvoiceId} di sistem. — ARA`;
+          fetch("/api/send-wa",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:"6281299898937",message:ownerMsg})}).catch(()=>{});
 
-      // Status override
-      if (isComplainSvc && finalTotal === 0) {
-        newInvoice.status   = "PAID";
-        newInvoice.paid_at  = new Date().toISOString();
-        addAgentLog("GARANSI_AUTO_PAID", `Invoice ${invId} Rp 0 → auto PAID`, "SUCCESS");
-      } else if (isComplainSvc && prevGaransiExpired) {
-        addAgentLog("GARANSI_EXPIRED_FEE",
-          `Invoice ${invId} — garansi expired (ref: ${prevGaransiExpired.id}) → biaya cek Rp ${BIAYA_CEK.toLocaleString("id-ID")}`,
-          "WARNING");
-      }
-
-      setInvoicesData(prev=>{const e=prev.some(i=>i.id===newInvoice.id||i.job_id===newInvoice.job_id);return e?prev.map(i=>(i.id===newInvoice.id||i.job_id===newInvoice.job_id)?newInvoice:i):[...prev,newInvoice];});
-
-      // Simpan invoice ke Supabase
-      const invPayload = {
-        ...newInvoice,
-        materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
-      };
-      const { error: invErr } = await supabase.from("invoices").upsert(invPayload,{onConflict:"id"});
-      if (invErr) {
-        console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
-        for (const st of ["PENDING_APPROVAL","UNPAID"]) {
-          const { error: e2 } = await supabase.from("invoices").insert({
-            id: newInvoice.id, job_id: newInvoice.job_id,
-            customer: newInvoice.customer, service: newInvoice.service,
-            units: newInvoice.units, labor: newInvoice.labor,
-            material: newInvoice.material, total: newInvoice.total,
-            status: st,
-          });
-          if (!e2) { console.log("✅ Invoice inserted:", st); break; }
-        }
-      }
-
-      addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
-
-      // WA notif ke Owner
-      const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
-      const ownerMsg =
-        "Invoice Menunggu Approval\n"
-        +"Job: "+laporanModal.id+"\n"
-        +"Customer: "+laporanModal.customer+"\n"
-        +"Layanan: "+laporanModal.service+" - "+laporanUnits.length+" unit\n"
-        +"Teknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")+"\n"
-        +"Total: "+fmt(newInvoice.total)+"  Jasa: "+fmt(newInvoice.labor)+" Material: "+fmt(newInvoice.material)+"\n"
-        +"Invoice: "+invId+"  Silakan approve di menu Invoice. — ARA";
-      ownerAccounts.forEach(u => { if (u.phone) sendWA(u.phone, ownerMsg); });
-      if (ownerAccounts.length === 0) {
-        fetch("/api/send-wa", {
-          method: "POST", headers: _apiHeaders(),
-          body: JSON.stringify({ phone: "6281299898937", message: ownerMsg })
-        }).catch(() => {});
-      }
-    }
-
-    setLaporanSubmitted(true);
-    pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
-    showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan dikirim ke Owner/Admin untuk verifikasi.`);
-    submitLaporan._running = false;
-  };
+          setLaporanSubmitted(true);
+          pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
+          showNotif(`✅ Laporan ${laporanModal.id} (${laporanUnits.length} unit) terkirim! Invoice ${newInvoiceId} dibuat.`);
+        };
 
         const tagStyle = (active, color) => ({
           display:"flex",alignItems:"center",gap:6,background:cs.card,
@@ -9741,7 +7005,7 @@ ${matRowsHtml}
                           <div style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 12px",fontSize:12,color:cs.text}}>
                             <span style={{color:cs.accent,fontWeight:700}}>Unit {u.unit_no}</span>
                           </div>
-                          <input id="field_30" value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Lokasi/nama unit..."
+                          <input value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Lokasi/nama unit..."
                             style={{width:140,background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           {laporanUnits.length>1&&(
                             <button onClick={()=>{const nu=laporanUnits.filter((_,i)=>i!==idx).map((u2,i)=>({...u2,unit_no:i+1}));setLaporanUnits(nu);setActiveUnitIdx(Math.max(0,idx-1));}}
@@ -9762,7 +7026,7 @@ ${matRowsHtml}
                       ⚠ Jumlah unit berbeda dari order. Admin akan dinotifikasi untuk verifikasi.
                     </div>
                   )}
-                  <button onClick={()=>setLaporanStep(laporanModal?.service==="Install" ? 3 : 2)} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"13px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
+                  <button onClick={()=>setLaporanStep(2)} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"13px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
                     Lanjut — Isi Detail Unit →
                   </button>
                 </div>
@@ -9805,12 +7069,12 @@ ${matRowsHtml}
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Merk</div>
-                            <input id="field_31" value={u.merk} onChange={e=>upd({merk:e.target.value})} placeholder="Daikin..."
+                            <input value={u.merk} onChange={e=>upd({merk:e.target.value})} placeholder="Daikin..."
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>PK</div>
-                            <input id="field_32" value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
+                            <input value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         </div>
@@ -9820,7 +7084,7 @@ ${matRowsHtml}
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
                             {KONDISI_SBL.map(k=>(
                               <label key={k} style={tagStyle(u.kondisi_sebelum.includes(k),cs.yellow)}>
-                                <input id="field_checkbox_33" type="checkbox" checked={u.kondisi_sebelum.includes(k)} onChange={()=>upd({kondisi_sebelum:toggleArr(u.kondisi_sebelum,k)})} style={{accentColor:cs.yellow}}/>{k}
+                                <input type="checkbox" checked={u.kondisi_sebelum.includes(k)} onChange={()=>upd({kondisi_sebelum:toggleArr(u.kondisi_sebelum,k)})} style={{accentColor:cs.yellow}}/>{k}
                               </label>
                             ))}
                           </div>
@@ -9831,7 +7095,7 @@ ${matRowsHtml}
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
                             {PEKERJAAN_OPT(laporanModal?.service||"Cleaning").map(k=>(
                               <label key={k} style={tagStyle(u.pekerjaan.includes(k),cs.accent)}>
-                                <input id="field_checkbox_34" type="checkbox" checked={u.pekerjaan.includes(k)} onChange={()=>upd({pekerjaan:toggleArr(u.pekerjaan,k)})} style={{accentColor:cs.accent}}/>{k}
+                                <input type="checkbox" checked={u.pekerjaan.includes(k)} onChange={()=>upd({pekerjaan:toggleArr(u.pekerjaan,k)})} style={{accentColor:cs.accent}}/>{k}
                               </label>
                             ))}
                           </div>
@@ -9842,7 +7106,7 @@ ${matRowsHtml}
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
                             {KONDISI_SDH.map(k=>(
                               <label key={k} style={tagStyle(u.kondisi_setelah.includes(k),cs.green)}>
-                                <input id="field_checkbox_35" type="checkbox" checked={u.kondisi_setelah.includes(k)} onChange={()=>upd({kondisi_setelah:toggleArr(u.kondisi_setelah,k)})} style={{accentColor:cs.green}}/>{k}
+                                <input type="checkbox" checked={u.kondisi_setelah.includes(k)} onChange={()=>upd({kondisi_setelah:toggleArr(u.kondisi_setelah,k)})} style={{accentColor:cs.green}}/>{k}
                               </label>
                             ))}
                           </div>
@@ -9851,12 +7115,12 @@ ${matRowsHtml}
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Tekanan Freon (psi)</div>
-                            <input id="field_number_36" type="number" value={u.freon_ditambah} onChange={e=>upd({freon_ditambah:e.target.value})} placeholder="0" min="0" step="0.1"
+                            <input type="number" value={u.freon_ditambah} onChange={e=>upd({freon_ditambah:e.target.value})} placeholder="0" min="0" step="0.1"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Ampere Akhir (A)</div>
-                            <input id="field_number_37" type="number" value={u.ampere_akhir} onChange={e=>upd({ampere_akhir:e.target.value})} placeholder="0.0" min="0" step="0.1"
+                            <input type="number" value={u.ampere_akhir} onChange={e=>upd({ampere_akhir:e.target.value})} placeholder="0.0" min="0" step="0.1"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         </div>
@@ -9874,7 +7138,7 @@ ${matRowsHtml}
                     <button onClick={()=>setLaporanStep(1)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
                     <div style={{textAlign:"center",fontSize:11,color:cs.muted,alignSelf:"center"}}>{laporanUnits.filter(isUnitDone).length}/{laporanUnits.length} unit ✓</div>
                     <button onClick={()=>{
-                      if(!isInstallJob && incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi`);setActiveUnitIdx(laporanUnits.findIndex(u=>!isUnitDone(u)));return;}
+                      if(incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi`);setActiveUnitIdx(laporanUnits.findIndex(u=>!isUnitDone(u)));return;}
                       setLaporanStep(3);
                     }} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>Lanjut →</button>
                   </div>
@@ -9885,74 +7149,6 @@ ${matRowsHtml}
               {laporanStep===3&&(
                 <div style={{display:"grid",gap:14}}>
 
-              {/* ══ REPORT INSTALL FORM ══ */}
-              {isInstallJob && (
-              <div style={{display:"grid",gap:8,marginBottom:8}}>
-                <div style={{fontSize:12,fontWeight:700,color:cs.accent,marginBottom:2}}>🔧 Detail Pekerjaan Instalasi</div>
-                <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Isi 0 jika tidak dikerjakan.</div>
-                {/* ── Group 1: Jasa Pemasangan ── */}
-                <div style={{fontSize:10,fontWeight:700,color:cs.muted,letterSpacing:1,textTransform:"uppercase",marginTop:2}}>Jasa Pemasangan</div>
-                {INSTALL_ITEMS.filter(it=>["pasang_05_1pk","pasang_15_2pk","bongkar_05_1pk","bongkar_15_25pk","vacum_05_25pk"].includes(it.key)).map(item=>(
-                <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
-                  background:parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"08":cs.card,
-                  border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"44":cs.border),
-                  borderRadius:8,padding:"8px 10px"}}>
-                  <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
-                    {item.label}<span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
-                  </div>
-                  <input type="number" min="0" step={item.satuan==="Meter"?"0.5":"1"}
-                    value={laporanInstallItems[item.key]??""}
-                    onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
-                    placeholder="0"
-                    style={{width:64,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none",textAlign:"center"}}/>
-                </div>
-                ))}
-                {/* ── Group 2: Material ── */}
-                <div style={{fontSize:10,fontWeight:700,color:cs.muted,letterSpacing:1,textTransform:"uppercase",marginTop:6}}>Material</div>
-                {INSTALL_ITEMS.filter(it=>["pipa_1pk","pipa_2pk","pipa_25pk","pipa_3pk","kabel_15","kabel_25","ducttape_biasa","ducttape_lem","jasa_pipa_ac","jasa_pipa_ruko","dinabolt","karet_mounting","breket_outdoor"].includes(it.key)).map(item=>(
-                <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
-                  background:parseFloat(laporanInstallItems[item.key]||0)>0?cs.green+"08":cs.card,
-                  border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?cs.green+"44":cs.border),
-                  borderRadius:8,padding:"8px 10px"}}>
-                  <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
-                    {item.label}<span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
-                  </div>
-                  <input type="number" min="0" step={item.satuan==="Meter"?"0.5":"1"}
-                    value={laporanInstallItems[item.key]??""}
-                    onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
-                    placeholder="0"
-                    style={{width:64,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none",textAlign:"center"}}/>
-                </div>
-                ))}
-                {/* ── Group 3: Freon & Vacum ── */}
-                <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",letterSpacing:1,textTransform:"uppercase",marginTop:6}}>❄️ Freon & Vacum</div>
-                {INSTALL_ITEMS.filter(it=>["kuras_vacum_r32","kuras_vacum_r22","freon_r22","freon_r32","freon_r410"].includes(it.key)).map(item=>(
-                <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
-                  background:parseFloat(laporanInstallItems[item.key]||0)>0?"#38bdf808":cs.card,
-                  border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?"#38bdf844":cs.border),
-                  borderRadius:8,padding:"8px 10px"}}>
-                  <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
-                    {item.label}<span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
-                  </div>
-                  <input type="number" min="0" step={item.satuan==="KG"?"0.5":"1"}
-                    value={laporanInstallItems[item.key]??""}
-                    onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
-                    placeholder="0"
-                    style={{width:64,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none",textAlign:"center"}}/>
-                </div>
-                ))}
-                {/* Summary */}
-                {Object.values(laporanInstallItems).some(v=>parseFloat(v||0)>0) && (
-                <div style={{background:cs.green+"10",border:"1px solid "+cs.green+"33",borderRadius:9,padding:"8px 12px",fontSize:11,color:cs.green,marginTop:4}}>
-                  ✅ {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).length} item diisi
-                </div>
-                )}
-              </div>
-              )}
-
-                  {/* ══ NORMAL MATERIAL FORM (Service/Repair/Complain) ══ */}
-                  {!isInstallJob && (
-                  <div style={{display:"grid",gap:10}}>
                   {/* Material */}
                   <div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -9963,113 +7159,55 @@ ${matRowsHtml}
                       </button>
                     </div>
                     {showMatPreset&&(
-                      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
-                        <div style={{fontSize:11,color:cs.muted,width:"100%",marginBottom:2}}>Tap untuk tambah:</div>
-                        {presets.map(p=>(
-                          <button key={p.nama||p} onClick={()=>{if(laporanMaterials.length<20)setLaporanMaterials(prev=>[...prev,{id:Date.now(),nama:p.nama||p,jumlah:"",satuan:p.satuan||"pcs",keterangan:""}]);setShowMatPreset(false);}}
-                            style={{fontSize:11,background:cs.surface,border:"1px solid "+cs.border,color:cs.text,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>
-                            {p.nama||p}
-                          </button>
-                        ))}
+                      <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:12,marginBottom:10}}>
+                        <div style={{fontSize:11,color:cs.muted,marginBottom:8}}>Tap untuk tambah cepat:</div>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                          {presets.map(p=>(
+                            <button key={p} onClick={()=>{if(laporanMaterials.length<20)setLaporanMaterials(prev=>[...prev,{id:Date.now(),nama:p,jumlah:"",satuan:"pcs",keterangan:""}]);setShowMatPreset(false);}}
+                              style={{fontSize:11,background:cs.accent+"10",border:"1px solid "+cs.accent+"22",color:cs.accent,borderRadius:6,padding:"5px 10px",cursor:"pointer"}}>+ {p}</button>
+                          ))}
+                        </div>
                       </div>
                     )}
-                    {laporanMaterials.length===0&&<div style={{textAlign:"center",padding:"14px 0",fontSize:12,color:cs.muted,fontStyle:"italic"}}>Belum ada material. Tap + Tambah atau pakai Preset.</div>}
-              {laporanMaterials.map(mat=>{
-                // Build lookup: inventory + price_list Material (tanpa harga)
-                const matLookup = [
-                  ...inventoryData.map(r=>({nama:r.name,satuan:r.unit||"pcs"})),
-                  ...priceListData.filter(r=>r.service==="Material").map(r=>({nama:r.type,satuan:r.unit||"pcs"}))
-                ].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i); // dedupe
-                const isSearching = matSearchId === mat.id;
-                const query = isSearching ? matSearchQuery : "";
-                const filtered = matLookup.filter(x=>
-                  x.nama.toLowerCase().includes(query.toLowerCase())
-                ).slice(0,12);
-                return (
-                <div key={mat.id} style={{background:cs.card,border:"1px solid "+(mat.nama?cs.accent+"44":cs.border),borderRadius:10,padding:"10px 12px",marginBottom:6}}>
-                  {/* Row 1: Nama material — dropdown search */}
-                  <div style={{position:"relative",marginBottom:6}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
-                      {/* Nama field — tampilkan nama terpilih atau input search */}
-                      <div style={{flex:1,position:"relative"}}>
-                        <input
-                          id={"mat_search_"+mat.id}
-                          value={isSearching ? matSearchQuery : mat.nama}
-                          placeholder="Cari material..."
-                          onFocus={()=>{ setMatSearchId(mat.id); setMatSearchQuery(mat.nama); }}
-                          onChange={e=>{ setMatSearchQuery(e.target.value); }}
-                          onBlur={()=>setTimeout(()=>{ setMatSearchId(null); setMatSearchQuery(""); },200)}
-                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
-                            borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}
-                        />
-                        {/* Dropdown hasil search */}
-                        {isSearching && (
-                          <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:999,
-                            background:cs.surface,border:"1px solid "+cs.accent+"55",
-                            borderRadius:"0 0 10px 10px",maxHeight:200,overflowY:"auto",
-                            boxShadow:"0 8px 24px #0006"}}>
-                            {filtered.length > 0 ? filtered.map((item,idx)=>(
-                              <div key={idx}
-                                onMouseDown={()=>{
-                                  setLaporanMaterials(p=>p.map(m=>m.id===mat.id
-                                    ?{...m,nama:item.nama,satuan:item.satuan}:m));
-                                  setMatSearchId(null); setMatSearchQuery("");
-                                }}
-                                style={{padding:"9px 12px",cursor:"pointer",fontSize:13,
-                                  color:cs.text,borderBottom:"1px solid "+cs.border+"33",
-                                  display:"flex",justifyContent:"space-between",alignItems:"center"}}
-                                onMouseEnter={e=>e.currentTarget.style.background=cs.accent+"18"}
-                                onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-                              >
-                                <span style={{fontWeight:600}}>{item.nama}</span>
-                                <span style={{fontSize:11,color:cs.muted,marginLeft:8}}>{item.satuan}</span>
-                              </div>
-                            )) : (
-                              <div style={{padding:"10px 12px",color:cs.muted,fontSize:12}}>
-                                Tidak ditemukan — ketik manual
-                              </div>
-                            )}
+                    <div style={{display:"grid",gap:8}}>
+                      {laporanMaterials.length===0&&<div style={{textAlign:"center",padding:"14px 0",fontSize:12,color:cs.muted,fontStyle:"italic"}}>Belum ada material — opsional untuk Cleaning</div>}
+                      {laporanMaterials.map(mat=>(
+                        <div key={mat.id} style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
+                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                            <input value={mat.nama} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,nama:e.target.value}:m))} placeholder="Nama material..."
+                              style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+                            <button onClick={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
+                              style={{background:"#ef444422",border:"1px solid #ef444433",color:"#ef4444",borderRadius:7,padding:"8px 10px",cursor:"pointer",fontSize:14,lineHeight:1,fontWeight:700}}>×</button>
                           </div>
-                        )}
-                      </div>
-                      {/* Tombol hapus baris */}
-                      <button onMouseDown={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
-                        style={{background:"#ef444420",border:"none",color:"#ef4444",
-                          borderRadius:7,padding:"6px 10px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>
-                        ×
-                      </button>
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1.5fr",gap:8}}>
+                            <input type="number" value={mat.jumlah} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:e.target.value}:m))} placeholder="Jml" min="0"
+                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+                            <input type="number" value={mat.harga||0} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,harga:Number(e.target.value)}:m))}
+                              placeholder="Harga/unit" min="0"
+                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"7px 8px",color:cs.text,fontSize:12,outline:"none"}} />
+                            <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
+                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
+                              {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
+                            </select>
+                            <input value={mat.keterangan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,keterangan:e.target.value}:m))} placeholder="Keterangan..."
+                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
+                          </div>
+                        </div>
+                      ))}
                     </div>
+                    {laporanMaterials.length<20&&(
+                      <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,harga:0,satuan:"pcs",keterangan:""}])}
+                        style={{marginTop:8,width:"100%",background:cs.green+"10",border:"1px dashed "+cs.green+"33",color:cs.green,borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                        + Tambah Material
+                      </button>
+                    )}
                   </div>
-                  {/* Row 2: Qty + Satuan */}
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                    <input type="number" min="0" step="0.5" value={mat.jumlah}
-                      onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:parseFloat(e.target.value)||0}:m))}
-                      placeholder="Jumlah"
-                      style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
-                        padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
-                    <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
-                      style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
-                        padding:"7px 10px",color:cs.text,fontSize:13}}>
-                      {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
-                    </select>
-                  </div>
-                </div>
-                );
-              })}
-                  </div>
-                  {laporanMaterials.length<20&&(
-                    <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,satuan:"pcs",keterangan:""}])}
-                      style={{marginTop:8,width:"100%",background:cs.green+"10",border:"1px dashed "+cs.green+"33",color:cs.green,borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>
-                      + Tambah Material
-                    </button>
-                  )}
-                  </div>
-                  )}{/* end !isInstallJob */}
 
-                  {/* ── Foto: tampil untuk semua service ── */}
+                  {/* Foto */}
                   <div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>📸 Foto Dokumentasi ({laporanFotos.length}/10)
+                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>
+                        📸 Foto Dokumentasi ({laporanFotos.length}/10)
                         {laporanFotos.length > 0 && (
                           <span style={{marginLeft:8,fontSize:11}}>
                             <span style={{color:cs.green}}>☁️ {laporanFotos.filter(f=>f.url).length} tersimpan</span>
@@ -10081,27 +7219,28 @@ ${matRowsHtml}
                       </div>
                       {laporanFotos.length<10&&(
                         <button onClick={()=>fotoInputRef.current?.click()}
-                          style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>+ Foto</button>
+                          style={{fontSize:11,background:cs.yellow+"15",border:"1px solid "+cs.yellow+"33",color:cs.yellow,borderRadius:6,padding:"5px 11px",cursor:"pointer",fontWeight:600}}>+ Upload</button>
                       )}
                     </div>
-                    <input id="field_file_42" ref={fotoInputRef} type="file" accept="image/*" multiple onChange={handleFotoUpload} style={{display:"none"}}/>
+                    <input ref={fotoInputRef} type="file" accept="image/*" multiple onChange={handleFotoUpload} style={{display:"none"}}/>
                     {laporanFotos.length===0?(
                       <div onClick={()=>fotoInputRef.current?.click()}
-                        style={{border:"1px dashed "+cs.border,borderRadius:10,padding:"20px",textAlign:"center",cursor:"pointer",color:cs.muted,fontSize:12}}>
+                        style={{border:"1px dashed "+cs.yellow+"33",borderRadius:10,padding:"20px",textAlign:"center",cursor:"pointer",color:cs.muted,fontSize:12}}>
                         📷 Tap untuk upload foto<br/><span style={{fontSize:11}}>Sebelum &amp; sesudah servis, kondisi material</span>
                       </div>
                     ):(
                       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
                         {laporanFotos.map(f=>(
                           <div key={f.id} style={{position:"relative"}}>
-                            <img src={f.data_url} alt={f.label} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:8,border:"1px solid "+cs.border}}/>
-                            <div style={{position:"absolute",top:4,right:4,background:f.url?"#22c55e":"#f59e0b",color:"#fff",fontSize:9,padding:"1px 5px",borderRadius:99,fontWeight:700}}>
+                            <img src={f.data_url} alt={f.label} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:8,border:"1px solid "+(f.url?cs.green:cs.yellow),opacity:f.url?1:0.75}}/>
+                            {/* Status badge: cloud = uploaded, clock = pending */}
+                            <div style={{position:"absolute",top:4,left:4,background:f.url?"#22c55ecc":"#f59e0bcc",borderRadius:4,padding:"1px 5px",fontSize:9,color:"#fff",fontWeight:700}}>
                               {f.url ? "☁️ OK" : "⏳"}
                             </div>
                             <button onClick={()=>setLaporanFotos(p=>p.filter(x=>x.id!==f.id))}
-                              style={{position:"absolute",top:4,left:4,background:"#ef4444cc",border:"none",color:"#fff",borderRadius:99,width:18,height:18,cursor:"pointer",fontSize:10,lineHeight:1,padding:0}}>×</button>
-                            <input id="field_43" value={f.label} onChange={e=>setLaporanFotos(p=>p.map(x=>x.id===f.id?{...x,label:e.target.value}:x))}
-                              placeholder="Label foto..." style={{marginTop:3,width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:5,padding:"4px 6px",color:cs.text,fontSize:10,outline:"none",boxSizing:"border-box"}}/>
+                              style={{position:"absolute",top:4,right:4,background:"#000a",border:"none",color:"#fff",borderRadius:"50%",width:20,height:20,cursor:"pointer",fontSize:12,lineHeight:"20px",padding:0,textAlign:"center"}}>×</button>
+                            <input value={f.label} onChange={e=>setLaporanFotos(p=>p.map(x=>x.id===f.id?{...x,label:e.target.value}:x))}
+                              style={{marginTop:3,width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:5,padding:"4px 6px",color:cs.text,fontSize:10,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         ))}
                         {laporanFotos.length<10&&(
@@ -10112,7 +7251,7 @@ ${matRowsHtml}
                     )}
                   </div>
 
-                  {/* ── Rekomendasi & Catatan: shared untuk semua service ── */}
+                  {/* Rekomendasi & Catatan */}
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:5}}>Rekomendasi untuk Customer</div>
                     <textarea value={laporanRekomendasi} onChange={e=>setLaporanRekomendasi(e.target.value)} rows={2} placeholder="cth: Disarankan servis berkala tiap 3 bulan..."
@@ -10125,7 +7264,7 @@ ${matRowsHtml}
                   </div>
 
                   <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
-                    <button onClick={()=>setLaporanStep(laporanModal?.service==="Install" ? 1 : 2)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
+                    <button onClick={()=>setLaporanStep(2)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
                     <button onClick={()=>setLaporanStep(4)} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>Lanjut → Ringkasan</button>
                   </div>
                 </div>
@@ -10142,61 +7281,32 @@ ${matRowsHtml}
                       <div>
                         <span style={{color:cs.muted}}>Total: </span>
                         <span style={{fontWeight:700,color:cs.text}}>{laporanUnits.length} unit AC</span>
-                        {totalFreon>0&&<span style={{color:cs.muted}}> · Tekanan Freon: <span style={{color:cs.yellow}}>{totalFreon.toFixed(0)} psi</span></span>}
+                        {totalFreon>0&&<span style={{color:cs.muted}}> · Freon <span style={{color:cs.yellow}}>{totalFreon.toFixed(1)}kg</span></span>}
                         {laporanFotos.length>0&&<span style={{color:cs.muted}}> · <span style={{color:cs.green}}>{laporanFotos.length} foto</span></span>}
                         {laporanMaterials.length>0&&<span style={{color:cs.muted}}> · <span style={{color:cs.accent}}>{laporanMaterials.length} material</span></span>}
                       </div>
                     </div>
                     {/* Per-unit summary */}
-                    {/* ══ Install summary ══ */}
-                    {isInstallJob && (
-                      <div style={{background:cs.card,border:"1px solid "+cs.accent+"33",borderRadius:10,padding:"12px 14px"}}>
-                        <div style={{fontWeight:700,color:cs.accent,marginBottom:8,fontSize:12}}>🔧 Detail Instalasi</div>
-                        {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).map(it=>(
-                          <div key={it.key} style={{display:"flex",justifyContent:"space-between",fontSize:12,
-                            color:cs.text,marginBottom:3,paddingBottom:3,borderBottom:"1px solid "+cs.border+"33"}}>
-                            <span>{it.label}</span>
-                            <span style={{fontWeight:700,color:cs.accent}}>{laporanInstallItems[it.key]} {it.satuan}</span>
+                    <div style={{display:"grid",gap:8}}>
+                      {laporanUnits.map((u,i)=>(
+                        <div key={i} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"10px 12px"}}>
+                          <div style={{fontWeight:700,color:cs.accent,marginBottom:5}}>Unit {u.unit_no} — {u.label} {u.merk?`(${u.merk})`:""}</div>
+                          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
+                            {u.kondisi_sebelum.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.yellow+"18",color:cs.yellow,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
                           </div>
-                        ))}
-                        {!INSTALL_ITEMS.some(it=>parseFloat(laporanInstallItems[it.key]||0)>0) && (
-                          <div style={{color:cs.muted,fontSize:12,textAlign:"center"}}>Belum ada item diisi</div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* ══ Per-unit summary (Service/Repair/Complain) ══ */}
-                    {!isInstallJob && (
-                      <div style={{display:"grid",gap:8}}>
-                        {laporanUnits.map((u,i)=>(
-                          <div key={i} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"10px 12px"}}>
-                            <div style={{fontWeight:700,color:cs.accent,marginBottom:5}}>Unit {u.unit_no} — {u.label} {u.merk?`(${u.merk})`:""}</div>
-                            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
-                              {u.kondisi_sebelum.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.yellow+"18",color:cs.yellow,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
-                            </div>
-                            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
-                              {u.pekerjaan.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.accent+"18",color:cs.accent,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
-                            </div>
-                            <div style={{fontSize:11,color:cs.muted}}>
-                              {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}{u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
-                              {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
-                              {u.catatan_unit?` · ${u.catatan_unit}`:""}
-                            </div>
+                          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
+                            {u.pekerjaan.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.accent+"18",color:cs.accent,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
                           </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* ══ Material summary ══ */}
-                    {isInstallJob && INSTALL_ITEMS.some(it=>parseFloat(laporanInstallItems[it.key]||0)>0) && (
-                      <div style={{marginTop:10}}>
-                        <div style={{fontWeight:700,color:cs.text,marginBottom:5,fontSize:11}}>Material Instalasi:</div>
-                        {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).map((it,mi)=>(
-                          <div key={mi} style={{fontSize:11,color:cs.muted,marginBottom:2}}>• {it.label}: {laporanInstallItems[it.key]} {it.satuan}</div>
-                        ))}
-                      </div>
-                    )}
-                    {!isInstallJob && laporanMaterials.length>0 && (
+                          <div style={{fontSize:11,color:cs.muted}}>
+                            {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}{u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
+                            {parseFloat(u.freon_ditambah)>0?`Freon +${u.freon_ditambah}kg`:""}
+                            {u.catatan_unit?` · ${u.catatan_unit}`:""}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Material */}
+                    {laporanMaterials.length>0&&(
                       <div style={{marginTop:10}}>
                         <div style={{fontWeight:700,color:cs.text,marginBottom:5,fontSize:11}}>Material:</div>
                         {laporanMaterials.map((m,mi)=>(
@@ -10234,8 +7344,14 @@ ${matRowsHtml}
                           addAgentLog("COMPLAIN_UPGRADED",`Complain ${laporanModal.id} → Repair ${rId}`,"SUCCESS");
                           showNotif(`✅ Job Repair ${rId} dibuat! Admin dinotifikasi.`);
                           const admR=userAccounts.filter(u=>u.role==="Admin"||u.role==="Owner");
-                          admR.forEach(a=>{if(a?.phone)sendWA(a.phone,
-                            "Upgrade Complain Repair\nComplain: "+laporanModal.id+"\nRepair Baru: "+rId+"\nCustomer: "+laporanModal.customer+"\nTeknisi: "+laporanModal.teknisi+"\n\nSilakan approve. — ARA");});
+                          admR.forEach(a=>{if(a?.phone)sendWA(a.phone,`🔧 *Upgrade Complain → Repair*
+
+Complain: ${laporanModal.id}
+Repair Baru: *${rId}*
+Customer: ${laporanModal.customer}
+Teknisi: ${laporanModal.teknisi}
+
+Silakan approve & buat invoice. — ARA`);});
                         } else showNotif("❌ Gagal buat Repair: "+rErr.message);
                       }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,
                         padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",width:"100%"}}>
@@ -10299,3 +7415,4 @@ ${matRowsHtml}
     </div>
   );
 }
+
