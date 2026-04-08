@@ -8848,7 +8848,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                              : llmProvider === "openai"  ? "llm"   // openai uses /api/test-connection?type=llm
                              : "llm";                               // claude default
                   const r = await fetch("/api/test-connection?type=" + type, {
-                    headers: { "X-Internal-Token": internalToken }
+                    headers: _apiHeaders()
                   });
                   const d = await r.json();
                   if (!r.ok || !d.ok) throw new Error(d.error || d.message || "Test gagal");
