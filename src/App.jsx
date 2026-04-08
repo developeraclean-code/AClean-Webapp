@@ -12490,7 +12490,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       total_units:  newReport.total_units,
       total_freon:  newReport.total_freon,
       submitted_at: new Date().toISOString(),
-      notes:        (newReport.catatan_global || newReport.rekomendasi || "").slice(0,500),
       foto_urls:    laporanFotos.filter(f=>f.url).map(f=>f.url) || [],
       rekomendasi:  newReport.rekomendasi || "",
       catatan_global: newReport.catatan_global || "",
