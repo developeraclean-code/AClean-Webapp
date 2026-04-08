@@ -12510,12 +12510,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         else { lastError = e1; console.warn("❌ Attempt 1 failed:", e1.message); }
       } catch(ex) { lastError = ex; console.warn("❌ Attempt 1 error:", ex.message); }
     }
-    if (!savedOk) { // Attempt 2: tanpa JSON cols (core fields only)
+    if (!savedOk) { // Attempt 2: dengan units_json & materials_json (skip units jsonb)
       try {
-        const { error: e2 } = await supabase.from("service_reports").upsert(
-          basePayload, { onConflict: "id" }
-        );
-        if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
+        const { error: e2 } = await supabase.from("service_reports").upsert({
+          ...basePayload,
+          units_json:     JSON.stringify(laporanUnits),
+          materials_json: JSON.stringify(effectiveMaterials),
+        }, { onConflict: "id" });
+        if (!e2) { savedOk = true; console.log("✅ Laporan saved (json text cols):", newReport.id); }
         else { lastError = e2; console.warn("❌ Attempt 2 failed:", e2.message); }
       } catch(ex) { lastError = ex; console.warn("❌ Attempt 2 error:", ex.message); }
     }
