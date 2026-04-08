@@ -2049,7 +2049,7 @@ ${matRowsHtml}
           ...r,
           units:     r.units_json ? safeJsonParse(r.units_json, `laporan_units_${r.id}`, r.units||[]) : (r.units||[]),
           materials: r.materials_json ? safeJsonParse(r.materials_json, `laporan_materials_${r.id}`, r.materials_used||[]) : (r.materials_used||[]),
-          fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:(r.fotos||[])[i]?.id||i,label:(r.fotos||[])[i]?.label||`Foto ${i+1}`,url})) : (r.fotos||[]).filter(f=>f.url),
+          fotos:     r.fotos || (r.foto_urls||[]).map((url,i)=>({id:i,label:`Foto ${i+1}`,url})),
           editLog:   safeArr(r.edit_log ?? r.editLog),
           rekomendasi:    r.rekomendasi    || "",
           catatan_global: r.catatan_global || r.catatan || "",
@@ -2362,7 +2362,7 @@ ${matRowsHtml}
                         ...r,
                         units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
                         materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials_used || []; } })() : (r.materials_used || []),
-                        fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:(r.fotos||[])[i]?.id||i,label:(r.fotos||[])[i]?.label||`Foto ${i+1}`,url})) : (r.fotos||[]).filter(f=>f.url),
+                        fotos:     r.fotos || (r.foto_urls||[]).map((url,i)=>({id:i,label:`Foto ${i+1}`,url})),
                         editLog:   safeArr(r.edit_log ?? r.editLog),
                       })));
                     }
@@ -2377,7 +2377,7 @@ ${matRowsHtml}
                   .then(({data}) => { if(data) setLaporanReports(data.map(r => ({...r,
                     units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return [];} })() : (r.units||[]),
                     materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return [];} })() : (r.materials_used||[]),
-                    fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:(r.fotos||[])[i]?.id||i,label:(r.fotos||[])[i]?.label||`Foto ${i+1}`,url})) : (r.fotos||[]).filter(f=>f.url),
+                    fotos:     r.fotos || (r.foto_urls||[]).map((url,i)=>({id:i,label:`Foto ${i+1}`,url})),
                     editLog:   safeArr(r.edit_log??r.editLog),
                   }))); }), 30000);
               }
@@ -12571,7 +12571,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           ...r,
           units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
           materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials_used || []; } })() : (r.materials_used || []),
-          fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:i,label:`Foto ${i+1}`,url})) : [],
+          fotos:     r.fotos || (r.foto_urls||[]).map((url,i)=>({id:i,label:`Foto ${i+1}`,url})),
           editLog:   safeArr(r.edit_log ?? r.editLog),
         })));
       }
