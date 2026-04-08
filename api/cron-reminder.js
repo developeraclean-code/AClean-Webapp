@@ -52,7 +52,8 @@ async function log(action, detail, status="SUCCESS") {
 // TASK 1: Invoice Reminder (default)
 // ══════════════════════════════════════════════════
 async function taskReminder() {
-  const today = new Date().toISOString().slice(0,10);
+  // Indonesia timezone (UTC+7)
+  const today = new Date(Date.now() + 7*60*60*1000).toISOString().slice(0,10);
   const res = { reminder1:0, reminder2:0, reminder3:0, escalated:0, autoapproved:0 };
 
   // Fetch bank details from app_settings (with env var fallback)
@@ -64,7 +65,8 @@ async function taskReminder() {
   const BANK_NUMBER = bankMap.bank_number || process.env.BANK_NUMBER || "8830883011";
   const BANK_HOLDER = bankMap.bank_holder || process.env.BANK_HOLDER || "Malda Retta";
 
-  const { data: invs } = await sb.from("invoices").select("*").in("status",["UNPAID","OVERDUE"]);
+  // Limit to prevent timeout (Vercel max 30s). Process in batches if needed.
+  const { data: invs } = await sb.from("invoices").select("*").in("status",["UNPAID","OVERDUE"]).limit(500);
   for (const inv of invs||[]) {
     const daysOverdue = daysSince(inv.due || inv.sent);
     if (inv.status==="UNPAID" && inv.due && inv.due<today) {
@@ -79,8 +81,8 @@ async function taskReminder() {
     if (msg) { await sendWA(inv.phone, msg); await log("REMINDER_SENT",`${inv.id} — ${daysOverdue}d`); }
   }
 
-  // Auto-approve PENDING_APPROVAL > 6 jam
-  const { data: pend } = await sb.from("invoices").select("*").eq("status","PENDING_APPROVAL");
+  // Auto-approve PENDING_APPROVAL > 6 jam (limit to prevent timeout)
+  const { data: pend } = await sb.from("invoices").select("*").eq("status","PENDING_APPROVAL").limit(300);
   for (const inv of pend||[]) {
     const hrs = (Date.now()-new Date(inv.created_at).getTime())/3600000;
     if (hrs>=6 && /(Cleaning|Install)/.test(inv.service||"")) {
@@ -92,8 +94,9 @@ async function taskReminder() {
     }
   }
 
-  // Update UNPAID lewat due → OVERDUE
-  await sb.from("invoices").update({status:"OVERDUE"}).eq("status","UNPAID").lt("due",new Date().toISOString().slice(0,10));
+  // Update UNPAID lewat due → OVERDUE (Indonesia timezone UTC+7)
+  const nowStr = new Date(Date.now() + 7*60*60*1000).toISOString().slice(0,10);
+  await sb.from("invoices").update({status:"OVERDUE"}).eq("status","UNPAID").lt("due",nowStr);
   await log("CRON_REMINDER",`r1=${res.reminder1} r2=${res.reminder2} r3=${res.reminder3} esc=${res.escalated} auto=${res.autoapproved}`);
   return res;
 }
@@ -102,7 +105,8 @@ async function taskReminder() {
 // TASK 2: Daily Report
 // ══════════════════════════════════════════════════
 async function taskDaily() {
-  const today = new Date().toISOString().slice(0,10);
+  // Indonesia timezone (UTC+7)
+  const today = new Date(Date.now() + 7*60*60*1000).toISOString().slice(0,10);
   const [{ data:orders }, { data:invoices }, { data:laporan }] = await Promise.all([
     sb.from("orders").select("*").eq("date",today),
     sb.from("invoices").select("*").gte("created_at",today+"T00:00:00"),

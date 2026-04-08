@@ -116,38 +116,6 @@ const validateFileSize = (bytes, maxMB = 5) => bytes <= (maxMB * 1024 * 1024);
 const validationError = (field, message) => ({ ok: false, field, message });
 const validationOk = () => ({ ok: true });
 
-// ── Session Management Helpers ──
-// Check if JWT token in localStorage is expired
-const isSessionExpired = () => {
-  try {
-    const session = _ls("localSession", null);
-    if (session && session._exp) {
-      // For local sessions: check expiry timestamp
-      return Date.now() > session._exp;
-    }
-    // For Supabase sessions: rely on getSession() which auto-refreshes
-    return false;
-  } catch(e) {
-    console.warn("[SESSION_CHECK_ERROR]", e.message);
-    return false;
-  }
-};
-
-// Get time until session expires (in milliseconds, or -1 if no expiry)
-const getSessionTimeLeft = () => {
-  try {
-    const session = _ls("localSession", null);
-    if (session && session._exp) {
-      const ms = session._exp - Date.now();
-      return Math.max(0, ms);
-    }
-    // Supabase sessions typically last 1 hour before refresh needed
-    return 3600000; // 1 hour
-  } catch(e) {
-    return 3600000;
-  }
-};
-
 // sameCustomer: unik berdasarkan phone + nama lengkap (case insensitive, trim)
 // "Bapak Dedy Jelita" vs "Bapak Dedy Aruna" = BEDA meski phone sama
 const sameCustomer = (c, phone, name) => {
@@ -1921,12 +1889,13 @@ ${matRowsHtml}
   useEffect(() => {
     if (!isLoggedIn) return;
 
-    // Check session validity before loading data
-    const isValid = checkSessionValidity();
-    if (!isValid) return; // Session expired, abort load
+    const initLoadAll = async () => {
+      // Check session validity before loading data (must await!)
+      const isValid = await checkSessionValidity();
+      if (!isValid) return; // Session expired, abort load
 
-    const loadAll = async () => {
-      const results = await Promise.allSettled([
+      const loadAll = async () => {
+        const results = await Promise.allSettled([
         supabase.from("orders").select("*").order("date", { ascending: false }),
         supabase.from("invoices").select("*").order("created_at", { ascending: false }),
         supabase.from("customers").select("*").order("name"),
@@ -2129,15 +2098,19 @@ ${matRowsHtml}
           console.log("✅ ARA Brain loaded from Supabase — sync ke semua device");
         }
       } catch(e) { console.warn("ara_brain DB load failed, pakai localStorage:", e?.message); }
+      };
+
+      setDataLoading(true);
+      loadAll().finally(() => {
+        setDataLoading(false);
+        // GAP-7: Jalankan check stuck jobs segera setelah data load, lalu setiap 15 menit
+        setTimeout(() => checkStuckJobs(), 5000); // delay 5 detik agar state ready
+        startStuckCheck();
+      });
     };
 
-    setDataLoading(true);
-    loadAll().finally(() => {
-      setDataLoading(false);
-      // GAP-7: Jalankan check stuck jobs segera setelah data load, lalu setiap 15 menit
-      setTimeout(() => checkStuckJobs(), 5000); // delay 5 detik agar state ready
-      startStuckCheck();
-    });
+    // Call the async initialization wrapper
+    initLoadAll();
 
       // ── AUTO-VERIFY CLIENT: Cek laporan SUBMITTED > 48 jam saat data selesai load ──
       setTimeout(async () => {
@@ -2615,9 +2588,10 @@ ${matRowsHtml}
 
     const today = getLocalDate();
     const due = new Date(Date.now() + 14*24*60*60*1000 + 7*60*60*1000).toISOString().slice(0,10);
-    const approvedAt = new Date().toISOString();
+    const approvedAt = getLocalISOString(); // Indonesia timezone (UTC+7)
+    const sentAt = getLocalISOString(); // When invoice sent/approved timestamp
     setInvoicesData(prev => prev.map(i =>
-      i.id === inv.id ? {...i, status:"UNPAID", sent:today, due} : i
+      i.id === inv.id ? {...i, status:"UNPAID", sent: sentAt, due} : i
     ));
     setOrdersData(prev => prev.map(o =>
       o.id === inv.job_id ? {...o, invoice_id:inv.id, status:"INVOICE_APPROVED"} : o
@@ -10083,13 +10057,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:6 }}>
                 <button onClick={() => setModalStok(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
                 <button onClick={async () => {
-                  if (!newStokForm.name) { showNotif("Nama material wajib diisi"); return; }
+                  // Validation
+                  if (!validateNameLength(newStokForm.name)) { showNotif("❌ Nama material harus 2-100 karakter"); return; }
                   const stokAwal = parseInt(newStokForm.stock)||0;
+                  if (stokAwal < 0) { showNotif("❌ Stok tidak boleh negatif"); return; }
+                  const price = parseInt(newStokForm.price)||0;
+                  if (price < 0 || price > 100000000) { showNotif("❌ Harga tidak valid (0-100juta)"); return; }
                   const reorderPt = parseInt(newStokForm.reorder)||5;
+                  if (reorderPt < 0) { showNotif("❌ Reorder point tidak boleh negatif"); return; }
                   const minAlert  = parseInt(newStokForm.min_alert)||2;
+                  if (minAlert < 0) { showNotif("❌ Min alert tidak boleh negatif"); return; }
+
                   const newCode   = "MAT"+Date.now().toString(36).slice(-4).toUpperCase();
                   const stokStatus= stokAwal===0?"OUT":stokAwal<=minAlert?"CRITICAL":stokAwal<=reorderPt?"WARNING":"OK";
-                  const newItem   = { code:newCode, name:newStokForm.name, unit:newStokForm.unit||"pcs", price:parseInt(newStokForm.price)||0, stock:stokAwal, reorder:reorderPt, min_alert:minAlert, status:stokStatus };
+                  const newItem   = { code:newCode, name:newStokForm.name, unit:newStokForm.unit||"pcs", price, stock:stokAwal, reorder:reorderPt, min_alert:minAlert, status:stokStatus };
                   setInventoryData(prev=>[...prev,newItem]);
                   // Insert tanpa status — biarkan DB default, lalu update stock untuk trigger auto-status
                   const insertPayload = { ...newItem };
@@ -12655,12 +12636,26 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         +"Teknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")+"\n"
         +"Total: "+fmt(newInvoice.total)+" Jasa: "+fmt(newInvoice.labor)+" Mat: "+fmt(newInvoice.material)+"\n"
         +"Invoice: "+invId+" Silakan approve di menu Invoice. — ARA";
-      ownerAccounts.forEach(u => { if (u.phone) sendWA(u.phone, ownerMsg); });
+      // Notify owner accounts
+      await Promise.all(ownerAccounts.map(u => {
+        if (u.phone) return sendWA(u.phone, ownerMsg);
+        return Promise.resolve();
+      }));
+
+      // Fallback if no owner accounts (notify default phone)
       if (ownerAccounts.length === 0) {
-        fetch("/api/send-wa", {
-          method: "POST", headers: _apiHeaders(),
-          body: JSON.stringify({ phone: "6281299898937", message: ownerMsg, currentUserRole: currentUser?.role || "Unknown" })
-        }).catch(err => console.warn("[ARA_NOTIFY_OWNER_FAILED]", err.message));
+        try {
+          const r = await fetch("/api/send-wa", {
+            method: "POST", headers: _apiHeaders(),
+            body: JSON.stringify({ phone: "6281299898937", message: ownerMsg, currentUserRole: currentUser?.role || "Unknown" })
+          });
+          if (!r.ok) {
+            const d = await r.json().catch(()=>({}));
+            console.warn("[ARA_NOTIFY_OWNER_FAILED]", d.error || r.status);
+          }
+        } catch(err) {
+          console.warn("[ARA_NOTIFY_OWNER_FAILED]", err.message);
+        }
       }
     }
 

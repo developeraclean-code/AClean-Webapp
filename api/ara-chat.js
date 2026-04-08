@@ -16,6 +16,9 @@ const buildSystem = (biz, brain) => {
   // Hapus hargaLayanan & priceList dari JSON utama agar tidak redundan & tidak terlalu panjang
   const { hargaLayanan: _h, priceList: _p, ...bizClean } = biz;
 
+  // Indonesia timezone (UTC+7)
+  const localTime = new Date(Date.now() + 7*60*60*1000).toLocaleString("id-ID");
+
   return `${brain}
 
 ## IDENTITAS
@@ -27,10 +30,10 @@ SELALU gunakan harga dari seksi "PRICE LIST LIVE" di bawah ini.
 JANGAN gunakan harga dari brain.md atau memori lama.
 Harga ini sudah di-update langsung oleh Owner dari tampilan Price List.
 
-## PRICE LIST LIVE (dari Supabase — ${new Date().toLocaleString("id-ID")})
+## PRICE LIST LIVE (dari Supabase — ${localTime})
 ${hargaSection}
 
-## DATA BISNIS LIVE (${new Date().toLocaleString("id-ID")})
+## DATA BISNIS LIVE (${localTime})
 ${JSON.stringify(bizClean, null, 2)}
 
 ## ACTION TOOLKIT — gunakan tag [ACTION]...[/ACTION] untuk eksekusi data
