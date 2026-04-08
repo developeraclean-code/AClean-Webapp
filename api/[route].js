@@ -1,7 +1,7 @@
 // api/[route].js - AClean Unified API Router
 import { setCorsHeaders, checkRateLimit, validateInternalToken } from "./_auth.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "monitor", "get-llm-config"];
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "monitor", "get-llm-config", "sync-fotos"];
 
 // ── VALIDATION HELPERS ──
 function validateAndNormalizePhone(phone) {
