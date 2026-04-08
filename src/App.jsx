@@ -821,8 +821,8 @@ export default function ACleanWebApp() {
   // ── LLM Settings: Load from backend endpoint instead of localStorage ──
   // SECURITY FIX: Never store API keys in localStorage
   // Backend endpoint /api/get-llm-config returns available providers & default
-  const [llmProvider,     setLlmProvider]     = useState("minimax"); // default while loading
-  const [llmModel,        setLlmModel]        = useState("MiniMax-M2.5"); // default while loading
+  const [llmProvider,     setLlmProvider]     = useState(() => _ls("llmProvider", "minimax")); // load from localStorage, default to minimax
+  const [llmModel,        setLlmModel]        = useState(() => _ls("llmModel", "MiniMax-M2.5")); // load from localStorage, default to MiniMax-M2.5
   const [llmConfig,       setLlmConfig]       = useState(null); // stores backend response
   const [availableProviders, setAvailableProviders] = useState([]);
   const [ollamaUrl,       setOllamaUrl]       = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
@@ -9933,7 +9933,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   })()}
                 </select>
               </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:10 }}>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Teknisi</div>
                   {(() => {
@@ -10064,7 +10064,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <span>👥 Tim Tambahan <span style={{fontWeight:400}}>(opsional — 1 job, beberapa orang)</span></span>
                 </div>
                 {/* Teknisi 2 */}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))",gap:8,marginBottom:8}}>
                   <div>
                     <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Teknisi ke-2</div>
                     <select value={newOrderForm.teknisi2||""} onChange={e=>setNewOrderForm(f=>({...f,teknisi2:e.target.value}))}
