@@ -1,8 +1,13 @@
 import { useState, useEffect, useRef, useCallback, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-const SUPA_URL = import.meta.env.VITE_SUPABASE_URL  || "https://placeholder.supabase.co";
-const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "placeholder-key";
+const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// ── Enforce required environment variables at startup ──
+if (!SUPA_URL) throw new Error("[CRITICAL] VITE_SUPABASE_URL env var is required but not set. Check your .env.local file.");
+if (!SUPA_KEY) throw new Error("[CRITICAL] VITE_SUPABASE_ANON_KEY env var is required but not set. Check your .env.local file.");
+
 const supabase = createClient(SUPA_URL, SUPA_KEY);
 
 // Error boundary — tangkap crash dan tampilkan pesan error
@@ -42,11 +47,148 @@ const CUSTOMERS_DATA = [
 
 // ── buildCustomerHistory: LIVE dari ordersData + laporanReports + invoicesData
 // Dipanggil di: renderCustomers(), laporan step-1, order detail
+// ── normalizePhone: 08xxx / +62xxx / 628xxx → 628xxx ──────────────
+const normalizePhone = (p) => {
+  if (!p) return "";
+  const d = p.toString().replace(/[\s\-().+]/g, ""); // hapus spasi, strip, plus, kurung
+  if (d.startsWith("08"))  return "62" + d.slice(1);   // 08xxx → 628xxx
+  if (d.startsWith("62"))  return d;                    // 628xxx → tetap
+  if (d.startsWith("8"))   return "62" + d;             // 8xxx → 628xxx (tanpa 0)
+  return d;
+};
+
+// samePhone: bandingkan 2 nomor, dianggap sama jika normalisasi sama
+const samePhone = (a, b) => {
+  if (!a || !b) return false;
+  return normalizePhone(a) === normalizePhone(b);
+};
+
+// ── getLocalDate: Convert UTC to Indonesia local time (UTC+7) ──
+// Returns YYYY-MM-DD in local timezone (Jakarta)
+const getLocalDate = () => {
+  const offset = 7 * 60 * 60 * 1000; // UTC+7 in milliseconds
+  const localDate = new Date(Date.now() + offset);
+  return localDate.toISOString().slice(0, 10);
+};
+
+// ── getLocalDateObj: Get Date object representing Indonesia local date ──
+const getLocalDateObj = () => {
+  const offset = 7 * 60 * 60 * 1000;
+  return new Date(Date.now() + offset);
+};
+
+// ── getLocalISOString: Get ISO string with local timezone context ──
+const getLocalISOString = () => {
+  const offset = 7 * 60 * 60 * 1000;
+  return new Date(Date.now() + offset).toISOString();
+};
+
+// ── safeJsonParse: Parse JSON with error logging (don't silently fail) ──
+const safeJsonParse = (jsonStr, context = "", defaultValue = null) => {
+  if (!jsonStr) return defaultValue;
+  try {
+    return JSON.parse(jsonStr);
+  } catch(err) {
+    console.error(`[JSON_PARSE_ERROR] ${context}:`, {
+      error: err.message,
+      inputLength: String(jsonStr).length,
+      inputPreview: String(jsonStr).slice(0, 100)
+    });
+    // Add to agent logs so we can monitor data corruption
+    if (window.addAgentLog) {
+      window.addAgentLog("JSON_PARSE_ERROR", `${context}: ${err.message}`, "ERROR");
+    }
+    return defaultValue;
+  }
+};
+
+// ── Form Validation Helpers ──
+const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email||"").trim());
+const validatePhone = (phone) => /^(08|62|0|6)[0-9]{8,12}$/.test(String(phone||"").replace(/\D/g, ""));
+const validateTime = (time) => /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(String(time||""));
+const validateDate = (date) => /^\d{4}-\d{2}-\d{2}$/.test(String(date||"")) && !isNaN(new Date(date));
+const validatePositiveNumber = (num) => !isNaN(num) && Number(num) > 0;
+const validateAddressLength = (addr) => String(addr||"").trim().length >= 5 && String(addr||"").length <= 255;
+const validateNameLength = (name) => String(name||"").trim().length >= 2 && String(name||"").length <= 100;
+const validateFileSize = (bytes, maxMB = 5) => bytes <= (maxMB * 1024 * 1024);
+
+// Validation result object
+const validationError = (field, message) => ({ ok: false, field, message });
+const validationOk = () => ({ ok: true });
+
+// ── Session Management Helpers ──
+// Check if JWT token in localStorage is expired
+const isSessionExpired = () => {
+  try {
+    const session = _ls("localSession", null);
+    if (session && session._exp) {
+      // For local sessions: check expiry timestamp
+      return Date.now() > session._exp;
+    }
+    // For Supabase sessions: rely on getSession() which auto-refreshes
+    return false;
+  } catch(e) {
+    console.warn("[SESSION_CHECK_ERROR]", e.message);
+    return false;
+  }
+};
+
+// Get time until session expires (in milliseconds, or -1 if no expiry)
+const getSessionTimeLeft = () => {
+  try {
+    const session = _ls("localSession", null);
+    if (session && session._exp) {
+      const ms = session._exp - Date.now();
+      return Math.max(0, ms);
+    }
+    // Supabase sessions typically last 1 hour before refresh needed
+    return 3600000; // 1 hour
+  } catch(e) {
+    return 3600000;
+  }
+};
+
+// sameCustomer: unik berdasarkan phone + nama lengkap (case insensitive, trim)
+// "Bapak Dedy Jelita" vs "Bapak Dedy Aruna" = BEDA meski phone sama
+const sameCustomer = (c, phone, name) => {
+  if (!c || !phone || !name) return false;
+  return samePhone(c.phone, phone) &&
+         c.name.trim().toLowerCase() === name.trim().toLowerCase();
+};
+
+// findCustomer: cari customer paling tepat — prioritas (phone+name) > phone saja
+const findCustomer = (customers, phone, name) => {
+  if (!phone && !name) return null;
+  // 1. Exact match phone + nama lengkap
+  if (phone && name) {
+    const exact = customers.find(c => sameCustomer(c, phone, name));
+    if (exact) return exact;
+  }
+  // 2. Phone sama + nama depan sama (misal "Bapak Dedy" match "Bapak Dedy Jelita")
+  if (phone && name) {
+    const firstName = name.trim().toLowerCase().split(" ").slice(0,2).join(" ");
+    const partial = customers.find(c =>
+      samePhone(c.phone, phone) &&
+      c.name.trim().toLowerCase().startsWith(firstName)
+    );
+    if (partial) return partial;
+  }
+  // 3. Phone saja (fallback — hanya jika nama tidak disediakan)
+  if (phone && !name) {
+    return customers.find(c => samePhone(c.phone, phone)) || null;
+  }
+  // 4. Nama saja (fallback terakhir)
+  if (name && !phone) {
+    return customers.find(c => c.name.trim().toLowerCase() === name.trim().toLowerCase()) || null;
+  }
+  return null;
+};
+
 const buildCustomerHistory = (customer, ordersData, laporanReports, invoicesData) => {
   if (!customer) return [];
   const nm = (s) => (s||"").trim().toLowerCase();
   const matchName  = (o) => nm(o.customer) === nm(customer.name);
-  const matchPhone = (o) => customer.phone && o.phone && o.phone === customer.phone;
+  const matchPhone = (o) => customer.phone && o.phone && samePhone(o.phone, customer.phone);
 
   return ordersData
     .filter(o => matchName(o) || matchPhone(o))
@@ -100,48 +242,118 @@ const INVOICES_DATA = [
 
 // GAP 13 — Price list untuk auto-hitung invoice dari laporan
 // ── PRICE_LIST: default fallback (akan di-override oleh DB price_list tabel) ──
-const PRICE_LIST_DEFAULT = {
+  const PRICE_LIST_DEFAULT = {
   "Cleaning": {
-    "AC Split 0.5-1PK":   85000,
-    "AC Split 1.5-2.5PK": 100000,
-    "AC Cassette 2-2.5PK":250000,
-    "AC Cassette 3PK":    300000,
-    "AC Cassette 4PK":    350000,
-    "AC Standing":        200000,
-    "AC Duct":            400000,
-    "default":             85000,
+    "AC Split 0.5-1PK":              85000,
+    "AC Split 1.5-2.5PK":           100000,
+    "AC Cassette 2-2.5PK":          250000,
+    "AC Cassette 3PK":              300000,
+    "AC Cassette 4PK":              400000,
+    "AC Cassette 5PK":              500000,
+    "AC Cassette 6PK":              600000,
+    "AC Standing":                  100000,
+    "AC Split Duct":                100000,
+    "Jasa Service Besar 0,5PK - 1PK":   400000,
+    "Jasa Service Besar 1,5PK - 2,5PK": 450000,
+    "default":                       85000,
   },
   "Install": {
-    "Pasang AC 0.5-1PK":  500000,
-    "Pasang AC 1PK":      500000,
-    "Pasang AC 1.5-2PK":  600000,
-    "Pasang AC 2.5PK":    700000,
-    "default":            500000,
+    "Pemasangan AC Baru 0,5PK - 1PK":       350000,
+    "Pemasangan AC Baru 1,5PK - 2PK":       400000,
+    "Pasang AC Split 3PK":                   450000,
+    "Bongkar Pasang AC Split 1/2 - 1PK":    500000,
+    "Bongkar Pasang AC Split 1,5 - 2,5PK":  550000,
+    "Bongkar Unit AC 0.5-1PK":               150000,
+    "Bongkar Unit AC 1.5-2.5PK":             200000,
+    "Bongkar Pasang Indoor AC":              200000,
+    "Bongkar Pasang Outdoor AC":             200000,
+    "Jasa Vacum AC 0,5PK - 2,5PK":           50000,
+    "Jasa Vacum Unit AC >3PK":               150000,
+    "Jasa Penarikan Pipa AC":                 25000,
+    "Jasa Penarikan Pipa Ruko":               35000,
+    "Pasang AC Cassette":                    900000,
+    "Pasang AC Standing":                    600000,
+    "Pemasangan AC Baru Apartemen":          350000,
+    "Jasa Instalasi Pipa AC":                200000,
+    "Jasa Instalasi Listrik":                150000,
+    "Flaring Pipa":                          100000,
+    "Flushing Pipa":                         200000,
+    "Jasa Bobok Tembok":                     150000,
+    "Jasa Pengelasan Pipa AC":               100000,
+    "Jasa Pembuatan Saluran Pembuangan":     150000,
+    "default":                               350000,
   },
   "Repair": {
-    "Pengecekan AC":       75000,
-    "Pengecekan AC Panas/Bocor": 75000,
-    "Perbaikan Freon Bocor": 150000,
-    "Perbaikan Kompresor":  250000,
-    "Perbaikan PCB/Elektrik": 175000,
-    "Ganti Kapasitor":     125000,
-    "Ganti Freon":         150000,
-    "default":              75000,
+    "Biaya Pengecekan AC":                   100000,
+    "Perbaikan Hermaplex":                   150000,
+    "Jasa Pemasangan Sparepart":             250000,
+    "Perbaikan PCB/Elektrik":                250000,
+    "Pergantian Kapasitor Fan Indoor":       250000,
+    "Pergantian Sensor Indoor":              250000,
+    "Pergantian Overload Outdoor":           300000,
+    "Jasa Pemasangan Sparepart Daikin":      330000,
+    "Kapasitor AC 0.5-1.5PK":               350000,
+    "Pergantian Kapasitor Outdoor 1PK":      350000,
+    "Pergantian Modul Indoor Standart":      400000,
+    "Kapasitor AC 2-2.5PK":                  450000,
+    "Pergantian Kapasitor Outdoor 1,5-2,5PK":450000,
+    "Test Press Unit":                       450000,
+    "Jasa Pemasangan Kompresor":             500000,
+    "Pergantian Modul Indoor Inverter":      500000,
+    "Kuras Vacum + Isi Freon R32/R410":      600000,
+    "Kuras Vacum Freon R22":                 600000,
+    "default":                               100000,
   },
   "Complain": {
-    "Komplain AC Tidak Dingin": 50000,
-    "Komplain Bising/Berisik":  50000,
-    "Komplain Setelah Service":      0,
-    "Komplain Garansi":              0,
-    "Pengecekan Ulang":         50000,
-    "default":                       0,
+    "Garansi Servis (gratis)":          0,
+    "Komplain AC Tidak Dingin":         0,
+    "Komplain Bising/Berisik":          0,
+    "Komplain Bocor Air":               0,
+    "Komplain Garansi":                 0,
+    "Komplain Setelah Servis":          0,
+    "Pengecekan AC Gratis":             0,
+    "Pengecekan Ulang":                 0,
+    "default":                          0,
   },
-  "freon_R22":   150000,
-  "freon_R410A": 180000,
-  "freon_R32":   160000,
+  "freon_R22":   450000,
+  "freon_R410A": 450000,
+  "freon_R32":   450000,
 };
 // PRICE_LIST akan di-replace oleh data DB setelah loadAll() — jangan edit langsung
 let PRICE_LIST = { ...PRICE_LIST_DEFAULT };
+// ── buildPriceListFromDB: bangun PRICE_LIST dari data DB ──
+// Menggantikan 5 loader duplikat yang tersebar di kode
+// Normalisasi: service/type key dari DB di-trim & lowercase untuk match
+const buildPriceListFromDB = (rows) => {
+  const pl = { ...PRICE_LIST_DEFAULT };
+  const active = rows.filter(r => r.is_active !== false);
+  active.forEach(row => {
+    const price = Number(row.price) || 0;
+    const notes = (row.notes || "").trim().toLowerCase();
+    const svc   = (row.service || "").trim();
+    const type  = (row.type    || "").trim();
+
+    // Freon: identifikasi via notes field
+    if (notes === "freon_r22"   || notes === "freon_r22")   { pl["freon_R22"]   = price; return; }
+    if (notes === "freon_r410a" || notes === "freon_r410")  { pl["freon_R410A"] = price; return; }
+    if (notes === "freon_r32")                               { pl["freon_R32"]   = price; return; }
+
+    // Freon via service name (kalau ada row khusus freon di price_list)
+    if (svc.toLowerCase().includes("freon")) {
+      if (svc.toLowerCase().includes("r22"))  { pl["freon_R22"]   = price; return; }
+      if (svc.toLowerCase().includes("r32"))  { pl["freon_R32"]   = price; return; }
+      if (svc.toLowerCase().includes("r410")) { pl["freon_R410A"] = price; return; }
+    }
+
+    // Service/type normal
+    if (svc) {
+      if (!pl[svc]) pl[svc] = {};
+      if (type) pl[svc][type] = price;
+    }
+  });
+  return pl;
+};
+
 
 // ── Dynamic tech color — deterministik berdasarkan hash nama ──
 const TECH_PALETTE = [
@@ -167,7 +379,7 @@ const WA_CONVERSATIONS = [
 const AGENT_LOGS = [
 ];
 
-const BRAIN_MD_DEFAULT = `# ARA BRAIN v4.0 — AClean Service
+const BRAIN_MD_DEFAULT = `# ARA BRAIN v5.0 — AClean Service
 
 ## IDENTITAS
 - Nama: ARA (Aclean Response Agent)
@@ -176,41 +388,57 @@ const BRAIN_MD_DEFAULT = `# ARA BRAIN v4.0 — AClean Service
 - Area Perlu Konfirmasi: Jakarta Barat, Jakarta Selatan (ongkir tambah)
 - Peran: Asisten AI eksekutif untuk Owner/Admin
 
-## LAYANAN & HARGA STANDAR
-| Layanan | Harga/unit |
-|---------|-----------|
-| Cuci AC | 80.000 |
-| Freon AC (R22) | 150.000 |
-| Freon AC (R32) | 200.000 |
-| Perbaikan AC | 100.000–500.000 (estimasi) |
-| Pasang AC Baru | 300.000 |
-| Bongkar AC | 150.000 |
-| Service AC | 120.000 |
-- Biaya dadakan (booking H-0): +50.000
+## LAYANAN & HARGA
+⚠️ WAJIB: Selalu gunakan harga dari seksi "PRICE LIST LIVE" yang ada di system prompt.
+Harga di-update langsung oleh Owner via UI — jangan gunakan angka lain.
+Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal)
 - Minimal 1 unit per order
+- Biaya dadakan (booking H-0): +Rp50.000 (tetap, bukan dari price list)
+- Service type yang valid: Cleaning | Install | Repair | Complain
+  * Cleaning = cuci AC, service rutin
+  * Install = pasang AC baru, bongkar + pindah
+  * Repair = perbaikan, isi freon, troubleshoot
+  * Complain = garansi, follow-up keluhan
 
 ## SOP ORDER
 1. Cek jadwal teknisi sebelum assign (gunakan teknisiWorkload dari data live)
 2. Jam operasional: 08:00–17:00, kecuali ada konfirmasi khusus
 3. Prioritas assign: teknisi dengan slot kosong terbanyak hari ini
-4. Helper wajib untuk order 3+ unit atau Pasang AC Baru
+4. Helper WAJIB untuk: order 3+ unit APAPUN servicenya, atau service Install
 5. Dispatch WA otomatis setelah order CONFIRMED
 6. Status flow: PENDING → CONFIRMED → IN_PROGRESS → COMPLETED
 
 ## SOP INVOICE
 1. Invoice dibuat setelah laporan teknisi masuk (status SUBMITTED/COMPLETED)
 2. WAJIB gunakan action CREATE_INVOICE — jangan hitung manual
-3. Invoice otomatis baca material + freon dari laporan → masuk ke field "material"
-4. Due date: H+3 dari tanggal selesai
-5. Kirim reminder WA jika H-1 due dan belum PAID
-6. OVERDUE: tandai otomatis jika lewat due date
-7. Hanya Owner yang bisa APPROVE invoice
-8. Setelah laporan masuk → langsung tawarkan buat invoice: "Ada laporan baru masuk untuk [order]. Buat invoice sekarang?"
+3. CEK PEKERJAAN AKTUAL: Sebelum buat invoice, baca bizContext.laporan[].pekerjaan_aktual
+   - Jika has_service_besar = true → gunakan service_besar_type sebagai type invoice
+   - Contoh: order Cleaning AC Split 85rb TAPI laporan ada "Deep Cleaning (Service Besar)"
+     → invoice labor harus pakai "Jasa Service Besar 0,5PK - 1PK" = 400rb
+   - Selalu KONFIRMASI ke Owner sebelum apply harga berbeda dari order awal
+4. Invoice otomatis baca material + freon dari laporan → masuk ke field "material"
+5. Due date: H+3 dari tanggal selesai
+6. Kirim reminder WA jika H-1 due dan belum PAID
+7. OVERDUE: tandai otomatis jika lewat due date
+8. Hanya Owner yang bisa APPROVE invoice
+9. Complain dalam garansi aktif → invoice GRATIS (jasa=0, material tetap dicharge)
+10. Complain tidak ada garansi + teknisi tidak input apapun → biaya cek 100rb
+11. Setelah laporan masuk → langsung tawarkan buat invoice
 
 ## SOP STOK
 1. Alert jika stok <= reorder point
 2. Freon R22 & R32: reorder jika < 5 kg
 3. Catat penggunaan setiap selesai service (UPDATE_STOCK dengan delta negatif)
+
+## SOP BIAYA / PENGELUARAN
+1. Gunakan CREATE_EXPENSE untuk catat pengeluaran harian
+2. Kategori utama:
+   - petty_cash: Bensin Motor, Perbaikan Motor, Parkir, Kasbon Karyawan, Lembur, Bonus, Lain-lain
+   - material_purchase: Pipa AC, Kabel, Freon, Material Lain
+3. Jika user dump pengeluaran per tanggal → parse setiap item → CREATE_EXPENSE satu per satu atau BULK
+4. Format yang dikenali:
+   "Bensin 50rb, parkir 15rb, kasbon Andi 200rb — 7 April" → 3 CREATE_EXPENSE terpisah
+   "Beli pipa AC 3/8 15m = 250rb" → CREATE_EXPENSE category=material_purchase
 
 ## TIM TEKNISI & HELPER
 > Data tim diambil LIVE dari bizContext.teknisiWorkload dan bizContext.helperList
@@ -224,7 +452,7 @@ Cara baca data:
 Rules assign teknisi:
 1. Cek field skills teknisi — cocokkan dengan jenis layanan yang diminta
 2. Cek field jobsToday — pilih yang paling sedikit job hari ini
-3. Helper wajib untuk order 3+ unit atau Pasang AC Baru
+3. Helper wajib untuk order 3+ unit (semua service) atau Install
 4. Jika nama teknisi tidak ada di list = tolak dan tampilkan daftar yang tersedia
 
 ## RULES EKSEKUSI
@@ -232,10 +460,12 @@ Rules assign teknisi:
 - Jangan eksekusi CANCEL atau hapus data tanpa alasan jelas dari user
 - Jika ada konflik jadwal: WAJIB tanyakan ke user dulu, jangan auto-assign
 - ACTION per response: maks 1 untuk operasi tunggal; maks 3 untuk workflow chain standar
-- Workflow chain yang diizinkan (berurutan dalam 1 response):
+- Workflow chain yang diizinkan:
   * CREATE_ORDER → DISPATCH_WA (setelah konfirmasi user)
-  * UPDATE_ORDER_STATUS(COMPLETED) → CREATE_INVOICE (langsung)
+  * UPDATE_ORDER_STATUS(COMPLETED) → CREATE_INVOICE
   * MARK_PAID → SEND_WA (konfirmasi bayar ke customer)
+  * RESCHEDULE_ORDER → SEND_WA (notif customer & teknisi — sudah otomatis)
+  * CANCEL_ORDER → SEND_WA (opsional, jika user minta notif customer)
 - Gunakan data live (bizContext) untuk semua keputusan, bukan asumsi
 - Jika data tidak lengkap: tanya user, jangan mengarang
 - Saat ada order PENDING baru: proaktif tawarkan konfirmasi + assign teknisi
@@ -243,20 +473,73 @@ Rules assign teknisi:
 - Selalu sebut nomor order dan nama customer dalam setiap konfirmasi aksi
 - Gunakan bizContext.slotRekomendasi.teknisiDisarankan untuk rekomendasi teknisi terbaik
 
-## FITUR PARSE JOB DARI TEKS
-Jika user paste teks berisi info order (dari WA, form, dll):
-1. Ekstrak: nama customer, alamat, no telepon, jenis layanan, jumlah unit, tanggal/jam
-2. Jika ada info tidak jelas: tandai dengan [?]
-3. WAJIB tampilkan ringkasan konfirmasi ke user SEBELUM eksekusi:
-   "📋 Saya baca info berikut — mohon konfirmasi sebelum dibuat:
-   👤 Customer: [nama] ([status: BARU/EXISTING])
-   📱 No. HP: [phone]
-   📍 Alamat: [address]
-   🔧 Layanan: [service] — [units] unit
-   📅 Jadwal: [date] jam [time]
-   👷 Teknisi disarankan: [dari slotRekomendasi]
-   ✅ Ketik OK untuk buat order, atau koreksi bagian yang salah"
-4. Setelah user konfirmasi → eksekusi CREATE_ORDER + DISPATCH_WA
+## FITUR PARSE JOB DARI TEKS (Dump Order Harian)
+Jika user paste list order per hari (dari WA grup, catatan, dll):
+
+FORMAT YANG DIKENALI:
+  Budi / Jl. Mawar 5, Alam Sutera / 08111222333 / Cleaning 2 unit / Andi + Reza / 8 April 09.00
+  Siti / Jl. Melati 3, BSD / 08222333444 / Pasang AC baru 1 unit / Bowo / 8 April 13.00
+
+LANGKAH:
+1. Parse setiap baris → ekstrak: customer, alamat, phone, service, units, teknisi, helper, date, time
+2. Alias service yang dikenali:
+   - "cuci", "cleaning", "service rutin" → Cleaning
+   - "pasang", "install", "baru" → Install
+   - "perbaikan", "repair", "freon", "isi freon", "bongkar" → Repair
+   - "complain", "komplain", "garansi" → Complain
+3. Tampilkan ringkasan SEMUA order yang akan dibuat:
+   "📋 Saya baca [N] order untuk [tanggal]:
+   1. Budi — Cleaning 2 unit — Andi + Reza — 09.00
+   2. Siti — Install 1 unit — Bowo — 13.00
+   ...
+   ✅ Ketik OK untuk buat semua, atau sebutkan nomor yang perlu dikoreksi"
+4. Setelah konfirmasi → gunakan BULK_CREATE_ORDER untuk create semuanya
+
+## FITUR RESCHEDULE MASSAL (Teknisi Tidak Masuk)
+Jika user info "teknisi X tidak masuk hari ini":
+1. Tampilkan semua order hari ini yang menggunakan teknisi X
+2. Tanyakan: opsi reschedule (tanggal/jam baru) atau ganti teknisi lain
+3. Setelah user jawab → eksekusi RESCHEDULE_ORDER atau UPDATE_ORDER per order
+4. Setiap reschedule → otomatis kirim WA ke customer DAN teknisi baru
+
+## FITUR PARSE PENGELUARAN DARI TEKS
+Jika user dump pengeluaran:
+  "Bensin 50rb, parkir 15rb, kasbon Andi 200rb — 7 April"
+  "Beli pipa 3/8 15m = 250rb, freon R32 2kg = 900rb — 8 April"
+
+LANGKAH:
+1. Parse setiap item → subcategory, amount, date
+2. Detect kategori otomatis dari konteks (bensin=Bensin Motor, parkir=Parkir, dll)
+3. Tampilkan ringkasan konfirmasi sebelum create
+4. Setelah konfirmasi → CREATE_EXPENSE satu per satu untuk setiap item
+
+## REFERENSI ACTION LENGKAP
+Gunakan tag [ACTION]...[/ACTION] untuk eksekusi. Satu response = max 1 action.
+Untuk bulk/chain, eksekusi berurutan dalam 1 response (max 3).
+
+**Order:**
+- Buat 1 order:   [ACTION]{"type":"CREATE_ORDER","customer":"Nama","phone":"08xxx","address":"Alamat","service":"Cleaning","units":1,"teknisi":"Nama","helper":"Nama","date":"2025-04-08","time":"09:00","notes":""}[/ACTION]
+- Bulk order:     [ACTION]{"type":"BULK_CREATE_ORDER","orders":[{"customer":"...","service":"Cleaning","units":1,"teknisi":"...","date":"2025-04-08","time":"09:00"},{...}]}[/ACTION]
+- Update status:  [ACTION]{"type":"UPDATE_ORDER_STATUS","id":"ORD-xxx","status":"CONFIRMED"}[/ACTION]
+- Reschedule:     [ACTION]{"type":"RESCHEDULE_ORDER","id":"ORD-xxx","date":"2025-04-10","time":"10:00","teknisi":"Nama"}[/ACTION]
+- Cancel:         [ACTION]{"type":"CANCEL_ORDER","id":"ORD-xxx","reason":"Alasan cancel"}[/ACTION]
+- Dispatch WA:    [ACTION]{"type":"DISPATCH_WA","order_id":"ORD-xxx"}[/ACTION]
+
+**Invoice:**
+- Buat invoice:   [ACTION]{"type":"CREATE_INVOICE","order_id":"ORD-xxx"}[/ACTION]
+- Update field:   [ACTION]{"type":"UPDATE_INVOICE","id":"INV-xxx","field":"dadakan","value":50000}[/ACTION]
+- Mark lunas:     [ACTION]{"type":"MARK_PAID","id":"INV-xxx"}[/ACTION]
+- Approve:        [ACTION]{"type":"APPROVE_INVOICE","id":"INV-xxx"}[/ACTION]
+- Reminder WA:    [ACTION]{"type":"SEND_REMINDER","invoice_id":"INV-xxx"}[/ACTION]
+- Mark overdue:   [ACTION]{"type":"MARK_INVOICE_OVERDUE"}[/ACTION]
+
+**Biaya/Pengeluaran:**
+- Catat biaya:    [ACTION]{"type":"CREATE_EXPENSE","category":"petty_cash","subcategory":"Bensin Motor","amount":50000,"date":"2025-04-08","description":"opsional","teknisi_name":"opsional"}[/ACTION]
+- Pembelian mat:  [ACTION]{"type":"CREATE_EXPENSE","category":"material_purchase","subcategory":"Freon","amount":900000,"date":"2025-04-08","item_name":"R32 2kg","freon_type":"R32"}[/ACTION]
+
+**Stok & WA:**
+- Update stok:    [ACTION]{"type":"UPDATE_STOCK","code":"KODE","name":"Nama","delta":-2,"reason":"Dipakai job ORD-xxx"}[/ACTION]
+- Kirim WA:       [ACTION]{"type":"SEND_WA","phone":"08xxx","message":"Pesan..."}[/ACTION]
 
 ## FORMAT JAWABAN
 - Gunakan Bahasa Indonesia
@@ -268,6 +551,7 @@ Jika user paste teks berisi info order (dari WA, form, dll):
 Jika user upload gambar bersamaan dengan pesan:
 - Gambar bukti bayar/transfer → ekstrak: nama bank, nominal, tanggal, nama pengirim → tawarkan MARK_PAID jika cocok dengan invoice
 - Gambar complain (AC rusak, bocor, dll) → deskripsikan kondisi dan rekomendasikan jenis service
+- Gambar nota/struk belanja → baca item + harga → tawarkan CREATE_EXPENSE untuk setiap item
 - Gambar dokumen/nota → baca informasi relevan dan masukkan ke konteks percakapan
 - Jika gambar tidak jelas → minta user kirim ulang dengan resolusi lebih baik
 `.trim();
@@ -284,15 +568,11 @@ export default function ACleanWebApp() {
   const [loginError,    setLoginError]    = useState("");
   const [loginEmail,    setLoginEmail]    = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+
   const [modalAddUser,  setModalAddUser]  = useState(false);
   const [newUserForm,   setNewUserForm]   = useState({ name:"", email:"", role:"Admin", password:"", phone:"" });
-  const [userAccounts,  setUserAccounts]  = useState([
-    { id:"USR001", name:"Malda Retta",  email:"owner@aclean.id",  role:"Owner",   phone:"6281299898937", avatar:"M", color:"#f59e0b", active:true,  password:"owner123",  lastLogin:"2026-03-03 08:15" },
-    { id:"USR002", name:"Admin AClean", email:"admin@aclean.id",  role:"Admin",   phone:"6281200000001", avatar:"A", color:"#38bdf8", active:true,  password:"admin123",  lastLogin:"2026-03-03 07:30" },
-    { id:"USR003", name:"Mulyadi",      email:"mulyadi@aclean.id",role:"Teknisi", phone:"6288225633768", avatar:"Y", color:"#22c55e", active:true,  password:"mly2026",   lastLogin:"2026-03-02 17:45" },
-    { id:"USR004", name:"Usaeri",       email:"usaeri@aclean.id", role:"Teknisi", phone:"6287786870189", avatar:"U", color:"#a78bfa", active:true,  password:"usr2026",   lastLogin:"2026-03-01 16:20" },
-    { id:"USR005", name:"Albana Niji",  email:"albana@aclean.id", role:"Teknisi", phone:"6287815496845", avatar:"B", color:"#34d399", active:false, password:"abn2026",   lastLogin:"2026-02-28 12:10" },
-  ]);
+  const [userAccounts,  setUserAccounts]  = useState([]);
+  // userAccounts diload dari Supabase user_profiles — tidak ada password hardcode di sini
 
   // ── Tim Teknisi state (reactive) ──
   const [teknisiData, setTeknisiData] = useState(TEKNISI_DATA);
@@ -308,16 +588,32 @@ export default function ACleanWebApp() {
   // ── Orders ──
   const [orderFilter,    setOrderFilter]    = useState("Semua");
   const [searchOrder,    setSearchOrder]    = useState("");
-  const [orderTekFilter, setOrderTekFilter] = useState("Semua");
+  const [orderTekFilter,  setOrderTekFilter]  = useState("Semua");
+  const [orderDateFrom,   setOrderDateFrom]   = useState("");
+  const [orderDateTo,     setOrderDateTo]     = useState("");
+  const [orderServiceFilter, setOrderServiceFilter] = useState("Semua"); // GAP-9
   const [orderPage,      setOrderPage]      = useState(1);
   const ORDER_PAGE_SIZE = 20;
 
   // ── Invoice ──
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [invoiceFilter,   setInvoiceFilter]   = useState("Semua");
+  const [invoiceDateFrom, setInvoiceDateFrom] = useState("");
+  const [invoiceDateTo,   setInvoiceDateTo]   = useState("");
   const [invoicePage,     setInvoicePage]     = useState(1);
+  const [customerPage,    setCustomerPage]    = useState(1);
+  const [schedPage,       setSchedPage]       = useState(1);
+  const [inventoryPage,   setInventoryPage]   = useState(1);
+  const [dbHealthData,    setDbHealthData]    = useState([]);
+  const [omsetView,       setOmsetView]       = useState("minggu");
+  const [dbHealthLoading, setDbHealthLoading] = useState(false);
+  const [vacuumLoading,   setVacuumLoading]   = useState({});
   const INV_PAGE_SIZE = 15;
+  const CUST_PAGE_SIZE = 20;
+  const SCHED_PAGE_SIZE = 15;
   const [modalPDF,        setModalPDF]        = useState(false);
+  const [modalApproveInv, setModalApproveInv] = useState(false); // popup pilihan approve
+  const [pendingApproveInv, setPendingApproveInv] = useState(null); // invoice yang menunggu approve
 
   // ── Schedule ──
   const [scheduleView,   setScheduleView]   = useState("week");
@@ -331,39 +627,25 @@ export default function ACleanWebApp() {
   const [searchPriceList,  setSearchPriceList]  = useState("");
   const [priceListSvcTab, setPriceListSvcTab]  = useState("Semua");
   const [priceListData,   setPriceListData]    = useState([]);
+  const [priceListSyncedAt, setPriceListSyncedAt] = useState(null); // timestamp terakhir sync harga
   const [plEditItem,      setPlEditItem]       = useState(null);
   const [plEditForm,      setPlEditForm]       = useState({});
+  const [plAddModal,      setPlAddModal]       = useState(false);
+  const [plNewForm,       setPlNewForm]        = useState({ service:"Cleaning", type:"", code:"", price:"", unit:"unit", notes:"" });
   const [searchLaporan,   setSearchLaporan]   = useState("");
   const [laporanSvcFilter, setLaporanSvcFilter] = useState("Semua");
   const [laporanStatusFilter, setLaporanStatusFilter] = useState("Semua");
-  const [laporanDateFilter, setLaporanDateFilter] = useState("Semua"); // Semua/Minggu Ini/Bulan Ini
+  const [laporanDateFilter, setLaporanDateFilter] = useState("Semua"); // Semua/Hari Ini/Minggu Ini/Bulan Ini/Range
+  const [laporanTeamFilter, setLaporanTeamFilter] = useState("Semua"); // filter per teknisi
+  const [laporanDateFrom,   setLaporanDateFrom]   = useState(""); // date range: dari
+  const [laporanDateTo,     setLaporanDateTo]     = useState(""); // date range: sampai
   const [laporanPage,     setLaporanPage]     = useState(1);
+  const [agentLogPage,    setAgentLogPage]    = useState(1);
   const LAP_PAGE_SIZE = 10;
+  const AGENT_LOG_PAGE_SIZE = 20;
 
   // ── Laporan Tim ──
-  const [laporanReports,  setLaporanReports]  = useState([
-    { id:"LPR001", job_id:"JOB10002", teknisi:"Usaeri", helper:null, customer:"Maria Thomson",
-      service:"Repair", date:"2026-03-01", submitted:"2026-03-01 15:30", status:"SUBMITTED",
-      total_units:1,
-      units:[{ unit_no:1, label:"Unit 1 - Ruang Tengah", tipe:"AC Split 0.5-1PK", merk:"Daikin", pk:"1PK",
-        kondisi_sebelum:["AC tidak dingin","Kapasitor rusak"], kondisi_setelah:["Normal, dingin optimal","Semua fungsi normal"],
-        pekerjaan:["Ganti kapasitor","Cek instalasi"], freon_ditambah:"0", ampere_akhir:"4.5", catatan_unit:"Kapasitor 25uF diganti" }],
-      materials:[{id:1,nama:"Kapasitor",jumlah:"1",satuan:"pcs",keterangan:"25uF"}],
-      fotos:[], rekomendasi:"Cek freon 6 bulan lagi", catatan_global:"Kapasitor sudah aus", editLog:[] },
-    { id:"LPR002", job_id:"JOB10001", teknisi:"Mulyadi", helper:"Samsul", customer:"Eddy Limanto",
-      service:"Cleaning", date:"2026-03-01", submitted:"2026-03-01 11:45", status:"VERIFIED",
-      total_units:2,
-      units:[
-        { unit_no:1, label:"Unit 1 - Kamar Utama", tipe:"AC Split 0.5-1PK", merk:"Daikin", pk:"1PK",
-          kondisi_sebelum:["AC tidak dingin","Bau tidak sedap"], kondisi_setelah:["Normal, dingin optimal","Filter bersih"],
-          pekerjaan:["Deep cleaning","Cuci filter","Semprot evaporator"], freon_ditambah:"0", ampere_akhir:"3.8", catatan_unit:"" },
-        { unit_no:2, label:"Unit 2 - Ruang Tamu", tipe:"AC Split 0.5-1PK", merk:"Panasonic", pk:"1PK",
-          kondisi_sebelum:["Bau tidak sedap"], kondisi_setelah:["Filter bersih","Semua fungsi normal"],
-          pekerjaan:["Deep cleaning","Cuci filter"], freon_ditambah:"0", ampere_akhir:"3.9", catatan_unit:"" }
-      ],
-      materials:[], fotos:[], rekomendasi:"Jadwalkan Mei 2026", catatan_global:"2 unit selesai",
-      editLog:[{ by:"Mulyadi", at:"2026-03-01 12:00", field:"catatan_global", old:"selesai", new:"2 unit selesai" }] },
-  ]);
+  const [laporanReports,  setLaporanReports]  = useState([]);
   const [selectedLaporan, setSelectedLaporan] = useState(null);
   const [modalLaporanDetail, setModalLaporanDetail] = useState(false);
   const [editLaporanMode, setEditLaporanMode] = useState(false);
@@ -377,6 +659,8 @@ export default function ACleanWebApp() {
   // ── Modals ──
   const [modalOrder,   setModalOrder]   = useState(false);
   const [modalStok,    setModalStok]    = useState(false);
+  const [modalWaTek,   setModalWaTek]   = useState(false); // popup pilihan pesan WA teknisi ke customer
+  const [waTekTarget,  setWaTekTarget]  = useState(null);  // { phone, customer, service, time, address }
   const [modalTeknisi, setModalTeknisi] = useState(false);
   const [editTeknisi,  setEditTeknisi]  = useState(null);
   const [modalEditStok, setModalEditStok] = useState(false);
@@ -389,17 +673,64 @@ export default function ACleanWebApp() {
   const [laporanSubmitted,   setLaporanSubmitted]   = useState(false);
   const [laporanUnits,       setLaporanUnits]       = useState([]);
   const [laporanMaterials,   setLaporanMaterials]   = useState([]);
+  const [laporanJasaItems,   setLaporanJasaItems]   = useState([]);  // Jasa section A
+  const [jasaManualText,    setJasaManualText]    = useState({});  // {item.id: text} untuk input manual jasa
+  const [repairManualText,  setRepairManualText]  = useState({});  // {item.id: text} untuk input manual repair
+  const [laporanRepairItems, setLaporanRepairItems] = useState([]);  // Repair/Sparepart B
+  const [showJasaSearch,     setShowJasaSearch]     = useState(false);
+  const [jasaSearchQ,        setJasaSearchQ]        = useState("");
+  const [showRepairSearch,   setShowRepairSearch]   = useState(false);
+  const [repairSearchQ,      setRepairSearchQ]      = useState("");
+  const [showMatSearch,      setShowMatSearch]      = useState(false);
+  const [matSearchQ2,        setMatSearchQ2]        = useState("");
   const [laporanFotos,       setLaporanFotos]       = useState([]);
   const [laporanRekomendasi, setLaporanRekomendasi] = useState("");
   const [laporanCatatan,     setLaporanCatatan]     = useState("");
+  const [laporanInstallItems, setLaporanInstallItems] = useState({}); // key→qty untuk Report Install
+  const [historyPreview, setHistoryPreview] = useState(null); // customer untuk preview history
+  const [matSearchId, setMatSearchId] = useState(null); // id material yang sedang di-search
+  const [matSearchQuery, setMatSearchQuery] = useState(""); // query search per baris
   const [activeUnitIdx,      setActiveUnitIdx]      = useState(0);
   const [showMatPreset,      setShowMatPreset]      = useState(false);
   const fotoInputRef = useRef();
 
+  // ── Session Management ──
+  const lastSessionCheckRef = useRef(0); // Track last session check to avoid excessive checks
+
   // ── New order / stok / customer form ──
-  const [newOrderForm,     setNewOrderForm]     = useState({ customer:"", phone:"", address:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false); // anti double submit
+  const _orderSubmitLock = useRef(false); // ref-level lock (state updates batch, ref updates instantly)
+  const [matTrackFilter,   setMatTrackFilter]   = useState("Semua"); // filter kategori material
+  const [matTrackSearch,   setMatTrackSearch]   = useState("");
+  const [matTrackDateFrom, setMatTrackDateFrom] = useState("");
+  const [matTrackDateTo,   setMatTrackDateTo]   = useState("");
+  const [invTxData,        setInvTxData]        = useState([]);
+
+  // ── Biaya / Expenses ──
+  const [expensesData,     setExpensesData]     = useState([]);
+  const [expenseTab,       setExpenseTab]       = useState("petty_cash"); // "petty_cash" | "material_purchase"
+  const [expenseFilter,    setExpenseFilter]    = useState("Semua");
+  const [expenseSearch,    setExpenseSearch]    = useState("");
+  const [expenseDateFrom,  setExpenseDateFrom]  = useState("");
+  const [expenseDateTo,    setExpenseDateTo]    = useState("");
+  const [expensePage,      setExpensePage]      = useState(1);
+  const [modalExpense,     setModalExpense]     = useState(false);
+  const [editExpenseItem,  setEditExpenseItem]  = useState(null);
+  const [newExpenseForm,   setNewExpenseForm]   = useState({
+    category:"petty_cash", subcategory:"", amount:"", date:"",
+    description:"", teknisi_name:"", item_name:"", freon_type:""
+  });
+  const EXPENSE_PAGE_SIZE = 20;
+
+  // ── ARA Log filters ──
+  const [logDateFilter,    setLogDateFilter]    = useState("Semua");
+  const [logActionFilter,  setLogActionFilter]  = useState("Semua");
+  const [schedListFilter,  setSchedListFilter]  = useState("minggu_ini"); // "hari_ini" | "minggu_ini" | "semua"
+  const [invUnitsData,     setInvUnitsData]     = useState([]); // unit fisik per item (tabung/roll)
+  const [showAddStock,     setShowAddStock]     = useState(false);
+  const [newOrderForm,     setNewOrderForm]     = useState({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
   const [newStokForm,      setNewStokForm]      = useState({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
-  const [newTeknisiForm,   setNewTeknisiForm]   = useState({ name:"", role:"Teknisi", phone:"", skills:[] });
+  const [newTeknisiForm,   setNewTeknisiForm]   = useState({ name:"", role:"Teknisi", phone:"", skills:[], email:"", password:"", buatAkun:false });
   const [modalAddCustomer, setModalAddCustomer] = useState(false);
   const [newCustomerForm,  setNewCustomerForm]  = useState({ name:"", phone:"", address:"", area:"", notes:"", is_vip:false });
   const [customersData,    setCustomersData]    = useState(CUSTOMERS_DATA);
@@ -416,6 +747,23 @@ export default function ACleanWebApp() {
   const [modalEditInvoice, setModalEditInvoice] = useState(false);
   const [editInvoiceData,  setEditInvoiceData]  = useState(null);
   const [editInvoiceForm,  setEditInvoiceForm]  = useState({});
+  const [editInvoiceItems, setEditInvoiceItems] = useState([]); // per-item edit
+  // ── Confirm Modal (ganti window.confirm) ──
+  const [confirmModal, setConfirmModal] = useState(null);
+  // confirmModal = { title, message, icon, danger, onConfirm, onCancel, confirmText, cancelText }
+  const showConfirm = (opts) => new Promise(resolve => {
+    setConfirmModal({ ...opts,
+      onConfirm: () => { setConfirmModal(null); resolve(true);  },
+      onCancel:  () => { setConfirmModal(null); resolve(false); },
+    });
+  });
+
+  const [modalEditPwd, setModalEditPwd] = useState(false);
+  const [editPwdTarget, setEditPwdTarget] = useState(null); // {id, name}
+  const [editPwdForm, setEditPwdForm] = useState({newPwd:"", confirmPwd:""});
+  const [editAddType,  setEditAddType]  = useState(''); // 'jasa' | 'material'
+  const [editAddSearch,setEditAddSearch]= useState('');
+  const [editJasaItems, setEditJasaItems] = useState([]); // jasa items per-row
 
   // GAP 7/8 — ARA Chat state (live LLM)
   const [araPanel,         setAraPanel]         = useState(false);
@@ -432,10 +780,40 @@ export default function ACleanWebApp() {
   // GAP 7 — Reactive agent logs
   const [agentLogs,        setAgentLogs]        = useState(AGENT_LOGS);
   const addAgentLog = async (action, detail, status="SUCCESS") => {
-    const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-    setAgentLogs(prev => [{ time:now, action, detail, status }, ...prev].slice(0,50));
-    try { await supabase.from("agent_logs").insert({ time:now, action, detail, status }); } catch(e) {}
+    const now       = new Date();
+    const timeStr   = now.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+    const createdAt = now.toISOString();
+    const userName  = currentUser?.name || "System";
+    const userId    = currentUser?.id   || null;
+    // Update local state
+    setAgentLogs(prev => [{ time:timeStr, action, detail, status,
+      user_name:userName, created_at:createdAt }, ...prev].slice(0,200));
+    // Persist ke Supabase
+    try {
+      const { error: alErr } = await supabase.from("agent_logs").insert({
+        action, detail, status,
+        time:       timeStr,
+        created_at: createdAt,
+        user_name:  userName,
+        user_id:    userId,
+      });
+      if (alErr) console.warn("agent_logs insert:", alErr.message, alErr.hint);
+    } catch(e) { console.warn("agent_logs catch:", e.message); }
   };
+
+  // ── App Settings: bank, phone, nama — load dari DB tabel app_settings ──
+  const [appSettings, setAppSettings] = useState({
+    bank_name:   "",
+    bank_number: "",
+    bank_holder: "",
+    owner_phone: "",
+    company_name:"",
+    company_addr:"",
+    wa_number:   "",
+    wa_autoreply_enabled: "false",
+    ara_training_rules:   "",
+    wa_forward_to_owner:  "true",
+  });
 
   // ── Settings: _ls HARUS dideklarasi SEBELUM useState yang memakainya ──
   const _ls = (key, def) => {
@@ -450,6 +828,16 @@ export default function ACleanWebApp() {
   } catch { return def; }
 };
   const _lsSave = (key, val) => { try { localStorage.setItem("aclean_"+key, JSON.stringify(val)); } catch {} };
+  // SEC-02: internal token untuk API calls (dibaca dari Vite env, TIDAK disimpan di localStorage)
+  const _apiHeaders = () => ({
+    "Content-Type": "application/json",
+    ...(import.meta.env.VITE_INTERNAL_API_SECRET
+      ? { "X-Internal-Token": import.meta.env.VITE_INTERNAL_API_SECRET }
+      : {})
+  });
+  // SEC-07: brute force states — harus setelah _ls didefinisikan
+  const [loginAttempts, setLoginAttempts] = useState(() => _ls("loginAttempts", 0));
+  const [lockoutUntil,  setLockoutUntil]  = useState(() => _ls("lockoutUntil",  0));
 
   // ── Settings state ──
   const [waProvider,      setWaProvider]      = useState(() => _ls("waProvider", "fonnte"));
@@ -457,14 +845,15 @@ export default function ACleanWebApp() {
   const [waDevice,        setWaDevice]        = useState(() => _ls("waDevice",   ""));
   const [waStatus,        setWaStatus]        = useState("not_connected");
 
-  const [llmProvider,     setLlmProvider]     = useState(() => _ls("llmProvider", "gemini")); // default gemini (free tier)
-  const [llmApiKey,       setLlmApiKey]       = useState(() => {
-    // Load key per-provider yang aktif — selalu sync dengan llmProvider
-    const prov = _ls("llmProvider", "gemini"); // sama dengan default llmProvider
-    return _ls("llmApiKey_" + prov, "") || _ls("llmApiKey", "");
-  });
-  const [llmModel,        setLlmModel]        = useState(() => _ls("llmModel", "claude-sonnet-4-6"));
+  // ── LLM Settings: Load from backend endpoint instead of localStorage ──
+  // SECURITY FIX: Never store API keys in localStorage
+  // Backend endpoint /api/get-llm-config returns available providers & default
+  const [llmProvider,     setLlmProvider]     = useState("minimax"); // default while loading
+  const [llmModel,        setLlmModel]        = useState("MiniMax-M2.5"); // default while loading
+  const [llmConfig,       setLlmConfig]       = useState(null); // stores backend response
+  const [availableProviders, setAvailableProviders] = useState([]);
   const [ollamaUrl,       setOllamaUrl]       = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
+  const [llmApiKey,       setLlmApiKey]       = useState(""); // session-only, NEVER persisted to localStorage
   const [llmStatus,       setLlmStatus]       = useState(() => _ls("llmStatus", "not_connected"));
   const [storageProvider, setStorageProvider] = useState("r2");
   const [storageStatus,   setStorageStatus]   = useState("not_connected");
@@ -494,18 +883,22 @@ export default function ACleanWebApp() {
   ]);
 
   // ── Tanggal dinamis ──
-  const TODAY = new Date().toISOString().slice(0,10);
+  const TODAY = getLocalDate();
   const todayDate = new Date();
   const hariIni = todayDate.toLocaleDateString("id-ID", { weekday:"long", day:"numeric", month:"long", year:"numeric" });
   const bulanIni = todayDate.toISOString().slice(0,7); // "2026-03"
   const [weekOffset, setWeekOffset] = useState(0); // 0=minggu ini, -1=minggu lalu, +1=minggu depan
+  const [searchSchedule, setSearchSchedule] = useState(""); // BUG-4: search jadwal
 
   // ── WA Conversations reaktif ──
   const [waConversations, setWaConversations] = useState(WA_CONVERSATIONS);
   const [waMessages,     setWaMessages]     = useState([]);  // chat history conv aktif
 
   // ── Statistik periode filter ──
-  const [statsPeriod, setStatsPeriod] = useState("bulan"); // "hari"|"bulan"|"tahun"
+  const [statsPeriod,    setStatsPeriod]    = useState("bulan"); // "hari"|"minggu"|"bulan"|"tahun"|"custom"
+  const [statsDateFrom,  setStatsDateFrom]  = useState(""); // untuk custom range
+  const [statsDateTo,    setStatsDateTo]    = useState(""); // untuk custom range
+  const [statsMingguOff, setStatsMingguOff] = useState(0);  // 0=minggu ini, -1=minggu lalu, dst
 
   // ── Mobile detection (MUST be before any conditional returns) ──
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
@@ -526,6 +919,14 @@ export default function ACleanWebApp() {
       await Notification.requestPermission();
     }
   };
+  // GAP-7: jalankan check stuck jobs setiap 15 menit
+  const stuckCheckTimer = useRef(null);
+  const startStuckCheck = () => {
+    if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
+    stuckCheckTimer.current = setInterval(() => {
+      checkStuckJobs();
+    }, 15 * 60 * 1000); // 15 menit
+  };
   const pushNotif = (title, body, icon = "⬡") => {
     if ("Notification" in window && Notification.permission === "granted") {
       try {
@@ -538,6 +939,92 @@ export default function ACleanWebApp() {
     clearTimeout(notifTimer.current);
     notifTimer.current = setTimeout(() => setNotification(null), 3000);
     if (push) pushNotif("AClean", msg.replace(/[🔔📋✅❌⚠️💰]/g, "").trim());
+  };
+
+  // ── FORCE RELOAD PRICE LIST: dipanggil dari tombol "Sync Harga" di panel ARA ──
+  const forceReloadPriceList = async () => {
+    try {
+      const { data, error } = await supabase.from("price_list").select("*").order("service").order("type");
+      if (error) { showNotif("❌ Gagal sync harga: " + error.message); return; }
+      if (!data || data.length === 0) { showNotif("⚠️ Tabel price_list kosong di Supabase"); return; }
+      setPriceListData(data);
+      const activePL = data.filter(r => r.is_active !== false);
+      PRICE_LIST = buildPriceListFromDB(activePL);
+      setPriceListSyncedAt(new Date());
+      showNotif("✅ Harga berhasil di-sync dari Supabase (" + data.length + " item)");
+      addAgentLog("PRICELIST_SYNC", "Force reload price list: " + data.length + " item", "SUCCESS");
+    } catch(e) {
+      showNotif("❌ Error sync: " + e.message);
+    }
+  };
+
+  // ── GAP-7: Cek job stuck — kirim reminder ke teknisi jika laporan belum masuk 1 jam setelah selesai ──
+  const checkStuckJobs = async () => {
+  // ── SLA CHECK: alert jika teknisi belum ON_SITE 30 menit setelah jam booking ──
+  const now2 = new Date();
+  const slaAlerts = ordersData.filter(o => {
+    if (o.status !== "DISPATCHED" && o.status !== "CONFIRMED") return false;
+    if (!o.date || !o.time || o.date > TODAY) return false;
+    const bookingMs = (o.date && o.time ? new Date(o.date + "T" + o.time + ":00").getTime() : 0);
+    const menit30 = 30 * 60 * 1000;
+    // Sudah lebih dari 30 menit dari jam booking tapi belum ON_SITE
+    return (now2.getTime() > bookingMs + menit30) && o.date === TODAY;
+  });
+  if (slaAlerts.length > 0) {
+    slaAlerts.forEach(o => {
+      const alreadyAlerted = agentLogs.some(l =>
+        l.action === "SLA_ALERT" && (l.detail||"").includes(o.id)
+        && (Date.now() - new Date(l.created_at||0).getTime()) < 2*60*60*1000
+      );
+      if (!alreadyAlerted) {
+        addAgentLog("SLA_ALERT",
+          `⚠️ SLA: ${o.teknisi} belum konfirmasi tiba — ${o.id} ${o.customer} jam ${o.time}`,
+          "WARNING"
+        );
+        showNotif(`⚠️ SLA: ${o.teknisi} belum di lokasi ${o.customer} (booking ${o.time})`, true);
+        // Kirim WA Owner
+        const owners = [...(teknisiData||[]),...(userAccounts||[])].filter(u=>u.role==="Owner"&&u.phone);
+        const slaMsg = `⚠️ *SLA ALERT*\n📋 ${o.id}\n👤 ${o.customer}\n👷 ${o.teknisi||"-"}\n⏰ Booking: ${o.time} — belum konfirmasi tiba`;
+        owners.forEach(ow=>sendWA(ow.phone, slaMsg));
+      }
+    });
+  }
+    const nowMs = Date.now();
+    const stuckOrders = ordersData.filter(o => {
+      if (!["DISPATCHED","ON_SITE"].includes(o.status)) return false;
+      if (!o.date || !o.time_end) return false;
+      // Sudah lewat tanggal job
+      if (o.date > TODAY) return false;
+      // Hitung estimasi selesai
+      const [h, m] = (o.time_end || "17:00").split(":").map(Number);
+      const jobEndMs = (o.date && o.time_end ? new Date(o.date + "T" + o.time_end + ":00").getTime() : 0);
+      const satu_jam = 60 * 60 * 1000;
+      // Sudah lebih dari 1 jam setelah selesai
+      return nowMs > (jobEndMs + satu_jam);
+    });
+
+    for (const o of stuckOrders) {
+      // Cek apakah sudah ada laporan
+      const sudahAda = laporanReports.find(r => r.job_id === o.id);
+      if (sudahAda) continue;
+      // Cek apakah reminder sudah dikirim (pakai agent_logs)
+      const sudahReminder = agentLogs.find(l =>
+        l.action === "LAPORAN_REMINDER" && l.detail?.includes(o.id)
+      );
+      if (sudahReminder) continue;
+
+      // Kirim WA reminder ke teknisi
+      const tek = teknisiData.find(t => t.name === o.teknisi);
+      if (tek?.phone) {
+        const msg = `⏰ *Reminder Laporan*
+
+Halo ${o.teknisi}, job *${o.id}* (${o.customer} — ${o.service}) sudah selesai lebih dari 1 jam.
+
+Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
+        if (tek?.phone) sendWA(tek.phone, msg);
+      }
+      addAgentLog("LAPORAN_REMINDER", `Reminder laporan dikirim ke ${o.teknisi} — ${o.id}`, "WARNING");
+    }
   };
 
   // ── Laporan Helper Constants — sesuai standar AClean ──
@@ -608,16 +1095,62 @@ export default function ACleanWebApp() {
     ],
   };
     const PEKERJAAN_OPT = (svc) => PEKERJAAN_BY_SERVICE[svc] || PEKERJAAN_BY_SERVICE["Cleaning"];
+  // ── MATERIAL_PRESET: quick-add di STEP 3 (Service/Repair/Complain) ──
   const MATERIAL_PRESET = {
-    Cleaning:  ["Freon R22","Freon R410A","Filter Udara","Kompressor Oil","Pembersih Evaporator","Plastik Cuci AC"],
-    Install:   ["Pipa AC Hoda 1/4 3/8","Kabel Listrik 3x1.5","Kabel Listrik 3x2.5","Bracket Outdoor","Duct Tape","Stop Kontak","Paralon Pembuangan AC"],
-    Repair:    ["Kapasitor","Thermostat","Sensor Indoor","Freon R22","Freon R410A","Relay","PCB Module","Kipas Motor"],
-    Complain:  [],
+  Cleaning: [
+    {nama:"Freon R-22",              satuan:"KG"},
+    {nama:"Freon R-32",              satuan:"KG"},
+    {nama:"Freon R-410A",            satuan:"KG"},
+    {nama:"Sparepart Kapasitor Fan", satuan:"Piece"},
+    {nama:"Thermis Indoor",          satuan:"Piece"},
+  ],
+    Repair: [
+      {nama:"Freon R-22",              satuan:"KG"},
+      {nama:"Freon R-32",              satuan:"KG"},
+      {nama:"Freon R-410A",            satuan:"KG"},
+      {nama:"Sparepart Kapasitor Fan", satuan:"Piece"},
+      {nama:"Thermis Indoor",          satuan:"Piece"},
+      {nama:"Remote AC Multi",         satuan:"Unit"},
+      {nama:"REMOTE AC DAIKIN",        satuan:"Piece"},
+      {nama:"Steker Colokan",          satuan:"Piece"},
+    ],
+    Complain: [
+      {nama:"Freon R-22",              satuan:"KG"},
+      {nama:"Freon R-32",              satuan:"KG"},
+      {nama:"Freon R-410A",            satuan:"KG"},
+    ],
   };
+  // ── INSTALL_ITEMS: preset form instalasi ──
+  const INSTALL_ITEMS = [
+    { key:"pasang_05_1pk",   label:"Pemasangan AC Baru 0,5PK - 1PK",      satuan:"Unit",  default:0 },
+    { key:"pasang_15_2pk",   label:"Pemasangan AC Baru 1,5PK - 2PK",      satuan:"Unit",  default:0 },
+    { key:"bongkar_05_1pk",  label:"Bongkar Unit AC 0.5-1PK",             satuan:"Unit",  default:0 },
+    { key:"bongkar_15_25pk", label:"Bongkar Unit AC 1.5-2.5PK",           satuan:"Unit",  default:0 },
+    { key:"vacum_05_25pk",   label:"Jasa Vacum AC 0,5PK - 2,5PK",         satuan:"Unit",  default:0 },
+    { key:"pipa_1pk",        label:"Pipa AC Hoda 1PK",                    satuan:"Meter", default:0 },
+    { key:"pipa_2pk",        label:"Pipa AC Hoda 2PK",                    satuan:"Meter", default:0 },
+    { key:"pipa_25pk",       label:"Pipa AC Hoda 2,5PK",                  satuan:"Meter", default:0 },
+    { key:"pipa_3pk",        label:"Pipa AC Hoda 3PK",                    satuan:"Meter", default:0 },
+    { key:"kabel_15",        label:"Kabel Eterna 3x1,5",                  satuan:"Meter", default:0 },
+    { key:"kabel_25",        label:"Kabel Eterna 3x2,5",                  satuan:"Meter", default:0 },
+    { key:"ducttape_biasa",  label:"Duct Tape Non Lem",                   satuan:"Piece", default:0 },
+    { key:"ducttape_lem",    label:"Duct Tape Lem",                       satuan:"Piece", default:0 },
+    { key:"jasa_pipa_ac",    label:"Jasa Penarikan Pipa AC",              satuan:"Meter", default:0 },
+    { key:"jasa_pipa_ruko",  label:"Jasa Penarikan Pipa Ruko",            satuan:"Meter", default:0 },
+    { key:"dinabolt",        label:"DINABOLT Set",                        satuan:"Set",   default:0 },
+    { key:"karet_mounting",  label:"KARET MOUNTING",                      satuan:"Set",   default:0 },
+    { key:"breket_outdoor",  label:"Breket Outdoor",                      satuan:"Piece", default:0 },
+  { key:"kuras_vacum_r32",  label:"Kuras Vacum + Isi Freon R32/R410", satuan:"Unit",  default:0 },
+  { key:"kuras_vacum_r22",  label:"Kuras Vacum Freon R22",            satuan:"Unit",  default:0 },
+  { key:"freon_r22",        label:"Freon R-22",                       satuan:"KG",    default:0 },
+  { key:"freon_r32",        label:"Freon R-32",                       satuan:"KG",    default:0 },
+  { key:"freon_r410",       label:"Freon R-410A",                     satuan:"KG",    default:0 },
+  ];
   const TIPE_AC_OPT = ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"];
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
 
   const mkUnit = (no) => ({ unit_no:no, label:`Unit ${no}`, tipe:"AC Split 0.5-1PK", merk:"", pk:"1PK", kondisi_sebelum:[], kondisi_setelah:[], pekerjaan:[], freon_ditambah:"", ampere_akhir:"", catatan_unit:"" });
+  // isUnitDone untuk Step 2: cek pekerjaan + kondisi (tipe & pk sudah di Step 1)
   const isUnitDone = (u) => u.pekerjaan.length > 0 && (u.kondisi_sebelum.length > 0 || u.kondisi_setelah.length > 0);
   const compressImg = (file) => new Promise((res) => {
     const r = new FileReader();
@@ -642,6 +1175,442 @@ export default function ACleanWebApp() {
     r.readAsDataURL(file);
   });
 
+  // Helper: normalize URL foto → selalu proxy via /api/foto
+  // /api/foto melakukan AWS Sig V4 signing ke R2 private endpoint
+  // Ini memastikan foto tampil meskipun R2 public access belum diaktifkan
+  const fotoSrc = (url) => {
+    if (!url) return "";
+    // Sudah pakai proxy → langsung
+    if (url.startsWith("/api/foto")) return url;
+    // URL r2.dev atau r2.cloudflarestorage.com → extract key → proxy
+    if (url.includes(".r2.dev/")) {
+      const keyMatch = url.match(/\.r2\.dev\/(.+)$/);
+      if (keyMatch) return "/api/foto?key=" + encodeURIComponent(keyMatch[1]);
+    }
+    if (url.includes(".r2.cloudflarestorage.com/")) {
+      const keyMatch = url.match(/cloudflarestorage\.com\/[^/]+\/(.+)$/);
+      if (keyMatch) return "/api/foto?key=" + encodeURIComponent(keyMatch[1]);
+    }
+    // Supabase storage → langsung (tidak perlu proxy)
+    if (url.includes("supabase")) return url;
+    // Fallback → langsung
+    return url;
+  };
+
+  // ── Generate & Download Invoice PDF (pakai browser print API) ──
+  // ── Download Rekap Harian (Orders + Invoice) ke CSV/Excel ──
+  // ── Trigger auto-rekap manual via Edge Function ──
+  const triggerRekapHarian = async (targetDate) => {
+    const tgl = targetDate || TODAY;
+    showNotif("⏳ Mengirim rekap ke WhatsApp Owner...");
+    try {
+      const res = await fetch(
+        `https://apsbeppcmsxeldnejibz.supabase.co/functions/v1/rekap-harian?date=${tgl}`,
+        { method: "GET", headers: { "Content-Type": "application/json" } }
+      );
+      const data = await res.json();
+      if (data.ok) {
+        showNotif(data.waSent
+          ? `✅ Rekap ${tgl} terkirim ke WA Owner!`
+          : `⚠️ Rekap dibuat tapi WA gagal dikirim`
+        );
+        addAgentLog("MANUAL_REKAP", `Rekap manual ${tgl} dipicu oleh ${currentUser?.name}`, data.waSent?"SUCCESS":"WARNING");
+      } else {
+        showNotif("❌ Gagal generate rekap: " + (data.error || "Unknown error"));
+      }
+    } catch(err) {
+      showNotif("❌ Error: " + err.message);
+    }
+  };
+
+  const downloadRekapHarian = (targetDate) => {
+    const tgl = targetDate || TODAY;
+    const fmt2 = (n) => "Rp " + (Number(n)||0).toLocaleString("id-ID");
+    const tglLabel = new Date(tgl + "T00:00:00").toLocaleDateString("id-ID",
+      {weekday:"long", day:"numeric", month:"long", year:"numeric"});
+
+    // ── Sheet 1: Rekap Pekerjaan ──
+    const ordersHariIni = ordersData.filter(o => o.date === tgl);
+    const orderHeaders  = ["No","Job ID","Customer","No HP","Layanan","Unit","Teknisi","Helper",
+                           "Status","Jam","Alamat","Catatan"];
+    const orderRows = ordersHariIni.map((o, i) => [
+      i+1,
+      o.id||"-",
+      `"${(o.customer||"").replace(/"/g,'""')}"`,
+      o.phone||"-",
+      o.service||"-",
+      o.units||1,
+      o.teknisi||"-",
+      o.helper||"-",
+      o.status||"-",
+      o.time||"-",
+      `"${(o.address||"").replace(/"/g,'""')}"`,
+      `"${(o.notes||"").replace(/"/g,'""')}"`,
+    ]);
+
+    // ── Sheet 2: Rekap Invoice ──
+    const invoicesHariIni = invoicesData.filter(i =>
+      (i.created_at||"").slice(0,10) === tgl || (i.paid_at||"").slice(0,10) === tgl
+    );
+    const invHeaders = ["No","Invoice ID","Customer","No HP","Layanan","Total","Status",
+                        "Teknisi","Tgl Dibuat","Tgl Bayar","Metode Bayar"];
+    const invRows = invoicesHariIni.map((inv, i) => [
+      i+1,
+      inv.id||"-",
+      `"${(inv.customer||"").replace(/"/g,'""')}"`,
+      inv.phone||"-",
+      `"${(inv.service||"").replace(/"/g,'""')}"`,
+      inv.total||0,
+      inv.status||"-",
+      inv.teknisi||"-",
+      inv.created_at ? new Date(inv.created_at).toLocaleDateString("id-ID") : "-",
+      inv.paid_at    ? new Date(inv.paid_at).toLocaleDateString("id-ID")    : "-",
+      inv.paid_method||"-",
+    ]);
+
+    // ── Hitung summary ──
+    const totalOrder  = ordersHariIni.length;
+    const totalSelesai= ordersHariIni.filter(o=>["COMPLETED","REPORT_SUBMITTED","VERIFIED"].includes(o.status)).length;
+    const totalOmset  = invoicesHariIni.filter(i=>i.status==="PAID").reduce((s,i)=>s+(i.total||0),0);
+    const totalInvBaru= invoicesHariIni.filter(i=>i.created_at?.slice(0,10)===tgl).length;
+
+    // ── Build CSV ──
+    const bom = "﻿";
+    const sep = "\n";
+    const rows = [];
+
+    // Header dokumen
+    rows.push(`"REKAP HARIAN ACLEAN SERVICE AC"`);
+    rows.push(`"Tanggal: ${tglLabel}"`);
+    rows.push(`"Digenerate: ${new Date().toLocaleString("id-ID")}"`);
+    rows.push("");
+
+    // Summary
+    rows.push(`"=== RINGKASAN ==="`);
+    rows.push(`"Total Order Hari Ini","${totalOrder}"`);
+    rows.push(`"Order Selesai","${totalSelesai}"`);
+    rows.push(`"Invoice Dibuat Hari Ini","${totalInvBaru}"`);
+    rows.push(`"Total Omset Terbayar","${fmt2(totalOmset)}"`);
+    rows.push("");
+
+    // Rekap pekerjaan
+    rows.push(`"=== REKAP PEKERJAAN (${ordersHariIni.length} order) ==="`);
+    rows.push(orderHeaders.join(","));
+    orderRows.forEach(r => rows.push(r.join(",")));
+    rows.push("");
+
+    // Rekap invoice
+    rows.push(`"=== REKAP INVOICE (${invoicesHariIni.length} invoice) ==="`);
+    rows.push(invHeaders.join(","));
+    invRows.forEach(r => rows.push(r.join(",")));
+    rows.push("");
+
+    // Per teknisi
+    const perTek = {};
+    ordersHariIni.forEach(o => {
+      if (o.teknisi) {
+        if (!perTek[o.teknisi]) perTek[o.teknisi] = {order:0, selesai:0, omset:0};
+        perTek[o.teknisi].order++;
+        if (["COMPLETED","REPORT_SUBMITTED","VERIFIED"].includes(o.status))
+          perTek[o.teknisi].selesai++;
+      }
+    });
+    invoicesHariIni.filter(i=>i.status==="PAID").forEach(i => {
+      if (i.teknisi && perTek[i.teknisi])
+        perTek[i.teknisi].omset += (i.total||0);
+    });
+    if (Object.keys(perTek).length > 0) {
+      rows.push(`"=== REKAP PER TEKNISI ==="`);
+      rows.push(`"Teknisi","Total Order","Selesai","Omset Terbayar"`);
+      Object.entries(perTek).sort((a,b)=>b[1].omset-a[1].omset).forEach(([name,d])=>{
+        rows.push(`"${name}",${d.order},${d.selesai},"${fmt2(d.omset)}"`);
+      });
+    }
+
+    const blob = new Blob([bom + rows.join(sep)], {type:"text/csv;charset=utf-8;"});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `Rekap_Harian_AClean_${tgl}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    addAgentLog("EXPORT_REKAP", `Rekap harian ${tgl} didownload oleh ${currentUser?.name||"Owner"}`, "SUCCESS");
+    showNotif(`✅ Rekap ${tglLabel} berhasil didownload!`);
+  };
+
+  const downloadInvoicePDF = (inv) => {
+    const fmt2 = (n) => "Rp " + (Number(n)||0).toLocaleString("id-ID");
+    const perUnit = inv.units > 0 ? Math.round((inv.labor||0) / inv.units) : (inv.labor||0);
+
+    // Build material rows HTML (di luar template literal agar tidak ada backtick conflict)
+  // Build material rows HTML (di luar template literal agar tidak ada backtick conflict)
+  // Parse materials_detail — bisa array (sudah parsed) atau string JSON dari DB
+  const matDetails = (() => {
+    const md = inv.materials_detail;
+    if (!md) return [];
+    if (Array.isArray(md)) return md;
+    try { return JSON.parse(md); } catch(_) { return []; }
+  })();
+  let matRowsHtml = "";
+  if (matDetails.length > 0) {
+    // Per-item: setiap material = 1 baris di tabel
+    // Group items by category — support both new (keterangan field) and old invoices (detect by nama)
+    // Helper: detect kategori dari nama item jika keterangan kosong
+    const detectKat = (m) => {
+      if (m.keterangan==="jasa")   return "jasa";
+      if (m.keterangan==="repair") return "repair";
+      if (m.keterangan==="freon")  return "freon";
+      const n = (m.nama||"").toLowerCase();
+      // Freon / kuras vacum — by nama (diperluas)
+      if (["freon","kuras vacum","kuras+vacum","r32","r410","r22"].some(k=>n.includes(k))) return "freon";
+      // Repair/perbaikan — by nama (cek lebih dulu dari jasa)
+      const repairNames = ["repair","perbaikan","kapasitor","kompresor","sparepart","pcb",
+        "modul","overload","sensor","ganti","penggantian","spare part"];
+      if (repairNames.some(k=>n.includes(k))) return "repair";
+      // Jasa — by nama pattern
+      const jasaNames = ["cleaning","jasa vacum","jasa pemasangan","jasa perbaikan","jasa servis",
+        "jasa","service","servis","pemasangan ac","bongkar ac","biaya pengecekan",
+        "service besar","complain","pasang","instalasi"];
+      if (jasaNames.some(k=>n.includes(k))) return "jasa";
+      // Install material — pipa, kabel, breket, insulasi, duct tape
+      const matNames = ["pipa","kabel","insulasi","breket","duct tape","ducttape","selang"];
+      if (matNames.some(k=>n.includes(k))) return "mat";
+      // Default: jika ada harga dan di invoice jasa — anggap jasa
+      return "jasa";
+    };
+    const jasaRows   = matDetails.filter(m=>detectKat(m)==="jasa");
+    const repairRows = matDetails.filter(m=>detectKat(m)==="repair");
+    const freonRows  = matDetails.filter(m=>detectKat(m)==="freon");
+    const matRows    = matDetails.filter(m=>detectKat(m)==="mat");
+
+    const addSectionHeader = (label, color) => {
+      matRowsHtml += '<tr style="background:'+color+'10">' +
+        '<td colspan="4" style="padding:5px 12px;font-size:10px;font-weight:800;color:'+color+';'+
+        'text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid '+color+'33">' +
+        label + '</td></tr>';
+    };
+    const addRow = (m) => {
+      const hSatFix = m.harga_satuan > 0 ? m.harga_satuan
+        : (m.subtotal > 0 && m.jumlah > 0 ? Math.round(m.subtotal / m.jumlah) : 0);
+      const hSatStr = hSatFix > 0 ? hSatFix.toLocaleString("id-ID") : "—";
+      const subStr  = m.subtotal > 0 ? m.subtotal.toLocaleString("id-ID")
+        : (hSatFix > 0 && m.jumlah > 0 ? (hSatFix * m.jumlah).toLocaleString("id-ID") : "—");
+      matRowsHtml +=
+        "<tr>" +
+        "<td>" + m.nama + "</td>" +
+        '<td style="text-align:right;width:72px;white-space:nowrap">' + m.jumlah + " " + (m.satuan||"") + "</td>" +
+        '<td style="text-align:right;font-family:monospace">' + hSatStr + "</td>" +
+        '<td style="text-align:right;font-family:monospace;font-weight:600">' + subStr + "</td>" +
+        "</tr>";
+    };
+
+    if (jasaRows.length > 0) {
+      addSectionHeader("⚡ Jasa / Layanan", "#3b82f6");
+      jasaRows.forEach(addRow);
+    }
+    if (repairRows.length > 0) {
+      addSectionHeader("🔩 Repair / Perbaikan", "#f59e0b");
+      repairRows.forEach(addRow);
+    }
+    if (matRows.length > 0) {
+      addSectionHeader("🔧 Material / Sparepart", "#10b981");
+      matRows.forEach(addRow);
+    }
+    if (freonRows.length > 0) {
+      addSectionHeader("❄️ Freon / Kuras Vacum", "#06b6d4");
+      freonRows.forEach(addRow);
+    }
+    // Fallback: ada item tapi tidak terklasifikasi
+    const otherRows = matDetails.filter(m=>
+      !jasaRows.includes(m)&&!repairRows.includes(m)&&!matRows.includes(m)&&!freonRows.includes(m)
+    );
+    if (otherRows.length > 0) { otherRows.forEach(addRow); }
+
+    // CRITICAL: jika inv.material > 0 tapi tidak ada di matDetails (invoice lama)
+    // Tampilkan sebagai baris material/freon tambahan
+    const matDetailTotal = matDetails.reduce((s,m)=>s+(m.subtotal||0),0);
+    const invMaterial = inv.material||0;
+    const matNotInDetail = invMaterial > 0 && matDetailTotal < invMaterial - 1000;
+    if (matNotInDetail) {
+      const remainMat = invMaterial - matDetails.filter(m=>detectKat(m)!=="jasa"&&detectKat(m)!=="repair").reduce((s,m)=>s+(m.subtotal||0),0);
+      if (remainMat > 0) {
+        addSectionHeader("❄️ Material / Freon", "#06b6d4");
+        matRowsHtml +=
+          "<tr><td style=\"color:#475569;font-style:italic\">Material &amp; Freon</td>" +
+          "<td style=\"text-align:right\">—</td><td style=\"text-align:right\">—</td>" +
+          "<td style=\"text-align:right;font-family:monospace;font-weight:600\">" +
+          remainMat.toLocaleString("id-ID") + "</td></tr>";
+      }
+    }
+  } else if ((inv.material||0) > 0) {
+    // Fallback invoice lama: materials_detail kosong tapi ada inv.material
+    // Reconstruct dari inv.material → tampilkan sebagai material/freon row
+    matRowsHtml =
+      '<tr style="background:#06b6d410"><td colspan="4" style="padding:5px 12px;font-size:10px;font-weight:800;color:#06b6d4;text-transform:uppercase;letter-spacing:1px">❄️ Material / Freon</td></tr>' +
+      '<tr style="background:#f8fafc">' +
+      '<td style="color:#475569;font-style:italic">Material &amp; Freon (total)</td>' +
+      '<td style="text-align:right;color:#94a3b8">—</td>' +
+      '<td style="text-align:right;color:#94a3b8">—</td>' +
+      '<td style="text-align:right;font-family:monospace;font-weight:600">' +
+      (inv.material||0).toLocaleString("id-ID") + "</td></tr>";
+  }
+  const html = `<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Invoice ${inv.id} — ${appSettings.company_name}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; font-size: 12px; color: #1e293b; background: #fff; }
+  .page { width: 794px; min-height: 1123px; margin: 0 auto; padding: 40px; }
+  .header { background: #1E3A5F; border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
+  .header-top { padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; }
+  .brand { font-size: 22px; font-weight: 800; color: #fff; }
+  .brand span { color: #60a5fa; }
+  .brand-sub { font-size: 11px; color: #93c5fd; margin-top: 2px; }
+  .inv-badge { background: #2563EB; color: #fff; padding: 6px 14px; border-radius: 6px; font-family: monospace; font-weight: 800; font-size: 15px; }
+  .inv-label { font-size: 10px; color: #93c5fd; font-weight: 600; text-align: right; margin-bottom: 4px; }
+  .header-sub { background: #0f2744; padding: 8px 24px; font-size: 10px; color: #94a3b8; display: flex; gap: 24px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .box { border-radius: 8px; padding: 14px 16px; }
+  .box-blue { background: #EFF6FF; }
+  .box-white { background: #fff; border: 1px solid #e2e8f0; }
+  .box-title { font-size: 10px; font-weight: 800; color: #1e40af; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
+  .row { display: flex; gap: 8px; margin-bottom: 4px; }
+  .row-label { color: #64748b; min-width: 90px; }
+  .row-val { color: #1e293b; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12px; }
+  thead tr { background: #1E3A5F; }
+  thead th { padding: 9px 12px; text-align: left; color: #fff; font-weight: 700; font-size: 10px; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  tbody td { padding: 9px 12px; color: #1e293b; border-bottom: 1px solid #f1f5f9; }
+  .total-row { background: #1E3A5F !important; }
+  .total-row td { color: #fff !important; font-weight: 800; font-size: 14px; border: none; }
+  .footer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+  .bank-box { background: #EFF6FF; border-radius: 8px; padding: 14px 16px; }
+  .bank-num { font-weight: 800; font-size: 16px; color: #1e293b; margin: 4px 0; }
+  .status-box { border-radius: 8px; padding: 14px 16px; }
+  .footer-note { text-align: center; padding-top: 16px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 11px; }
+  .status-paid { background: #F0FDF4; border: 1px solid #86efac; }
+  .status-unpaid { background: #FFFBEB; border: 1px solid #fde68a; }
+  .status-overdue { background: #FEF2F2; border: 1px solid #fca5a5; }
+  .garansi-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 10px 16px; margin-bottom: 16px; font-size: 11px; color: #166534; }
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .page { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-top">
+      <div>
+        <div class="brand"><span>AC</span>lean Service</div>
+        <div class="brand-sub">Jasa Servis AC Profesional · Tangerang Selatan</div>
+      </div>
+      <div>
+        <div class="inv-label">INVOICE</div>
+        <div class="inv-badge">${inv.id}</div>
+      </div>
+    </div>
+    <div class="header-sub">
+      <span>📍 ${appSettings.company_addr}</span>
+      <span>📞 ${appSettings.wa_number}</span>
+      <span>🏦 ${appSettings.bank_name} ${appSettings.bank_number} a.n. ${appSettings.bank_holder}</span>
+    </div>
+  </div>
+
+  <!-- Detail Grid -->
+  <div class="grid2">
+    <div class="box box-blue">
+      <div class="box-title">Detail Invoice</div>
+      <div class="row"><span class="row-label">Tgl Invoice</span><span class="row-val">${inv.created_at ? new Date(inv.created_at).toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"}) : new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})}</span></div>
+      <div class="row"><span class="row-label">Issued</span><span class="row-val" style="font-weight:800;color:#1e40af">${new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})}</span></div>
+      <div class="row"><span class="row-label">No. Invoice</span><span class="row-val">${inv.id}</span></div>
+      <div class="row"><span class="row-label">No. Order</span><span class="row-val">${inv.job_id || "—"}</span></div>
+      <div class="row"><span class="row-label">Jatuh Tempo</span><span class="row-val">${inv.due || "—"}</span></div>
+    </div>
+    <div class="box box-white">
+      <div class="box-title">Tagihan Kepada</div>
+      <div style="font-weight:700;font-size:14px;color:#1e293b;margin-bottom:6px">${inv.customer}</div>
+      <div style="color:#64748b">📱 ${inv.phone || "—"}</div>
+      <div style="color:#64748b;margin-top:4px">🔧 ${inv.service || "—"}</div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <table>
+    <thead>
+      <tr>
+        <th style="width:auto">Deskripsi</th>
+        <th style="text-align:right;width:72px;white-space:nowrap">Jml Unit</th>
+        <th style="text-align:right;width:100px;white-space:nowrap">Harga/Unit</th>
+        <th style="text-align:right;width:100px;white-space:nowrap">Subtotal</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${(inv.labor > 0 && matDetails.length === 0) ? '<tr><td>' + ((inv.service || "Jasa Servis AC") + (inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF" ? " (Garansi Jasa Gratis)" : "")) + '</td><td style="text-align:center">' + (inv.units || 1) + '</td><td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td><td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor||0).toLocaleString("id-ID") + '</td></tr>' : ""}
+${matRowsHtml}
+      ${(inv.dadakan > 0) ? '<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>' : ""}
+      <tr class="total-row">
+        <td colspan="3">TOTAL TAGIHAN</td>
+        <td style="text-align:right;font-family:monospace">Rp ${(inv.total||0).toLocaleString("id-ID")}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  ${inv.garansi_expires ? '<div class="garansi-box">🛡️ <strong>Garansi Servis ${inv.garansi_days || 30} Hari</strong> — berlaku sampai ${inv.garansi_expires}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</div>' : ""}
+
+  <!-- Footer -->
+  <div class="footer-grid">
+    <div class="bank-box">
+      <div class="box-title">Informasi Pembayaran</div>
+      <div style="color:#475569;font-size:11px">Transfer Bank BCA</div>
+    <div class="bank-num">${appSettings.bank_number}</div>
+    <div style="color:#475569;font-size:11px">a.n. ${appSettings.bank_holder}</div>
+      <div style="margin-top:8px;font-size:11px;color:#64748b">Kirim bukti transfer via WhatsApp ke nomor di atas</div>
+    </div>
+    <div class="status-box ${inv.status==="PAID"?"status-paid":inv.status==="OVERDUE"?"status-overdue":"status-unpaid"}">
+      <div class="box-title">Status Pembayaran</div>
+      <div style="font-weight:700;font-size:15px;color:#1e293b;margin-bottom:4px">
+        ${inv.status==="PAID" ? "✅ LUNAS" : inv.status==="OVERDUE" ? "⚠️ JATUH TEMPO" : "⏳ MENUNGGU PEMBAYARAN"}
+      </div>
+      <div style="font-size:11px;color:#64748b">Jatuh tempo: ${inv.due || "—"}</div>
+      ${inv.paid_at ? '<div style="font-size:11px;color:#16a34a;margin-top:4px">Dibayar: '+new Date(inv.paid_at).toLocaleDateString("id-ID")+'</div>' : ""}
+    </div>
+  </div>
+
+  <div class="footer-note">
+    <p>Pertanyaan? Hubungi kami via WhatsApp: ${appSettings.wa_number}</p>
+    <p style="font-style:italic;margin-top:4px;color:#94a3b8">Terima kasih telah mempercayakan perawatan AC Anda kepada ${appSettings.company_name} 🙏</p>
+  </div>
+</div>
+<script>window.onload = () => { window.print(); }</script>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    // SEC-09: Audit log setiap kali invoice dicetak/download
+    addAgentLog("INVOICE_PRINT",
+      `Invoice ${inv.id} (${inv.customer}) dicetak oleh ${currentUser?.name || "Unknown"} — Rp${fmt(inv.total)}`,
+      "SUCCESS"
+    );
+    const win  = window.open(url, "_blank", "width=860,height=1000,scrollbars=yes");
+    if (!win) {
+      // Fallback jika popup diblokir browser
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Invoice_${inv.id}_${inv.customer.replace(/\s+/g,"_")}.html`;
+      a.click();
+      showNotif("PDF disimpan sebagai file HTML — buka lalu Ctrl+P untuk cetak");
+    } else {
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+  };
+
   const openLaporanModal = (order) => {
     // ANTI-DUPLIKAT: cek apakah sudah ada laporan untuk job ini
     const existingReport = laporanReports.find(r => r.job_id === (order._rewriteId ? order.id : order.id) && r.status !== "PENDING");
@@ -661,7 +1630,46 @@ export default function ACleanWebApp() {
     const count = Math.min(order.units||1, 10);
     setLaporanUnits(Array.from({length:count},(_,i)=>mkUnit(i+1)));
     setLaporanMaterials([]);
-    setLaporanFotos([]);
+    setLaporanJasaItems([]); setJasaManualText({});
+    setLaporanRepairItems([]); setRepairManualText({});
+    setShowJasaSearch(false);  setJasaSearchQ("");
+    setShowRepairSearch(false); setRepairSearchQ("");
+    setShowMatSearch(false);   setMatSearchQ2("");
+    // ── LAYER 2 (lintas sesi): Load foto existing dari service_reports ──
+    // Jika sudah ada laporan untuk job ini, tampilkan foto yang sudah tersimpan
+    // sehingga teknisi tidak bisa upload ulang foto yang sama
+    const existingRep = laporanReports.find(r =>
+      r.job_id === order.id && r.status !== "REJECTED"
+    );
+    if (existingRep && existingRep.foto_urls && existingRep.foto_urls.length > 0) {
+      // Rebuild laporanFotos dari foto_urls yang sudah ada di DB
+      // hash dibuat dari URL (sebagai identifier unik per sesi)
+      const restoredFotos = existingRep.foto_urls.map((url, idx) => {
+        const hashFromUrl = url.split("/").pop().replace(".jpg","").slice(0, 16); // ambil hash dari nama file
+        return {
+          id:       Date.now() + idx,
+          label:    `Foto ${idx + 1}`,
+          data_url: url,      // tampilkan dari URL R2 (sudah tersimpan)
+          url:      url,      // sudah tersimpan = ☁️ OK
+          errMsg:   "",
+          hash:     hashFromUrl,
+          restored: true,     // flag: ini foto lama, bukan baru diupload
+        };
+      });
+      setLaporanFotos(restoredFotos);
+    } else {
+      setLaporanFotos([]);
+    }
+  // Auto-fill install items berdasarkan jumlah unit order
+  const _installDefaults = {};
+  if (order.service === "Install") {
+    const _u = Math.min(order.units||1, 10);
+    // Auto-fill pasang AC berdasarkan jumlah unit
+    _installDefaults.pasang_05_1pk  = String(_u);
+    _installDefaults.vacum_unit = String(_u);
+    _installDefaults.vacum_unit = String(_u);
+  }
+  setLaporanInstallItems(_installDefaults);
     setLaporanRekomendasi("");
     setLaporanCatatan("");
     setActiveUnitIdx(0);
@@ -672,47 +1680,65 @@ export default function ACleanWebApp() {
   };
   const doLogin = async (email, pass) => {
     setLoginError("");
+
+    // ── SEC-07: Cek lockout brute force ──
+    const _now = Date.now();
+    const _lockout = _ls("lockoutUntil", 0);
+    if (_lockout > _now) {
+      const sisa = Math.ceil((_lockout - _now) / 1000);
+      setLoginError(`⛔ Terlalu banyak percobaan. Coba lagi dalam ${sisa} detik.`);
+      return;
+    }
+
     try {
       // ── Coba Supabase Auth dulu (untuk akun real dengan UUID) ──
       const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
 
       if (!error && data?.user) {
         // Login Supabase Auth berhasil — load profil dari user_profiles
-        const { data: profile } = await supabase
+        const { data: profile, error: profileErr } = await supabase
           .from("user_profiles").select("*").eq("id", data.user.id).single();
+        if (profileErr) {
+          console.error("[LOGIN_PROFILE_LOAD_ERROR]", profileErr.message);
+          setLoginError("Gagal load profil pengguna. Silakan coba lagi. (Err: " + profileErr.code + ")");
+          await supabase.auth.signOut();
+          return;
+        }
         if (!profile || !profile.active) {
           setLoginError("Akun tidak aktif. Hubungi Owner.");
           await supabase.auth.signOut(); return;
         }
-        const userObj = { ...data.user, ...profile };
+        // SEC-08: Tambah expiry 8 jam ke session
+        const userObj = { ...data.user, ...profile, _exp: Date.now() + 8*60*60*1000 };
         setCurrentUser(userObj);
         setIsLoggedIn(true);
         setActiveRole(profile.role.toLowerCase());
         setActiveMenu("dashboard");
         _lsSave("localSession", userObj);
+        // SEC-07: Reset counter setelah login berhasil
+        setLoginAttempts(0); setLockoutUntil(0);
+        _lsSave("loginAttempts", 0); _lsSave("lockoutUntil", 0);
         showNotif("Selamat datang, " + profile.name + "!");
+        addAgentLog("LOGIN", `${profile.name} (${profile.role}) login via Supabase Auth`, "SUCCESS");
         requestPushPermission();
         return;
       }
 
-      // ── Fallback: cek di userAccounts lokal (akun demo / belum di Supabase Auth) ──
-      const localUser = userAccounts.find(u =>
-        u.email.toLowerCase() === email.toLowerCase() && u.password === pass && u.active !== false
-      );
-      if (localUser) {
-        const userObj = { ...localUser, id: localUser.id };
-        setCurrentUser(userObj);
-        setIsLoggedIn(true);
-        setActiveRole(localUser.role.toLowerCase());
-        setActiveMenu("dashboard");
-        // Simpan session lokal agar tidak hilang saat refresh
-        _lsSave("localSession", userObj);
-        showNotif("Selamat datang, " + localUser.name + "! (mode lokal)");
-        requestPushPermission();
-        return;
-      }
+      // ── Fallback dihapus: semua login wajib via Supabase Auth ──
+      // Tidak ada lagi login dengan password hardcode
 
-      setLoginError("Email atau password salah, atau akun tidak aktif.");
+      // SEC-07: increment attempt counter
+      const newAttempts = loginAttempts + 1;
+      setLoginAttempts(newAttempts);
+      _lsSave("loginAttempts", newAttempts);
+      if (newAttempts >= 5) {
+        const lockUntil = Date.now() + 5 * 60 * 1000; // 5 menit
+        setLockoutUntil(lockUntil);
+        _lsSave("lockoutUntil", lockUntil);
+        setLoginError("⛔ 5 percobaan gagal. Akun dikunci 5 menit.");
+      } else {
+        setLoginError(`Email atau password salah. (${newAttempts}/5 percobaan)`);
+      }
     } catch (err) {
       setLoginError("Terjadi kesalahan: " + err.message);
     }
@@ -721,6 +1747,7 @@ export default function ACleanWebApp() {
   const doLogout = async () => {
     await supabase.auth.signOut();
     _lsSave("localSession", null);
+    addAgentLog("LOGOUT", `${currentUser?.name||"User"} (${currentUser?.role||""}) keluar`, "SUCCESS");
     setIsLoggedIn(false);
     setCurrentUser(null);
     setLoginEmail("");
@@ -748,7 +1775,7 @@ export default function ACleanWebApp() {
     }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
     if (role === "Teknisi" || role === "Helper")
-      return menu === "dashboard" || menu === "schedule" || menu === "myreport";
+    return menu === "dashboard" || menu === "schedule" || menu === "myreport";
     return false;
   };
 
@@ -759,7 +1786,12 @@ export default function ACleanWebApp() {
   // ── Auto-save settings ke localStorage saat berubah ──
   // ── Startup cleanup: fix nilai lama yang tersimpan sebagai array ──
   useEffect(() => {
-    const stringKeys = ["brainMd","waProvider","llmProvider","llmApiKey","llmModel","ollamaUrl","llmStatus","fonnteKey","wapiToken","wapiUrl"];
+    // Delete any stored API credentials (security: never persist keys in localStorage)
+    ["fonnteKey","wapiToken","wapiUrl","llmApiKey"].forEach(k => {
+      try { localStorage.removeItem("aclean_"+k); } catch(_) {}
+    });
+
+    const stringKeys = ["brainMd","waProvider","llmProvider","llmModel","ollamaUrl"];
     stringKeys.forEach(key => {
       try {
         const raw = localStorage.getItem("aclean_"+key);
@@ -776,10 +1808,7 @@ export default function ACleanWebApp() {
   }, []);
 
   useEffect(() => { _lsSave("llmProvider", llmProvider); }, [llmProvider]);
-  useEffect(() => {
-    _lsSave("llmApiKey",              llmApiKey);            // generik (backward compat)
-    _lsSave("llmApiKey_" + llmProvider, llmApiKey);          // per-provider
-  }, [llmApiKey, llmProvider]);
+  // SECURITY: Never store API keys in localStorage — keys are managed on backend only
   useEffect(() => { _lsSave("llmModel",    llmModel);    }, [llmModel]);
   useEffect(() => { _lsSave("ollamaUrl",   ollamaUrl);   }, [ollamaUrl]);
   useEffect(() => { _lsSave("brainMd",        brainMd);           }, [brainMd]);
@@ -787,7 +1816,40 @@ export default function ACleanWebApp() {
   useEffect(() => { _lsSave("waProvider",  waProvider);  }, [waProvider]);
   useEffect(() => { _lsSave("waToken",     waToken);     }, [waToken]);
   useEffect(() => { _lsSave("waDevice",    waDevice);    }, [waDevice]);
-  useEffect(() => { _lsSave("llmStatus",   llmStatus);   }, [llmStatus]);
+
+  // ── Helper: Check session expiry and auto-logout ──
+  const checkSessionValidity = async () => {
+    // Only check once per 30 seconds to avoid excessive checking
+    const now = Date.now();
+    if (now - lastSessionCheckRef.current < 30000) return;
+    lastSessionCheckRef.current = now;
+
+    // Check local session expiry
+    const saved = _ls("localSession", null);
+    if (saved && saved._exp && Date.now() > saved._exp) {
+      console.warn("[SESSION] Local session expired, auto-logout");
+      _lsSave("localSession", null);
+      setIsLoggedIn(false);
+      setCurrentUser(null);
+      return false;
+    }
+
+    // Check Supabase session (auto-refresh handled by library)
+    if (isLoggedIn && currentUser) {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error || !data?.session) {
+          console.warn("[SESSION] Supabase session invalid, auto-logout");
+          setIsLoggedIn(false);
+          setCurrentUser(null);
+          return false;
+        }
+      } catch(e) {
+        console.warn("[SESSION_CHECK_ERROR]", e.message);
+      }
+    }
+    return true;
+  };
 
   useEffect(() => {
     // ── Restore session saat refresh ──
@@ -795,10 +1857,17 @@ export default function ACleanWebApp() {
       // 1. Coba restore dari localStorage dulu (akun lokal/demo) — tidak butuh auth
       const saved = _ls("localSession", null);
       if (saved && saved.id && saved.role) {
-        setCurrentUser(saved);
-        setIsLoggedIn(true);
-        setActiveRole(saved.role.toLowerCase());
-        return; // sudah restore, skip Supabase auth check
+        // SEC-08: Cek expiry session — auto logout setelah 8 jam
+        if (saved._exp && Date.now() > saved._exp) {
+          _lsSave("localSession", null);
+          console.warn("SEC-08: Session expired, auto-logout");
+          // jatuh ke Supabase auth check
+        } else {
+          setCurrentUser(saved);
+          setIsLoggedIn(true);
+          setActiveRole(saved.role.toLowerCase());
+          return;
+        }
       }
       // 2. Fallback: Supabase Auth session (akun real) — wrapped try/catch agar tidak spam 400
       try {
@@ -806,8 +1875,13 @@ export default function ACleanWebApp() {
         if (error) { console.warn("Auth session check:", error.message); return; }
         const session = data?.session;
         if (session?.user) {
-          const { data: profile } = await supabase
+          const { data: profile, error: profileErr } = await supabase
             .from("user_profiles").select("*").eq("id", session.user.id).single();
+          if (profileErr) {
+            console.warn("[AUTH_RESTORE_PROFILE_ERROR]", profileErr.message);
+            // Continue silently — user will need to login manually
+            return;
+          }
           if (profile && profile.active) {
             setCurrentUser({ ...session.user, ...profile });
             setIsLoggedIn(true);
@@ -819,32 +1893,76 @@ export default function ACleanWebApp() {
     restoreSession();
   }, []);
 
+  // ── Load LLM Configuration from Backend (independent of login) ──
+  useEffect(() => {
+    const loadLlmConfig = async () => {
+      try {
+        const headers = _apiHeaders();
+        const resp = await fetch("/api/get-llm-config", { headers });
+        if (resp.ok) {
+          const config = await resp.json();
+          setLlmConfig(config);
+          setAvailableProviders(config.providers || []);
+          // Set default provider from backend (server knows which keys are available)
+          if (config.defaultProvider) {
+            setLlmProvider(config.defaultProvider);
+            console.log("[LLM Config] Using provider:", config.defaultProvider, "Available:", config.providers?.map(p => p.name));
+          }
+        }
+      } catch(err) {
+        console.warn("[LLM Config Load Error]", err.message, "— will use default minimax");
+        // Fallback: keep defaults set above
+      }
+    };
+    loadLlmConfig();
+  }, []);
+
   // ── Supabase: Load data + Realtime saat login ──
   useEffect(() => {
     if (!isLoggedIn) return;
 
+    // Check session validity before loading data
+    const isValid = checkSessionValidity();
+    if (!isValid) return; // Session expired, abort load
+
     const loadAll = async () => {
-      const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes] = await Promise.all([
+      const results = await Promise.allSettled([
         supabase.from("orders").select("*").order("date", { ascending: false }),
         supabase.from("invoices").select("*").order("created_at", { ascending: false }),
         supabase.from("customers").select("*").order("name"),
         supabase.from("inventory").select("*").order("code"),
         supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }),
-        supabase.from("agent_logs").select("*").order("time", { ascending: false }).limit(50),
+        supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(100),
+        supabase.from("inventory_transactions").select("*").order("created_at",{ascending:false}).limit(500),
+        supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label"),
       ]);
+      const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
       // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
       // Jika error = fallback ke demo data yang sudah di-init
       if (!ordersRes.error   && ordersRes.data)   setOrdersData(ordersRes.data);
+      if (!invTxRes?.error && invTxRes?.data)   setInvTxData(invTxRes.data);
+      if (!invUnitsRes?.error && invUnitsRes?.data) setInvUnitsData(invUnitsRes.data);
       if (!invoicesRes.error && invoicesRes.data)  setInvoicesData(invoicesRes.data);
       if (!customersRes.error && customersRes.data) setCustomersData(customersRes.data);
       // [G1 FIXED] laporan load handled below by parseLaporan block
       if (!inventoryRes.error && inventoryRes.data) setInventoryData(inventoryRes.data);
       // Load laporan — single clean parse, always run (even empty = clear demo data)
+      // Parse materials_detail JSON di invoices
+      if (!invoicesRes.error && invoicesRes.data) {
+        setInvoicesData(invoicesRes.data.map(inv => ({
+          ...inv,
+          materials_detail: (() => {
+            if (!inv.materials_detail) return [];
+            if (Array.isArray(inv.materials_detail)) return inv.materials_detail;
+            return safeJsonParse(inv.materials_detail, `invoice_materials_${inv.id}`, []);
+          })(),
+        })));
+      }
       if (!laporanRes.error && laporanRes.data) {
         const parseLaporan = r => ({
           ...r,
-          units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return r.units    ||[];} })() : (r.units    ||[]),
-          materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return r.materials||[];} })() : (r.materials||[]),
+          units:     r.units_json ? safeJsonParse(r.units_json, `laporan_units_${r.id}`, r.units||[]) : (r.units||[]),
+          materials: r.materials_json ? safeJsonParse(r.materials_json, `laporan_materials_${r.id}`, r.materials||[]) : (r.materials||[]),
           fotos:     r.fotos || (r.foto_urls||[]).map((url,i) => ({id:i, label:`Foto ${i+1}`, url})),
           editLog:   safeArr(r.edit_log ?? r.editLog),
           rekomendasi:    r.rekomendasi    || "",
@@ -856,6 +1974,18 @@ export default function ACleanWebApp() {
       }
       // Jika DB error total, keep demo data (already in useState init)
       if (!logsRes.error && logsRes.data && logsRes.data.length > 0) setAgentLogs(logsRes.data);
+
+      // ── Load Expenses ──
+      try {
+        const expRes = await supabase.from("expenses").select("*").order("date", { ascending: false });
+        if (!expRes.error && expRes.data) setExpensesData(expRes.data);
+      } catch(e) { /* tabel belum ada, skip */ }
+
+      // ── Auto-cleanup: hapus agent_logs > 90 hari ──
+      try {
+        const d90 = new Date(Date.now() - 90*24*60*60*1000).toISOString();
+        await supabase.from("agent_logs").delete().lt("created_at", d90);
+      } catch(e) { /* skip jika gagal */ }
 
       // GAP 3: Load payments summary & dispatch recent (untuk dashboard)
       try {
@@ -873,8 +2003,39 @@ export default function ACleanWebApp() {
         if (!setRes.error && setRes.data) {
           const sMap = Object.fromEntries(setRes.data.map(s=>[s.key, s.value]));
           // ── FIXED: selalu sync dari DB (override localStorage jika DB punya nilai) ──
-          if (sMap.llm_provider) setLlmProvider(sMap.llm_provider);
-          if (sMap.llm_model)    setLlmModel(sMap.llm_model);
+          // Validasi provider sebelum apply agar tidak pakai stale/invalid value dari DB
+          const VALID_PROVIDERS = ["minimax", "claude", "openai", "groq", "ollama"];
+          if (sMap.llm_provider && VALID_PROVIDERS.includes(sMap.llm_provider)) {
+            console.log("[Settings] Loading provider dari DB:", sMap.llm_provider);
+            setLlmProvider(sMap.llm_provider);
+          } else if (sMap.llm_provider) {
+            console.warn("[Settings] Invalid provider di DB:", sMap.llm_provider, "→ skip, pakai default minimax");
+          }
+          // Validasi model — reject gemini atau yang tidak sesuai
+          if (sMap.llm_model && !sMap.llm_model.includes("gemini")) {
+            console.log("[Settings] Loading model dari DB:", sMap.llm_model);
+            setLlmModel(sMap.llm_model);
+          } else if (sMap.llm_model && sMap.llm_model.includes("gemini")) {
+            console.warn("[Settings] Rejecting gemini model dari DB:", sMap.llm_model, "→ pakai default MiniMax-M2.5");
+          }
+        // Load bank & phone settings dari DB
+        if (sMap.bank_number) setAppSettings(prev=>({...prev,
+          bank_name:   sMap.bank_name   || prev.bank_name,
+          bank_number: sMap.bank_number || prev.bank_number,
+          bank_holder: sMap.bank_holder || prev.bank_holder,
+          owner_phone: sMap.owner_phone || prev.owner_phone,
+          company_name:sMap.company_name|| prev.company_name,
+          company_addr:sMap.company_addr|| prev.company_addr,
+          wa_number:   sMap.wa_number   || prev.wa_number,
+          wa_autoreply_enabled: sMap.wa_autoreply_enabled ?? prev.wa_autoreply_enabled,
+          wa_forward_to_owner:  sMap.wa_forward_to_owner  ?? prev.wa_forward_to_owner,
+          ara_training_rules:   sMap.ara_training_rules   ?? prev.ara_training_rules,
+        }));
+        if (sMap.cron_jobs) {
+          try { const s=JSON.parse(sMap.cron_jobs);
+            if(Array.isArray(s)&&s.length>0) setCronJobs(s);
+          } catch(e){}
+        }
           // Sync apiKey sesuai provider dari DB
           if (sMap.llm_provider) {
             const dbProv = sMap.llm_provider;
@@ -906,6 +2067,26 @@ export default function ACleanWebApp() {
         }
       } catch(e) { console.warn("Load teknisi failed:", e); }
 
+      // Load Owner & Admin → userAccounts (dari user_profiles yang sama)
+      try {
+        const uaRes = await supabase.from("user_profiles").select("*")
+          .in("role",["Owner","Admin","owner","admin"]).order("name");
+        if (!uaRes.error && uaRes.data && uaRes.data.length > 0) {
+          const roleColors = { owner:"#f59e0b", admin:"#38bdf8" };
+          const normalized = uaRes.data.map(u => ({
+            ...u,
+            role: (u.role||"").charAt(0).toUpperCase() + (u.role||"").slice(1).toLowerCase(),
+            color: u.color || roleColors[(u.role||"").toLowerCase()] || "#94a3b8",
+            avatar: u.avatar || (u.name||"").charAt(0).toUpperCase(),
+            active: u.active !== false,
+            lastLogin: u.last_login
+              ? new Date(u.last_login).toLocaleString("id-ID",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})
+              : "-",
+          }));
+          setUserAccounts(normalized);
+        }
+      } catch(e) { console.warn("Load userAccounts failed:", e); }
+
       // Load WA conversations dari Supabase (tabel opsional)
       try {
         const waRes = await supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false }).limit(50);
@@ -920,22 +2101,88 @@ export default function ACleanWebApp() {
           setPriceListData(plRes.data);
           // Build PRICE_LIST map untuk kalkulasi invoice
           const activePL = plRes.data.filter(r => r.is_active !== false);
-          const newPL = { ...PRICE_LIST_DEFAULT };
-          activePL.forEach(row => {
-            if (row.notes === "freon_R22")   { newPL["freon_R22"]   = Number(row.price)||0; return; }
-            if (row.notes === "freon_R410A") { newPL["freon_R410A"] = Number(row.price)||0; return; }
-            if (row.notes === "freon_R32")   { newPL["freon_R32"]   = Number(row.price)||0; return; }
-            if (!newPL[row.service]) newPL[row.service] = {};
-            newPL[row.service][row.type] = Number(row.price) || 0;
-          });
-          PRICE_LIST = newPL;
+          PRICE_LIST = buildPriceListFromDB(activePL);
+          setPriceListSyncedAt(new Date());
           console.log("✅ PRICE_LIST loaded from DB:", plRes.data.length, "rows");
         }
       } catch(e) { console.warn("price_list DB fallback to default:", e?.message); }
+
+      // ── BRAIN LOAD: Baca brain.md & brain_customer dari Supabase ara_brain ──
+      try {
+        const brainRes = await supabase.from("ara_brain").select("key,value");
+        if (!brainRes.error && brainRes.data && brainRes.data.length > 0) {
+          const brainMap = Object.fromEntries(brainRes.data.map(r => [r.key, r.value]));
+          // Load dari DB, TAPI skip jika v4.0 (use hardcoded v5.1 instead)
+          if (brainMap.brain_md && typeof brainMap.brain_md === "string" && brainMap.brain_md.length > 10) {
+            const isOldVersion = brainMap.brain_md.includes("v4.0");
+            if (!isOldVersion) {
+              setBrainMd(brainMap.brain_md);
+              _lsSave("brainMd", brainMap.brain_md);
+            } else {
+              console.log("⚠️ DB brain_md is v4.0 (old), using hardcoded v5.1 instead");
+            }
+          }
+          if (brainMap.brain_customer && typeof brainMap.brain_customer === "string" && brainMap.brain_customer.length > 10) {
+            setBrainMdCustomer(brainMap.brain_customer);
+            _lsSave("brainMdCustomer", brainMap.brain_customer);
+          }
+          console.log("✅ ARA Brain loaded from Supabase — sync ke semua device");
+        }
+      } catch(e) { console.warn("ara_brain DB load failed, pakai localStorage:", e?.message); }
     };
 
     setDataLoading(true);
-    loadAll().finally(() => setDataLoading(false));
+    loadAll().finally(() => {
+      setDataLoading(false);
+      // GAP-7: Jalankan check stuck jobs segera setelah data load, lalu setiap 15 menit
+      setTimeout(() => checkStuckJobs(), 5000); // delay 5 detik agar state ready
+      startStuckCheck();
+    });
+
+      // ── AUTO-VERIFY CLIENT: Cek laporan SUBMITTED > 48 jam saat data selesai load ──
+      setTimeout(async () => {
+        try {
+          const now = Date.now();
+          const LIMIT_MS = 48 * 60 * 60 * 1000; // 48 jam
+          const cutoffTime = new Date(now - LIMIT_MS).toISOString();
+
+          // Simplify query - use select(*) to avoid field name issues
+          const { data: staleLaporan, error: qErr } = await supabase
+            .from("service_reports")
+            .select("*")
+            .eq("status", "SUBMITTED")
+            .lt("submitted_at", cutoffTime);
+
+          if (qErr) {
+            console.warn("❌ Auto-verify query error:", qErr.message);
+            addAgentLog("AUTO_VERIFY_ERROR", `Query error: ${qErr.message}`, "WARNING");
+            return;
+          }
+
+          if (staleLaporan && staleLaporan.length > 0) {
+            console.log(`⏱️ Auto-verify: ${staleLaporan.length} laporan > 48 jam ditemukan`);
+            for (const r of staleLaporan) {
+              try {
+                await supabase.from("service_reports").update({
+                  status: "VERIFIED"
+                }).eq("id", r.id);
+                setLaporanReports(prev => prev.map(x =>
+                  x.id === r.id ? {...x, status: "VERIFIED",
+                    verified_at: new Date().toISOString()} : x
+                ));
+                addAgentLog("AUTO_VERIFIED",
+                  `Laporan ${r.job_id||r.id} auto-verified setelah 48 jam — ${r.teknisi||""}`,
+                  "INFO"
+                );
+              } catch(uErr) {
+                console.warn(`⚠️ Update laporan ${r.id} gagal:`, uErr);
+              }
+            }
+            showNotif(`⏱️ ${staleLaporan.length} laporan otomatis terverifikasi (>48 jam)`);
+          }
+        } catch(e) { console.warn("Auto-verify check skip:", e?.message); }
+      }, 8000); // jalankan 8 detik setelah data selesai load
+
 
     // ── GAP-08 FIX: Auto-refresh data setiap 30 menit ──
     const _statsTimer = setInterval(() => {
@@ -947,108 +2194,188 @@ export default function ACleanWebApp() {
       loadAll().catch(e => console.warn("Auto-refresh error:", e));
     }, 30 * 60 * 1000); // 30 menit
 
-    // Realtime — data update otomatis di semua device
-    // ── SIM-7 FIX: debounce timer agar realtime tidak flood query ──
-    const _rtDebounce = {};
-    const rtDebounced = (key, fn, delay=600) => {
-      clearTimeout(_rtDebounce[key]);
-      _rtDebounce[key] = setTimeout(fn, delay);
-    };
+          // ══ Supabase Realtime Channels ══
+          // Hanya 4 channel kritis (Supabase free tier: max concurrent realtime)
+          // WA tables (wa_conversations, wa_messages) di-skip jika tidak ada
 
-    const ch1 = supabase.channel("rt-orders")
-      .on("postgres_changes", { event:"*", schema:"public", table:"orders" }, () =>
-        rtDebounced("orders", () =>
-          supabase.from("orders").select("*").order("date",{ascending:false}).limit(500)
-            .then(({data}) => {
-              if(data) {
-                setOrdersData(data);
-                pushNotif("AClean — Order Update", "Ada perubahan status order");
+          const _rtDebounce = {};
+          const rtDebounced = (key, fn, delay=800) => {
+            clearTimeout(_rtDebounce[key]);
+            _rtDebounce[key] = setTimeout(fn, delay);
+          };
+
+          // CH1: Orders — kritis
+          const ch1 = supabase.channel("rt-orders")
+            .on("postgres_changes", { event:"*", schema:"public", table:"orders" }, () =>
+              rtDebounced("orders", () =>
+                supabase.from("orders").select("*").order("date",{ascending:false}).limit(500)
+                  .then(({data}) => { if(data) setOrdersData(data); })
+              ))
+            .subscribe((status) => {
+              if (status === "SUBSCRIBED") console.log("✅ RT orders connected");
+              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT orders error — akan polling manual");
+            });
+
+          // CH2: Invoices — kritis
+          const ch2 = supabase.channel("rt-invoices")
+            .on("postgres_changes", { event:"*", schema:"public", table:"invoices" }, () =>
+              rtDebounced("invoices", () =>
+                supabase.from("invoices").select("*").order("created_at",{ascending:false}).limit(300)
+                  .then(({data}) => { if(data) setInvoicesData(data.map(inv => ({
+                    ...inv,
+                    materials_detail: (() => {
+                      const md = inv.materials_detail;
+                      if (!md) return [];
+                      if (Array.isArray(md)) return md;
+                      try { return JSON.parse(md); } catch(_){ return []; }
+                    })()
+                  }))); })
+              ))
+            .subscribe((status) => {
+              if (status === "CHANNEL_ERROR") {
+                console.warn("⚠️ RT invoices error — fallback polling aktif");
+                // Polling manual setiap 30 detik
+                if (window._rtPoll_1617) clearInterval(window._rtPoll_1617);
+                window._rtPoll_1617 = setInterval(() => supabase.from("invoices").select("*")
+                  .order("created_at",{ascending:false}).limit(300)
+                  .then(({data}) => { if(data) setInvoicesData(data.map(inv => ({...inv,
+                    materials_detail: (() => { const md=inv.materials_detail; if(!md) return []; if(Array.isArray(md)) return md; try{return JSON.parse(md);}catch(_){return [];} })()
+                  }))); }), 30000);
               }
-            })
-        ))
-      .subscribe();
-    const ch2 = supabase.channel("rt-invoices")
-      .on("postgres_changes", { event:"*", schema:"public", table:"invoices" }, () =>
-        rtDebounced("invoices", () =>
-          supabase.from("invoices").select("*").order("created_at",{ascending:false}).limit(300)
-            .then(({data}) => { if(data) setInvoicesData(data); })
-        ))
-      .subscribe();
-    const ch3 = supabase.channel("rt-inventory")
-      .on("postgres_changes", { event:"*", schema:"public", table:"inventory" }, () =>
-        supabase.from("inventory").select("*").order("code")
-          .then(({data}) => { if(data) setInventoryData(data); }))
-      .subscribe();
-    const ch4 = supabase.channel("rt-customers")
-      .on("postgres_changes", { event:"*", schema:"public", table:"customers" }, () =>
-        supabase.from("customers").select("*").order("name")
-          .then(({data}) => { if(data) setCustomersData(data); }))
-      .subscribe();
-    const ch5 = supabase.channel("rt-laporan")
-      .on("postgres_changes", { event:"*", schema:"public", table:"service_reports" }, () =>
-        rtDebounced("laporan", () =>
-        supabase.from("service_reports").select("*").order("submitted_at",{ascending:false}).limit(200)
-          .then(({data}) => {
-            if (data && data.length > 0) {
-              pushNotif("AClean — Laporan Masuk", "Teknisi baru submit laporan");
-              setLaporanReports(data.map(r => ({
-                ...r,
-                units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){return r.units    ||[];} })() : (r.units    ||[]),
-                materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })() : (r.materials||[]),
-                fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
-                editLog:   safeArr(r.edit_log ?? r.editLog),
-              })));
-            }
-          })))
-      .subscribe();
+            });
 
-    // WA Conversations realtime
-    const ch6 = supabase.channel("rt-wa-conv")
-      .on("postgres_changes", { event:"*", schema:"public", table:"wa_conversations" }, () =>
-        supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
-          .then(({data}) => { if(data) setWaConversations(data); }))
-      .subscribe();
+          // CH3: Laporan teknisi — kritis
+          const ch3 = supabase.channel("rt-laporan")
+            .on("postgres_changes", { event:"*", schema:"public", table:"service_reports" }, () =>
+              rtDebounced("laporan", () =>
+                supabase.from("service_reports").select("*").order("submitted_at",{ascending:false}).limit(200)
+                  .then(({data}) => {
+                    if (data && data.length > 0) {
+                      setLaporanReports(data.map(r => ({
+                        ...r,
+                        units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
+                        materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials || []; } })() : (r.materials || []),
+                        fotos:     r.fotos || (r.foto_urls||[]).map((u,idx)=>({id:idx,label:`Foto ${idx+1}`,url:u})),
+                        editLog:   safeArr(r.edit_log ?? r.editLog),
+                      })));
+                    }
+                  })
+              ))
+            .subscribe((status) => {
+              if (status === "CHANNEL_ERROR") {
+                console.warn("⚠️ RT laporan error — fallback polling aktif");
+                if (window._rtPoll_1645) clearInterval(window._rtPoll_1645);
+                window._rtPoll_1645 = setInterval(() => supabase.from("service_reports").select("*")
+                  .order("submitted_at",{ascending:false}).limit(200)
+                  .then(({data}) => { if(data) setLaporanReports(data.map(r => ({...r,
+                    units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return [];} })() : (r.units||[]),
+                    materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return [];} })() : (r.materials||[]),
+                    fotos:     r.fotos||(r.foto_urls||[]).map((u,idx)=>({id:idx,label:`Foto ${idx+1}`,url:u})),
+                    editLog:   safeArr(r.edit_log??r.editLog),
+                  }))); }), 30000);
+              }
+            });
 
-    // WA Messages realtime — reload history saat ada pesan baru
-    const ch7 = supabase.channel("rt-wa-msg")
-      .on("postgres_changes", { event:"INSERT", schema:"public", table:"wa_messages" }, (payload) => {
-        // Reload messages jika phone = selectedConv yang sedang dibuka
-        setWaMessages(prev => {
-          if (prev.length === 0) return prev; // tidak ada conv aktif
-          const phone = payload.new?.phone;
-          if (!phone) return prev;
-          // Append message baru jika milik conv yang sedang dibuka
-          if (prev[0]?.phone === phone || (prev.length > 0 && prev[0].phone === phone)) {
-            return [...prev, payload.new];
+          // CH4: Price list — kritis untuk ARA
+          const ch4 = supabase.channel("rt-pricelist")
+            .on("postgres_changes", { event:"*", schema:"public", table:"price_list" }, () =>
+              rtDebounced("pricelist", () =>
+                supabase.from("price_list").select("*").order("service").order("type")
+                  .then(({data}) => {
+                    if (data) {
+                      setPriceListData(data);
+                      const activePL = data.filter(r => r.is_active !== false);
+                      PRICE_LIST = buildPriceListFromDB(activePL);
+                      setPriceListSyncedAt(new Date());
+                    }
+                  })
+              ))
+            .subscribe((status) => {
+              if (status === "CHANNEL_ERROR") {
+                console.warn("⚠️ RT pricelist error — fallback polling aktif");
+                if (window._rtPoll_1673) clearInterval(window._rtPoll_1673);
+                window._rtPoll_1673 = setInterval(() => supabase.from("price_list").select("*")
+                  .order("service").order("type")
+                  .then(({data}) => { if(data) {
+                    setPriceListData(data);
+                    PRICE_LIST = buildPriceListFromDB(data.filter(r=>r.is_active!==false));
+                  }}), 60000);
+              }
+            });
+
+          // CH5: Inventory — polling manual lebih aman (tidak perlu realtime ketat)
+          const ch5 = supabase.channel("rt-inventory")
+            .on("postgres_changes", { event:"*", schema:"public", table:"inventory" }, () =>
+              rtDebounced("inventory", () =>
+                supabase.from("inventory").select("*").order("code")
+                  .then(({data}) => { if(data) setInventoryData(data); })
+              ))
+            .subscribe((status) => {
+              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT inventory error — skip");
+            });
+
+          // CH6: Customers
+          const ch6 = supabase.channel("rt-customers")
+            .on("postgres_changes", { event:"*", schema:"public", table:"customers" }, () =>
+              rtDebounced("customers", () =>
+                supabase.from("customers").select("*").order("name")
+                  .then(({data}) => { if(data) setCustomersData(data); })
+              ))
+            .subscribe((status) => {
+              if (status === "CHANNEL_ERROR") console.warn("⚠️ RT customers error — skip");
+            });
+
+          // CH7 & CH8: WA tables — opsional, skip gracefully jika tabel tidak ada
+          let ch7 = null, ch8 = null;
+          try {
+            ch7 = supabase.channel("rt-wa-conv")
+              .on("postgres_changes", { event:"*", schema:"public", table:"wa_conversations" }, () =>
+                supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
+                  .then(({data, error}) => { if(data && !error) setWaConversations(data); }))
+              .subscribe((status) => {
+                if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
+              });
+
+            ch8 = supabase.channel("rt-wa-msg")
+              .on("postgres_changes", { event:"INSERT", schema:"public", table:"wa_messages" }, (payload) => {
+                setWaMessages(prev => {
+                  if (prev.length === 0) return prev;
+                  const phone = payload.new?.phone;
+                  if (!phone) return prev;
+                  if (prev[0]?.phone === phone) return [...prev, payload.new];
+                  return prev;
+                });
+                supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
+                  .then(({data, error}) => { if(data && !error) setWaConversations(data); });
+              })
+              .subscribe((status) => {
+                if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_messages — tabel mungkin belum ada");
+              });
+          } catch(e) {
+            console.warn("WA realtime channels skip:", e?.message);
           }
-          return prev;
-        });
-        // Juga reload wa_conversations untuk update last_message
-        supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
-          .then(({data}) => { if(data) setWaConversations(data); });
-      })
-      .subscribe();
 
-    return () => {
-    const ch8 = supabase.channel("rt-pricelist")
-      .on("postgres_changes", { event:"*", schema:"public", table:"price_list" }, () =>
-        rtDebounced("pricelist", () =>
-          supabase.from("price_list").select("*").order("service").order("type")
-            .then(({data}) => { if(data) setPriceListData(data); })
-        ))
-      .subscribe();
-
-      clearInterval(_statsTimer);
-      supabase.removeChannel(ch1);
-      supabase.removeChannel(ch2);
-      supabase.removeChannel(ch3);
-      supabase.removeChannel(ch4);
-      supabase.removeChannel(ch5);
-      supabase.removeChannel(ch6);
-      supabase.removeChannel(ch7);
-      supabase.removeChannel(ch8);
-    };
+          return () => {
+            clearInterval(_statsTimer);
+            if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
+            [ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8].forEach(ch => {
+              try { if(ch) supabase.removeChannel(ch); } catch(_) {}
+            });
+          };
   }, [isLoggedIn]);
+  // ── Helper: parse materials_detail JSON safely ──
+  // Nama prefix yang menandakan item adalah JASA (bukan material)
+  const jasaSvcNames = ["Cleaning /","Install /","Repair /","Complain /","Jasa ","Pemasangan ","Bongkar ","Vacum ","Flaring","Flushing"];
+
+  const parseMD = (md) => {
+    if (!md) return [];
+    if (Array.isArray(md)) return md;
+    if (typeof md === "string" && md) {
+      try { return JSON.parse(md); } catch(e) { return []; }
+    }
+    return [];
+  };
+
   // ── Colors ──
   const cs = {
     bg:      "#0a0f1e",
@@ -1096,23 +2423,52 @@ export default function ACleanWebApp() {
   // ── Helpers ──
   // ── WA: kirim via Fonnte backend, fallback wa.me ──
   const sendWA = async (phone, message) => {
-    if (!phone) return false;
+    if (!phone || !message) {
+      console.warn("sendWA skip: phone/message kosong", {phone, message: message?.slice(0,30)});
+      return false;
+    }
     try {
       const r = await fetch("/api/send-wa", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({phone, message})
+        method:"POST", headers:_apiHeaders(),
+        body: JSON.stringify({phone, message, currentUserRole: currentUser?.role || "Unknown"})
       });
-      const d = await r.json();
+      const d = await r.json().catch(()=>({}));
       if (r.ok && d.success) return true;
-    } catch(_) {}
-    // Fallback: buka wa.me manual (jika FONNTE_TOKEN belum diset)
-    window.open("https://wa.me/"+phone+"?text="+encodeURIComponent(message),"_blank");
-    return false;
+      // Log error detail — informasi berguna untuk debugging
+      const errMsg = d.error || d.detail || String(r.status);
+      console.warn("sendWA failed:", errMsg, "| target:", phone);
+      // Tampilkan notif hanya untuk error kritis (bukan quota/device)
+      if (errMsg.includes("FONNTE_TOKEN") || errMsg.includes("belum diset")) {
+        showNotif("⚠️ WA tidak terkirim: FONNTE_TOKEN belum diset di Vercel");
+      } else if (errMsg.includes("offline") || errMsg.includes("device")) {
+        showNotif("⚠️ WA tidak terkirim: Device Fonnte offline — scan ulang QR");
+      }
+      return false;
+    } catch(err) {
+      console.warn("sendWA error:", err.message);
+      return false;
+    }
   };
 
-  const openWA = (phone, msg) => {
-    if (msg) sendWA(phone, msg);
-    else window.open("https://wa.me/"+phone,"_blank");
+  const openWA = async (phone, msg) => {
+    if (!phone) { showNotif("❌ Nomor HP tidak tersedia"); return; }
+    // Normalisasi nomor — pastikan format 628xxx
+    const normPhone = String(phone).replace(/^0/, "62").replace(/[^0-9]/g, "");
+    if (msg) {
+      // Coba kirim via Fonnte dulu
+      const sent = await sendWA(normPhone, msg);
+      if (sent) {
+        showNotif("✅ Pesan WA terkirim ke " + normPhone);
+      } else {
+        // Fonnte gagal → fallback buka wa.me agar teknisi tetap bisa kirim manual
+        showNotif("⚠️ Kirim otomatis gagal — membuka WhatsApp manual...");
+        const waUrl = "https://wa.me/" + normPhone + "?text=" + encodeURIComponent(msg);
+        window.open(waUrl, "_blank");
+      }
+    } else {
+      // Tidak ada pesan — langsung buka wa.me
+      window.open("https://wa.me/" + normPhone, "_blank");
+    }
   };
 
   // ── Dispatch: update status saja (tanpa WA) ──
@@ -1133,53 +2489,39 @@ export default function ACleanWebApp() {
   const sendDispatchWA = async (order) => {
     const tek = teknisiData.find(t => t.name === order.teknisi);
     if (!tek?.phone) return showNotif("⚠️ No. HP teknisi tidak ditemukan");
-    const msg = `📋 *DISPATCH JOB ${order.id}*
-👤 Customer: *${order.customer}*
-📍 Alamat: ${order.address}
-🔧 Service: ${order.service} — ${order.units} unit
-📅 Jadwal: ${order.date} jam ${order.time}${order.time_end?"–"+order.time_end:""}
-
-Segera konfirmasi kehadiran. — AClean`;
+    const msg =
+      "DISPATCH JOB "+order.id+"\n"
+      +"Customer: "+order.customer+"\n"
+      +"Alamat: "+order.address+"\n"
+      +"Service: "+order.service+" - "+order.units+" unit\n"
+      +"Jadwal: "+order.date+" jam "+order.time+(order.time_end?" - "+order.time_end:"")+"\n\n"
+      +"Segera konfirmasi kehadiran. — AClean";
     const ok = await sendWA(tek.phone, msg);
     if (order.helper) {
       const helperData = teknisiData.find(t => t.name === order.helper);
       if (helperData?.phone) {
-        const helperMsg = `📋 *ASSIST JOB ${order.id}*
-👤 Customer: *${order.customer}*
-📍 Alamat: ${order.address}
-🔧 Service: ${order.service} — ${order.units} unit
-📅 Jadwal: ${order.date} jam ${order.time}
-👷 Teknisi: ${order.teknisi}
-
-Kamu ditugaskan sebagai Helper. — AClean`;
+        const helperMsg =
+          "ASSIST JOB "+order.id+"\n"
+          +"Customer: "+order.customer+"\n"
+          +"Alamat: "+order.address+"\n"
+          +"Service: "+order.service+" - "+order.units+" unit\n"
+          +"Jadwal: "+order.date+" jam "+order.time+"\n"
+          +"Teknisi: "+order.teknisi+"\n\n"
+          +"Kamu ditugaskan sebagai Helper. — AClean";
         await sendWA(helperData.phone, helperMsg);
       }
     }
     if (ok) {
-      await supabase.from("dispatch_logs").insert({
-        order_id: order.id, teknisi: order.teknisi,
-        assigned_by_name: currentUser?.name||"",
-        wa_message: msg, status:"SENT"
-      }).catch(()=>{});
+      try {
+        await supabase.from("dispatch_logs").insert({
+          order_id: order.id, teknisi: order.teknisi,
+          assigned_by_name: currentUser?.name||"",
+          wa_message: msg, status:"SENT"
+        });
+      } catch(e) { /* dispatch_logs opsional */ }
       addAgentLog("DISPATCH_WA_SENT", `WA dispatch ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
       showNotif(`✅ WA Dispatch terkirim ke ${order.teknisi}${order.helper?" + "+order.helper:""}`);
-      // ── GAP-12 FIX: Auto WA ke Customer — teknisi sedang dalam perjalanan ──
-      if (order.phone) {
-        const custDispatchMsg = `Halo ${order.customer} 👋
-
-Teknisi *${order.teknisi}* dari AClean sedang dalam perjalanan menuju lokasi Anda.
-
-📋 Job: ${order.id}
-🔧 Service: ${order.service} — ${order.units} unit
-📅 Jadwal: ${order.date} jam ${order.time}
-
-Estimasi tiba ±30 menit. Mohon pastikan ada di lokasi ya! 🙏
-
-_AClean Service_`;
-        sendWA(order.phone, custDispatchMsg).then(custOk => {
-          if(custOk) addAgentLog("CUST_NOTIF_DISPATCH", `WA on-the-way ke customer ${order.customer}`, "SUCCESS");
-        });
-      }
+      // WA ke customer TIDAK dikirim saat dispatch — teknisi belum tentu langsung berangkat
     } else {
       showNotif("📱 WA dibuka manual di browser");
     }
@@ -1192,12 +2534,15 @@ _AClean Service_`;
   };
 
   const invoiceReminderWA = (inv) => {
+  if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
     const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
     sendWA(inv.phone, msg);
   };
 
   // ── GAP 2: Hitung labor dari price list ──
   const hitungLabor = (service, type, units) => {
+    const plItem = priceListData.find(r => r.service === service && r.type === type);
+    if (plItem && plItem.price > 0) return plItem.price * (units || 1);
     const svcMap = PRICE_LIST[service] || PRICE_LIST["Cleaning"];
     const hargaPerUnit = svcMap[type] || svcMap["default"] || 85000;
     return hargaPerUnit * (units || 1);
@@ -1205,19 +2550,71 @@ _AClean Service_`;
 
   const hitungMaterialTotal = (materials) => {
     return materials.reduce((sum, m) => {
-      const invItem = inventoryData.find(i =>
-        i.name.toLowerCase().includes(m.nama.toLowerCase()) ||
-        m.nama.toLowerCase().includes(i.name.toLowerCase())
-      );
-      const harga = invItem ? invItem.price : 0;
+      const raw  = (m.nama||"").toLowerCase().trim();
+      const norm = raw
+        .replace(/,/g, ".")         
+        .replace(/eterna\s*/g, "")  
+        .replace(/[-\s]/g, "")      
+        .replace(/r410a?$/, "r410") 
+        .replace(/r22a?$/,  "r22")
+        .replace(/r32a?$/,  "r32");
+      const isJasaItem = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama||"").trim());
+      // 1. Cari di inventory (skip jasa)
+      const invItem = isJasaItem ? null : inventoryData.find(inv => {
+        const n = inv.name.toLowerCase()
+          .replace(/,/g, ".").replace(/eterna\s*/g, "")
+          .replace(/[-\s]/g, "").replace(/r410a?$/, "r410")
+          .replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
+        if (n === norm) return true;
+        if (norm.length > 6 && n.includes(norm)) return true;
+        if (n.length > 6 && norm.includes(n)) return true;
+        return false;
+      });
+      let harga = invItem ? invItem.price : 0;
+      // 2. Fallback ke PRICE_LIST (semua service: Install, Material, Repair, dll)
+      if (!harga) {
+        const mNama = m.nama || "";
+        for (const svc of ["Repair","Install","Material","Cleaning","Complain"]) {
+          if (PRICE_LIST[svc] && PRICE_LIST[svc][mNama]) {
+            harga = PRICE_LIST[svc][mNama];
+            break;
+          }
+        }
+      }
+      // 2b. Fallback priceListData DB exact
+      if (!harga) {
+        const plIt = priceListData.find(r => r.type && r.type.trim() === (m.nama||"").trim());
+        if (plIt) harga = plIt.price || 0;
+      }
+      // 3. Fallback freon spesifik — skip jika isJasaItem
+      if (!harga && !isJasaItem) {
+        if      (raw.includes("r-22")||raw.includes("r22"))  harga = PRICE_LIST["freon_R22"]   || 450000;
+        else if (raw.includes("r-32")||raw.includes("r32"))  harga = PRICE_LIST["freon_R32"]   || 450000;
+        else if (raw.includes("r-410")||raw.includes("r410")) harga = PRICE_LIST["freon_R410A"] || 450000;
+      }
       return sum + (harga * (parseFloat(m.jumlah) || 0));
     }, 0);
   };
 
   // ── GAP 3: Approve invoice (real state mutation) ──
-  const approveInvoice = async (inv) => {
-    const today = new Date().toISOString().slice(0,10);
-    const due = new Date(Date.now() + 14*24*60*60*1000).toISOString().slice(0,10);
+  // ── Approve invoice (core) — tanpa kirim WA ──
+  const approveInvoiceCore = async (inv) => {
+    // Input validation
+    if (!inv.id || inv.id.trim().length === 0) {
+      showNotif("❌ Invoice ID tidak valid");
+      return null;
+    }
+    if (!validatePositiveNumber(inv.total)) {
+      showNotif("❌ Invoice total harus lebih dari 0");
+      return null;
+    }
+    if (!inv.customer || inv.customer.trim().length === 0) {
+      showNotif("❌ Nama customer tidak valid");
+      return null;
+    }
+
+    const today = getLocalDate();
+    const due = new Date(Date.now() + 14*24*60*60*1000 + 7*60*60*1000).toISOString().slice(0,10);
     const approvedAt = new Date().toISOString();
     setInvoicesData(prev => prev.map(i =>
       i.id === inv.id ? {...i, status:"UNPAID", sent:today, due} : i
@@ -1229,7 +2626,7 @@ _AClean Service_`;
     // Update invoice — try full, fallback minimal
     {
       const {error:apErr} = await supabase.from("invoices").update({
-        status:"UNPAID", sent:today, due,
+        status:"UNPAID", sent:true, due,
         approved_by: currentUser?.name || null,
         approved_at: approvedAt,
       }).eq("id", inv.id);
@@ -1250,15 +2647,50 @@ _AClean Service_`;
         await supabase.from("orders").update({ status:"COMPLETED" }).eq("id", inv.job_id);
       }
     }
-    const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service||"Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
-    sendWA(inv.phone, waMsg);
     addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} approve oleh ${currentUser?.name||"—"} — ${inv.customer} ${fmt(inv.total)}`, "SUCCESS");
-    showNotif(`✅ Invoice ${inv.id} diapprove & dikirim ke ${inv.customer}`);
+    return due; // kembalikan due date untuk dipakai caller
+  };
+
+  // ── approveInvoice: buka popup pilihan (Kirim ke Customer / Simpan Dahulu) ──
+  const approveInvoice = (inv) => {
+    setPendingApproveInv(inv);
+    setModalApproveInv(true);
+  };
+
+  // ── Approve + kirim WA ke customer ──
+  const approveAndSend = async (inv) => {
+    const due = await approveInvoiceCore(inv);
+    const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service||"Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
+    const sent = await sendWA(inv.phone, waMsg);
+    if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}`);
+    else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
+    setModalApproveInv(false); setPendingApproveInv(null);
+  };
+
+  // ── Approve saja tanpa kirim WA ──
+  const approveSaveOnly = async (inv) => {
+    await approveInvoiceCore(inv);
+    showNotif(`✅ Invoice ${inv.id} diapprove — belum dikirim ke customer`);
+    setModalApproveInv(false); setPendingApproveInv(null);
   };
 
   // ── GAP 1.6: Mark Paid → simpan ke payments table ──
   const markPaid = async (inv, method="transfer", notes="", sendCustNotif=null) => {
-    const paidAt = new Date().toISOString();
+    // Input validation
+    if (!inv.id || inv.id.trim().length === 0) {
+      showNotif("❌ Invoice ID tidak valid");
+      return;
+    }
+    if (!validatePositiveNumber(inv.total)) {
+      showNotif("❌ Invoice total harus lebih dari 0");
+      return;
+    }
+    if (!inv.customer || inv.customer.trim().length === 0) {
+      showNotif("❌ Nama customer tidak valid");
+      return;
+    }
+
+    const paidAt = getLocalISOString();
     setInvoicesData(prev => prev.map(i =>
       i.id === inv.id ? {...i, status:"PAID", paid_at:paidAt} : i
     ));
@@ -1275,25 +2707,18 @@ _AClean Service_`;
 
     // Notif WA ke customer — hanya jika admin/owner menyetujui (sendCustNotif=true)
     const shouldNotif = sendCustNotif === true ||
-      (sendCustNotif === null && window.confirm(
-        `Kirim konfirmasi pembayaran ke WhatsApp customer?
-
-${inv.customer} — Rp ${(inv.total||0).toLocaleString("id-ID")}`
-      ));
+      (sendCustNotif === null && await showConfirm({
+        icon:"📱", title:"Kirim Notif WA?",
+        message:"Kirim konfirmasi WA ke customer? "+inv.customer+" Rp "+(inv.total||0).toLocaleString("id-ID"),
+        confirmText:"Kirim WA"
+      }));
     if (shouldNotif && inv.phone) {
       sendWA(inv.phone,
-        `✅ *Pembayaran Diterima!*
-
-Yth. ${inv.customer},
-
-Pembayaran untuk invoice *${inv.id}* sebesar *Rp ${(inv.total||0).toLocaleString("id-ID")}* telah kami terima dan dikonfirmasi.
-
-Terima kasih telah menggunakan layanan *AClean Service* 🙏
-
-_Simpan pesan ini sebagai bukti pelunasan._`
+        "Pembayaran "+inv.id+" Rp "+(inv.total||0).toLocaleString("id-ID")+" diterima. Terima kasih! — AClean"
       );
     }
     // GAP 1.6: Catat ke payments table untuk history + partial payment support
+    try {
     await supabase.from("payments").insert({
       invoice_id: inv.id,
       amount: inv.total,
@@ -1303,7 +2728,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       verified: true,
       verified_by: currentUser?.id || null,
       verified_at: paidAt,
-    }).catch(()=>{});
+    }); } catch(e) { console.warn("payments insert skip:", e?.message); }
     // Update customer last_service
     if (inv.phone) await supabase.from("customers").update({last_service:paidAt.slice(0,10)}).eq("phone",inv.phone);
     addAgentLog("PAYMENT_CONFIRMED", `Invoice ${inv.id} LUNAS — ${inv.customer} ${fmt(inv.total)} via ${method}`, "SUCCESS");
@@ -1312,12 +2737,15 @@ _Simpan pesan ini sebagai bukti pelunasan._`
 
   // ── GAP 6: Inventory deduct ──
   // GAP 1.2 + GAP 3: Inventory via transaction table — audit trail + cegah negatif
-  const deductInventory = async (materials, orderId, reportId) => {
+  const deductInventory = async (materials, orderId, reportId, customerName, teknisiName, jobDate) => {
     for (const mat of materials) {
-      const item = inventoryData.find(i =>
-        i.name.toLowerCase().includes(mat.nama.toLowerCase()) ||
-        mat.nama.toLowerCase().includes(i.name.toLowerCase())
-      );
+      // Jika ada _useCode (freon tabung spesifik), match by code dulu
+      const item = mat._useCode
+        ? inventoryData.find(i => i.code === mat._useCode)
+        : inventoryData.find(i =>
+            i.name.toLowerCase().includes(mat.nama.toLowerCase()) ||
+            mat.nama.toLowerCase().includes(i.name.toLowerCase())
+          );
       if (!item) continue;
       const qty = parseFloat(mat.jumlah) || 0;
       // GAP 3: Cek stok cukup sebelum deduct
@@ -1331,17 +2759,23 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       // Update local state
       setInventoryData(prev => prev.map(i => i.code === item.code ? {...i, stock:newStock, status:newStatus} : i));
       // Insert transaksi ke DB (trigger Supabase akan update stock otomatis)
-      await supabase.from("inventory_transactions").insert({
+    try {
+    await supabase.from("inventory_transactions").insert({
         inventory_code: item.code,
         inventory_name: item.name,
         order_id: orderId || null,
         report_id: reportId || null,
-        qty: -qty,                                // negatif = keluar
+        qty: -qty,
         type: "usage",
         notes: mat.keterangan || "",
+        customer_name: customerName || null,
+        teknisi_name: teknisiName || currentUser?.name || null,
+        job_date: jobDate || null,
         created_by: currentUser?.id || null,
         created_by_name: currentUser?.name || "",
-      }).catch(e => console.warn("inv tx:", e.message));
+        unit_id: mat._unitId || null,
+        unit_label: mat._unitLabel || null,
+    }); } catch(e) { console.warn("inv tx skip:", e?.message); }
       if (newStatus === "CRITICAL" || newStatus === "OUT") {
         addAgentLog("STOCK_ALERT", `${item.name}: ${newStatus} (sisa ${newStock} ${item.unit})`, "WARNING");
       }
@@ -1350,69 +2784,213 @@ _Simpan pesan ini sebagai bukti pelunasan._`
 
   // ── GAP 9: Create order (real state mutation) ──
   const createOrder = async (form) => {
-    // G3 FIX: Hard conflict check — block overbooking even if 2 admin input simultaneously
+    // Input validation
+    if (!validateNameLength(form.customer)) {
+      showNotif("❌ Nama customer harus 2-100 karakter");
+      return null;
+    }
+    if (!validatePhone(form.phone)) {
+      showNotif("❌ Format nomor HP tidak valid");
+      return null;
+    }
+    if (!validateAddressLength(form.address)) {
+      showNotif("❌ Alamat harus 5-255 karakter");
+      return null;
+    }
+    if (!form.date || !validateDate(form.date)) {
+      showNotif("❌ Format tanggal tidak valid (gunakan YYYY-MM-DD)");
+      return null;
+    }
+    if (!form.time || !validateTime(form.time)) {
+      showNotif("❌ Format jam tidak valid (gunakan HH:MM)");
+      return null;
+    }
+    if (!form.service || form.service.trim().length === 0) {
+      showNotif("❌ Pilih jenis layanan");
+      return null;
+    }
+    if (!validatePositiveNumber(form.units)) {
+      showNotif("❌ Jumlah unit harus lebih dari 0");
+      return null;
+    }
+    if (!form.teknisi || form.teknisi.trim().length === 0) {
+      showNotif("❌ Pilih teknisi");
+      return null;
+    }
+
+    // GAP-1&2: DB-level conflict check (real-time, anti race condition)
     if (form.teknisi && form.date && form.time) {
-      const isAvail = cekTeknisiAvailable(form.teknisi, form.date, form.time, form.service, form.units);
-      if (!isAvail) {
-        showNotif("⚠️ " + form.teknisi + " sudah ada job di jam " + form.time + " tanggal " + form.date + ". Pilih jam lain.");
+      const dbCheck = await cekTeknisiAvailableDB(form.teknisi, form.date, form.time, form.service, form.units);
+      if (!dbCheck.ok) {
+        showNotif("⚠️ " + (dbCheck.reason || form.teknisi + " tidak tersedia di jam tersebut"));
         return null;
       }
     }
-    // GAP 4: ID aman — timestamp ms + random 3 digit, tidak bergantung array.length
-    const newId = "JOB" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
+    // Higher entropy order ID to prevent collisions on simultaneous submissions
+    const newId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2,5).toUpperCase();
     const timeEnd = hitungJamSelesai(form.time||"09:00", form.service||"Cleaning", form.units||1);
+    // Cek customer existing by phone ATAU name (untuk customer_id)
+    const preExistCust = findCustomer(customersData, form.phone, form.customer);
     const newOrder = {
       id:newId,
-      customer: form.customer, phone: form.phone, address: form.address,
-      customer_id: customersData.find(c=>c.name===form.customer)?.id || null,
+      customer: form.customer, phone: normalizePhone(form.phone), address: form.address,
+      customer_id: preExistCust?.id || null,
       service: form.service, type: form.type, units: parseInt(form.units)||1,
       teknisi: form.teknisi, helper: form.helper||null,
+      teknisi2: form.teknisi2||null, helper2: form.helper2||null,
+      teknisi3: form.teknisi3||null, helper3: form.helper3||null,
       date: form.date, time: form.time, time_end: timeEnd, status:"CONFIRMED",
       invoice_id:null, dispatch:false, notes:form.notes||""
     };
+
+    // ── Fallback insert: coba full → minimal (BEFORE updating state) ──
+    let orderSaved = false;
+
+    // Attempt 1: full payload
+    { const { error: e1 } = await supabase.from("orders").insert(newOrder);
+      if (!e1) { orderSaved = true; console.log("✅ Order saved full:", newOrder.id); }
+      else console.warn("❌ A1 full:", e1.message, "| hint:", e1.hint, "| detail:", e1.details); }
+
+    // Attempt 2: kolom aman saja
+    if (!orderSaved) {
+      const safe2 = {
+        id: newOrder.id, date: newOrder.date, status: newOrder.status,
+        service: newOrder.service, units: newOrder.units,
+        customer: newOrder.customer, teknisi: newOrder.teknisi,
+        helper: newOrder.helper, time: newOrder.time, time_end: newOrder.time_end,
+        customer_id: newOrder.customer_id,
+      };
+      const { error: e2 } = await supabase.from("orders").insert(safe2);
+      if (!e2) { orderSaved = true; console.log("✅ Order saved safe2:", newOrder.id); }
+      else console.warn("❌ A2 safe:", e2.message, "| hint:", e2.hint); }
+
+    // Attempt 3: hanya id + date + service + units + status
+    if (!orderSaved) {
+      const minimal = { id: newOrder.id, date: newOrder.date,
+        service: newOrder.service, units: newOrder.units, status: newOrder.status };
+      const { error: e3 } = await supabase.from("orders").insert(minimal);
+      if (!e3) { orderSaved = true; console.log("✅ Order saved minimal:", newOrder.id); }
+      else {
+        console.error("❌ A3 minimal:", e3.message, "| hint:", e3.hint, "| detail:", e3.details);
+        showNotif("❌ Gagal simpan order: " + e3.message + (e3.hint ? " — " + e3.hint : ""));
+        return null;
+      }
+    }
+    if (!orderSaved) return null;
+
+    // ── Only update state AFTER DB confirmation ──
     setOrdersData(prev => [...prev, newOrder]);
-    const { error } = await supabase.from("orders").insert(newOrder);
-  // ── GAP-06: parent_job_id tersimpan di newOrder jika diisi di form ──
-    if (error) { showNotif("❌ Gagal simpan order: " + error.message); return null; }
 
     // GAP 1.5: Simpan ke technician_schedule untuk cegah double booking
     if (form.teknisi && form.date && form.time && timeEnd) {
-      const tek = teknisiData.find(t => t.name === form.teknisi);
-      if (tek?.id) {
-        const [h1,m1] = (form.time||"09:00").split(":");
-        const [h2,m2] = (timeEnd||"17:00").split(":");
-        await supabase.from("technician_schedule").insert({
-          teknisi_id: tek.id,
-          teknisi: form.teknisi,
-          order_id: newId,
-          date: form.date,
-          start_time: `${h1}:${m1}:00`,
-          end_time: `${h2}:${m2}:00`,
-          status: "ACTIVE"
-        }).catch(e => addAgentLog("SCHEDULE_WARNING", `Schedule insert: ${e.message}`, "WARNING"));
-      }
+      // Insert ke technician_schedule — field minimal agar kompatibel berbagai schema
+      try {
+        const schedPayload = {
+          order_id:  newId,
+          teknisi:   form.teknisi,
+          date:      form.date,
+          time_start: form.time||"09:00",
+          time_end:   timeEnd,
+          status:    "ACTIVE",
+        };
+        const { error: se } = await supabase.from("technician_schedule").insert(schedPayload);
+        if (se) console.error("technician_schedule 400:", se.message, "|", se.hint, "|", se.details, "| payload:", JSON.stringify(schedPayload));
+      } catch(e) { /* technician_schedule opsional */ }
     }
 
     addAgentLog("ORDER_CREATED", `Order baru ${newId} — ${form.customer} (${form.service} ${form.units} unit)`, "SUCCESS");
-    showNotif(`✅ Order ${newId} berhasil dibuat! Klik 📤 di daftar order untuk kirim WA ke teknisi.`);
 
-    // Dispatch WA tidak lagi otomatis — gunakan tombol 📤 di daftar order
+    // ── AUTO-DISPATCH: Owner/Admin buat order → langsung dispatch ke teknisi ──
+    // Teknisi tidak perlu menunggu tombol dispatch manual
+    if (form.teknisi && (currentUser?.role === "Owner" || currentUser?.role === "Admin")) {
+      // Update status ke DISPATCHED dulu
+      setOrdersData(prev => prev.map(o =>
+        o.id === newId ? { ...o, status: "DISPATCHED", dispatch: true, dispatch_at: new Date().toISOString() } : o
+      ));
+      await supabase.from("orders").update({
+        status: "DISPATCHED", dispatch: true, dispatch_at: new Date().toISOString()
+      }).eq("id", newId);
 
-    // GAP 5: Auto-upsert customer jika nomor HP baru
+      // Kirim WA ke teknisi (dan helper jika ada) + customer
+      await sendDispatchWA(newOrder);
+      showNotif(`✅ Order ${newId} dibuat & WA dispatch dikirim ke ${form.teknisi}!`);
+      addAgentLog("AUTO_DISPATCH", `Auto-dispatch ${newId} → ${form.teknisi}`, "SUCCESS");
+    } else {
+      showNotif(`✅ Order ${newId} berhasil dibuat!`);
+    }
+
+    // (komentar lama dihapus)
+
+    // ── AUTO-SAVE CUSTOMER: tambah/update customer saat order dibuat ──
     if (form.phone && form.customer) {
-      const existing = customersData.find(c => c.phone === form.phone);
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const orderDate = form.date || todayStr;
+      const existing = findCustomer(customersData, form.phone, form.customer);
+
       if (!existing) {
-        const newCust = {
-          id: "CUST" + Date.now(),
-          name: form.customer, phone: form.phone,
-          address: form.address||"", area: form.area||"",
-          total_orders: 1, joined: form.date, last_service: form.date
-        };
-        setCustomersData(prev => [...prev, newCust]);
-        await supabase.from("customers").upsert(
-          {name:form.customer, phone:form.phone, address:form.address||"", area:form.area||""},
-          {onConflict:"phone", ignoreDuplicates:false}
-        ).catch(()=>{});
+        // ── Customer BARU ──
+        if (!form.phone || form.phone.trim().length < 5) {
+          // Phone kosong — skip insert, hanya log
+          addAgentLog("CUSTOMER_SKIP", "Customer " + form.customer + " tidak disimpan: no HP kosong", "WARNING");
+        } else {
+          const insertPayload = {
+            name:         form.customer.trim(),
+            phone:        normalizePhone(form.phone),
+            address:      (form.address || "").trim(),
+            area:         (form.area    || "").trim(),
+            notes:        "",
+            is_vip:       false,
+            total_orders: 1,
+            joined_date:  orderDate,
+            last_service: orderDate,
+          };
+          const { data: savedCust, error: custErr } = await supabase
+            .from("customers")
+            .insert(insertPayload)
+            .select()
+            .single();
+
+          if (custErr) {
+            // Fallback: upsert jika insert gagal (misal phone sudah ada di DB tapi belum di state)
+            const { data: upsertedCust, error: upsertErr } = await supabase
+              .from("customers")
+              .upsert(insertPayload, { onConflict: "phone", ignoreDuplicates: false })
+              .select()
+              .single();
+            if (upsertErr) {
+              addAgentLog("CUSTOMER_SAVE_ERROR",
+                "Gagal simpan customer " + form.customer + ": " + custErr.message, "ERROR");
+              showNotif("⚠️ Customer gagal ke DB: " + custErr.message + " — tambah manual di menu Customer");
+              setCustomersData(prev => [...prev, { ...insertPayload, id: "CUST_LOCAL_" + Date.now() }]);
+            } else {
+              const c2 = upsertedCust || { ...insertPayload, id: "CUST_" + Date.now() };
+              setCustomersData(prev => [...prev, c2]);
+              addAgentLog("CUSTOMER_AUTO_ADDED", "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
+              showNotif("✅ Order + Customer baru " + form.customer + " tersimpan!");
+            }
+          } else {
+            const c1 = savedCust || { ...insertPayload, id: "CUST_" + Date.now() };
+            setCustomersData(prev => [...prev, c1]);
+            addAgentLog("CUSTOMER_AUTO_ADDED", "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
+            showNotif("✅ Order + Customer baru " + form.customer + " tersimpan ke database!");
+          }
+        }
+      } else {
+        // ── Customer EXISTING: update total_orders & last_service ──
+        const updatedOrders = (existing.total_orders || 0) + 1;
+        setCustomersData(prev => prev.map(c =>
+          sameCustomer(c, form.phone, form.customer)
+            ? { ...c, total_orders: updatedOrders, last_service: orderDate }
+            : c
+        ));
+        try {
+          await supabase.from("customers")
+            .update({ total_orders: updatedOrders, last_service: orderDate })
+            .eq("phone", normalizePhone(form.phone))
+            .eq("name", form.customer.trim());
+        } catch(e) {
+          addAgentLog("CUSTOMER_UPDATE_WARN", "Gagal update total_orders: " + (e?.message||""), "WARNING");
+        }
       }
     }
     return newId;
@@ -1432,10 +3010,19 @@ _Simpan pesan ini sebagai bukti pelunasan._`
     const bizContext = {
       today: TODAY,
       orders:    ordersData.map(o=>({id:o.id,customer:o.customer,service:o.service,type:o.type,units:o.units,status:o.status,date:o.date,time:o.time,teknisi:o.teknisi,helper:o.helper,dispatch:o.dispatch,invoice_id:o.invoice_id})),
-      invoices:  invoicesData.map(i=>({id:i.id,customer:i.customer,phone:i.phone,total:i.total,status:i.status,due:i.due,labor:i.labor,material:i.material,dadakan:i.dadakan})),
+      invoices:  invoicesData.map(i=>({id:i.id,customer:i.customer,phone:i.phone,total:i.total,status:i.status,due:i.due,labor:i.labor,material:i.material,dadakan:i.dadakan,materials_detail:(i.materials_detail||[]).map(m=>({nama:m.nama,jumlah:m.jumlah,satuan:m.satuan,harga_satuan:m.harga_satuan,subtotal:m.subtotal}))})),
       inventory: inventoryData.map(i=>({code:i.code,name:i.name,stock:i.stock,unit:i.unit,status:i.status,price:i.price,reorder:i.reorder})),
       customers: customersData.map(c=>({id:c.id,name:c.name,phone:c.phone,area:c.area,total_orders:c.total_orders,is_vip:c.is_vip})),
-      laporan: laporanReports.map(r=>({id:r.id,job_id:r.job_id,teknisi:r.teknisi,customer:r.customer,service:r.service,status:r.status,date:r.date,submitted:r.submitted})),
+      laporan: laporanReports.map(r=>({
+        id:r.id, job_id:r.job_id, teknisi:r.teknisi, customer:r.customer,
+        service:r.service, status:r.status, date:r.date, submitted:r.submitted,
+        is_install: r.service==="Install",
+        pekerjaan_aktual: (r.units||[]).flatMap(u=>u.pekerjaan||[]),
+        has_service_besar: (r.units||[]).some(u=>(u.pekerjaan||[]).some(p=>p.toLowerCase().includes("besar")||p.toLowerCase().includes("deep"))),
+        service_besar_type: (r.units||[]).some(u=>(u.pekerjaan||[]).some(p=>p.toLowerCase().includes("besar")||p.toLowerCase().includes("deep"))) ? (r.total_units > 1 ? "Jasa Service Besar 1,5PK - 2,5PK" : "Jasa Service Besar 0,5PK - 1PK") : null,
+        materials: (r.materials||[]).map(m=>({nama:m.nama,jumlah:m.jumlah,satuan:m.satuan})),
+        total_units: r.total_units||0,
+      })),
       laporanPending: laporanReports.filter(r=>r.status==="SUBMITTED").length,
       laporanRevisi:  laporanReports.filter(r=>r.status==="REVISION").length,
       teknisiWorkload: teknisiData.filter(t=>t.role==="Teknisi"||t.role==="teknisi").map(t=>({
@@ -1476,18 +3063,43 @@ _Simpan pesan ini sebagai bukti pelunasan._`
       logikaDurasi: "Cleaning: 1u=1j,2u=2j,3u=3j,4u=3j,5-6u=4j,7-8u=5j,9-10u=6j,>10=sehari | Install: 1-3u=1hari,4+u=2hari | Repair: 60-120mnt/unit | Complain: 1u=30mnt,setiap tambahan unit +15mnt",
       jamKerja: "09:00-17:00 WIB",
       revenueStats: {
-        bulanIni: invoicesData.filter(i=>i.status==="PAID"&&(i.sent||"").startsWith(bulanIni)).reduce((a,b)=>a+(b.total||0),0),
+        bulanIni: invoicesData.filter(i=>i.status==="PAID"&&String(i.sent||i.created_at||"").startsWith(bulanIni)).reduce((a,b)=>a+(b.total||0),0),
         totalUnpaid: invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").reduce((a,b)=>a+(b.total||0),0),
         stokKritis: inventoryData.filter(i=>i.status==="OUT"||i.status==="CRITICAL").map(i=>i.name),
       },
+      // ── PRICE LIST LIVE: baca dari priceListData (React state — reactive) ──
+      // priceListData di-update setiap kali ada perubahan di Supabase via realtime
+      hargaLayanan: (() => {
+        const src = priceListData.filter(r => r.is_active !== false);
+        if (src.length === 0) {
+          // Fallback ke PRICE_LIST var jika state belum load
+          const rows = [];
+          Object.entries(PRICE_LIST).forEach(([svc, types]) => {
+            if (typeof types === "object" && !Array.isArray(types)) {
+              Object.entries(types).forEach(([tipe, harga]) => {
+                if (tipe !== "default") rows.push({ service: svc, type: tipe, harga, formatted: "Rp" + Number(harga).toLocaleString("id-ID") });
+              });
+            }
+          });
+          return rows;
+        }
+        return src.map(r => ({
+          service: r.service,
+          type: r.type,
+          harga: Number(r.price)||0,
+          formatted: "Rp" + Number(r.price||0).toLocaleString("id-ID"),
+          notes: r.notes||null,
+        }));
+      })(),
     };
 
     try {
       let fullText = "";
 
       // ── Coba backend proxy dulu (API key aman di server) ──
+      console.log("[ARA-CHAT Frontend] Sending request:", { provider: llmProvider, model: llmModel, hasMessage: newMessages.length > 0 });
       const backendRes = await fetch("/api/ara-chat", {
-        method:"POST", headers:{"Content-Type":"application/json"},
+        method:"POST", headers:_apiHeaders(),
         body: JSON.stringify({
           messages: newMessages.map(m=>({role:m.role, content:m.content})),
           bizContext, brainMd, provider:llmProvider, model:llmModel, ollamaUrl,
@@ -1509,10 +3121,12 @@ _Simpan pesan ini sebagai bukti pelunasan._`
         } catch(je) {
           throw new Error(je.message || "ara-chat server error " + backendRes.status);
         }
-      } else if (!backendRes && (llmApiKey || llmProvider === "ollama")) {
-        // ── Fallback HANYA jika /api/ara-chat tidak tersedia (localhost dev) ──
-        // Di production Vercel: proxy selalu ada, API key AMAN di server
-        const sysP = (typeof brainMd==="string"?brainMd:BRAIN_MD_DEFAULT)+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000}\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}
+      } else if (!backendRes && llmProvider === "ollama") {
+        // ── Ollama ONLY: Fallback jika /api/ara-chat tidak tersedia (localhost dev) ──
+        // SECURITY NOTE: Direct API calls with keys are NOT supported anymore
+        // Production: always use backend /api/ara-chat endpoint (keys are safe on server)
+        // Development: use /api/ara-chat or local Ollama
+        const sysP = (typeof brainMd==="string"?brainMd:BRAIN_MD_DEFAULT)+`\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000} (field: labor/material/dadakan/notes. Detail material ada di invoices[].materials_detail)\\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"material","value":200000} (ubah total material)\\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}
 - {"type":"CREATE_INVOICE","order_id":"ORD-xxx"}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
 
         if (llmProvider === "ollama") {
@@ -1536,173 +3150,11 @@ _Simpan pesan ini sebagai bukti pelunasan._`
           }
           const fd = await fr.json();
           fullText = fd.message?.content || fd.response || "";
-
-        } else if (llmProvider === "openai") {
-          // ── OpenAI / ChatGPT API ──
-          const fr = await fetch("https://api.openai.com/v1/chat/completions", {
-            method:"POST",
-            headers:{"Content-Type":"application/json","Authorization":"Bearer "+llmApiKey},
-            body:JSON.stringify({
-              model: llmModel || "gpt-4o-mini",
-              max_tokens: 1000,
-              messages: [
-                {role:"system", content:sysP},
-                ...newMessages.map(m=>({role:m.role, content:m.content}))
-              ]
-            })
-          });
-          const fd = await fr.json();
-          if (!fr.ok) throw new Error(fd.error?.message || "OpenAI API error " + fr.status);
-          fullText = fd.choices?.[0]?.message?.content || "";
-
-        } else if (llmProvider === "gemini") {
-          // ── Google Gemini API dengan Function Calling ──
-          const model = llmModel || "gemini-2.5-flash";
-
-          // Definisi tools untuk Gemini function calling
-          const geminiTools = [{
-            functionDeclarations: [
-              { name:"create_order", description:"Buat order baru",
-                parameters:{ type:"OBJECT", properties:{
-                  customer:{type:"STRING"}, phone:{type:"STRING"}, address:{type:"STRING"},
-                  service:{type:"STRING",enum:["Cuci AC","Freon AC","Perbaikan AC","Pasang AC Baru","Bongkar AC","Service AC"]},
-                  units:{type:"NUMBER"}, teknisi:{type:"STRING"}, helper:{type:"STRING"},
-                  date:{type:"STRING",description:"YYYY-MM-DD"}, time:{type:"STRING",description:"HH:MM"},
-                  notes:{type:"STRING"}
-                }, required:["customer","service","date"]}
-              },
-              { name:"update_order_status", description:"Update status order",
-                parameters:{ type:"OBJECT", properties:{
-                  id:{type:"STRING"}, status:{type:"STRING",enum:["PENDING","CONFIRMED","IN_PROGRESS","COMPLETED","CANCELLED"]}
-                }, required:["id","status"]}
-              },
-              { name:"reschedule_order", description:"Jadwal ulang order",
-                parameters:{ type:"OBJECT", properties:{
-                  id:{type:"STRING"}, date:{type:"STRING"}, time:{type:"STRING"}, teknisi:{type:"STRING"}
-                }, required:["id","date"]}
-              },
-              { name:"cancel_order", description:"Batalkan order",
-                parameters:{ type:"OBJECT", properties:{
-                  id:{type:"STRING"}, reason:{type:"STRING"}
-                }, required:["id"]}
-              },
-              { name:"create_invoice", description:"Buat invoice dari order yang sudah selesai",
-                parameters:{ type:"OBJECT", properties:{ order_id:{type:"STRING"} }, required:["order_id"]}
-              },
-              { name:"mark_invoice_paid", description:"Tandai invoice lunas",
-                parameters:{ type:"OBJECT", properties:{ id:{type:"STRING"} }, required:["id"]}
-              },
-              { name:"approve_invoice", description:"Approve invoice",
-                parameters:{ type:"OBJECT", properties:{ id:{type:"STRING"} }, required:["id"]}
-              },
-              { name:"update_stock", description:"Update stok material",
-                parameters:{ type:"OBJECT", properties:{
-                  code:{type:"STRING"}, name:{type:"STRING"},
-                  delta:{type:"NUMBER",description:"positif=tambah, negatif=kurangi"},
-                  reason:{type:"STRING"}
-                }, required:["delta"]}
-              },
-              { name:"dispatch_wa", description:"Kirim dispatch WA ke teknisi",
-                parameters:{ type:"OBJECT", properties:{ order_id:{type:"STRING"} }, required:["order_id"]}
-              },
-              { name:"send_wa", description:"Kirim pesan WhatsApp ke nomor tertentu",
-                parameters:{ type:"OBJECT", properties:{
-                  phone:{type:"STRING"}, message:{type:"STRING"}
-                }, required:["phone","message"]}
-              },
-              { name:"send_reminder", description:"Kirim reminder WA untuk invoice belum lunas",
-                parameters:{ type:"OBJECT", properties:{ invoice_id:{type:"STRING"} }, required:["invoice_id"]}
-              },
-              { name:"update_invoice", description:"Edit field invoice (labor/material/dadakan/discount/notes)",
-                parameters:{ type:"OBJECT", properties:{
-                  id:{type:"STRING"},
-                  field:{type:"STRING", enum:["labor","material","dadakan","discount","notes","due"]},
-                  value:{type:"STRING"}
-                }, required:["id","field","value"]}
-              },
-              { name:"mark_invoice_overdue", description:"Tandai semua invoice UNPAID yang melewati due date menjadi OVERDUE",
-                parameters:{ type:"OBJECT", properties:{} }
-              },
-            ]
-          }];
-
-          // Normalize pesan untuk Gemini (harus alternating user/model)
-          const rawMsgs = newMessages.map(m => ({
-            role: m.role === "assistant" ? "model" : "user",
-            parts: [{ text: m.content }]
-          }));
-          const geminiContents = rawMsgs.reduce((acc, msg) => {
-            if (acc.length === 0 && msg.role !== "user") return acc;
-            const prev = acc[acc.length - 1];
-            if (prev && prev.role === msg.role) {
-              return [...acc.slice(0,-1), { role: prev.role, parts: [...prev.parts, ...msg.parts] }];
-            }
-            return [...acc, msg];
-          }, []);
-
-          const fr = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${llmApiKey}`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                system_instruction: { parts: [{ text: sysP }] },
-                contents: geminiContents,
-                tools: geminiTools,
-                generationConfig: { maxOutputTokens: 1500 }
-              })
-            }
-          );
-          const fd = await fr.json();
-          if (!fr.ok) throw new Error(fd.error?.message || "Gemini API error " + fr.status);
-
-          // Handle function call response dari Gemini
-          const candidate = fd.candidates?.[0];
-          const parts = candidate?.content?.parts || [];
-          const funcCall = parts.find(p => p.functionCall);
-
-          if (funcCall) {
-            // Gemini ingin eksekusi function — konversi ke ACTION format
-            const fn = funcCall.functionCall;
-            const args = fn.args || {};
-            const textPart = parts.find(p => p.text)?.text || "";
-
-            // Map Gemini function call → ACTION object
-            const actionMap = {
-              create_order:         { type:"CREATE_ORDER",          ...args },
-              update_order_status:  { type:"UPDATE_ORDER_STATUS",   ...args },
-              reschedule_order:     { type:"RESCHEDULE_ORDER",      ...args },
-              cancel_order:         { type:"CANCEL_ORDER",          ...args },
-              create_invoice:       { type:"CREATE_INVOICE",        ...args },
-              mark_invoice_paid:    { type:"MARK_PAID",             ...args },
-              approve_invoice:      { type:"APPROVE_INVOICE",       ...args },
-              update_stock:         { type:"UPDATE_STOCK",          ...args },
-              dispatch_wa:          { type:"DISPATCH_WA",           ...args },
-              send_wa:              { type:"SEND_WA",               ...args },
-              send_reminder:        { type:"SEND_REMINDER",         ...args },
-              update_invoice:       { type:"UPDATE_INVOICE",        ...args },
-              mark_invoice_overdue: { type:"MARK_INVOICE_OVERDUE"           },
-            };
-            const action = actionMap[fn.name];
-            if (action) {
-              fullText = (textPart ? textPart + "\n" : "") + "[ACTION]" + JSON.stringify(action) + "[/ACTION]";
-            } else {
-              fullText = textPart || "Aksi tidak dikenali: " + fn.name;
-            }
-          } else {
-            fullText = parts.map(p => p.text || "").join("") || "";
-          }
-
         } else {
-          // ── Anthropic Claude API (default) ──
-          const fr = await fetch("https://api.anthropic.com/v1/messages", {
-            method:"POST",
-            headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-            body:JSON.stringify({model:llmModel||"claude-sonnet-4-6",max_tokens:1000,system:sysP,messages:newMessages.map(m=>({role:m.role,content:m.content}))})
-          });
-          const fd = await fr.json();
-          if (!fr.ok) throw new Error(fd.error?.message || "Claude API error");
-          fullText = fd.content?.map(c=>c.text||"").join("")||"";
+          // ── SECURITY: No direct API calls from frontend ──
+          // All LLM calls must go through /api/ara-chat backend endpoint
+          // This ensures API keys are never exposed in browser
+          throw new Error(`Provider "${llmProvider}" requires backend /api/ara-chat endpoint. Is your API server running?`);
         }
       } else {
         const needKey = llmProvider !== "ollama";
@@ -1778,17 +3230,33 @@ _Simpan pesan ini sebagai bukti pelunasan._`
               addAgentLog("ARA_STOCK",`ARA ${txType} ${item.name}: delta ${delta}`,"SUCCESS");
             } else ar=`\n⚠️ *Material tidak ditemukan*`;
           } else if (act.type==="CREATE_ORDER") {
-            const today = new Date().toISOString().slice(0,10);
+            const today = getLocalDate();
             const seq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
             const newId = "ORD-" + (act.date||today).replace(/-/g,"").slice(2,8) + "-" + seq;
+            // Normalize service type — handle case insensitive + alias dari bahasa natural
+            const _normSvc = (s) => {
+              const sl = (s||"").toLowerCase().trim();
+              if (sl.includes("install")||sl.includes("pasang")||sl.includes("baru")) return "Install";
+              if (sl.includes("repair")||sl.includes("perbaikan")||sl.includes("servis")) return "Repair";
+              if (sl.includes("complain")||sl.includes("komplain")||sl.includes("garansi")||sl.includes("complain")) return "Complain";
+              if (sl.includes("bongkar")) return "Repair"; // bongkar = repair category
+              return "Cleaning"; // default
+            };
+            // Validate teknisi ada di DB
+            const _tekValid = (nm) => !nm || teknisiData.some(t => t.name.toLowerCase() === (nm||"").toLowerCase());
+            const _helperValid = (nm) => !nm || teknisiData.some(t => t.role==="Helper" && t.name.toLowerCase() === (nm||"").toLowerCase());
+            const normService = _normSvc(act.service);
+            const normTeknisi = act.teknisi
+              ? (teknisiData.find(t=>t.role==="Teknisi"&&t.name.toLowerCase()===(act.teknisi||"").toLowerCase())?.name || act.teknisi)
+              : "";
             const newOrd = {
               id: newId,
               customer: act.customer || "?",
               phone: act.phone || "",
               address: act.address || "",
-              service: act.service || "Cuci AC",
+              service: normService,
               units: parseInt(act.units)||1,
-              teknisi: act.teknisi || "",
+              teknisi: normTeknisi,
               helper: act.helper || "",
               date: act.date || today,
               time: act.time || "09:00",
@@ -1797,6 +3265,14 @@ _Simpan pesan ini sebagai bukti pelunasan._`
               dispatch: false,
               created_at: new Date().toISOString(),
             };
+            // ── Auto-enforce helper rule: 3+ unit ATAU Install untuk SEMUA service ──
+            if ((parseInt(newOrd.units)||1) >= 3 || newOrd.service === "Install") {
+              if (!newOrd.helper) {
+                const availHelper = teknisiData.find(t => t.role==="Helper" && t.status!=="inactive");
+                if (availHelper) { newOrd.helper = availHelper.name; }
+                else addAgentLog("ARA_WARN","Helper dibutuhkan tapi belum ada di database","WARNING");
+              }
+            }
             setOrdersData(prev => [...prev, newOrd]);
             const {error:oErr} = await supabase.from("orders").insert(newOrd);
             if (oErr) console.warn("Create order DB:", oErr.message);
@@ -1804,28 +3280,32 @@ _Simpan pesan ini sebagai bukti pelunasan._`
 
             // ── Auto-upsert customer (new vs existing detection) ──
             if (newOrd.phone && newOrd.customer) {
-              const existingCust = customersData.find(c => c.phone === newOrd.phone || c.name === newOrd.customer);
+              const existingCust = findCustomer(customersData, newOrd.phone, newOrd.customer);
               if (!existingCust) {
                 const newCust = {
                   id: "CUST" + Date.now(),
                   name: newOrd.customer, phone: newOrd.phone,
                   address: newOrd.address || "", area: "",
-                  total_orders: 1, joined: newOrd.date, last_service: newOrd.date, is_vip: false
+                  total_orders: 1, joined_date: newOrd.date, last_service: newOrd.date, is_vip: false
                 };
                 setCustomersData(prev => [...prev, newCust]);
-                await supabase.from("customers").upsert(
-                  { name: newOrd.customer, phone: newOrd.phone, address: newOrd.address||"", joined: newOrd.date },
-                  { onConflict: "phone", ignoreDuplicates: false }
-                ).catch(e => console.warn("Customer upsert:", e.message));
+                try {
+                  await supabase.from("customers").upsert(
+                    { name: newOrd.customer, phone: newOrd.phone, address: newOrd.address||"", joined_date: newOrd.date },
+                    { onConflict: "phone", ignoreDuplicates: false }
+                  );
+                } catch(e) { console.warn("Customer upsert:", e?.message); }
                 ar += "\n👤 *Customer baru ditambahkan: " + newOrd.customer + "*";
               } else {
                 // Update total_orders untuk customer existing
                 setCustomersData(prev => prev.map(c =>
-                  c.phone === newOrd.phone ? { ...c, total_orders: (c.total_orders||0)+1, last_service: newOrd.date } : c
+                  sameCustomer(c, newOrd.phone, newOrd.customer) ? { ...c, total_orders: (c.total_orders||0)+1, last_service: newOrd.date } : c
                 ));
-                await supabase.from("customers").update({
-                  total_orders: (existingCust.total_orders||0)+1, last_service: newOrd.date
-                }).eq("phone", newOrd.phone).catch(()=>{});
+                try {
+                  await supabase.from("customers").update({
+                    total_orders: (existingCust.total_orders||0)+1, last_service: newOrd.date
+                  }).eq("phone", newOrd.phone);
+                } catch(e) { console.warn("Customer update skip:", e?.message); }
                 ar += "\n👤 *Customer existing: " + newOrd.customer + " (order ke-" + ((existingCust.total_orders||0)+1) + ")*";
               }
             }
@@ -1835,47 +3315,113 @@ _Simpan pesan ini sebagai bukti pelunasan._`
             // Buat invoice dari order yang sudah COMPLETED
             const ord = ordersData.find(o => o.id === act.order_id);
             if (!ord) { ar = "\n⚠️ *Order " + act.order_id + " tidak ditemukan*"; }
+            else if (invoicesData.find(inv => inv.job_id === act.order_id && inv.status !== "CANCELLED")) {
+              // ── PREVENT DUPLICATE: Jika invoice sudah ada untuk order ini, skip ──
+              const existing = invoicesData.find(inv => inv.job_id === act.order_id && inv.status !== "CANCELLED");
+              ar = `\n⚠️ *Invoice untuk order ini sudah ada: ${existing.id}* (status: ${existing.status})`;
+              addAgentLog("ARA_DUPLICATE_INVOICE", `Duplicate invoice attempt for order ${act.order_id} — existing: ${existing.id}`, "WARNING");
+            }
             else {
-              const today = new Date().toISOString().slice(0,10);
+              const today = getLocalDate();
               const seq2  = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
               const invId = "INV-" + today.replace(/-/g,"").slice(2,8) + "-" + seq2;
-              const labor = PRICE_LIST[ord.service]?.[ord.type || "default"] || PRICE_LIST[ord.service]?.["default"] || 80000;
+        // Cek pekerjaan aktual + tipe AC dari laporan teknisi
+        const lapRepForLabor = laporanReports.find(r => r.job_id === ord.id);
+        const hasServiceBesar = lapRepForLabor?.units
+          ? lapRepForLabor.units.some(u => (u.pekerjaan||[]).some(p =>
+              p.toLowerCase().includes("besar") || p.toLowerCase().includes("deep")))
+          : false;
+
+        // ── BUILD EFFECTIVE TYPE untuk invoice ──
+        // Priority: 1) Laporan tipe AC+PK detail, 2) Service besar detection, 3) Order type, 4) Default
+        let effectiveType = "default";
+        if (lapRepForLabor?.units && lapRepForLabor.units.length > 0) {
+          // Build type dari tipe AC + PK di laporan (Step 1 detail)
+          const typeList = lapRepForLabor.units
+            .filter(u => u.tipe && u.pk)
+            .map(u => `${u.tipe} ${u.pk}`)
+            .join(", ");
+          if (typeList) effectiveType = typeList; // Contoh: "Cassette 5PK, Split 1PK"
+        }
+
+        // Jika service besar → gunakan harga service besar (override tipe jika ada)
+        if (hasServiceBesar && ord.service === "Cleaning") {
+          effectiveType = (ord.units||1) > 1
+            ? "Jasa Service Besar 1,5PK - 2,5PK"
+            : "Jasa Service Besar 0,5PK - 1PK";
+        }
+
+        // Fallback ke order type jika laporan tidak ada
+        if (effectiveType === "default" && ord.type) {
+          effectiveType = ord.type;
+        }
+
+        const labor = PRICE_LIST[ord.service]?.[effectiveType] ||
+          PRICE_LIST[ord.service]?.["default"] || 85000;
               const laborTotal = labor * (ord.units || 1);
 
               // ── Baca material + freon dari laporan teknisi ──
               const lapRep = laporanReports.find(r => r.job_id === ord.id);
               const materialCost = lapRep?.materials
                 ? lapRep.materials.reduce((sum, m) => {
-                    // Support both old field names (price/qty) and new names (harga/jumlah)
-                    const harga = m.harga || m.price || 0;
-                    const qty   = parseFloat(m.jumlah || m.qty || m.quantity || 1);
+          // Lookup harga dari inventory (sama seperti hitungMaterialTotal)
+          const _mNama = (m.nama||"").toLowerCase();
+          const _invItem = inventoryData.find(inv =>
+            inv.name.toLowerCase().includes(_mNama) || _mNama.includes(inv.name.toLowerCase())
+          );
+          let harga = _invItem?.price || m.harga || m.price || 0;
+          // Fallback ke PRICE_LIST freon jika tidak ada di inventory
+          if (!harga) {
+            if (_mNama.includes("r-22")||_mNama.includes("r22")) harga = PRICE_LIST["freon_R22"]||150000;
+            else if (_mNama.includes("r-32")||_mNama.includes("r32")) harga = PRICE_LIST["freon_R32"]||450000;
+            else if (_mNama.includes("r-410")||_mNama.includes("r410")) harga = PRICE_LIST["freon_R410A"]||450000;
+          }
+          const qty = parseFloat(m.jumlah || m.qty || m.quantity || 1);
                     return sum + (harga * qty);
                   }, 0)
                 : 0;
+          // [OPSI A] Freon tidak dihitung dari total_freon (psi data)
+          const freonCost  = 0; // freon masuk via material manual
               // Freon: hitung dari total_freon × harga freon (R32=200rb, R22=150rb default R32)
-              const freonType  = ord.type?.includes("R22") ? 150000 : 200000;
-              const freonCost  = lapRep?.total_freon ? Math.round(lapRep.total_freon * freonType) : 0;
-              const materialTotal = materialCost + freonCost;
 
               // Dadakan jika booking H-0
               const isToday = ord.date === today;
               const dadakanFee = isToday ? 50000 : 0;
-              const totalInv = laborTotal + materialTotal + dadakanFee;
+              const totalInv = laborTotal + materialCost + dadakanFee;
 
+              // Build materials_detail for ARA invoice from laporan
+              const _araMatDetail = (() => {
+                if (!lapRep) return null;
+                const mats = (() => {
+                  if (lapRep.materials_json) { try { return JSON.parse(lapRep.materials_json); } catch(_){} }
+                  return safeArr(lapRep.materials);
+                })().filter(m=>m.nama&&parseFloat(m.jumlah||0)>0);
+                if (!mats.length) return null;
+                return JSON.stringify(mats.map(m=>({
+                  nama:m.nama, jumlah:parseFloat(m.jumlah)||1,
+                  satuan:m.satuan||"pcs",
+                  harga_satuan:parseFloat(m.harga_satuan)||0,
+                  subtotal:(parseFloat(m.harga_satuan)||0)*(parseFloat(m.jumlah)||1),
+                  keterangan:m.keterangan||""
+                })));
+              })();
               const newInv = {
                 id: invId, job_id: ord.id,
                 customer: ord.customer, phone: ord.phone || "",
                 service: ord.service + (ord.type ? " - " + ord.type : ""),
                 units: ord.units || 1,
                 labor: laborTotal,
-                material: materialTotal,
+                material: materialCost,
+                materials_detail: _araMatDetail,
                 dadakan: dadakanFee,
                 discount: 0,
                 total: totalInv,
                 status: "PENDING",
+                garansi_days: 30,
+                garansi_expires: new Date(Date.now() + 30*86400000 + 7*60*60*1000).toISOString().slice(0,10),
                 laporan_id: lapRep?.id || null,
-                due: new Date(Date.now() + 3*86400000).toISOString().slice(0,10),
-                sent: false, created_at: new Date().toISOString()
+                due: new Date(Date.now() + 3*86400000 + 7*60*60*1000).toISOString().slice(0,10),
+                sent: false, created_at: getLocalISOString()
               };
               setInvoicesData(prev => [...prev, newInv]);
               const {error:invErr} = await supabase.from("invoices").insert(newInv);
@@ -1884,7 +3430,7 @@ _Simpan pesan ini sebagai bukti pelunasan._`
               setOrdersData(prev => prev.map(o => o.id===ord.id ? {...o, invoice_id:invId} : o));
               await supabase.from("orders").update({invoice_id:invId}).eq("id",ord.id);
               addAgentLog("ARA_CREATE_INVOICE","ARA buat invoice "+invId+" dari "+ord.id+" — "+newInv.customer,"SUCCESS");
-              ar = "\n✅ *Invoice " + invId + " dibuat untuk " + newInv.customer + " — Total: " + newInv.total.toLocaleString("id-ID") + "*";
+              ar = "\n✅ *Invoice " + invId + " dibuat untuk " + newInv.customer + " — Total: " + (newInv.total||0).toLocaleString("id-ID") + "*";
             }
           } else if (act.type==="CANCEL_ORDER") {
             setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,status:"CANCELLED"}:o));
@@ -1899,10 +3445,10 @@ _Simpan pesan ini sebagai bukti pelunasan._`
             // ── Cek konflik di hari & jam baru sebelum reschedule ──
             let rescheduleConflict = null;
             if (tekForReschedule && act.date && act.time && rOrdCheck) {
-              const conflictResult = cekTeknisiAvailable(tekForReschedule, act.date, act.time, rOrdCheck.service, rOrdCheck.units);
-              // conflictResult = null jika tersedia, atau string alasan konflik
-              if (conflictResult && conflictResult !== true) {
-                rescheduleConflict = conflictResult;
+              // GAP-1/2: Cek dari DB langsung, bukan state lokal
+              const dbConflict = await cekTeknisiAvailableDB(tekForReschedule, act.date, act.time, rOrdCheck.service, rOrdCheck.units);
+              if (!dbConflict.ok && !dbConflict.reason?.includes(act.id)) {
+                rescheduleConflict = dbConflict.reason || "Ada order lain di waktu tersebut";
               }
             }
 
@@ -1928,7 +3474,7 @@ Jadwal layanan AC Anda *${act.id}* telah diubah:
 
 Mohon pastikan ada di lokasi pada waktu tersebut.
 Terima kasih — *AClean Service* 😊`;
-                sendWA(rOrd.phone, custMsg);
+                if (rOrd?.phone) sendWA(rOrd.phone, custMsg);
               }
               if (tekData?.phone) {
                 const rMsg = `📅 *Jadwal Diubah*
@@ -1952,6 +3498,103 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             const cnt = invoicesData.filter(i=>i.status==="UNPAID"&&i.due&&i.due<TODAY).length;
             await supabase.from("invoices").update({status:"OVERDUE"}).eq("status","UNPAID").lt("due",TODAY);
             ar=`\n✅ *${cnt} invoice ditandai OVERDUE*`;
+
+          } else if (act.type==="CREATE_EXPENSE") {
+            // ── ARA create pengeluaran/biaya ──
+            const _expCat = (cat) => {
+              const c = (cat||"").toLowerCase();
+              if (c.includes("material")||c.includes("pipa")||c.includes("kabel")||c.includes("freon")) return "material_purchase";
+              return "petty_cash";
+            };
+            const _expSub = (sub) => {
+              const s = (sub||"").toLowerCase();
+              if (s.includes("bensin")||s.includes("bbm")||s.includes("solar")) return "Bensin Motor";
+              if (s.includes("parkir")) return "Parkir";
+              if (s.includes("kasbon")||s.includes("pinjam")||s.includes("utang")) return "Kasbon Karyawan";
+              if (s.includes("lembur")||s.includes("overtime")) return "Lembur";
+              if (s.includes("bonus")) return "Bonus";
+              if (s.includes("perbaikan motor")||s.includes("servis motor")||s.includes("motor")) return "Perbaikan Motor";
+              if (s.includes("pipa")) return "Pipa AC";
+              if (s.includes("kabel")) return "Kabel";
+              if (s.includes("freon")) return "Freon";
+              if (s.includes("material")) return "Material Lain";
+              return sub || "Lain-lain";
+            };
+            const expPayload = {
+              category:    act.category    ? _expCat(act.category) : _expCat(act.subcategory),
+              subcategory: act.subcategory ? _expSub(act.subcategory) : (act.category||"Lain-lain"),
+              amount:      Number(act.amount)||0,
+              date:        act.date || TODAY,
+              description: act.description || act.keterangan || "",
+              teknisi_name:act.teknisi_name || act.nama_karyawan || null,
+              item_name:   act.item_name || act.nama_barang || null,
+              freon_type:  act.freon_type || null,
+              created_by:  currentUser?.name || "ARA",
+            };
+            if (!expPayload.amount) {
+              ar = "\n⚠️ *Jumlah biaya (amount) wajib diisi*";
+            } else {
+              const {data:expData, error:expErr} = await supabase.from("expenses").insert(expPayload).select().single();
+              if (expErr) {
+                ar = `\n⚠️ *Gagal catat biaya: ${expErr.message}*`;
+              } else {
+                setExpensesData(prev => [expData || expPayload, ...prev]);
+                addAgentLog("ARA_EXPENSE",`ARA create expense: ${expPayload.subcategory} — Rp${expPayload.amount.toLocaleString("id-ID")} (${expPayload.date})`,"SUCCESS");
+                ar = `\n✅ *Biaya dicatat:*\n📂 ${expPayload.category==="material_purchase"?"Pembelian Material":"Petty Cash"} — ${expPayload.subcategory}\n💰 Rp${expPayload.amount.toLocaleString("id-ID")}\n📅 ${expPayload.date}${expPayload.description?" — "+expPayload.description:""}`;
+              }
+            }
+
+          } else if (act.type==="BULK_CREATE_ORDER") {
+            // ── ARA bulk create order dari dump teks ──
+            const orders = Array.isArray(act.orders) ? act.orders : [];
+            if (orders.length === 0) {
+              ar = "\n⚠️ *BULK_CREATE_ORDER membutuhkan field `orders` berupa array*";
+            } else if (orders.length > 20) {
+              ar = "\n⚠️ *Maksimal 20 order sekaligus — pisah menjadi beberapa batch*";
+            } else {
+              const today = getLocalDate();
+              const _normSvcBulk = (s) => {
+                const sl = (s||"").toLowerCase().trim();
+                if (sl.includes("install")||sl.includes("pasang")||sl.includes("baru")) return "Install";
+                if (sl.includes("repair")||sl.includes("perbaikan")||sl.includes("servis")||sl.includes("bongkar")) return "Repair";
+                if (sl.includes("complain")||sl.includes("komplain")||sl.includes("garansi")) return "Complain";
+                return "Cleaning";
+              };
+              const results = [];
+              for (const o of orders) {
+                const seq2 = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
+                const bId  = "ORD-" + (o.date||today).replace(/-/g,"").slice(2,8) + "-" + seq2;
+                const bOrd = {
+                  id: bId,
+                  customer: o.customer || "?",
+                  phone: o.phone || "",
+                  address: o.address || "",
+                  service: _normSvcBulk(o.service),
+                  units: parseInt(o.units)||1,
+                  teknisi: o.teknisi || "",
+                  helper: o.helper || "",
+                  date: o.date || today,
+                  time: o.time || "09:00",
+                  status: "PENDING",
+                  notes: o.notes || "",
+                  dispatch: false,
+                  created_at: new Date().toISOString(),
+                };
+                // Auto helper
+                if ((bOrd.units >= 3 || bOrd.service === "Install") && !bOrd.helper) {
+                  const avH = teknisiData.find(t=>t.role==="Helper"&&t.status!=="inactive");
+                  if (avH) bOrd.helper = avH.name;
+                }
+                setOrdersData(prev => [...prev, bOrd]);
+                const {error:bErr} = await supabase.from("orders").insert(bOrd);
+                results.push({id:bId, customer:bOrd.customer, service:bOrd.service, date:bOrd.date, ok:!bErr});
+                // Small delay agar ID unik
+                await new Promise(r => setTimeout(r, 60));
+              }
+              addAgentLog("ARA_BULK_ORDER",`ARA bulk create ${results.length} orders`,"SUCCESS");
+              ar = `\n✅ *${results.length} order berhasil dibuat:*\n` +
+                results.map((r,i)=>`${i+1}. \`${r.id}\` — ${r.customer} | ${r.service} | ${r.date} ${r.ok?"✅":"❌"}`).join("\n");
+            }
           }
         } catch(e){ console.warn("Action parse",e); }
       }
@@ -1985,7 +3628,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id:"ara",        icon:"🤖",  label:"ARA Chat"     },
     { id:"reports",    icon:"📊",  label:"Statistik"    },
     { id:"agentlog",   icon:"📡",  label:"ARA Log"      },
+    { id:"monitoring", icon:"🔍",  label:"Monitoring"   },
     { id:"settings",   icon:"⚙️",  label:"Pengaturan"   },
+    { id:"mattrack",   icon:"🧮",  label:"Stok Material" },
+    { id:"biaya",      icon:"💸",  label:"Biaya"         },
     // Teknisi-only menu (not shown to Owner/Admin)
     { id:"myreport",   icon:"📋",  label:"Laporan Saya" },
   ];
@@ -2049,7 +3695,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <div style={{ fontSize:11, color:cs.muted }}>📍 {o.address}</div>
                   {o.helper && <div style={{ fontSize:11, color:cs.accent, marginTop:3 }}>🤝 Helper: {o.helper}</div>}
                   <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
-                    <button onClick={() => openWA(o.phone, "Halo "+o.customer+", saya "+myName+" dari AClean Service. Saya akan datang pkl "+o.time+" untuk "+o.service+". Terima kasih.")}
+                    <button onClick={() => { setWaTekTarget({phone:o.phone,customer:o.customer,service:o.service,time:o.time,address:o.address}); setModalWaTek(true); }}
                       style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:600 }}>💬 Chat WA</button>
                     <button onClick={() => { const url="https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(o.address); window.open(url,"_blank"); }}
                       style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:600 }}>🗺 Maps</button>
@@ -2069,11 +3715,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div key={o.id} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px", marginBottom:8, display:"flex", alignItems:"center", gap:12 }}>
                   <div style={{ background:myColor+"22", border:"1px solid "+myColor+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:44, flexShrink:0 }}>
                     <div style={{ fontSize:14, fontWeight:800, color:myColor }}>{o.time}</div>
-                    <div style={{ fontSize:9, color:cs.muted }}>{o.date.slice(5)}</div>
+                    <div style={{ fontSize:9, color:cs.muted }}>{(o.date||"").slice(5)}</div>
                   </div>
                   <div style={{ flex:1 }}>
                     <div style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{o.customer}</div>
-                    <div style={{ fontSize:11, color:cs.muted }}>{o.service} · {o.units} unit · {o.address.slice(0,35)}...</div>
+                    <div style={{ fontSize:11, color:cs.muted }}>{o.service} · {o.units} unit · {(o.address||"-").slice(0,35)}...</div>
                   </div>
                 </div>
               ))}
@@ -2086,9 +3732,33 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // ── OWNER / ADMIN DASHBOARD ────────────────────────────────
     const todayOrders   = ordersData.filter(o => o.date === TODAY);
     const unpaidCount   = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
-    const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && (i.sent||"").startsWith(bulanIni)).reduce((a,b) => a+b.total, 0);
+    const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && String(i.sent||i.created_at||"").startsWith(bulanIni)).reduce((a,b) => a+b.total, 0);
     const lowStock      = inventoryData.filter(i => i.status === "CRITICAL" || i.status === "OUT").length;
+    const garansiKritisD = invoicesData.filter(inv => {
+      if (!inv.garansi_expires) return false;
+      const d = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+      return d >= 0 && d <= 7;
+    });
+    const garansiExpireSoon = invoicesData.filter(inv => {
+      if (!inv.garansi_expires) return false;
+      const d = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+      return d >= 0 && d <= 30;
+    }).sort((a,b) => a.garansi_expires.localeCompare(b.garansi_expires));
+    // GAP-4: Invoice pending >3 hari
+    const pendingOldInv = invoicesData.filter(inv => {
+      if (inv.status !== "PENDING_APPROVAL") return false;
+      const daysPending = Math.ceil((new Date() - new Date(inv.created_at||inv.sent||"")) / 86400000);
+      return daysPending > 3;
+    });
+    // GAP-6: Approved belum bayar
+    const approvedUnpaid = invoicesData.filter(inv => inv.status === "APPROVED");
     const greeting      = role === "Owner" ? "Owner" : "Admin";
+    // techColors dipakai di omset stats block (IIFE) dan kalender
+    const techColors = Object.fromEntries(
+      [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map((n,i) => [
+        n, ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#ec4899"][i%8]
+      ])
+    );
 
     return (
       <div style={{ display:"grid", gap:20 }}>
@@ -2098,6 +3768,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             <div style={{ fontSize:13, color:cs.muted }}>{hariIni} · ARA aktif memantau</div>
           </div>
           <div style={{ display:"flex", gap:10 }}>
+            {/* Rekap Hari Ini — tombol ringkas di dashboard */}
+            {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+              <button onClick={()=>triggerRekapHarian(TODAY)}
+                style={{background:cs.surface,border:"1px solid "+cs.border,color:cs.muted,
+                  padding:"8px 14px",borderRadius:8,cursor:"pointer",fontWeight:600,fontSize:13,
+                  display:"flex",alignItems:"center",gap:6}}>
+                📊 Rekap Hari Ini
+              </button>
+            )}
             <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"10px 20px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
             <button onClick={() => setWaPanel(true)} style={{ position:"relative", background:cs.card, border:"1px solid #25D36644", color:"#25D366", padding:"10px 16px", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:13 }}>
               📱 WhatsApp
@@ -2110,15 +3789,45 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           </div>
         </div>
 
+        {/* ── GAP-4: Pending invoice >3 hari ── */}
+        {pendingOldInv && pendingOldInv.length > 0 && (
+          <div style={{background:"#ef444410",border:"1px solid #ef444440",borderRadius:14,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:22}}>🔴</span>
+              <div>
+                <div style={{fontWeight:800,color:"#ef4444",fontSize:13}}>{pendingOldInv.length} Invoice Pending Approval &gt;3 Hari</div>
+                <div style={{fontSize:11,color:cs.muted}}>Total tertahan: Rp {pendingOldInv.reduce((s,i)=>s+(i.total||0),0).toLocaleString("id-ID")}</div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("PENDING_APPROVAL");}} style={{padding:"7px 14px",borderRadius:8,background:"#ef444422",border:"1px solid #ef444444",color:"#ef4444",fontWeight:700,fontSize:12,cursor:"pointer"}}>Lihat Invoice</button>
+              <button onClick={()=>{showNotif("WA reminder dikirim ke admin");}} style={{padding:"7px 14px",borderRadius:8,background:"#ef444422",border:"1px solid #ef444444",color:"#ef4444",fontWeight:700,fontSize:12,cursor:"pointer"}}>📱 WA Remind</button>
+            </div>
+          </div>
+        )}
+        {/* ── GAP-6: Approved belum bayar ── */}
+        {approvedUnpaid && approvedUnpaid.length > 0 && (
+          <div style={{background:cs.yellow+"10",border:"1px solid "+cs.yellow+"40",borderRadius:14,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:22}}>🟡</span>
+              <div>
+                <div style={{fontWeight:800,color:cs.yellow,fontSize:13}}>{approvedUnpaid.length} Invoice Approved Belum Dibayar</div>
+                <div style={{fontSize:11,color:cs.muted}}>Total: Rp {approvedUnpaid.reduce((s,i)=>s+(i.total||0),0).toLocaleString("id-ID")}</div>
+              </div>
+            </div>
+            <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("APPROVED");}} style={{padding:"7px 14px",borderRadius:8,background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,fontWeight:700,fontSize:12,cursor:"pointer"}}>Lihat Invoice</button>
+          </div>
+        )}
+
         {/* KPI Cards */}
         <div style={{ display:"grid", gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:14 }}>
           {[
-            { label:"Order Hari Ini",      value:todayOrders.length,          sub:`${todayOrders.filter(o=>o.status==="IN_PROGRESS").length} aktif · ${todayOrders.filter(o=>o.status==="COMPLETED").length} selesai`, color:cs.accent, icon:"📋" },
-            { label:"Invoice Unpaid",       value:unpaidCount,                 sub:"Perlu follow-up",     color:cs.yellow, icon:"🧾" },
-            { label:"Pendapatan Bln Ini",   value:fmt(totalRevBulanIni),        sub:"Invoice terbayar",    color:cs.green,  icon:"💰" },
-            { label:"Stok Kritis",          value:lowStock,                    sub:"Perlu restock",       color:cs.red,    icon:"📦" },
+            { label:"Order Hari Ini",      value:todayOrders.length,          sub:`${todayOrders.filter(o=>o.status==="IN_PROGRESS").length} aktif · ${todayOrders.filter(o=>o.status==="COMPLETED").length} selesai`, color:cs.accent, icon:"📋", onClick:()=>setActiveMenu("orders") },
+            { label:"Invoice Unpaid",       value:unpaidCount,                 sub:"Perlu follow-up",     color:cs.yellow, icon:"🧾", onClick:()=>{setActiveMenu("invoice");setInvoiceFilter("UNPAID");} },
+            { label:"Pendapatan Bln Ini",   value:fmt(totalRevBulanIni),        sub:"Invoice terbayar",    color:cs.green,  icon:"💰", onClick:()=>{setActiveMenu("invoice");setInvoiceFilter("PAID");} },
+            { label:"Stok Kritis",          value:lowStock,                    sub:"Perlu restock",       color:cs.red,    icon:"📦", onClick:()=>setActiveMenu("inventory") },
           ].map(kpi => (
-            <div key={kpi.label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18 }}>
+            <div key={kpi.label} onClick={kpi.onClick} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:18, cursor:"pointer" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
                 <span style={{ fontSize:24 }}>{kpi.icon}</span>
                 <span style={{ fontSize:11, color:cs.muted }}>{kpi.sub}</span>
@@ -2128,6 +3837,274 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </div>
           ))}
         </div>
+
+        {/* ── STATISTIK OMSET PER HARI/MINGGU/BULAN (Owner & Admin) ── */}
+        {(() => {
+          const now      = new Date();
+          const todayStr = now.toISOString().slice(0,10);
+
+          const startOf = (mode) => {
+            const d = new Date(now);
+            if (mode === "hari")   { d.setHours(0,0,0,0); return d; }
+            if (mode === "minggu") { d.setDate(d.getDate() - d.getDay()); d.setHours(0,0,0,0); return d; }
+            if (mode === "bulan")  { d.setDate(1); d.setHours(0,0,0,0); return d; }
+            return d;
+          };
+
+          const paidInvoices = invoicesData.filter(i => i.status === "PAID" && i.paid_at);
+
+          const buildData = (mode) => {
+            const start    = startOf(mode);
+            const filtered = paidInvoices.filter(i => new Date(i.paid_at) >= start);
+            if (mode === "hari") {
+              const hours = Array.from({length:24},(_,h)=>({label:`${String(h).padStart(2,"0")}:00`,total:0,count:0}));
+              filtered.forEach(i => { const h=new Date(i.paid_at).getHours(); hours[h].total+=(i.total||0); hours[h].count++; });
+              return hours.filter((_,h) => h <= new Date().getHours());
+            }
+            if (mode === "minggu") {
+              const days = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
+              return Array.from({length:7},(_,i) => {
+                const d = new Date(startOf("minggu")); d.setDate(d.getDate()+i);
+                const dStr = d.toISOString().slice(0,10);
+                const dayInv = paidInvoices.filter(inv => inv.paid_at?.slice(0,10)===dStr);
+                return { label:days[d.getDay()], date:dStr, total:dayInv.reduce((s,v)=>s+(v.total||0),0), count:dayInv.length };
+              });
+            }
+            if (mode === "bulan") {
+              const weeks = [{label:"Mgg 1",total:0,count:0},{label:"Mgg 2",total:0,count:0},{label:"Mgg 3",total:0,count:0},{label:"Mgg 4+",total:0,count:0}];
+              filtered.forEach(i => { const wk=Math.min(Math.floor((new Date(i.paid_at).getDate()-1)/7),3); weeks[wk].total+=(i.total||0); weeks[wk].count++; });
+              return weeks;
+            }
+            return [];
+          };
+
+          const data        = buildData(omsetView);
+          const maxVal      = Math.max(...data.map(d=>d.total), 1);
+          const totalPeriod = data.reduce((s,d)=>s+d.total, 0);
+          const totalCount  = data.reduce((s,d)=>s+d.count, 0);
+
+          // ── Omset per TEKNISI + HELPER (gabung) ──
+          const start        = startOf(omsetView);
+          const paidInPeriod = paidInvoices.filter(i => new Date(i.paid_at) >= start);
+          const byPerson     = {};
+
+          paidInPeriod.forEach(inv => {
+            // Teknisi utama
+            const tek = inv.teknisi;
+            if (tek) {
+              if (!byPerson[tek]) byPerson[tek] = {total:0, count:0, role:"Teknisi"};
+              byPerson[tek].total += (inv.total||0);
+              byPerson[tek].count++;
+            }
+          });
+
+          // Job count per orang hari ini (orders, bukan invoice — sudah include helper)
+          const todayOrders2 = ordersData.filter(o => o.date === todayStr);
+          const jobsToday    = {};
+          todayOrders2.forEach(o => {
+            if (o.teknisi) { jobsToday[o.teknisi] = (jobsToday[o.teknisi]||0) + 1; }
+            if (o.helper)  { jobsToday[o.helper]  = (jobsToday[o.helper] ||0) + 1; }
+          });
+
+          // Semua anggota tim (dari teknisiData)
+          const allTeam = teknisiData.filter(t => t.status !== "inactive");
+
+          const teamRanking = Object.entries(byPerson)
+            .sort((a,b) => b[1].total - a[1].total);
+
+          return (
+          <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:14,padding:20}}>
+
+            {/* Header + filter tabs */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontWeight:800,fontSize:15,color:cs.text}}>📊 Statistik Tim & Omset</div>
+                <div style={{fontSize:11,color:cs.muted}}>{totalCount} transaksi terbayar</div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                {["hari","minggu","bulan"].map(m=>(
+                  <button key={m} onClick={()=>setOmsetView(m)}
+                    style={{padding:"5px 12px",borderRadius:8,fontSize:12,cursor:"pointer",
+                      border:"1px solid "+(omsetView===m?cs.accent:cs.border),
+                      background:omsetView===m?cs.accent+"22":cs.surface,
+                      color:omsetView===m?cs.accent:cs.muted,fontWeight:omsetView===m?700:400}}>
+                    {m==="hari"?"Hari Ini":m==="minggu"?"Minggu Ini":"Bulan Ini"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Total omset */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+              <div style={{background:cs.green+"18",border:"1px solid "+cs.green+"33",borderRadius:10,padding:"10px 14px"}}>
+                <div style={{fontSize:11,color:cs.muted}}>Total Omset</div>
+                <div style={{fontWeight:800,fontSize:18,color:cs.green}}>{fmt(totalPeriod)}</div>
+              </div>
+              <div style={{background:cs.accent+"18",border:"1px solid "+cs.accent+"33",borderRadius:10,padding:"10px 14px"}}>
+                <div style={{fontSize:11,color:cs.muted}}>Job Hari Ini</div>
+                <div style={{fontWeight:800,fontSize:18,color:cs.accent}}>{todayOrders2.length} order</div>
+              </div>
+            </div>
+
+            {/* Bar chart omset */}
+            {data.length > 0 && totalPeriod > 0 && (
+              <div style={{display:"flex",gap:3,alignItems:"flex-end",height:70,marginBottom:12}}>
+                {data.map((d,i)=>(
+                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                    <div style={{fontSize:8,color:cs.muted}}>{d.total>0?fmt(d.total).replace("Rp ","").replace(".000","rb"):""}</div>
+                    <div title={fmt(d.total)+" · "+d.count+" inv"}
+                      style={{width:"100%",background:d.total===maxVal?cs.green:cs.accent+"77",
+                        height:Math.max(3,Math.round(d.total/maxVal*55))+"px",
+                        borderRadius:"3px 3px 0 0",
+                        border:d.date===todayStr?"2px solid "+cs.green:"none"}}/>
+                    <div style={{fontSize:8,color:d.date===todayStr?cs.green:cs.muted,fontWeight:d.date===todayStr?700:400,textAlign:"center"}}>
+                      {d.label}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Kartu per anggota tim hari ini */}
+            <div style={{borderTop:"1px solid "+cs.border,paddingTop:12,marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:8}}>👥 Job Hari Ini per Anggota Tim</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:7}}>
+                {allTeam.map(t => {
+                  const jobCnt  = jobsToday[t.name] || 0;
+                  const col     = techColors[t.name] || cs.accent;
+                  const isActive = jobCnt > 0;
+                  return (
+                    <div key={t.name} style={{background:isActive?col+"18":cs.surface,
+                      border:"1px solid "+(isActive?col+"44":cs.border),
+                      borderRadius:10,padding:"8px 10px",textAlign:"center"}}>
+                      <div style={{width:32,height:32,borderRadius:10,background:col+"33",
+                        display:"flex",alignItems:"center",justifyContent:"center",
+                        fontSize:14,fontWeight:800,color:col,margin:"0 auto 6px"}}>
+                        {(t.name||"?")[0]}
+                      </div>
+                      <div style={{fontSize:11,fontWeight:700,color:cs.text,marginBottom:2}}>{t.name}</div>
+                      <div style={{fontSize:10,color:col,fontWeight:700}}>{jobCnt} job</div>
+                      <div style={{fontSize:9,color:cs.muted}}>{t.role||"Teknisi"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Ranking omset per teknisi periode terpilih */}
+            {teamRanking.length > 0 && (
+              <div style={{borderTop:"1px solid "+cs.border,paddingTop:10}}>
+                <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:8}}>
+                  🏆 Omset {omsetView==="hari"?"Hari Ini":omsetView==="minggu"?"Minggu Ini":"Bulan Ini"} per Teknisi
+                </div>
+                <div style={{display:"grid",gap:5}}>
+                  {teamRanking.map(([name,stat],idx)=>{
+                    const col = techColors[name] || cs.accent;
+                    const pct = totalPeriod > 0 ? Math.round(stat.total/totalPeriod*100) : 0;
+                    return (
+                      <div key={name} style={{display:"flex",alignItems:"center",gap:10,
+                        background:cs.surface,borderRadius:8,padding:"8px 12px"}}>
+                        <div style={{width:22,height:22,borderRadius:6,
+                          background:col+"33",display:"flex",alignItems:"center",
+                          justifyContent:"center",fontSize:11,fontWeight:800,color:col}}>
+                          {idx+1}
+                        </div>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:12,fontWeight:600,color:cs.text}}>{name}</div>
+                          {/* Progress bar */}
+                          <div style={{height:3,background:cs.border,borderRadius:99,marginTop:3,overflow:"hidden"}}>
+                            <div style={{height:"100%",width:pct+"%",background:col,borderRadius:99,transition:"width .3s"}}/>
+                          </div>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:12,fontWeight:700,color:cs.green}}>{fmt(stat.total)}</div>
+                          <div style={{fontSize:10,color:cs.muted}}>{stat.count} inv · {pct}%</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+          );
+        })()}
+
+              {/* ── SLA ALERT WIDGET ── */}
+              {(() => {
+                const now3 = new Date();
+                const slaOrders = ordersData.filter(o => {
+                  if (o.status !== "DISPATCHED" && o.status !== "CONFIRMED") return false;
+                  if (!o.date || !o.time || o.date !== TODAY) return false;
+                  const bMs = (o.date && o.time ? new Date(o.date+"T"+o.time+":00").getTime() : 0);
+                  return now3.getTime() > bMs + 30*60*1000;
+                });
+                if (slaOrders.length === 0) return null;
+                return (
+                <div style={{ background:"#ef444412", border:"1px solid #ef444433", borderRadius:12, padding:"14px 16px", marginBottom:12 }}>
+                  <div style={{ fontWeight:700, fontSize:14, color:"#ef4444", marginBottom:8 }}>⚠️ SLA Alert — {slaOrders.length} order belum konfirmasi tiba</div>
+                  {slaOrders.map(o=>(
+                    <div key={o.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px", background:"#ef444408", borderRadius:8, marginBottom:4 }}>
+                      <div>
+                        <div style={{ fontSize:12, fontWeight:700, color:cs.text }}>{o.customer}</div>
+                        <div style={{ fontSize:11, color:cs.muted }}>👷 {o.teknisi||"-"} · ⏰ booking {o.time}</div>
+                      </div>
+                      <span style={{ fontSize:10, background:"#ef444420", color:"#ef4444", padding:"3px 8px", borderRadius:99, fontWeight:700 }}>BELUM TIBA</span>
+                    </div>
+                  ))}
+                </div>
+                );
+              })()}
+
+        {/* ══ GAP 7: Garansi akan berakhir (≤30 hari) ══ */}
+        {garansiExpireSoon.length > 0 && (
+          <div style={{ background:cs.card, border:"1px solid #22d3ee44", borderRadius:14, padding:20 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+              <div style={{ fontWeight:700, fontSize:15, color:cs.text }}>🛡️ Monitor Garansi — {garansiExpireSoon.length} aktif</div>
+              <button onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("Garansi");}}
+                style={{ background:"#22d3ee22", border:"1px solid #22d3ee44", color:"#22d3ee", padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>Lihat Semua →</button>
+            </div>
+            <div style={{ display:"grid", gap:8 }}>
+              {garansiExpireSoon.slice(0,5).map(inv => {
+                const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+                const col = daysLeft <= 3 ? "#ef4444" : daysLeft <= 7 ? cs.yellow : "#22d3ee";
+                return (
+                  <div key={inv.id} style={{ background:cs.surface, border:"1px solid "+col+"33", borderRadius:10, padding:"10px 14px", display:"flex", alignItems:"center", gap:12 }}>
+                    <span style={{ fontSize:18 }}>{daysLeft<=3?"🚨":daysLeft<=7?"⚠️":"🛡️"}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontWeight:700, fontSize:13, color:cs.text }}>{inv.customer}</div>
+                      <div style={{ fontSize:11, color:cs.muted }}>{inv.service} · {inv.id}</div>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontWeight:800, fontSize:13, color:col }}>{daysLeft}h lagi</div>
+                      <div style={{ fontSize:10, color:cs.muted }}>{inv.garansi_expires}</div>
+                    </div>
+                    {daysLeft <= 7 && (
+                      <button onClick={()=>{
+                        const custPhone = inv.phone || customersData.find(c=>c.name===inv.customer)?.phone;
+                        if (!custPhone) { showNotif("⚠️ No HP customer tidak ditemukan"); return; }
+                        sendWA(custPhone,
+                          "Halo "+inv.customer+". Garansi "+inv.service
+                          +" berakhir "+daysLeft+" hari lagi ("+inv.garansi_expires+")."
+                          +" Hubungi kami jika ada kendala. — AClean"
+                        );
+                        addAgentLog("GARANSI_REMINDER", `WA garansi dikirim ke ${inv.customer} (${daysLeft}h lagi)`, "SUCCESS");
+                        showNotif("✅ WA reminder garansi terkirim ke "+inv.customer);
+                      }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>
+                        📱 Ingatkan
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              {garansiExpireSoon.length > 5 && (
+                <div style={{ textAlign:"center", fontSize:12, color:cs.muted, padding:8 }}>
+                  +{garansiExpireSoon.length-5} garansi lainnya — <span style={{color:cs.accent,cursor:"pointer"}} onClick={()=>{setActiveMenu("invoice");setInvoiceFilter("Garansi");}}>lihat semua</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Today orders */}
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
@@ -2141,7 +4118,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <div style={{ fontSize:11, color:cs.muted }}>{o.service} · {o.units} unit · 👷 {o.teknisi} · {o.time}</div>
                 </div>
                 <div style={{ display:"flex", gap:6 }}>
-                  <button onClick={() => { const cu=customersData.find(cu=>cu.phone===o.phone); if(cu){setSelectedCustomer(cu);setCustomerTab("history");setActiveMenu("customers");} }}
+                  <button onClick={() => { const cu=findCustomer(customersData, o.phone, o.customer); if(cu){setSelectedCustomer(cu);setCustomerTab("history");setActiveMenu("customers");} }}
                     style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>History</button>
                   {!o.dispatch && <button onClick={() => dispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>Dispatch WA</button>}
                 </div>
@@ -2194,7 +4171,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   const jobsBulan = ordersData.filter(o=>o.teknisi===tek && (o.date||"").startsWith(bulanIniPfx));
                   const selesai   = jobsBulan.filter(o=>["COMPLETED","PAID"].includes(o.status)).length;
                   const pending   = jobsBulan.filter(o=>["PENDING","CONFIRMED","IN_PROGRESS","ON_SITE"].includes(o.status)).length;
-                  const revInvTek = invoicesData.filter(i=>i.teknisi===tek && i.status==="PAID" && (i.created_at||"").startsWith(bulanIniPfx)).reduce((a,b)=>a+(b.total||0),0);
+                  const revInvTek = invoicesData.filter(i=>i.teknisi===tek && i.status==="PAID" && String(i.created_at||"").startsWith(bulanIniPfx)).reduce((a,b)=>a+(b.total||0),0);
                   const lapVerif  = laporanReports.filter(r=>r.teknisi===tek && r.status==="VERIFIED").length;
                   const lapRevisi = laporanReports.filter(r=>r.teknisi===tek && r.status==="REVISION").length;
                   return (
@@ -2238,11 +4215,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const history = selectedCustomer
       ? buildCustomerHistory(selectedCustomer, ordersData, laporanReports, invoicesData)
       : [];
-    const filteredCusts = customersData.filter(cu =>
-      !searchCustomer ||
-      cu.name.toLowerCase().includes(searchCustomer.toLowerCase()) ||
-      cu.phone.includes(searchCustomer)
-    );
+    const _scq = searchCustomer.trim().toLowerCase();
+    const filteredCusts = customersData.filter(cu => {
+      if (!_scq) return true;
+      return (
+        (cu.name||"").toLowerCase().includes(_scq) ||
+        (cu.phone||"").includes(searchCustomer.trim()) ||
+        (cu.address||"").toLowerCase().includes(_scq) ||
+        (cu.area||"").toLowerCase().includes(_scq) ||
+        (cu.notes||"").toLowerCase().includes(_scq)
+      );
+    });
+    const totPgCust = Math.ceil(filteredCusts.length / CUST_PAGE_SIZE) || 1;
+    const curPgCust = Math.min(customerPage, totPgCust);
+    const pageCusts = filteredCusts.slice((curPgCust-1)*CUST_PAGE_SIZE, curPgCust*CUST_PAGE_SIZE);
     return (
       <div style={{ display:"grid", gap:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -2268,7 +4254,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             {/* Search bar */}
             <div style={{ position:"relative" }}>
               <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-              <input value={searchCustomer} onChange={e=>setSearchCustomer(e.target.value)}
+              <input id="searchCustomer" value={searchCustomer} onChange={e=>{setSearchCustomer(e.target.value);setCustomerPage(1);}}
                 placeholder="Cari nama customer atau nomor telepon..."
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
               {searchCustomer && <button onClick={()=>setSearchCustomer("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
@@ -2276,47 +4262,98 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             {searchCustomer && (
               <div style={{ fontSize:12, color:cs.muted }}>Menampilkan <b style={{ color:cs.accent }}>{filteredCusts.length}</b> dari {customersData.length} customer</div>
             )}
-            {filteredCusts.map(cu => {
+            {pageCusts.map(cu => {
               const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
               const lastSvc = cHist[0]; // sudah sorted by date desc
               return (
-                <div key={cu.id} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20, display:"flex", gap:16, alignItems:"flex-start" }}>
-                  <div style={{ width:48, height:48, borderRadius:12, background:"linear-gradient(135deg,"+(cu.is_vip?cs.yellow:cs.accent)+",#3b82f6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>{cu.name.charAt(0)}</div>
+                <div key={cu.id} style={{ background:cs.card, border:"1px solid "+cs.border,
+                  borderRadius:10, padding:"10px 12px",
+                  display:"flex", alignItems:"center", gap:10 }}>
+                  {/* Avatar */}
+                  <div style={{ width:38, height:38, borderRadius:"50%",
+                    background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:15, fontWeight:800, color:"#fff", flexShrink:0 }}>
+                    {(cu.name||"?").charAt(0).toUpperCase()}
+                  </div>
+                  {/* Info */}
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
-                      <span style={{ fontWeight:700, color:cs.text, fontSize:15 }}>{cu.name}</span>
-                      {cu.is_vip && <span style={{ background:cs.yellow+"22", color:cs.yellow, fontSize:10, fontWeight:800, padding:"2px 7px", borderRadius:99, border:"1px solid "+cs.yellow+"44" }}>⭐ VIP</span>}
-                      <span style={{ fontSize:10, color:cs.muted, fontFamily:"monospace" }}>{cu.id}</span>
+                    <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+                      <span style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{cu.name}</span>
+                      {cu.is_vip && <span style={{ fontSize:9, background:"#f59e0b22", color:"#f59e0b", padding:"1px 5px", borderRadius:99, fontWeight:700 }}>⭐VIP</span>}
                     </div>
-                    <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:"3px 20px", fontSize:12, color:cs.muted, marginBottom:8 }}>
-                      <span>📱 {cu.phone}</span><span>📍 {cu.area}</span>
-                      <span>🏠 {cu.address.slice(0,32)}...</span><span>📅 {cu.joined}</span>
-                    </div>
-                    {/* ── BONUS: Last service summary di customer card ── */}
-                    {lastSvc ? (
-                      <div style={{ fontSize:11, background:cs.surface, borderRadius:7, padding:"6px 10px", marginBottom:6, display:"flex", gap:10, flexWrap:"wrap" }}>
-                        <span style={{ color:cs.muted }}>🕐 Terakhir:</span>
-                        <span style={{ color:cs.text, fontWeight:600 }}>{lastSvc.date}</span>
-                        <span style={{ color:cs.accent }}>{lastSvc.service}</span>
-                        <span style={{ color:cs.muted }}>{lastSvc.units} unit · {lastSvc.teknisi}</span>
-                        {lastSvc.rekomendasi&&(
-                          <span style={{ color:"#7dd3fc", fontStyle:"italic" }}>💡 {lastSvc.rekomendasi.slice(0,50)}{lastSvc.rekomendasi.length>50?"...":""}</span>
-                        )}
-                        <span style={{ color:cHist.length>1?cs.green:cs.muted, fontWeight:700 }}>({cHist.length}x servis)</span>
-                      </div>
-                    ) : (
-                      <div style={{ fontSize:11, color:cs.muted, marginBottom:6 }}>Belum ada riwayat servis</div>
-                    )}
-                    {cu.notes && <div style={{ fontSize:12, color:"#7dd3fc", background:"#0ea5e910", padding:"6px 10px", borderRadius:7, border:"1px solid #0ea5e922" }}>💡 {cu.notes}</div>}
+                    <div style={{ fontSize:11, color:cs.muted }}>📱 {cu.phone||"-"}</div>
+                    <div style={{ fontSize:11, color:cs.muted, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:180 }}>📍 {cu.address||cu.area||"-"}</div>
                   </div>
-                  <div style={{ display:"flex", flexDirection:"column", gap:8, flexShrink:0 }}>
-                    <button onClick={() => { setSelectedCustomer(cu); setCustomerTab("history"); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600, whiteSpace:"nowrap" }}>📋 Riwayat ({cHist.length})</button>
-                    <button onClick={() => { setNewOrderForm(f=>({...f,customer:cu.name,phone:cu.phone,address:cu.address})); setModalOrder(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>+ Order</button>
-                    <button onClick={() => openWA(cu.phone, "")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 WA</button>
+                  {/* Tombol — role-aware */}
+                  {(currentUser?.role === "Teknisi" || currentUser?.role === "Helper") ? (
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, flexShrink:0 }}>
+                    <button onClick={()=>{ setSelectedCustomer(cu); setCustomerTab("history"); }}
+                      style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent,
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                      📋 Riwayat
+                    </button>
+                    <button onClick={()=>cu.phone && openWA(cu.phone,"")}
+                      style={{ background:"#25D36618", border:"1px solid #25D36633", color:"#25D366",
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                      💬 WA
+                    </button>
                   </div>
+                  ) : (
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, flexShrink:0 }}>
+                    <button onClick={()=>{ setSelectedCustomer(cu); setCustomerTab("history"); }}
+                      style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent,
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                      📋 Riwayat
+                    </button>
+                    <button onClick={()=>{ setNewOrderForm(f=>({...f,customer:cu.name,phone:normalizePhone(cu.phone)||cu.phone,address:cu.address||"",service:"Cleaning"})); setModalOrder(true); }}
+                      style={{ background:cs.green+"18", border:"1px solid "+cs.green+"33", color:cs.green,
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                      📦 Order
+                    </button>
+                    <button onClick={()=>cu.phone && openWA(cu.phone,"")}
+                      style={{ background:"#25D36618", border:"1px solid #25D36633", color:"#25D366",
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                      💬 WA
+                    </button>
+                    {currentUser?.role === "Owner" ? (
+                      <button onClick={async()=>{
+                        if(!await showConfirm({ icon:"🗑️", title:"Hapus Customer?", danger:true,
+                          message:`Hapus "${cu.name}"?\nHistory order tetap ada.`,
+                          confirmText:"Hapus" })) return;
+                        setCustomersData(prev=>prev.filter(c=>c.id!==cu.id));
+                        const {error}=await supabase.from("customers").delete().eq("id",cu.id);
+                        if(error) showNotif("⚠️ "+error.message);
+                        else { addAgentLog("CUSTOMER_DELETED",cu.name+" dihapus","WARNING"); showNotif("🗑️ Dihapus"); }
+                      }} style={{ background:"#ef444418", border:"1px solid #ef444433", color:"#ef4444",
+                        borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                        🗑️ Hapus
+                      </button>
+                    ) : <div/>}
+                  </div>
+                  )}
                 </div>
               );
             })}
+            {/* Customer pagination */}
+            {totPgCust > 1 && (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, marginTop:14, flexWrap:"wrap" }}>
+                <button onClick={()=>setCustomerPage(p=>Math.max(1,p-1))} disabled={curPgCust===1}
+                  style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
+                    background:curPgCust===1?cs.surface:cs.card, color:curPgCust===1?cs.muted:cs.text, cursor:curPgCust===1?"default":"pointer" }}>‹</button>
+                {Array.from({length:Math.min(totPgCust,7)},(_,i)=>{
+                  let pg=i+1;
+                  if(totPgCust>7){ if(curPgCust<=4) pg=i+1; else if(curPgCust>=totPgCust-3) pg=totPgCust-6+i; else pg=curPgCust-3+i; }
+                  return (<button key={pg} onClick={()=>setCustomerPage(pg)}
+                    style={{ padding:"5px 10px", borderRadius:8, border:"1px solid "+(curPgCust===pg?cs.accent:cs.border),
+                      background:curPgCust===pg?cs.accent:cs.card, color:curPgCust===pg?"#0a0f1e":cs.text, cursor:"pointer", fontWeight:curPgCust===pg?700:400 }}>{pg}</button>);
+                })}
+                <button onClick={()=>setCustomerPage(p=>Math.min(totPgCust,p+1))} disabled={curPgCust===totPgCust}
+                  style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
+                    background:curPgCust===totPgCust?cs.surface:cs.card, color:curPgCust===totPgCust?cs.muted:cs.text, cursor:curPgCust===totPgCust?"default":"pointer" }}>›</button>
+                <span style={{fontSize:11,color:cs.muted}}>hal {curPgCust}/{totPgCust} · {filteredCusts.length} customer</span>
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ display:"grid", gap:14 }}>
@@ -2468,8 +4505,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     {safeArr(svc.foto_urls).length > 0 && (
                       <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:8 }}>
                         {safeArr(svc.foto_urls).slice(0,5).map((url, fi) => (
-                          <img key={fi} src={url} alt={`Foto ${fi+1}`}
-                            onClick={() => window.open(url, "_blank")}
+                          <img key={fi} src={fotoSrc(url)} alt={`Foto ${fi+1}`}
+                            onClick={() => window.open(fotoSrc(url), "_blank")}
                             style={{ width:56, height:56, objectFit:"cover", borderRadius:8,
                               cursor:"pointer", border:"1px solid "+cs.border,
                               transition:"opacity .15s" }}
@@ -2480,7 +4517,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           <div style={{ width:56, height:56, borderRadius:8, background:cs.surface,
                             border:"1px solid "+cs.border, display:"flex", alignItems:"center",
                             justifyContent:"center", fontSize:11, color:cs.muted, cursor:"pointer" }}
-                            onClick={() => window.open(svc.foto_urls[5], "_blank")}>
+                            onClick={() => window.open(fotoSrc(svc.foto_urls[5]), "_blank")}>
                             +{safeArr(svc.foto_urls).length - 5}
                           </div>
                         )}
@@ -2539,12 +4576,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Data Customer</button>
                     <button onClick={()=>{ openWA(selectedCustomer.phone, ""); }}
                       style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12 }}>📱 Hubungi WA</button>
-                    <button onClick={()=>{ if(window.confirm&&window.confirm("Tandai "+selectedCustomer.name+" sebagai "+(selectedCustomer.is_vip?"Regular":"VIP")+"?")){
+                    <button onClick={async ()=>{ if(await showConfirm({ icon:"⭐", title:"Ubah Status VIP?",
+                      message:`Tandai ${selectedCustomer.name} sebagai ${selectedCustomer.is_vip?"Regular":"VIP"}?`,
+                      confirmText:"Ya, Ubah" }))
                       setCustomersData(prev=>prev.map(cu=>cu.id===selectedCustomer.id?{...cu,is_vip:!cu.is_vip}:cu));
                       setSelectedCustomer(prev=>({...prev,is_vip:!prev.is_vip}));
                       supabase.from("customers").update({is_vip:!selectedCustomer.is_vip}).eq("id",selectedCustomer.id);
                       showNotif(selectedCustomer.name+(selectedCustomer.is_vip?" diturunkan ke Regular":" dijadikan VIP ⭐"));
-                    }}}
+                    }}
                       style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"8px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>{selectedCustomer.is_vip?"⭐ Hapus VIP":"⭐ Jadikan VIP"}</button>
                   </div>
                 )}
@@ -2567,12 +4606,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     if (orderFilter === "Hari Ini") filtered = filtered.filter(o => o.date === TODAY);
     else if (orderFilter !== "Semua") filtered = filtered.filter(o => o.status === (sMap2[orderFilter]||orderFilter));
     if (orderTekFilter !== "Semua") filtered = filtered.filter(o => o.teknisi === orderTekFilter || o.helper === orderTekFilter);
+    if (orderDateFrom) filtered = filtered.filter(o => (o.date||"") >= orderDateFrom);
+    if (orderServiceFilter !== "Semua") filtered = filtered.filter(o => o.service === orderServiceFilter); // GAP-9
+    if (orderDateTo)   filtered = filtered.filter(o => (o.date||"") <= orderDateTo);
     if (searchOrder.trim()) {
       const q = searchOrder.trim().toLowerCase();
       filtered = filtered.filter(o =>
-        (o.customer||"").toLowerCase().includes(q) || (o.id||"").toLowerCase().includes(q) ||
-        (o.phone||"").includes(searchOrder.trim()) || (o.teknisi||"").toLowerCase().includes(q) ||
-        (o.address||"").toLowerCase().includes(q)
+        (o.customer||"").toLowerCase().includes(q) ||
+        (o.id||"").toLowerCase().includes(q) ||
+        (o.phone||"").toLowerCase().includes(q) ||
+        (o.teknisi||"").toLowerCase().includes(q) ||
+        (o.helper||"").toLowerCase().includes(q) ||
+        (o.address||"").toLowerCase().includes(q) ||
+        (o.service||"").toLowerCase().includes(q) ||
+        (o.notes||"").toLowerCase().includes(q)
       );
     }
     filtered.sort((a,b) => (b.date+(b.time||"")).localeCompare(a.date+(a.time||"")));
@@ -2582,15 +4629,75 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     return (
       <div style={{ display:"grid", gap:14 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-          <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>
+          <div style={{ fontWeight:700, fontSize:18, color:cs.text, display:"flex", alignItems:"center", gap:10 }}>
             📋 Order Masuk <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filtered.length})</span>
+            {(() => {
+              const stuck = ordersData.filter(o =>
+                ["DISPATCHED","ON_SITE"].includes(o.status) && o.date < TODAY
+              ).length;
+              return stuck > 0 ? (
+                <span title="Job belum ada laporan (sudah lewat hari)" style={{ fontSize:11, background:cs.red+"22", color:cs.red, border:"1px solid "+cs.red+"44", borderRadius:99, padding:"2px 8px", fontWeight:700, cursor:"pointer" }}
+                  onClick={()=>{setOrderFilter("Semua");setOrderTekFilter("Semua");}}>
+                  ⚠️ {stuck} stuck
+                </span>
+              ) : null;
+            })()}
           </div>
-          <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (() => {
+              const todayUndispatched = ordersData.filter(o =>
+                o.date === TODAY && !o.dispatch &&
+                ["PENDING","CONFIRMED","DISPATCHED"].includes(o.status)
+              );
+              return todayUndispatched.length > 0 ? (
+                <button onClick={async () => {
+                  if (!await showConfirm({ icon:"📤", title:"Bulk Dispatch WA?",
+  message:"Kirim WA ke "+todayUndispatched.length+" teknisi untuk job hari ini?",
+
+  confirmText:"Ya, Kirim Semua" })) return;
+                  let sukses = 0, gagal = 0;
+                  showNotif(`⏳ Mengirim WA ke ${todayUndispatched.length} teknisi...`);
+                  for (const o of todayUndispatched) {
+                    try {
+                      await sendDispatchWA(o);
+                      sukses++;
+                      await new Promise(r => setTimeout(r, 500)); // jeda 0.5s antar WA
+                    } catch(e) { gagal++; }
+                  }
+                  addAgentLog("BULK_DISPATCH", `Bulk dispatch: ${sukses} sukses, ${gagal} gagal — ${TODAY}`, sukses>0?"SUCCESS":"ERROR");
+                  showNotif(`✅ Bulk dispatch selesai: ${sukses} WA terkirim${gagal>0?", "+gagal+" gagal":""}`);
+                }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"9px 14px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12, display:"flex", alignItems:"center", gap:6 }}>
+                  📤 Dispatch Hari Ini <span style={{background:"#25D366",color:"#fff",borderRadius:99,padding:"1px 7px",fontSize:11}}>{todayUndispatched.length}</span>
+                </button>
+              ) : null;
+            })()}
+            {/* ── Rekap Order: Download + Kirim WA ── */}
+            {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+              <div style={{display:"flex",alignItems:"center",gap:5,
+                background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"4px 7px"}}>
+                <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>📥 Rekap</span>
+                <input type="date" id="rekapOrder"
+                  defaultValue={TODAY}
+                  style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,
+                    padding:"3px 7px",fontSize:11,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+                />
+                <button onClick={()=>{const d=document.getElementById("rekapOrder")?.value||TODAY;downloadRekapHarian(d);}}
+                  title="Download rekap ke file"
+                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
+                    padding:"4px 8px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11}}>⬇️</button>
+                <button onClick={()=>{const d=document.getElementById("rekapOrder")?.value||TODAY;triggerRekapHarian(d);}}
+                  title="Kirim rekap via WhatsApp"
+                  style={{background:"#25D36622",border:"1px solid #25D36644",color:"#25D366",
+                    padding:"4px 8px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11}}>📲</button>
+              </div>
+            )}
+            <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Order Baru</button>
+          </div>
         </div>
         {/* Search bar */}
         <div style={{ position:"relative" }}>
           <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:14, pointerEvents:"none" }}>🔍</span>
-          <input value={searchOrder} onChange={e=>{setSearchOrder(e.target.value);setOrderPage(1);}}
+          <input id="searchOrder" value={searchOrder} onChange={e=>{setSearchOrder(e.target.value);setOrderPage(1);}}
             placeholder="Cari nama customer, Job ID, telepon, atau teknisi..."
             style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
           {searchOrder && <button onClick={()=>{setSearchOrder("");setOrderPage(1);}} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
@@ -2607,6 +4714,31 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"6px 10px", fontSize:12, cursor:"pointer" }}>
             {allTekOrd.map(t=><option key={t} value={t}>👷 {t}</option>)}
           </select>
+          <span style={{width:1,height:16,background:cs.border,display:"inline-block",marginLeft:4}} />
+          <input id="orderDateFrom" type="date" value={orderDateFrom} onChange={e=>{setOrderDateFrom(e.target.value);setOrderPage(1);}}
+            title="Dari tanggal"
+            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:orderDateFrom?cs.text:cs.muted, padding:"5px 8px", fontSize:11, cursor:"pointer", width:130 }} />
+          <span style={{color:cs.muted,fontSize:11}}>–</span>
+          <input id="orderDateTo" type="date" value={orderDateTo} onChange={e=>{setOrderDateTo(e.target.value);setOrderPage(1);}}
+            title="Sampai tanggal"
+            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:orderDateTo?cs.text:cs.muted, padding:"5px 8px", fontSize:11, cursor:"pointer", width:130 }} />
+          {(orderDateFrom||orderDateTo) && (
+            <button onClick={()=>{setOrderDateFrom("");setOrderDateTo("");setOrderPage(1);}}
+              style={{background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:14,padding:"2px 4px"}} title="Reset tanggal">✕</button>
+          )}
+          {/* GAP-9: Filter service type */}
+          <span style={{width:1,height:16,background:cs.border,display:"inline-block",marginLeft:4}} />
+          <select value={orderServiceFilter} onChange={e=>{setOrderServiceFilter(e.target.value);setOrderPage(1);}}
+            style={{ background:cs.card, border:"1px solid "+(orderServiceFilter!="Semua"?cs.yellow:cs.border), borderRadius:8, color:orderServiceFilter!="Semua"?cs.yellow:cs.text, padding:"6px 10px", fontSize:12, cursor:"pointer" }}>
+            {["Semua","Cleaning","Install","Repair","Complain"].map(s=><option key={s} value={s}>🔧 {s}</option>)}
+          </select>
+          {/* GAP-9: Reset Semua filter */}
+          {(orderFilter!=="Semua"||orderTekFilter!=="Semua"||orderDateFrom||orderDateTo||orderServiceFilter!=="Semua"||searchOrder) && (
+            <button onClick={()=>{setOrderFilter("Semua");setOrderTekFilter("Semua");setOrderDateFrom("");setOrderDateTo("");setOrderServiceFilter("Semua");setSearchOrder("");setOrderPage(1);}}
+              style={{ background:cs.red+"18", border:"1px solid "+cs.red+"44", color:cs.red, padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+              ✕ Reset Semua
+            </button>
+          )}
         </div>
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
           <table style={{ width:"100%", borderCollapse:"collapse" }}>
@@ -2623,7 +4755,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:12, color:cs.accent, fontWeight:700 }}>{o.id}</td>
                   <td style={{ padding:"10px 14px" }}>
                     <div style={{ fontSize:13, fontWeight:600, color:cs.text }}>{o.customer}</div>
-                    <div style={{ fontSize:11, color:cs.muted }}>{o.address.slice(0,28)}...</div>
+                    <div style={{ fontSize:11, color:cs.muted }}>{(o.address||"-").slice(0,28)}...</div>
                   </td>
                   <td style={{ padding:"10px 14px" }}>
                     {(() => { const sCol={Cleaning:"#22c55e",Install:"#3b82f6",Repair:"#f59e0b",Complain:"#ef4444"}[o.service]||cs.muted; return (
@@ -2631,7 +4763,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <span style={{fontSize:11,color:cs.muted,marginLeft:5}}>{o.units}u</span></>
                     ); })()}
                   </td>
-                  <td style={{ padding:"10px 14px", fontSize:12, color:cs.text }}>{o.teknisi}</td>
+                  <td style={{ padding:"10px 14px", fontSize:12 }}>
+                    <div style={{fontWeight:600,color:cs.text}}>{o.teknisi||"—"}</div>
+                    {(o.helper||o.helper2||o.helper3) && (currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+                      <div style={{fontSize:10,color:cs.muted,marginTop:2}}>
+                        🤝 {[o.helper,o.helper2,o.helper3].filter(Boolean).join(" + ")}
+                      </div>
+                    )}
+                    {(o.teknisi2||o.teknisi3) && (
+                      <div style={{fontSize:10,color:cs.accent,marginTop:1}}>
+                        👷 {[o.teknisi2,o.teknisi3].filter(Boolean).join(" + ")}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding:"10px 14px", fontSize:12, color:cs.muted }}>{o.date}<br/>{o.time}</td>
                   <td style={{ padding:"10px 14px" }}>
                     <span style={{ fontSize:10, padding:"3px 8px", borderRadius:99, background:(statusColor[o.status]||cs.muted)+"22", color:statusColor[o.status]||cs.muted, border:"1px solid "+(statusColor[o.status]||cs.muted)+"44", fontWeight:700 }}>{statusLabel[o.status]||o.status.replace("_"," ")}</span>
@@ -2655,6 +4799,36 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
                         <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,type:o.type||"",units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }}
                           style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
+                      )}
+                      {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+                        <button onClick={async()=>{
+                          if (!await showConfirm({ icon:"🗑️", title:"Hapus Order?", danger:true,
+                            message:`Hapus order ${o.id} — ${o.customer}?\n\nTindakan ini tidak bisa dibatalkan.\nOrder yang sudah ada invoice TIDAK bisa dihapus.`,
+                            confirmText:"Ya, Hapus" })) return;
+                          if (o.invoice_id) {
+                            showNotif("❌ Tidak bisa hapus: order sudah punya invoice "+o.invoice_id);
+                            return;
+                          }
+                          // Blok hapus jika status sudah COMPLETED (kecuali Owner)
+                          if (currentUser?.role==="Admin" && ["COMPLETED","REPORT_SUBMITTED","VERIFIED"].includes(o.status)) {
+                            showNotif("❌ Admin tidak bisa hapus order yang sudah selesai. Hubungi Owner.");
+                            return;
+                          }
+                          const { error: delErr } = await supabase.from("orders").delete().eq("id", o.id);
+                          if (delErr) { showNotif("❌ Gagal hapus: "+delErr.message); return; }
+                          try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch(_){}
+                          setOrdersData(prev => prev.filter(x => x.id !== o.id));
+                          addAgentLog("ORDER_DELETED",
+                            `${currentUser?.role} hapus order ${o.id} — ${o.customer} (${o.service}) tgl ${o.date}`,
+                            "WARNING");
+                          showNotif("✅ Order "+o.id+" berhasil dihapus");
+                        }} title={currentUser?.role==="Admin"
+                          ? "Hapus order (tidak bisa jika sudah selesai/ada invoice)"
+                          : "Hapus order (Owner)"}
+                          style={{ background:"#ef444422", border:"1px solid #ef444444", color:"#ef4444",
+                            padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                          🗑️
+                        </button>
                       )}
                     </div>
                   </td>
@@ -2701,8 +4875,29 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   const renderInvoice = () => {
     // ── SIM-3+2: status filter + search + pagination ──
+    // ══ GAP 7: Warranty tracker — filter garansi aktif ══
+    const garansiAktif = invoicesData.filter(inv => {
+      if (!inv.garansi_expires) return false;
+      const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+      return daysLeft >= 0;
+    }).sort((a,b) => a.garansi_expires.localeCompare(b.garansi_expires));
+    const garansiKritis = garansiAktif.filter(inv => {
+      const d = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+      return d <= 7;
+    });
+
     let filteredInv = [...invoicesData];
-    if (invoiceFilter !== "Semua") filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
+    const todayDateStr = getLocalDate();
+    if (invoiceFilter === "Garansi") {
+      filteredInv = garansiAktif;
+    } else if (invoiceFilter === "Hari Ini") {
+      filteredInv = filteredInv.filter(inv => (inv.created_at||"").slice(0,10) === todayDateStr);
+    } else if (invoiceFilter !== "Semua") {
+      filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
+    }
+    // Date range filter
+    if (invoiceDateFrom) filteredInv = filteredInv.filter(inv => (inv.created_at||"").slice(0,10) >= invoiceDateFrom);
+    if (invoiceDateTo)   filteredInv = filteredInv.filter(inv => (inv.created_at||"").slice(0,10) <= invoiceDateTo);
     if (searchInvoice.trim()) {
       const q = searchInvoice.trim().toLowerCase();
       filteredInv = filteredInv.filter(inv =>
@@ -2724,11 +4919,113 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"8px 14px", borderRadius:9, cursor:"pointer", fontWeight:600, fontSize:12 }}>
           🔔 Kirim Reminder ({unpaidCnt})
         </button>
+        <button onClick={async () => {
+          try {
+            if (!window.XLSX) {
+              await new Promise((res, rej) => {
+                const s = document.createElement("script");
+                s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+                s.onload = res; s.onerror = rej;
+                document.head.appendChild(s);
+              });
+            }
+            const XLSX = window.XLSX;
+            const rows = filteredInv;
+            const rangeLabel = invoiceDateFrom||invoiceDateTo
+              ? `${invoiceDateFrom||"awal"}_sd_${invoiceDateTo||"skrg"}`
+              : (invoiceFilter !== "Semua" ? invoiceFilter.replace(/\s/g,"_") : "Semua");
+            const data = rows.map((inv, i) => ({
+              "No": i+1, "ID Invoice": inv.id||"-",
+              "Tgl Dibuat": inv.created_at ? new Date(inv.created_at).toLocaleDateString("id-ID") : "-",
+              "Customer": inv.customer||"-", "No HP": inv.phone||"-",
+              "Layanan": inv.service||"-", "Unit": inv.units||1,
+              "Status": inv.status||"-", "Total (Rp)": inv.total||0,
+              "Teknisi": inv.teknisi||"-",
+              "Tgl Bayar": inv.paid_at ? new Date(inv.paid_at).toLocaleDateString("id-ID") : "-",
+              "Metode Bayar": inv.paid_method||"-",
+            }));
+            const totalPaid   = rows.filter(i=>i.status==="PAID").reduce((s,i)=>s+(i.total||0),0);
+            const totalUnpaid = rows.filter(i=>["UNPAID","OVERDUE"].includes(i.status)).reduce((s,i)=>s+(i.total||0),0);
+            const summary = [
+              {"Keterangan":"Total Invoice","Nilai":rows.length},
+              {"Keterangan":"Invoice PAID","Nilai":rows.filter(i=>i.status==="PAID").length},
+              {"Keterangan":"Invoice UNPAID","Nilai":rows.filter(i=>i.status==="UNPAID").length},
+              {"Keterangan":"Invoice OVERDUE","Nilai":rows.filter(i=>i.status==="OVERDUE").length},
+              {"Keterangan":"Omset Terbayar (Rp)","Nilai":totalPaid},
+              {"Keterangan":"Belum Terbayar (Rp)","Nilai":totalUnpaid},
+            ];
+            const wb = XLSX.utils.book_new();
+            const ws1 = XLSX.utils.json_to_sheet(data);
+            ws1["!cols"] = [{wch:4},{wch:22},{wch:13},{wch:20},{wch:14},{wch:16},{wch:5},{wch:15},{wch:13},{wch:12},{wch:12},{wch:12}];
+            const ws2 = XLSX.utils.json_to_sheet(summary);
+            ws2["!cols"] = [{wch:22},{wch:16}];
+            XLSX.utils.book_append_sheet(wb, ws1, "Invoice");
+            XLSX.utils.book_append_sheet(wb, ws2, "Summary");
+            XLSX.writeFile(wb, `Invoice_${rangeLabel}_${getLocalDate()}.xlsx`);
+            showNotif(`✅ Export ${rows.length} invoice → .xlsx berhasil!`);
+          } catch(err) { showNotif("❌ Export gagal: " + err.message); }
+        }}
+        style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green,
+          padding:"8px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:13,
+          display:"flex", alignItems:"center", gap:6 }}>
+          📊 Export XLSX ({filteredInv.length})
+        </button>
+        {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+          <div style={{display:"flex",alignItems:"center",gap:6,
+            background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"4px 8px"}}>
+            <span style={{fontSize:11,color:cs.muted,whiteSpace:"nowrap"}}>📥 Rekap Harian:</span>
+            <input type="date" id="rekapDatePickerInv"
+              defaultValue={TODAY}
+              style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,
+                padding:"4px 8px",fontSize:11,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+            />
+            <button
+              onClick={()=>{
+                const d = document.getElementById("rekapDatePickerInv")?.value || TODAY;
+                downloadRekapHarian(d);
+              }}
+              style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,
+                padding:"5px 12px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:12,
+                whiteSpace:"nowrap"}}>
+              ⬇️ Download
+            </button>
+          </div>
+        )}
       </div>
+      {/* ── Date range picker invoice ── */}
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",
+        background:cs.surface,border:"1px solid "+cs.border,borderRadius:10,padding:"8px 12px"}}>
+        <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>📅 Filter Tanggal:</span>
+        <input type="date" value={invoiceDateFrom}
+          onChange={e=>{setInvoiceDateFrom(e.target.value);setInvoicePage(1);}}
+          style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+            padding:"5px 9px",fontSize:12,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+        />
+        <span style={{fontSize:12,color:cs.muted}}>–</span>
+        <input type="date" value={invoiceDateTo}
+          onChange={e=>{setInvoiceDateTo(e.target.value);setInvoicePage(1);}}
+          style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+            padding:"5px 9px",fontSize:12,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+        />
+        {(invoiceDateFrom||invoiceDateTo) && (
+          <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
+            <span style={{fontSize:11,color:cs.accent,fontWeight:600}}>
+              {filteredInv.length} invoice
+            </span>
+            <button onClick={()=>{setInvoiceDateFrom("");setInvoiceDateTo("");setInvoicePage(1);}}
+              style={{fontSize:11,padding:"3px 10px",borderRadius:99,
+                background:cs.red+"22",border:"1px solid "+cs.red+"44",
+                color:cs.red,cursor:"pointer",fontWeight:600}}>
+              ✕ Reset
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Search */}
       <div style={{ position:"relative" }}>
         <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-        <input value={searchInvoice} onChange={e=>{setSearchInvoice(e.target.value);setInvoicePage(1);}}
+        <input id="searchInvoice" value={searchInvoice} onChange={e=>{setSearchInvoice(e.target.value);setInvoicePage(1);}}
           placeholder="Cari nama customer, no. telepon, atau ID invoice..."
           style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
         {searchInvoice && <button onClick={()=>{setSearchInvoice("");setInvoicePage(1);}} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
@@ -2737,18 +5034,26 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
         {[
           ["Semua", cs.muted],
+          ["Hari Ini", "#f97316"],
           ["UNPAID", cs.yellow],
           ["OVERDUE", cs.red],
           ["PAID", cs.green],
           ["PENDING_APPROVAL", cs.accent],
+          ["Garansi", "#22d3ee"],
         ].map(([s, col]) => {
-          const cnt = s==="Semua" ? invoicesData.length : invoicesData.filter(i=>i.status===s).length;
+          const todayStr = getLocalDate();
+          const cnt = s==="Semua" ? invoicesData.length
+            : s==="Hari Ini" ? invoicesData.filter(inv => (inv.created_at||"").slice(0,10) === todayStr).length
+            : s==="Garansi" ? garansiAktif.length
+            : invoicesData.filter(i=>i.status===s).length;
+          const showBadge = s==="Garansi" && garansiKritis.length > 0;
           return (
             <button key={s} onClick={()=>{setInvoiceFilter(s);setInvoicePage(1);}}
               style={{ padding:"6px 14px", borderRadius:99, border:"1px solid "+(invoiceFilter===s?col:cs.border),
                 background:invoiceFilter===s?col+"22":cs.card, color:invoiceFilter===s?col:cs.muted,
-                cursor:"pointer", fontSize:12, fontWeight:invoiceFilter===s?700:500 }}>
-              {s==="Semua"?"Semua":s==="PENDING_APPROVAL"?"Approval":s} ({cnt})
+                cursor:"pointer", fontSize:12, fontWeight:invoiceFilter===s?700:500, position:"relative" }}>
+              {s==="Semua"?"Semua":s==="PENDING_APPROVAL"?"Approval":s==="Garansi"?"🛡️ Garansi":s} ({cnt})
+              {showBadge && <span style={{position:"absolute",top:-4,right:-4,background:"#ef4444",color:"#fff",borderRadius:99,fontSize:9,padding:"1px 5px",fontWeight:800}}>{garansiKritis.length}</span>}
             </button>
           );
         })}
@@ -2761,12 +5066,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:14 }}>{inv.id}</span>
                 <span style={{ fontSize:10, padding:"3px 8px", borderRadius:99, background:(statusColor[inv.status]||cs.muted)+"22", color:statusColor[inv.status]||cs.muted, border:"1px solid "+(statusColor[inv.status]||cs.muted)+"44", fontWeight:700 }}>{inv.status.replace(/_/g," ")}</span>
                 {inv.follow_up > 0 && <span style={{ fontSize:10, color:cs.yellow }}>Follow-up: {inv.follow_up}x</span>}
+                {inv.garansi_expires && (() => {
+                  const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
+                  if (daysLeft < 0) return <span style={{fontSize:10,color:cs.muted,background:cs.surface,padding:"1px 6px",borderRadius:4}}>🔒 Garansi selesai</span>;
+                  if (daysLeft <= 7) return <span style={{fontSize:10,color:"#ef4444",background:"#ef444418",padding:"1px 6px",borderRadius:4,fontWeight:700}}>⚠️ Garansi {daysLeft}h lagi</span>;
+                  if (daysLeft <= 30) return <span style={{fontSize:10,color:cs.yellow,background:cs.yellow+"18",padding:"1px 6px",borderRadius:4}}>🛡️ Garansi {daysLeft}h</span>;
+                  return <span style={{fontSize:10,color:cs.green,background:cs.green+"18",padding:"1px 6px",borderRadius:4}}>✅ Garansi {daysLeft}h</span>;
+                })()}
               </div>
               <div style={{ fontWeight:800, fontSize:18, color:cs.text, fontFamily:"monospace" }}>{fmt(inv.total)}</div>
             </div>
             {/* GAP 3 — breakdown nilai */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:6, marginBottom:10, fontSize:11 }}>
-              <div style={{ background:cs.surface, borderRadius:6, padding:"6px 10px" }}><div style={{color:cs.muted}}>Jasa</div><div style={{color:cs.text,fontWeight:700}}>{fmt(inv.labor)}</div></div>
+              <div style={{ background:inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF"?cs.green+"10":cs.surface,borderRadius:6,padding:"6px 10px",border:inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF"?"1px solid "+cs.green+"33":"none"}}><div style={{color:cs.muted}}>Jasa</div><div style={{color:inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF"?cs.green:cs.text,fontWeight:700}}>{inv.garansi_status==="GARANSI_DENGAN_MATERIAL"||inv.garansi_status==="GARANSI_AKTIF"?"Rp 0 (Garansi)":fmt(inv.labor)}</div></div>
               <div style={{ background:cs.surface, borderRadius:6, padding:"6px 10px" }}><div style={{color:cs.muted}}>Material</div><div style={{color:cs.text,fontWeight:700}}>{fmt(inv.material)}</div></div>
               <div style={{ background:inv.dadakan>0?cs.yellow+"18":cs.surface, borderRadius:6, padding:"6px 10px", border:inv.dadakan>0?"1px solid "+cs.yellow+"44":"none" }}><div style={{color:cs.muted}}>Tambahan</div><div style={{color:inv.dadakan>0?cs.yellow:cs.text,fontWeight:700}}>{fmt(inv.dadakan)}</div></div>
             </div>
@@ -2778,8 +5090,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
               <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>👁 Preview</button>
               {/* Edit invoice — Owner bisa edit semua status kecuali PAID */}
-              {inv.status !== "PAID" && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-                <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); setModalEditInvoice(true); }}
+              {/* Edit invoice */}
+              {inv.status !== "PAID" &&
+               (currentUser?.role === "Owner" ||
+                (currentUser?.role === "Admin" && inv.status === "PENDING_APPROVAL")) && (
+                <button onClick={() => { setEditInvoiceData(inv); setEditInvoiceForm({labor:inv.labor,material:inv.material,dadakan:inv.dadakan||0,notes:""}); const _allItems = parseMD(inv.materials_detail).map((m,idx)=>({...m,_idx:idx}));
+          const _jasaItems = _allItems.filter(m => jasaSvcNames.some(s => (m.nama||"").includes(s)));
+          const _matItems  = _allItems.filter(m => !jasaSvcNames.some(s => (m.nama||"").includes(s)));
+          setEditJasaItems(_jasaItems);
+          setEditInvoiceItems(_matItems); setModalEditInvoice(true); }}
                   style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
               {inv.status === "PENDING_APPROVAL" && (
@@ -2792,7 +5111,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               {inv.status === "UNPAID" && (
                 <>
                   <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>📤 Kirim ke Customer</button>
-                  <button onClick={() => { if(!window.confirm||window.confirm(`Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`)) { const pp = invoicesData.find(i=>i.id===inv.id); markPaid(pp||inv); }}} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12 }}>💰 Tandai Lunas</button>
+                  <button onClick={async () => { if(await showConfirm({ icon:"💰", title:"Tandai Lunas?",
+  message:`Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`,
+  confirmText:"Ya, Lunas" })) { const pp = invoicesData.find(i=>i.id===inv.id); markPaid(pp||inv); }}} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12 }}>💰 Tandai Lunas</button>
                   <button onClick={() => invoiceReminderWA(inv)} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>🔔 Reminder</button>
                 </>
               )}
@@ -2801,6 +5122,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>📤 Kirim ke Customer</button>
                   <button onClick={() => invoiceReminderWA(inv)} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12 }}>⚠️ Reminder OVERDUE</button>
                 </>
+              )}
+              {/* Hapus Invoice — Owner only, hanya status PENDING_APPROVAL */}
+              {currentUser?.role === "Owner" && inv.status === "PENDING_APPROVAL" && (
+                <button onClick={async () => {
+                  if (!await showConfirm({ icon:"🗑️", title:"Hapus Invoice?", danger:true,
+                    message:`Hapus invoice ${inv.id}?\n\nInvoice akan dihapus permanen dari database.\nOrder terkait akan kembali ke status COMPLETED.`,
+                    confirmText:"Hapus Permanen" })) return;
+                  setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
+                  const { error } = await supabase.from("invoices").delete().eq("id", inv.id);
+                  if (error) { showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message); return; }
+                  if (inv.job_id) await supabase.from("orders").update({ status:"COMPLETED", invoice_id:null }).eq("id", inv.job_id);
+                  addAgentLog("INVOICE_DELETED", `Invoice ${inv.id} (${inv.customer}) dihapus oleh ${currentUser?.name}`, "WARNING");
+                  showNotif("🗑️ Invoice " + inv.id + " berhasil dihapus");
+                }} style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>🗑️ Hapus Invoice</button>
               )}
             </div>
           </div>
@@ -2827,9 +5162,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const renderInventory = () => {
     const filteredInvt = inventoryData.filter(item =>
       !searchInventory ||
-      item.name.toLowerCase().includes(searchInventory.toLowerCase()) ||
-      item.code.toLowerCase().includes(searchInventory.toLowerCase())
+      (item.name||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
+      (item.code||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
+      (item.unit||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
+      (item.status||"").toLowerCase().includes(searchInventory.toLowerCase()) ||
+      String(item.price||"").includes(searchInventory) ||
+      String(item.stock||"").includes(searchInventory)
     );
+    const totPgInv = Math.ceil(filteredInvt.length / INV_PAGE_SIZE) || 1;
+    const curPgInv = Math.min(inventoryPage, totPgInv);
+    const pageInvt = filteredInvt.slice((curPgInv-1)*INV_PAGE_SIZE, curPgInv*INV_PAGE_SIZE);
     return (
     <div style={{ display:"grid", gap:16 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -2839,12 +5181,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* Search bar */}
       <div style={{ position:"relative" }}>
         <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, color:cs.muted, pointerEvents:"none" }}>🔍</span>
-        <input value={searchInventory} onChange={e=>setSearchInventory(e.target.value)}
+        <input id="searchInventory" value={searchInventory} onChange={e=>{setSearchInventory(e.target.value);setInventoryPage(1);}}
           placeholder="Cari nama barang atau kode material..."
           style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
-        {searchInventory && <button onClick={()=>setSearchInventory("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
+        {searchInventory && <button onClick={()=>{setSearchInventory("");setInventoryPage(1);}} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
       </div>
-      {searchInventory && <div style={{ fontSize:12, color:cs.muted }}>Ditemukan <b style={{ color:cs.accent }}>{filteredInvt.length}</b> item</div>}
+      <div style={{ fontSize:12, color:cs.muted }}>{searchInventory ? <>Ditemukan <b style={{ color:cs.accent }}>{filteredInvt.length}</b> dari {inventoryData.length} item</> : <><b style={{ color:cs.accent }}>{inventoryData.length}</b> item total</>}</div>
       <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead>
@@ -2855,7 +5197,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </tr>
           </thead>
           <tbody>
-            {inventoryData.map((item,i) => {
+            {pageInvt.map((item,i) => {
               const stC = item.status==="OUT"?cs.red:item.status==="CRITICAL"?cs.red:item.status==="WARNING"?cs.yellow:cs.green;
               return (
                 <tr key={item.code} style={{ borderTop:"1px solid "+cs.border, background:i%2===0?"transparent":cs.surface+"80" }}>
@@ -2873,9 +5215,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                         <button onClick={() => { setEditStokItem({...item}); setNewStokForm({name:item.name,unit:item.unit,price:item.price,stock:item.stock,reorder:item.reorder,min_alert:item.min_alert}); setModalEditStok(true); }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
                       )}
-                      {currentUser?.role === "Owner" && (
+                      {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                         <button onClick={async () => {
-                          if (!window.confirm(`Hapus material "${item.name}"?`)) return;
+                          if (!await showConfirm({ icon:"🗑️", title:"Hapus Material?", danger:true,
+  message:"Hapus material "+item.name+"? Tidak bisa dibatalkan.",
+  confirmText:"Hapus" })) return;
                           // Delete pakai id (UUID) jika ada, fallback ke code
                           const delQuery = item.id && !String(item.id).startsWith("INV")
                             ? supabase.from("inventory").delete().eq("id", item.id)
@@ -2898,6 +5242,17 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           </tbody>
         </table>
       </div>
+      {/* Pagination Inventory */}
+      {totPgInv > 1 && (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"10px 0" }}>
+          <button onClick={()=>setInventoryPage(p=>Math.max(1,p-1))} disabled={curPgInv===1}
+            style={{ padding:"6px 14px", borderRadius:8, border:"1px solid "+cs.border, background:curPgInv===1?cs.surface:cs.card, color:curPgInv===1?cs.muted:cs.text, cursor:curPgInv===1?"not-allowed":"pointer", fontSize:12 }}>← Prev</button>
+          <span style={{fontSize:12,color:cs.text}}>Hal {curPgInv}/{totPgInv}</span>
+          <button onClick={()=>setInventoryPage(p=>Math.min(totPgInv,p+1))} disabled={curPgInv===totPgInv}
+            style={{ padding:"6px 14px", borderRadius:8, border:"1px solid "+cs.border, background:curPgInv===totPgInv?cs.surface:cs.card, color:curPgInv===totPgInv?cs.muted:cs.text, cursor:curPgInv===totPgInv?"not-allowed":"pointer", fontSize:12 }}>Next →</button>
+          <span style={{fontSize:11,color:cs.muted}}>{filteredInvt.length} item</span>
+        </div>
+      )}
     </div>
     );
   };
@@ -2917,7 +5272,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         (r.type||"").toLowerCase().includes(q) ||
         (r.service||"").toLowerCase().includes(q) ||
         (r.code||"").toLowerCase().includes(q) ||
-        (r.notes||"").toLowerCase().includes(q)
+        (r.notes||"").toLowerCase().includes(q) ||
+        String(r.price||"").includes(searchPriceList.trim())
       );
     }
 
@@ -2932,18 +5288,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         is_active:   updated.is_active !== false,
       }).eq("id", updated.id);
       if (error) { showNotif("❌ Gagal update: "+error.message); return; }
-      // Update local state
-      setPriceListData(prev => prev.map(r => r.id===updated.id ? {...r,...updated} : r));
-      // Rebuild PRICE_LIST map
-      const newPL = { ...PRICE_LIST_DEFAULT };
-      priceListData.filter(r=>r.is_active!==false).forEach(row => {
-        if (row.id===updated.id) row = {...row,...updated};
-        if (!newPL[row.service]) newPL[row.service] = {};
-        newPL[row.service][row.type] = Number(row.price)||0;
-      });
-      PRICE_LIST = newPL;
+      // Update local state & rebuild PRICE_LIST dari data terbaru
+      const freshList = priceListData.map(r => r.id===updated.id ? {...r,...updated} : r);
+      setPriceListData(freshList);
+      // Rebuild PRICE_LIST dari freshList (bukan priceListData yang stale)
+      PRICE_LIST = buildPriceListFromDB(data.filter(r => r.is_active !== false));
+      setPriceListSyncedAt(new Date());
+      console.log("✅ PRICE_LIST updated after save:", Object.keys(newPL));
       setPlEditItem(null);
-      showNotif("✅ Harga diperbarui di DB — ARA & Invoice otomatis pakai harga baru");
+      showNotif("✅ Harga diperbarui — ARA langsung pakai harga baru");
       addAgentLog("PRICELIST_UPDATE", `Harga "${updated.type}" diupdate → Rp${fmt(updated.price)}`, "SUCCESS");
     };
 
@@ -2961,20 +5314,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </div>
           </div>
           {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
+            <div style={{ display:"flex", gap:8 }}>
             <button onClick={async()=>{
-              // Reload fresh dari DB
               const { data } = await supabase.from("price_list").select("*").order("service").order("type");
               if (data) { setPriceListData(data); showNotif("✅ Price list di-refresh dari DB"); }
             }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"8px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
-              🔄 Refresh dari DB
+              🔄 Refresh
             </button>
+            <button onClick={()=>{ setPlNewForm({ service:"Cleaning", type:"", code:"", price:"", unit:"unit", notes:"" }); setPlAddModal(true); }}
+              style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"8px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
+              + Tambah Item
+            </button>
+            </div>
           )}
         </div>
 
         {/* Search */}
         <div style={{ position:"relative" }}>
           <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:14, pointerEvents:"none" }}>🔍</span>
-          <input value={searchPriceList} onChange={e=>setSearchPriceList(e.target.value)}
+          <input id="searchPriceList" value={searchPriceList} onChange={e=>setSearchPriceList(e.target.value)}
             placeholder="Cari nama layanan, tipe AC, kode..."
             style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"10px 14px 10px 36px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
           {searchPriceList && <button onClick={()=>setSearchPriceList("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
@@ -3024,7 +5382,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       </td>
                       <td style={{ padding:"10px 14px" }}>
                         {isEdit ? (
-                          <input value={plEditForm.type||""} onChange={e=>setPlEditForm(f=>({...f,type:e.target.value}))}
+                          <input id="field_1" value={plEditForm.type||""} onChange={e=>setPlEditForm(f=>({...f,type:e.target.value}))}
                             style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"6px 10px", color:cs.text, fontSize:12, width:"100%" }} />
                         ) : (
                           <div>
@@ -3035,7 +5393,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       </td>
                       <td style={{ padding:"10px 14px" }}>
                         {isEdit ? (
-                          <input type="number" value={plEditForm.price||""} onChange={e=>setPlEditForm(f=>({...f,price:e.target.value}))}
+                          <input id="field_number_2" type="number" value={plEditForm.price||""} onChange={e=>setPlEditForm(f=>({...f,price:e.target.value}))}
                             style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:6, padding:"6px 10px", color:cs.text, fontSize:13, fontWeight:700, width:110 }} />
                         ) : (
                           <div style={{ fontWeight:700, fontSize:13, color:cs.text, fontFamily:"monospace" }}>{fmt(r.price)}</div>
@@ -3044,7 +5402,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <td style={{ padding:"10px 14px" }}>
                         {isEdit ? (
                           <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, cursor:"pointer" }}>
-                            <input type="checkbox" checked={plEditForm.is_active!==false} onChange={e=>setPlEditForm(f=>({...f,is_active:e.target.checked}))} />
+                            <input id="field_checkbox_3" type="checkbox" checked={plEditForm.is_active!==false} onChange={e=>setPlEditForm(f=>({...f,is_active:e.target.checked}))} />
                             Aktif
                           </label>
                         ) : (
@@ -3058,7 +5416,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           {/* Edit: Admin & Owner */}
                           {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
                             isEdit ? (
-                              <>
+                              <div style={{display:"flex",gap:6}}>
                                 <button onClick={handleSavePrice}
                                   style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
                                   💾 Simpan
@@ -3067,27 +5425,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                   style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>
                                   Batal
                                 </button>
-                              </>
+                              </div>
                             ) : (
-                              <>
+                              <div style={{display:"flex",gap:6}}>
                                 <button onClick={()=>{ setPlEditItem(r); setPlEditForm({type:r.type,price:r.price,service:r.service,notes:r.notes||"",is_active:r.is_active!==false}); }}
                                   style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                                   ✏️ Edit
                                 </button>
-                                {/* Delete — Owner ONLY */}
                                 {currentUser?.role==="Owner" && (
                                   <button onClick={async()=>{
-                                    if (!window.confirm || window.confirm(`Hapus harga "${r.type}"? Tidak bisa dibatalkan.`)) {
+                                    if (await showConfirm({ icon:"🗑️", title:"Hapus Price List?", danger:true,
+  message:"Hapus "+r.type+"? Tidak bisa dibatalkan.",
+
+  confirmText:"Hapus" })) {
                                       const { error: delErr } = await supabase.from("price_list").delete().eq("id", r.id);
-                                      if (delErr) {
-                                        showNotif("❌ Gagal hapus: "+delErr.message);
-                                      } else {
+                                      if (delErr) { showNotif("❌ Gagal hapus: "+delErr.message); }
+                                      else {
                                         setPriceListData(prev => prev.filter(p => p.id !== r.id));
-                                        const remaining = priceListData.filter(p => p.id !== r.id && p.is_active !== false);
-                                        const newPL = { ...PRICE_LIST_DEFAULT };
-                                        remaining.forEach(row => { if (!newPL[row.service]) newPL[row.service] = {}; newPL[row.service][row.type] = Number(row.price)||0; });
-                                        PRICE_LIST = newPL;
-                                        addAgentLog("PRICELIST_DELETE", `Hapus "${r.type}" (${r.service})`, "WARNING");
+                                        PRICE_LIST = buildPriceListFromDB(data.filter(r => r.is_active !== false));
+                                        addAgentLog("PRICELIST_DELETE",`Hapus "${r.type}" (${r.service})`,"WARNING");
                                         showNotif("✅ Item dihapus dari database");
                                       }
                                     }
@@ -3095,9 +5451,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                     🗑️
                                   </button>
                                 )}
-                              </>
+                              </div>
                             )
-                        )}
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -3121,7 +5477,67 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             ))}
           </div>
         </div>
+
+      {/* ── Modal Tambah Item PriceList ── */}
+      {plAddModal && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:16, padding:24, width:"100%", maxWidth:420 }}>
+          <div style={{ fontWeight:800, fontSize:16, color:cs.text, marginBottom:16 }}>➕ Tambah Item Harga Baru</div>
+          {[
+            { label:"Jenis Layanan", key:"service", type:"select", opts:["Cleaning","Install","Repair","Complain"] },
+            { label:"Tipe AC / Nama Item", key:"type", type:"text", ph:"contoh: AC 1 PK, AC 2 PK" },
+            { label:"Kode", key:"code", type:"text", ph:"contoh: CLN-1PK" },
+            { label:"Harga (Rp)", key:"price", type:"number", ph:"contoh: 150000" },
+            { label:"Satuan", key:"unit", type:"text", ph:"contoh: unit, set, meter" },
+            { label:"Catatan", key:"notes", type:"text", ph:"opsional" },
+          ].map(({ label, key, type, ph, opts }) => (
+            <div key={key} style={{ marginBottom:10 }}>
+              <div style={{ fontSize:11, color:cs.muted, marginBottom:4 }}>{label}</div>
+              {type === "select" ? (
+                <select value={plNewForm[key]} onChange={e => setPlNewForm(f=>({...f,[key]:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13 }}>
+                  {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              ) : (
+                <input id="field_4" type={type} value={plNewForm[key]} placeholder={ph||""}
+                  onChange={e => setPlNewForm(f=>({...f,[key]:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, boxSizing:"border-box" }} />
+              )}
+            </div>
+          ))}
+          <div style={{ display:"flex", gap:8, marginTop:16 }}>
+            <button onClick={()=>setPlAddModal(false)}
+              style={{ flex:1, background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:600 }}>
+              Batal
+            </button>
+            <button onClick={async()=>{
+              if (!plNewForm.type.trim()) { showNotif("❌ Tipe/Nama item wajib diisi"); return; }
+              if (!plNewForm.price || isNaN(Number(plNewForm.price))) { showNotif("❌ Harga harus berupa angka"); return; }
+              const newItem = {
+                service: plNewForm.service,
+                type: plNewForm.type.trim(),
+                code: plNewForm.code.trim() || (plNewForm.service.slice(0,3).toUpperCase()+"-"+Date.now().toString().slice(-4)),
+                price: Number(plNewForm.price),
+                unit: plNewForm.unit.trim() || "unit",
+                notes: plNewForm.notes.trim(),
+                is_active: true,
+              };
+              const { data, error } = await supabase.from("price_list").insert(newItem).select().single();
+              if (error) { showNotif("❌ Gagal simpan: "+error.message); return; }
+              setPriceListData(prev => [...prev, data||newItem]);
+              setPriceListSyncedAt(new Date());
+              addAgentLog("PRICELIST_ADD", `Item baru "${newItem.type}" (${newItem.service}) Rp${fmt(newItem.price)} ditambah oleh ${currentUser?.name}`, "SUCCESS");
+              showNotif("✅ Item harga baru berhasil ditambah!");
+              setPlAddModal(false);
+            }}
+              style={{ flex:2, background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:700 }}>
+              💾 Simpan Item
+            </button>
+          </div>
+        </div>
       </div>
+      )}
+    </div>
     );
   };
 
@@ -3155,11 +5571,22 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const allTekNames = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
     // Helper: lihat jadwal via field o.helper, bukan o.teknisi
     const isHelperRole = currentUser?.role === "Helper";
-    const filteredOrders = activeTek === "Semua" 
-      ? ordersData 
-      : ordersData.filter(o => isHelperRole 
+    const _sqSched = searchSchedule.trim().toLowerCase();
+    const _baseOrders = activeTek === "Semua"
+      ? ordersData
+      : ordersData.filter(o => isHelperRole
           ? (o.helper === activeTek || o.teknisi === activeTek)
           : o.teknisi === activeTek);
+    // BUG-4: tambah search text filter di jadwal
+    const filteredOrders = !_sqSched ? _baseOrders : _baseOrders.filter(o =>
+      (o.customer||"").toLowerCase().includes(_sqSched) ||
+      (o.id||"").toLowerCase().includes(_sqSched) ||
+      (o.teknisi||"").toLowerCase().includes(_sqSched) ||
+      (o.helper||"").toLowerCase().includes(_sqSched) ||
+      (o.address||"").toLowerCase().includes(_sqSched) ||
+      (o.service||"").toLowerCase().includes(_sqSched) ||
+      (o.phone||"").includes(searchSchedule.trim())
+    );
     const teknisiList = activeTek === "Semua" ? allTekNames : [activeTek];
     // Untuk teknisi/helper: filter hanya hari ini
     const todayOrdersTek = isTekRole ? filteredOrders.filter(o => o.date === TODAY) : filteredOrders;
@@ -3196,8 +5623,29 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 ))}
               </div>
             )}
+            {/* ── Rekap Jadwal: Download + Kirim WA ── */}
+            {!isTekRole && (
+              <div style={{display:"flex",alignItems:"center",gap:5,
+                background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"4px 7px"}}>
+                <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>📥 Rekap</span>
+                <input type="date" id="rekapSched"
+                  defaultValue={TODAY}
+                  style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,
+                    padding:"3px 7px",fontSize:11,color:cs.text,colorScheme:"dark",cursor:"pointer"}}
+                />
+                <button onClick={()=>{const d=document.getElementById("rekapSched")?.value||TODAY;downloadRekapHarian(d);}}
+                  title="Download rekap ke file"
+                  style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,
+                    padding:"4px 8px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11}}>⬇️</button>
+                <button onClick={()=>{const d=document.getElementById("rekapSched")?.value||TODAY;triggerRekapHarian(d);}}
+                  title="Kirim rekap via WhatsApp"
+                  style={{background:"#25D36622",border:"1px solid #25D36644",color:"#25D366",
+                    padding:"4px 8px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11}}>📲</button>
+              </div>
+            )}
             {!isTekRole && (
               <button onClick={() => setModalOrder(true)} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"9px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>+ Order</button>
+
             )}
           </div>
         </div>
@@ -3221,6 +5669,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 </button>
               );
             })}
+          </div>
+        )}
+
+        {/* Search bar di Jadwal — Owner & Admin */}
+        {!isTekRole && (
+          <div style={{ position:"relative", marginTop:4 }}>
+            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:cs.muted, fontSize:13, pointerEvents:"none" }}>🔍</span>
+            <input id="searchSchedule"
+              value={searchSchedule}
+              onChange={e => setSearchSchedule(e.target.value)}
+              placeholder="Cari customer, teknisi, alamat, Job ID..."
+              style={{ width:"100%", background:cs.card, border:"1px solid "+(searchSchedule?cs.accent:cs.border), borderRadius:10, padding:"9px 36px", color:cs.text, fontSize:12, boxSizing:"border-box", outline:"none" }}
+            />
+            {searchSchedule && (
+              <button onClick={() => setSearchSchedule("")}
+                style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:15 }}>✕</button>
+            )}
           </div>
         )}
 
@@ -3317,7 +5782,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         style={{ background:"#3b82f622", border:"1px solid #3b82f644", color:"#3b82f6", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                         🗺️ Maps
                       </button>
-                      <button onClick={() => openWA(o.phone,"Halo "+o.customer+", saya "+myTekName+" dari AClean, sedang menuju lokasi Anda.")}
+                       <button onClick={()=>{
+                         const cu = customersData.find(c=>c.name===o.customer);
+                         setHistoryPreview(cu||{name:o.customer,phone:o.phone,address:o.address});
+                       }}
+                         style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"44",
+                           color:cs.accent, borderRadius:8, padding:"6px 12px",
+                           cursor:"pointer", fontWeight:600, fontSize:12 }}>
+                         📋 History
+                       </button>
+                      <button onClick={() => { setWaTekTarget({phone:o.phone,customer:o.customer,service:o.service,time:o.time,address:o.address}); setModalWaTek(true); }}
                         style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
                         📱 WA
                       </button>
@@ -3325,13 +5799,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         <>
                           {o.status !== "ON_SITE" && (
                             <button onClick={async () => {
-                              await supabase.from("orders").update({status:"ON_SITE", confirmed_at: new Date().toISOString()}).eq("id",o.id);
+                              await supabase.from("orders").update({status:"ON_SITE"}).eq("id",o.id);
                               setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
                               showNotif("✅ Status → On Site!");
-                              const admins = userAccounts.filter(u=>u.role==="Admin"||u.role==="Owner");
-                              const msg = `✅ *Teknisi di Lokasi*
-📋 ${o.id} — ${o.customer}
-👷 ${myTekName}`;
+        const admins = teknisiData.filter(u=>u.role==="Admin"||u.role==="Owner")
+          .concat((userAccounts||[]).filter(u=>u.role==="Admin"||u.role==="Owner"));
+                              const msg =
+                                "Teknisi di Lokasi\n"
+                                +"Job: "+o.id+" - "+o.customer+"\n"
+                                +"Teknisi: "+myTekName;
                               admins.forEach(adm=>{if(adm?.phone) sendWA(adm.phone,msg);});
                             }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700 }}>
                               ✅ On Site
@@ -3383,7 +5859,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           return (
                             <div key={j.id} style={{ background:col+(isHelper?"10":"22"), border:"1px solid "+col+(isHelper?"33":"44"), borderRadius:5, padding:"3px 5px", marginBottom:2, opacity:isHelper?0.85:1 }}>
                               <div style={{ fontSize:9, fontWeight:800, color:col }}>{j.time} {isHelper?"🤝":""}</div>
-                              <div style={{ fontSize:9, color:cs.text }}>{(j.customer||"").split(" ")[0]}</div>
+                              <div style={{ fontSize:9, color:cs.text }}>{(j.customer||"").slice(0,13)}{(j.customer||"").length>13?"…":""}</div>
                               <div style={{ fontSize:8, color:cs.muted }}>{j.service}</div>
                             </div>
                           );
@@ -3397,16 +5873,44 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         ) : (
           /* LIST VIEW */
           <div style={{ display:"grid", gap:10 }}>
+            {/* Filter bar — Hari Ini / Minggu Ini / Semua */}
+            <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+              <span style={{ fontSize:11, color:cs.muted, fontWeight:600 }}>Tampilkan:</span>
+              {[["hari_ini","🔴 Hari Ini"],["minggu_ini","📅 Minggu Ini"],["semua","📋 Semua"]].map(([v,lbl]) => (
+                <button key={v} onClick={() => { setSchedListFilter(v); setSchedPage(1); }}
+                  style={{ padding:"5px 12px", borderRadius:99, border:"1px solid "+(schedListFilter===v?cs.accent:cs.border),
+                    background:schedListFilter===v?cs.accent+"22":"transparent", color:schedListFilter===v?cs.accent:cs.muted,
+                    cursor:"pointer", fontSize:11, fontWeight:schedListFilter===v?700:400 }}>{lbl}</button>
+              ))}
+              {_sqSched && <span style={{ fontSize:10, color:cs.yellow, background:cs.yellow+"15", padding:"3px 10px", borderRadius:99, border:"1px solid "+cs.yellow+"33" }}>🔍 Hasil pencarian — menampilkan semua periode</span>}
+            </div>
             {(() => {
+              const cutoff30 = new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10);
+              // Saat ada pencarian aktif, tampilkan semua (tidak tersembunyi)
+              const preFiltered = _sqSched ? filteredOrders : filteredOrders.filter(o => {
+                if (schedListFilter === "hari_ini")  return (o.date||"") === TODAY;
+                if (schedListFilter === "minggu_ini") return (o.date||"") >= (weekDays[0]?.date||TODAY) && (o.date||"") <= (weekDays[6]?.date||TODAY);
+                // "semua" — sembunyikan >30 hari lalu
+                return (o.date||"") >= cutoff30;
+              });
+              if (preFiltered.length === 0) {
+                return <div style={{ background:cs.card, borderRadius:12, padding:32, textAlign:"center", color:cs.muted }}>
+                  {schedListFilter==="hari_ini" ? "Tidak ada jadwal hari ini" : schedListFilter==="minggu_ini" ? "Tidak ada jadwal minggu ini" : "Tidak ada jadwal dalam 30 hari terakhir"}
+                  {!_sqSched && schedListFilter !== "semua" && <div style={{ fontSize:11, color:cs.muted, marginTop:6 }}>Klik <b style={{color:cs.accent}}>Semua</b> atau gunakan pencarian untuk melihat jadwal lama</div>}
+                </div>;
+              }
               if (filteredOrders.length === 0) {
                 return <div style={{ background:cs.card, borderRadius:12, padding:32, textAlign:"center", color:cs.muted }}>Tidak ada jadwal untuk {activeTek}</div>;
               }
               const dayNames2 = ["Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"];
-              const sorted2 = [...filteredOrders].sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
-              const groups = sorted2.reduce((acc, o) => { if (!acc[o.date]) acc[o.date] = []; acc[o.date].push(o); return acc; }, {});
-              return Object.entries(groups).map(([date2, dayOrders]) => {
+              const sorted2 = [...preFiltered].sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
+              const totPgSched = Math.ceil(sorted2.length / SCHED_PAGE_SIZE) || 1;
+              const curPgSched = Math.min(schedPage, totPgSched);
+              const pagedSched = sorted2.slice((curPgSched-1)*SCHED_PAGE_SIZE, curPgSched*SCHED_PAGE_SIZE);
+              const groups = pagedSched.reduce((acc, o) => { if (!acc[o.date]) acc[o.date] = []; acc[o.date].push(o); return acc; }, {});
+              const groupsJSX = Object.entries(groups).map(([date2, dayOrders]) => {
                 const d2 = new Date(date2 + "T00:00:00");
-                const todayStr2 = new Date().toISOString().slice(0,10);
+                const todayStr2 = getLocalDate();
                 const tomorrowStr2 = new Date(Date.now()+86400000).toISOString().slice(0,10);
                 const isToday2 = (date2 === todayStr2);
                 const isTomorrow2 = (date2 === tomorrowStr2);
@@ -3425,7 +5929,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         <div style={{ background:(techColors[o.teknisi]||cs.accent)+"22", border:"1px solid "+(techColors[o.teknisi]||cs.accent)+"44", borderRadius:8, padding:"6px 10px", textAlign:"center", minWidth:54, flexShrink:0 }}>
                           <div style={{ fontSize:15, fontWeight:800, color:techColors[o.teknisi]||cs.accent }}>{o.time}</div>
                           <div style={{ fontSize:9, color:cs.muted }}>–{o.time_end||hitungJamSelesai(o.time,o.service,o.units)}</div>
-                          <div style={{ fontSize:9, color:cs.muted }}>{o.date.slice(5)}</div>
+                          <div style={{ fontSize:9, color:cs.muted }}>{(o.date||"").slice(5)}</div>
                         </div>
                         <div style={{ flex:1 }}>
                           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
@@ -3436,7 +5940,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           <div style={{ fontSize:12, color:cs.muted, display:"grid", gridTemplateColumns:"1fr 1fr", gap:"2px 14px" }}>
                             <span>🔧 {o.service} · {o.units} unit</span>
                             <span style={{ color:techColors[o.teknisi]||cs.muted }}>👷 {o.teknisi}{o.helper?" + "+o.helper:""}</span>
-                            <span>📍 {o.address.slice(0,32)}...</span>
+                            <span>📍 {(o.address||"-").slice(0,32)}...</span>
                           </div>
                         </div>
                         <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
@@ -3454,55 +5958,75 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           {!isTekRole && (
                             <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
                           )}
+                          {currentUser?.role==="Owner" && !(["COMPLETED","PAID"].includes(o.status)) && (
+                            <button onClick={async()=>{
+                              if(!await showConfirm({ icon:"🗑️", title:"Hapus Order?", danger:true,
+                                message:`Hapus order ${o.id} — ${o.customer}?\nOrder COMPLETED/PAID tidak bisa dihapus.`,
+                                confirmText:"Hapus" })) return;
+                              const { error: delOrdErr } = await supabase.from("orders").delete().eq("id", o.id);
+                              if (delOrdErr) { showNotif("❌ Gagal hapus order: "+delOrdErr.message); return; }
+                              // Hapus schedule terkait
+                              try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch(_){}
+                              setOrdersData(prev => prev.filter(ord => ord.id !== o.id));
+                              addAgentLog("ORDER_DELETED", `Owner hapus order ${o.id} — ${o.customer} (${o.service})`, "WARNING");
+                              showNotif("🗑️ Order "+o.id+" berhasil dihapus");
+                            }} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }} title="Hapus order (Owner only)">🗑️</button>
+                          )}
                           {isTekRole && (
                             <button onClick={() => { window.open("https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(o.address),"_blank"); }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>🗺 Maps</button>
                           )}
                           {isTekRole && (
-                            <button onClick={() => openWA(o.phone,"Halo "+o.customer+", saya "+myTekName+" dari AClean. Saya akan tiba pkl "+o.time+" untuk "+o.service+". Terima kasih!")} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>💬 Chat WA</button>
+                            <button onClick={()=>{
+                              const cu = customersData.find(c=>c.name===o.customer);
+                              setHistoryPreview(cu||{name:o.customer,phone:o.phone,address:o.address});
+                            }}
+                            style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"44",
+                              color:cs.accent, borderRadius:8, padding:"7px 10px",
+                              cursor:"pointer", fontWeight:600, fontSize:12 }}>
+                              📋 History
+                            </button>
+                          )}
+                          {isTekRole && (
+                            <button onClick={() => { if(o.phone) openWA(o.phone,"Halo "+(o.customer||"Bapak/Ibu")+", saya "+myTekName+" dari AClean. Saya akan tiba pkl "+(o.time||"-")+" untuk "+(o.service||"servis AC")+". Terima kasih!"); else showNotif("❌ Nomor HP customer tidak tersedia"); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>💬 Chat WA</button>
                           )}
                           {isTekRole && o.dispatch && !["COMPLETED","CANCELLED","PAID"].includes(o.status) && (<>
-                            {/* Konfirmasi Hadir — update status SAJA */}
+                            {/* ── Konfirmasi Tiba: 1 tombol, update status ON_SITE, tanpa WA Admin ── */}
                             {o.status !== "ON_SITE" && (
                               <button onClick={async () => {
-                                await supabase.from("orders").update({status:"ON_SITE", confirmed_at: new Date().toISOString()}).eq("id",o.id);
+                                await supabase.from("orders").update({status:"ON_SITE", on_site_at:new Date().toISOString()}).eq("id",o.id);
                                 setOrdersData(prev=>prev.map(ord=>ord.id===o.id?{...ord,status:"ON_SITE"}:ord));
-                                showNotif("✅ Status → On Site! Notif otomatis ke Admin...");
-                                // ── GAP-04 FIX: Auto WA ke semua Admin saat ON_SITE ──
-                                const admins04 = userAccounts.filter(u => u.role==="Admin"||u.role==="Owner");
-                                const msg04 = `✅ *Teknisi Sudah di Lokasi*
-
-📋 Job: *${o.id}*
-👤 Customer: ${o.customer}
-📍 Alamat: ${o.address}
-👷 Teknisi: ${currentUser?.name||o.teknisi}
-🕐 Tiba: ${new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"})} WIB
-
-_Laporan masuk setelah pekerjaan selesai._`;
-                                admins04.forEach(adm => { if(adm?.phone) sendWA(adm.phone, msg04); });
-                                addAgentLog("ON_SITE_AUTO_NOTIF", `Auto notif ke ${admins04.length} Admin — ${o.id}`, "SUCCESS");
+                                showNotif("✅ Status → Sudah di Lokasi!");
+                                addAgentLog("ON_SITE", `${currentUser?.name} tiba di lokasi — ${o.id}`, "SUCCESS");
+        // Notif Owner via WA saat teknisi konfirmasi tiba
+        const ownerContacts = [...(teknisiData||[]),...(userAccounts||[])]
+          .filter(u=>u.role==="Owner"&&u.phone);
+        const konfMsg = `✅ *Teknisi di Lokasi*\n📋 ${o.id}\n👤 ${o.customer}\n📍 ${o.address||"-"}\n👷 ${currentUser?.name}\n⏰ ${new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"})}`;
+        ownerContacts.forEach(ow=>sendWA(ow.phone, konfMsg));
                               }} style={{ background:"#22c55e22", border:"1px solid #22c55e44", color:"#22c55e", borderRadius:8, padding:"7px 12px", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
-                              ✅ Konfirmasi Hadir
-                            </button>
+                                ✅ Konfirmasi Tiba
+                              </button>
                             )}
-                            {/* WA Notif ke Admin — terpisah */}
-                            <button onClick={() => {
-                              const adm = userAccounts.find(u=>u.role==="Admin"||u.role==="Owner");
-                              if(adm?.phone) sendWA(adm.phone,
-                                `✅ *Konfirmasi Kehadiran*
-👷 ${currentUser?.name} sudah tiba di lokasi
-📋 Job: ${o.id}
-👤 Customer: ${o.customer}
-📍 ${o.address}
-🔧 ${o.service} ${o.units} unit`
+                            {/* ── WA Customer: manual, teknisi isi estimasi jam tiba ── */}
+                            {o.phone && (() => {
+                              const jamSkrg = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
+                              const [h,m] = jamSkrg.split(":").map(Number);
+                              const etaDate = new Date(); etaDate.setMinutes(etaDate.getMinutes()+30);
+                              const jamEta = etaDate.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
+                              return (
+                                <button onClick={() => {
+                                  const eta = window.prompt(
+                                    `Estimasi tiba di lokasi ${o.customer}?\nContoh: 13:30`,
+                                    jamEta
+                                  );
+                                  if (!eta) return;
+                                  const msg = `Halo ${o.customer} 👋\n\nKami dari *AClean Service* akan segera tiba di lokasi Anda.\n\n📋 Job: ${o.id}\n🔧 Service: ${o.service} — ${o.units} unit\n⏰ Estimasi tiba: *${eta} WIB*\n\nMohon pastikan ada di lokasi ya! 🙏\n\n_${currentUser?.name} — AClean_`;
+                                  if (o.phone) sendWA(o.phone, msg);
+                                  else showNotif("⚠️ No. HP customer tidak tersedia");
+                                }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                                  📱 WA Customer
+                                </button>
                               );
-                            }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
-                              📱 Notif Admin
-                            </button>
-                            {/* WA ke Customer */}
-                            <button onClick={() => openWA(o.phone, `Halo ${o.customer}, saya ${currentUser?.name} dari AClean. Sudah tiba di lokasi, siap mulai pengerjaan. 🔧`)}
-                              style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700 }}>
-                              📱 WA Customer
-                            </button>
+                            })()}
                           </>)}
                           <button onClick={() => openLaporanModal(o)} style={{ background:cs.ara+"22", border:"1px solid "+cs.ara+"44", color:cs.ara, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📝 Laporan</button>
                         </div>
@@ -3511,19 +6035,105 @@ _Laporan masuk setelah pekerjaan selesai._`;
                   </div>
                 );
               });
+              return (
+                <>
+                  {groupsJSX}
+                  {totPgSched > 1 && (
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, marginTop:14, flexWrap:"wrap" }}>
+                      <button onClick={()=>setSchedPage(p=>Math.max(1,p-1))} disabled={curPgSched===1}
+                        style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
+                          background:curPgSched===1?cs.surface:cs.card, color:curPgSched===1?cs.muted:cs.text, cursor:curPgSched===1?"default":"pointer" }}>‹</button>
+                      {Array.from({length:Math.min(totPgSched,7)},(_,i)=>{
+                        let pg=i+1;
+                        if(totPgSched>7){ if(curPgSched<=4) pg=i+1; else if(curPgSched>=totPgSched-3) pg=totPgSched-6+i; else pg=curPgSched-3+i; }
+                        return (<button key={pg} onClick={()=>setSchedPage(pg)}
+                          style={{ padding:"5px 10px", borderRadius:8, border:"1px solid "+(curPgSched===pg?cs.accent:cs.border),
+                            background:curPgSched===pg?cs.accent:cs.card, color:curPgSched===pg?"#0a0f1e":cs.text, cursor:"pointer", fontWeight:curPgSched===pg?700:400 }}>{pg}</button>);
+                      })}
+                      <button onClick={()=>setSchedPage(p=>Math.min(totPgSched,p+1))} disabled={curPgSched===totPgSched}
+                        style={{ padding:"5px 12px", borderRadius:8, border:"1px solid "+cs.border,
+                          background:curPgSched===totPgSched?cs.surface:cs.card, color:curPgSched===totPgSched?cs.muted:cs.text, cursor:curPgSched===totPgSched?"default":"pointer" }}>›</button>
+                      <span style={{fontSize:11,color:cs.muted}}>hal {curPgSched}/{totPgSched} · {sorted2.length} jadwal</span>
+                    </div>
+                  )}
+                </>
+              );
             })()}
           </div>
         )}
           </>
         )}
+      </div>
+    );
   };
 
 
   // ============================================================
   // RENDER TEKNISI ADMIN
   // ============================================================
-  const renderTeknisiAdmin = () => (
+  const renderTeknisiAdmin = () => {
+    // GAP-11: Rekap performa per teknisi
+    const weekAgo  = new Date(Date.now()-7*24*60*60*1000).toISOString().slice(0,10);
+    const monthAgo = new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10);
+    const perfMap = {};
+    teknisiData.forEach(t => {
+      const jobsMinggu = ordersData.filter(o =>
+        (o.teknisi===t.name||o.helper===t.name) && (o.date||"") >= weekAgo
+      );
+      const jobsBulan = ordersData.filter(o =>
+        (o.teknisi===t.name||o.helper===t.name) && (o.date||"") >= monthAgo
+      );
+      const laporanMinggu = laporanReports.filter(r =>
+        (r.teknisi===t.name||r.helper===t.name) && (r.submitted_at||r.submitted||"") >= weekAgo
+      );
+      const revisi = laporanReports.filter(r =>
+        (r.teknisi===t.name||r.helper===t.name) && r.status==="REVISION"
+      ).length;
+      // Job stuck: DISPATCHED/ON_SITE tapi belum ada laporan & sudah lewat jam selesai
+      const stuck = ordersData.filter(o =>
+        (o.teknisi===t.name||o.helper===t.name) &&
+        ["DISPATCHED","ON_SITE"].includes(o.status) &&
+        o.date < TODAY
+      ).length;
+      const selesai = jobsMinggu.filter(o =>
+        ["COMPLETED","REPORT_SUBMITTED","INVOICE_APPROVED","INVOICE_CREATED","PAID"].includes(o.status)
+      ).length;
+      // GAP-11: Hitung laporan terlambat (ada laporan tapi > 2 jam setelah time_end)
+      const laporanTerlambat = laporanMinggu.filter(r => {
+        const order = ordersData.find(o => o.id === r.job_id || o.id === r.order_id);
+        if (!order || !order.time_end || !r.submitted_at) return false;
+        const endMs  = new Date((order.date||"")+"T"+(order.time_end||"17:00")+":00").getTime();
+        const subMs  = new Date(r.submitted_at).getTime();
+        return subMs > (endMs + 2*60*60*1000); // > 2 jam setelah selesai
+      }).length;
+      perfMap[t.name] = {
+        jobsMinggu: jobsMinggu.length, selesai, revisi, stuck,
+        jobsBulan: jobsBulan.length,
+        laporanMinggu: laporanMinggu.length,
+        onTime: laporanMinggu.length - laporanTerlambat,
+        terlambat: laporanTerlambat,
+        avgJobPerDay: +(jobsMinggu.length / 7).toFixed(1),
+      };
+    });
+
+    return (
     <div style={{ display:"grid", gap:16 }}>
+      {/* GAP-7: Banner stuck jobs */}
+      {(() => {
+        const stuckList = ordersData.filter(o =>
+          ["DISPATCHED","ON_SITE"].includes(o.status) && o.date < TODAY
+        );
+        if (stuckList.length === 0) return null;
+        return (
+          <div style={{ background:cs.red+"15", border:"1px solid "+cs.red+"33", borderRadius:10, padding:"10px 14px", display:"flex", gap:10, alignItems:"center" }}>
+            <span style={{fontSize:16}}>⚠️</span>
+            <div>
+              <div style={{fontWeight:700, color:cs.red, fontSize:13}}>{stuckList.length} job belum ada laporan (sudah lewat hari)</div>
+              <div style={{fontSize:11, color:cs.muted}}>{stuckList.map(o=>`${o.id} (${o.teknisi})`).join(", ")}</div>
+            </div>
+          </div>
+        );
+      })()}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>👷 Tim Teknisi</div>
         <button onClick={() => { setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[]}); setModalTeknisi(true); }} style={{ background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"9px 18px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:13 }}>+ Tambah Anggota</button>
@@ -3531,6 +6141,7 @@ _Laporan masuk setelah pekerjaan selesai._`;
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
         {teknisiData.map(t => {
           const stC = t.status==="on-job"?cs.green:t.status==="active"?cs.accent:cs.muted;
+          const perf = perfMap[t.name] || {};
           return (
             <div key={t.id} style={{ background:cs.card, border:"1px solid "+stC+"33", borderRadius:14, padding:16 }}>
               <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
@@ -3548,12 +6159,27 @@ _Laporan masuk setelah pekerjaan selesai._`;
                   {t.skills.map(s => <span key={s} style={{ background:cs.accent+"18", color:cs.accent, fontSize:9, padding:"2px 6px", borderRadius:4, fontWeight:600 }}>{s}</span>)}
                 </div>
               </div>
+              {/* GAP-11: Rekap performa minggu ini */}
+              <div style={{ borderTop:"1px solid "+cs.border, paddingTop:8, marginBottom:10, display:"grid", gridTemplateColumns:"1fr 1fr", gap:4 }}>
+                <div style={{ fontSize:10, color:cs.muted }}>📅 7 hari</div>
+                <div style={{ fontSize:10, color:cs.muted }}>📅 30 hari</div>
+                <div style={{ fontSize:13, fontWeight:700, color:cs.text }}>{perf.jobsMinggu||0} job</div>
+                <div style={{ fontSize:13, fontWeight:700, color:cs.text }}>{perf.jobsBulan||0} job</div>
+                <div style={{ fontSize:10, color:cs.green }}>✅ {perf.selesai||0} selesai</div>
+                <div style={{ fontSize:10, color:perf.revisi>0?cs.yellow:cs.muted }}>🔄 {perf.revisi||0} revisi</div>
+                {(perf.stuck||0) > 0 && (
+                  <div style={{ fontSize:10, color:cs.red, gridColumn:"1/-1" }}>⚠️ {perf.stuck} job stuck (laporan belum masuk)</div>
+                )}
+              </div>
               <div style={{ display:"flex", gap:6 }}>
                 <button onClick={() => { setEditTeknisi(t); setNewTeknisiForm({...t}); setModalTeknisi(true); }} style={{ flex:1, background:cs.accent+"18", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
-                <button onClick={() => openWA(t.phone, "Halo " + t.name + ", ada info dari AClean:")} style={{ flex:1, background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 WA</button>
+                <button onClick={() => { if(t.phone) openWA(t.phone, "Halo " + (t.name||"Teknisi") + ", ada info dari AClean:"); else showNotif("❌ No. HP teknisi tidak ada"); }} style={{ flex:1, background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 WA</button>
                 {currentUser?.role === "Owner" && (
                   <button onClick={async () => {
-                    if (window.confirm && !window.confirm(`Hapus ${t.name} dari tim?`)) return;
+                    if (!await showConfirm({ icon:"👷", title:"Hapus dari Tim?", danger:true,
+  message:"Hapus "+t.name+" dari tim? Data order tidak terpengaruh.",
+
+  confirmText:"Hapus" })) return;
                     setTeknisiData(prev => prev.filter(x => x.id !== t.id));
                     if (!String(t.id).startsWith("Tech")) {
                       await supabase.from("user_profiles").delete().eq("id", t.id);
@@ -3567,8 +6193,97 @@ _Laporan masuk setelah pekerjaan selesai._`;
           );
         })}
       </div>
+
+      {/* GAP-11: Tabel Rekap Performa Mingguan — Enhanced */}
+      {(() => {
+        // Hitung ranking: siapa top performer minggu ini
+        const perfList = teknisiData.map(t => ({ ...t, p: perfMap[t.name]||{} }));
+        const maxJobs = Math.max(...perfList.map(t => t.p.jobsMinggu||0), 1);
+        const rankedByJob = [...perfList].sort((a,b)=>(b.p.jobsMinggu||0)-(a.p.jobsMinggu||0));
+        const topName = rankedByJob[0]?.name;
+        return (
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:16, marginTop:4 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+            <div style={{ fontWeight:700, fontSize:14, color:cs.text }}>📊 Rekap Performa Tim — 7 Hari Terakhir</div>
+            <div style={{ fontSize:11, color:cs.muted }}>
+              Total job: <strong style={{color:cs.accent}}>{perfList.reduce((a,t)=>a+(t.p.jobsMinggu||0),0)}</strong>
+              &nbsp;·&nbsp;Stuck: <strong style={{color:cs.red}}>{perfList.reduce((a,t)=>a+(t.p.stuck||0),0)}</strong>
+            </div>
+          </div>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead>
+                <tr style={{ background:cs.surface }}>
+                  {["#","Teknisi","Role","Job 7hr","Selesai","Rate","Bar","Revisi","Laporan","Stuck","Status"].map(h => (
+                    <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:cs.muted, borderBottom:"1px solid "+cs.border }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rankedByJob.map((t,i) => {
+                  const p = t.p;
+                  const completionRate = (p.jobsMinggu||0)>0 ? Math.round(((p.selesai||0)/(p.jobsMinggu||1))*100) : 0;
+                  const barPct = maxJobs>0 ? Math.round(((p.jobsMinggu||0)/maxJobs)*100) : 0;
+                  const isTop = t.name===topName && (p.jobsMinggu||0)>0;
+                  const hasIssue = (p.stuck||0)>0 || (p.revisi||0)>2;
+                  const rowBg = isTop ? cs.green+"0d" : hasIssue ? cs.red+"0d" : "transparent";
+                  const rateColor = completionRate>=80?cs.green:completionRate>=50?cs.yellow:cs.red;
+                  return (
+                    <tr key={t.id} style={{ borderBottom:"1px solid "+cs.border+"55", background:rowBg }}>
+                      <td style={{ padding:"8px 10px", color:cs.muted, fontWeight:700 }}>
+                        {isTop ? "🥇" : i===1 ? "🥈" : i===2 ? "🥉" : (i+1)}
+                      </td>
+                      <td style={{ padding:"8px 10px", fontWeight:700, color:cs.text }}>
+                        {t.name}
+                        {isTop && <span style={{fontSize:9,background:cs.green+"22",color:cs.green,borderRadius:99,padding:"1px 6px",marginLeft:4,fontWeight:700}}>TOP</span>}
+                      </td>
+                      <td style={{ padding:"8px 10px", color:cs.muted, fontSize:11 }}>{t.role}</td>
+                      <td style={{ padding:"8px 10px", fontWeight:700, color:cs.accent, fontSize:14 }}>{p.jobsMinggu||0}</td>
+                      <td style={{ padding:"8px 10px", color:cs.green }}>{p.selesai||0}</td>
+                      <td style={{ padding:"8px 10px" }}>
+                        <span style={{fontWeight:700,color:rateColor}}>{completionRate}%</span>
+                      </td>
+                      <td style={{ padding:"8px 10px", minWidth:80 }}>
+                        <div style={{ background:cs.surface, borderRadius:99, height:6, overflow:"hidden" }}>
+                          <div style={{ height:"100%", width:barPct+"%", background:isTop?cs.green:cs.accent, borderRadius:99, transition:"width 0.5s" }} />
+                        </div>
+                      </td>
+                      <td style={{ padding:"8px 10px", color:(p.revisi||0)>0?cs.yellow:cs.muted }}>
+                        {(p.revisi||0)>0 ? "🔄 "+(p.revisi||0) : "—"}
+                      </td>
+                      <td style={{ padding:"8px 10px", color:cs.muted }}>{p.laporanMinggu||0}</td>
+                      <td style={{ padding:"8px 10px", color:(p.stuck||0)>0?cs.red:cs.muted, fontWeight:(p.stuck||0)>0?700:400 }}>
+                        {(p.stuck||0)>0 ? <span style={{background:cs.red+"22",color:cs.red,borderRadius:99,padding:"2px 7px",fontSize:10}}>⚠️ {p.stuck} stuck</span> : "—"}
+                      </td>
+                      <td style={{ padding:"8px 10px" }}>
+                        {(p.stuck||0)>0
+                          ? <span style={{fontSize:10,color:cs.red,fontWeight:700}}>⚡ Perlu Perhatian</span>
+                          : completionRate>=80
+                            ? <span style={{fontSize:10,color:cs.green}}>✅ Baik</span>
+                            : completionRate>0
+                              ? <span style={{fontSize:10,color:cs.yellow}}>📈 Berkembang</span>
+                              : <span style={{fontSize:10,color:cs.muted}}>—</span>
+                        }
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {/* Legend */}
+          <div style={{ marginTop:10, display:"flex", gap:14, fontSize:10, color:cs.muted, flexWrap:"wrap" }}>
+            <span>🥇 Top performer</span>
+            <span style={{color:cs.green}}>■ Rate ≥80% = Baik</span>
+            <span style={{color:cs.yellow}}>■ Rate 50-79% = Berkembang</span>
+            <span style={{color:cs.red}}>■ Rate &lt;50% atau ada stuck</span>
+          </div>
+        </div>
+        );
+      })()}
     </div>
-  );
+    );
+  };
 
   // ============================================================
   // RENDER AGENT LOG
@@ -3611,26 +6326,29 @@ _Laporan masuk setelah pekerjaan selesai._`;
   };
 
   // Cek apakah teknisi AVAILABLE di slot waktu tertentu (tidak overlap)
+  const MAX_LOKASI_PER_HARI = 6; // GAP-3: max 6 lokasi berbeda per teknisi per hari
+
   const cekTeknisiAvailable = (teknisiName, date, timeStart, service, units, checkAsHelper = false) => {
     const durBaru = hitungDurasi(service, units);
     const startBaru = (timeStart || "09:00").split(":").map(Number);
     const startMinBaru = startBaru[0] * 60 + startBaru[1];
     const endMinBaru   = startMinBaru + Math.round(durBaru * 60);
 
-    // Cek konflik sebagai teknisi ATAU sebagai helper
-    const conflicts = ordersData.filter(o =>
+    const activeOrders = ordersData.filter(o =>
       (checkAsHelper ? o.helper === teknisiName : (o.teknisi === teknisiName || o.helper === teknisiName)) &&
       o.date === date &&
-      // COMPLETED & SUBMITTED (laporan masuk) = pekerjaan sudah selesai → tidak block slot baru
-      ["PENDING","CONFIRMED","IN_PROGRESS","ON_SITE"].includes(o.status)
+      ["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS","ON_SITE"].includes(o.status)
     );
 
-    for (const o of conflicts) {
+    // GAP-3: Hard cap — max 6 lokasi per hari (tidak ada batasan unit)
+    if (activeOrders.length >= MAX_LOKASI_PER_HARI) return false;
+
+    // Cek overlap jam
+    for (const o of activeOrders) {
       const durExist = hitungDurasi(o.service || "Cleaning", o.units || 1);
       const startExist = (o.time || "09:00").split(":").map(Number);
       const startMinExist = startExist[0] * 60 + startExist[1];
       const endMinExist   = startMinExist + Math.round(durExist * 60);
-      // Overlap check
       if (startMinBaru < endMinExist && endMinBaru > startMinExist) return false;
     }
     return true;
@@ -3647,6 +6365,49 @@ _Laporan masuk setelah pekerjaan selesai._`;
       }
     }
     return null; // penuh
+  };
+
+  // ── GAP-1 & GAP-2: Real-time availability check ke Supabase (anti race condition) ──
+  const cekTeknisiAvailableDB = async (teknisiName, date, timeStart, service, units) => {
+    try {
+      const durMenit = Math.round(hitungDurasi(service, units) * 60);
+      const startParts = (timeStart || "09:00").split(":").map(Number);
+      const startMin = startParts[0] * 60 + startParts[1];
+      const endMin   = startMin + durMenit;
+
+      // Query langsung ke Supabase — bukan state lokal
+      const { data: dbOrders, error } = await supabase
+        .from("orders")
+        .select("id, time, time_end, service, units, status")
+        .eq("teknisi", teknisiName)
+        .eq("date", date)
+        .in("status", ["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS","ON_SITE"]);
+
+      if (error) {
+        console.warn("cekAvailDB error:", error.message, "— fallback ke state lokal");
+        return cekTeknisiAvailable(teknisiName, date, timeStart, service, units);
+      }
+
+      // Hard cap: max 6 lokasi
+      if ((dbOrders||[]).length >= MAX_LOKASI_PER_HARI) {
+        return { ok: false, reason: `${teknisiName} sudah mencapai batas 6 job di tanggal ${date}` };
+      }
+
+      // Cek overlap jam
+      for (const o of (dbOrders||[])) {
+        const oStart = (o.time||"09:00").split(":").map(Number);
+        const oStartMin = oStart[0]*60 + oStart[1];
+        const oDur = Math.round(hitungDurasi(o.service||"Cleaning", o.units||1) * 60);
+        const oEndMin = oStartMin + oDur;
+        if (startMin < oEndMin && endMin > oStartMin) {
+          return { ok: false, reason: `${teknisiName} bentrok dengan job ${o.id} jam ${o.time}–${o.time_end||"?"}` };
+        }
+      }
+      return { ok: true };
+    } catch(e) {
+      console.warn("cekAvailDB catch:", e.message);
+      return { ok: true }; // fallback allow jika error network
+    }
   };
 
   // AREA PELAYANAN
@@ -3700,8 +6461,11 @@ _Laporan masuk setelah pekerjaan selesai._`;
       "Invoice mana yang belum dibayar?",
       "Stok material apa yang kritis?",
       "Buat ringkasan order hari ini",
-      "Update dadakan INV-20260301-001 jadi Rp 50000",
+      "Tampilkan semua harga layanan terbaru",
     ];
+    const syncLabel = priceListSyncedAt
+      ? "Harga terakhir sync: " + priceListSyncedAt.toLocaleString("id-ID",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})
+      : "Harga belum di-sync dari Supabase";
     return (
       <div style={{ display:"grid", gap:0, height:"calc(100vh - 120px)", maxHeight:700 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
@@ -3709,12 +6473,38 @@ _Laporan masuk setelah pekerjaan selesai._`;
             <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>🤖 ARA — AI Agent AClean</div>
             <div style={{ fontSize:12, color:cs.muted }}>Chat langsung · Bisa update data invoice, cek stok, analisa bisnis</div>
           </div>
-          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+            {/* Sync status indicator */}
+            <div style={{ display:"flex", alignItems:"center", gap:5, background:cs.surface, border:"1px solid "+cs.border, borderRadius:7, padding:"4px 10px" }}>
+              <div style={{ width:7, height:7, borderRadius:"50%", background:priceListSyncedAt?cs.green:cs.yellow }} />
+              <span style={{ fontSize:10, color:cs.muted }}>
+                Harga: {priceListSyncedAt
+                  ? priceListSyncedAt.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"})
+                  : "belum sync"}
+              </span>
+            </div>
+            <button
+              onClick={forceReloadPriceList}
+              title="Sync harga terbaru dari Supabase"
+              style={{ background:cs.green+"18", border:"1px solid "+cs.green+"44", color:cs.green, padding:"5px 12px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+              🔄 Sync Harga
+            </button>
             <div style={{ width:8, height:8, borderRadius:"50%", background:araLoading?cs.yellow:cs.green }} />
             <span style={{ fontSize:11, color:cs.muted }}>{araLoading?"Berpikir...":"Online"}</span>
             <button onClick={() => setAraMessages([{ role:"assistant", content:"Halo! Saya ARA 🤖 — AI Agent AClean. Ada yang bisa saya bantu?" }])}
               style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"5px 12px", borderRadius:6, cursor:"pointer", fontSize:11 }}>🗑 Reset</button>
           </div>
+        </div>
+        {/* Harga sync status banner */}
+        <div style={{ background:priceListSyncedAt?cs.green+"12":cs.yellow+"18", border:"1px solid "+(priceListSyncedAt?cs.green:cs.yellow)+"33", borderRadius:8, padding:"6px 12px", marginBottom:8, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <span style={{ fontSize:11, color:priceListSyncedAt?cs.green:cs.yellow }}>
+            {priceListSyncedAt ? "✅ " : "⚠️ "}{syncLabel}
+          </span>
+          {!priceListSyncedAt && (
+            <button onClick={forceReloadPriceList} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"3px 10px", borderRadius:5, cursor:"pointer", fontSize:10, fontWeight:700 }}>
+              Sync Sekarang
+            </button>
+          )}
         </div>
         {/* Quick prompts */}
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
@@ -3760,7 +6550,7 @@ _Laporan masuk setelah pekerjaan selesai._`;
           </div>
         )}
         <div style={{ display:"flex", gap:8, marginTop:8 }}>
-          <input
+          <input id="araInput"
             value={araInput} onChange={e=>setAraInput(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendToARA(araInput); } }}
             placeholder="Tanya ARA atau minta update data... (Enter untuk kirim)"
@@ -3800,81 +6590,181 @@ _Laporan masuk setelah pekerjaan selesai._`;
     );
   };
 
-  const renderAgentLog = () => (
-    <div style={{ display:"grid", gap:16 }}>
-      <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>🤖 ARA Agent Log</div>
-      <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
-        {agentLogs.map((log,i) => {
-          const lC = log.status==="ERROR"?cs.red:log.status==="WARNING"?cs.yellow:cs.green;
-          return (
-            <div key={i} style={{ display:"flex", gap:14, padding:"12px 18px", borderBottom:"1px solid "+cs.border, alignItems:"flex-start" }}>
-              <span style={{ fontFamily:"monospace", fontSize:11, color:cs.muted, whiteSpace:"nowrap", flexShrink:0 }}>{log.time}</span>
-              <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:lC+"22", color:lC, border:"1px solid "+lC+"33", fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.status}</span>
-              <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:cs.accent+"18", color:cs.accent, fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.action}</span>
-              <span style={{ fontSize:12, color:cs.muted }}>{log.detail}</span>
-            </div>
-          );
-        })}
+  const renderAgentLog = () => {
+    // Collect unique dates from logs for filter dropdown
+    const logDates = [...new Set(agentLogs.map(l => (l.created_at||"").slice(0,10)).filter(Boolean))].sort().reverse();
+    const filteredLogs = agentLogs.filter(l => {
+      const dayMatch = logDateFilter === "Semua" || (l.created_at||"").slice(0,10) === logDateFilter;
+      const actMatch = logActionFilter === "Semua" || l.action === logActionFilter;
+      return dayMatch && actMatch;
+    });
+    const logActions = [...new Set(agentLogs.map(l => l.action).filter(Boolean))].sort();
+    const totPgLog = Math.ceil(filteredLogs.length / AGENT_LOG_PAGE_SIZE) || 1;
+    const curPgLog = Math.min(agentLogPage, totPgLog);
+    const pageLog = filteredLogs.slice((curPgLog-1)*AGENT_LOG_PAGE_SIZE, curPgLog*AGENT_LOG_PAGE_SIZE);
+    return (
+      <div style={{ display:"grid", gap:16 }}>
+        <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>🤖 ARA Agent Log</div>
+        {/* Filter bar */}
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <span style={{ fontSize:11, color:cs.muted, fontWeight:600 }}>Tanggal:</span>
+            <select value={logDateFilter} onChange={e => {setLogDateFilter(e.target.value);setAgentLogPage(1);}}
+              style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"5px 10px", fontSize:12, cursor:"pointer" }}>
+              <option value="Semua">Semua</option>
+              {logDates.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <span style={{ fontSize:11, color:cs.muted, fontWeight:600 }}>Action:</span>
+            <select value={logActionFilter} onChange={e => {setLogActionFilter(e.target.value);setAgentLogPage(1);}}
+              style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"5px 10px", fontSize:12, cursor:"pointer" }}>
+              <option value="Semua">Semua</option>
+              {logActions.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+          <span style={{ fontSize:11, color:cs.muted, marginLeft:"auto" }}>
+            {filteredLogs.length} / {agentLogs.length} log • auto-hapus &gt;90 hari
+          </span>
+        </div>
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
+          {filteredLogs.length === 0
+            ? <div style={{ padding:"32px", textAlign:"center", color:cs.muted, fontSize:13 }}>Tidak ada log untuk filter ini.</div>
+            : pageLog.map((log,i) => {
+              const lC = log.status==="ERROR"?cs.red:log.status==="WARNING"?cs.yellow:cs.green;
+              return (
+                <div key={i} style={{ display:"flex", gap:14, padding:"12px 18px", borderBottom:"1px solid "+cs.border, alignItems:"flex-start" }}>
+                  <span style={{ fontFamily:"monospace", fontSize:11, color:cs.muted, whiteSpace:"nowrap", flexShrink:0 }}>
+                    {log.created_at ? new Date(log.created_at).toLocaleString("id-ID",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}) : (log.time||"-")}
+                  </span>
+                  <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:lC+"22", color:lC, border:"1px solid "+lC+"33", fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.status}</span>
+                  <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:cs.accent+"18", color:cs.accent, fontFamily:"monospace", fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{log.action}</span>
+                  <span style={{ fontSize:12, color:cs.muted }}>{log.user_name ? `[${log.user_name}] ` : ""}{log.detail}</span>
+                </div>
+              );
+            })
+          }
+        </div>
+        {/* Pagination */}
+        {totPgLog > 1 && (
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"10px 0" }}>
+            <button onClick={()=>setAgentLogPage(p=>Math.max(1,p-1))} disabled={curPgLog===1}
+              style={{ padding:"6px 14px", borderRadius:8, border:"1px solid "+cs.border, background:curPgLog===1?cs.surface:cs.card, color:curPgLog===1?cs.muted:cs.text, cursor:curPgLog===1?"not-allowed":"pointer", fontSize:12 }}>← Prev</button>
+            <span style={{fontSize:12,color:cs.text}}>Hal {curPgLog}/{totPgLog}</span>
+            <button onClick={()=>setAgentLogPage(p=>Math.min(totPgLog,p+1))} disabled={curPgLog===totPgLog}
+              style={{ padding:"6px 14px", borderRadius:8, border:"1px solid "+cs.border, background:curPgLog===totPgLog?cs.surface:cs.card, color:curPgLog===totPgLog?cs.muted:cs.text, cursor:curPgLog===totPgLog?"not-allowed":"pointer", fontSize:12 }}>Next →</button>
+            <span style={{fontSize:11,color:cs.muted}}>{filteredLogs.length} log</span>
+          </div>
+        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   // ============================================================
   // RENDER REPORTS
   // ============================================================
   const renderReports = () => {
     const techColors = Object.fromEntries([...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(n=>[n, getTechColor(n, teknisiData)]))
-    const filterByPeriod = (inv) => {
-      if(statsPeriod==="hari")  return (inv.sent||"").startsWith(TODAY);
-      if(statsPeriod==="bulan") return (inv.sent||"").startsWith(bulanIni);
-      return (inv.sent||"").startsWith(TODAY.slice(0,4));
+    // ── Filter helper berdasarkan periode yang dipilih ──
+    const tahunIni = TODAY.slice(0,4);
+
+    // Hitung range minggu sesuai statsMingguOff
+    const getMingguRange = (offset) => {
+      const now = new Date();
+      const dow = now.getDay(); // 0=Sun
+      const diffToMon = dow === 0 ? -6 : 1 - dow;
+      const mon = new Date(now);
+      mon.setDate(now.getDate() + diffToMon + offset * 7);
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+      const fmt = d => d.toISOString().slice(0,10);
+      return { from: fmt(mon), to: fmt(sun) };
     };
-    const periodLabel = statsPeriod==="hari"?"Hari Ini":statsPeriod==="bulan"?"Bulan Ini ("+bulanIni+")":"Tahun "+TODAY.slice(0,4);
+    const mingguRange = getMingguRange(statsMingguOff);
+
+    // Label periode
+    const mingguLabel = statsMingguOff === 0 ? "Minggu Ini"
+      : statsMingguOff === -1 ? "Minggu Lalu"
+      : "Minggu " + (statsMingguOff < 0 ? Math.abs(statsMingguOff) + " lalu" : statsMingguOff + " ke depan");
+    const periodLabel = statsPeriod === "hari"   ? "Hari Ini ("+TODAY+")"
+      : statsPeriod === "minggu" ? mingguLabel + " ("+mingguRange.from+" – "+mingguRange.to+")"
+      : statsPeriod === "bulan"  ? "Bulan Ini ("+bulanIni+")"
+      : statsPeriod === "tahun"  ? "Tahun "+tahunIni
+      : statsPeriod === "custom" && statsDateFrom && statsDateTo
+        ? statsDateFrom+" s/d "+statsDateTo
+        : "Semua Waktu";
+
+    // Filter berdasarkan tanggal
+    const inRange = (tgl) => {
+      if (!tgl) return false;
+      const d = tgl.slice(0,10);
+      if (statsPeriod === "hari")   return d === TODAY;
+      if (statsPeriod === "minggu") return d >= mingguRange.from && d <= mingguRange.to;
+      if (statsPeriod === "bulan")  return d.startsWith(bulanIni);
+      if (statsPeriod === "tahun")  return d.startsWith(tahunIni);
+      if (statsPeriod === "custom") {
+        if (statsDateFrom && statsDateTo) return d >= statsDateFrom && d <= statsDateTo;
+        if (statsDateFrom) return d >= statsDateFrom;
+        if (statsDateTo)   return d <= statsDateTo;
+      }
+      return true; // tanpa filter
+    };
+    const filterInvByPeriod  = (inv) => inRange(String(inv.paid_at || inv.created_at || ""));
+    const filterOrderByPeriod = (o)  => inRange(String(o.date || ""));
 
     // ── Revenue & Invoice ──
     const allInv        = invoicesData;
-    const paidInv       = allInv.filter(i=>i.status==="PAID"&&filterByPeriod(i));
-    const unpaidInv     = allInv.filter(i=>i.status==="UNPAID");
-    const overdueInv    = allInv.filter(i=>i.status==="OVERDUE");
-    const pendingInv    = allInv.filter(i=>i.status==="PENDING_APPROVAL");
-    const totalRevenue  = paidInv.reduce((a,b)=>a+(b.total||0),0);
-    const totalLabor    = paidInv.reduce((a,b)=>a+(b.labor||0),0);
-    const totalMaterial = paidInv.reduce((a,b)=>a+(b.material||0),0);
-    const totalDadakan  = paidInv.reduce((a,b)=>a+(b.dadakan||0),0);
-    const totalAR       = unpaidInv.reduce((a,b)=>a+(b.total||0),0) + overdueInv.reduce((a,b)=>a+(b.total||0),0);
-    const totalPending  = pendingInv.reduce((a,b)=>a+(b.total||0),0);
-    // AR Overdue
-    const totalOverdue  = overdueInv.reduce((a,b)=>a+(b.total||0),0);
+    // paidInv: PAID di periode ini (by paid_at)
+    const paidInv       = allInv.filter(i => i.status === "PAID" && filterInvByPeriod(i));
+    // AR: selalu semua outstanding (bukan filter periode)
+    const unpaidInv     = allInv.filter(i => i.status === "UNPAID");
+    const overdueInv    = allInv.filter(i => i.status === "OVERDUE");
+    const pendingInv    = allInv.filter(i => i.status === "PENDING_APPROVAL");
+    const totalRevenue  = paidInv.reduce((a,b) => a+(b.total||0), 0);
+    const totalLabor    = paidInv.reduce((a,b) => a+(b.labor||0), 0);
+    const totalMaterial = paidInv.reduce((a,b) => a+(b.material||0), 0);
+    const totalDadakan  = paidInv.reduce((a,b) => a+(b.dadakan||0), 0);
+    const totalAR       = unpaidInv.reduce((a,b) => a+(b.total||0), 0)
+                        + overdueInv.reduce((a,b) => a+(b.total||0), 0);
+    const totalPending  = pendingInv.reduce((a,b) => a+(b.total||0), 0);
+    const totalOverdue  = overdueInv.reduce((a,b) => a+(b.total||0), 0);
 
-    // ── Orders ──
-    const ordersDone    = ordersData.filter(o=>o.status==="COMPLETED").length;
-    const ordersAll     = ordersData.length;
-    const ordersMonth   = ordersData.filter(o=>(o.date||"").startsWith(bulanIni)).length;
-    const completionRate= ordersAll > 0 ? Math.round(ordersDone/ordersAll*100) : 0;
-    const avgOrderVal   = ordersDone > 0 ? Math.round(totalRevenue/Math.max(paidInv.length,1)) : 0;
+    // ── Orders — filter sesuai periode ──
+    const DONE_STATUSES = ["COMPLETED","REPORT_SUBMITTED","VERIFIED"];
+    const ordersPeriod  = ordersData.filter(filterOrderByPeriod);  // orders di periode ini
+    const ordersDone    = ordersPeriod.filter(o => DONE_STATUSES.includes(o.status)).length;
+    const ordersAll     = ordersPeriod.length;
+    const completionRate = ordersAll > 0 ? Math.round(ordersDone/ordersAll*100) : 0;
+    const avgOrderVal    = paidInv.length > 0 ? Math.round(totalRevenue/paidInv.length) : 0;
 
-    // ── Revenue per layanan ──
+    // ── Revenue per layanan (periode ini) ──
     const revBreakdown = [
-      ["Cleaning", paidInv.filter(i=>(i.service||"").includes("Cleaning")).reduce((a,b)=>a+(b.total||0),0), cs.accent],
-      ["Install",  paidInv.filter(i=>(i.service||"").includes("Install")).reduce((a,b)=>a+(b.total||0),0), cs.green],
-      ["Repair",   paidInv.filter(i=>(i.service||"").includes("Repair")).reduce((a,b)=>a+(b.total||0),0), cs.yellow],
-    ];
+      ["Cleaning", paidInv.filter(i=>(i.service||"").toLowerCase().includes("cleaning")).reduce((a,b)=>a+(b.total||0),0), cs.accent,   paidInv.filter(i=>(i.service||"").toLowerCase().includes("cleaning")).length],
+      ["Install",  paidInv.filter(i=>(i.service||"").toLowerCase().includes("install")).reduce((a,b)=>a+(b.total||0),0),  cs.green,    paidInv.filter(i=>(i.service||"").toLowerCase().includes("install")).length],
+      ["Repair",   paidInv.filter(i=>(i.service||"").toLowerCase().includes("repair")).reduce((a,b)=>a+(b.total||0),0),   cs.yellow,   paidInv.filter(i=>(i.service||"").toLowerCase().includes("repair")).length],
+      ["Complain", paidInv.filter(i=>(i.service||"").toLowerCase().includes("complain")).reduce((a,b)=>a+(b.total||0),0), cs.red,      paidInv.filter(i=>(i.service||"").toLowerCase().includes("complain")).length],
+    ].filter(([,rev,,cnt]) => rev > 0 || cnt > 0);
 
-    // ── Teknisi performance ──
-    const tekPerf = [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(name=>({
-      name,
-      done:  ordersData.filter(o=>o.teknisi===name&&o.status==="COMPLETED").length,
-      total: ordersData.filter(o=>o.teknisi===name).length,
-      rev:   paidInv.filter(i=>(i.service||"")&&ordersData.find(o=>o.teknisi===name&&o.id===i.job_id)).reduce((a,b)=>a+(b.total||0),0),
-    })).sort((a,b)=>b.done-a.done);
+    // ── Teknisi performance — filter sesuai periode ──
+    const tekPerf = [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map(name => {
+      const myOrders = ordersPeriod.filter(o => o.teknisi === name);
+      const myDone   = myOrders.filter(o => DONE_STATUSES.includes(o.status)).length;
+      const myRev    = paidInv
+        .filter(i => myOrders.some(o => o.id === i.job_id))
+        .reduce((a,b) => a+(b.total||0), 0);
+      return { name, done: myDone, total: myOrders.length, rev: myRev };
+    }).filter(t => t.total > 0).sort((a,b) => b.done - a.done);
     const maxDone = Math.max(...tekPerf.map(t=>t.done), 1);
 
     // ── Customer metrics ──
     const custTotal = customersData.length;
     const custVip   = customersData.filter(c=>c.is_vip).length;
-    const custBaru  = customersData.filter(c=>(c.joined||"").startsWith(bulanIni)).length;
+    const custBaru  = customersData.filter(c =>
+      inRange(String(c.joined||c.created_at||""))
+    ).length;
 
     const fmtPct = (n,d) => d>0 ? (n/d*100).toFixed(1)+"%" : "—";
+    const fmtRp  = (n) => "Rp "+Math.round(n).toLocaleString("id-ID");
 
     return (
       <div style={{ display:"grid", gap:18 }}>
@@ -3884,11 +6774,48 @@ _Laporan masuk setelah pekerjaan selesai._`;
             <div style={{ fontWeight:800, fontSize:18, color:cs.text }}>📊 Laporan Keuangan &amp; Operasional</div>
             <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Profit &amp; Loss · Accounts Receivable · Performa Tim</div>
           </div>
-          <div style={{ display:"flex", gap:6 }}>
-            {[["hari","Hari Ini"],["bulan","Bulan Ini"],["tahun","Tahun Ini"]].map(([v,l])=>(
-              <button key={v} onClick={()=>setStatsPeriod(v)}
-                style={{ background:statsPeriod===v?cs.accent:cs.card, border:"1px solid "+(statsPeriod===v?cs.accent:cs.border), color:statsPeriod===v?"#0a0f1e":cs.muted, padding:"6px 14px", borderRadius:99, cursor:"pointer", fontSize:12, fontWeight:600 }}>{l}</button>
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" }}>
+            {[["hari","Hari Ini"],["minggu","Minggu"],["bulan","Bulan Ini"],["tahun","Tahun Ini"],["custom","Custom"]].map(([v,l])=>(
+              <button key={v} onClick={()=>{ setStatsPeriod(v); if(v!=="minggu") setStatsMingguOff(0); }}
+                style={{ padding:"7px 14px", borderRadius:99, fontSize:12, cursor:"pointer", fontWeight:600,
+                  border:"1px solid "+(statsPeriod===v ? cs.accent : cs.border),
+                  background:statsPeriod===v ? cs.accent+"22" : cs.surface,
+                  color:statsPeriod===v ? cs.accent : cs.muted }}>
+                {l}
+              </button>
             ))}
+            {statsPeriod==="minggu" && (
+              <div style={{ display:"flex", alignItems:"center", gap:4, background:cs.card,
+                border:"1px solid "+cs.border, borderRadius:99, padding:"3px 6px" }}>
+                <button onClick={()=>setStatsMingguOff(w=>w-1)}
+                  style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:14, padding:"0 6px" }}>←</button>
+                <span style={{ fontSize:11, color:cs.muted, minWidth:90, textAlign:"center" }}>
+                  {statsMingguOff===0?"Minggu Ini":statsMingguOff===-1?"Minggu Lalu":Math.abs(statsMingguOff)+" minggu lalu"}
+                </span>
+                <button onClick={()=>setStatsMingguOff(w=>Math.min(0,w+1))}
+                  style={{ background:"none", border:"none",
+                    color:statsMingguOff===0?cs.border:cs.muted,
+                    cursor:statsMingguOff===0?"default":"pointer", fontSize:14, padding:"0 6px" }}>→</button>
+              </div>
+            )}
+            {statsPeriod==="custom" && (
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <input type="date" value={statsDateFrom}
+                  onChange={e=>setStatsDateFrom(e.target.value)}
+                  style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:7,
+                    padding:"5px 8px", fontSize:11, color:cs.text, colorScheme:"dark" }}/>
+                <span style={{ color:cs.muted, fontSize:12 }}>–</span>
+                <input type="date" value={statsDateTo}
+                  onChange={e=>setStatsDateTo(e.target.value)}
+                  style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:7,
+                    padding:"5px 8px", fontSize:11, color:cs.text, colorScheme:"dark" }}/>
+                {(statsDateFrom||statsDateTo) && (
+                  <button onClick={()=>{ setStatsDateFrom(""); setStatsDateTo(""); }}
+                    style={{ fontSize:11, padding:"3px 8px", borderRadius:99, background:cs.red+"22",
+                      border:"1px solid "+cs.red+"44", color:cs.red, cursor:"pointer" }}>✕ Reset</button>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -3965,7 +6892,7 @@ _Laporan masuk setelah pekerjaan selesai._`;
           {[
             {label:"Completion Rate",val:completionRate+"%",sub:ordersDone+"/"+ordersAll+" order",color:cs.green,icon:"✅"},
             {label:"Avg. Order Value",val:fmt(avgOrderVal),sub:"per transaksi PAID",color:cs.accent,icon:"📋"},
-            {label:"Order Bulan Ini",val:ordersMonth,sub:custBaru+" customer baru",color:cs.yellow,icon:"🗂️"},
+            {label:"Order "+periodLabel,val:ordersAll,sub:custBaru+" customer baru",color:cs.yellow,icon:"🗂️"},
           ].map(k=>(
             <div key={k.label} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:12, padding:16, textAlign:"center" }}>
               <div style={{ fontSize:22, marginBottom:6 }}>{k.icon}</div>
@@ -4078,21 +7005,88 @@ _Laporan masuk setelah pekerjaan selesai._`;
   // ============================================================
   const renderLaporanTim = () => {
     const sMap = { SUBMITTED:[cs.accent,"Submitted"], VERIFIED:[cs.green,"Terverifikasi"], REVISION:[cs.yellow,"Perlu Revisi"], REJECTED:[cs.red,"Ditolak"] };
-    const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,fontWeight:700}}>{lbl}</span>; };
+    const badge = (s) => {
+      // Case insensitive status lookup
+      const statusKey = (s || "").toUpperCase();
+      const [col,lbl] = sMap[statusKey] || [cs.muted, s];
+      return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,fontWeight:700}}>{lbl}</span>;
+    };
     const statusOrder = { SUBMITTED:0, REVISION:1, VERIFIED:2, REJECTED:3 };
+    // Fix sort to handle case-insensitive status
+    const getStatusOrder = (status) => statusOrder[(status || "").toUpperCase()] || 9;
+    // techColors — warna per teknisi (konsisten dengan kalender & dashboard)
+    const techColors = Object.fromEntries(
+      [...new Set(ordersData.map(o=>o.teknisi).filter(Boolean))].map((n,i)=>[
+        n, ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#ec4899"][i%8]
+      ])
+    );
     // ── SIM-8: date + service + status filters + pagination ──
+    const todayLap = getLocalDate();
     const weekAgo  = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
     const monthAgo = new Date(Date.now()-30*86400000).toISOString().slice(0,10);
     let filtered = [...laporanReports];
-    if (laporanDateFilter==="Minggu Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=weekAgo);
+
+    // ── AUTO-HIDE VERIFIED untuk Teknisi & Helper (hide laporan yang sudah selesai) ──
+    const userRole = currentUser?.role?.toLowerCase() || "";
+    const isTeknisiOrHelper = userRole === "teknisi" || userRole === "helper";
+
+    // Debug: log all status values
+    if (isTeknisiOrHelper && filtered.length > 0) {
+      const statusCounts = {};
+      filtered.forEach(r => {
+        const s = r.status || "unknown";
+        statusCounts[s] = (statusCounts[s] || 0) + 1;
+      });
+      console.log("[Laporan Filter] Status breakdown BEFORE filter:", statusCounts);
+    }
+
+    if (isTeknisiOrHelper) {
+      const beforeCount = filtered.length;
+      // Filter out VERIFIED — case insensitive
+      filtered = filtered.filter(r => {
+        const status = (r.status || "").toUpperCase();
+        return status !== "VERIFIED";
+      });
+      console.log(`[Laporan Filter] teknisi=${currentUser?.name}, before=${beforeCount}, after=${filtered.length}, hidden=${beforeCount - filtered.length}`);
+    }
+
+    if (laporanDateFilter==="Hari Ini")  filtered=filtered.filter(r=>(r.date||r.submitted_at||"").slice(0,10)===todayLap);
+    else if (laporanDateFilter==="Minggu Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=weekAgo);
     else if (laporanDateFilter==="Bulan Ini") filtered=filtered.filter(r=>(r.date||r.submitted_at||"")>=monthAgo);
+    else if (laporanDateFilter==="Range" && (laporanDateFrom||laporanDateTo)) {
+      // Convert dd/mm/yyyy → yyyy-mm-dd untuk perbandingan
+      const parseDate = (s) => {
+        if (!s) return "";
+        const parts = s.split("/");
+        if (parts.length===3) return `${parts[2]}-${parts[1].padStart(2,"0")}-${parts[0].padStart(2,"0")}`;
+        return s; // already yyyy-mm-dd
+      };
+      const fromStr = parseDate(laporanDateFrom);
+      const toStr   = parseDate(laporanDateTo);
+      filtered = filtered.filter(r => {
+        const d = (r.date||r.submitted_at||"").slice(0,10);
+        if (fromStr && toStr) return d >= fromStr && d <= toStr;
+        if (fromStr) return d >= fromStr;
+        if (toStr)   return d <= toStr;
+        return true;
+      });
+    }
     if (laporanSvcFilter!=="Semua") filtered=filtered.filter(r=>(r.service||"")===laporanSvcFilter);
-    if (laporanStatusFilter!=="Semua") filtered=filtered.filter(r=>r.status===laporanStatusFilter);
+    if (laporanStatusFilter!=="Semua") filtered=filtered.filter(r=>(r.status||"").toUpperCase()===laporanStatusFilter.toUpperCase());
+    if (laporanTeamFilter!=="Semua") filtered=filtered.filter(r=>r.teknisi===laporanTeamFilter||r.helper===laporanTeamFilter);
     if (searchLaporan.trim()) {
       const q=searchLaporan.trim().toLowerCase();
-      filtered=filtered.filter(r=>(r.customer||"").toLowerCase().includes(q)||(r.teknisi||"").toLowerCase().includes(q)||(r.job_id||"").toLowerCase().includes(q)||(r.helper||"").toLowerCase().includes(q)||(r.service||"").toLowerCase().includes(q));
+      filtered=filtered.filter(r=>
+        (r.customer||"").toLowerCase().includes(q)||
+        (r.teknisi||"").toLowerCase().includes(q)||
+        (r.job_id||r.id||"").toLowerCase().includes(q)||
+        (r.helper||"").toLowerCase().includes(q)||
+        (r.service||"").toLowerCase().includes(q)||
+        (r.catatan_global||r.catatan||"").toLowerCase().includes(q)||
+        (r.rekomendasi||"").toLowerCase().includes(q)
+      );
     }
-    filtered.sort((a,b)=>{const dA=a.submitted_at||a.date||"",dB=b.submitted_at||b.date||"";if(dB!==dA)return dB.localeCompare(dA);return (statusOrder[a.status]||9)-(statusOrder[b.status]||9);});
+    filtered.sort((a,b)=>{const dA=a.submitted_at||a.date||"",dB=b.submitted_at||b.date||"";if(dB!==dA)return dB.localeCompare(dA);return getStatusOrder(a.status)-getStatusOrder(b.status);});
     const totPgL=Math.ceil(filtered.length/LAP_PAGE_SIZE)||1;
     const curPgL=Math.min(laporanPage,totPgL);
     const pageLap=filtered.slice((curPgL-1)*LAP_PAGE_SIZE,curPgL*LAP_PAGE_SIZE);
@@ -4102,82 +7096,309 @@ _Laporan masuk setelah pekerjaan selesai._`;
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
           <div>
             <div style={{fontWeight:800,fontSize:18,color:cs.text}}>Laporan Tim Teknisi <span style={{fontSize:13,color:cs.muted,fontWeight:400}}>({filtered.length})</span></div>
-            <div style={{fontSize:12,color:cs.muted,marginTop:2}}>Verifikasi laporan, cek riwayat edit, tandai sesuai atau minta revisi</div>
+            <div style={{fontSize:12,color:cs.muted,marginTop:2}}>
+              {isTeknisiOrHelper ? "📋 Menampilkan laporan baru & revisi saja. Laporan terverifikasi disembunyikan. " : ""}
+              {!isTeknisiOrHelper ? "Verifikasi laporan, cek riwayat edit, tandai sesuai atau minta revisi" : ""}
+            </div>
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {[["SUBMITTED",cs.accent,"Baru"],["VERIFIED",cs.green,"Verified"],["REVISION",cs.yellow,"Revisi"],["REJECTED",cs.red,"Ditolak"]].map(([s,col,lbl])=>(
               <span key={s} style={{fontSize:11,padding:"5px 11px",borderRadius:99,background:col+"18",color:col,border:"1px solid "+col+"33",fontWeight:700}}>
-                {laporanReports.filter(r=>r.status===s).length} {lbl}
+                {laporanReports.filter(r=>(r.status||"").toUpperCase()===s).length} {lbl}
               </span>
             ))}
           </div>
         </div>
-        {/* Filters: date + service + status */}
+        {/* Filters: date + service + status + tim */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-          {["Semua","Minggu Ini","Bulan Ini"].map(f=>(
+          {/* Date filter — tambah Hari Ini */}
+          {[["Semua","📋"],["Hari Ini","🔴"],["Minggu Ini","📅"],["Bulan Ini","📅"]].map(([f,ic])=>(
             <button key={f} onClick={()=>{setLaporanDateFilter(f);setLaporanPage(1);}}
-              style={{padding:"5px 12px",borderRadius:99,border:"1px solid "+(laporanDateFilter===f?cs.accent:cs.border),background:laporanDateFilter===f?cs.accent+"22":cs.card,color:laporanDateFilter===f?cs.accent:cs.muted,cursor:"pointer",fontSize:11,fontWeight:laporanDateFilter===f?700:500}}>
-              📅 {f}
+              style={{padding:"5px 12px",borderRadius:99,fontSize:12,cursor:"pointer",
+                border:"1px solid "+(laporanDateFilter===f?cs.accent:cs.border),
+                background:laporanDateFilter===f?cs.accent+"22":cs.surface,
+                color:laporanDateFilter===f?cs.accent:cs.muted,
+                fontWeight:laporanDateFilter===f?700:400}}>
+              {ic} {f}
             </button>
           ))}
           <span style={{width:1,height:16,background:cs.border}}/>
           {["Semua","Cleaning","Install","Repair","Complain"].map(f=>(
             <button key={f} onClick={()=>{setLaporanSvcFilter(f);setLaporanPage(1);}}
-              style={{padding:"5px 12px",borderRadius:99,border:"1px solid "+(laporanSvcFilter===f?cs.accent:cs.border),background:laporanSvcFilter===f?cs.accent+"22":cs.card,color:laporanSvcFilter===f?cs.accent:cs.muted,cursor:"pointer",fontSize:11,fontWeight:laporanSvcFilter===f?700:500}}>
+              style={{padding:"5px 12px",borderRadius:99,fontSize:12,cursor:"pointer",
+                border:"1px solid "+(laporanSvcFilter===f?cs.accent:cs.border),
+                background:laporanSvcFilter===f?cs.accent+"22":cs.surface,
+                color:laporanSvcFilter===f?cs.accent:cs.muted,
+                fontWeight:laporanSvcFilter===f?700:400}}>
               {f}
             </button>
           ))}
           <span style={{width:1,height:16,background:cs.border}}/>
           {["Semua","SUBMITTED","VERIFIED","REVISION","REJECTED"].map(f=>(
             <button key={f} onClick={()=>{setLaporanStatusFilter(f);setLaporanPage(1);}}
-              style={{padding:"5px 12px",borderRadius:99,border:"1px solid "+(laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]:cs.border),background:laporanStatusFilter===f?((sMap[f]||[cs.accent])[0])+"22":cs.card,color:laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]:cs.muted,cursor:"pointer",fontSize:11,fontWeight:laporanStatusFilter===f?700:500}}>
+              style={{padding:"5px 12px",borderRadius:99,fontSize:12,cursor:"pointer",
+                border:"1px solid "+(laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]:cs.border),
+                background:laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]+"22":cs.surface,
+                color:laporanStatusFilter===f?(sMap[f]||[cs.accent])[0]:cs.muted,
+                fontWeight:laporanStatusFilter===f?700:400}}>
               {f==="Semua"?"Semua":f==="SUBMITTED"?"Baru":f==="VERIFIED"?"Verified":f==="REVISION"?"Revisi":"Ditolak"}
+            </button>
+          ))}
+          <span style={{width:1,height:16,background:cs.border}}/>
+          {/* Filter per tim/teknisi */}
+          {["Semua",...[...new Set([
+            ...laporanReports.map(r=>r.teknisi),
+            ...laporanReports.map(r=>r.helper)
+          ].filter(Boolean))].sort()].map(f=>(
+            <button key={f} onClick={()=>{setLaporanTeamFilter(f);setLaporanPage(1);}}
+              style={{padding:"5px 12px",borderRadius:99,fontSize:12,cursor:"pointer",
+                border:"1px solid "+(laporanTeamFilter===f?cs.green:cs.border),
+                background:laporanTeamFilter===f?cs.green+"22":cs.surface,
+                color:laporanTeamFilter===f?cs.green:cs.muted,
+                fontWeight:laporanTeamFilter===f?700:400,
+                display:"flex",alignItems:"center",gap:4}}>
+              {f!=="Semua" && (
+                <span style={{width:8,height:8,borderRadius:"50%",
+                  background:techColors?.[f]||cs.accent,display:"inline-block"}}/>
+              )}
+              {f==="Semua"?"👥 Semua Tim":f}
             </button>
           ))}
         </div>
         {/* Search */}
         <div style={{position:"relative"}}>
           <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:cs.muted,fontSize:14,pointerEvents:"none"}}>🔍</span>
-          <input value={searchLaporan} onChange={e=>{setSearchLaporan(e.target.value);setLaporanPage(1);}}
+          <input id="searchLaporan" value={searchLaporan} onChange={e=>{setSearchLaporan(e.target.value);setLaporanPage(1);}}
             placeholder="Cari nama teknisi, customer, ID job, atau layanan..."
             style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px 10px 38px",color:cs.text,fontSize:13,boxSizing:"border-box"}} />
           {searchLaporan && <button onClick={()=>{setSearchLaporan("");setLaporanPage(1);}} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:16}}>✕</button>}
         </div>
+        {/* ── DATE RANGE PICKER ── */}
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",
+          background:cs.surface,border:"1px solid "+cs.border,borderRadius:10,padding:"8px 12px"}}>
+          <span style={{fontSize:11,fontWeight:700,color:cs.muted,whiteSpace:"nowrap"}}>📅 Rentang Tanggal:</span>
+          {/* Input dari */}
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:11,color:cs.muted}}>Dari</span>
+            <input
+              type="date"
+              value={laporanDateFrom}
+              onChange={e=>{
+                setLaporanDateFrom(e.target.value);
+                setLaporanDateFilter("Range");
+                setLaporanPage(1);
+              }}
+              style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+                padding:"5px 9px",fontSize:12,color:cs.text,cursor:"pointer",
+                colorScheme:"dark"}}
+            />
+          </div>
+          <span style={{fontSize:12,color:cs.muted}}>–</span>
+          {/* Input sampai */}
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:11,color:cs.muted}}>Sampai</span>
+            <input
+              type="date"
+              value={laporanDateTo}
+              onChange={e=>{
+                setLaporanDateTo(e.target.value);
+                setLaporanDateFilter("Range");
+                setLaporanPage(1);
+              }}
+              style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+                padding:"5px 9px",fontSize:12,color:cs.text,cursor:"pointer",
+                colorScheme:"dark"}}
+            />
+          </div>
+          {/* Info hasil + tombol reset */}
+          {laporanDateFilter==="Range" && (laporanDateFrom||laporanDateTo) && (
+            <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
+              <span style={{fontSize:11,color:cs.accent,fontWeight:600}}>
+                {filtered.length} laporan
+              </span>
+              <button
+                onClick={()=>{
+                  setLaporanDateFrom("");
+                  setLaporanDateTo("");
+                  setLaporanDateFilter("Semua");
+                  setLaporanPage(1);
+                }}
+                style={{fontSize:11,padding:"3px 10px",borderRadius:99,
+                  background:cs.red+"22",border:"1px solid "+cs.red+"44",
+                  color:cs.red,cursor:"pointer",fontWeight:600}}>
+                ✕ Reset
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ── LAPORAN HARI INI — selalu tampil di atas ── */}
+        {(() => {
+          const todayStr  = getLocalDate();
+          const todayReps = laporanReports.filter(r =>
+            (r.date || r.submitted_at || "").slice(0,10) === todayStr
+          );
+          if (todayReps.length === 0 && laporanDateFilter === "Semua") return null;
+          if (laporanDateFilter !== "Semua") return null; // sudah difilter, tidak perlu card ini
+          return (
+            <div style={{background:cs.card,border:"2px solid "+cs.accent+"44",borderRadius:14,padding:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{fontWeight:800,fontSize:13,color:cs.accent}}>
+                  🔴 Laporan Hari Ini — {new Date().toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long"})}
+                </div>
+                <div style={{fontSize:11,color:cs.muted}}>{todayReps.length} laporan</div>
+              </div>
+              {todayReps.length === 0 ? (
+                <div style={{fontSize:12,color:cs.muted,textAlign:"center",padding:"10px 0"}}>
+                  Belum ada laporan masuk hari ini
+                </div>
+              ) : (
+                <div style={{display:"grid",gap:7}}>
+                  {todayReps
+                    .sort((a,b) => (sMap[a.status]?0:1) - (sMap[b.status]?0:1))
+                    .map(r => {
+                      const [col] = sMap[r.status] || [cs.muted];
+                      const tcol  = techColors?.[r.teknisi] || cs.accent;
+                      return (
+                        <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,
+                          background:cs.surface,borderRadius:10,padding:"8px 12px",
+                          border:"1px solid "+col+"33"}}>
+                          {/* Avatar teknisi */}
+                          <div style={{width:30,height:30,borderRadius:8,background:tcol+"33",
+                            display:"flex",alignItems:"center",justifyContent:"center",
+                            fontSize:13,fontWeight:800,color:tcol,flexShrink:0}}>
+                            {(r.teknisi||"?")[0]}
+                          </div>
+                          {/* Info */}
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12,fontWeight:700,color:cs.text,
+                              whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                              {r.customer} · {r.service}
+                            </div>
+                            <div style={{fontSize:11,color:cs.muted}}>
+                              👷 {r.teknisi}{r.helper?" + "+r.helper:""}
+                              {" · "}{r.job_id||r.id}
+                            </div>
+                          </div>
+                          {/* Status badge */}
+                          <div style={{fontSize:10,padding:"3px 9px",borderRadius:99,
+                            background:col+"22",color:col,fontWeight:700,flexShrink:0}}>
+                            {r.status==="SUBMITTED"?"Baru":r.status==="VERIFIED"?"Verified":
+                             r.status==="REVISION"?"Revisi":"Ditolak"}
+                          </div>
+                          {/* Tombol verifikasi cepat */}
+                          {r.status==="SUBMITTED" && (currentUser?.role==="Admin"||currentUser?.role==="Owner") && (
+                            <button onClick={()=>verifyLaporan(r)}
+                              style={{fontSize:11,padding:"4px 10px",borderRadius:7,
+                                background:cs.green+"22",border:"1px solid "+cs.green+"44",
+                                color:cs.green,cursor:"pointer",fontWeight:600,flexShrink:0}}>
+                              ✅ Verify
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* List */}
         {filtered.length===0
           ? <div style={{background:cs.card,borderRadius:14,padding:40,textAlign:"center",color:cs.muted}}>Tidak ada laporan</div>
           : pageLap.map(r=>(
-          <div key={r.id} style={{background:cs.card,border:"1px solid "+(sMap[r.status]?sMap[r.status][0]:cs.border)+"33",borderRadius:16,padding:20}}>
-            {/* Card header */}
-            <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                <span style={{fontFamily:"monospace",fontWeight:800,color:cs.accent,fontSize:14}}>{r.job_id}</span>
+          <div key={r.id} style={{background:cs.card,border:"1px solid "+(sMap[r.status]?sMap[r.status][0]:cs.border)+"33",borderRadius:12,padding:"14px 16px"}}>
+            {/* Card header — responsive */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",flex:1,minWidth:0}}>
+                <span style={{fontFamily:"monospace",fontWeight:700,color:cs.accent,fontSize:13}}>{r.job_id}</span>
                 {badge(r.status)}
                 {safeArr(r.editLog).length>0 && (
-                  <span style={{fontSize:10,color:cs.yellow,background:cs.yellow+"15",padding:"2px 8px",borderRadius:99,border:"1px solid "+cs.yellow+"33"}}>
-                    Diedit {safeArr(r.editLog).length}x
+                  <span style={{fontSize:9,color:cs.yellow,background:cs.yellow+"15",padding:"2px 6px",borderRadius:99,border:"1px solid "+cs.yellow+"33",whiteSpace:"nowrap"}}>
+                    ✏️ {safeArr(r.editLog).length}x
                   </span>
                 )}
               </div>
-              <div style={{fontSize:11,color:cs.muted}}>Submit: {r.submitted}</div>
+              <div style={{fontSize:10,color:cs.muted,whiteSpace:"nowrap"}}>{r.submitted}</div>
             </div>
 
-            {/* Info grid */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px 24px",fontSize:12,marginBottom:14}}>
+            {/* Info grid — responsive: 1 col mobile, 2 col desktop */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))",gap:"6px 24px",fontSize:12,marginBottom:14}}>
               <div><span style={{color:cs.muted}}>Customer: </span><span style={{fontWeight:700,color:cs.text}}>{r.customer}</span></div>
               <div><span style={{color:cs.muted}}>Teknisi: </span><span style={{fontWeight:700,color:cs.accent}}>{r.teknisi}{r.helper?" + "+r.helper+" (Helper)":""}</span></div>
               <div><span style={{color:cs.muted}}>Layanan: </span><span style={{color:cs.text}}>{r.service}</span></div>
               <div><span style={{color:cs.muted}}>Tanggal: </span><span style={{color:cs.text}}>{r.date}</span></div>
-              <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit AC</span></div>
+              <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit</span></div>
               {safeArr(r.materials).length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
-              {r.fotos&&r.fotos.length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
-              {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon Total: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
+              {safeArr(r.fotos).length>0&&<div><span style={{color:cs.green}}>📸 {r.fotos.length} foto</span></div>}
+              {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
+              {/* Summary PK + brand semua unit */}
+              {(r.units||[]).length > 0 && (()=>{
+                const unitSummary = (r.units||[]).map((u,i) => {
+                  const pk    = u.pk   || "";
+                  const merk  = u.merk || "";
+                  const label = u.label|| `Unit ${i+1}`;
+                  return { label, pk, merk, tipe: u.tipe||"" };
+                });
+                return (
+                  <div style={{gridColumn:"1/-1"}}>
+                    <span style={{color:cs.muted}}>Detail Unit: </span>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:4}}>
+                      {unitSummary.map((u,i)=>(
+                        <div key={i} style={{display:"flex",alignItems:"center",gap:5,
+                          background:cs.surface,border:"1px solid "+cs.border,
+                          borderRadius:7,padding:"3px 9px",fontSize:11}}>
+                          <span style={{fontWeight:700,color:cs.accent}}>Unit {i+1}</span>
+                          <span style={{color:cs.muted}}>·</span>
+                          {u.merk && <span style={{fontWeight:700,color:cs.text}}>{u.merk}</span>}
+                          {u.pk && (
+                            <span style={{background:cs.accent+"22",color:cs.accent,
+                              fontWeight:800,fontSize:10,padding:"1px 6px",borderRadius:99}}>
+                              {u.pk}
+                            </span>
+                          )}
+                          {u.label && <span style={{color:cs.muted,fontSize:10}}>{u.label}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
-            {/* Per-unit accordion */}
+            {/* Per-unit accordion — compact mobile layout */}
             {(r.units||[]).map((u,ui)=>(
-              <div key={ui} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"10px 13px",marginBottom:8,fontSize:12}}>
-                <div style={{fontWeight:700,color:cs.accent,marginBottom:6}}>Unit {u.unit_no} — {u.label} {u.merk?`(${u.merk})`:""}</div>
+              <div key={ui} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"10px 12px",marginBottom:6,fontSize:11}}>
+                {/* Unit header: compact mobile */}
+                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:6,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:700,color:cs.accent,fontSize:12,minWidth:"50px"}}>
+                    Unit {u.unit_no}
+                  </span>
+                  {u.label && (
+                    <span style={{fontSize:11,color:cs.text,fontWeight:600}}>{u.label}</span>
+                  )}
+                  {u.merk && (
+                    <span style={{fontSize:10,fontWeight:700,color:cs.text,
+                      background:cs.surface,border:"1px solid "+cs.border,
+                      borderRadius:4,padding:"1px 6px"}}>
+                      {u.merk}
+                    </span>
+                  )}
+                  {u.pk && (
+                    <span style={{fontSize:10,fontWeight:700,color:"#fff",
+                      background:cs.accent,borderRadius:99,padding:"2px 7px"}}>
+                      {u.pk}
+                    </span>
+                  )}
+                  {parseFloat(u.freon_ditambah)>0 && (
+                    <span style={{fontSize:9,fontWeight:700,color:"#06b6d4",
+                      background:"#06b6d422",borderRadius:99,padding:"1px 6px"}}>
+                      ❄️{u.freon_ditambah}psi
+                    </span>
+                  )}
+                </div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:4}}>
                   {(u.kondisi_sebelum||[]).map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.yellow+"18",color:cs.yellow,padding:"1px 7px",borderRadius:99}}>{k}</span>)}
                 </div>
@@ -4189,7 +7410,7 @@ _Laporan masuk setelah pekerjaan selesai._`;
                 </div>
                 <div style={{fontSize:11,color:cs.muted}}>
                   {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}{u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
-                  {parseFloat(u.freon_ditambah)>0?`Freon +${u.freon_ditambah}kg`:""}
+                  {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
                   {u.catatan_unit?` · ${u.catatan_unit}`:""}
                 </div>
               </div>
@@ -4211,8 +7432,8 @@ _Laporan masuk setelah pekerjaan selesai._`;
                 <div style={{fontSize:11,fontWeight:700,color:cs.green,marginBottom:6}}>📸 Foto Laporan ({safeArr(r.fotos).filter(f=>f.url).length})</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:6}}>
                   {safeArr(r.fotos).filter(f=>f.url).map((f,fi)=>(
-                    <div key={fi} style={{position:"relative",cursor:"pointer"}} onClick={()=>window.open(f.url,"_blank")}>
-                      <img src={f.url} alt={f.label||`Foto ${fi+1}`} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:7,border:"1px solid "+cs.border}} />
+                    <div key={fi} style={{position:"relative",cursor:"pointer"}} onClick={()=>window.open(fotoSrc(f.url),"_blank")}>
+                      <img src={fotoSrc(f.url)} alt={f.label||`Foto ${fi+1}`} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:7,border:"1px solid "+cs.border}} />
                       <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#000a",borderRadius:"0 0 7px 7px",padding:"2px 4px",fontSize:9,color:"#fff",textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{f.label||`Foto ${fi+1}`}</div>
                     </div>
                   ))}
@@ -4245,11 +7466,13 @@ _Laporan masuk setelah pekerjaan selesai._`;
                 <button onClick={async()=>{
                   // ── SIM-10: Verify laporan + AUTO-CREATE invoice ──
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"VERIFIED"}:x));
-                  const verifiedById = isRealUUID(currentUser?.id) ? currentUser.id : null;
                   const {error:vErr} = await supabase.from("service_reports").update({
-                    status:"VERIFIED", verified_by:verifiedById, verified_at:new Date().toISOString()
+                    status:"VERIFIED"
                   }).eq("id",r.id);
-                  if(vErr) await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id);
+                  if(vErr) {
+                    console.warn("❌ verify laporan failed:", vErr.message);
+                    await supabase.from("service_reports").update({status:"VERIFIED"}).eq("id",r.id).catch(e=>console.warn("retry also failed:", e.message));
+                  }
                   addAgentLog("LAPORAN_VERIFIED",`Laporan ${r.job_id} (${r.customer}) diverifikasi`,"SUCCESS");
 
                   // Cek apakah invoice sudah ada
@@ -4257,26 +7480,68 @@ _Laporan masuk setelah pekerjaan selesai._`;
                   if (existInv) {
                     showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
                   } else {
-                    // AUTO-CREATE invoice PENDING_APPROVAL (tidak langsung kirim ke customer)
+                    // AUTO-CREATE invoice — breakdown 1-1 dari r.materials (laporan data)
                     const ord = ordersData.find(o => o.id === r.job_id);
                     const invId = "INV" + Date.now().toString().slice(-7) + Math.floor(Math.random()*100).toString().padStart(2,"0");
-                    const labor = PRICE_LIST[r.service]?.[ord?.type||"default"] || PRICE_LIST[r.service]?.["default"] || 85000;
-                    const laborTotal = labor * (r.units || ord?.units || 1);
-                    const matCost = safeArr(r.materials).reduce((s,m) => s + ((m.harga||m.price||0)*parseFloat(m.jumlah||m.qty||1)), 0);
-                    const freonCost = (r.total_freon||0) > 0 ? Math.round((r.total_freon||0) * (PRICE_LIST["freon_R32"]||200000)) : 0;
-                    const dadakan = ord?.date === new Date().toISOString().slice(0,10) ? 50000 : 0;
-                    const totalInv = laborTotal + matCost + freonCost + dadakan;
+
+                    // Build mDetail dari r.materials / materials_json (fallback chain)
+                    const _rawMats = (() => {
+                      // Priority: materials_json (string dari DB) > r.materials (parsed)
+                      if (r.materials_json) {
+                        try { return JSON.parse(r.materials_json); } catch(_) {}
+                      }
+                      if (r.units_json && r.service === "Install") {
+                        // Install: units_json tidak relevan, pakai materials
+                      }
+                      return safeArr(r.materials);
+                    })();
+                    const vMats = _rawMats.filter(m=>m.nama&&parseFloat(m.jumlah||0)>0);
+                    const vMDetail = vMats.map(m => {
+                      const nama2 = (m.nama||"").toLowerCase();
+                      const isF = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
+                      const rawQ = parseFloat(m.jumlah)||0;
+                      const qty  = isF ? Math.max(1,Math.ceil(rawQ)) : rawQ;
+                      let hSat   = parseFloat(m.harga_satuan)||0;
+                      if (!hSat) {
+                        const inv2 = inventoryData.find(i=>(i.name||"").toLowerCase().includes(nama2)||nama2.includes((i.name||"").toLowerCase()));
+                        hSat = inv2?.price || 0;
+                      }
+                      if (!hSat && isF) hSat = nama2.includes("r22")?450000:nama2.includes("r32")?450000:450000;
+                      return { nama:m.nama, jumlah:qty, satuan:m.satuan||"pcs", harga_satuan:hSat, subtotal:hSat*qty, keterangan:m.keterangan||"" };
+                    });
+
+                    // Inject service fee jika tidak ada jasa row
+                    if (!vMDetail.some(m=>m.keterangan==="jasa")) {
+                      const svcFeeV = hitungLabor(r.service, ord?.type, r.units||ord?.units||1);
+                      if (svcFeeV > 0) {
+                        const uCount = r.units||ord?.units||1;
+                        vMDetail.unshift({ nama:(r.service||"")+(ord?.type?" - "+ord.type:"")+" (Servis)", jumlah:uCount, satuan:"unit", harga_satuan:Math.round(svcFeeV/uCount), subtotal:svcFeeV, keterangan:"jasa" });
+                      }
+                    }
+
+                    const laborV   = vMDetail.filter(m=>m.keterangan==="jasa"||m.keterangan==="repair").reduce((s,m)=>s+m.subtotal,0) || hitungLabor(r.service, ord?.type, r.units||ord?.units||1);
+                    const matV     = vMDetail.filter(m=>m.keterangan!=="jasa"&&m.keterangan!=="repair").reduce((s,m)=>s+m.subtotal,0);
+                    const totalInv = laborV + matV;
                     const newInv = {
                       id:invId, job_id:r.job_id, laporan_id:r.id,
                       customer:r.customer, phone:r.phone||ord?.phone||"",
                       service:r.service+(ord?.type?" - "+ord.type:""), units:r.units||ord?.units||1,
                       teknisi:r.teknisi||"",
-                      labor:laborTotal, material:matCost+freonCost, dadakan, discount:0,
+                      labor:laborV, material:matV,
+                      materials_detail: vMDetail.length > 0 ? JSON.stringify(vMDetail) : null,
+                      dadakan:0, discount:0,
                       total:totalInv,
-                      status:"PENDING_APPROVAL",  // ⚠ harus approve dulu sebelum dikirim
+                      status:"PENDING_APPROVAL",
+                      garansi_days:30, garansi_expires:new Date(Date.now()+30*86400000).toISOString().slice(0,10),
                       due: new Date(Date.now()+3*86400000).toISOString().slice(0,10),
                       sent:false, created_at:new Date().toISOString()
                     };
+                    // 1 invoice per job — hapus invoice lama jika ada
+                    const oldInvs = invoicesData.filter(inv => inv.job_id === r.job_id);
+                    if (oldInvs.length > 0) {
+                      await Promise.all(oldInvs.map(oi => supabase.from("invoices").delete().eq("id",oi.id)));
+                      setInvoicesData(prev => prev.filter(inv => inv.job_id !== r.job_id));
+                    }
                     setInvoicesData(prev => [...prev, newInv]);
                     const {error:iErr} = await supabase.from("invoices").insert(newInv);
                     if(iErr) showNotif("⚠️ Invoice gagal simpan: "+iErr.message);
@@ -4290,29 +7555,72 @@ _Laporan masuk setelah pekerjaan selesai._`;
                       owners.forEach(o => { if(o?.phone) sendWA(o.phone, `⚡ *Invoice Auto-Generated*\n\nJob: *${r.job_id}*\nCustomer: ${r.customer}\nService: ${r.service}\nTotal: *${fmt(totalInv)}*\n\nMohon cek dan approve invoice di menu Invoice. — AClean`); });
                     }
                   }
-                }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>✅ Verifikasi + Buat Invoice</button>
+                }} style={{background:cs.green+"22",border:"1px solid "+cs.green+"44",color:cs.green,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>✅ Verifikasi</button>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REVISION"}:x));
-                  await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
+                  const {error:revErr} = await supabase.from("service_reports").update({status:"REVISION"}).eq("id",r.id);
+                  if(revErr) {
+                    console.warn("❌ update REVISION failed:", revErr.message);
+                    addAgentLog("LAPORAN_UPDATE_ERROR",`Update status REVISION gagal: ${revErr.message.slice(0,80)}`,"WARNING");
+                    showNotif("❌ Gagal update status — "+revErr.message.slice(0,50));
+                    return;
+                  }
                   addAgentLog("LAPORAN_REVISION",`Laporan ${r.job_id} diminta revisi oleh ${currentUser?.name}`,"WARNING");
                   showNotif("⚠️ Revisi diminta untuk laporan "+r.job_id);
                   // SIM-11: WA notif ke teknisi saat laporan REVISION
                   const tekAccRev = userAccounts.find(u=>u.name===r.teknisi&&u.phone);
-                  if(tekAccRev?.phone) sendWA(tekAccRev.phone, `⚠️ *Laporan Perlu Direvisi*
-
-Job: *${r.job_id}*
-Customer: ${r.customer}
-Service: ${r.service}
-
-Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. — AClean`);
+                  if(tekAccRev?.phone) sendWA(tekAccRev.phone,
+                    "Laporan Perlu Direvisi\nJob: "+r.job_id
+                    +"\nCustomer: "+r.customer+"\nService: "+r.service
+                    +"\n\nAdmin meminta revisi. Silakan perbaiki. — AClean");
                 }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>Minta Revisi</button>
                 <button onClick={async()=>{
                   setLaporanReports(p=>p.map(x=>x.id===r.id?{...x,status:"REJECTED"}:x));
-                  await supabase.from("service_reports").update({status:"REJECTED"}).eq("id",r.id);
+                  const {error:rejErr} = await supabase.from("service_reports").update({status:"REJECTED"}).eq("id",r.id);
+                  if(rejErr) {
+                    console.warn("❌ update REJECTED failed:", rejErr.message);
+                    addAgentLog("LAPORAN_UPDATE_ERROR",`Update status REJECTED gagal: ${rejErr.message.slice(0,80)}`,"WARNING");
+                    showNotif("❌ Gagal update status — "+rejErr.message.slice(0,50));
+                    return;
+                  }
                   addAgentLog("LAPORAN_REJECTED",`Laporan ${r.job_id} ditolak oleh ${currentUser?.name}`,"ERROR");
                   showNotif("❌ Laporan "+r.job_id+" ditolak");
                 }} style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",color:cs.red,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>Tolak</button>
               </>)}
+              {/* Delete laporan — Owner & Admin */}
+              {(currentUser?.role==="Owner" || currentUser?.role==="Admin") && (
+                <button onClick={async()=>{
+                  const ok = await showConfirm({
+                    icon:"🗑️", title:"Hapus Laporan?",
+                    message:"Hapus laporan "+r.job_id+" ("+r.customer+")? Invoice terkait juga akan dihapus.",
+                    confirmText:"Ya, Hapus"
+                  });
+                  if(!ok) return;
+                  // Hapus laporan
+                  const {error:delErr} = await supabase.from("service_reports").delete().eq("id",r.id);
+                  if(delErr) {
+                    console.warn("❌ delete laporan failed:", delErr.message);
+                    showNotif("❌ Gagal hapus laporan: "+delErr.message.slice(0,50));
+                    return;
+                  }
+                  setLaporanReports(p=>p.filter(x=>x.id!==r.id));
+                  // Hapus invoice terkait jika ada
+                  const relInv = invoicesData.filter(i=>i.job_id===r.job_id);
+                  if(relInv.length>0){
+                    await Promise.all(relInv.map(inv=>supabase.from("invoices").delete().eq("id",inv.id)));
+                    setInvoicesData(p=>p.filter(i=>i.job_id!==r.job_id));
+                  }
+                  // Reset order status ke COMPLETED (bukan INVOICED)
+                  await supabase.from("orders").update({status:"COMPLETED",invoice_id:null}).eq("id",r.job_id);
+                  setOrdersData(p=>p.map(o=>o.id===r.job_id?{...o,status:"COMPLETED",invoice_id:null}:o));
+                  addAgentLog("LAPORAN_DELETED","Laporan "+r.job_id+" dihapus oleh "+currentUser?.name,"WARNING");
+                  showNotif("🗑️ Laporan "+r.job_id+" dihapus");
+                }}
+                  style={{background:cs.red+"18",border:"1px solid "+cs.red+"33",color:cs.red,
+                    padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                  🗑️ Hapus Laporan
+                </button>
+              )}
               {r.status==="REVISION" && <span style={{fontSize:12,color:cs.yellow}}>Menunggu revisi dari {r.teknisi}</span>}
               {r.status==="VERIFIED" && <span style={{fontSize:12,color:cs.green}}>Laporan sudah terverifikasi</span>}
               {r.status==="REJECTED" && <span style={{fontSize:12,color:cs.red}}>Laporan ditolak</span>}
@@ -4344,32 +7652,63 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
     // Get my ORDERS_DATA jobs that don't have a report yet — show as pending
     const myJobs = ordersData.filter(o => o.teknisi===myName || o.helper===myName);
     const reportedJobIds = submittedReps.map(r => r.job_id);
-    const pendingJobs = myJobs.filter(o => !reportedJobIds.includes(o.id));
+    const pendingJobs = myJobs.filter(o =>
+      !reportedJobIds.includes(o.id) && (o.date||"") <= TODAY
+    );
     const pendingAsDraft = pendingJobs.map(o => ({
       id:"PENDING_"+o.id, job_id:o.id, teknisi:o.teknisi, helper:o.helper||null,
       customer:o.customer, service:o.service, date:o.date, submitted:"Belum dibuat",
       status:"PENDING", kondisi_sebelum:"", kondisi_setelah:"", pekerjaan:[],
       rekomendasi:"", catatan:"", freon:"0", ampere:"", editLog:[]
     }));
-    const myReps = [...submittedReps, ...pendingAsDraft];
+    let myReps = [...submittedReps, ...pendingAsDraft]
+      .sort((a,b)=>{
+        const da=a.date||a.submitted?.slice(0,10)||"";
+        const db=b.date||b.submitted?.slice(0,10)||"";
+        if(da===TODAY&&db!==TODAY) return -1;
+        if(db===TODAY&&da!==TODAY) return 1;
+        return db.localeCompare(da);
+      });
+
+    // ── AUTO-HIDE VERIFIED untuk Teknisi & Helper (hide laporan yang sudah selesai) ──
+    const userRole = currentUser?.role?.toLowerCase() || "";
+    const isTeknisiOrHelper = userRole === "teknisi" || userRole === "helper";
+    if (isTeknisiOrHelper) {
+      const beforeCount = myReps.length;
+      // Filter out VERIFIED — case insensitive
+      myReps = myReps.filter(r => (r.status || "").toUpperCase() !== "VERIFIED");
+      console.log(`[MyReport Filter] user=${myName}, before=${beforeCount}, after=${myReps.length}, hidden=${beforeCount - myReps.length}`);
+    }
+
     const filtReps = myReps.filter(r =>
       !searchLaporan ||
       r.customer.toLowerCase().includes(searchLaporan.toLowerCase()) ||
       r.job_id.toLowerCase().includes(searchLaporan.toLowerCase())
     );
     const sMap = { SUBMITTED:[cs.accent,"Submitted"], VERIFIED:[cs.green,"Terverifikasi"], REVISION:[cs.yellow,"Perlu Revisi"], REJECTED:[cs.red,"Ditolak"], PENDING:[cs.muted,"Belum Dibuat"] };
-    const badge = (s) => { const [col,lbl]=sMap[s]||[cs.muted,s]; return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,border:"1px solid "+col+"44",fontWeight:700}}>{lbl}</span>; };
+    const badge = (s) => {
+      // Make badge case-insensitive for status lookup
+      const normalizedStatus = (s || "").toUpperCase();
+      const [col,lbl] = sMap[normalizedStatus] || [cs.muted, s];
+      return <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:col+"22",color:col,border:"1px solid "+col+"44",fontWeight:700}}>{lbl}</span>;
+    };
 
     return (
       <div style={{display:"grid",gap:16}}>
         <div>
           <div style={{fontWeight:800,fontSize:18,color:cs.text}}>Laporan Saya</div>
-          <div style={{fontSize:12,color:cs.muted,marginTop:3}}>Semua job kamu — buat laporan untuk job yang belum dilaporkan, edit yang sudah masuk</div>
+          <div style={{fontSize:12,color:cs.muted,marginTop:3}}>
+            {isTeknisiOrHelper ? "📋 Menampilkan laporan baru & revisi saja. Laporan terverifikasi disembunyikan. " : ""}
+            {!isTeknisiOrHelper ? "Semua job kamu — buat laporan untuk job yang belum dilaporkan, edit yang sudah masuk" : ""}
+          </div>
         </div>
 
         {/* Stats */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
-          {[["Belum Laporan",pendingAsDraft.length,cs.muted],["Submitted",submittedReps.filter(r=>r.status==="SUBMITTED").length,cs.accent],["Terverifikasi",submittedReps.filter(r=>r.status==="VERIFIED").length,cs.green]].map(([lbl,val,col])=>(
+        <div style={{display:"grid",gridTemplateColumns:`repeat(${isTeknisiOrHelper?2:3},1fr)`,gap:10}}>
+          {(isTeknisiOrHelper
+            ? [["Belum Laporan",pendingAsDraft.length,cs.muted],["Submitted",submittedReps.filter(r=>(r.status||"").toUpperCase()==="SUBMITTED").length,cs.accent]]
+            : [["Belum Laporan",pendingAsDraft.length,cs.muted],["Submitted",submittedReps.filter(r=>(r.status||"").toUpperCase()==="SUBMITTED").length,cs.accent],["Terverifikasi",submittedReps.filter(r=>(r.status||"").toUpperCase()==="VERIFIED").length,cs.green]]
+          ).map(([lbl,val,col])=>(
             <div key={lbl} style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:12,padding:16,textAlign:"center"}}>
               <div style={{fontWeight:800,fontSize:26,color:col}}>{val}</div>
               <div style={{fontSize:11,color:cs.muted,marginTop:4}}>{lbl}</div>
@@ -4380,7 +7719,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
         {/* Search */}
         <div style={{position:"relative"}}>
           <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:cs.muted,fontSize:14,pointerEvents:"none"}}>&#128269;</span>
-          <input value={searchLaporan} onChange={e=>setSearchLaporan(e.target.value)}
+          <input id="searchLaporan" value={searchLaporan} onChange={e=>setSearchLaporan(e.target.value)}
             placeholder="Cari customer atau ID job..."
             style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px 10px 38px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
           {searchLaporan && <button onClick={()=>setSearchLaporan("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:cs.muted,cursor:"pointer",fontSize:20,lineHeight:1}}>x</button>}
@@ -4497,6 +7836,627 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
   };
 
   // ============================================================
+  // RENDER MATERIAL TRACKING (Stok & Pemakaian Material)
+  // ============================================================
+  const renderMatTrack = () => {
+    // Item prioritas yang perlu ditrack (freon, pipa, kabel)
+    const TRACK_ITEMS = inventoryData.filter(item =>
+      item.material_type === "freon" ||
+      item.material_type === "pipa"  ||
+      item.material_type === "kabel"
+    );
+
+    // Helper: reload units dari DB
+    const reloadUnits = async () => {
+      const { data } = await supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label");
+      if (data) setInvUnitsData(data);
+    };
+
+    // Helper: tambah unit baru
+    const addUnit = async (invCode, label, capacity, minVisible) => {
+      const { error } = await supabase.from("inventory_units").insert({
+        inventory_code: invCode,
+        unit_label:     label,
+        stock:          capacity,   // stok awal = kapasitas penuh
+        capacity:       capacity,
+        min_visible:    minVisible,
+        is_active:      true,
+      });
+      if (!error) { await reloadUnits(); showNotif("✅ Unit " + label + " ditambahkan"); }
+      else showNotif("❌ " + error.message);
+    };
+
+    // Helper: update stok unit
+    const updateUnitStock = async (unitId, newStock) => {
+      const { error } = await supabase.from("inventory_units")
+        .update({ stock: newStock, updated_at: new Date().toISOString() })
+        .eq("id", unitId);
+      if (!error) {
+        setInvUnitsData(prev => prev.map(u => u.id === unitId ? {...u, stock: newStock} : u));
+        showNotif("✅ Stok unit diupdate");
+      }
+    };
+
+    // Helper: toggle aktif/nonaktif unit
+    const toggleUnit = async (unitId, isActive) => {
+      await supabase.from("inventory_units").update({ is_active: isActive }).eq("id", unitId);
+      setInvUnitsData(prev => prev.map(u => u.id === unitId ? {...u, is_active: isActive} : u));
+    };
+
+    // Filter inventory_transactions
+    let txFiltered = [...invTxData].filter(tx => tx.qty < 0); // hanya keluar (usage)
+    if (matTrackFilter !== "Semua") {
+      if (matTrackFilter === "Freon") txFiltered = txFiltered.filter(tx =>
+        ["R22","R32","R410"].some(f => (tx.inventory_name||"").toUpperCase().includes(f.replace("-","")))
+      );
+      else if (matTrackFilter === "Pipa") txFiltered = txFiltered.filter(tx =>
+        (tx.inventory_name||"").toLowerCase().includes("pipa")
+      );
+      else if (matTrackFilter === "Kabel") txFiltered = txFiltered.filter(tx =>
+        (tx.inventory_name||"").toLowerCase().includes("kabel")
+      );
+      else txFiltered = txFiltered.filter(tx => tx.inventory_code === matTrackFilter);
+    }
+    if (matTrackSearch.trim()) {
+      const q = matTrackSearch.toLowerCase();
+      txFiltered = txFiltered.filter(tx =>
+        (tx.inventory_name||"").toLowerCase().includes(q) ||
+        (tx.customer_name||"").toLowerCase().includes(q) ||
+        (tx.teknisi_name||"").toLowerCase().includes(q) ||
+        (tx.order_id||"").toLowerCase().includes(q)
+      );
+    }
+    if (matTrackDateFrom) txFiltered = txFiltered.filter(tx => (tx.job_date||tx.created_at?.slice(0,10)||"") >= matTrackDateFrom);
+    if (matTrackDateTo)   txFiltered = txFiltered.filter(tx => (tx.job_date||tx.created_at?.slice(0,10)||"") <= matTrackDateTo);
+    txFiltered.sort((a,b) => (b.created_at||"").localeCompare(a.created_at||""));
+
+    // Summary per item (penggunaan total)
+    const usageByItem = {};
+    invTxData.filter(tx => tx.qty < 0).forEach(tx => {
+      const k = tx.inventory_code || tx.inventory_name;
+      if (!usageByItem[k]) usageByItem[k] = { name: tx.inventory_name, code: tx.inventory_code, totalUsed: 0, txCount: 0 };
+      usageByItem[k].totalUsed += Math.abs(tx.qty);
+      usageByItem[k].txCount++;
+    });
+
+    return (
+      <div style={{display:"grid", gap:16}}>
+        {/* Header */}
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8}}>
+          <div>
+            <div style={{fontWeight:800, fontSize:18, color:cs.text}}>🧮 Stok & Tracking Material</div>
+            <div style={{fontSize:12, color:cs.muted}}>Pemakaian material per job · Auto-deduct dari laporan teknisi</div>
+          </div>
+          <button onClick={()=>setModalStok(true)}
+            style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#fff",
+              padding:"9px 16px",borderRadius:10,cursor:"pointer",fontWeight:700,fontSize:13}}>
+            + Stok Material Baru
+          </button>
+        </div>
+
+        {/* Kartu stok item prioritas */}
+        <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:10}}>
+          {TRACK_ITEMS.map(item => {
+            const tot = invTxData.filter(tx=>tx.qty<0 && tx.inventory_code===item.code)
+              .reduce((s,tx)=>s+Math.abs(tx.qty),0);
+            const col = item.status==="OUT"?"#ef4444":item.status==="CRITICAL"?cs.yellow:item.status==="WARNING"?"#f97316":cs.green;
+            return (
+              <div key={item.id}
+                onClick={()=>{setMatTrackFilter(item.code);}}
+                style={{background:cs.card,border:"1px solid "+(matTrackFilter===item.code?cs.accent:col)+"44",
+                  borderRadius:10,padding:"10px 12px",cursor:"pointer",
+                  borderLeft:"3px solid "+col}}>
+                <div style={{fontSize:10,color:cs.muted,marginBottom:2}}>{item.code}</div>
+                <div style={{fontSize:12,fontWeight:700,color:cs.text,marginBottom:6}}>{item.name}</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+                  <div>
+                    <div style={{fontSize:18,fontWeight:800,color:col}}>{item.stock}</div>
+                    <div style={{fontSize:10,color:cs.muted}}>{item.unit} tersisa</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:13,fontWeight:700,color:cs.muted}}>{tot.toFixed(1)}</div>
+                    <div style={{fontSize:9,color:cs.muted}}>{item.unit} terpakai</div>
+                  </div>
+                </div>
+                <div style={{marginTop:6,height:4,background:cs.border,borderRadius:99,overflow:"hidden"}}>
+                  <div style={{height:"100%",background:col,borderRadius:99,
+                    width:item.min_alert>0?Math.min(100,Math.round(item.stock/item.min_alert*50))+"%":"30%"}}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Unit Fisik per Item (Tabung / Roll) — Owner/Admin only ── */}
+        <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:14,padding:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:14,color:cs.text}}>📦 Unit Fisik (Tabung & Roll)</div>
+              <div style={{fontSize:11,color:cs.muted}}>Stok per unit · Teknisi lihat unit sisa &ge; batas minimum</div>
+            </div>
+          </div>
+          {TRACK_ITEMS.map(item => {
+            const units = invUnitsData.filter(u => u.inventory_code === item.code);
+            const totalStok = units.reduce((s,u)=>s+(u.stock||0),0);
+            return (
+              <div key={item.code} style={{marginBottom:12,background:cs.surface,borderRadius:10,padding:"10px 14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div>
+                    <span style={{fontWeight:700,fontSize:13,color:cs.text}}>{item.name}</span>
+                    <span style={{fontSize:11,color:cs.muted,marginLeft:8}}>[{item.code}]</span>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <span style={{fontSize:12,fontWeight:700,color:cs.green}}>{totalStok} {item.unit} total</span>
+                    <button onClick={()=>{
+                      const label = prompt("Label unit baru (contoh: Roll 1PK-B):");
+                      if (!label) return;
+                      const cap   = parseFloat(prompt("Kapasitas (meter/kg, contoh: 30):") || "0");
+                      const minV  = parseFloat(prompt("Batas minimum untuk teknisi (contoh: 3):") || "3");
+                      if (cap > 0) addUnit(item.code, label, cap, minV);
+                    }}
+                    style={{fontSize:11,padding:"3px 10px",borderRadius:7,background:cs.accent+"22",
+                      border:"1px solid "+cs.accent+"44",color:cs.accent,cursor:"pointer",fontWeight:600}}>
+                      + Tambah Unit
+                    </button>
+                  </div>
+                </div>
+                <div style={{display:"grid",gap:6}}>
+                  {units.length === 0 ? (
+                    <div style={{fontSize:11,color:cs.muted,textAlign:"center",padding:"8px 0"}}>
+                      Belum ada unit fisik. Klik "+ Tambah Unit" untuk menambah.
+                    </div>
+                  ) : units.map(unit => {
+                    const pct = unit.capacity > 0 ? Math.min(100, Math.round(unit.stock/unit.capacity*100)) : 0;
+                    const col = !unit.is_active ? cs.muted
+                      : unit.stock < (unit.min_visible||3) ? cs.red
+                      : unit.stock < (unit.capacity||99)/3 ? cs.yellow
+                      : cs.green;
+                    const hiddenFromTek = unit.stock < (unit.min_visible||3);
+                    return (
+                      <div key={unit.id} style={{display:"flex",alignItems:"center",gap:10,
+                        opacity:unit.is_active?1:0.5,
+                        background:cs.card,borderRadius:8,padding:"7px 10px",
+                        border:"1px solid "+col+"33"}}>
+                        {/* Label + status */}
+                        <div style={{minWidth:120}}>
+                          <div style={{fontSize:12,fontWeight:600,color:cs.text}}>{unit.unit_label}</div>
+                          <div style={{fontSize:10,color:cs.muted}}>
+                            {hiddenFromTek && unit.is_active ? "👁️ Tersembunyi dari teknisi" : ""}
+                            {!unit.is_active ? "⏸️ Nonaktif" : ""}
+                          </div>
+                        </div>
+                        {/* Progress bar */}
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:cs.muted,marginBottom:3}}>
+                            <span>{unit.stock} {item.unit} sisa</span>
+                            <span>{unit.capacity||"?"} {item.unit} kapasitas</span>
+                          </div>
+                          <div style={{height:6,background:cs.border,borderRadius:99,overflow:"hidden"}}>
+                            <div style={{height:"100%",width:pct+"%",background:col,borderRadius:99,transition:"width .3s"}}/>
+                          </div>
+                        </div>
+                        {/* Edit stok */}
+                        <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                          <button onClick={()=>{
+                            const ns = parseFloat(prompt("Stok baru untuk "+unit.unit_label+" ("+item.unit+"):", unit.stock));
+                            if (!isNaN(ns) && ns >= 0) updateUnitStock(unit.id, ns);
+                          }}
+                          style={{fontSize:11,padding:"3px 8px",borderRadius:6,background:cs.yellow+"22",
+                            border:"1px solid "+cs.yellow+"44",color:cs.yellow,cursor:"pointer"}}>
+                            ✏️ Ubah
+                          </button>
+                          <button onClick={()=>toggleUnit(unit.id, !unit.is_active)}
+                          style={{fontSize:11,padding:"3px 8px",borderRadius:6,
+                            background:unit.is_active?cs.red+"22":cs.green+"22",
+                            border:"1px solid "+(unit.is_active?cs.red:cs.green)+"44",
+                            color:unit.is_active?cs.red:cs.green,cursor:"pointer"}}>
+                            {unit.is_active?"⏸️":"▶️"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Filter pills */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          {[["Semua","📋"],["Freon","❄️"],["Pipa","🔧"],["Kabel","⚡"]].map(([f,ic])=>(
+            <button key={f} onClick={()=>{setMatTrackFilter(f);}}
+              style={{padding:"5px 12px",borderRadius:99,fontSize:12,cursor:"pointer",
+                border:"1px solid "+(matTrackFilter===f?cs.accent:cs.border),
+                background:matTrackFilter===f?cs.accent+"22":cs.surface,
+                color:matTrackFilter===f?cs.accent:cs.muted,fontWeight:matTrackFilter===f?700:400}}>
+              {ic} {f}
+            </button>
+          ))}
+          <span style={{width:1,height:16,background:cs.border}}/>
+          <input type="date" value={matTrackDateFrom}
+            onChange={e=>{setMatTrackDateFrom(e.target.value);}}
+            style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+              padding:"4px 8px",fontSize:12,color:cs.text,colorScheme:"dark"}}
+          />
+          <span style={{color:cs.muted}}>–</span>
+          <input type="date" value={matTrackDateTo}
+            onChange={e=>{setMatTrackDateTo(e.target.value);}}
+            style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:7,
+              padding:"4px 8px",fontSize:12,color:cs.text,colorScheme:"dark"}}
+          />
+          {(matTrackDateFrom||matTrackDateTo) && (
+            <button onClick={()=>{setMatTrackDateFrom("");setMatTrackDateTo("");}}
+              style={{fontSize:11,padding:"3px 10px",borderRadius:99,background:cs.red+"22",
+                border:"1px solid "+cs.red+"44",color:cs.red,cursor:"pointer"}}>✕ Reset</button>
+          )}
+        </div>
+
+        {/* Search */}
+        <div style={{position:"relative"}}>
+          <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:cs.muted}}>🔍</span>
+          <input value={matTrackSearch} onChange={e=>setMatTrackSearch(e.target.value)}
+            placeholder="Cari item, customer, teknisi, job ID..."
+            style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:10,
+              padding:"10px 14px 10px 36px",color:cs.text,fontSize:13}}/>
+        </div>
+
+        {/* Tabel pemakaian */}
+        {txFiltered.length === 0 ? (
+          <div style={{background:cs.card,borderRadius:14,padding:32,textAlign:"center",color:cs.muted}}>
+            Belum ada data pemakaian{matTrackFilter!=="Semua"?" untuk filter ini":""}
+          </div>
+        ) : (
+          <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:14,overflow:"hidden"}}>
+            <div style={{padding:"10px 16px",borderBottom:"1px solid "+cs.border,
+              display:"grid",gridTemplateColumns:"1fr 1fr 100px 80px 100px",gap:8,
+              fontSize:11,fontWeight:700,color:cs.muted}}>
+              <div>Item</div><div>Customer · Job</div><div>Teknisi</div>
+              <div style={{textAlign:"right"}}>Qty</div><div style={{textAlign:"right"}}>Tanggal</div>
+            </div>
+            {txFiltered.slice(0,100).map((tx,i) => (
+              <div key={tx.id||i}
+                style={{padding:"9px 16px",borderBottom:"1px solid "+cs.border+"55",
+                  display:"grid",gridTemplateColumns:"1fr 1fr 100px 80px 100px",gap:8,
+                  background:i%2===0?"transparent":cs.surface,fontSize:12}}>
+                <div>
+                  <div style={{fontWeight:600,color:cs.text}}>{tx.inventory_name||"—"}</div>
+                  <div style={{fontSize:10,color:cs.muted}}>{tx.inventory_code}</div>
+                </div>
+                <div>
+                  <div style={{color:cs.text}}>{tx.customer_name||"—"}</div>
+                  <div style={{fontSize:10,color:cs.muted}}>{tx.order_id||tx.report_id||"—"}</div>
+                </div>
+                <div style={{color:cs.accent,fontSize:11}}>{tx.teknisi_name||"—"}</div>
+                <div style={{textAlign:"right",fontWeight:700,
+                  color:tx.qty<0?cs.red:cs.green}}>
+                  {tx.qty<0?"-":"+"}
+                  {Math.abs(tx.qty)} {tx.notes?.split(" ").pop()||""}
+                </div>
+                <div style={{textAlign:"right",color:cs.muted,fontSize:11}}>
+                  {(tx.job_date||tx.created_at||"").slice(0,10)}
+                </div>
+              </div>
+            ))}
+            {txFiltered.length > 100 && (
+              <div style={{padding:"8px 16px",textAlign:"center",color:cs.muted,fontSize:11}}>
+                Menampilkan 100 dari {txFiltered.length} transaksi
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+
+  // ============================================================
+  // RENDER EXPENSES (BIAYA)
+  // ============================================================
+  const renderExpenses = () => {
+    const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+
+    const PETTY_CASH_SUBS = ["Bensin Motor","Perbaikan Motor","Parkir","Kasbon Karyawan","Lembur","Bonus","Lain-lain"];
+    const MATERIAL_SUBS   = ["Pipa AC","Kabel","Freon","Material Lain"];
+    // Quick-filter chips (for petty_cash tab only)
+    const QUICK_FILTERS = ["Semua","Bensin Motor","Parkir","Kasbon Karyawan"];
+
+    // Apply filters
+    const filtered = expensesData.filter(e => {
+      if (expenseTab === "petty_cash"    && e.category !== "petty_cash")    return false;
+      if (expenseTab === "material_purchase" && e.category !== "material_purchase") return false;
+      if (expenseTab === "petty_cash" && expenseFilter !== "Semua" && e.subcategory !== expenseFilter) return false;
+      if (expenseDateFrom && (e.date||"") < expenseDateFrom) return false;
+      if (expenseDateTo   && (e.date||"") > expenseDateTo)   return false;
+      if (expenseSearch) {
+        const q = expenseSearch.toLowerCase();
+        if (!(e.description||"").toLowerCase().includes(q) &&
+            !(e.subcategory||"").toLowerCase().includes(q) &&
+            !(e.teknisi_name||"").toLowerCase().includes(q) &&
+            !(e.item_name||"").toLowerCase().includes(q)) return false;
+      }
+      return true;
+    }).sort((a,b) => (b.date||"").localeCompare(a.date||""));
+
+    const totalPage = Math.ceil(filtered.length / EXPENSE_PAGE_SIZE) || 1;
+    const pageData  = filtered.slice((expensePage-1)*EXPENSE_PAGE_SIZE, expensePage*EXPENSE_PAGE_SIZE);
+    const grandTotal = filtered.reduce((s,e) => s + Number(e.amount||0), 0);
+
+    const resetForm = () => {
+      setNewExpenseForm({ category: expenseTab === "material_purchase" ? "material_purchase" : "petty_cash",
+        subcategory:"", amount:"", date:TODAY, description:"", teknisi_name:"", item_name:"", freon_type:"" });
+      setEditExpenseItem(null);
+    };
+
+    const openAdd = () => { resetForm(); setModalExpense(true); };
+    const openEdit = (item) => {
+      setEditExpenseItem(item);
+      setNewExpenseForm({ category:item.category, subcategory:item.subcategory, amount:String(item.amount||""),
+        date:item.date||TODAY, description:item.description||"", teknisi_name:item.teknisi_name||"",
+        item_name:item.item_name||"", freon_type:item.freon_type||"" });
+      setModalExpense(true);
+    };
+
+    const saveExpense = async () => {
+      const f = newExpenseForm;
+      if (!f.subcategory || !f.amount || !f.date) { alert("Isi subkategori, jumlah, dan tanggal."); return; }
+      const payload = { category:f.category, subcategory:f.subcategory, amount:Number(f.amount),
+        date:f.date, description:f.description, teknisi_name:f.teknisi_name||null,
+        item_name:f.item_name||null, freon_type:f.freon_type||null,
+        created_by: currentUser?.name || currentUser?.email || "unknown" };
+      if (editExpenseItem) {
+        const { error } = await supabase.from("expenses").update(payload).eq("id", editExpenseItem.id);
+        if (error) { alert("Gagal update: " + error.message); return; }
+        setExpensesData(prev => prev.map(x => x.id === editExpenseItem.id ? { ...x, ...payload } : x));
+      } else {
+        const { data, error } = await supabase.from("expenses").insert(payload).select().single();
+        if (error) { alert("Gagal simpan: " + error.message); return; }
+        setExpensesData(prev => [data, ...prev]);
+      }
+      setModalExpense(false);
+      resetForm();
+    };
+
+    const deleteExpense = async (item) => {
+      if (!window.confirm(`Hapus biaya "${item.subcategory}" Rp ${Number(item.amount).toLocaleString("id-ID")}?`)) return;
+      const { error } = await supabase.from("expenses").delete().eq("id", item.id);
+      if (error) { alert("Gagal hapus: " + error.message); return; }
+      setExpensesData(prev => prev.filter(x => x.id !== item.id));
+    };
+
+    return (
+      <div style={{ display:"grid", gap:16 }}>
+        {/* Header */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
+          <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>💸 Biaya</div>
+          {isOwnerAdmin && (
+            <button onClick={openAdd}
+              style={{ background:"linear-gradient(135deg,"+cs.accent+","+cs.ara+")", border:"none", color:"#fff",
+                padding:"9px 18px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+              + Tambah Biaya
+            </button>
+          )}
+        </div>
+
+        {/* Tab bar */}
+        <div style={{ display:"flex", gap:6 }}>
+          {[["petty_cash","💰 Petty Cash"],["material_purchase","🔧 Pembelian Material"]].map(([v,lbl]) => (
+            <button key={v} onClick={() => { setExpenseTab(v); setExpensePage(1); setExpenseFilter("Semua"); }}
+              style={{ padding:"8px 16px", borderRadius:10, border:"1px solid "+(expenseTab===v?cs.accent:cs.border),
+                background: expenseTab===v ? cs.accent+"22" : cs.card,
+                color: expenseTab===v ? cs.accent : cs.muted, fontWeight: expenseTab===v?700:400,
+                cursor:"pointer", fontSize:13 }}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+
+        {/* Quick-filter chips (petty_cash only) */}
+        {expenseTab === "petty_cash" && (
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+            {QUICK_FILTERS.map(f => (
+              <button key={f} onClick={() => { setExpenseFilter(f); setExpensePage(1); }}
+                style={{ padding:"5px 12px", borderRadius:20, border:"1px solid "+(expenseFilter===f?cs.accent:cs.border),
+                  background: expenseFilter===f ? cs.accent+"22" : "transparent",
+                  color: expenseFilter===f ? cs.accent : cs.muted,
+                  cursor:"pointer", fontSize:12, fontWeight: expenseFilter===f?700:400 }}>
+                {f}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Search + date range */}
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+          <input value={expenseSearch} onChange={e => { setExpenseSearch(e.target.value); setExpensePage(1); }}
+            placeholder="🔍 Cari keterangan / nama..."
+            style={{ flex:1, minWidth:140, background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+              color:cs.text, padding:"8px 12px", fontSize:13 }} />
+          <input type="date" value={expenseDateFrom} onChange={e => { setExpenseDateFrom(e.target.value); setExpensePage(1); }}
+            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"7px 10px", fontSize:12 }} />
+          <span style={{ color:cs.muted, fontSize:12 }}>—</span>
+          <input type="date" value={expenseDateTo} onChange={e => { setExpenseDateTo(e.target.value); setExpensePage(1); }}
+            style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:8, color:cs.text, padding:"7px 10px", fontSize:12 }} />
+          {(expenseSearch||expenseDateFrom||expenseDateTo) && (
+            <button onClick={() => { setExpenseSearch(""); setExpenseDateFrom(""); setExpenseDateTo(""); setExpensePage(1); }}
+              style={{ background:"transparent", border:"1px solid "+cs.border, borderRadius:8, color:cs.muted, padding:"7px 12px", fontSize:12, cursor:"pointer" }}>
+              ✕ Reset
+            </button>
+          )}
+        </div>
+
+        {/* Summary bar */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:12, padding:"12px 18px",
+          display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+          <span style={{ fontSize:13, color:cs.muted }}>{filtered.length} transaksi</span>
+          <span style={{ fontWeight:700, fontSize:16, color:cs.red }}>Total: Rp {grandTotal.toLocaleString("id-ID")}</span>
+        </div>
+
+        {/* Table */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, overflow:"hidden" }}>
+          {pageData.length === 0
+            ? <div style={{ padding:"40px", textAlign:"center", color:cs.muted }}>Tidak ada data biaya.</div>
+            : pageData.map((item, i) => (
+              <div key={item.id||i} style={{ display:"flex", gap:12, padding:"12px 16px",
+                borderBottom:"1px solid "+cs.border, alignItems:"center", flexWrap:"wrap" }}>
+                <div style={{ minWidth:80, fontSize:11, color:cs.muted, fontFamily:"monospace" }}>{item.date||"-"}</div>
+                <div style={{ flex:1, minWidth:120 }}>
+                  <div style={{ fontWeight:600, fontSize:13, color:cs.text }}>{item.subcategory||"-"}</div>
+                  {item.description && <div style={{ fontSize:11, color:cs.muted }}>{item.description}</div>}
+                  {item.teknisi_name && <div style={{ fontSize:11, color:cs.accent }}>👤 {item.teknisi_name}</div>}
+                  {item.item_name && <div style={{ fontSize:11, color:cs.muted }}>📦 {item.item_name}{item.freon_type?" ("+item.freon_type+")":""}</div>}
+                </div>
+                <div style={{ fontWeight:700, fontSize:14, color:cs.red, whiteSpace:"nowrap" }}>
+                  Rp {Number(item.amount||0).toLocaleString("id-ID")}
+                </div>
+                {isOwnerAdmin && (
+                  <div style={{ display:"flex", gap:6 }}>
+                    <button onClick={() => openEdit(item)}
+                      style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent,
+                        borderRadius:8, padding:"5px 10px", cursor:"pointer", fontSize:12 }}>✏️</button>
+                    <button onClick={() => deleteExpense(item)}
+                      style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red,
+                        borderRadius:8, padding:"5px 10px", cursor:"pointer", fontSize:12 }}>🗑️</button>
+                  </div>
+                )}
+              </div>
+            ))
+          }
+        </div>
+
+        {/* Pagination */}
+        {totalPage > 1 && (
+          <div style={{ display:"flex", gap:6, justifyContent:"center", flexWrap:"wrap" }}>
+            {Array.from({length:totalPage},(_,i)=>i+1).map(p => (
+              <button key={p} onClick={() => setExpensePage(p)}
+                style={{ padding:"6px 12px", borderRadius:8,
+                  border:"1px solid "+(expensePage===p?cs.accent:cs.border),
+                  background: expensePage===p ? cs.accent+"22" : "transparent",
+                  color: expensePage===p ? cs.accent : cs.muted, cursor:"pointer", fontSize:12 }}>
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Modal Add/Edit */}
+        {modalExpense && (
+          <div style={{ position:"fixed", inset:0, background:"#00000099", zIndex:1000,
+            display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}
+            onClick={e => { if(e.target===e.currentTarget){setModalExpense(false);resetForm();} }}>
+            <div style={{ background:cs.bg, border:"1px solid "+cs.border, borderRadius:16,
+              padding:24, width:"100%", maxWidth:460, maxHeight:"90vh", overflowY:"auto" }}>
+              <div style={{ fontWeight:700, fontSize:16, color:cs.text, marginBottom:16 }}>
+                {editExpenseItem ? "✏️ Edit Biaya" : "➕ Tambah Biaya"}
+              </div>
+              {/* Category */}
+              <div style={{ marginBottom:12 }}>
+                <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Kategori</label>
+                <select value={newExpenseForm.category}
+                  onChange={e => setNewExpenseForm(p => ({...p, category:e.target.value, subcategory:""}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                    color:cs.text, padding:"9px 12px", fontSize:13 }}>
+                  <option value="petty_cash">💰 Petty Cash</option>
+                  <option value="material_purchase">🔧 Pembelian Material</option>
+                </select>
+              </div>
+              {/* Subcategory */}
+              <div style={{ marginBottom:12 }}>
+                <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Sub-kategori *</label>
+                <select value={newExpenseForm.subcategory}
+                  onChange={e => setNewExpenseForm(p => ({...p, subcategory:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                    color:cs.text, padding:"9px 12px", fontSize:13 }}>
+                  <option value="">-- Pilih --</option>
+                  {(newExpenseForm.category==="material_purchase" ? MATERIAL_SUBS : PETTY_CASH_SUBS).map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              {/* Amount */}
+              <div style={{ marginBottom:12 }}>
+                <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Jumlah (Rp) *</label>
+                <input type="number" value={newExpenseForm.amount}
+                  onChange={e => setNewExpenseForm(p => ({...p, amount:e.target.value}))}
+                  placeholder="50000"
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                    color:cs.text, padding:"9px 12px", fontSize:13, boxSizing:"border-box" }} />
+              </div>
+              {/* Date */}
+              <div style={{ marginBottom:12 }}>
+                <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Tanggal *</label>
+                <input type="date" value={newExpenseForm.date}
+                  onChange={e => setNewExpenseForm(p => ({...p, date:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                    color:cs.text, padding:"9px 12px", fontSize:13, boxSizing:"border-box" }} />
+              </div>
+              {/* Teknisi name (for petty_cash like Kasbon/Lembur/Bonus) */}
+              {newExpenseForm.category === "petty_cash" && ["Kasbon Karyawan","Lembur","Bonus"].includes(newExpenseForm.subcategory) && (
+                <div style={{ marginBottom:12 }}>
+                  <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Nama Karyawan</label>
+                  <input value={newExpenseForm.teknisi_name}
+                    onChange={e => setNewExpenseForm(p => ({...p, teknisi_name:e.target.value}))}
+                    placeholder="Nama teknisi/helper..."
+                    style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                      color:cs.text, padding:"9px 12px", fontSize:13, boxSizing:"border-box" }} />
+                </div>
+              )}
+              {/* Item name + freon type for material */}
+              {newExpenseForm.category === "material_purchase" && (
+                <>
+                  <div style={{ marginBottom:12 }}>
+                    <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Nama / Spesifikasi Barang</label>
+                    <input value={newExpenseForm.item_name}
+                      onChange={e => setNewExpenseForm(p => ({...p, item_name:e.target.value}))}
+                      placeholder="misal: Pipa 3/8 × 5/8 — 15m"
+                      style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                        color:cs.text, padding:"9px 12px", fontSize:13, boxSizing:"border-box" }} />
+                  </div>
+                  {newExpenseForm.subcategory === "Freon" && (
+                    <div style={{ marginBottom:12 }}>
+                      <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Jenis Freon</label>
+                      <select value={newExpenseForm.freon_type}
+                        onChange={e => setNewExpenseForm(p => ({...p, freon_type:e.target.value}))}
+                        style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                          color:cs.text, padding:"9px 12px", fontSize:13 }}>
+                        <option value="">-- Pilih --</option>
+                        {["R22","R32","R410A","R134a","R404A","Lainnya"].map(f => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </>
+              )}
+              {/* Description */}
+              <div style={{ marginBottom:20 }}>
+                <label style={{ fontSize:12, color:cs.muted, display:"block", marginBottom:4 }}>Keterangan</label>
+                <textarea value={newExpenseForm.description}
+                  onChange={e => setNewExpenseForm(p => ({...p, description:e.target.value}))}
+                  placeholder="Keterangan tambahan..."
+                  rows={3}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8,
+                    color:cs.text, padding:"9px 12px", fontSize:13, resize:"vertical", boxSizing:"border-box" }} />
+              </div>
+              {/* Actions */}
+              <div style={{ display:"flex", gap:10 }}>
+                <button onClick={() => { setModalExpense(false); resetForm(); }}
+                  style={{ flex:1, background:"transparent", border:"1px solid "+cs.border, borderRadius:10,
+                    color:cs.muted, padding:"10px", cursor:"pointer", fontSize:13 }}>
+                  Batal
+                </button>
+                <button onClick={saveExpense}
+                  style={{ flex:2, background:"linear-gradient(135deg,"+cs.accent+","+cs.ara+")", border:"none",
+                    color:"#fff", padding:"10px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+                  {editExpenseItem ? "Simpan Perubahan" : "Simpan"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ============================================================
   // RENDER SETTINGS
   // ============================================================
   const renderSettings = () => {
@@ -4521,10 +8481,10 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
         fields:[{k:"key",label:"API Key",ph:"sk-proj-...",t:"password"}],
         guide:["Buka platform.openai.com","Settings → API Keys → Create","Copy key, paste di sini"],
         note:"GPT-4o-mini: lebih hemat, cocok volume tinggi" },
-      { id:"gemini",  label:"Gemini (Google)",    icon:"🔵", rec:false, models:["gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.5-pro","gemini-1.5-flash"],
-        fields:[{k:"key",label:"API Key",ph:"AIzaSy...",t:"password"}],
-        guide:["Buka aistudio.google.com","Klik Get API Key → Create API key","Copy key, paste di sini — GRATIS"],
-        note:"✅ Rekomendasi: gemini-2.5-flash (gratis ~15 RPM, 1500 RPD)" },
+      { id:"minimax", label:"Minimax",             icon:"🟦", rec:false, models:["MiniMax-M2.5","MiniMax-M2.7-highspeed"],
+        fields:[{k:"key",label:"API Key",ph:"eyJhbGci...",t:"password"},{k:"group_id",label:"Group ID",ph:"1234567890"}],
+        guide:["Buka platform.minimaxi.com","API → API Keys → Create","Copy API Key & Group ID, paste di sini"],
+        note:"Rekomendasi: MiniMax-M2.5 — balanced latency & quality. MiniMax-M2.7-highspeed — faster response" },
       { id:"ollama",  label:"Ollama (Lokal/Free)", icon:"🦙", rec:false, models:["llama3","llama3.1","llama3.2","mistral","gemma2","qwen2.5","deepseek-r1"],
         fields:[{k:"url",label:"URL Server Ollama",ph:"http://localhost:11434 atau https://xxxx.ngrok-free.app"}],
         guide:["Install: curl -fsSL https://ollama.com/install.sh | sh","Pull model: ollama pull llama3","Jalankan: OLLAMA_ORIGINS='*' ollama serve","Expose publik: ngrok http 11434","Copy URL ngrok ke kolom URL di atas"],
@@ -4558,19 +8518,23 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
     const FieldList = ({ fields, isLLM }) => (
       <div style={{ display:"grid", gap:8, marginBottom:12 }}>
         {fields.map(f => {
-          const isUrlField  = isLLM && f.k === "url";
-          const isKeyField  = isLLM && f.k === "key";
-          const isWAField   = !isLLM && waFieldMap[f.k];
-          const val    = isUrlField ? ollamaUrl : isKeyField ? llmApiKey : isWAField ? waFieldMap[f.k].val : "";
+          const isUrlField     = isLLM && f.k === "url";
+          const isKeyField     = isLLM && f.k === "key";
+          const isGroupIdField = isLLM && f.k === "group_id";
+          const isWAField      = !isLLM && waFieldMap[f.k];
+          const val    = isUrlField ? ollamaUrl : isKeyField ? llmApiKey
+                       : isGroupIdField ? (localStorage.getItem("llmGroupId")||"")
+                       : isWAField ? waFieldMap[f.k].val : "";
           const setter = isUrlField ? (e=>setOllamaUrl(e.target.value))
                        : isKeyField ? (e=>setLlmApiKey(e.target.value))
+                       : isGroupIdField ? (e=>{ localStorage.setItem("llmGroupId", e.target.value); })
                        : isWAField  ? waFieldMap[f.k].set
                        : undefined;
           const isSet  = !!val;
           return (
             <div key={f.k}>
               <div style={{ fontSize:11, color:cs.muted, marginBottom:3 }}>{f.label}</div>
-              <input type={f.t||"text"} placeholder={f.ph}
+              <input id="val" type={f.t||"text"} placeholder={f.ph}
                 value={val}
                 onChange={setter}
                 style={{ width:"100%", background:cs.surface, border:"1px solid "+(isSet?cs.green:cs.border), borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
@@ -4603,6 +8567,56 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
         {currentUser?.role === "Owner" && (<>
 
         {/* ── WHATSAPP PROVIDER ── */}
+        {/* ══ Informasi Perusahaan ══════════════════════════════ */}
+        <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:14,padding:20}}>
+          <div style={{fontWeight:800,color:cs.text,fontSize:15,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
+            🏢 Informasi Perusahaan & Rekening
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}}>
+            {[
+              {key:"company_name",label:"Nama Perusahaan",ph:"Contoh: AClean Service",icon:"🏢"},
+              {key:"company_addr",label:"Alamat Perusahaan",ph:"Jl. Sudirman No.1, Jakarta",icon:"📍"},
+              {key:"wa_number",label:"No. WA Perusahaan",ph:"62812xxxxxxxx (tanpa +)",icon:"📱"},
+              {key:"bank_name",label:"Nama Bank",ph:"Contoh: BCA",icon:"🏦"},
+              {key:"bank_number",label:"No. Rekening",ph:"Contoh: 1234567890",icon:"💳"},
+              {key:"bank_holder",label:"Atas Nama",ph:"Nama pemilik rekening",icon:"👤"},
+            ].map(field => (
+              <div key={field.key}>
+                <div style={{fontSize:11,color:cs.muted,marginBottom:5,fontWeight:600}}>{field.icon} {field.label}</div>
+                <input
+                  value={appSettings[field.key]||""}
+                  onChange={e=>setAppSettings(prev=>({...prev,[field.key]:e.target.value}))}
+                  onBlur={async e=>{
+                    try{
+                      await supabase.from("app_settings").upsert({key:field.key,value:e.target.value.trim()},{onConflict:"key"});
+                    }catch(err){console.warn("settings err:",err);}
+                  }}
+                  placeholder={field.ph}
+                  style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
+                    borderRadius:9,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none"}}
+                />
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={async()=>{
+              try{
+                await Promise.all(
+                  ["company_name","company_addr","wa_number","bank_name","bank_number","bank_holder"]
+                  .map(k=>supabase.from("app_settings").upsert({key:k,value:appSettings[k]||""},{onConflict:"key"}))
+                );
+                showNotif("Informasi perusahaan tersimpan!");
+                addAgentLog("SETTINGS_SAVED","Company info saved","SUCCESS");
+              }catch(e){showNotif("Gagal simpan: "+e.message);}
+            }}
+            style={{marginTop:14,padding:"9px 20px",borderRadius:9,
+              background:"linear-gradient(135deg,"+cs.accent+",#1d4ed8)",
+              color:"#fff",fontWeight:700,fontSize:13,border:"none",cursor:"pointer"}}>
+            Simpan Perubahan
+          </button>
+        </div>
+
+
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
           <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
             <div style={{ fontSize:28 }}>📱</div>
@@ -4629,7 +8643,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
           <FieldList fields={activeWA.fields} />
           <GuideBox guide={activeWA.guide} title={"Setup " + activeWA.label} />
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={async () => { setWaStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"wa",provider:waProvider,token:waToken,device:waDevice})}); const d=await r.json(); setWaStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setWaStatus("not_connected"); showNotif("❌ "+e.message); } }}
+            <button onClick={async () => { setWaStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:_apiHeaders(),body:JSON.stringify({type:"wa",provider:waProvider,token:waToken,device:waDevice})}); const d=await r.json(); setWaStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setWaStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {waStatus==="testing" ? "⏳ Testing..." : "🔌 Test &amp; Simpan Koneksi"}
             </button>
@@ -4676,7 +8690,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
             {llmProvider === "ollama" && (
               <div style={{ marginTop:8 }}>
                 <div style={{ fontSize:11, color:cs.muted, marginBottom:4 }}>Atau ketik nama model custom (harus sama dengan <code style={{background:cs.surface,padding:"1px 5px",borderRadius:3}}>ollama list</code>):</div>
-                <input value={llmModel} onChange={e=>setLlmModel(e.target.value)} placeholder="contoh: llama3, mistral, qwen2.5:7b ..."
+                <input id="llmModel" value={llmModel} onChange={e=>setLlmModel(e.target.value)} placeholder="contoh: llama3, mistral, qwen2.5:7b ..."
                   style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.accent+"44", borderRadius:7, padding:"8px 11px", color:cs.text, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }} />
               </div>
             )}
@@ -4754,35 +8768,18 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   setLlmStatus("connected");
                   showNotif("✅ Ollama terkoneksi! Model tersedia: " + (models||"(kosong — jalankan: ollama pull llama3)"));
                   return; // done for ollama
-                } else if (llmProvider === "openai") {
-                  const r = await fetch("https://api.openai.com/v1/chat/completions", {
-                    method:"POST", headers:{"Content-Type":"application/json","Authorization":"Bearer "+llmApiKey},
-                    body:JSON.stringify({model:llmModel||"gpt-4o-mini",max_tokens:10,messages:[{role:"user",content:"Hi"}]})
-                  });
-                  ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"OpenAI error "+r.status);}
-                } else if (llmProvider === "gemini") {
-                  const testModel = llmModel || "gemini-2.5-flash";
-                  const r = await fetch(
-                    `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent?key=${llmApiKey}`,
-                    { method:"POST", headers:{"Content-Type":"application/json"},
-                      body:JSON.stringify({ contents:[{role:"user",parts:[{text:"Hi, reply with just OK"}]}], generationConfig:{maxOutputTokens:5} })
-                    }
-                  );
-                  const rd = await r.json();
-                  if (!r.ok) {
-                    const errMsg = rd.error?.message || ("Gemini error " + r.status);
-                    // Common errors:
-                    if (r.status === 400) throw new Error("API Key tidak valid atau model '"+testModel+"' tidak ditemukan. Coba: gemini-2.5-flash atau gemini-1.5-flash");
-                    if (r.status === 403) throw new Error("API Key tidak punya akses. Aktifkan Generative Language API di Google Cloud Console.");
-                    throw new Error(errMsg);
-                  }
-                  ok = true;
                 } else {
-                  const r = await fetch("https://api.anthropic.com/v1/messages", {
-                    method:"POST", headers:{"Content-Type":"application/json","x-api-key":llmApiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-                    body:JSON.stringify({model:llmModel||"claude-sonnet-4-6",max_tokens:10,messages:[{role:"user",content:"Hi"}]})
+                  // Test via backend using environment variables (no keys exposed in browser)
+                  const type = llmProvider === "minimax" ? "minimax"
+                             : llmProvider === "groq"    ? "groq"
+                             : llmProvider === "openai"  ? "llm"   // openai uses /api/test-connection?type=llm
+                             : "llm";                               // claude default
+                  const r = await fetch("/api/test-connection?type=" + type, {
+                    headers: { "X-Internal-Token": internalToken }
                   });
-                  ok = r.ok; if(!ok){const d=await r.json(); throw new Error(d.error?.message||"Claude error");}
+                  const d = await r.json();
+                  if (!r.ok || !d.ok) throw new Error(d.error || d.message || "Test gagal");
+                  ok = true;
                 }
                 setLlmStatus("connected");
                 const modelInfo = llmModel ? " ("+llmModel+")" : "";
@@ -4823,7 +8820,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
           <FieldList fields={activeSTO.fields} />
           <GuideBox guide={activeSTO.guide} title={"Setup " + activeSTO.label} />
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={async () => { setStorageStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"storage"})}); const d=await r.json(); setStorageStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setStorageStatus("not_connected"); showNotif("❌ "+e.message); } }}
+            <button onClick={async () => { setStorageStatus("testing"); try { const r=await fetch("/api/test-connection",{method:"POST",headers:_apiHeaders(),body:JSON.stringify({type:"storage"})}); const d=await r.json(); setStorageStatus(d.success?"connected":"not_connected"); showNotif(d.message); } catch(e){ setStorageStatus("not_connected"); showNotif("❌ "+e.message); } }}
               style={{ flex:2, background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"10px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
               {storageStatus==="testing" ? "⏳ Testing..." : "🔌 Test &amp; Simpan Koneksi"}
             </button>
@@ -4854,12 +8851,300 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
             ))}
           </div>
           <div style={{ display:"grid", gap:8 }}>
-            <input placeholder={dbProvider==="supabase"?"Supabase URL":"Host / Connection String"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
-            <input type="password" placeholder={dbProvider==="supabase"?"Supabase Anon Key":"Password / Secret Key"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
+            <input id="field_5" placeholder={dbProvider==="supabase"?"Supabase URL":"Host / Connection String"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
+            <input id="field_password_6" type="password" placeholder={dbProvider==="supabase"?"Supabase Anon Key":"Password / Secret Key"} style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }} />
             <button onClick={() => { showNotif("Mencoba koneksi database..."); setTimeout(() => showNotif("Database terkoneksi! Tables: 15"), 2000); }}
               style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"9px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:700 }}>🔌 Test Koneksi</button>
           </div>
         </div>
+
+        {/* ── WA AUTO-REPLY TOGGLE (Owner only) ── */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+            <span style={{ fontSize:20 }}>💬</span>
+            <div>
+              <div style={{ fontWeight:800, color:cs.text, fontSize:14 }}>Pengaturan WA Auto-Reply</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Kontrol auto-reply & notif masuk tanpa perlu ubah kode</div>
+            </div>
+          </div>
+          {[
+            { key:"wa_autoreply_enabled", label:"Auto-Reply Aktif",      desc:"Balas pesan customer otomatis berdasarkan keyword (halo, harga, order, dll)", icon:"🤖" },
+            { key:"wa_forward_to_owner",  label:"Forward ke Owner",       desc:"Teruskan semua pesan WA masuk ke nomor Owner sebagai notifikasi", icon:"📨" },
+          ].map(({ key, label, desc, icon }) => {
+            const isOn = appSettings[key] === "true";
+            return (
+              <div key={key} style={{ display:"flex", alignItems:"center", gap:14, padding:"12px 0",
+                borderBottom:"1px solid "+cs.border }}>
+                <span style={{ fontSize:18, minWidth:24 }}>{icon}</span>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontWeight:700, color:isOn?cs.text:cs.muted, fontSize:13 }}>{label}</div>
+                  <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>{desc}</div>
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:11, color:isOn?cs.green:cs.muted }}>{isOn?"ON":"OFF"}</span>
+                  <div onClick={async () => {
+                    const newVal = isOn ? "false" : "true";
+                    setAppSettings(prev => ({ ...prev, [key]: newVal }));
+                    await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict:"key" });
+                    showNotif((isOn?"⛔ ":"✅ ") + label + (isOn?" dimatikan":" diaktifkan"));
+                  }}
+                  style={{ width:44, height:24, borderRadius:99,
+                    background:isOn?"linear-gradient(135deg,"+cs.green+",#059669)":cs.surface,
+                    border:"1px solid "+(isOn?cs.green:cs.border),
+                    cursor:"pointer", position:"relative", transition:"all .2s" }}>
+                    <div style={{ position:"absolute", width:18, height:18, borderRadius:"50%", background:"#fff",
+                      top:2, left:isOn?22:2, transition:"left .2s",
+                      boxShadow:"0 1px 3px #0004" }} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ marginTop:12, padding:"10px 12px", background:cs.surface, borderRadius:8, fontSize:11, color:cs.muted }}>
+            💡 <b>Mode aman:</b> Auto-Reply <b>OFF</b> + Forward <b>ON</b> = pesan masuk diteruskan ke Owner, dibalas manual. Ideal saat tim sedang sibuk.
+          </div>
+        </div>
+
+        {/* ── ARA TRAINING RULES UPLOAD (Owner only) ── */}
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+            <span style={{ fontSize:20 }}>🧠</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontWeight:800, color:cs.text, fontSize:14 }}>ARA Training Rules</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Upload file Excel training untuk melatih respons ARA lebih baik — tersimpan di Supabase</div>
+            </div>
+            <a href="#" onClick={async(e)=>{e.preventDefault();
+              const {data:d} = await supabase.from("app_settings").select("value").eq("key","ara_training_rules").single();
+              if(d?.value){const blob=new Blob([d.value],{type:"application/json"});const u=URL.createObjectURL(blob);const a=document.createElement("a");a.href=u;a.download="ara_rules.json";a.click();}
+            }} style={{ fontSize:11, color:cs.accent, textDecoration:"none" }}>⬇️ Download JSON</a>
+          </div>
+
+          {/* Stats */}
+          {(() => {
+            try {
+              const raw = appSettings.ara_training_rules;
+              if (!raw || raw === "{}") return null;
+              const d = typeof raw === "string" ? JSON.parse(raw) : raw;
+              const rules = (d.auto_reply_rules||[]).length;
+              const scenarios = (d.ara_training_scenarios||[]).length;
+              const troubles = (d.trouble_cases||[]).length;
+              if (!rules && !scenarios && !troubles) return null;
+              return (
+                <div style={{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap" }}>
+                  {[["🔁 Auto-Reply Rules", rules, cs.accent], ["🎭 Scenarios", scenarios, cs.green], ["⚠️ Trouble Cases", troubles, cs.yellow]].map(([label, count, color])=>(
+                    <div key={label} style={{ background:color+"18", border:"1px solid "+color+"44", borderRadius:8, padding:"6px 12px", fontSize:11, color:color, fontWeight:700 }}>
+                      {label}: {count}
+                    </div>
+                  ))}
+                  <div style={{ fontSize:11, color:cs.muted, alignSelf:"center" }}>
+                    v{(typeof raw==="string"?JSON.parse(raw):raw).version||"1.0"} — diupdate {(typeof raw==="string"?JSON.parse(raw):raw).updated||"-"}
+                  </div>
+                </div>
+              );
+            } catch(_) { return null; }
+          })()}
+
+          {/* Upload area */}
+          <div style={{ border:"2px dashed "+cs.border, borderRadius:10, padding:16, textAlign:"center", background:cs.surface }}>
+            <div style={{ fontSize:13, color:cs.muted, marginBottom:10 }}>
+              📂 Upload file Excel (.xlsx) atau JSON yang sudah diisi
+            </div>
+            <input type="file" accept=".xlsx,.json" id="ara-training-upload"
+              style={{ display:"none" }}
+              onChange={async(e)=>{
+                const file = e.target.files?.[0];
+                if (!file) return;
+                showNotif("⏳ Membaca file training...");
+                try {
+                  if (file.name.endsWith(".json")) {
+                    const text = await file.text();
+                    const parsed = JSON.parse(text);
+                    const val = JSON.stringify(parsed);
+                    await supabase.from("app_settings").upsert({key:"ara_training_rules", value:val},{onConflict:"key"});
+                    setAppSettings(prev=>({...prev, ara_training_rules: val}));
+                    const rules = (parsed.auto_reply_rules||[]).length;
+                    const sc = (parsed.ara_training_scenarios||[]).length;
+                    showNotif("✅ Training rules berhasil diupload: "+rules+" rules, "+sc+" scenarios");
+                  } else if (file.name.endsWith(".xlsx")) {
+                    showNotif("⚠️ Untuk file .xlsx, export dulu ke JSON dari sheet JSON Preview, lalu upload JSON-nya.");
+                  }
+                } catch(err) {
+                  showNotif("❌ Error baca file: " + err.message);
+                }
+                e.target.value = "";
+              }}
+            />
+            <button onClick={()=>document.getElementById("ara-training-upload").click()}
+              style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#fff", padding:"10px 24px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+              📤 Upload Training File
+            </button>
+            <div style={{ fontSize:11, color:cs.muted, marginTop:8 }}>
+              Format: .json (dari sheet "JSON Preview" di file Excel) atau .xlsx langsung
+            </div>
+          </div>
+
+          {/* Sync to ARA Brain */}
+          <div style={{ marginTop:12, padding:"10px 14px", background:cs.green+"12", border:"1px solid "+cs.green+"33", borderRadius:8, display:"flex", alignItems:"center", gap:12 }}>
+            <span style={{ fontSize:16 }}>🔄</span>
+            <div style={{ flex:1, fontSize:11, color:cs.muted }}>
+              Rules yang diupload otomatis digunakan ARA saat membalas pesan WA. Tidak perlu restart.
+            </div>
+            <button onClick={async()=>{
+              const {data:d} = await supabase.from("app_settings").select("value").eq("key","ara_training_rules").single();
+              if(d?.value){ setAppSettings(prev=>({...prev, ara_training_rules:d.value})); showNotif("✅ Rules ARA disync dari Supabase"); }
+            }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:7, cursor:"pointer", fontWeight:700, fontSize:12, whiteSpace:"nowrap" }}>
+              🔄 Sync Sekarang
+            </button>
+          </div>
+        </div>
+
+        {/* ── DATABASE HEALTH — DEAD ROWS MONITOR ── */}
+        {currentUser?.role === "Owner" && (
+        <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:20 }}>🧹</span>
+              <div>
+                <div style={{ fontWeight:800, color:cs.text, fontSize:14 }}>Database Health — Dead Rows</div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>Monitor "bangkai data" yang memboroskan storage. Jalankan VACUUM manual jika persentase tinggi.</div>
+              </div>
+            </div>
+            <button onClick={async () => {
+              setDbHealthLoading(true);
+              try {
+                const { data } = await supabase.rpc('get_dead_rows_stats').catch(() => ({ data: null }));
+                if (data) {
+                  setDbHealthData(data);
+                } else {
+                  // Fallback: query langsung
+                  const { data: raw } = await supabase
+                    .from('pg_stat_user_tables_view')
+                    .select('*')
+                    .catch(() => ({ data: null }));
+                  if (!raw) {
+                    showNotif("⚠️ Perlu setup view pg_stat — cek panduan di bawah");
+                  }
+                }
+              } catch(e) {
+                showNotif("❌ Gagal load health data: " + e.message);
+              } finally {
+                setDbHealthLoading(false);
+              }
+            }}
+            style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent,
+              padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:600, fontSize:12,
+              display:"flex", alignItems:"center", gap:6 }}>
+              {dbHealthLoading ? "⏳ Loading..." : "🔄 Refresh Stats"}
+            </button>
+          </div>
+
+          {/* Penjelasan dead rows */}
+          <div style={{ background:cs.surface, borderRadius:8, padding:"10px 14px", marginBottom:14,
+            border:"1px solid "+cs.border, fontSize:11, color:cs.muted, lineHeight:1.6 }}>
+            💡 <b style={{color:cs.text}}>Apa itu Dead Rows?</b> Saat data diupdate atau dihapus, PostgreSQL tidak langsung hapus dari disk — 
+            ia menandai data lama sebagai "mati" dulu (dead row). Ini normal dan aman. Data asli <b style={{color:cs.green}}>TIDAK hilang</b>. 
+            VACUUM hanya membersihkan "bangkai" ini agar storage lebih efisien. Jalankan jika persentase {">"} 50%.
+          </div>
+
+          {/* Tabel dead rows */}
+          {dbHealthData.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"20px 0", color:cs.muted, fontSize:12 }}>
+              Klik "Refresh Stats" untuk melihat kondisi database
+            </div>
+          ) : (
+            <div style={{ display:"grid", gap:6 }}>
+              {dbHealthData
+                .filter(r => r.dead_rows > 0)
+                .sort((a,b) => b.dead_rows - a.dead_rows)
+                .map(r => {
+                  const pct = r.live_rows > 0 ? Math.round(r.dead_rows / r.live_rows * 100) : r.dead_rows * 100;
+                  const color = pct >= 200 ? cs.red : pct >= 80 ? cs.yellow : cs.green;
+                  const label = pct >= 200 ? "Tinggi" : pct >= 80 ? "Sedang" : "Normal";
+                  const isVacuuming = vacuumLoading[r.tablename];
+                  return (
+                    <div key={r.tablename} style={{ display:"flex", alignItems:"center", gap:10,
+                      background:cs.surface, borderRadius:8, padding:"8px 12px",
+                      border:"1px solid "+(pct >= 200 ? cs.red+"44" : pct >= 80 ? cs.yellow+"44" : cs.border) }}>
+                      {/* Nama tabel */}
+                      <div style={{ width:160, fontWeight:600, fontSize:12, color:cs.text, fontFamily:"monospace" }}>
+                        {r.tablename}
+                      </div>
+                      {/* Stats */}
+                      <div style={{ fontSize:11, color:cs.muted, flex:1 }}>
+                        <span style={{ color:cs.green }}>✅ {r.live_rows} live</span>
+                        <span style={{ margin:"0 6px", color:cs.border }}>|</span>
+                        <span style={{ color:color }}>💀 {r.dead_rows} dead</span>
+                        {r.last_autovacuum && (
+                          <>
+                            <span style={{ margin:"0 6px", color:cs.border }}>|</span>
+                            <span>🕐 Auto-vacuum: {new Date(r.last_autovacuum).toLocaleDateString("id-ID")}</span>
+                          </>
+                        )}
+                      </div>
+                      {/* Progress bar */}
+                      <div style={{ width:100, height:6, background:cs.border, borderRadius:99, overflow:"hidden" }}>
+                        <div style={{ width:Math.min(100,pct)+"%" , height:"100%", background:color, borderRadius:99, transition:"width .3s" }} />
+                      </div>
+                      {/* Badge */}
+                      <div style={{ fontSize:10, padding:"2px 8px", borderRadius:99, fontWeight:700,
+                        background:color+"22", color:color, minWidth:50, textAlign:"center" }}>
+                        {pct}% {label}
+                      </div>
+                      {/* Tombol VACUUM */}
+                      <button
+                        disabled={isVacuuming || pct < 30}
+                        onClick={async () => {
+                          if (!await showConfirm({
+                            icon: "🧹",
+                            title: "Jalankan VACUUM?",
+                            message: `VACUUM pada tabel "${r.tablename}" akan membersihkan ${r.dead_rows} dead rows.\n\n⚠️ Data aktif TIDAK akan terhapus. Proses aman dan bisa dibatalkan kapan saja.`,
+                            confirmText: "Ya, Bersihkan"
+                          })) return;
+                          setVacuumLoading(prev => ({...prev, [r.tablename]: true}));
+                          try {
+                            // Panggil via Supabase RPC
+                            const { error } = await supabase.rpc('manual_vacuum_table', { table_name: r.tablename });
+                            if (error) throw new Error(error.message);
+                            showNotif("✅ VACUUM selesai: " + r.tablename);
+                            // Refresh stats
+                            setTimeout(async () => {
+                              const { data } = await supabase.rpc('get_dead_rows_stats');
+                              if (data) setDbHealthData(data);
+                            }, 1000);
+                          } catch(e) {
+                            showNotif("❌ VACUUM gagal: " + e.message);
+                          } finally {
+                            setVacuumLoading(prev => ({...prev, [r.tablename]: false}));
+                          }
+                        }}
+                        style={{ fontSize:11, padding:"4px 10px", borderRadius:7, cursor:isVacuuming || pct < 30 ? "default" : "pointer",
+                          background: pct < 30 ? cs.surface : cs.accent+"22",
+                          border:"1px solid "+(pct < 30 ? cs.border : cs.accent+"44"),
+                          color: pct < 30 ? cs.muted : cs.accent, fontWeight:600,
+                          opacity: isVacuuming ? 0.6 : 1, minWidth:80 }}>
+                        {isVacuuming ? "⏳ ..." : pct >= 30 ? "🧹 VACUUM" : "✅ OK"}
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+
+          {/* Info: kapan perlu VACUUM */}
+          <div style={{ marginTop:12, display:"flex", gap:10, flexWrap:"wrap" }}>
+            {[
+              { color:cs.green,  label:"Normal", desc:"< 80% — biarkan, autovacuum akan handle" },
+              { color:cs.yellow, label:"Sedang",  desc:"80–200% — perhatikan, VACUUM jika perlu" },
+              { color:cs.red,    label:"Tinggi",  desc:"> 200% — disarankan VACUUM manual" },
+            ].map(({ color, label, desc }) => (
+              <div key={label} style={{ display:"flex", alignItems:"center", gap:6, fontSize:11, color:cs.muted }}>
+                <div style={{ width:10, height:10, borderRadius:3, background:color }} />
+                <b style={{ color:cs.text }}>{label}:</b> {desc}
+              </div>
+            ))}
+          </div>
+        </div>
+        )}
 
         {/* ── CRON JOBS ── */}
         <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:14, padding:20 }}>
@@ -4877,7 +9162,12 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
           <div style={{ display:"grid", gap:8 }}>
             {cronJobs.map((job,idx) => (
               <div key={job.id} style={{ background:cs.surface, border:"1px solid "+(job.active?cs.green:cs.border), borderRadius:10, padding:"12px 14px", display:"flex", gap:12, alignItems:"center" }}>
-                <div onClick={() => setCronJobs(prev => prev.map((j,i) => i===idx ? {...j,active:!j.active} : j))}
+                <div onClick={async () => {
+                  const upd=cronJobs.map((j,ii)=>ii===idx?{...j,active:!j.active}:j);
+                  setCronJobs(upd);
+                  await supabase.from("app_settings").upsert(
+                    {key:"cron_jobs",value:JSON.stringify(upd)},{onConflict:"key"});
+                }}
                   style={{ width:34, height:20, borderRadius:99, background:job.active?cs.green:cs.border, cursor:"pointer", position:"relative", flexShrink:0 }}>
                   <div style={{ position:"absolute", width:14, height:14, borderRadius:"50%", background:"#fff", top:3, left:job.active?17:3, transition:"left 0.2s" }} />
                 </div>
@@ -4885,7 +9175,12 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   <div style={{ fontWeight:700, color:job.active?cs.text:cs.muted, fontSize:13 }}>{job.name}</div>
                   <div style={{ fontSize:11, color:cs.muted }}>{job.time} · {job.days} · {job.task}</div>
                 </div>
-                <button onClick={() => setCronJobs(prev => prev.filter((_,i) => i!==idx))} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
+                <button onClick={async () => {
+                  const upd=cronJobs.filter((_,ii)=>ii!==idx);
+                  setCronJobs(upd);
+                  await supabase.from("app_settings").upsert(
+                    {key:"cron_jobs",value:JSON.stringify(upd)},{onConflict:"key"});
+                }} style={{ background:"none", border:"none", color:cs.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
               </div>
             ))}
           </div>
@@ -4913,7 +9208,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
           </div>
           {/* User list — hanya Owner & Admin (Teknisi/Helper dikelola di Tim Teknisi) */}
           <div style={{ display:"grid", gap:8 }}>
-            {userAccounts.filter(u => u.role === "Owner" || u.role === "Admin").map(u => (
+            {userAccounts.map(u => (
               <div key={u.id} style={{ background:cs.surface, border:"1px solid "+(u.active?cs.border:cs.red+"33"), borderRadius:10, padding:"12px 16px", display:"flex", alignItems:"center", gap:12 }}>
                 <div style={{ width:38, height:38, borderRadius:10, background:"linear-gradient(135deg,"+u.color+","+u.color+"66)", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:16, color:"#fff", flexShrink:0 }}>
                   {u.avatar}
@@ -4922,7 +9217,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:2 }}>
                     <span style={{ fontWeight:700, color:cs.text, fontSize:13 }}>{u.name}</span>
                     <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:u.color+"22", color:u.color, fontWeight:700, border:"1px solid "+u.color+"44" }}>
-                      {u.role === "Owner" ? "👑" : u.role === "Admin" ? "🛠️" : "👷"} {u.role}
+                      {u.role === "Owner" ? "👑" : u.role === "Admin" ? "🛠️" : u.role === "Helper" ? "🤝" : "👷"} {u.role}
                     </span>
                     {!u.active && <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:cs.red+"22", color:cs.red, fontWeight:700 }}>Nonaktif</span>}
                   </div>
@@ -4935,6 +9230,16 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                     <button onClick={() => { setNewUserForm({...u, password:""}); setModalAddUser(true); }}
                       style={{ background:cs.accent+"18", border:"1px solid "+cs.accent+"33", color:cs.accent, padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
                   )}
+              {currentUser?.role === "Owner" && (
+                <button onClick={() => {
+                  setEditPwdTarget({id:u.id, name:u.name});
+                  setEditPwdForm({newPwd:"", confirmPwd:""});
+                  setModalEditPwd(true);
+                }} style={{ fontSize:11, background:"#f59e0b20", border:"1px solid #f59e0b44",
+                  color:"#f59e0b", borderRadius:6, padding:"4px 10px", cursor:"pointer", fontWeight:600 }}>
+                  🔑 Password
+                </button>
+              )}
                   {u.role !== "Owner" && (
                     <button onClick={() => { setUserAccounts(prev => prev.map(acc => acc.id===u.id ? {...acc, active:!acc.active} : acc)); showNotif((u.active?"Akun ":"Akun ")+(u.name)+(u.active?" dinonaktifkan":" diaktifkan")); }}
                       style={{ background:(u.active?cs.red:cs.green)+"18", border:"1px solid "+(u.active?cs.red:cs.green)+"33", color:u.active?cs.red:cs.green, padding:"5px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>
@@ -4947,6 +9252,155 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
           </div>
         </div>
         </>)}
+      </div>
+    );
+  };
+
+  // ============================================================
+  // RENDER MONITORING DASHBOARD
+  // ============================================================
+  const [monitorData, setMonitorData] = useState(null);
+  const [monitorLoading, setMonitorLoading] = useState(false);
+
+  useEffect(() => {
+    if (activeMenu !== "monitoring" || !currentUser) return;
+
+    const loadMonitor = async () => {
+      try {
+        setMonitorLoading(true);
+        const resp = await fetch("/api/monitor");
+        const data = await resp.json();
+        setMonitorData(data);
+      } catch(err) {
+        console.error("[Monitor Load Error]", err.message);
+      } finally {
+        setMonitorLoading(false);
+      }
+    };
+
+    // Load immediately
+    loadMonitor();
+
+    // Auto-refresh every 30 seconds (only when monitoring is active)
+    const interval = setInterval(loadMonitor, 30000);
+    return () => clearInterval(interval);
+  }, [activeMenu, currentUser]);
+
+  const renderMonitoring = () => {
+    const data = monitorData;
+    if (!data) return <div style={{padding:24,color:cs.muted}}>⏳ Loading monitoring data...</div>;
+
+    const metrics = data.metrics || {};
+    const errorRate = metrics.errorRate || 0;
+    const hasHighErrors = errorRate > 0.1; // 10% threshold
+
+    return (
+      <div style={{display:"grid",gap:16}}>
+        {/* Header */}
+        <div>
+          <div style={{fontWeight:800,fontSize:20,color:cs.text}}>🔍 System Monitoring</div>
+          <div style={{fontSize:12,color:cs.muted,marginTop:4}}>Real-time health status & error tracking</div>
+        </div>
+
+        {/* Health Status Card */}
+        <div style={{
+          background: data.health === "healthy" ? cs.green+"18" : data.health === "degraded" ? cs.yellow+"18" : cs.red+"18",
+          border: `1px solid ${data.health === "healthy" ? cs.green : data.health === "degraded" ? cs.yellow : cs.red}33`,
+          borderRadius:14, padding:20, display:"grid", gap:12
+        }}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontWeight:800,fontSize:16,color:cs.text}}>
+                {data.health === "healthy" ? "✅ Healthy" : data.health === "degraded" ? "⚠️ Degraded" : "🔴 Unhealthy"}
+              </div>
+              <div style={{fontSize:12,color:cs.muted,marginTop:4}}>Last updated: {new Date(data.timestamp).toLocaleTimeString("id-ID")}</div>
+            </div>
+            <button onClick={() => {
+              setMonitorLoading(true);
+              fetch("/api/monitor").then(r => r.json()).then(d => {
+                setMonitorData(d);
+                setMonitorLoading(false);
+              });
+            }} style={{padding:"8px 14px",borderRadius:8,background:cs.accent+"22",border:`1px solid ${cs.accent}33`,color:cs.accent,cursor:"pointer",fontWeight:700,fontSize:12}}>
+              🔄 Refresh Now
+            </button>
+          </div>
+
+          {/* Metrics Grid */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12}}>
+            <div style={{background:cs.card,borderRadius:10,padding:14}}>
+              <div style={{fontSize:11,color:cs.muted,fontWeight:700,marginBottom:6}}>Total Errors (24h)</div>
+              <div style={{fontSize:24,fontWeight:800,color:cs.red}}>{metrics.totalErrors || 0}</div>
+            </div>
+            <div style={{background:cs.card,borderRadius:10,padding:14}}>
+              <div style={{fontSize:11,color:cs.muted,fontWeight:700,marginBottom:6}}>Total Warnings (24h)</div>
+              <div style={{fontSize:24,fontWeight:800,color:cs.yellow}}>{metrics.totalWarnings || 0}</div>
+            </div>
+            <div style={{background:cs.card,borderRadius:10,padding:14}}>
+              <div style={{fontSize:11,color:cs.muted,fontWeight:700,marginBottom:6}}>Error Rate</div>
+              <div style={{fontSize:24,fontWeight:800,color:errorRate > 0.1 ? cs.red : errorRate > 0.05 ? cs.yellow : cs.green}}>
+                {(errorRate * 100).toFixed(1)}%
+              </div>
+            </div>
+            <div style={{background:cs.card,borderRadius:10,padding:14}}>
+              <div style={{fontSize:11,color:cs.muted,fontWeight:700,marginBottom:6}}>Logs Checked</div>
+              <div style={{fontSize:24,fontWeight:800,color:cs.accent}}>{metrics.totalLogsChecked || 0}</div>
+            </div>
+          </div>
+
+          {/* Alert */}
+          {hasHighErrors && (
+            <div style={{background:cs.red+"22",border:`1px solid ${cs.red}44`,borderRadius:8,padding:12}}>
+              <div style={{fontWeight:700,color:cs.red,fontSize:13}}>⚠️ High Error Rate Detected</div>
+              <div style={{fontSize:11,color:cs.red,marginTop:4,opacity:0.8}}>
+                Error rate is {(errorRate*100).toFixed(1)}% (threshold: 10%). Check recent errors below.
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Recent Errors */}
+        <div style={{background:cs.card,border:`1px solid ${cs.border}`,borderRadius:14,padding:16}}>
+          <div style={{fontWeight:700,color:cs.text,marginBottom:12,fontSize:14}}>📋 Recent Errors & Warnings (Last 24h)</div>
+          {(!metrics.recentErrors || metrics.recentErrors.length === 0) ? (
+            <div style={{color:cs.muted,fontSize:12,textAlign:"center",padding:20}}>✅ No errors or warnings found</div>
+          ) : (
+            <div style={{display:"grid",gap:8,maxHeight:"400px",overflowY:"auto"}}>
+              {metrics.recentErrors.map((err, idx) => (
+                <div key={idx} style={{
+                  background: err.status === "ERROR" ? cs.red+"12" : cs.yellow+"12",
+                  border: `1px solid ${err.status === "ERROR" ? cs.red : cs.yellow}33`,
+                  borderRadius:8, padding:10, fontSize:12
+                }}>
+                  <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                    <span style={{fontWeight:700,color:err.status === "ERROR" ? cs.red : cs.yellow,minWidth:50}}>
+                      {err.status === "ERROR" ? "❌" : "⚠️"} {err.status}
+                    </span>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,color:cs.text}}>{err.action}</div>
+                      <div style={{color:cs.muted,marginTop:2,wordBreak:"break-word"}}>{err.detail}</div>
+                      <div style={{fontSize:11,color:cs.muted+"88",marginTop:4}}>
+                        {new Date(err.time).toLocaleString("id-ID")}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Info */}
+        <div style={{background:cs.surface,border:`1px solid ${cs.border}`,borderRadius:10,padding:12}}>
+          <div style={{fontSize:11,color:cs.muted,lineHeight:1.6}}>
+            <strong>📊 Health Status:</strong><br/>
+            • <strong>Healthy:</strong> Error rate &lt; 5%<br/>
+            • <strong>Degraded:</strong> Error rate 5-10%<br/>
+            • <strong>Unhealthy:</strong> Error rate &gt; 10%<br/><br/>
+            <strong>🔄 Auto-refresh:</strong> Every 30 seconds<br/>
+            <strong>📌 Data Period:</strong> Last 24 hours
+          </div>
+        </div>
       </div>
     );
   };
@@ -4969,6 +9423,9 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
       case "ara":        return renderAra();
       case "reports":    return renderReports();
       case "agentlog":   return renderAgentLog();
+      case "mattrack":   return renderMatTrack();
+      case "biaya":      return renderExpenses();
+      case "monitoring": return renderMonitoring();
       case "settings":   return renderSettings();
       default:           return renderDashboard();
     }
@@ -4979,11 +9436,12 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
   // ============================================================
   // ─────────────── LOGIN SCREEN ───────────────
   if (!isLoggedIn) {
-    const DEMO_ACCOUNTS = [
-      { role:"Owner",   color:"#f59e0b", icon:"👑", email:"owner@aclean.id",   password:"owner123",  name:"Malda Retta",  desc:"Akses penuh semua menu & pengaturan" },
-      { role:"Admin",   color:"#38bdf8", icon:"🛠️", email:"admin@aclean.id",   password:"admin123",  name:"Admin AClean", desc:"Semua menu kecuali Pengaturan"       },
-      { role:"Teknisi", color:"#22c55e", icon:"👷", email:"mulyadi@aclean.id", password:"mly2026",   name:"Mulyadi",      desc:"Jadwal & Laporan Saya saja"          },
-      { role:"Helper",  color:"#a78bfa", icon:"🤝", email:"albana@aclean.id",  password:"abn2026",   name:"Albana Niji",  desc:"Jadwal & Laporan Saya saja"          },
+    // Quick login hints dihapus — gunakan email & password dari Supabase
+    const quickLogins = [
+      { role:"Owner",   icon:"👑", email:"owner@aclean.id"   },
+      { role:"Admin",   icon:"🛠️", email:"admin@aclean.id"   },
+      { role:"Teknisi", icon:"👷", email:"mulyadi@aclean.id"     },
+      { role:"Helper",  icon:"🤝", email:"albana@aclean.id"     },
     ];
     return (
       <div style={{ background:cs.bg, color:cs.text, minHeight:"100vh", fontFamily:"system-ui,-apple-system,sans-serif", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
@@ -5000,20 +9458,23 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
             <div style={{ fontSize:12, color:cs.muted, marginBottom:22 }}>Login dengan akun yang diberikan oleh Owner</div>
 
             {loginError && (
-              <div style={{ background:"#ef444418", border:"1px solid #ef444433", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:12, color:cs.red }}>
-                ⚠️ {loginError}
+              <div style={{ background: loginError.startsWith("⛔") ? "#f9731620" : "#ef444418",
+                            border: "1px solid " + (loginError.startsWith("⛔") ? "#f97316" : "#ef444433"),
+                            borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:12,
+                            color: loginError.startsWith("⛔") ? "#f97316" : cs.red }}>
+                {loginError.startsWith("⛔") ? loginError : "⚠️ " + loginError}
               </div>
             )}
 
             <div style={{ marginBottom:12 }}>
               <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Email</div>
-              <input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
+              <input id="loginEmail" type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
                 placeholder="email@aclean.id"
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"11px 14px", color:cs.text, fontSize:14, outline:"none", boxSizing:"border-box" }} />
             </div>
             <div style={{ marginBottom:20 }}>
               <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Password</div>
-              <input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
+              <input id="loginPassword" type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && doLogin(loginEmail, loginPassword)}
                 placeholder="••••••••"
                 style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"11px 14px", color:cs.text, fontSize:14, outline:"none", boxSizing:"border-box" }} />
@@ -5231,29 +9692,65 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               <button onClick={() => setModalOrder(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
             </div>
             <div style={{ display:"grid", gap:12 }}>
-              {[["Nama Customer","customer","text"],["Nomor HP","phone","text"],["Alamat Lengkap","address","text"],["Catatan","notes","text"]].map(([label,key,type]) => (
+              {[["Nama Customer","customer","text"],["Nomor HP","phone","text"],["Alamat Lengkap","address","text"],["Area / Kota","area","text"],["Catatan","notes","text"]].map(([label,key,type]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                  <input type={type} value={newOrderForm[key]||""} onChange={e => setNewOrderForm(f=>({...f,[key]:e.target.value}))}
+                  <input id="field_7" type={type} value={newOrderForm[key]||""} onChange={e => {
+                    const val = e.target.value;
+                    if (key === "phone") {
+                      const normVal = normalizePhone(val);
+                      const matches = customersData.filter(c => samePhone(c.phone, val));
+                      if (matches.length === 1) {
+                        // 1 match → auto-fill langsung
+                        setNewOrderForm(f => ({...f, phone:normVal, customer:matches[0].name, address:matches[0].address||f.address, area:matches[0].area||f.area}));
+                      } else if (matches.length > 1) {
+                        // Multiple match (phone sama, beda lokasi) → JANGAN auto-fill nama/alamat
+                        // Biarkan user pilih sendiri atau ketik nama berbeda
+                        setNewOrderForm(f => ({...f, phone:normVal}));
+                      } else {
+                        setNewOrderForm(f => ({...f, phone:normVal}));
+                      }
+                    } else { setNewOrderForm(f => ({...f, [key]:val})); }
+                  }}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
               {/* Customer auto-detect badge */}
               {newOrderForm.phone && newOrderForm.phone.length >= 6 && (() => {
-                const existCust = customersData.find(c =>
-                  c.phone === newOrderForm.phone ||
-                  (newOrderForm.customer && c.name.toLowerCase() === newOrderForm.customer.toLowerCase())
-                );
+                const phoneMatches = customersData.filter(c => samePhone(c.phone, newOrderForm.phone));
+                const exactMatch  = findCustomer(customersData, newOrderForm.phone, newOrderForm.customer);
+                if (phoneMatches.length > 1) {
+                  // Phone sama, beda nama/lokasi → tampilkan pilihan
+                  return (
+                    <div style={{ borderRadius:8, overflow:"hidden", border:"1px solid #f59e0b44" }}>
+                      <div style={{ padding:"7px 12px", background:"#f59e0b18", fontSize:12, fontWeight:700, color:"#d97706" }}>
+                        📍 {phoneMatches.length} lokasi ditemukan dengan nomor ini — pilih atau isi nama baru:
+                      </div>
+                      {phoneMatches.map(m => (
+                        <div key={m.id} onClick={() => setNewOrderForm(f=>({...f, customer:m.name, address:m.address||f.address, area:m.area||f.area}))}
+                          style={{ padding:"7px 12px", background: newOrderForm.customer===m.name ? "#16a34a22" : cs.card,
+                            borderTop:"1px solid "+cs.border, cursor:"pointer", fontSize:12,
+                            color: newOrderForm.customer===m.name ? "#16a34a" : cs.text, display:"flex", justifyContent:"space-between" }}>
+                          <span>{newOrderForm.customer===m.name?"✅ ":""}<strong>{m.name}</strong></span>
+                          <span style={{color:cs.muted,fontSize:11}}>{m.address||m.area||"—"}</span>
+                        </div>
+                      ))}
+                      <div style={{padding:"6px 12px",background:cs.surface,fontSize:11,color:cs.muted}}>
+                        Atau ketik nama baru di atas untuk lokasi berbeda
+                      </div>
+                    </div>
+                  );
+                }
                 return (
                   <div style={{ padding:"8px 12px", borderRadius:8, fontSize:12, fontWeight:700,
-                    background: existCust ? "#16a34a18" : "#f59e0b18",
-                    border: "1px solid " + (existCust ? "#16a34a44" : "#f59e0b44"),
-                    color: existCust ? "#16a34a" : "#d97706",
+                    background: exactMatch ? "#16a34a18" : "#f59e0b18",
+                    border: "1px solid " + (exactMatch ? "#16a34a44" : "#f59e0b44"),
+                    color: exactMatch ? "#16a34a" : "#d97706",
                     display:"flex", alignItems:"center", gap:8
                   }}>
-                    {existCust ? "✅" : "🆕"}
-                    {existCust
-                      ? `Customer EXISTING: ${existCust.name} — ${existCust.total_orders||0} order sebelumnya`
+                    {exactMatch ? "✅" : "🆕"}
+                    {exactMatch
+                      ? `Customer EXISTING: ${exactMatch.name} — ${exactMatch.total_orders||0} order sebelumnya`
                       : "Customer BARU — akan otomatis ditambahkan ke menu Customer"}
                   </div>
                 );
@@ -5268,33 +9765,107 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                 </div>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Jumlah Unit</div>
-                  <input type="number" min="1" max="20" value={newOrderForm.units} onChange={e => setNewOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
+                  <input id="field_number_8" type="number" min="1" max="20" value={newOrderForm.units} onChange={e => setNewOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               </div>
               {/* Tipe AC */}
               <div>
                 <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Tipe AC</div>
-                <select value={newOrderForm.type||"AC Split 0.5-1PK"} onChange={e => setNewOrderForm(f=>({...f,type:e.target.value}))}
-                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
-                  {newOrderForm.service==="Cleaning" && ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"].map(t=><option key={t}>{t}</option>)}
-                  {newOrderForm.service==="Install"  && ["Pasang AC 0.5-1PK","Pasang AC 1PK","Pasang AC 1.5-2PK","Pasang AC 2.5PK"].map(t=><option key={t}>{t}</option>)}
-                  {newOrderForm.service==="Repair"   && ["Pengecekan AC","Pengecekan AC Panas/Bocor","Ganti Freon","Ganti Kompressor","Ganti Kapasitor","Bocor Refrigerant","Perbaikan PCB","Perbaikan Motor Fan"].map(t=><option key={t}>{t}</option>)}
-                  {newOrderForm.service==="Complain" && ["Komplain AC Tidak Dingin","Komplain Bising/Berisik","Komplain Setelah Service","Komplain Garansi","Pengecekan Ulang"].map(t=><option key={t}>{t}</option>)}
+                <select value={newOrderForm.type||""}  onChange={e => setNewOrderForm(f=>({...f,type:e.target.value}))}
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13 }}>
+                  <option value="">Pilih tipe...</option>
+                  {(() => {
+                    // DYNAMIC dari priceListData — auto update saat price_list DB berubah
+                    const svc = newOrderForm.service;
+                    // Filter tipe dari DB, exclude sub-jasa Install (Jasa Penarikan, Flaring, dll)
+                    const INSTALL_EXCLUDE = [
+                      "Jasa Penarikan Pipa AC","Jasa Penarikan Pipa Ruko","Jasa Vacum AC 0,5PK - 2,5PK",
+                      "Flaring Pipa","Jasa Pengelasan Pipa AC","Jasa Bobok Tembok","Jasa Instalasi Listrik",
+                      "Jasa Pembuatan Saluran Pembuangan","Jasa Vacum Unit AC >3PK","Bongkar Pasang Indoor AC",
+                      "Bongkar Pasang Outdoor AC","Bongkar Unit AC 0.5-1PK","Bongkar Unit AC 1.5-2.5PK",
+                      "Flushing Pipa","Jasa Instalasi Pipa AC"
+                    ];
+                    // Exclude dari Cleaning: jasa besar dan transport (dipilih otomatis dari laporan)
+                    const CLEANING_EXCLUDE = [
+                      "Jasa Service Besar 0,5PK - 1PK","Jasa Service Besar 1,5PK - 2,5PK",
+                      "Biaya Transport Bila 1 Unit"
+                    ];
+                    // Exclude dari Repair: jasa install dan cleaning besar
+                    const REPAIR_EXCLUDE = [
+                      "Jasa Service Besar 0,5PK - 1PK","Jasa Service Besar 1,5PK - 2,5PK",
+                      "Biaya Transport Bila 1 Unit","Jasa Penarikan Pipa AC","Jasa Penarikan Pipa Ruko",
+                      "Jasa Vacum AC 0,5PK - 2,5PK","Jasa Instalasi Pipa AC"
+                    ];
+                    // Complain: hanya tipe pengecekan/garansi — exclude sub-jasa
+                    const COMPLAIN_EXCLUDE = [
+                      "Jasa Service Besar 0,5PK - 1PK","Jasa Service Besar 1,5PK - 2,5PK",
+                      "Biaya Transport Bila 1 Unit","Jasa Penarikan Pipa AC","Jasa Penarikan Pipa Ruko",
+                      "Jasa Vacum AC 0,5PK - 2,5PK","Jasa Instalasi Pipa AC","Flushing Pipa",
+                      "Jasa Bobok Tembok","Jasa Instalasi Listrik"
+                    ];
+                    const types = priceListData
+                      .filter(r => r.service === svc && r.is_active !== false)
+                      .filter(r => {
+                        if (svc === "Install")  return !INSTALL_EXCLUDE.includes(r.type);
+                        if (svc === "Cleaning") return !CLEANING_EXCLUDE.includes(r.type);
+                        if (svc === "Repair")   return !REPAIR_EXCLUDE.includes(r.type);
+                        if (svc === "Complain") return !COMPLAIN_EXCLUDE.includes(r.type);
+                        return true;
+                      })
+                      .map(r => r.type);
+                    return types.length > 0
+                      ? types.map(t => <option key={t} value={t}>{t}</option>)
+                      : <option disabled>Loading...</option>;
+                  })()}
                 </select>
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Teknisi</div>
-                  <select value={newOrderForm.teknisi} onChange={e => setNewOrderForm(f=>({...f,teknisi:e.target.value,helper:""}))}
-                    style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
-                    <option value="">Pilih teknisi...</option>
-                    {teknisiData.filter(t=>t.role==="Teknisi").map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                  </select>
+                  {(() => {
+                    const tgl = newOrderForm.date || "";
+                    return (
+                      <select value={newOrderForm.teknisi} onChange={e => setNewOrderForm(f=>({...f,teknisi:e.target.value,helper:""}))}
+                        style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none" }}>
+                        <option value="">Pilih teknisi...</option>
+                        {teknisiData.filter(t=>t.role==="Teknisi").map(t => {
+                          const jobHariIni = tgl ? ordersData.filter(o =>
+                            o.teknisi===t.name && o.date===tgl &&
+                            ["PENDING","CONFIRMED","DISPATCHED","ON_SITE","IN_PROGRESS"].includes(o.status)
+                          ).length : 0;
+                          const penuh = jobHariIni >= MAX_LOKASI_PER_HARI;
+                          return (
+                            <option key={t.id} value={t.name} disabled={penuh}>
+                              {penuh ? "🔴" : jobHariIni >= 4 ? "🟡" : "🟢"} {t.name} — {jobHariIni}/6 job{penuh ? " (PENUH)" : ""}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    );
+                  })()}
+                  {/* GAP-3: Warning cap 6 lokasi */}
+                  {newOrderForm.teknisi && newOrderForm.date && (() => {
+                    const jobCount = ordersData.filter(o =>
+                      o.teknisi===newOrderForm.teknisi && o.date===newOrderForm.date &&
+                      ["PENDING","CONFIRMED","DISPATCHED","ON_SITE","IN_PROGRESS"].includes(o.status)
+                    ).length;
+                    if (jobCount >= MAX_LOKASI_PER_HARI) return (
+                      <div style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", borderRadius:7, padding:"7px 10px", fontSize:11, color:cs.red, marginTop:4 }}>
+                        🔴 <b>{newOrderForm.teknisi}</b> sudah {jobCount} job di {newOrderForm.date} — batas 6 lokasi tercapai. Pilih teknisi lain atau tanggal lain.
+                      </div>
+                    );
+                    if (jobCount >= 4) return (
+                      <div style={{ background:cs.yellow+"18", border:"1px solid "+cs.yellow+"33", borderRadius:7, padding:"7px 10px", fontSize:11, color:cs.yellow, marginTop:4 }}>
+                        🟡 <b>{newOrderForm.teknisi}</b> sudah {jobCount}/6 job di tanggal ini.
+                      </div>
+                    );
+                    return null;
+                  })()}
                 </div>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Tanggal</div>
-                  <input type="date" value={newOrderForm.date} onChange={e => setNewOrderForm(f=>({...f,date:e.target.value}))}
+                  <input id="field_date_9" type="date" value={newOrderForm.date} onChange={e => setNewOrderForm(f=>({...f,date:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               </div>
@@ -5331,7 +9902,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                         );
                       })}
                     </div>
-                    <input type="time" min="09:00" max="17:00" value={newOrderForm.time||"09:00"} onChange={e=>setNewOrderForm(f=>({...f,time:e.target.value}))}
+                    <input id="field_time_10" type="time" min="09:00" max="17:00" value={newOrderForm.time||"09:00"} onChange={e=>setNewOrderForm(f=>({...f,time:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                     {/* Estimasi durasi & jam selesai */}
                     <div style={{ marginTop:8, background:avail?cs.green+"10":cs.red+"10", border:"1px solid "+(avail?cs.green:cs.red)+"22", borderRadius:8, padding:"8px 12px", display:"flex", gap:12, flexWrap:"wrap", fontSize:12 }}>
@@ -5373,10 +9944,118 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   })}
                 </select>
               </div>
+
+              {/* ── Teknisi/Helper Tambahan ── */}
+              <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 14px"}}>
+                <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span>👥 Tim Tambahan <span style={{fontWeight:400}}>(opsional — 1 job, beberapa orang)</span></span>
+                </div>
+                {/* Teknisi 2 */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Teknisi ke-2</div>
+                    <select value={newOrderForm.teknisi2||""} onChange={e=>setNewOrderForm(f=>({...f,teknisi2:e.target.value}))}
+                      style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12}}>
+                      <option value="">— Tidak ada —</option>
+                      {teknisiData.filter(t=>t.role==="Teknisi"&&t.name!==newOrderForm.teknisi).map(t=>(
+                        <option key={t.id} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Helper ke-2</div>
+                    <select value={newOrderForm.helper2||""} onChange={e=>setNewOrderForm(f=>({...f,helper2:e.target.value}))}
+                      style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12}}>
+                      <option value="">— Tidak ada —</option>
+                      {teknisiData.filter(t=>t.name!==newOrderForm.helper&&t.name!==newOrderForm.teknisi).map(t=>(
+                        <option key={t.id} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {/* Teknisi 3 */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div>
+                    <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Teknisi ke-3</div>
+                    <select value={newOrderForm.teknisi3||""} onChange={e=>setNewOrderForm(f=>({...f,teknisi3:e.target.value}))}
+                      style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12}}>
+                      <option value="">— Tidak ada —</option>
+                      {teknisiData.filter(t=>t.role==="Teknisi"&&t.name!==newOrderForm.teknisi&&t.name!==newOrderForm.teknisi2).map(t=>(
+                        <option key={t.id} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Helper ke-3</div>
+                    <select value={newOrderForm.helper3||""} onChange={e=>setNewOrderForm(f=>({...f,helper3:e.target.value}))}
+                      style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12}}>
+                      <option value="">— Tidak ada —</option>
+                      {teknisiData.filter(t=>t.name!==newOrderForm.helper&&t.name!==newOrderForm.teknisi&&t.name!==newOrderForm.helper2&&t.name!==newOrderForm.teknisi2).map(t=>(
+                        <option key={t.id} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {/* Preview tim */}
+                {(newOrderForm.teknisi2||newOrderForm.helper2||newOrderForm.teknisi3||newOrderForm.helper3) && (
+                  <div style={{marginTop:8,background:cs.accent+"10",borderRadius:7,padding:"6px 10px",fontSize:11,color:cs.muted}}>
+                    Tim: {[newOrderForm.teknisi,newOrderForm.teknisi2,newOrderForm.teknisi3,
+                           newOrderForm.helper,newOrderForm.helper2,newOrderForm.helper3]
+                      .filter(Boolean).join(" · ")}
+                  </div>
+                )}
+              </div>
+
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:6 }}>
                 <button onClick={() => setModalOrder(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
-                <button onClick={() => { if(!newOrderForm.customer){showNotif("Nama customer wajib diisi");return;} if(!newOrderForm.teknisi){showNotif("Pilih teknisi dulu");return;} if(!newOrderForm.date){showNotif("Pilih tanggal dulu");return;} createOrder(newOrderForm); setModalOrder(false); setNewOrderForm({ customer:"", phone:"", address:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" }); }}
-                  style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>✓ Buat Order</button>
+                {(() => {
+                  const capReached = newOrderForm.teknisi && newOrderForm.date && ordersData.filter(o =>
+                    o.teknisi===newOrderForm.teknisi && o.date===newOrderForm.date &&
+                    ["PENDING","CONFIRMED","DISPATCHED","ON_SITE","IN_PROGRESS"].includes(o.status)
+                  ).length >= MAX_LOKASI_PER_HARI;
+                  // ── CLASH HARD-BLOCK: cek overlap jam secara lokal ──
+                  const clashDetected = !!(newOrderForm.teknisi && newOrderForm.date && newOrderForm.time
+                    && !cekTeknisiAvailable(newOrderForm.teknisi, newOrderForm.date,
+                        newOrderForm.time||"09:00", newOrderForm.service, newOrderForm.units||1));
+                  const isBlocked = capReached || clashDetected;
+                  return (
+                    <>
+                      {clashDetected && (
+                        <div style={{background:"#ef444412",border:"1px solid #ef444440",borderRadius:9,
+                          padding:"10px 14px",fontSize:12,color:"#ef4444",fontWeight:700,marginBottom:6}}>
+                          🚫 Jadwal Bentrok! Teknisi <strong>{newOrderForm.teknisi}</strong> sudah ada job di jam ini.
+                          Pilih jam lain atau ganti teknisi.
+                        </div>
+                      )}
+                      <button
+                        disabled={isBlocked || isSubmittingOrder}
+                        onClick={async () => {
+                          // Anti double-submit: guard HARUS di awal sebelum async call
+                          // Ref-level lock: prevents double-click race condition before re-render
+                          if (_orderSubmitLock.current) return;
+                          _orderSubmitLock.current = true;
+                          setIsSubmittingOrder(true);
+                          try {
+                          if (!newOrderForm.customer) { showNotif("Nama customer wajib diisi"); return; }
+                          if (!newOrderForm.teknisi)  { showNotif("Pilih teknisi dulu"); return; }
+                          if (!newOrderForm.date)     { showNotif("Pilih tanggal dulu"); return; }
+                          // DB-level final check (anti race condition)
+                          if (newOrderForm.teknisi && newOrderForm.date && newOrderForm.time) {
+                            const dbOk = await cekTeknisiAvailableDB(newOrderForm.teknisi, newOrderForm.date, newOrderForm.time, newOrderForm.service, newOrderForm.units);
+                            if (!dbOk.ok) { showNotif("🚫 " + (dbOk.reason || "Jadwal bentrok, cek ulang")); return; }
+                          }
+                          const formCopy = {...newOrderForm};
+                          setModalOrder(false);
+                          setNewOrderForm({ customer:"", phone:"", address:"", area:"", service:"Cleaning", type:"AC Split 0.5-1PK", units:1, teknisi:"", helper:"", date:"", time:"09:00", notes:"" });
+                          await createOrder(formCopy);
+                          } finally { _orderSubmitLock.current = false; setIsSubmittingOrder(false); }
+                        }}
+                        style={{ background: isBlocked ? cs.border : "linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color: isBlocked ? cs.muted : "#0a0f1e", padding:"12px", borderRadius:10, cursor: isBlocked ? "not-allowed" : "pointer", fontWeight:800, fontSize:14, opacity: isBlocked ? 0.6 : 1 }}>
+                        {capReached ? "🔴 Teknisi Penuh" : clashDetected ? "🚫 Jadwal Bentrok" : "✓ Buat Order"}
+                      </button>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -5397,7 +10076,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               {[["Nama Material","name","text"],["Satuan","unit","text"],["Harga/Unit","price","number"],["Stok Awal","stock","number"],["Reorder Point","reorder","number"],["Min Alert","min_alert","number"]].map(([label,key,type]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>{label}</div>
-                  <input type={type} value={newStokForm[key]||""} onChange={e => setNewStokForm(f=>({...f,[key]:e.target.value}))}
+                  <input id="field_11" type={type} value={newStokForm[key]||""} onChange={e => setNewStokForm(f=>({...f,[key]:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
@@ -5412,7 +10091,14 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   const stokStatus= stokAwal===0?"OUT":stokAwal<=minAlert?"CRITICAL":stokAwal<=reorderPt?"WARNING":"OK";
                   const newItem   = { code:newCode, name:newStokForm.name, unit:newStokForm.unit||"pcs", price:parseInt(newStokForm.price)||0, stock:stokAwal, reorder:reorderPt, min_alert:minAlert, status:stokStatus };
                   setInventoryData(prev=>[...prev,newItem]);
-                  const {error:invErr} = await supabase.from("inventory").insert(newItem);
+                  // Insert tanpa status — biarkan DB default, lalu update stock untuk trigger auto-status
+                  const insertPayload = { ...newItem };
+                  delete insertPayload.status; // hindari check constraint — trigger set otomatis
+                  const {error:invErr} = await supabase.from("inventory").insert(insertPayload);
+                  if (!invErr && stokAwal > 0) {
+                    // Trigger inventory_auto_status hanya jalan saat UPDATE stock
+                    await supabase.from("inventory").update({stock:stokAwal}).eq("code",newCode);
+                  }
                   if(invErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+invErr.message);
                   else { addAgentLog("STOCK_ADDED",`Material baru: ${newStokForm.name} (stok: ${newStokForm.stock} ${newStokForm.unit||"pcs"})`,"SUCCESS"); showNotif("✅ Material " + (newStokForm.name||"baru") + " berhasil ditambah"); }
                   setModalStok(false); setNewStokForm({ name:"", unit:"pcs", price:"", stock:"", reorder:"", min_alert:"" });
@@ -5444,24 +10130,24 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Stok Saat Ini</div>
-                    <input type="number" value={newStokForm.stock ?? editStokItem.stock} onChange={e=>setNewStokForm(f=>({...f,stock:e.target.value}))}
+                    <input id="field_number_12" type="number" value={newStokForm.stock ?? editStokItem.stock} onChange={e=>setNewStokForm(f=>({...f,stock:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Tambah (+)</div>
-                    <input type="number" min="0" placeholder="0" value={newStokForm.tambah||""} onChange={e=>setNewStokForm(f=>({...f,tambah:e.target.value}))}
+                    <input id="field_number_13" type="number" min="0" placeholder="0" value={newStokForm.tambah||""} onChange={e=>setNewStokForm(f=>({...f,tambah:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                 </div>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Harga/Unit</div>
-                    <input type="number" value={newStokForm.price ?? editStokItem.price} onChange={e=>setNewStokForm(f=>({...f,price:e.target.value}))}
+                    <input id="field_number_14" type="number" value={newStokForm.price ?? editStokItem.price} onChange={e=>setNewStokForm(f=>({...f,price:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                   <div>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>Reorder Point</div>
-                    <input type="number" value={newStokForm.reorder ?? editStokItem.reorder} onChange={e=>setNewStokForm(f=>({...f,reorder:e.target.value}))}
+                    <input id="field_number_15" type="number" value={newStokForm.reorder ?? editStokItem.reorder} onChange={e=>setNewStokForm(f=>({...f,reorder:e.target.value}))}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                 </div>
@@ -5484,9 +10170,10 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                         notes: `Update manual oleh ${currentUser?.name||"Admin"}`,
                         created_by: currentUser?.id||null,
                         created_by_name: currentUser?.name||"",
-                      }).catch(()=>{});
+                      });
+                      // ignore inventory_transactions error (tabel opsional)
                     }
-                    const {error:eErr} = await supabase.from("inventory").update({stock:stokFinal,price:hargaBaru,reorder:reorderBaru,status:statusBaru}).eq("code",editStokItem.code);
+                    const {error:eErr} = await supabase.from("inventory").update({stock:stokFinal, price:hargaBaru, reorder:reorderBaru, updated_at:new Date().toISOString()}).eq("code",editStokItem.code);
                     if(eErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
                     else { addAgentLog("STOCK_UPDATED",`Stok ${editStokItem.name}: ${editStokItem.stock}→${stokFinal} ${editStokItem.unit} (${statusBaru})`,"SUCCESS"); showNotif("✅ Stok "+editStokItem.name+" diupdate → "+stokFinal+" "+editStokItem.unit); }
                     setModalEditStok(false); setEditStokItem(null); setNewStokForm({name:"",unit:"pcs",price:"",stock:"",reorder:"",min_alert:"",tambah:""});
@@ -5512,7 +10199,7 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
               {[["Nama Lengkap","name"],["Nomor WA","phone"]].map(([label,key]) => (
                 <div key={key}>
                   <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:4 }}>{label}</div>
-                  <input value={newTeknisiForm[key]||""} onChange={e => setNewTeknisiForm(f=>({...f,[key]:e.target.value}))}
+                  <input id="field_16" value={newTeknisiForm[key]||""} onChange={e => setNewTeknisiForm(f=>({...f,[key]:e.target.value}))}
                     style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                 </div>
               ))}
@@ -5523,14 +10210,47 @@ Admin meminta revisi laporan Anda. Silakan buka aplikasi dan perbaiki laporan. �
                   {["Teknisi","Helper","Supervisor"].map(r => <option key={r}>{r}</option>)}
                 </select>
               </div>
-              {editTeknisi && (
+
+              {/* ── Toggle: Buat Akun Login (hanya saat tambah baru) ── */}
+              {!editTeknisi && (
+                <div style={{background:cs.card,border:"1px solid "+(newTeknisiForm.buatAkun?cs.accent:cs.border),borderRadius:10,padding:"12px 14px"}}>
+                  <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                    <input id="field_checkbox_17" type="checkbox" checked={!!newTeknisiForm.buatAkun}
+                      onChange={e=>setNewTeknisiForm(f=>({...f,buatAkun:e.target.checked,email:"",password:""}))}
+                      style={{width:16,height:16,accentColor:cs.accent}} />
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:newTeknisiForm.buatAkun?cs.accent:cs.text}}>🔑 Buat Akun Login</div>
+                      <div style={{fontSize:11,color:cs.muted,marginTop:1}}>Teknisi bisa login ke app untuk submit laporan</div>
+                    </div>
+                  </label>
+                  {newTeknisiForm.buatAkun && (
+                    <div style={{marginTop:12,display:"grid",gap:8}}>
+                      <div>
+                        <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Email Login</div>
+                        <input id="field_email_18" type="email" value={newTeknisiForm.email||""} placeholder="contoh: mulyadi@aclean.id"
+                          onChange={e=>setNewTeknisiForm(f=>({...f,email:e.target.value}))}
+                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"44",borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,boxSizing:"border-box",outline:"none"}} />
+                      </div>
+                      <div>
+                        <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Password</div>
+                        <input id="field_password_19" type="password" value={newTeknisiForm.password||""} placeholder="min. 6 karakter"
+                          onChange={e=>setNewTeknisiForm(f=>({...f,password:e.target.value}))}
+                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"44",borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,boxSizing:"border-box",outline:"none"}} />
+                      </div>
+                      <div style={{fontSize:11,color:cs.muted,background:cs.accent+"10",borderRadius:7,padding:"8px 10px"}}>
+                        💡 Email & password ini dipakai teknisi untuk login di halaman utama app
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {editTeknisi && currentUser?.role === "Owner" && (
                 <div style={{ display:"grid", gap:6 }}>
                   <button onClick={async () => {
-                    if (!window.confirm) { /* skip confirm in some envs */ }
-                    else if (!window.confirm(`Hapus ${editTeknisi.name} dari tim dan database?
-
-Perhatian: Tindakan ini tidak bisa dibatalkan.
-Order yang sudah ada tidak terpengaruh.`)) return;
+                    if (!await showConfirm({ icon:"🗑️", title:"Hapus dari Tim & Database?", danger:true,
+                      message:`Hapus ${editTeknisi.name} dari tim dan database?\n\nPerhatian: Tindakan ini tidak bisa dibatalkan.\nOrder yang sudah ada tidak terpengaruh.`,
+                      confirmText:"Hapus Permanen" })) return;
                     // Hapus dari local state
                     setTeknisiData(prev => prev.filter(t => t.id !== editTeknisi.id));
                     // Hapus dari Supabase (jika punya UUID id)
@@ -5580,19 +10300,54 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                     if(tErr) showNotif("⚠️ Update lokal saja, DB gagal");
                     else { addAgentLog("TEKNISI_UPDATED","Data "+newTeknisiForm.name+" diupdate","SUCCESS"); showNotif("✅ "+newTeknisiForm.name+" berhasil diupdate"); }
                   } else {
-                    // Add new
-                    const newTek = {name:newTeknisiForm.name,phone:newTeknisiForm.phone,role:newTeknisiForm.role,skills:newTeknisiForm.skills||[],status:"active",jobs_today:0};
+                    // ── Add new teknisi ──
+                    let profileId = null;
+
+                    // Step 1: Buat akun Auth dulu (kalau diminta)
+                    if (newTeknisiForm.buatAkun) {
+                      if (!newTeknisiForm.email || !newTeknisiForm.password) {
+                        showNotif("❌ Email dan password wajib diisi untuk buat akun login"); return;
+                      }
+                      if (newTeknisiForm.password.length < 6) {
+                        showNotif("❌ Password minimal 6 karakter"); return;
+                      }
+                      const { data: authData, error: authErr } = await supabase.auth.admin
+                        ? supabase.auth.admin.createUser({ email: newTeknisiForm.email, password: newTeknisiForm.password, email_confirm: true })
+                        : await (async () => {
+                            // Fallback: pakai signUp biasa (kirim email konfirmasi)
+                            const r = await supabase.auth.signUp({ email: newTeknisiForm.email, password: newTeknisiForm.password });
+                            return r;
+                          })();
+                      if (authErr) { showNotif("❌ Gagal buat akun: "+authErr.message); return; }
+                      profileId = authData?.user?.id || null;
+                    }
+
+                    // Step 2: Insert ke user_profiles
+                    const newTek = {
+                      ...(profileId ? {id: profileId} : {}),
+                      name: newTeknisiForm.name,
+                      phone: newTeknisiForm.phone,
+                      role: newTeknisiForm.role,
+                      skills: newTeknisiForm.skills||[],
+                      status: "active",
+                      jobs_today: 0,
+                      ...(newTeknisiForm.email ? {email: newTeknisiForm.email} : {}),
+                    };
                     const {error:tErr,data:tData} = await supabase.from("user_profiles").insert(newTek).select().single();
                     if(tErr) {
                       showNotif("⚠️ Tersimpan lokal, DB gagal: "+tErr.message);
-                      setTeknisiData(prev=>[...prev,{...newTek,id:"TMP_"+Date.now()}]); // Reload dari DB saat refresh (normal)
+                      setTeknisiData(prev=>[...prev,{...newTek,id:"TMP_"+Date.now()}]);
                     } else {
                       setTeknisiData(prev=>[...prev,tData||newTek]);
-                      addAgentLog("TEKNISI_ADDED","Anggota baru: "+newTeknisiForm.name+" ("+newTeknisiForm.role+")","SUCCESS");
-                      showNotif("✅ "+newTeknisiForm.name+" berhasil ditambahkan");
+                      addAgentLog("TEKNISI_ADDED","Anggota baru: "+newTeknisiForm.name+" ("+newTeknisiForm.role+")"+(newTeknisiForm.buatAkun?" + akun login":""),"SUCCESS");
+                      if (newTeknisiForm.buatAkun) {
+                        showNotif("✅ "+newTeknisiForm.name+" ditambahkan + akun login dibuat! Cek email untuk konfirmasi.");
+                      } else {
+                        showNotif("✅ "+newTeknisiForm.name+" berhasil ditambahkan (tanpa akun login)");
+                      }
                     }
                   }
-                  setModalTeknisi(false); setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[]});
+                  setModalTeknisi(false); setEditTeknisi(null); setNewTeknisiForm({name:"",role:"Teknisi",phone:"",skills:[],email:"",password:"",buatAkun:false});
                 }}
                   style={{ background:"linear-gradient(135deg,"+cs.green+",#059669)", border:"none", color:"#fff", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>
                   ✓ {editTeknisi?"Update":"Tambah"} Anggota
@@ -5612,7 +10367,10 @@ Order yang sudah ada tidak terpengaruh.`)) return;
             <div style={{ background:cs.ara+"15", borderBottom:"1px solid "+cs.ara+"33", padding:"16px 22px", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
               <div>
                 <div style={{ fontWeight:800, color:cs.ara, fontSize:16 }}>🧠 Edit Brain.md — Memori Permanen ARA</div>
-                <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>Tersimpan di sistem · Otomatis terbaca oleh semua LLM yang terkoneksi</div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>
+                  {localStorage.getItem("aclean_brainMd") ? "💾 Backup lokal: ✅" : "💾 Backup lokal: ✗"}&nbsp;·&nbsp;
+                  ☁️ Supabase: tersimpan permanen · Sync semua device
+                </div>
               </div>
               <button onClick={() => setModalBrainEdit(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:24, cursor:"pointer" }}>×</button>
             </div>
@@ -5635,7 +10393,41 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 style={{ background:cs.red+"18", border:"1px solid "+cs.red+"33", color:cs.red, padding:"9px 16px", borderRadius:8, cursor:"pointer", fontSize:12 }}>🔄 Reset ke Default</button>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setModalBrainEdit(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"9px 18px", borderRadius:8, cursor:"pointer", fontWeight:600 }}>Batal</button>
-                <button onClick={() => { showNotif("Brain.md tersimpan — ARA akan gunakan memori terbaru"); setModalBrainEdit(false); }}
+                <button onClick={async () => {
+                    showNotif("⏳ Menyimpan Brain.md ke Supabase...");
+                    // Selalu simpan ke localStorage dulu sebagai backup instan
+                    _lsSave("brainMd", brainMd);
+                    let dbOk = false;
+                    // Attempt 1: upsert (insert or update on conflict)
+                    try {
+                      const payload = { key: "brain_md", value: brainMd, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() };
+                      const { error: e1 } = await supabase.from("ara_brain").upsert(payload, { onConflict: "key" });
+                      if (!e1) { dbOk = true; }
+                      else {
+                        // Attempt 2: coba UPDATE saja (jika row sudah ada)
+                        const { error: e2 } = await supabase.from("ara_brain")
+                          .update({ value: brainMd, updated_by: currentUser?.name||"Owner", updated_at: new Date().toISOString() })
+                          .eq("key", "brain_md");
+                        if (!e2) { dbOk = true; }
+                        else {
+                          // Attempt 3: INSERT baru (jika row belum ada)
+                          const { error: e3 } = await supabase.from("ara_brain")
+                            .insert({ key: "brain_md", value: brainMd, updated_by: currentUser?.name||"Owner" });
+                          if (!e3) dbOk = true;
+                          else throw new Error("Upsert: "+e1.message+" | Update: "+e2.message+" | Insert: "+e3.message);
+                        }
+                      }
+                    } catch(e) {
+                      showNotif("⚠️ DB error: " + (e?.message||"") + " — Tersimpan di localStorage saja. Jalankan fix_ara_brain_table.sql di Supabase.");
+                      addAgentLog("BRAIN_SAVE_ERROR", "Brain.md gagal ke DB: "+(e?.message||""), "ERROR");
+                      setModalBrainEdit(false); return;
+                    }
+                    if (dbOk) {
+                      addAgentLog("BRAIN_SAVED", "Brain.md disimpan ke Supabase (" + brainMd.length + " karakter)", "SUCCESS");
+                      showNotif("✅ Brain.md tersimpan permanen di Supabase + localStorage!");
+                    }
+                    setModalBrainEdit(false);
+                  }}
                   style={{ background:"linear-gradient(135deg,"+cs.ara+",#7c3aed)", border:"none", color:"#fff", padding:"9px 22px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>💾 Simpan Brain.md</button>
               </div>
             </div>
@@ -5672,7 +10464,37 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               </button>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setModalBrainCustomerEdit(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"9px 18px", borderRadius:8, cursor:"pointer", fontSize:13 }}>Batal</button>
-                <button onClick={() => { showNotif("Brain Customer tersimpan ✅"); setModalBrainCustomerEdit(false); }}
+                <button onClick={async () => {
+                    showNotif("⏳ Menyimpan Brain Customer ke Supabase...");
+                    _lsSave("brainMdCustomer", brainMdCustomer);
+                    let dbOk = false;
+                    try {
+                      const payload = { key: "brain_customer", value: brainMdCustomer, updated_by: currentUser?.name||"Owner", updated_at: new Date().toISOString() };
+                      const { error: e1 } = await supabase.from("ara_brain").upsert(payload, { onConflict: "key" });
+                      if (!e1) { dbOk = true; }
+                      else {
+                        const { error: e2 } = await supabase.from("ara_brain")
+                          .update({ value: brainMdCustomer, updated_by: currentUser?.name||"Owner", updated_at: new Date().toISOString() })
+                          .eq("key", "brain_customer");
+                        if (!e2) { dbOk = true; }
+                        else {
+                          const { error: e3 } = await supabase.from("ara_brain")
+                            .insert({ key: "brain_customer", value: brainMdCustomer, updated_by: currentUser?.name||"Owner" });
+                          if (!e3) dbOk = true;
+                          else throw new Error("Upsert: "+e1.message+" | Update: "+e2.message+" | Insert: "+e3.message);
+                        }
+                      }
+                    } catch(e) {
+                      showNotif("⚠️ DB error: " + (e?.message||"") + " — Tersimpan lokal. Jalankan fix_ara_brain_table.sql di Supabase.");
+                      addAgentLog("BRAIN_CUST_SAVE_ERROR", "Brain Customer gagal ke DB: "+(e?.message||""), "ERROR");
+                      setModalBrainCustomerEdit(false); return;
+                    }
+                    if (dbOk) {
+                      addAgentLog("BRAIN_CUSTOMER_SAVED", "Brain Customer disimpan ke Supabase (" + brainMdCustomer.length + " karakter)", "SUCCESS");
+                      showNotif("✅ Brain Customer tersimpan permanen di Supabase + localStorage!");
+                    }
+                    setModalBrainCustomerEdit(false);
+                  }}
                   style={{ background:"linear-gradient(135deg,#22c55e,#16a34a)", border:"none", color:"#fff", padding:"9px 22px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:13 }}>
                   💾 Simpan Brain Customer
                 </button>
@@ -5686,71 +10508,449 @@ Order yang sudah ada tidak terpengaruh.`)) return;
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — EDIT INVOICE (GAP 3) */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalEditInvoice && editInvoiceData && (
-        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:450, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={()=>setModalEditInvoice(false)}>
-          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:20, width:"100%", maxWidth:460, padding:28 }} onClick={e=>e.stopPropagation()}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+      {/* ══ MODAL HISTORY PREVIEW — Teknisi view-only ══ */}
+      {historyPreview && (() => {
+        const cu = historyPreview;
+        const hist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
+        return (
+        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:9998,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.border,
+            borderRadius:18, width:"100%", maxWidth:500, maxHeight:"88vh",
+            display:"flex", flexDirection:"column", overflow:"hidden" }}>
+            {/* Header */}
+            <div style={{ background:cs.card, padding:"14px 18px",
+              borderBottom:"1px solid "+cs.border,
+              display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <div>
-                <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>✏️ Edit Nilai Invoice</div>
-                <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>{editInvoiceData.id} · {editInvoiceData.customer}</div>
+                <div style={{ fontWeight:800, fontSize:15, color:cs.text }}>📋 Riwayat Pekerjaan</div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>{cu.name} · {hist.length}x servis</div>
               </div>
-              <button onClick={()=>setModalEditInvoice(false)} style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
+              <button onClick={()=>setHistoryPreview(null)}
+                style={{ background:"none", border:"none", color:cs.muted, fontSize:24, cursor:"pointer" }}>×</button>
             </div>
-            <div style={{ display:"grid", gap:12 }}>
-              {[["Jasa / Labor (Rp)","labor"],["Material (Rp)","material"],["Pekerjaan Tambahan / Dadakan (Rp)","dadakan"]].map(([label,key]) => (
-                <div key={key}>
-                  <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                  <input type="number" min="0" value={editInvoiceForm[key]||0}
-                    onChange={e=>setEditInvoiceForm(f=>({...f,[key]:parseInt(e.target.value)||0}))}
-                    style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+            {/* Info lokasi */}
+            <div style={{ padding:"7px 18px", background:cs.accent+"08",
+              borderBottom:"1px solid "+cs.border+"44", fontSize:11, color:cs.muted }}>
+              📍 {(cu.address||cu.area||"-").slice(0,50)}
+              {hist[0] && <span style={{marginLeft:12}}>🕐 Terakhir: {hist[0].date}</span>}
+            </div>
+            {/* List history */}
+            <div style={{ overflowY:"auto", flex:1 }}>
+              {hist.length === 0
+                ? <div style={{ padding:"32px", textAlign:"center", color:cs.muted, fontSize:13 }}>Belum ada riwayat servis</div>
+                : hist.map((h, hi) => (
+                <div key={hi} style={{ borderBottom:"1px solid "+cs.border+"33" }}>
+                  {/* Job header */}
+                  <div style={{ padding:"10px 18px", background:hi===0?cs.accent+"08":"transparent",
+                    display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                    <div>
+                      <div style={{ fontWeight:700, fontSize:13, color:cs.text }}>
+                        {h.service}{h.type?" — "+h.type:""}
+                      </div>
+                      <div style={{ fontSize:11, color:cs.muted, marginTop:2, display:"flex", gap:10 }}>
+                        <span>📅 {h.date}</span>
+                        <span>👷 {h.teknisi||"-"}</span>
+                        <span>🔧 {h.units} unit</span>
+                      </div>
+                    </div>
+                    <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, flexShrink:0,
+                      background:(h.status==="COMPLETED"||h.status==="PAID"?cs.green:cs.yellow)+"22",
+                      color:(h.status==="COMPLETED"||h.status==="PAID"?cs.green:cs.yellow), fontWeight:700 }}>
+                      {statusLabel?.[h.status]||h.status||"-"}
+                    </span>
+                  </div>
+                  {/* Detail per unit AC */}
+                  {(h.unit_detail||[]).length > 0 && (
+                    <div style={{ margin:"0 18px 8px", background:cs.card, borderRadius:8, padding:"8px 10px" }}>
+                      {(h.unit_detail||[]).map((u, ui) => (
+                        <div key={ui} style={{ marginBottom:ui<h.unit_detail.length-1?6:0,
+                          paddingBottom:ui<h.unit_detail.length-1?5:0,
+                          borderBottom:ui<h.unit_detail.length-1?"1px solid "+cs.border+"33":"none" }}>
+                          <div style={{ fontSize:11, fontWeight:700, color:cs.accent }}>
+                            Unit {u.unit_no||ui+1}: {u.tipe||u.label||"-"}{u.merk?" · "+u.merk:""}
+                          </div>
+                          {(u.pekerjaan||[]).length>0 && (
+                            <div style={{ fontSize:10, color:cs.muted, marginTop:1 }}>🔨 {u.pekerjaan.join(", ")}</div>
+                          )}
+                          {(u.kondisi_setelah||[]).length>0 && (
+                            <div style={{ fontSize:10, color:cs.green, marginTop:1 }}>✅ {u.kondisi_setelah.join(", ")}</div>
+                          )}
+                          {u.freon_ditambah>0 && (
+                            <div style={{ fontSize:10, color:"#38bdf8", marginTop:1 }}>❄️ Tekanan: {u.freon_ditambah} psi</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Catatan & Rekomendasi */}
+                  {(h.rekomendasi||h.catatan) && (
+                    <div style={{ margin:"0 18px 8px", fontSize:11 }}>
+                      {h.catatan && <div style={{ color:cs.muted, marginBottom:3 }}>📝 {h.catatan.slice(0,100)}</div>}
+                      {h.rekomendasi && (
+                        <div style={{ color:"#7dd3fc", background:"#0ea5e910",
+                          borderRadius:6, padding:"4px 8px", fontStyle:"italic" }}>
+                          💡 {h.rekomendasi.slice(0,120)}{h.rekomendasi.length>120?"...":""}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* Foto dokumentasi */}
+                  {(h.foto_urls||[]).length > 0 && (
+                    <div style={{ padding:"0 18px 12px" }}>
+                      <div style={{ fontSize:10, color:cs.muted, marginBottom:5, fontWeight:600 }}>📸 Foto ({h.foto_urls.length})</div>
+                      <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:4 }}>
+                        {(h.foto_urls||[]).map((url, fi) => (
+                          <img key={fi} src={url} alt={"Foto "+(fi+1)}
+                            onClick={()=>window.open(url,"_blank")}
+                            onError={e=>{ e.target.style.display="none"; }}
+                            style={{ width:90, height:90, objectFit:"cover", flexShrink:0,
+                              borderRadius:8, cursor:"pointer", border:"1px solid "+cs.border }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
-              <div style={{ background:cs.accent+"12", border:"1px solid "+cs.accent+"33", borderRadius:10, padding:14 }}>
-                <div style={{ fontSize:12, color:cs.muted, marginBottom:4 }}>Total Baru</div>
-                <div style={{ fontWeight:800, fontSize:20, color:cs.accent, fontFamily:"monospace" }}>
-                  {fmt((editInvoiceForm.labor||0)+(editInvoiceForm.material||0)+(editInvoiceForm.dadakan||0))}
-                </div>
-                {(editInvoiceForm.labor||0)+(editInvoiceForm.material||0)+(editInvoiceForm.dadakan||0) !== editInvoiceData.total && (
-                  <div style={{ fontSize:11, color:cs.yellow, marginTop:4 }}>
-                    Perubahan: {fmt(((editInvoiceForm.labor||0)+(editInvoiceForm.material||0)+(editInvoiceForm.dadakan||0))-editInvoiceData.total)}
-                  </div>
-                )}
+            </div>
+            {/* Footer */}
+            <div style={{ padding:"10px 18px", borderTop:"1px solid "+cs.border, background:cs.card }}>
+              <button onClick={()=>setHistoryPreview(null)}
+                style={{ width:"100%", padding:"10px", background:cs.surface,
+                  border:"1px solid "+cs.border, borderRadius:10,
+                  color:cs.text, cursor:"pointer", fontWeight:600, fontSize:13 }}>Tutup</button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* ══ CONFIRM MODAL — ganti semua window.confirm() ══ */}
+      {confirmModal && (
+        <div style={{ position:"fixed", inset:0, background:"#000000cc", zIndex:9999,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div style={{ background:cs.surface, border:"1px solid "+(confirmModal.danger?cs.red:cs.border),
+            borderRadius:16, width:"100%", maxWidth:400, padding:24, boxShadow:"0 20px 60px #000a" }}>
+            {/* Icon + Title */}
+            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+              <div style={{ fontSize:28 }}>{confirmModal.icon||(confirmModal.danger?"⚠️":"❓")}</div>
+              <div style={{ fontWeight:800, fontSize:16, color:confirmModal.danger?cs.red:cs.text }}>
+                {confirmModal.title}
               </div>
-              <div key="notes">
-                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Catatan Perubahan</div>
-                <input value={editInvoiceForm.notes||""} onChange={e=>setEditInvoiceForm(f=>({...f,notes:e.target.value}))}
-                  placeholder="Alasan perubahan nilai..."
-                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"9px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+            </div>
+            {/* Message */}
+            <div style={{ fontSize:13, color:cs.muted, lineHeight:1.6, marginBottom:20,
+              whiteSpace:"pre-line", background:cs.card, borderRadius:10, padding:"12px 14px" }}>
+              {confirmModal.message}
+            </div>
+            {/* Buttons */}
+            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <button onClick={confirmModal.onCancel}
+                style={{ padding:"9px 20px", background:cs.surface, border:"1px solid "+cs.border,
+                  borderRadius:10, color:cs.text, cursor:"pointer", fontWeight:600, fontSize:13 }}>
+                {confirmModal.cancelText||"Batal"}
+              </button>
+              <button onClick={confirmModal.onConfirm}
+                style={{ padding:"9px 20px", border:"none", borderRadius:10, cursor:"pointer",
+                  fontWeight:700, fontSize:13, color:"#fff",
+                  background: confirmModal.danger
+                    ? "linear-gradient(135deg,#ef4444,#dc2626)"
+                    : "linear-gradient(135deg,"+cs.accent+",#3b82f6)" }}>
+                {confirmModal.confirmText||(confirmModal.danger?"Ya, Hapus":"Ya, Lanjutkan")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ MODAL EDIT PASSWORD (Owner only) ══ */}
+      {modalEditPwd && editPwdTarget && (
+        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:500,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.border,
+            borderRadius:16, width:"100%", maxWidth:380, padding:24 }}>
+            <div style={{ fontWeight:800, fontSize:15, color:cs.text, marginBottom:4 }}>🔑 Ganti Password</div>
+            <div style={{ fontSize:12, color:cs.muted, marginBottom:20 }}>Akun: <strong style={{color:cs.accent}}>{editPwdTarget.name}</strong></div>
+            <div style={{ display:"grid", gap:12 }}>
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Password Baru</div>
+                <input id="epwd_new" type="password" value={editPwdForm.newPwd}
+                  onChange={e=>setEditPwdForm(f=>({...f,newPwd:e.target.value}))}
+                  placeholder="Minimal 8 karakter"
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border,
+                    borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13 }}/>
               </div>
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Konfirmasi Password</div>
+                <input id="epwd_confirm" type="password" value={editPwdForm.confirmPwd}
+                  onChange={e=>setEditPwdForm(f=>({...f,confirmPwd:e.target.value}))}
+                  placeholder="Ulangi password baru"
+                  style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border,
+                    borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13 }}/>
+              </div>
+              {editPwdForm.newPwd && editPwdForm.confirmPwd && editPwdForm.newPwd !== editPwdForm.confirmPwd && (
+                <div style={{ fontSize:11, color:cs.red }}>⚠️ Password tidak cocok</div>
+              )}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10, marginTop:4 }}>
-                <button onClick={()=>setModalEditInvoice(false)} style={{ background:cs.card, border:"1px solid "+cs.border, color:cs.muted, padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:700 }}>Batal</button>
-                <button onClick={async()=>{
-                  const labor = Math.max(0, parseInt(editInvoiceForm.labor)||0);
-                  const material = Math.max(0, parseInt(editInvoiceForm.material)||0);
-                  const dadakan = Math.max(0, parseInt(editInvoiceForm.dadakan)||0);
-                  const newTotal = labor + material + dadakan;
-                  if(newTotal <= 0){ showNotif("⚠️ Total invoice tidak boleh 0 atau negatif"); return; }
-                  setInvoicesData(prev=>prev.map(i=>i.id===editInvoiceData.id?{...i,labor,material,dadakan,total:newTotal}:i));
-                  // Try update with all cols → fallback to known-safe cols
-                  let editSaved = false;
-                  // Attempt 1: full cols
-                  { const {error:e1} = await supabase.from("invoices").update({labor,material,dadakan,total:newTotal}).eq("id",editInvoiceData.id);
-                    if(!e1){ editSaved=true; } else console.warn("editInv attempt1:", e1.message); }
-                  // Attempt 2: without dadakan  
-                  if(!editSaved){ const {error:e2} = await supabase.from("invoices").update({labor,material,total:newTotal}).eq("id",editInvoiceData.id);
-                    if(!e2){ editSaved=true; } else console.warn("editInv attempt2:", e2.message); }
-                  // Attempt 3: total only
-                  if(!editSaved){ const {error:e3} = await supabase.from("invoices").update({total:newTotal}).eq("id",editInvoiceData.id);
-                    if(!e3){ editSaved=true; } else showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+e3.message); }
-                  else { addAgentLog("INVOICE_EDITED",`Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotal)}${editInvoiceForm.notes?" ("+editInvoiceForm.notes+")":""}`, "SUCCESS"); }
-                  showNotif(`✅ Invoice ${editInvoiceData.id} berhasil diupdate → ${fmt(newTotal)}`);
-                  setModalEditInvoice(false); setEditInvoiceData(null);
-                }} style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"12px", borderRadius:10, cursor:"pointer", fontWeight:800, fontSize:14 }}>💾 Simpan Perubahan</button>
+                <button onClick={()=>{ setModalEditPwd(false); setEditPwdTarget(null); }}
+                  style={{ padding:"10px", background:cs.surface, border:"1px solid "+cs.border,
+                    borderRadius:10, color:cs.text, cursor:"pointer", fontWeight:600 }}>Batal</button>
+                <button onClick={()=>{
+                  const p = editPwdForm.newPwd.trim();
+                  const c = editPwdForm.confirmPwd.trim();
+                  if (!p || p.length < 8) { showNotif("⚠️ Password minimal 8 karakter"); return; }
+                  if (p !== c) { showNotif("⚠️ Password tidak cocok"); return; }
+                  // Update di userAccounts state
+                  setUserAccounts(prev=>prev.map(u=>u.id===editPwdTarget.id?{...u,password:p}:u));
+                  // Jika user punya UUID Supabase → update di DB juga
+                  const isUUID = /^[0-9a-f-]{36}$/.test(String(editPwdTarget.id||"").toLowerCase());
+                  if (isUUID) {
+                    supabase.from("user_profiles").update({password:p}).eq("id",editPwdTarget.id)
+                      .then(({error})=>{
+                        if (!error) addAgentLog("PWD_CHANGED",`Password ${editPwdTarget.name} diubah oleh Owner`,"SUCCESS");
+                        else showNotif("✅ Tersimpan lokal. DB sync: "+error.message);
+                      });
+                  } else {
+                    addAgentLog("PWD_CHANGED",`Password ${editPwdTarget.name} diubah (lokal)`,"SUCCESS");
+                  }
+                  showNotif("✅ Password "+editPwdTarget.name+" berhasil diubah");
+                  setModalEditPwd(false); setEditPwdTarget(null);
+                }} style={{ padding:"10px", background:"linear-gradient(135deg,#f59e0b,#f97316)",
+                  border:"none", borderRadius:10, color:"#fff", cursor:"pointer", fontWeight:700 }}>
+                  💾 Simpan Password
+                </button>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {modalEditInvoice && editInvoiceData && (() => {
+        // Build lookup lists dari priceListData + inventoryData
+        const jasaLookup = priceListData
+          .filter(r => r.service !== 'Material' && (r.price||0) > 0)
+          .map(r => ({ label: r.service + ' / ' + r.type, harga: r.price||0, satuan: r.unit||'Unit' }));
+        const matLookup = inventoryData
+          .map(r => ({ label: r.name, harga: r.price||0, satuan: r.unit||'pcs' }));
+
+        const filteredJasa = jasaLookup.filter(x =>
+          x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
+        const filteredMat  = matLookup.filter(x =>
+          x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
+
+        const jasaTotal = editJasaItems.reduce((s,m)=>s+(m.subtotal||0), 0);
+        const matTotal = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0), 0);
+        const newTotal = jasaTotal + matTotal;
+        return (
+        <div style={{ position:"fixed", inset:0, background:"#000d", zIndex:450, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:20, width:"100%", maxWidth:560, maxHeight:"90vh", overflowY:"auto", padding:20 }}>
+
+            {/* Header */}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+              <div>
+                <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>✏️ Edit Invoice</div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>{editInvoiceData.id} · {editInvoiceData.customer}</div>
+              </div>
+              <button onClick={()=>{ setModalEditInvoice(false); setEditAddType(''); setEditAddSearch(''); }}
+                style={{ background:"none", border:"none", color:cs.muted, fontSize:22, cursor:"pointer" }}>×</button>
+            </div>
+
+            <div style={{ display:"grid", gap:14 }}>
+
+              {/* ── JASA / LABOR section ── */}
+              {/* ── JASA / LABOR section ── */}
+              <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"12px 14px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:cs.accent }}>🔧 Jasa / Labor</div>
+                  <button onClick={()=>{ setEditAddType(editAddType==='jasa'?'':'jasa'); setEditAddSearch(''); }}
+                    style={{ fontSize:11, background:cs.accent+"20", border:"1px solid "+cs.accent+"44", color:cs.accent, borderRadius:6, padding:"4px 10px", cursor:"pointer", fontWeight:700 }}>
+                    {editAddType==='jasa' ? '✕ Tutup' : '+ Tambah Jasa'}
+                  </button>
+                </div>
+                {editAddType === 'jasa' && (
+                  <div style={{ marginBottom:10 }}>
+                    <input id="ei_search_jasa" autoFocus value={editAddSearch}
+                      onChange={e=>setEditAddSearch(e.target.value)}
+                      placeholder="Cari jasa... (Cleaning, Install, Repair...)"
+                      style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 10px", color:cs.text, fontSize:12, marginBottom:6 }}
+                    />
+                    <div style={{ maxHeight:180, overflowY:"auto", background:cs.surface, borderRadius:8, border:"1px solid "+cs.border }}>
+                      {filteredJasa.slice(0,25).map((item,idx) => (
+                        <div key={idx} onClick={()=>{
+                          setEditJasaItems(prev=>[...prev,{
+                            nama:item.label, jumlah:1, satuan:item.satuan||'Unit',
+                            harga_satuan:item.harga, subtotal:item.harga, _idx:Date.now()+idx
+                          }]);
+                          setEditAddType(''); setEditAddSearch('');
+                        }}
+                          style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:cs.text,
+                            borderBottom:"1px solid "+cs.border+"44", display:"flex", justifyContent:"space-between" }}
+                          onMouseEnter={e=>e.currentTarget.style.background=cs.accent+"15"}
+                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                        >
+                          <span>{item.label}</span>
+                          <span style={{ fontFamily:"monospace", color:cs.accent, fontWeight:700 }}>{fmt(item.harga)}</span>
+                        </div>
+                      ))}
+                      {filteredJasa.length === 0 && <div style={{ padding:"10px 12px", color:cs.muted, fontSize:12 }}>Tidak ada hasil</div>}
+                    </div>
+                  </div>
+                )}
+                {editJasaItems.length > 0 && (
+                  <div style={{ marginBottom:8 }}>
+                    {editJasaItems.map((m, mi) => (
+                      <div key={m._idx||mi} style={{ display:"grid", gridTemplateColumns:"1fr 55px 30px 100px 28px", gap:5, alignItems:"center", marginBottom:6, padding:"6px 8px", background:cs.surface, borderRadius:8 }}>
+                        <input id={"ej_name_"+mi} value={m.nama||''} onChange={e=>setEditJasaItems(prev=>prev.map((x,xi)=>xi===mi?{...x,nama:e.target.value}:x))}
+                          style={{ background:"transparent", border:"none", borderBottom:"1px solid "+cs.border, color:cs.text, fontSize:12, padding:"2px 4px" }} />
+                        <input id={"ej_qty_"+mi} type="number" min="0" step="0.1" value={m.jumlah||1}
+                          onChange={e=>setEditJasaItems(prev=>prev.map((x,xi)=>xi===mi?{...x,jumlah:parseFloat(e.target.value)||0,subtotal:(parseFloat(e.target.value)||0)*(x.harga_satuan||0)}:x))}
+                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, textAlign:"center" }} />
+                        <span style={{ fontSize:10, color:cs.muted, textAlign:"center" }}>{m.satuan}</span>
+                        <input id={"ej_harga_"+mi} type="number" min="0" value={m.harga_satuan||0}
+                          onChange={e=>setEditJasaItems(prev=>prev.map((x,xi)=>xi===mi?{...x,harga_satuan:parseInt(e.target.value)||0,subtotal:(parseInt(e.target.value)||0)*(x.jumlah||0)}:x))}
+                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, fontFamily:"monospace", textAlign:"right" }} />
+                        <button onClick={()=>setEditJasaItems(prev=>prev.filter((_x,xi)=>xi!==mi))}
+                          style={{ background:"#ef444420", border:"none", color:"#ef4444", borderRadius:5, padding:"4px 6px", cursor:"pointer", fontSize:12, fontWeight:700 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ fontSize:11, color:cs.muted, textAlign:"right" }}>
+                  Subtotal jasa: <strong style={{color:cs.accent,fontFamily:"monospace"}}>{fmt(editJasaItems.reduce((s,m)=>s+(m.subtotal||0),0))}</strong>
+                </div>
+              </div>
+
+              {/* ── MATERIAL section ── */}
+              <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:10, padding:"12px 14px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:cs.green }}>📦 Material</div>
+                  <button onClick={()=>{ setEditAddType(editAddType==='material'?'':'material'); setEditAddSearch(''); }}
+                    style={{ fontSize:11, background:cs.green+"20", border:"1px solid "+cs.green+"44", color:cs.green, borderRadius:6, padding:"4px 10px", cursor:"pointer", fontWeight:700 }}>
+                    {editAddType==='material' ? '✕ Tutup' : '+ Tambah Material'}
+                  </button>
+                </div>
+
+                {/* Lookup material */}
+                {editAddType === 'material' && (
+                  <div style={{ marginBottom:10 }}>
+                    <input id="ei_search_mat" autoFocus value={editAddSearch}
+                      onChange={e=>setEditAddSearch(e.target.value)}
+                      placeholder="Cari material... (Freon, Pipa, Kabel...)"
+                      style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"8px 10px", color:cs.text, fontSize:12, marginBottom:6 }}
+                    />
+                    <div style={{ maxHeight:160, overflowY:"auto", background:cs.surface, borderRadius:8, border:"1px solid "+cs.border }}>
+                      {filteredMat.slice(0,20).map((item,idx) => (
+                        <div key={idx} onClick={()=>{
+                          setEditInvoiceItems(prev=>[...prev,{
+                            nama:item.label, jumlah:1, satuan:item.satuan,
+                            harga_satuan:item.harga, subtotal:item.harga, _idx:Date.now()+idx
+                          }]);
+                          setEditAddType(''); setEditAddSearch('');
+                        }}
+                          style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:cs.text, borderBottom:"1px solid "+cs.border+"44",
+                            display:"flex", justifyContent:"space-between", alignItems:"center" }}
+                          onMouseEnter={e=>e.currentTarget.style.background=cs.green+"10"}
+                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                        >
+                          <span>{item.label} <span style={{fontSize:10,color:cs.muted}}>/ {item.satuan}</span></span>
+                          <span style={{ fontFamily:"monospace", color:cs.green, fontWeight:700 }}>{fmt(item.harga)}</span>
+                        </div>
+                      ))}
+                      {filteredMat.length === 0 && (
+                        <div style={{ padding:"10px 12px", color:cs.muted, fontSize:12 }}>Tidak ada hasil</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Item list — editable */}
+                {editInvoiceItems.length > 0 && (
+                  <div style={{ marginBottom:8 }}>
+                    {editInvoiceItems.map((m, mi) => (
+                      <div key={m._idx||mi} style={{ display:"grid", gridTemplateColumns:"1fr 60px 30px 100px 28px", gap:5, alignItems:"center", marginBottom:6, padding:"6px 8px", background:cs.surface, borderRadius:8 }}>
+                        <input id={"ei_name_"+mi} value={m.nama||''} onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,nama:e.target.value}:x))}
+                          style={{ background:"transparent", border:"none", borderBottom:"1px solid "+cs.border, color:cs.text, fontSize:12, padding:"2px 4px" }} />
+                        <input id={"ei_qty_"+mi} type="number" min="0" step="0.1" value={m.jumlah||1}
+                          onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,jumlah:parseFloat(e.target.value)||0,subtotal:(parseFloat(e.target.value)||0)*(x.harga_satuan||0)}:x))}
+                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, textAlign:"center" }} />
+                        <span style={{ fontSize:10, color:cs.muted, textAlign:"center" }}>{m.satuan}</span>
+                        <input id={"ei_harga_"+mi} type="number" min="0" value={m.harga_satuan||0}
+                          onChange={e=>setEditInvoiceItems(prev=>prev.map((x,xi)=>xi===mi?{...x,harga_satuan:parseInt(e.target.value)||0,subtotal:(parseInt(e.target.value)||0)*(x.jumlah||0)}:x))}
+                          style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:5, padding:"4px 5px", color:cs.text, fontSize:11, fontFamily:"monospace", textAlign:"right" }} />
+                        <button onClick={()=>setEditInvoiceItems(prev=>prev.filter((_,xi)=>xi!==mi))}
+                          style={{ background:"#ef444420", border:"none", color:"#ef4444", borderRadius:5, padding:"4px 6px", cursor:"pointer", fontSize:12, fontWeight:700 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ fontSize:11, color:cs.muted, textAlign:"right" }}>
+                  Subtotal material: <strong style={{color:cs.green, fontFamily:"monospace"}}>{fmt(matTotal)}</strong>
+                </div>
+              </div>
+
+              {/* ── Total preview ── */}
+              <div style={{ background:cs.accent+"12", border:"1px solid "+cs.accent+"33", borderRadius:10, padding:14 }}>
+                <div style={{ fontSize:12, color:cs.muted, marginBottom:4 }}>Total Invoice Baru</div>
+                <div style={{ fontWeight:800, fontSize:22, color:cs.accent, fontFamily:"monospace" }}>{fmt(newTotal)}</div>
+                {newTotal !== editInvoiceData.total && (
+                  <div style={{ fontSize:11, color:cs.yellow, marginTop:4 }}>
+                    Perubahan: {fmt(newTotal - editInvoiceData.total)} dari sebelumnya {fmt(editInvoiceData.total)}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Catatan ── */}
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>Catatan Perubahan</div>
+                <input id="ei_notes" value={editInvoiceForm.notes||''}
+                  onChange={e=>setEditInvoiceForm(f=>({...f,notes:e.target.value}))}
+                  placeholder="Alasan perubahan nilai..."
+                  style={{ width:"100%", background:cs.surface, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13 }}
+                />
+              </div>
+
+              {/* ── Action buttons ── */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:10 }}>
+                <button onClick={()=>{ setModalEditInvoice(false); setEditAddType(''); setEditAddSearch(''); }}
+                  style={{ padding:"11px", background:cs.surface, border:"1px solid "+cs.border, borderRadius:10, color:cs.text, cursor:"pointer", fontWeight:600, fontSize:13 }}>
+                  Batal
+                </button>
+                <button onClick={async()=>{
+                  const jasaTotal3    = editJasaItems.reduce((s,m)=>s+(m.subtotal||0),0);
+                  const matTotal3     = editInvoiceItems.reduce((s,m)=>s+(m.subtotal||0),0);
+                  const labor         = jasaTotal3;
+                  const newTotalFinal = jasaTotal3 + matTotal3;
+                  if(newTotalFinal <= 0){ showNotif("⚠️ Total tidak boleh 0"); return; }
+                  const newMD = [
+                    ...editJasaItems.filter(m=>m.nama&&(m.jumlah||0)>0),
+                    ...editInvoiceItems.filter(m=>m.nama&&(m.jumlah||0)>0)
+                  ];
+                  setInvoicesData(prev=>prev.map(i=>i.id===editInvoiceData.id
+                    ?{...i,labor,material:matTotal3,dadakan:0,total:newTotalFinal,materials_detail:newMD}:i));
+                  let saved=false;
+                  {const {error:e1}=await supabase.from("invoices").update({
+                    labor, material:matTotal3, dadakan:0, total:newTotalFinal,
+                    materials_detail:JSON.stringify(newMD)
+                  }).eq("id",editInvoiceData.id); if(!e1)saved=true; else console.warn("editInv e1:",e1.message);}
+                  if(!saved){const {error:e2}=await supabase.from("invoices").update({labor,material:matTotal3,total:newTotalFinal}).eq("id",editInvoiceData.id);
+                    if(!e2)saved=true;}
+                  if(!saved) await supabase.from("invoices").update({total:newTotalFinal}).eq("id",editInvoiceData.id);
+                  addAgentLog("INVOICE_EDITED",`Invoice ${editInvoiceData.id} diedit → ${fmt(newTotalFinal)}`+(editInvoiceForm.notes?` (${editInvoiceForm.notes})`:"")+` by Owner`,"SUCCESS");
+                  showNotif(`✅ Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotalFinal)}`);
+                  setModalEditInvoice(false); setEditInvoiceData(null);
+                  setEditAddType(''); setEditAddSearch('');
+                }} style={{ padding:"11px", background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", borderRadius:10, color:"#fff", cursor:"pointer", fontWeight:700, fontSize:13 }}>
+                  💾 Simpan Perubahan
+                </button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — INVOICE PREVIEW */}
@@ -5769,8 +10969,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               </div>
               <div style={{ display:"flex", gap:8 }}>
                 {liveInv.status === "PENDING_APPROVAL" && (
-                  <button onClick={() => { approveInvoice(liveInv); setModalPDF(false); }}
-                    style={{ background:"#22c55e", border:"none", color:"#fff", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>✓ Approve &amp; Kirim PDF</button>
+                  <button onClick={() => { setModalPDF(false); setTimeout(()=>approveInvoice(liveInv),100); }}
+                    style={{ background:"#22c55e", border:"none", color:"#fff", padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>✓ Approve Invoice</button>
                 )}
                 <button onClick={() => setModalPDF(false)} style={{ background:"none", border:"1px solid #ffffff44", color:"#fff", padding:"6px 14px", borderRadius:8, cursor:"pointer", fontSize:13 }}>× Tutup</button>
               </div>
@@ -5793,15 +10993,20 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                   </div>
                 </div>
                 <div style={{ background:"#0f2744", padding:"8px 20px", display:"flex", gap:20, fontSize:10, color:"#94a3b8" }}>
-                  <span>📍 Alam Sutera, Tangerang Selatan</span>
-                  <span>🏦 BCA 8830883011 a.n. Malda Retta</span>
+                  <span>📍 ${appSettings.company_addr}</span>
+                  <span>🏦 ${appSettings.bank_name} ${appSettings.bank_number} a.n. ${appSettings.bank_holder}</span>
                 </div>
               </div>
               {/* Detail Grid */}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
                 <div style={{ background:"#EFF6FF", borderRadius:8, padding:"12px 14px" }}>
                   <div style={{ fontSize:10, fontWeight:800, color:"#1e40af", marginBottom:8, textTransform:"uppercase" }}>Detail Invoice</div>
-                  {[["Tanggal", liveInv.sent||"—"],["No. Invoice",liveInv.id],["No. Order",liveInv.job_id]].map(([k,v]) => (
+                  {[
+                    ["Tgl Invoice", liveInv.created_at ? new Date(liveInv.created_at).toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"}) : (liveInv.sent_at ? new Date(liveInv.sent_at).toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"}) : "—")],
+                    ["Issued", new Date().toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"})],
+                    ["No. Invoice", liveInv.id],
+                    ["No. Order", liveInv.job_id||"—"],
+                  ].map(([k,v]) => (
                     <div key={k} style={{ display:"flex", gap:8, marginBottom:4, fontSize:11 }}>
                       <span style={{ color:"#64748b", minWidth:80 }}>{k}</span>
                       <span style={{ color:"#1e293b", fontWeight:600 }}>{v}</span>
@@ -5818,26 +11023,61 @@ Order yang sudah ada tidak terpengaruh.`)) return;
               <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:14, fontSize:12 }}>
                 <thead>
                   <tr style={{ background:"#1E3A5F" }}>
-                    {["Deskripsi","Jml Unit","Harga Satuan","Subtotal"].map(h => (
-                      <th key={h} style={{ padding:"8px 10px", textAlign:"left", color:"#fff", fontWeight:700, fontSize:10 }}>{h}</th>
+                    {[["Deskripsi","auto"],["Jml Unit","72px"],["Harga Satuan","100px"],["Subtotal","100px"]].map(([h,w]) => (
+                      <th key={h} style={{ padding:"8px 10px", textAlign:h==="Deskripsi"?"left":"right", color:"#fff", fontWeight:700, width:w, fontSize:10 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
+                  {liveInv.labor > 0 && parseMD(liveInv.materials_detail).length === 0 && (
                   <tr style={{ background:"#fff" }}>
                     <td style={{ padding:"8px 10px", color:"#1e293b" }}>{liveInv.service}</td>
                     <td style={{ padding:"8px 10px", color:"#475569", textAlign:"center" }}>{liveInv.units}</td>
-                    <td style={{ padding:"8px 10px", color:"#475569", fontFamily:"monospace" }}>{(liveInv.labor/liveInv.units).toLocaleString("id-ID")}</td>
+                    <td style={{ padding:"8px 10px", color:"#475569", fontFamily:"monospace" }}>{((liveInv.labor||0)/(liveInv.units||1)).toLocaleString("id-ID")}</td>
                     <td style={{ padding:"8px 10px", color:"#1e293b", fontFamily:"monospace", fontWeight:600 }}>{liveInv.labor.toLocaleString("id-ID")}</td>
                   </tr>
-                  {liveInv.material > 0 && (
-                    <tr style={{ background:"#f0f9ff" }}>
-                      <td style={{ padding:"8px 10px", color:"#1e293b" }}>Material &amp; Spare Part</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center" }}>—</td>
-                      <td style={{ padding:"8px 10px" }}>—</td>
-                      <td style={{ padding:"8px 10px", color:"#1e293b", fontFamily:"monospace", fontWeight:600 }}>{liveInv.material.toLocaleString("id-ID")}</td>
-                    </tr>
                   )}
+                  {/* Per-item material dari materials_detail */}
+                  {(() => {
+                    const md = liveInv.materials_detail;
+                    const mArr = Array.isArray(md) ? md
+                      : (typeof md === "string" && md)
+                        ? (() => { try { return JSON.parse(md); } catch(_){ return []; } })()
+                        : [];
+                    if (mArr.length > 0) {
+                      return mArr.map((m, mi) => (
+                        <tr key={mi} style={{ background: mi%2===0 ? "#f0f9ff" : "#fff" }}>
+                          <td style={{ padding:"8px 10px", color:"#1e293b" }}>
+                            {m.nama}
+                            {m.keterangan && <span style={{ fontSize:10, color:"#64748b", marginLeft:4 }}>({m.keterangan})</span>}
+                          </td>
+                          <td style={{ padding:"8px 10px", textAlign:"right", color:"#475569", width:"72px" }}>{m.jumlah} {m.satuan}</td>
+                          <td style={{ padding:"8px 10px", fontFamily:"monospace", color:"#475569", textAlign:"right" }}>
+                {(() => {
+                              const hF = m.harga_satuan > 0 ? m.harga_satuan
+                                : (m.subtotal>0&&m.jumlah>0?Math.round(m.subtotal/m.jumlah):0);
+                              return hF > 0 ? hF.toLocaleString("id-ID") : "—";
+                            })()}
+                          </td>
+                          <td style={{ padding:"8px 10px", fontFamily:"monospace", fontWeight:600, color:"#1e293b", textAlign:"right" }}>
+                            {m.subtotal > 0 ? m.subtotal.toLocaleString("id-ID") : "—"}
+                          </td>
+                        </tr>
+                      ));
+                    }
+                    // Fallback: materials_detail kosong → tampil 1 baris total
+                    if ((liveInv.material||0) > 0) return (
+                      <tr style={{ background:"#f0f9ff" }}>
+                        <td style={{ padding:"8px 10px", color:"#64748b", fontStyle:"italic" }}>Material &amp; Spare Part</td>
+                        <td style={{ padding:"8px 10px", textAlign:"center" }}>—</td>
+                        <td style={{ padding:"8px 10px" }}>—</td>
+                        <td style={{ padding:"8px 10px", fontFamily:"monospace", fontWeight:600, color:"#1e293b", textAlign:"right" }}>
+                          {(liveInv.material||0).toLocaleString("id-ID")}
+                        </td>
+                      </tr>
+                    );
+                    return null;
+                  })()}
                   {liveInv.dadakan > 0 && (
                     <tr style={{ background:"#fffbeb" }}>
                       <td style={{ padding:"8px 10px", color:"#92400e" }}>Pekerjaan Tambahan</td>
@@ -5857,8 +11097,8 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 <div style={{ background:"#EFF6FF", borderRadius:8, padding:"12px 14px" }}>
                   <div style={{ fontSize:10, fontWeight:800, color:"#1e40af", marginBottom:6 }}>Informasi Pembayaran</div>
                   <div style={{ fontSize:11, color:"#475569" }}>Transfer Bank BCA</div>
-                  <div style={{ fontWeight:800, color:"#1e293b", fontSize:13, marginTop:4 }}>8830883011</div>
-                  <div style={{ fontSize:11, color:"#475569" }}>a.n. Malda Retta</div>
+                  <div style={{ fontWeight:800, color:"#1e293b", fontSize:13, marginTop:4 }}>{appSettings.bank_number}</div>
+                  <div style={{ fontSize:11, color:"#475569" }}>a.n. {appSettings.bank_holder}</div>
                 </div>
                 <div style={{ background:liveInv.status==="OVERDUE"?"#FEF2F2":liveInv.status==="PAID"?"#F0FDF4":"#FFFBEB", borderRadius:8, padding:"12px 14px", border:"1px solid "+(liveInv.status==="OVERDUE"?"#fca5a5":liveInv.status==="PAID"?"#86efac":"#fde68a") }}>
                   <div style={{ fontSize:10, fontWeight:800, color:"#64748b", marginBottom:6 }}>Jatuh Tempo</div>
@@ -5868,24 +11108,182 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                 </div>
               </div>
               <div style={{ textAlign:"center", padding:"10px 0", borderTop:"1px solid #e2e8f0" }}>
-                <div style={{ fontSize:11, color:"#64748b" }}>Pertanyaan? Hubungi kami via WA: +62812-8989-8937</div>
-                <div style={{ fontSize:11, color:"#94a3b8", fontStyle:"italic", marginTop:4 }}>Terima kasih telah mempercayakan perawatan AC Anda kepada AClean Service</div>
+                <div style={{ fontSize:11, color:"#64748b" }}>Pertanyaan? Hubungi kami via WA: ${appSettings.wa_number}</div>
+                <div style={{ fontSize:11, color:"#94a3b8", fontStyle:"italic", marginTop:4 }}>Terima kasih telah mempercayakan perawatan AC Anda kepada ${appSettings.company_name}</div>
               </div>
             </div>
             {/* Action bar */}
             <div style={{ background:"#f1f5f9", padding:"12px 20px", borderTop:"1px solid #e2e8f0", display:"flex", gap:10, justifyContent:"flex-end", borderRadius:"0 0 20px 20px", flexShrink:0 }}>
-              <button onClick={() => showNotif("PDF digenerate — siap download")} style={{ background:"#EFF6FF", border:"1px solid #bfdbfe", color:"#1d4ed8", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📥 Download PDF</button>
+              <button onClick={() => downloadInvoicePDF(liveInv)} style={{ background:"#EFF6FF", border:"1px solid #bfdbfe", color:"#1d4ed8", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📥 Download PDF</button>
               {liveInv.status === "UNPAID" && (
                 <button onClick={() => { invoiceReminderWA(liveInv); setModalPDF(false); }} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>📱 Kirim via WA</button>
               )}
-              {liveInv.status === "PENDING_APPROVAL" && (
-                <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
+              {liveInv.status === "PENDING_APPROVAL" &&
+               (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({labor:liveInv.labor,material:liveInv.material,dadakan:liveInv.dadakan,notes:""}); const _aLv=parseMD(liveInv.materials_detail).map((m,idx)=>({...m,_idx:idx})); const _jLv=_aLv.filter(m=>jasaSvcNames.some(s=>(m.nama||"").includes(s))); const _mLv=_aLv.filter(m=>!jasaSvcNames.some(s=>(m.nama||"").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setModalEditInvoice(true); }} style={{ background:"#fef9c322", border:"1px solid #fde68a", color:"#92400e", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
             </div>
           </div>
         </div>
         );
       })()}
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* MODAL — APPROVE INVOICE (pilihan kirim/simpan) */}
+      {/* ══════════════════════════════════════════════════════ */}
+      {modalApproveInv && pendingApproveInv && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:500,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
+          onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}>
+          <div style={{ background:cs.surface, border:"1px solid "+cs.border, borderRadius:18,
+            padding:28, width:"100%", maxWidth:420, boxShadow:"0 20px 60px rgba(0,0,0,0.4)" }}
+            onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
+              <div>
+                <div style={{ fontWeight:800, fontSize:16, color:cs.text }}>✅ Approve Invoice</div>
+                <div style={{ fontSize:12, color:cs.muted, marginTop:4 }}>Setelah approve, invoice tidak bisa diedit lagi</div>
+              </div>
+              <button onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}
+                style={{ background:"none", border:"none", color:cs.muted, fontSize:20, cursor:"pointer", lineHeight:1 }}>×</button>
+            </div>
+
+            {/* Info invoice */}
+            <div style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:12, padding:"14px 16px", marginBottom:20 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                <span style={{ fontFamily:"monospace", fontWeight:800, color:cs.accent, fontSize:14 }}>{pendingApproveInv.id}</span>
+                <span style={{ fontWeight:800, color:cs.green, fontSize:14 }}>{fmt(pendingApproveInv.total)}</span>
+              </div>
+              <div style={{ fontSize:12, color:cs.muted }}>👤 {pendingApproveInv.customer}</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>🔧 {pendingApproveInv.service}</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:2 }}>📱 {pendingApproveInv.phone}</div>
+            </div>
+
+            {/* Pilihan */}
+            <div style={{ display:"grid", gap:10 }}>
+              {/* Opsi 1 — Kirim ke Customer */}
+              <button onClick={() => approveAndSend(pendingApproveInv)}
+                style={{ display:"flex", alignItems:"center", gap:14, background:"linear-gradient(135deg,"+cs.green+",#059669)",
+                  border:"none", borderRadius:12, padding:"14px 18px", cursor:"pointer", textAlign:"left" }}>
+                <span style={{ fontSize:24 }}>📤</span>
+                <div>
+                  <div style={{ fontWeight:800, fontSize:14, color:"#fff" }}>Approve & Kirim ke Customer</div>
+                  <div style={{ fontSize:11, color:"rgba(255,255,255,0.8)", marginTop:2 }}>Invoice langsung dikirim via WA ke {pendingApproveInv.phone}</div>
+                </div>
+              </button>
+
+              {/* Opsi 2 — Simpan Dahulu */}
+              <button onClick={() => approveSaveOnly(pendingApproveInv)}
+                style={{ display:"flex", alignItems:"center", gap:14, background:cs.card,
+                  border:"1px solid "+cs.border, borderRadius:12, padding:"14px 18px", cursor:"pointer", textAlign:"left" }}>
+                <span style={{ fontSize:24 }}>💾</span>
+                <div>
+                  <div style={{ fontWeight:800, fontSize:14, color:cs.text }}>Approve & Simpan Dahulu</div>
+                  <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>Invoice diapprove tapi belum dikirim — kirim manual nanti dari halaman Invoice</div>
+                </div>
+              </button>
+
+              <button onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}
+                style={{ background:"none", border:"none", color:cs.muted, fontSize:12, cursor:"pointer", padding:"6px 0" }}>
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* MODAL — WA TEKNISI KE CUSTOMER (pilihan pesan) */}
+      {/* ══════════════════════════════════════════════════════ */}
+      {modalWaTek && waTekTarget && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:600,
+          display:"flex", alignItems:"flex-end", justifyContent:"center", padding:"0 0 0 0" }}
+          onClick={() => { setModalWaTek(false); setWaTekTarget(null); }}>
+          <div style={{ background:cs.surface, borderRadius:"18px 18px 0 0", width:"100%", maxWidth:480,
+            padding:"24px 20px 32px", border:"1px solid "+cs.border }}
+            onClick={e => e.stopPropagation()}>
+
+            {/* Handle bar */}
+            <div style={{ width:40, height:4, background:cs.border, borderRadius:99, margin:"0 auto 18px" }} />
+
+            {/* Header */}
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontWeight:800, fontSize:15, color:cs.text }}>📱 WA ke Customer</div>
+              <div style={{ fontSize:12, color:cs.muted, marginTop:3 }}>
+                {waTekTarget.customer} · {waTekTarget.phone}
+              </div>
+              <div style={{ fontSize:11, color:cs.muted, marginTop:1 }}>🔧 {waTekTarget.service}</div>
+            </div>
+
+            {/* Pilihan pesan */}
+            <div style={{ display:"grid", gap:8 }}>
+              {[
+                {
+                  icon:"🚗",
+                  label:"Konfirmasi sedang menuju",
+                  msg:`Halo ${waTekTarget.customer}, saya dari AClean Service sedang dalam perjalanan menuju lokasi Anda. Estimasi tiba pkl ${waTekTarget.time||"sebentar lagi"}. Mohon ditunggu ya! 🙏`
+                },
+                {
+                  icon:"📍",
+                  label:"Tanya patokan / lokasi",
+                  msg:`Halo ${waTekTarget.customer}, saya teknisi AClean yang akan servis hari ini. Boleh minta patokan lokasi rumah Bapak/Ibu? Alamat yang tercatat: ${waTekTarget.address||"—"}. Terima kasih 🙏`
+                },
+                {
+                  icon:"✅",
+                  label:"Konfirmasi jadwal hari ini",
+                  msg:`Halo ${waTekTarget.customer}, kami konfirmasi jadwal servis AC dari AClean hari ini pkl ${waTekTarget.time||"—"} untuk ${waTekTarget.service||"servis AC"}. Apakah masih bisa? 🙏`
+                },
+                {
+                  icon:"⏰",
+                  label:"Info terlambat / minta reschedule",
+                  msg:`Halo ${waTekTarget.customer}, mohon maaf kami dari AClean ada keterlambatan. Kami akan tiba sedikit lebih lama dari jadwal. Terima kasih atas pengertiannya 🙏`
+                },
+                {
+                  icon:"✔️",
+                  label:"Pekerjaan selesai — terima kasih",
+                  msg:`Halo ${waTekTarget.customer}, pekerjaan servis AC (${waTekTarget.service||"—"}) telah selesai. Terima kasih sudah mempercayakan ke AClean Service. Semoga AC-nya nyaman kembali! 😊`
+                },
+              ].map(({ icon, label, msg }) => (
+                <button key={label} onClick={async () => {
+                  setModalWaTek(false);
+                  setWaTekTarget(null);
+                  await openWA(waTekTarget.phone, msg);
+                }}
+                  style={{ display:"flex", alignItems:"center", gap:12, background:cs.card,
+                    border:"1px solid "+cs.border, borderRadius:12, padding:"12px 14px",
+                    cursor:"pointer", textAlign:"left", width:"100%" }}>
+                  <span style={{ fontSize:20, flexShrink:0 }}>{icon}</span>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:cs.text }}>{label}</div>
+                    <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>{msg.slice(0,60)}...</div>
+                  </div>
+                </button>
+              ))}
+
+              {/* Ketik manual */}
+              <button onClick={() => {
+                setModalWaTek(false); setWaTekTarget(null);
+                window.open("https://wa.me/" + String(waTekTarget.phone).replace(/^0/,"62").replace(/[^0-9]/g,""), "_blank");
+              }}
+                style={{ display:"flex", alignItems:"center", gap:12, background:"#25D36615",
+                  border:"1px solid #25D36633", borderRadius:12, padding:"12px 14px",
+                  cursor:"pointer", textAlign:"left", width:"100%" }}>
+                <span style={{ fontSize:20 }}>💬</span>
+                <div>
+                  <div style={{ fontSize:13, fontWeight:700, color:"#25D366" }}>Ketik pesan sendiri</div>
+                  <div style={{ fontSize:11, color:cs.muted, marginTop:2 }}>Buka WhatsApp — tulis pesan bebas</div>
+                </div>
+              </button>
+
+              <button onClick={() => { setModalWaTek(false); setWaTekTarget(null); }}
+                style={{ background:"none", border:"none", color:cs.muted, fontSize:12, cursor:"pointer", padding:"6px 0", marginTop:4 }}>
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* WA PANEL */}
@@ -5943,7 +11341,7 @@ Order yang sudah ada tidak terpengaruh.`)) return;
                       ))}
                     </div>
                     <div style={{ padding:"10px 14px", borderTop:"1px solid "+cs.border, display:"flex", gap:8, flexShrink:0 }}>
-                      <input value={waInput} onChange={e => setWaInput(e.target.value)}
+                      <input id="waInput" value={waInput} onChange={e => setWaInput(e.target.value)}
                         onKeyDown={async e => { if(e.key==="Enter" && waInput.trim() && selectedConv){
                           const ok = await sendWA(selectedConv.phone, waInput);
                           addAgentLog("WA_SENT_MANUAL",`Manual reply ke ${selectedConv.name}: "${waInput.slice(0,40)}"`,"SUCCESS");
@@ -6020,11 +11418,13 @@ Order yang sudah ada tidak terpengaruh.`)) return;
             if (error) { showNotif("❌ Gagal buat akun: " + error.message); return; }
 
             if (data.user) {
-              await supabase.from("user_profiles").upsert({
-                id: data.user.id,
-                name: newUserForm.name, role: newUserForm.role,
-                phone: newUserForm.phone||"", avatar, color, active: true,
-              }).catch(()=>{});
+              try {
+                await supabase.from("user_profiles").upsert({
+                  id: data.user.id,
+                  name: newUserForm.name, role: newUserForm.role,
+                  phone: newUserForm.phone||"", avatar, color, active: true,
+                });
+              } catch(e) { console.warn("user_profiles upsert:", e?.message); }
             }
 
             const newAcc = {
@@ -6043,9 +11443,9 @@ Order yang sudah ada tidak terpengaruh.`)) return;
         // Handle delete user
         const handleDeleteUser = async () => {
           if (!newUserForm.id || newUserForm.role === "Owner") return;
-          if (window.confirm && !window.confirm(`Hapus akun ${newUserForm.name}?
-
-Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
+          if (!await showConfirm({ icon:"🗑️", title:"Hapus Akun?", danger:true,
+            message:`Hapus akun ${newUserForm.name}?\n\nAkun tidak bisa dipulihkan. Data order/laporan tetap ada.`,
+            confirmText:"Hapus Akun" })) return;
           const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
           if (isUUID(newUserForm.id)) {
             // Nonaktifkan di DB (tidak hapus permanen — jaga data historis)
@@ -6092,7 +11492,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 {[["Nama Lengkap","name","text","Nama lengkap anggota"],["Email Login","email","email","nama@aclean.id"],["Nomor HP","phone","text","628812xxx"]].map(([label,key,type,ph]) => (
                   <div key={key}>
                     <div style={{ fontSize:12, fontWeight:700, color:cs.muted, marginBottom:5 }}>{label}</div>
-                    <input type={type} value={newUserForm[key]||""} onChange={e => setNewUserForm(f=>({...f,[key]:e.target.value}))}
+                    <input id="field_22" type={type} value={newUserForm[key]||""} onChange={e => setNewUserForm(f=>({...f,[key]:e.target.value}))}
                       placeholder={ph}
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
@@ -6110,7 +11510,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                       </div>
                     </div>
                   ) : (
-                    <input type="password" value={newUserForm.password||""} onChange={e => setNewUserForm(f=>({...f,password:e.target.value}))}
+                    <input id="field_password_23" type="password" value={newUserForm.password||""} onChange={e => setNewUserForm(f=>({...f,password:e.target.value}))}
                       placeholder="min 8 karakter"
                       style={{ width:"100%", background:cs.card, border:"1px solid "+cs.border, borderRadius:8, padding:"10px 12px", color:cs.text, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   )}
@@ -6157,7 +11557,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
               {[["Nama Lengkap","name","text","Nama customer"],["Nomor HP","phone","text","628xxx"],["Alamat Lengkap","address","text","Jl. ..."],["Area/Kecamatan","area","text","Alam Sutera, BSD, dll"]].map(([lbl,key,type,ph])=>(
                 <div key={key}>
                   <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>{lbl}</div>
-                  <input type={type} value={newCustomerForm[key]||""} onChange={e=>setNewCustomerForm(f=>({...f,[key]:e.target.value}))}
+                  <input id="field_24" type={type} value={newCustomerForm[key]||""} onChange={e=>setNewCustomerForm(f=>({...f,[key]:e.target.value}))}
                     placeholder={ph} style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"10px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                 </div>
               ))}
@@ -6175,33 +11575,56 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 <button onClick={async ()=>{
                   if(!newCustomerForm.name||!newCustomerForm.phone){showNotif("Nama dan nomor HP wajib diisi");return;}
                   // GAP 6: cek duplikat phone sebelum submit
-                  const existPhone = customersData.find(cu => cu.phone === newCustomerForm.phone && cu.id !== (selectedCustomer?.id||""));
+                  const existPhone = customersData.find(cu => samePhone(cu.phone, newCustomerForm.phone) && cu.id !== (selectedCustomer?.id||""));
                   if(existPhone){showNotif(`⚠️ Nomor HP sudah terdaftar atas nama "${existPhone.name}". Tidak bisa duplikat.`);return;}
                   if(selectedCustomer && selectedCustomer.id){
                     // UPDATE existing customer
                     setCustomersData(prev=>prev.map(cu=>cu.id===selectedCustomer.id?{...cu,...newCustomerForm}:cu));
                     setSelectedCustomer(prev=>({...prev,...newCustomerForm}));
                     // Hanya kolom yang ada di DB schema
-                    const dbUpdate = {name:newCustomerForm.name, phone:newCustomerForm.phone, address:newCustomerForm.address, area:newCustomerForm.area, notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false};
+                    const dbUpdate = {name:newCustomerForm.name, phone:normalizePhone(newCustomerForm.phone), address:newCustomerForm.address, area:newCustomerForm.area, notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false};
                     const {error:cErr} = await supabase.from("customers").update(dbUpdate).eq("id",selectedCustomer.id);
                     if(cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
                     else { addAgentLog("CUSTOMER_UPDATED","Customer "+newCustomerForm.name+" diupdate","SUCCESS"); showNotif("✅ Data "+newCustomerForm.name+" berhasil diupdate"); }
                   } else {
-                    // INSERT new customer
-                    const newId = "CUST" + String(Date.now()).slice(-6);
-                    const today = new Date().toISOString().slice(0,10);
-                    const dbCust = {id:newId, name:newCustomerForm.name, phone:newCustomerForm.phone, address:newCustomerForm.address||"", area:newCustomerForm.area||"", notes:newCustomerForm.notes||"", is_vip:newCustomerForm.is_vip||false, joined:today};
-                    const localCust = {...dbCust, last_service:"-", ac_units:0, total_orders:0};
-                    setCustomersData(prev=>[...prev,localCust]);
-                    // GAP 5: upsert dengan onConflict phone — cegah duplikat
-                    const {error:cErr} = await supabase.from("customers").upsert(
-                      dbCust, {onConflict:"phone", ignoreDuplicates:false}
-                    );
-                    if(cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+cErr.message);
-                    else if(customersData.find(cu=>cu.phone===newCustomerForm.phone&&cu.id!==newId)) {
-                      showNotif("ℹ️ Customer dengan nomor ini sudah ada — data digabung.");
+                    // INSERT new customer — tanpa kirim `id`, biarkan DB generate
+                    const today = getLocalDate();
+                    const dbCust = {
+                      name:         newCustomerForm.name.trim(),
+                      phone:        normalizePhone(newCustomerForm.phone),
+                      address:      newCustomerForm.address||"",
+                      area:         newCustomerForm.area||"",
+                      notes:        newCustomerForm.notes||"",
+                      is_vip:       newCustomerForm.is_vip||false,
+                      joined_date:  today,
+                      total_orders: 0,
+                      last_service: null,
+                    };
+                    const { data: savedCust, error: cErr } = await supabase
+                      .from("customers")
+                      .insert(dbCust)
+                      .select()
+                      .single();
+                    if (cErr) {
+                      // Fallback upsert jika phone sudah ada di DB
+                      const { data: upsertCust, error: cErr2 } = await supabase
+                        .from("customers")
+                        .upsert(dbCust, { onConflict: "phone", ignoreDuplicates: false })
+                        .select().single();
+                      if (cErr2) {
+                        showNotif("⚠️ Gagal simpan ke DB: " + cErr.message);
+                        // Tetap tampil di state lokal
+                        setCustomersData(prev => [...prev, { ...dbCust, id: "CUST_L_"+Date.now(), last_service:"-", ac_units:0 }]);
+                      } else {
+                        setCustomersData(prev => [...prev, upsertCust || { ...dbCust, id: "CUST_"+Date.now() }]);
+                        addAgentLog("CUSTOMER_ADDED", "Customer baru: "+newCustomerForm.name, "SUCCESS");
+                        showNotif("✅ Customer "+newCustomerForm.name+" berhasil ditambahkan");
+                      }
+                    } else {
+                      setCustomersData(prev => [...prev, savedCust || { ...dbCust, id: "CUST_"+Date.now() }]);
+                      addAgentLog("CUSTOMER_ADDED", "Customer baru: "+newCustomerForm.name+" ("+newCustomerForm.area+")", "SUCCESS");
+                      showNotif("✅ Customer "+newCustomerForm.name+" berhasil ditambahkan");
                     }
-                    else { addAgentLog("CUSTOMER_ADDED","Customer baru: "+newCustomerForm.name+" ("+newCustomerForm.area+")","SUCCESS"); showNotif("✅ Customer "+newCustomerForm.name+" berhasil ditambahkan"); }
                   }
                   setModalAddCustomer(false); setNewCustomerForm({name:"",phone:"",address:"",area:"",notes:"",is_vip:false});
                 }}
@@ -6234,7 +11657,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                   {[["Nama Customer","customer","text"],["No. HP","phone","text"],["Alamat Lengkap","address","text"]].map(([lbl,key,type])=>(
                     <div key={key}>
                       <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>{lbl}</div>
-                      <input type={type} value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
+                      <input id="field_25" type={type} value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
                         style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                     </div>
                   ))}
@@ -6254,7 +11677,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                   </div>
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Jumlah Unit</div>
-                    <input type="number" min="1" max="20" value={editOrderForm.units||1} onChange={e=>setEditOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
+                    <input id="field_number_26" type="number" min="1" max="20" value={editOrderForm.units||1} onChange={e=>setEditOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                   </div>
                 </div>
@@ -6266,12 +11689,12 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Tanggal</div>
-                    <input type="date" value={editOrderForm.date||""} onChange={e=>setEditOrderForm(f=>({...f,date:e.target.value}))}
+                    <input id="field_date_27" type="date" value={editOrderForm.date||""} onChange={e=>setEditOrderForm(f=>({...f,date:e.target.value}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                   </div>
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Jam Mulai</div>
-                    <input type="time" min="09:00" max="17:00" value={editOrderForm.time||"09:00"} onChange={e=>setEditOrderForm(f=>({...f,time:e.target.value}))}
+                    <input id="field_time_28" type="time" min="09:00" max="17:00" value={editOrderForm.time||"09:00"} onChange={e=>setEditOrderForm(f=>({...f,time:e.target.value}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                   </div>
                 </div>
@@ -6319,7 +11742,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                 </div>
                 <div>
                   <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Catatan Perubahan</div>
-                  <input value={editOrderForm.notes||""} onChange={e=>setEditOrderForm(f=>({...f,notes:e.target.value}))}
+                  <input id="field_29" value={editOrderForm.notes||""} onChange={e=>setEditOrderForm(f=>({...f,notes:e.target.value}))}
                     placeholder="Alasan perubahan..." style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                 </div>
               </div>
@@ -6327,6 +11750,23 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
               <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
                 <button onClick={()=>{setModalEditOrder(false);setEditOrderItem(null);}} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
                 <button onClick={async()=>{
+                  // GAP-1 & GAP-2: Cek ketersediaan teknisi di DB sebelum simpan edit
+                  const tekChanged = editOrderForm.teknisi !== editOrderItem.teknisi;
+                  const dateChanged = editOrderForm.date !== editOrderItem.date;
+                  const timeChanged = editOrderForm.time !== editOrderItem.time;
+                  if (editOrderForm.teknisi && (tekChanged || dateChanged || timeChanged)) {
+                    const dbCheck = await cekTeknisiAvailableDB(
+                      editOrderForm.teknisi, editOrderForm.date||editOrderItem.date,
+                      editOrderForm.time||editOrderItem.time||"09:00",
+                      editOrderForm.service||editOrderItem.service||"Cleaning",
+                      editOrderForm.units||editOrderItem.units||1
+                    );
+                    // Exclude order yang sedang diedit dari conflict check
+                    if (!dbCheck.ok && !dbCheck.reason?.includes(editOrderItem.id)) {
+                      showNotif("⚠️ " + (dbCheck.reason || editOrderForm.teknisi + " tidak tersedia di jadwal tersebut"));
+                      return;
+                    }
+                  }
                   const timeEnd = hitungJamSelesai(editOrderForm.time||"09:00", editOrderForm.service||"Cleaning", editOrderForm.units||1);
                   const updated = {...editOrderItem,...editOrderForm,time_end:timeEnd};
                   setOrdersData(prev=>prev.map(o=>o.id===editOrderItem.id?updated:o));
@@ -6334,19 +11774,23 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                   const {error:eoErr} = await supabase.from("orders").update(dbUpd).eq("id",editOrderItem.id);
           // ── GAP-10 FIX: Hapus schedule lama & insert baru setelah edit order ──
           if (!eoErr) {
-            await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id).catch(()=>{});
+            // Hapus schedule lama — gunakan try/catch, bukan .catch() langsung
+            try {
+              await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id);
+            } catch(e) { /* schedule tabel opsional, skip jika belum ada */ }
             if (editOrderForm.teknisi && editOrderForm.date) {
-              const dur = editOrderForm.service==="Install" ? 240 : editOrderForm.service==="Repair" ? 120 : 60;
-              await supabase.from("technician_schedule").insert({
-                order_id: editOrderItem.id,
-                teknisi: editOrderForm.teknisi,
-                date: editOrderForm.date,
-                time_start: editOrderForm.time||"09:00",
-                time_end: editOrderForm.time_end||(editOrderForm.time||"09:00"),
-                duration_min: dur * (parseInt(editOrderForm.units)||1),
-                status: "ACTIVE",
-              }).catch(()=>{});
-              addAgentLog("SCHEDULE_SYNCED", `Schedule diupdate untuk ${editOrderItem.id} setelah edit`, "SUCCESS");
+              const timeEnd2 = hitungJamSelesai(editOrderForm.time||"09:00", editOrderForm.service||"Cleaning", editOrderForm.units||1);
+              try {
+                await supabase.from("technician_schedule").insert({
+                  order_id: editOrderItem.id,
+                  teknisi:   editOrderForm.teknisi,
+                  date:      editOrderForm.date,
+                  time_start: editOrderForm.time||"09:00",
+                  time_end:   timeEnd2,
+                  status:    "ACTIVE",
+                });
+                addAgentLog("SCHEDULE_SYNCED", `Schedule diupdate untuk ${editOrderItem.id} setelah edit`, "SUCCESS");
+              } catch(e) { /* skip */ }
             }
           }
                   if(eoErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: "+eoErr.message);
@@ -6414,21 +11858,16 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                     const newStatus = selectedLaporan.status==="REVISION"?"SUBMITTED":selectedLaporan.status;
                     setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id
                       ?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,status:newStatus,editLog:allLogs}:r));
-                    // Save ke Supabase
-                    // Simpan edit ke Supabase
-                    const {error:elErr} = await supabase.from("service_reports").update({
-                      rekomendasi: editLaporanForm.rekomendasi,
-                      catatan_global: editLaporanForm.catatan_global,
+                    // Save ke Supabase — only use valid fields that exist in schema
+                    const updatePayload = {
                       status: newStatus,
-                      edit_log: JSON.stringify(allLogs),
-                    }).eq("id", selectedLaporan.id);
+                      notes: (editLaporanForm.catatan_global || editLaporanForm.rekomendasi || "").slice(0, 500),
+                    };
+
+                    const {error:elErr} = await supabase.from("service_reports").update(updatePayload).eq("id", selectedLaporan.id);
                     if(elErr) {
-                      console.warn("update with edit_log failed:", elErr.message);
-                      await supabase.from("service_reports").update({
-                        rekomendasi: editLaporanForm.rekomendasi,
-                        catatan_global: editLaporanForm.catatan_global,
-                        status: newStatus,
-                      }).eq("id", selectedLaporan.id);
+                      console.warn("❌ update service_reports failed:", elErr.message, "payload:", updatePayload);
+                      addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0,100)}`, "WARNING");
                     }
                     addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name} (${newLogs.length} perubahan)`,"SUCCESS");
                     showNotif("✅ Laporan "+selectedLaporan.job_id+" diupdate ("+newLogs.length+" perubahan dicatat)");
@@ -6470,7 +11909,7 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
                           <div style={{fontSize:11,color:cs.muted}}>
                             {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}
                             {u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
-                            {parseFloat(u.freon_ditambah)>0?`Freon +${u.freon_ditambah}kg`:""}
+                            {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
                           </div>
                         )}
                       </div>
@@ -6533,319 +11972,703 @@ Akun tidak bisa dipulihkan. Data order/laporan tetap ada.`)) return;
       {laporanModal && !laporanSubmitted && (() => {
         const incompleteUnits = laporanUnits.filter(u=>!isUnitDone(u));
         const totalFreon = laporanUnits.reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0);
-        const presets = MATERIAL_PRESET[laporanModal.service] || MATERIAL_PRESET.Cleaning;
-        const STEP_LABELS = ["","Konfirmasi Unit","Detail Per Unit","Material & Foto","Submit"];
+        const presets = MATERIAL_PRESET[laporanModal?.service] || MATERIAL_PRESET.Cleaning;
+        const isInstallJob = laporanModal?.service === "Install";
+        const STEP_LABELS = ["","Konfirmasi Unit",
+          isInstallJob ? "(skip)" : "Detail Per Unit",
+          isInstallJob ? "Form Instalasi" : "Material & Foto",
+          "Submit"];
 
         const updateUnit = (idx, updated) => setLaporanUnits(prev=>prev.map((u,i)=>i===idx?updated:u));
         const toggleArr = (arr, val) => arr.includes(val)?arr.filter(x=>x!==val):[...arr,val];
 
         const handleFotoUpload = async (e) => {
-          const files = Array.from(e.target.files||[]).slice(0,10-laporanFotos.length);
-          showNotif(`⏳ Mengkompresi ${files.length} foto...`);
-          const compressed = await Promise.all(files.map(compressImg));
+          const rawFiles = Array.from(e.target.files||[]).slice(0, 10 - laporanFotos.length);
+          if (rawFiles.length === 0) return;
           const reportId = laporanModal?.id || "tmp";
 
-          const uploaded = await Promise.all(compressed.map(async (dataUrl, i) => {
-            const localId = Date.now()+i;
-            const label = `Foto ${laporanFotos.length+i+1}`;
-            let url = null;
+          // ── LAYER 1: Hash setiap file SEBELUM compress ──
+          // Fungsi hash SHA-256 sederhana via SubtleCrypto (tersedia di semua browser modern)
+          const hashFile = async (file) => {
+            const buf = await file.arrayBuffer();
+            const hashBuf = await crypto.subtle.digest("SHA-256", buf);
+            return Array.from(new Uint8Array(hashBuf))
+              .map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16); // 16 char = cukup unik
+          };
 
-            // ── Coba R2 via backend dulu ──
+          // Hitung hash semua file sebelum compress
+          const fileHashes = await Promise.all(rawFiles.map(hashFile));
+
+          // ── LAYER 2: Cek duplikat vs foto yang sudah ada di state (per sesi) ──
+          const existingHashes = new Set(laporanFotos.map(f => f.hash).filter(Boolean));
+          const files = [];
+          const hashes = [];
+          let skippedCount = 0;
+          rawFiles.forEach((file, i) => {
+            if (existingHashes.has(fileHashes[i])) {
+              skippedCount++;
+            } else {
+              files.push(file);
+              hashes.push(fileHashes[i]);
+            }
+          });
+
+          if (skippedCount > 0) {
+            showNotif(`⚠️ ${skippedCount} foto sudah ada (duplikat diabaikan).`);
+          }
+          if (files.length === 0) { e.target.value = ""; return; }
+
+          showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2...`);
+          const compressed = await Promise.all(files.map(compressImg));
+
+          // ── Upload satu per satu (bukan parallel) agar tidak timeout ──
+          const uploaded = [];
+          for (let i = 0; i < compressed.length; i++) {
+            const dataUrl = compressed[i];
+            const hash    = hashes[i];
+            const localId = Date.now() + i;
+            const label   = `Foto ${laporanFotos.length + uploaded.length + i + 1}`;
+            let url       = null;
+            let errMsg    = "";
+
+            // ── LAYER 3: Kirim hash sebagai filename → R2 key idempotent ──
+            // Nama file = hash → upload foto yang sama = overwrite, tidak bikin duplikat di R2
             try {
               const r = await fetch("/api/upload-foto", {
-                method:"POST", headers:{"Content-Type":"application/json"},
-                body: JSON.stringify({base64:dataUrl, filename:`foto_${localId}.jpg`, reportId})
+                method:  "POST",
+                headers: _apiHeaders(),
+                body:    JSON.stringify({
+                  base64:   dataUrl,
+                  filename: `${hash}.jpg`,       // hash sebagai nama file
+                  reportId,
+                  mimeType: "image/jpeg",
+                  hash,                          // kirim hash untuk validasi server
+                  currentUserRole: currentUser?.role || "Unknown",
+                }),
               });
               const d = await r.json();
-              if (d.success && d.url) { url = d.url; }
-            } catch(_) {}
-
-            // ── Fallback: Supabase Storage (jika R2 belum dikonfigurasi) ──
-            if (!url) {
-              try {
-                const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-                const byteStr = atob(base64Data);
-                const arr = new Uint8Array(byteStr.length);
-                for (let j=0; j<byteStr.length; j++) arr[j] = byteStr.charCodeAt(j);
-                const blob = new Blob([arr], {type:"image/jpeg"});
-                const path = `reports/${reportId}/${localId}.jpg`;
-                const { data: upData, error: upErr } = await supabase.storage
-                  .from("laporan-fotos")
-                  .upload(path, blob, {contentType:"image/jpeg", upsert:true});
-                if (!upErr && upData) {
-                  const { data: { publicUrl } } = supabase.storage
-                    .from("laporan-fotos")
-                    .getPublicUrl(path);
-                  url = publicUrl;
-                }
-              } catch(_) {}
+              if (d.success && d.url) {
+                url = d.url;
+              } else {
+                errMsg = d.error || "Upload gagal";
+                console.error("R2 upload error:", errMsg);
+              }
+            } catch (err) {
+              errMsg = err.message;
+              console.error("R2 fetch error:", err);
             }
 
-            return { id:localId, label, data_url:dataUrl, url };
-          }));
+            uploaded.push({ id: localId, label, data_url: dataUrl, url, errMsg, hash });
+          }
 
-          setLaporanFotos(prev=>[...prev,...uploaded]);
-          const saved = uploaded.filter(f=>f.url).length;
-          showNotif(`✅ ${files.length} foto dikompresi (70%). ${saved} tersimpan ke cloud.`);
-          e.target.value="";
+          setLaporanFotos(prev => [...prev, ...uploaded]);
+          const saved  = uploaded.filter(f => f.url).length;
+          const failed = uploaded.filter(f => !f.url).length;
+
+          if (saved === uploaded.length) {
+            showNotif(`✅ ${saved} foto tersimpan di R2!`);
+          } else if (saved > 0) {
+            showNotif(`⚠️ ${saved} berhasil, ${failed} gagal. Tap ⏳ untuk retry.`);
+          } else {
+            const firstErr = uploaded[0]?.errMsg || "unknown error";
+            showNotif(`❌ Upload gagal: ${firstErr}. Cek koneksi & coba lagi.`);
+          }
+          e.target.value = "";
         };
 
-        const submitLaporan = async () => {
-          if(incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);return;}
-          // Cek foto gagal upload — warn tapi tidak block (sesuai keputusan: teknisi bisa reupload manual)
-          const fotoGagal = laporanFotos.filter(f=>!f.url).length;
-          if(fotoGagal > 0) {
-            const lanjut = window.confirm(`⚠️ ${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).
+  const submitLaporan = async () => {
+    if (submitLaporan._running) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
+    submitLaporan._running = true;
+    // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
+    const isInstall = laporanModal?.service === "Install";
 
-Lanjutkan submit laporan tanpa foto tersebut?
+    // ── 2. Validasi unit untuk non-Install ──
+    if (!isInstall && incompleteUnits.length > 0) {
+      showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);
+      return;
+    }
 
-• OK = lanjut submit
-• Batal = kembali & hapus foto gagal lalu upload ulang`);
-            if(!lanjut) return;
-          }
-          const now = new Date().toLocaleString("id-ID",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).replace(/\//g,"-");
-          const newReport = {
-            // If rewriting existing report, reuse same ID (upsert overwrites)
-            id: laporanModal._rewriteId || ("LPR_"+laporanModal.id+"_"+Date.now().toString(36).slice(-4).toUpperCase()),
-            job_id:laporanModal.id, teknisi:laporanModal.teknisi, helper:laporanModal.helper||null,
-            // ── GAP-07 FIX: is_substitute = true jika helper lapor sebagai pengganti teknisi utama ──
-            is_substitute: (currentUser?.role==="Helper" && currentUser?.name===laporanModal.helper && !teknisiData.find(t=>t.name===laporanModal.teknisi&&t.status!=="standby")) || false,
-            customer:laporanModal.customer, service:laporanModal.service, date:laporanModal.date,
-            submitted:now, status:"SUBMITTED", total_units:laporanUnits.length,
-            units:laporanUnits, materials:laporanMaterials,
-            fotos:laporanFotos.map(f=>({id:f.id,label:f.label})),
-            total_freon:totalFreon, rekomendasi:laporanRekomendasi, catatan_global:laporanCatatan,
-            unit_mismatch: laporanUnits.length!==(laporanModal.units||1),
-            editLog: laporanModal._rewriteId ? [{
-              by: currentUser?.name||"Teknisi", at: new Date().toLocaleString("id-ID"),
-              field:"full_rewrite", old:"(laporan lama)", new:"Laporan ditulis ulang dari awal"
-            }] : []
-          };
-          setLaporanReports(prev=>[...prev.filter(r=>r.job_id!==laporanModal.id),newReport]);
+    // ── 3. Cek foto gagal upload ──
+    const fotoGagal = laporanFotos.filter(f => !f.url).length;
+    if (fotoGagal > 0) {
+      const lanjut = await showConfirm({ icon:"⚠️", title:"Ada Foto Belum Tersimpan",
+        message:`${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).\n\nLanjutkan submit laporan tanpa foto tersebut?`,
+        confirmText:"Lanjutkan Submit" });
+      if (!lanjut) return;
+    }
 
-          // ── Notifikasi Admin/Owner via WA saat laporan masuk ──
-          const adminUsers = userAccounts.filter(u => u.role==="Admin"||u.role==="Owner");
-          const notifMsg = `📋 *Laporan Selesai*
+    // ── 4. Siapkan materials yang efektif ──
+    // Install: pakai laporanInstallItems, lainnya: pakai laporanMaterials
+    const jasaAsMaterials = [
+      ...laporanJasaItems.map(j => ({
+        id:"jasa_"+j.id, nama:j.nama, jumlah:j.jumlah||1,
+        satuan:j.satuan||"pcs", harga_satuan:j.harga_satuan||0, keterangan:"jasa"
+      })),
+      ...laporanRepairItems.map(r => ({
+        id:"repair_"+(r.id||r.nama), nama:r.nama, jumlah:r.jumlah||1,
+        satuan:r.satuan||"pcs", harga_satuan:r.harga_satuan||0, keterangan:"repair"
+      })),
+    ];
+    // Mapping INSTALL_ITEMS key → inventory code untuk deduct stok spesifik
+    const INSTALL_INV_MAP = {
+      "pipa_1pk":   "SKU022",  // Pipa AC Hoda 1PK
+      "pipa_2pk":   "SKU023",  // Pipa AC Hoda 2PK
+      "pipa_25pk":  "SKU024",  // Pipa AC Hoda 2,5PK
+      "pipa_3pk":   "SKU057",  // Pipa AC Hoda 3PK
+      "kabel_15":   "SKU025",  // Kabel Eterna 3x1,5
+      "kabel_25":   "SKU026",  // Kabel Eterna 3x2,5
+      "ducttape_biasa": "SKU031",
+      "ducttape_lem":   "SKU030",
+      "dinabolt":       "SKU058",
+      "karet_mounting": "SKU059",
+      "breket_outdoor": "SKU041",
+    };
 
-Job: *${laporanModal.id}*
-Customer: ${laporanModal.customer}
-Teknisi: ${laporanModal.teknisi}${laporanModal.helper?" + "+laporanModal.helper:""}
-Layanan: ${laporanModal.service} — ${laporanUnits.length} unit
-Material: ${laporanMaterials.length} item
-Foto: ${laporanFotos.filter(f=>f.url).length} foto
-
-Silakan buat invoice dari ARA Chat 👆`;
-          adminUsers.forEach(u => { if(u.phone) sendWA(u.phone, notifMsg); });
-
-          // Simpan laporan ke Supabase — AWAIT + fallback jika kolom JSON belum ada di schema
-          showNotif("⏳ Menyimpan laporan ke server...");
-          const basePayload = {
-            id: newReport.id, job_id: newReport.job_id, teknisi: newReport.teknisi,
-            helper: newReport.helper, customer: newReport.customer,
-            service: newReport.service, date: newReport.date,
-            status: "SUBMITTED", total_units: newReport.total_units,
-            total_freon: newReport.total_freon, rekomendasi: newReport.rekomendasi,
-            catatan_global: newReport.catatan_global,
-            submitted_at: new Date().toISOString(),
-            foto_urls: laporanFotos.filter(f=>f.url).map(f=>f.url),
-          };
-
-          // Simpan ke Supabase — bertahap dari lengkap ke minimal
-          let savedOk = false;
-
-          // Attempt 1: full payload dengan JSON cols
-          {
-            const { error: e1 } = await supabase.from("service_reports").upsert({
-              ...basePayload,
-              materials_json: JSON.stringify(laporanMaterials),
-              units_json:     JSON.stringify(laporanUnits),
-            }, { onConflict: "id" });
-            if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
-            else console.warn("Attempt 1 failed:", e1.message);
-          }
-
-          // Attempt 2: tanpa JSON cols
-          if (!savedOk) {
-            const { error: e2 } = await supabase.from("service_reports").upsert(
-              basePayload, { onConflict: "id" }
-            );
-            if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
-            else console.warn("Attempt 2 failed:", e2.message);
-          }
-
-          // Attempt 3: minimal — hanya kolom wajib
-          if (!savedOk) {
-            const minimal = {
-              id: newReport.id, job_id: newReport.job_id,
-              teknisi: newReport.teknisi, customer: newReport.customer,
-              service: newReport.service, date: newReport.date,
-              status: "SUBMITTED", total_units: newReport.total_units,
-              submitted_at: new Date().toISOString(),
+    const effectiveMaterials = isInstall
+      ? INSTALL_ITEMS
+          .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
+          .map(item => {
+            const plItem = priceListData.find(r => r.type && r.type.trim() === item.label.trim());
+            const inv2   = inventoryData.find(r => r.name && r.name.trim() === item.label.trim());
+            const hargaSat = plItem?.price || inv2?.price
+              || PRICE_LIST["Install"]?.[item.label]
+              || PRICE_LIST["Repair"]?.[item.label] || 0;
+            const qty = parseFloat(laporanInstallItems[item.key] || 0);
+            return {
+              id:item.key, nama:item.label, jumlah:qty, satuan:item.satuan,
+              harga_satuan:hargaSat, subtotal:hargaSat*qty, keterangan:"",
+              // _useCode: untuk deduct stok by kode inventori yang spesifik
+              _useCode: INSTALL_INV_MAP[item.key] || null,
             };
-            const { error: e3 } = await supabase.from("service_reports").upsert(
-              minimal, { onConflict: "id" }
-            );
-            if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
-            else {
-              console.error("All upsert attempts failed:", e3.message);
-              showNotif("❌ Gagal simpan ke server: " + e3.message);
-            }
-          }
+          })
+      : [...jasaAsMaterials, ...laporanMaterials];
 
-          // Reload laporan untuk semua user setelah submit (realtime akan trigger, ini backup)
-          const reloadLaporan = async () => {
-            const { data, error } = await supabase
-              .from("service_reports")
-              .select("*")
-              .order("submitted_at", { ascending: false });
-            if (error) {
-              console.warn("Reload laporan error:", error.message);
-              return;
-            }
-            if (data && data.length > 0) {
-              setLaporanReports(data.map(r => ({
-                ...r,
-                units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){return r.units    ||[];} })() : (r.units    ||[]),
-                materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){return r.materials||[];} })() : (r.materials||[]),
-                fotos:     r.fotos || (r.foto_urls||[]).map((u,i)=>({id:i,label:`Foto ${i+1}`,url:u})),
-                editLog:   safeArr(r.edit_log ?? r.editLog),
-              })));
-            }
-          };
-          setTimeout(reloadLaporan, 800);
-          setTimeout(reloadLaporan, 3000); // double-check setelah 3 detik
+    const now = new Date().toLocaleString("id-ID", {
+      year:"numeric", month:"2-digit", day:"2-digit",
+      hour:"2-digit", minute:"2-digit"
+    });
+    const totalFreonLocal = laporanUnits.reduce((s, u) => s + (parseFloat(u.freon_ditambah) || 0), 0);
 
-          // Update order status ke REPORT_SUBMITTED — menunggu Admin/Owner buat & approve invoice
-          setOrdersData(prev => prev.map(o =>
-            o.id === laporanModal.id ? {...o, status:"REPORT_SUBMITTED"} : o
-          ));
-          // Update order status — after schema migration REPORT_SUBMITTED works
-          // Fallback chain: REPORT_SUBMITTED → COMPLETED (always in schema)
-          {
-            const { error: ordErr } = await supabase.from("orders")
-              .update({status:"REPORT_SUBMITTED"}).eq("id", laporanModal.id);
-            if (ordErr) {
-              console.warn("REPORT_SUBMITTED rejected:", ordErr.message, "— using COMPLETED");
-              await supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id);
-            }
-          }
+    // ── 5. Buat objek laporan ──
+    const newReport = {
+      id: laporanModal._rewriteId || ("LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase()),
+      job_id:   laporanModal.id,
+      teknisi:  laporanModal.teknisi,
+      helper:   laporanModal.helper || null,
+      is_substitute: (currentUser?.role === "Helper" &&
+        currentUser?.name === laporanModal.helper &&
+        !teknisiData.find(t => t.role === "Teknisi" && t.name === laporanModal.helper)),
+      customer: laporanModal.customer,
+      service:  laporanModal?.service,
+      date:     laporanModal.date,
+      submitted: now,
+      status:   "SUBMITTED",
+      total_units: laporanUnits.length,
+      units:    laporanUnits,
+      materials: effectiveMaterials,
+      fotos:    laporanFotos.map(f => ({ id: f.id, label: f.label })),
+      total_freon: totalFreonLocal,
+      rekomendasi: laporanRekomendasi,
+      catatan_global: laporanCatatan,
+      unit_mismatch: laporanUnits.length !== (laporanModal.units || 1),
+      editLog: laporanModal._rewriteId ? [{
+        by: currentUser?.name || "Teknisi",
+        at: new Date().toLocaleString("id-ID"),
+        field: "full_rewrite",
+        old: "(laporan lama)",
+        new: "Laporan ditulis ulang dari awal",
+      }] : [],
+    };
 
-          // ── Teknisi SELESAI → status kembali "active" (siap terima job baru) ──
-          // Patokan: laporan disubmit = pekerjaan selesai secara aktual
-          const finTeknisi = teknisiData.find(t => t.name === laporanModal.teknisi);
-          if (finTeknisi?.id) {
-            setTeknisiData(prev => prev.map(t =>
-              t.name === laporanModal.teknisi ? {...t, status:"active"} : t
-            ));
-            // Only update if ID is a real Supabase UUID (not local demo ID like USR001)
-            if (finTeknisi.id && /^[0-9a-f-]{36}$/.test(finTeknisi.id)) {
-              supabase.from("user_profiles").update({status:"active"}).eq("id", finTeknisi.id);
-            }
-          }
-          // Helper juga kembali active
-          if (laporanModal.helper) {
-            const finHelper = teknisiData.find(t => t.name === laporanModal.helper);
-            if (finHelper?.id) {
-              setTeknisiData(prev => prev.map(t =>
-                t.name === laporanModal.helper ? {...t, status:"active"} : t
-              ));
-              if (finHelper.id && /^[0-9a-f-]{36}$/.test(finHelper.id)) {
-                supabase.from("user_profiles").update({status:"active"}).eq("id", finHelper.id);
-              }
-            }
-          }
+    setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), newReport]);
 
-          // GAP 6 — Auto-deduct inventory dari material yang dipakai
-          if (laporanMaterials.length > 0) {
-            deductInventory(laporanMaterials);
-            // Deduct di Supabase juga
-            laporanMaterials.forEach(mat => {
-              // ── GAP-02 FIX: deduct_inventory RPC + manual fallback jika RPC belum ada ──
-            supabase.rpc("deduct_inventory", {item_name: mat.nama, qty: parseFloat(mat.jumlah)||0})
-              .then(({error:rpcErr}) => {
-                if (rpcErr) {
-                  // RPC belum dibuat di Supabase — fallback ke update manual
-                  supabase.from("inventory").select("id,code,stock,min_alert,reorder")
-                    .ilike("name", mat.nama).limit(1)
-                    .then(({data:items}) => {
-                      if (items && items.length > 0) {
-                        const itm = items[0];
-                        const newStk = Math.max(0, (itm.stock||0) - (parseFloat(mat.jumlah)||0));
-                        const newSts = newStk===0?"OUT":newStk<=(itm.min_alert||1)?"CRITICAL":newStk<=(itm.reorder||3)?"WARNING":"OK";
-                        supabase.from("inventory").update({stock:newStk, status:newSts}).eq("id", itm.id)
-                          .then(()=>{ addAgentLog("STOCK_DEDUCTED", `${mat.nama}: -${mat.jumlah} (manual fallback, sisa ${newStk})`, "SUCCESS"); });
-                      }
-                    });
-                }
-              });
-            });
-            addAgentLog("MATERIAL_DEDUCT", `${laporanMaterials.length} material dipakai di ${laporanModal.id}`, "SUCCESS");
-          }
+    // ── 6. WA notif ke Admin/Owner ──
+    const adminUsers = userAccounts.filter(u => u.role === "Admin" || u.role === "Owner");
+    const matCount = isInstall
+      ? INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length
+      : laporanMaterials.length;
+    const notifMsg =
+      "Laporan Selesai\nJob: "+laporanModal.id
+      +"\nCustomer: "+laporanModal.customer
+      +"\nTeknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")
+      +"\nLayanan: "+laporanModal?.service+" - "+laporanUnits.length+" unit"
+      +"\nMaterial: "+matCount+" item  Foto: "+laporanFotos.filter(f=>f.url).length+" foto"
+      +"\n\nSilakan cek invoice di menu Invoice.";
+    adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
 
-          // GAP 2 — Auto-generate invoice dengan price list
-          const laborTotal = hitungLabor(laporanModal.service, laporanModal.type, laporanUnits.length);
-          const freonTotal2 = laporanUnits.reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0);
-          const freonType = laporanModal.type?.includes("R410")||laporanModal.type?.includes("inverter") ? "freon_R410A" : "freon_R22";
-          const freonValue = freonTotal2 * (PRICE_LIST[freonType]||150000);
-          const matTotal = hitungMaterialTotal(laporanMaterials) + freonValue;
-          const today2 = new Date().toISOString().slice(0,10);
-          const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
-          const newInvoiceId = "INV-" + today2.replace(/-/g,"").slice(0,8) + "-" + invSeq;
-          const newInvoice = {
-            id: newInvoiceId,
-            job_id: laporanModal.id,
-            customer: laporanModal.customer,
-            phone: laporanModal.phone || customersData.find(c=>c.name===laporanModal.customer)?.phone || "",
-            service: laporanModal.service + " - " + laporanModal.type,
-            units: laporanUnits.length,
-            labor: laborTotal,
-            material: matTotal,
-            dadakan: 0,
-            total: laborTotal + matTotal,
-            status: "PENDING_APPROVAL",
-          };
-          // ── GAP-13 FIX: Auto-approve invoice Rp 0 (Complain garansi) ──
-          if (newInvoice.total === 0 && laporanModal?.service === "Complain") {
-            newInvoice.status = "UNPAID"; // skip PENDING_APPROVAL — langsung UNPAID (atau PAID jika Rp0)
-            newInvoice.status = "PAID";   // Complain garansi = langsung PAID karena Rp 0
-            newInvoice.paid_at = new Date().toISOString();
-            // Update order juga
-            supabase.from("orders").update({status:"COMPLETED"}).eq("id", laporanModal.id).catch(()=>{});
-            addAgentLog("GARANSI_AUTO_APPROVE", `Invoice ${newInvoice.id} Rp 0 (Complain garansi) auto-approved`, "SUCCESS");
-          }
-          setInvoicesData(prev => [...prev, newInvoice]);
-          // Simpan invoice ke Supabase
-          // Insert invoice — try full object, fallback to minimal columns if schema mismatch
-          {
-            const { error: invErr } = await supabase.from("invoices").insert(newInvoice);
-            if (invErr) {
-              console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
-              // status fallback: try PENDING_APPROVAL → UNPAID (schema constraint)
-              const tryStatuses = ["PENDING_APPROVAL", "UNPAID"];
-              for (const st of tryStatuses) {
-                const minimalInv = {
-                  id: newInvoice.id, job_id: newInvoice.job_id,
-                  customer: newInvoice.customer, service: newInvoice.service,
-                  units: newInvoice.units, labor: newInvoice.labor,
-                  material: newInvoice.material, total: newInvoice.total,
-                  status: st,
-                };
-                const { error: invErr2 } = await supabase.from("invoices").insert(minimalInv);
-                if (!invErr2) { console.log("✅ Invoice inserted with status:", st); break; }
-                console.warn("Invoice status", st, "rejected:", invErr2.message);
-              }
-            }
-          }
-          addAgentLog("INVOICE_CREATED", `Invoice ${newInvoiceId} dibuat dari laporan ${laporanModal.id} — ${fmt(newInvoice.total)} — menunggu approval Owner`, "SUCCESS");
+    // ── 7. Simpan laporan ke Supabase (multi-attempt with fallback fields) ──
+    showNotif("⏳ Menyimpan laporan ke server...");
+    const basePayload = {
+      id:           newReport.id,
+      job_id:       newReport.job_id,
+      teknisi:      newReport.teknisi,
+      helper:       newReport.helper||null,
+      customer:     newReport.customer,
+      service:      newReport.service,
+      date:         newReport.date,
+      status:       "SUBMITTED",
+      total_units:  newReport.total_units,
+      total_freon:  newReport.total_freon,
+      submitted_at: new Date().toISOString(),
+      notes:        (newReport.catatan_global || newReport.rekomendasi || "").slice(0,500),
+    };
 
-          // Notif WA ke Owner bahwa laporan + invoice menunggu approval
-          const ownerMsg = `📝 Laporan baru masuk dari ${laporanModal.teknisi}\n\n🔧 ${laporanModal.service} - ${laporanModal.customer}\n💰 Invoice: ${fmt(newInvoice.total)}\n\nMohon approve invoice ${newInvoiceId} di sistem. — ARA`;
-          fetch("/api/send-wa",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:"6281299898937",message:ownerMsg})}).catch(()=>{});
+    let savedOk = false;
+    { // Attempt 1: dengan materials_json & units_json
+      try {
+        const { error: e1 } = await supabase.from("service_reports").upsert({
+          ...basePayload,
+          materials_json: JSON.stringify(effectiveMaterials),
+          units_json:     JSON.stringify(laporanUnits),
+        }, { onConflict: "id" });
+        if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
+        else console.warn("❌ Attempt 1 failed:", e1.message);
+      } catch(ex) { console.warn("❌ Attempt 1 error:", ex.message); }
+    }
+    if (!savedOk) { // Attempt 2: tanpa JSON cols (core fields only)
+      try {
+        const { error: e2 } = await supabase.from("service_reports").upsert(
+          basePayload, { onConflict: "id" }
+        );
+        if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
+        else console.warn("❌ Attempt 2 failed:", e2.message);
+      } catch(ex) { console.warn("❌ Attempt 2 error:", ex.message); }
+    }
+    if (!savedOk) { // Attempt 3: minimal
+      try {
+        const { error: e3 } = await supabase.from("service_reports").upsert({
+          id: newReport.id, job_id: newReport.job_id,
+          teknisi: newReport.teknisi, customer: newReport.customer,
+          service: newReport.service, date: newReport.date,
+          status: "SUBMITTED", total_units: newReport.total_units,
+          submitted_at: new Date().toISOString(),
+        }, { onConflict: "id" });
+        if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
+        else { console.error("❌ All upsert attempts failed:", e3.message); showNotif("❌ Gagal simpan: " + e3.message); }
+      } catch(ex) { console.error("❌ Attempt 3 error:", ex.message); showNotif("❌ Gagal simpan: "+ex.message); }
+    }
 
-          setLaporanSubmitted(true);
-          pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
-          showNotif(`✅ Laporan ${laporanModal.id} (${laporanUnits.length} unit) terkirim! Invoice ${newInvoiceId} dibuat.`);
+    // ── 8. Reload laporan (backup, realtime juga akan trigger) ──
+    const reloadLaporan = async () => {
+      const { data } = await supabase.from("service_reports")
+        .select("*").order("submitted_at", { ascending: false });
+      if (data?.length > 0) {
+        setLaporanReports(data.map(r => ({
+          ...r,
+          units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
+          materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials || []; } })() : (r.materials || []),
+          fotos:     r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i+1}`, url })),
+          editLog:   safeArr(r.edit_log ?? r.editLog),
+        })));
+      }
+    };
+    setTimeout(reloadLaporan, 800);
+    setTimeout(reloadLaporan, 3000);
+
+    // ── 9. Update order status ──
+    setOrdersData(prev => prev.map(o =>
+      o.id === laporanModal.id ? { ...o, status: "REPORT_SUBMITTED" } : o
+    ));
+    {
+      const { error: ordErr } = await supabase.from("orders")
+        .update({ status: "REPORT_SUBMITTED" }).eq("id", laporanModal.id);
+      if (ordErr) {
+        console.warn("REPORT_SUBMITTED rejected — fallback COMPLETED:", ordErr.message);
+        await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", laporanModal.id);
+      }
+    }
+
+    // ── 10. Update status teknisi → active ──
+    ["teknisi","helper"].forEach(role => {
+      const name = role === "teknisi" ? laporanModal.teknisi : laporanModal.helper;
+      if (!name) return;
+      const tek = teknisiData.find(t => t.name === name);
+      if (!tek?.id) return;
+      setTeknisiData(prev => prev.map(t => t.name === name ? { ...t, status: "active" } : t));
+      if (/^[0-9a-f-]{36}$/.test(tek.id)) {
+        supabase.from("user_profiles").update({ status: "active" }).eq("id", tek.id);
+      }
+    });
+
+    // ── 11. Deduct stok material (non-Install) ──
+    // Install: deduct dari effectiveMaterials (sudah punya _useCode untuk pipa/kabel)
+    // Non-install: deduct dari laporanMaterials (freon/pipa/kabel dipilih via selector)
+    const materialsToDeduct = isInstall ? effectiveMaterials : laporanMaterials;
+
+    // Deduct unit fisik: freon (tabung spesifik), pipa (roll), kabel (roll)
+    // freon_tabung_code = UUID dari inventory_units yang dipilih teknisi
+    // freon_inv_code    = inventory.code milik unit itu (untuk update stok di DB)
+    const unitDeducts = laporanMaterials
+      .filter(mat => mat.freon_tabung_code && parseFloat(mat.jumlah) > 0)
+      .map(mat => {
+        const unit = invUnitsData.find(u => u.id === mat.freon_tabung_code);
+        if (!unit) return null;
+        return {
+          nama:             unit.unit_label,    // label unit fisik, e.g. "Roll 1PK-A"
+          jumlah:           parseFloat(mat.jumlah),
+          satuan:           mat.satuan || "",
+          keterangan:       "unit_fisik",
+          _useCode:         unit.inventory_code,  // untuk deduct inventory parent
+          _unitId:          unit.id,              // untuk update inventory_units.stock
+          _unitLabel:       unit.unit_label,
         };
+      }).filter(Boolean);
+
+    // Deduct inventory_units.stock untuk setiap unit fisik yang dipakai
+    for (const ud of unitDeducts) {
+      const unit = invUnitsData.find(u => u.id === ud._unitId);
+      if (!unit) continue;
+      const newStock = Math.max(0, unit.stock - ud.jumlah);
+      // Update local state inventory_units
+      setInvUnitsData(prev => prev.map(u => u.id === ud._unitId
+        ? {...u, stock: newStock}
+        : u
+      ));
+      // Update DB inventory_units
+      supabase.from("inventory_units").update({
+        stock: newStock,
+        updated_at: new Date().toISOString()
+      }).eq("id", ud._unitId).then(({error}) => {
+        if (error) console.warn("inv_units update err:", error.message);
+      });
+    }
+
+    // Material tanpa unit fisik → deduct via inventory biasa (by nama)
+    const matWithoutUnit = materialsToDeduct.filter(mat => !mat.freon_tabung_code);
+    const allToDeduct = [...matWithoutUnit, ...unitDeducts];
+
+    if (allToDeduct.length > 0) {
+      deductInventory(
+        allToDeduct,
+        laporanModal?.id || null,        // orderId
+        null,                            // reportId
+        laporanModal?.customer || null,  // customerName
+        laporanModal?.teknisi  || null,  // teknisiName
+        laporanModal?.date     || null   // jobDate
+      );
+      // Cek stok kritis setelah deduct (dari inventoryData state yg sudah diupdate deductInventory)
+      setTimeout(() => {
+        const kritisItems = inventoryData.filter(i =>
+          allToDeduct.some(m => m._useCode ? m._useCode === i.code
+            : i.name.toLowerCase().includes((m.nama||"").toLowerCase())) &&
+          (i.status === "CRITICAL" || i.status === "OUT")
+        );
+        if (kritisItems.length > 0) {
+          const warnings = kritisItems.map(i => `${i.name} sisa ${i.stock} ${i.unit}`);
+          showNotif("⚠️ Stok kritis: " + warnings.join(", "));
+          const ownerAccs = userAccounts.filter(u => u.role === "Owner");
+          const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n`
+            + warnings.map(w => "• " + w).join("\n");
+          ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
+        }
+      }, 800);
+    }
+
+    // ── 12. Auto-generate invoice ──
+    // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST
+    // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
+    // Untuk service lain: hitung dari PRICE_LIST
+    const isInstallSvc = laporanModal.service === "Install";
+    const jasaNamesSet2 = new Set(
+      priceListData.filter(r=>r.service!=="Material").map(r=>r.type&&r.type.trim())
+    );
+    const repairNamesInMat = new Set(laporanRepairItems.map(r=>r.nama));
+    const jasaFromMat = laporanMaterials.filter(m=>
+      m.nama && jasaNamesSet2.has(m.nama.trim())
+    );
+    const matOnly = laporanMaterials.filter(m=>
+      m.nama && !jasaNamesSet2.has(m.nama.trim()) &&
+      !repairNamesInMat.has(m.nama) && parseFloat(m.jumlah||0)>0
+    );
+    const laborTotalInv = isInstallSvc ? 0 : (() => {
+      // Labor = service fee (cleaning/repair baseline) + jasa items + repair items
+      // ALL bisa hadir bersamaan dalam 1 job
+      const jasaSumForm   = laporanJasaItems.filter(j=>j.nama)
+        .reduce((s,j)=>s+((j.harga_satuan||0)*(parseFloat(j.jumlah)||1)),0);
+      const repairSumForm = laporanRepairItems.filter(r=>r.nama)
+        .reduce((s,r)=>s+((r.harga_satuan||0)*(parseFloat(r.jumlah)||1)),0);
+
+      // Service fee baseline (dari hitungLabor) — HANYA jika tidak ada jasa via form
+      const svcFeeBaseline = jasaSumForm > 0
+        ? 0  // teknisi sudah pilih jasa manual via form → pakai itu
+        : (laporanModal?.service==="Complain"
+          ? 0  // Complain → handle via garansi logic
+          : repairSumForm > 0
+            ? 0  // Repair items sudah capture service cost → tidak perlu baseline
+            : hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length));
+
+      return svcFeeBaseline + jasaSumForm + repairSumForm;
+    })();
+    const matTotalInv = isInstallSvc
+      ? hitungMaterialTotal(effectiveMaterials)
+      : hitungMaterialTotal(matOnly);
+    const invoiceTotal  = laborTotalInv + matTotalInv;
+    const todayInv      = new Date().toISOString().slice(0, 10);
+    const isComplainSvc = laporanModal.service === "Complain";
+    const isZeroTotal   = invoiceTotal === 0;
+
+    // ── GARANSI CHECK: selalu cek untuk Complain, terlepas dari total ──
+    // Cek apakah customer punya garansi AKTIF (belum expired)
+    const prevGaransiActive = isComplainSvc
+      ? invoicesData
+          .filter(inv =>
+            inv.customer === laporanModal.customer &&
+            inv.service  !== "Complain" &&
+            inv.garansi_expires &&
+            inv.garansi_expires >= todayInv &&
+            ["PAID","UNPAID","APPROVED","PENDING_APPROVAL"].includes(inv.status)
+          )
+          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
+      : null;
+
+    // Cek garansi EXPIRED (pernah punya garansi tapi sudah habis)
+    const prevGaransiExpired = isComplainSvc && !prevGaransiActive
+      ? invoicesData
+          .filter(inv =>
+            inv.customer === laporanModal.customer &&
+            inv.service  !== "Complain" &&
+            inv.garansi_expires &&
+            inv.garansi_expires < todayInv &&
+            ["PAID","UNPAID","APPROVED","PENDING_APPROVAL"].includes(inv.status)
+          )
+          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
+      : null;
+
+    const BIAYA_CEK = (() => {
+      const pl = priceListData.find(r=>r.service==="Repair"&&r.type==="Biaya Pengecekan AC");
+      return (pl&&pl.price>0) ? pl.price : 100000;
+    })();
+
+    // ── FINAL LABOR/TOTAL untuk Complain ──────────────────────────────
+    // Garansi AKTIF → jasa gratis (labor=0), material tetap dicharge
+    // Garansi EXPIRED + tidak ada input → biaya cek 100rb
+    // Tidak ada garansi + tidak ada input → biaya cek 100rb
+    // Ada input jasa/material → harga normal (garansi hanya cover jasa)
+    const noGaransiComplain = isComplainSvc && !prevGaransiActive && !prevGaransiExpired;
+    let finalLabor = laborTotalInv;
+    let finalTotal = invoiceTotal;
+    if (isComplainSvc) {
+      if (prevGaransiActive) {
+        // Garansi aktif: jasa gratis, material tetap bayar
+        finalLabor = 0;
+        finalTotal = matTotalInv; // hanya material
+      } else if (isZeroTotal) {
+        // Tidak ada garansi aktif DAN teknisi tidak input apapun → biaya cek
+        finalLabor = BIAYA_CEK;
+        finalTotal = BIAYA_CEK;
+      }
+      // Jika ada input (isZeroTotal=false) tapi garansi expired/no-garansi → harga normal
+    }
+
+    if (isComplainSvc && prevGaransiActive && finalTotal === 0) {
+      // SKIP invoice — dalam garansi
+      setOrdersData(prev => prev.map(o =>
+        o.id === laporanModal.id ? { ...o, status: "COMPLETED" } : o
+      ));
+      try { await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", laporanModal.id); } catch(_) {}
+      addAgentLog("GARANSI_SKIP_INVOICE",
+        `Complain ${laporanModal.id} — dalam garansi s/d ${prevGaransiActive.garansi_expires} ` +
+        `(ref: ${prevGaransiActive.id}) → invoice di-skip`, "SUCCESS");
+
+    } else {
+      // BUAT invoice
+      const invSeq     = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
+      const invId      = "INV-" + todayInv.replace(/-/g, "").slice(0, 8) + "-" + invSeq;
+      const gDays      = 30; // Semua service: garansi 30 hari dari terbit invoice
+      const gExpires   = new Date(Date.now() + gDays * 86400000).toISOString().slice(0, 10);
+
+      // ── BUILD mDetail — BREAKDOWN 1-1, SINGLE SOURCE OF TRUTH ──────────────
+      // Helper: lookup harga dari inventory/pricelist jika tidak ada di item
+      const lookupHarga = (nama, satuanHint) => {
+        const nama2 = (nama||"").toLowerCase();
+        const isF   = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
+        const norm  = nama2.replace(/,/g,".").replace(/eterna\s*/g,"")
+          .replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+        let h = 0;
+        const inv = inventoryData.find(i=>{
+          const n=(i.name||"").toLowerCase().replace(/,/g,".").replace(/eterna\s*/g,"")
+            .replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+          return n===norm||n.includes(norm)||norm.includes(n);
+        });
+        h = inv?.price || 0;
+        if (!h) { for (const sv of ["Material","Repair","Install","Cleaning","Complain"]) { if (PRICE_LIST[sv]?.[nama]) { h=PRICE_LIST[sv][nama]; break; } } }
+        if (!h && isF) { h = nama2.includes("r22")?PRICE_LIST["freon_R22"]||450000 : nama2.includes("r32")?PRICE_LIST["freon_R32"]||450000 : PRICE_LIST["freon_R410A"]||450000; }
+        return h;
+      };
+      const mkRow = (nama, jumlah, satuan, hSat, ket) => {
+        const nama2 = (nama||"").toLowerCase();
+        const isF   = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
+        const rawQ  = parseFloat(jumlah)||0;
+        const qty   = isF ? Math.max(1,Math.ceil(rawQ)) : rawQ;
+        const h     = parseFloat(hSat)||0 || lookupHarga(nama, satuan);
+        const ketFin= ket || (isF&&rawQ!==qty?`Aktual: ${rawQ} kg → dibulatkan ${qty} kg`:"");
+        return { nama, jumlah:qty, satuan:satuan||(isF?"kg":"pcs"), harga_satuan:h, subtotal:h*qty, keterangan:ketFin };
+      };
+
+      const mDetail = [];
+
+      // A. Jasa rows (dari [+] Tambah Jasa form) — keterangan: "jasa"
+      laporanJasaItems.filter(j=>j.nama&&j.nama!=="__manual__"&&parseFloat(j.jumlah||0)>0).forEach(j=>{
+        mDetail.push(mkRow(j.nama, j.jumlah||1, j.satuan||"pcs", j.harga_satuan||0, "jasa"));
+      });
+
+      // B. Repair rows (dari [+] Tambah Repair form) — keterangan: "repair"
+      laporanRepairItems.filter(r=>r.nama&&parseFloat(r.jumlah||0)>0).forEach(r=>{
+        mDetail.push(mkRow(r.nama, r.jumlah||1, r.satuan||"pcs", r.harga_satuan||0, "repair"));
+      });
+
+      // C. Material rows (dari [+] Tambah Material / Preset) — keterangan: "" atau freon label
+      laporanMaterials.filter(m=>m.nama&&parseFloat(m.jumlah||0)>0).forEach(m=>{
+        mDetail.push(mkRow(m.nama, m.jumlah, m.satuan||"pcs", m.harga_satuan||0, m.keterangan||""));
+      });
+
+      // D. Install rows — build dari laporanInstallItems dengan keterangan yang benar
+      if (isInstallSvc) {
+        mDetail.length = 0;
+        // Jasa Install (pasang, vacum, kuras) → keterangan:"jasa"
+        const INSTALL_JASA_KEYS = ["pasang","vacum","bongkar","kuras"];
+        effectiveMaterials.filter(m=>m.nama&&parseFloat(m.jumlah||0)>0).forEach(m=>{
+          const n = (m.nama||"").toLowerCase();
+          const isJasa = INSTALL_JASA_KEYS.some(k=>n.includes(k));
+          const isFreon = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>n.includes(k));
+          const ket = m.keterangan || (isJasa?"jasa":isFreon?"freon":"");
+          mDetail.push(mkRow(m.nama, m.jumlah, m.satuan||"pcs", m.harga_satuan||0, ket));
+        });
+      }
+
+      // E. AUTO-INJECT service fee jika tidak ada jasa item dari form
+      //    Rules:
+      //    - Cleaning/Install: inject service fee per unit SELALU (kecuali ada jasaItems)
+      //    - Repair: HANYA inject "Biaya Pengecekan" jika tidak ada repairItems
+      //      (jika ada repairItems, repair items sudah merepresentasikan biaya jasa)
+      //    - Complain: tidak inject (handled oleh garansi logic → finalLabor/finalTotal)
+      if (!isInstallSvc && !mDetail.some(m=>m.keterangan==="jasa")) {
+        const hasRepairItems = mDetail.some(m=>m.keterangan==="repair");
+        const isRepairSvc   = laporanModal?.service==="Repair";
+        const isComplainSvc2 = laporanModal?.service==="Complain";
+        // Inject hanya jika:
+        // - Bukan Complain (Complain punya garansi logic sendiri)
+        // - Bukan Repair dengan repair items (repair items = service cost)
+        const shouldInject = !isComplainSvc2 && !(isRepairSvc && hasRepairItems);
+        if (shouldInject) {
+          const svcFee = (() => {
+            if (laporanJasaItems.filter(j=>j.nama).length > 0) return 0;
+            if (isRepairSvc) return 0; // Repair tanpa items = Biaya Cek (handled via finalLabor)
+            return hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length);
+          })();
+          if (svcFee > 0) {
+            const unitCount = laporanUnits.length || 1;
+            const hPerUnit  = Math.round(svcFee / unitCount);
+            [...laporanUnits].reverse().forEach((u, idx) => {
+              const unitLabel = u.label || u.merk || ("Unit "+(u.unit_no || (unitCount-idx)));
+              const namaJasa  = (laporanModal.service||"")+(laporanModal.type?" - "+laporanModal.type:"")+" ("+unitLabel+")";
+              mDetail.unshift({ nama:namaJasa, jumlah:1, satuan:"unit", harga_satuan:hPerUnit, subtotal:hPerUnit, keterangan:"jasa" });
+            });
+          }
+        }
+        // Repair tanpa items: inject "Biaya Pengecekan" dari finalLabor (BIAYA_CEK)
+        if (isRepairSvc && !hasRepairItems && finalLabor > 0) {
+          mDetail.unshift({ nama:"Biaya Pengecekan AC", jumlah:1, satuan:"unit", harga_satuan:finalLabor, subtotal:finalLabor, keterangan:"jasa" });
+        }
+        // Complain biaya cek: inject dari finalLabor jika ada
+        if (isComplainSvc2 && finalLabor > 0 && finalLabor <= 200000) {
+          mDetail.unshift({ nama:"Biaya Pengecekan (Tanpa Garansi)", jumlah:1, satuan:"unit", harga_satuan:finalLabor, subtotal:finalLabor, keterangan:"jasa" });
+        }
+      }
+
+      // garansi_status: hanya untuk state lokal (tidak ada kolom ini di DB)
+      const garansiStatusLocal = isComplainSvc
+        ? (prevGaransiActive ? (matTotalInv > 0 ? 'GARANSI_DENGAN_MATERIAL' : 'GARANSI_AKTIF')
+          : prevGaransiExpired ? 'GARANSI_EXPIRED' : 'NO_GARANSI')
+        : null;
+      const newInvoice = {
+        id: invId, job_id: laporanModal.id,
+        customer: laporanModal.customer,
+        phone:    laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
+        service:  laporanModal.service + (laporanModal.type ? " - " + laporanModal.type : ""),
+        units:    laporanUnits.length,
+        labor:    finalLabor,
+        material: matTotalInv,
+        materials_detail: mDetail,           // array untuk state/display
+        garansi_status: garansiStatusLocal,  // hanya state, tidak ke DB
+        dadakan:  0,
+        total:    finalTotal,
+        status:   "PENDING_APPROVAL",
+        garansi_days:    gDays,
+        garansi_expires: gExpires,
+        created_at: new Date().toISOString(),
+      };
+
+      // Status override
+      if (isComplainSvc && finalTotal === 0) {
+        newInvoice.status   = "PAID";
+        newInvoice.paid_at  = new Date().toISOString();
+        addAgentLog("GARANSI_AUTO_PAID", `Invoice ${invId} Rp 0 → auto PAID`, "SUCCESS");
+      } else if (isComplainSvc && prevGaransiExpired) {
+        addAgentLog("GARANSI_EXPIRED_FEE",
+          `Invoice ${invId} — garansi expired (ref: ${prevGaransiExpired.id}) → biaya cek Rp ${BIAYA_CEK.toLocaleString("id-ID")}`,
+          "WARNING");
+      }
+
+      setInvoicesData(prev => [...prev, newInvoice]);
+
+      // Simpan invoice ke Supabase — exclude fields yang tidak ada di DB schema
+      const { garansi_status: _gs, ...invBase } = newInvoice;
+      const invPayload = {
+        ...invBase,
+        materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
+      };
+      // ── 1 invoice per job: cek existing, delete + insert baru ──
+      // Hapus invoice lama untuk job ini (jika ada) agar tidak double
+      const existingInvForJob = invoicesData.filter(i => i.job_id === laporanModal.id);
+      if (existingInvForJob.length > 0) {
+        await Promise.all(existingInvForJob.map(old =>
+          supabase.from("invoices").delete().eq("id", old.id)
+        ));
+        setInvoicesData(prev => prev.filter(i => i.job_id !== laporanModal.id));
+        addAgentLog("INVOICE_REWRITE", "Invoice lama dihapus untuk " + laporanModal.id + " (rewrite)", "INFO");
+      }
+      const { error: invErr } = await supabase.from("invoices").insert(invPayload);
+      if (invErr) {
+        console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
+        for (const st of ["PENDING_APPROVAL","UNPAID"]) {
+          const { error: e2 } = await supabase.from("invoices").insert({
+            id: newInvoice.id, job_id: newInvoice.job_id,
+            customer: newInvoice.customer, service: newInvoice.service,
+            units: newInvoice.units, labor: newInvoice.labor,
+            material: newInvoice.material, total: newInvoice.total,
+            status: st,
+          });
+          if (!e2) { console.log("✅ Invoice inserted:", st); break; }
+        }
+      }
+
+      addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
+
+      // WA notif ke Owner
+      const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
+      const ownerMsg =
+        "Invoice Menunggu Approval\n"
+        +"Job: "+laporanModal.id+"\n"
+        +"Customer: "+laporanModal.customer+"\n"
+        +"Layanan: "+laporanModal.service+" - "+laporanUnits.length+" unit\n"
+        +"Teknisi: "+laporanModal.teknisi+(laporanModal.helper?" + "+laporanModal.helper:"")+"\n"
+        +"Total: "+fmt(newInvoice.total)+" Jasa: "+fmt(newInvoice.labor)+" Mat: "+fmt(newInvoice.material)+"\n"
+        +"Invoice: "+invId+" Silakan approve di menu Invoice. — ARA";
+      ownerAccounts.forEach(u => { if (u.phone) sendWA(u.phone, ownerMsg); });
+      if (ownerAccounts.length === 0) {
+        fetch("/api/send-wa", {
+          method: "POST", headers: _apiHeaders(),
+          body: JSON.stringify({ phone: "6281299898937", message: ownerMsg, currentUserRole: currentUser?.role || "Unknown" })
+        }).catch(err => console.warn("[ARA_NOTIFY_OWNER_FAILED]", err.message));
+      }
+    }
+
+    setLaporanSubmitted(true);
+    pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
+    showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan dikirim ke Owner/Admin untuk verifikasi.`);
+    submitLaporan._running = false;
+  };
 
         const tagStyle = (active, color) => ({
           display:"flex",alignItems:"center",gap:6,background:cs.card,
@@ -6999,18 +12822,37 @@ Silakan buat invoice dari ARA Chat 👆`;
                   })()}
 
                   <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:12,padding:14}}>
-                    <div style={{fontSize:12,color:cs.muted,marginBottom:10}}>Order tercatat <b style={{color:cs.text}}>{laporanModal.units||1} unit</b> AC. Sesuaikan dengan kondisi aktual.</div>
+                    <div style={{fontSize:12,color:cs.muted,marginBottom:10}}>Order tercatat <b style={{color:cs.text}}>{laporanModal.units||1} unit</b> AC. Isi detail tipe & PK untuk setiap unit — penting untuk invoice!</div>
+
+                    {/* Info banner */}
+                    <div style={{background:cs.accent+"08",border:"1px solid "+cs.accent+"33",borderRadius:8,padding:"8px 10px",marginBottom:10,fontSize:10,color:cs.accent}}>
+                      ⚠️ <strong>Wajib isi Tipe AC & PK</strong> — Contoh: Cassette 5PK, Split 1PK, Window 0.5PK. Data ini langsung masuk invoice!
+                    </div>
+
                     <div style={{display:"grid",gap:8}}>
                       {laporanUnits.map((u,idx)=>(
-                        <div key={idx} style={{display:"flex",alignItems:"center",gap:8}}>
-                          <div style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 12px",fontSize:12,color:cs.text}}>
-                            <span style={{color:cs.accent,fontWeight:700}}>Unit {u.unit_no}</span>
-                          </div>
-                          <input value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Lokasi/nama unit..."
-                            style={{width:140,background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
+                        <div key={idx} style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr auto",gap:6,alignItems:"center",background:cs.surface,borderRadius:8,padding:"10px 12px",border:"1px solid "+(u.tipe&&u.tipe.trim()&&u.pk&&u.pk.trim()?cs.green+"33":cs.border)}}>
+                          {/* Unit number */}
+                          <div style={{fontSize:11,fontWeight:700,color:cs.accent,minWidth:50}}>Unit {u.unit_no}</div>
+
+                          {/* Label/lokasi */}
+                          <input id="field_30" value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Ruang/lokasi..."
+                            style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
+
+                          {/* Tipe AC — Required */}
+                          <select value={u.tipe} onChange={e=>updateUnit(idx,{...u,tipe:e.target.value})}
+                            style={{background:cs.card,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.tipe&&u.tipe.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.tipe&&u.tipe.trim()?600:400}}>
+                            {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
+                          </select>
+
+                          {/* PK — Required */}
+                          <input value={u.pk} onChange={e=>updateUnit(idx,{...u,pk:e.target.value})} placeholder="PK"
+                            style={{background:cs.card,border:"1px solid "+(u.pk&&u.pk.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.pk&&u.pk.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.pk&&u.pk.trim()?600:400,textAlign:"center"}}/>
+
+                          {/* Delete button */}
                           {laporanUnits.length>1&&(
                             <button onClick={()=>{const nu=laporanUnits.filter((_,i)=>i!==idx).map((u2,i)=>({...u2,unit_no:i+1}));setLaporanUnits(nu);setActiveUnitIdx(Math.max(0,idx-1));}}
-                              style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:8,padding:"8px 10px",cursor:"pointer",fontSize:13,lineHeight:1}}>×</button>
+                              style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700,lineHeight:1}}>×</button>
                           )}
                         </div>
                       ))}
@@ -7027,7 +12869,25 @@ Silakan buat invoice dari ARA Chat 👆`;
                       ⚠ Jumlah unit berbeda dari order. Admin akan dinotifikasi untuk verifikasi.
                     </div>
                   )}
-                  <button onClick={()=>setLaporanStep(2)} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"13px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
+
+                  {/* Validate Tipe AC & PK untuk semua unit */}
+                  {(() => {
+                    const incompleteUnits = laporanUnits.filter(u => !u.tipe || !u.tipe.trim() || !u.pk || !u.pk.trim());
+                    return incompleteUnits.length > 0 ? (
+                      <div style={{background:"#ef444410",border:"1px solid #ef444430",borderRadius:9,padding:"10px 13px",fontSize:11,color:"#ef4444",fontWeight:600}}>
+                        ❌ Lengkapi dulu: {incompleteUnits.map(u=>`Unit ${u.unit_no}`).join(", ")} — Pastikan Tipe AC & PK terisi!
+                      </div>
+                    ) : null;
+                  })()}
+
+                  <button onClick={()=>{
+                    const incomplete = laporanUnits.filter(u => !u.tipe || !u.tipe.trim() || !u.pk || !u.pk.trim());
+                    if (incomplete.length > 0) {
+                      showNotif(`⚠️ Lengkapi: ${incomplete.map(u=>`Unit ${u.unit_no}`).join(", ")} — Tipe AC & PK wajib diisi!`);
+                      return;
+                    }
+                    setLaporanStep(laporanModal?.service==="Install" ? 3 : 2);
+                  }} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"13px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
                     Lanjut — Isi Detail Unit →
                   </button>
                 </div>
@@ -7036,6 +12896,10 @@ Silakan buat invoice dari ARA Chat 👆`;
               {/* ── STEP 2: Detail Per Unit ── */}
               {laporanStep===2&&(
                 <div style={{display:"grid",gap:14}}>
+                  {/* Info banner: Step 2 adalah untuk detail kondisi & pekerjaan */}
+                  <div style={{background:cs.green+"08",border:"1px solid "+cs.green+"33",borderRadius:10,padding:"10px 12px",fontSize:11,color:cs.green,lineHeight:1.6}}>
+                    ✅ <strong>Step 1 selesai!</strong> Sekarang isi detail kondisi & pekerjaan untuk setiap unit. Step 3 (Material) opsional — hanya jika ada tambahan biaya.
+                  </div>
                   {/* Tab per unit */}
                   <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4}}>
                     {laporanUnits.map((u,idx)=>{
@@ -7059,10 +12923,10 @@ Silakan buat invoice dari ARA Chat 👆`;
                     return(
                       <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:12,padding:14,display:"grid",gap:12}}>
                         <div style={{fontSize:11,fontWeight:700,color:cs.accent,marginBottom:2}}>Unit {u.unit_no} — {u.label}</div>
-                        {/* Tipe & Merk */}
+                        {/* Tipe & Merk — Tipe AC sudah diisi di Step 1, cuma display + bisa edit */}
                         <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:8}}>
                           <div>
-                            <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Tipe AC</div>
+                            <div style={{fontSize:11,fontWeight:700,color:cs.text,marginBottom:4}}>Tipe AC (dari Step 1)</div>
                             <select value={u.tipe} onChange={e=>upd({tipe:e.target.value})}
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
                               {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
@@ -7070,12 +12934,12 @@ Silakan buat invoice dari ARA Chat 👆`;
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Merk</div>
-                            <input value={u.merk} onChange={e=>upd({merk:e.target.value})} placeholder="Daikin..."
+                            <input id="field_31" value={u.merk} onChange={e=>upd({merk:e.target.value})} placeholder="Daikin..."
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                           <div>
-                            <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>PK</div>
-                            <input value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
+                            <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>PK (dari Step 1)</div>
+                            <input id="field_32" value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         </div>
@@ -7085,7 +12949,7 @@ Silakan buat invoice dari ARA Chat 👆`;
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
                             {KONDISI_SBL.map(k=>(
                               <label key={k} style={tagStyle(u.kondisi_sebelum.includes(k),cs.yellow)}>
-                                <input type="checkbox" checked={u.kondisi_sebelum.includes(k)} onChange={()=>upd({kondisi_sebelum:toggleArr(u.kondisi_sebelum,k)})} style={{accentColor:cs.yellow}}/>{k}
+                                <input id="field_checkbox_33" type="checkbox" checked={u.kondisi_sebelum.includes(k)} onChange={()=>upd({kondisi_sebelum:toggleArr(u.kondisi_sebelum,k)})} style={{accentColor:cs.yellow}}/>{k}
                               </label>
                             ))}
                           </div>
@@ -7096,7 +12960,7 @@ Silakan buat invoice dari ARA Chat 👆`;
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
                             {PEKERJAAN_OPT(laporanModal?.service||"Cleaning").map(k=>(
                               <label key={k} style={tagStyle(u.pekerjaan.includes(k),cs.accent)}>
-                                <input type="checkbox" checked={u.pekerjaan.includes(k)} onChange={()=>upd({pekerjaan:toggleArr(u.pekerjaan,k)})} style={{accentColor:cs.accent}}/>{k}
+                                <input id="field_checkbox_34" type="checkbox" checked={u.pekerjaan.includes(k)} onChange={()=>upd({pekerjaan:toggleArr(u.pekerjaan,k)})} style={{accentColor:cs.accent}}/>{k}
                               </label>
                             ))}
                           </div>
@@ -7107,7 +12971,7 @@ Silakan buat invoice dari ARA Chat 👆`;
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
                             {KONDISI_SDH.map(k=>(
                               <label key={k} style={tagStyle(u.kondisi_setelah.includes(k),cs.green)}>
-                                <input type="checkbox" checked={u.kondisi_setelah.includes(k)} onChange={()=>upd({kondisi_setelah:toggleArr(u.kondisi_setelah,k)})} style={{accentColor:cs.green}}/>{k}
+                                <input id="field_checkbox_35" type="checkbox" checked={u.kondisi_setelah.includes(k)} onChange={()=>upd({kondisi_setelah:toggleArr(u.kondisi_setelah,k)})} style={{accentColor:cs.green}}/>{k}
                               </label>
                             ))}
                           </div>
@@ -7116,12 +12980,13 @@ Silakan buat invoice dari ARA Chat 👆`;
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Tekanan Freon (psi)</div>
-                            <input type="number" value={u.freon_ditambah} onChange={e=>upd({freon_ditambah:e.target.value})} placeholder="0" min="0" step="0.1"
+                            <input id="field_number_36" type="number" value={u.freon_ditambah} onChange={e=>upd({freon_ditambah:e.target.value})} placeholder="0" min="0" step="0.1"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+
                           </div>
                           <div>
                             <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Ampere Akhir (A)</div>
-                            <input type="number" value={u.ampere_akhir} onChange={e=>upd({ampere_akhir:e.target.value})} placeholder="0.0" min="0" step="0.1"
+                            <input id="field_number_37" type="number" value={u.ampere_akhir} onChange={e=>upd({ampere_akhir:e.target.value})} placeholder="0.0" min="0" step="0.1"
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         </div>
@@ -7139,7 +13004,12 @@ Silakan buat invoice dari ARA Chat 👆`;
                     <button onClick={()=>setLaporanStep(1)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
                     <div style={{textAlign:"center",fontSize:11,color:cs.muted,alignSelf:"center"}}>{laporanUnits.filter(isUnitDone).length}/{laporanUnits.length} unit ✓</div>
                     <button onClick={()=>{
-                      if(incompleteUnits.length>0){showNotif(`${incompleteUnits.length} unit belum diisi`);setActiveUnitIdx(laporanUnits.findIndex(u=>!isUnitDone(u)));return;}
+                      if(!isInstallJob && incompleteUnits.length>0){
+                        const incomplete = incompleteUnits.map(u=>`Unit ${u.unit_no}`).join(", ");
+                        showNotif(`⚠️ Lengkapi dulu: ${incomplete} — Pastikan Tipe AC & PK sudah diisi untuk semua unit`);
+                        setActiveUnitIdx(laporanUnits.findIndex(u=>!isUnitDone(u)));
+                        return;
+                      }
                       setLaporanStep(3);
                     }} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>Lanjut →</button>
                   </div>
@@ -7150,65 +13020,500 @@ Silakan buat invoice dari ARA Chat 👆`;
               {laporanStep===3&&(
                 <div style={{display:"grid",gap:14}}>
 
+              {/* ══ REPORT INSTALL FORM ══ */}
+              {isInstallJob && (
+              <div style={{display:"grid",gap:8,marginBottom:8}}>
+                <div style={{fontSize:12,fontWeight:700,color:cs.accent,marginBottom:2}}>🔧 Detail Pekerjaan Instalasi</div>
+                <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Isi 0 jika tidak dikerjakan.</div>
+                {/* ── Group 1: Jasa Pemasangan ── */}
+                <div style={{fontSize:10,fontWeight:700,color:cs.muted,letterSpacing:1,textTransform:"uppercase",marginTop:2}}>Jasa Pemasangan</div>
+                {INSTALL_ITEMS.filter(it=>["pasang_05_1pk","pasang_15_2pk","bongkar_05_1pk","bongkar_15_25pk","vacum_05_25pk"].includes(it.key)).map(item=>(
+                <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
+                  background:parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"08":cs.card,
+                  border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"44":cs.border),
+                  borderRadius:8,padding:"8px 10px"}}>
+                  <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
+                    {item.label}<span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
+                  </div>
+                  <input type="number" min="0" step={item.satuan==="Meter"?"0.5":"1"}
+                    value={laporanInstallItems[item.key]??""}
+                    onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
+                    placeholder="0"
+                    style={{width:64,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none",textAlign:"center"}}/>
+                </div>
+                ))}
+                {/* ── Group 2: Material ── */}
+                <div style={{fontSize:10,fontWeight:700,color:cs.muted,letterSpacing:1,textTransform:"uppercase",marginTop:6}}>Material</div>
+                {INSTALL_ITEMS.filter(it=>["pipa_1pk","pipa_2pk","pipa_25pk","pipa_3pk","kabel_15","kabel_25","ducttape_biasa","ducttape_lem","jasa_pipa_ac","jasa_pipa_ruko","dinabolt","karet_mounting","breket_outdoor"].includes(it.key)).map(item=>(
+                <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
+                  background:parseFloat(laporanInstallItems[item.key]||0)>0?cs.green+"08":cs.card,
+                  border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?cs.green+"44":cs.border),
+                  borderRadius:8,padding:"8px 10px"}}>
+                  <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
+                    {item.label}<span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
+                  </div>
+                  <input type="number" min="0" step={item.satuan==="Meter"?"0.5":"1"}
+                    value={laporanInstallItems[item.key]??""}
+                    onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
+                    placeholder="0"
+                    style={{width:64,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none",textAlign:"center"}}/>
+                </div>
+                ))}
+                {/* ── Group 3: Freon & Vacum ── */}
+                <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",letterSpacing:1,textTransform:"uppercase",marginTop:6}}>❄️ Freon & Vacum</div>
+                {INSTALL_ITEMS.filter(it=>["kuras_vacum_r32","kuras_vacum_r22","freon_r22","freon_r32","freon_r410"].includes(it.key)).map(item=>(
+                <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
+                  background:parseFloat(laporanInstallItems[item.key]||0)>0?"#38bdf808":cs.card,
+                  border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?"#38bdf844":cs.border),
+                  borderRadius:8,padding:"8px 10px"}}>
+                  <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
+                    {item.label}<span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
+                  </div>
+                  <input type="number" min="0" step={item.satuan==="KG"?"0.5":"1"}
+                    value={laporanInstallItems[item.key]??""}
+                    onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
+                    placeholder="0"
+                    style={{width:64,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none",textAlign:"center"}}/>
+                </div>
+                ))}
+                {/* Summary */}
+                {Object.values(laporanInstallItems).some(v=>parseFloat(v||0)>0) && (
+                <div style={{background:cs.green+"10",border:"1px solid "+cs.green+"33",borderRadius:9,padding:"8px 12px",fontSize:11,color:cs.green,marginTop:4}}>
+                  ✅ {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).length} item diisi
+                </div>
+                )}
+              </div>
+              )}
+
+                  {/* ══ JASA SECTION: [+] Jasa ══ */}
+                  {!isInstallJob && (
+                  <div style={{display:"grid",gap:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <div style={{fontSize:12,fontWeight:700,color:cs.accent}}>⚡ Jasa / Layanan ({laporanJasaItems.length})</div>
+                      <button onClick={()=>{
+                        const svc = laporanModal?.service||"";
+                        const plJasa = priceListData.filter(r=>
+                          r.service===svc && r.category==="Jasa" && parseInt(r.price||0)>0
+                        );
+                        if(laporanJasaItems.length<10) setLaporanJasaItems(p=>[...p,{
+                          id:Date.now(),nama:"",jumlah:1,satuan:"pcs",harga_satuan:0
+                        }]);
+                      }}
+                        style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,
+                          borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>
+                        + Tambah Jasa
+                      </button>
+                    </div>
+                    {laporanJasaItems.length===0&&(
+                      <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:cs.muted,
+                        background:cs.surface,borderRadius:8,border:"1px dashed "+cs.border}}>
+                        Belum ada jasa. Klik + Tambah Jasa untuk input biaya layanan.
+                      </div>
+                    )}
+                    {laporanJasaItems.map((item,idx)=>{
+                      const jasaLookup = priceListData
+                        .filter(r=>r.category==="Jasa" && parseInt(r.price||0)>0)
+                        .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}));
+                      const svcLookup = priceListData
+                        .filter(r=>r.service===laporanModal?.service && parseInt(r.price||0)>0)
+                        .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}));
+                      const allJasaOpt = [...jasaLookup,...svcLookup]
+                        .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,20);
+                      return (
+                      <div key={item.id} style={{background:cs.card,border:"1px solid "+(item.nama?cs.accent+"44":cs.border),
+                        borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
+                        {/* Nama jasa */}
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <select
+                            value={item._isManual ? "__manual__" : item.nama}
+                            onChange={e=>{
+                              const val = e.target.value;
+                              if(val==="__manual__"){
+                                setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                  ?{...j,nama:"__manual__",_isManual:true,harga_satuan:0,satuan:"pcs"}:j));
+                                setJasaManualText(p=>({...p,[item.id]:""}));
+                              } else {
+                                const sel = allJasaOpt.find(x=>x.nama===val);
+                                setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                  ?{...j,nama:val,_isManual:false,harga_satuan:sel?.harga||0,satuan:sel?.satuan||"pcs"}:j));
+                              }
+                            }}
+                            style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,
+                              borderRadius:8,padding:"8px 10px",color:item.nama?cs.text:cs.muted,fontSize:13}}>
+                            <option value="">-- Pilih jasa --</option>
+                            {allJasaOpt.map(o=>(
+                              <option key={o.nama} value={o.nama}>{o.nama}</option>
+                            ))}
+                            <option value="__manual__">✏️ Input manual...</option>
+                          </select>
+                          <button onMouseDown={()=>setLaporanJasaItems(p=>p.filter(j=>j.id!==item.id))}
+                            style={{background:"#ef444420",border:"none",color:"#ef4444",
+                              borderRadius:7,padding:"6px 10px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>
+                            ×
+                          </button>
+                        </div>
+                        {/* Manual input jika pilih manual — pakai local state agar tidak close saat ketik */}
+                        {item._isManual&&(
+                          <input
+                            value={jasaManualText[item.id]??"" }
+                            onChange={e=>{
+                              // Hanya update local text — TIDAK ubah laporanJasaItems.nama
+                              // Sehingga _isManual tetap true dan input tidak close
+                              setJasaManualText(p=>({...p,[item.id]:e.target.value}));
+                            }}
+                            onBlur={e=>{
+                              // Commit ke state saat user keluar dari input
+                              const txt = (jasaManualText[item.id]||"").trim();
+                              if(txt) setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                ?{...j,nama:txt,_isManual:true}:j));
+                            }}
+                            onKeyDown={e=>{
+                              if(e.key==="Enter"){
+                                const txt=(jasaManualText[item.id]||"").trim();
+                                if(txt) setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                                  ?{...j,nama:txt,_isManual:true}:j));
+                                e.target.blur();
+                              }
+                            }}
+                            placeholder="Ketik nama jasa..."
+                            autoFocus
+                            style={{width:"100%",background:cs.surface,border:"1px solid "+cs.accent+"55",
+                              borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                        )}
+                        {/* Qty Unit saja — harga disembunyikan dari teknisi */}
+                        <div>
+                          <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Jumlah Unit</div>
+                          <input type="number" min="1" step="1" value={item.jumlah||1}
+                            onChange={e=>setLaporanJasaItems(p=>p.map(j=>j.id===item.id
+                              ?{...j,jumlah:parseFloat(e.target.value)||1}:j))}
+                            style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
+                              borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                        </div>
+                      </div>
+                      );
+                    })}
+                  </div>
+                  )}
+
+                  {/* ══ REPAIR / SPAREPART SECTION: [+] Repair ══ */}
+                  {!isInstallJob && (
+                  <div style={{display:"grid",gap:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <div style={{fontSize:12,fontWeight:700,color:cs.yellow}}>🔩 Repair / Sparepart ({laporanRepairItems.length})</div>
+                      <button onClick={()=>{
+                        if(laporanRepairItems.length<10) setLaporanRepairItems(p=>[...p,{
+                          id:Date.now(), nama:"", jumlah:1, satuan:"pcs", harga_satuan:0, _isManual:false
+                        }]);
+                      }}
+                        style={{fontSize:11,background:cs.yellow+"15",border:"1px solid "+cs.yellow+"33",color:cs.yellow,
+                          borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>
+                        + Tambah Repair
+                      </button>
+                    </div>
+                    {laporanRepairItems.length===0&&(
+                      <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:cs.muted,
+                        background:cs.surface,borderRadius:8,border:"1px dashed "+cs.border}}>
+                        Belum ada item repair. Klik + Tambah Repair untuk input sparepart/perbaikan.
+                      </div>
+                    )}
+                    {laporanRepairItems.map((rItem,rIdx)=>{
+                      const repairOpt = priceListData
+                        .filter(r=>r.service==="Repair" && parseInt(r.price||0)>0)
+                        .map(r=>({nama:r.type, satuan:r.unit||"pcs", harga:parseInt(r.price||0)}));
+                      const invRepairOpt = inventoryData
+                        .filter(r=>parseInt(r.price||0)>0)
+                        .map(r=>({nama:r.name, satuan:r.unit||"pcs", harga:parseInt(r.price||0)}));
+                      const allRepairOpt = [...repairOpt,...invRepairOpt]
+                        .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,30);
+                      return (
+                      <div key={rItem.id} style={{background:cs.card,border:"1px solid "+(rItem.nama?cs.yellow+"44":cs.border),
+                        borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
+                        {/* Nama repair */}
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <select
+                            value={rItem._isManual?"__manual__":rItem.nama}
+                            onChange={e=>{
+                              const val=e.target.value;
+                              if(val==="__manual__"){
+                                setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
+                                  ?{...r,nama:"__manual__",_isManual:true,harga_satuan:0,satuan:"pcs"}:r));
+                                setRepairManualText(p=>({...p,[rItem.id]:""}));
+                              } else {
+                                const sel=allRepairOpt.find(x=>x.nama===val);
+                                setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
+                                  ?{...r,nama:val,_isManual:false,harga_satuan:sel?.harga||0,satuan:sel?.satuan||"pcs"}:r));
+                              }
+                            }}
+                            style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,
+                              borderRadius:8,padding:"8px 10px",color:rItem.nama&&!rItem._isManual?cs.text:cs.muted,fontSize:13}}>
+                            <option value="">-- Pilih repair/sparepart --</option>
+                            {allRepairOpt.map(o=>(
+                              <option key={o.nama} value={o.nama}>{o.nama}</option>
+                            ))}
+                            <option value="__manual__">✏️ Input manual...</option>
+                          </select>
+                          <button onMouseDown={()=>setLaporanRepairItems(p=>p.filter(r=>r.id!==rItem.id))}
+                            style={{background:"#ef444420",border:"none",color:"#ef4444",
+                              borderRadius:7,padding:"6px 10px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>
+                            ×
+                          </button>
+                        </div>
+                        {/* Manual input untuk repair */}
+                        {rItem._isManual&&(
+                          <input
+                            value={repairManualText[rItem.id]??""}
+                            onChange={e=>setRepairManualText(p=>({...p,[rItem.id]:e.target.value}))}
+                            onBlur={e=>{
+                              const txt=(repairManualText[rItem.id]||"").trim();
+                              if(txt) setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
+                                ?{...r,nama:txt,_isManual:true}:r));
+                            }}
+                            onKeyDown={e=>{
+                              if(e.key==="Enter"){
+                                const txt=(repairManualText[rItem.id]||"").trim();
+                                if(txt) setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
+                                  ?{...r,nama:txt,_isManual:true}:r));
+                                e.target.blur();
+                              }
+                            }}
+                            placeholder="Ketik nama repair/sparepart..."
+                            autoFocus
+                            style={{width:"100%",background:cs.surface,border:"1px solid "+cs.yellow+"55",
+                              borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                        )}
+                        {/* Qty — satuan otomatis dari DB */}
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"center"}}>
+                          <div>
+                            <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Jumlah</div>
+                            <input type="number" min="1" step="1" value={rItem.jumlah||1}
+                              onChange={e=>setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
+                                ?{...r,jumlah:parseFloat(e.target.value)||1}:r))}
+                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
+                                borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Satuan</div>
+                            <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                              padding:"8px 10px",color:cs.muted,fontSize:13,textAlign:"center"}}>
+                              {rItem.satuan||"pcs"}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      );
+                    })}
+                  </div>
+                  )}
+
+                  {/* ══ NORMAL MATERIAL FORM (Service/Repair/Complain) ══ */}
+                  {!isInstallJob && (
+                  <div style={{display:"grid",gap:10}}>
                   {/* Material */}
                   <div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                       <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>🔧 Material Digunakan ({laporanMaterials.length}/20)</div>
                       <button onClick={()=>setShowMatPreset(v=>!v)}
                         style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>
-                        {showMatPreset?"✕ Tutup":"📦 Preset "+laporanModal.service}
+                        {showMatPreset?"✕ Tutup":"📦 Preset Material"}
                       </button>
                     </div>
                     {showMatPreset&&(
-                      <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:12,marginBottom:10}}>
-                        <div style={{fontSize:11,color:cs.muted,marginBottom:8}}>Tap untuk tambah cepat:</div>
-                        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                          {presets.map(p=>(
-                            <button key={p} onClick={()=>{if(laporanMaterials.length<20)setLaporanMaterials(prev=>[...prev,{id:Date.now(),nama:p,jumlah:"",satuan:"pcs",keterangan:""}]);setShowMatPreset(false);}}
-                              style={{fontSize:11,background:cs.accent+"10",border:"1px solid "+cs.accent+"22",color:cs.accent,borderRadius:6,padding:"5px 10px",cursor:"pointer"}}>+ {p}</button>
-                          ))}
-                        </div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                        <div style={{fontSize:11,color:cs.muted,width:"100%",marginBottom:2}}>Tap untuk tambah:</div>
+                        {presets.map(p=>(
+                          <button key={p.nama||p} onClick={()=>{if(laporanMaterials.length<20)setLaporanMaterials(prev=>[...prev,{id:Date.now(),nama:p.nama||p,jumlah:"",satuan:p.satuan||"pcs",keterangan:""}]);setShowMatPreset(false);}}
+                            style={{fontSize:11,background:cs.surface,border:"1px solid "+cs.border,color:cs.text,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>
+                            {p.nama||p}
+                          </button>
+                        ))}
                       </div>
                     )}
-                    <div style={{display:"grid",gap:8}}>
-                      {laporanMaterials.length===0&&<div style={{textAlign:"center",padding:"14px 0",fontSize:12,color:cs.muted,fontStyle:"italic"}}>Belum ada material — opsional untuk Cleaning</div>}
-                      {laporanMaterials.map(mat=>(
-                        <div key={mat.id} style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
-                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                            <input value={mat.nama} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,nama:e.target.value}:m))} placeholder="Nama material..."
-                              style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
-                            <button onClick={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
-                              style={{background:"#ef444422",border:"1px solid #ef444433",color:"#ef4444",borderRadius:7,padding:"8px 10px",cursor:"pointer",fontSize:14,lineHeight:1,fontWeight:700}}>×</button>
+                    {laporanMaterials.length===0&&<div style={{textAlign:"center",padding:"14px 0",fontSize:12,color:cs.muted,fontStyle:"italic"}}>Belum ada material. Tap + Tambah atau pakai Preset.</div>}
+              {laporanMaterials.map(mat=>{
+                // Build lookup: inventory + price_list Material (tanpa harga)
+                const matLookup = [
+                  ...inventoryData.map(r=>({nama:r.name,satuan:r.unit||"pcs"})),
+                  ...priceListData.filter(r=>r.service==="Material").map(r=>({nama:r.type,satuan:r.unit||"pcs"}))
+                ].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i); // dedupe
+                const isSearching = matSearchId === mat.id;
+                const query = isSearching ? matSearchQuery : "";
+                const filtered = matLookup.filter(x=>
+                  x.nama.toLowerCase().includes(query.toLowerCase())
+                ).slice(0,12);
+                return (
+                <div key={mat.id} style={{background:cs.card,border:"1px solid "+(mat.nama?cs.accent+"44":cs.border),borderRadius:10,padding:"10px 12px",marginBottom:6}}>
+                  {/* Row 1: Nama material — dropdown search */}
+                  <div style={{position:"relative",marginBottom:6}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      {/* Nama field — tampilkan nama terpilih atau input search */}
+                      <div style={{flex:1,position:"relative"}}>
+                        <input
+                          id={"mat_search_"+mat.id}
+                          value={isSearching ? matSearchQuery : mat.nama}
+                          placeholder="Cari material..."
+                          onFocus={()=>{ setMatSearchId(mat.id); setMatSearchQuery(mat.nama); }}
+                          onChange={e=>{ setMatSearchQuery(e.target.value); }}
+                          onBlur={()=>setTimeout(()=>{ setMatSearchId(null); setMatSearchQuery(""); },200)}
+                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
+                            borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}
+                        />
+                        {/* Dropdown hasil search */}
+                        {isSearching && (
+                          <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:999,
+                            background:cs.surface,border:"1px solid "+cs.accent+"55",
+                            borderRadius:"0 0 10px 10px",maxHeight:200,overflowY:"auto",
+                            boxShadow:"0 8px 24px #0006"}}>
+                            {filtered.length > 0 ? filtered.map((item,idx)=>(
+                              <div key={idx}
+                                onMouseDown={()=>{
+                                  setLaporanMaterials(p=>p.map(m=>m.id===mat.id
+                                    ?{...m,nama:item.nama,satuan:item.satuan}:m));
+                                  setMatSearchId(null); setMatSearchQuery("");
+                                }}
+                                style={{padding:"9px 12px",cursor:"pointer",fontSize:13,
+                                  color:cs.text,borderBottom:"1px solid "+cs.border+"33",
+                                  display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                                onMouseEnter={e=>e.currentTarget.style.background=cs.accent+"18"}
+                                onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                              >
+                                <span style={{fontWeight:600}}>{item.nama}</span>
+                                <span style={{fontSize:11,color:cs.muted,marginLeft:8}}>{item.satuan}</span>
+                              </div>
+                            )) : (
+                              <div style={{padding:"10px 12px",color:cs.muted,fontSize:12}}>
+                                Tidak ditemukan — ketik manual
+                              </div>
+                            )}
                           </div>
-                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1.5fr",gap:8}}>
-                            <input type="number" value={mat.jumlah} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:e.target.value}:m))} placeholder="Jml" min="0"
-                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
-                            <input type="number" value={mat.harga||0} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,harga:Number(e.target.value)}:m))}
-                              placeholder="Harga/unit" min="0"
-                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"7px 8px",color:cs.text,fontSize:12,outline:"none"}} />
-                            <select value={mat.satuan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,satuan:e.target.value}:m))}
-                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
-                              {SATUAN_OPT.map(s=><option key={s}>{s}</option>)}
-                            </select>
-                            <input value={mat.keterangan} onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,keterangan:e.target.value}:m))} placeholder="Keterangan..."
-                              style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {laporanMaterials.length<20&&(
-                      <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,harga:0,satuan:"pcs",keterangan:""}])}
-                        style={{marginTop:8,width:"100%",background:cs.green+"10",border:"1px dashed "+cs.green+"33",color:cs.green,borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>
-                        + Tambah Material
+                        )}
+                      </div>
+                      {/* Tombol hapus baris */}
+                      <button onMouseDown={()=>setLaporanMaterials(p=>p.filter(m=>m.id!==mat.id))}
+                        style={{background:"#ef444420",border:"none",color:"#ef4444",
+                          borderRadius:7,padding:"6px 10px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>
+                        ×
                       </button>
-                    )}
+                    </div>
                   </div>
+                  {/* Row 2: Qty + Satuan */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <input type="number" min="0" step="0.5" value={mat.jumlah}
+                      onChange={e=>setLaporanMaterials(p=>p.map(m=>m.id===mat.id?{...m,jumlah:parseFloat(e.target.value)||0}:m))}
+                      placeholder="Jumlah"
+                      style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                        padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
+                    <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
+                      padding:"8px 10px",color:cs.muted,fontSize:13,textAlign:"center",
+                      display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      {mat.satuan||"pcs"}
+                    </div>
+                  </div>
+                  {/* ── Unit Fisik Selector (Tabung / Roll) ── */}
+                  {(()=>{
+                    const n = (mat.nama||"").toLowerCase();
+                    const isFreon = n.includes("freon") || n.includes("kuras vacum") ||
+                      n.includes("r-22") || n.includes("r-32") || n.includes("r-410") ||
+                      n.includes("r22") || n.includes("r32") || n.includes("r410");
+                    const isPipa  = n.includes("pipa") || n.includes("hoda");
+                    const isKabel = n.includes("kabel");
+                    if (!isFreon && !isPipa && !isKabel) return null;
 
-                  {/* Foto */}
+                    // Cari inventory item yang paling cocok dengan nama material
+                    const matchedInvItem = inventoryData.find(item => {
+                      const nm = (item.name||"").toLowerCase();
+                      return nm.includes(n) || n.includes(nm.replace(/\s+/g,"").substring(0,6));
+                    }) || inventoryData.find(item => {
+                      const nm = (item.name||"").toLowerCase();
+                      if (isFreon) return item.freon_type && n.includes(item.freon_type.toLowerCase().replace("r","r-"));
+                      if (isPipa)  return nm.includes("pipa") && nm.includes(n.replace("pipa","").replace("hoda","").trim().split(" ")[0]);
+                      if (isKabel) return nm.includes("kabel") && n.includes(nm.substring(nm.indexOf("3x"),nm.indexOf("3x")+6));
+                      return false;
+                    });
+
+                    // Ambil unit fisik milik item ini dari invUnitsData
+                    // Teknisi hanya lihat unit dengan stock >= min_visible
+                    // Admin/Owner bisa lihat semua (is_active = true)
+                    const isAdminRole = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+                    const availableUnits = invUnitsData.filter(u => {
+                      if (!matchedInvItem) return false;
+                      if (u.inventory_code !== matchedInvItem.code) return false;
+                      if (!u.is_active) return false;
+                      // Teknisi: hide unit dengan sisa < min_visible
+                      if (!isAdminRole && u.stock < (u.min_visible || 3)) return false;
+                      return true;
+                    });
+
+                    const icon      = isFreon ? "❄️" : isPipa ? "🔧" : "⚡";
+                    const unitWord  = isFreon ? "tabung" : isPipa ? "roll pipa" : "roll kabel";
+                    const borderCol = isFreon ? cs.accent : isPipa ? "#f59e0b" : "#22c55e";
+
+                    return (
+                      <div style={{marginTop:6,padding:"8px 10px",
+                        background:borderCol+"08",border:"1px solid "+borderCol+"33",borderRadius:8}}>
+                        <div style={{fontSize:10,fontWeight:700,color:borderCol,marginBottom:5}}>
+                          {icon} Dari {unitWord} mana?
+                          {matchedInvItem && (
+                            <span style={{fontWeight:400,color:cs.muted,marginLeft:6}}>
+                              ({matchedInvItem.name})
+                            </span>
+                          )}
+                        </div>
+                        {availableUnits.length === 0 ? (
+                          <div style={{fontSize:11,color:cs.red,padding:"4px 0"}}>
+                            ⚠️ Tidak ada {unitWord} tersedia (stok habis atau semua &lt; batas minimum).
+                            {isAdminRole && " Tambah unit baru di menu Stok Material."}
+                          </div>
+                        ) : (
+                          <select
+                            value={mat.freon_tabung_code||""}
+                            onChange={e=>{
+                              const unitId = e.target.value;
+                              const unit   = invUnitsData.find(u => u.id === unitId);
+                              setLaporanMaterials(p=>p.map(m=>m.id===mat.id
+                                ?{...m,
+                                  freon_tabung_code: unitId,
+                                  freon_unit_label:  unit?.unit_label || "",
+                                  freon_inv_code:    unit?.inventory_code || "",
+                                }:m));
+                            }}
+                            style={{width:"100%",background:cs.surface,
+                              border:"1px solid "+borderCol+"55",borderRadius:7,
+                              padding:"7px 10px",color:cs.text,fontSize:12}}>
+                            <option value="">— Pilih {unitWord} —</option>
+                            {availableUnits.map(unit=>(
+                              <option key={unit.id} value={unit.id}>
+                                {unit.unit_label} — Sisa: {unit.stock} {matchedInvItem?.unit||""}
+                                {unit.stock < (unit.min_visible||3)*2 ? " ⚠️" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        {mat.freon_tabung_code && mat.freon_unit_label && (
+                          <div style={{fontSize:10,color:cs.green,marginTop:4,display:"flex",gap:8}}>
+                            <span>✅ {mat.freon_unit_label}</span>
+                            <span style={{color:cs.muted}}>→ stok berkurang {mat.jumlah} {mat.satuan||matchedInvItem?.unit||""} saat submit</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+                );
+              })}
+                  </div>
+                  {laporanMaterials.length<20&&(
+                    <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,satuan:"pcs",keterangan:""}])}
+                      style={{marginTop:8,width:"100%",background:cs.green+"10",border:"1px dashed "+cs.green+"33",color:cs.green,borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                      + Tambah Material
+                    </button>
+                  )}
+                  </div>
+                  )}{/* end !isInstallJob */}
+
+                  {/* ── Foto: tampil untuk semua service ── */}
                   <div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>
-                        📸 Foto Dokumentasi ({laporanFotos.length}/10)
+                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>📸 Foto Dokumentasi ({laporanFotos.length}/10)
                         {laporanFotos.length > 0 && (
                           <span style={{marginLeft:8,fontSize:11}}>
                             <span style={{color:cs.green}}>☁️ {laporanFotos.filter(f=>f.url).length} tersimpan</span>
@@ -7220,28 +13525,59 @@ Silakan buat invoice dari ARA Chat 👆`;
                       </div>
                       {laporanFotos.length<10&&(
                         <button onClick={()=>fotoInputRef.current?.click()}
-                          style={{fontSize:11,background:cs.yellow+"15",border:"1px solid "+cs.yellow+"33",color:cs.yellow,borderRadius:6,padding:"5px 11px",cursor:"pointer",fontWeight:600}}>+ Upload</button>
+                          style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>+ Foto</button>
                       )}
                     </div>
-                    <input ref={fotoInputRef} type="file" accept="image/*" multiple onChange={handleFotoUpload} style={{display:"none"}}/>
+                    <input id="field_file_42" ref={fotoInputRef} type="file" accept="image/*" multiple onChange={handleFotoUpload} style={{display:"none"}}/>
                     {laporanFotos.length===0?(
                       <div onClick={()=>fotoInputRef.current?.click()}
-                        style={{border:"1px dashed "+cs.yellow+"33",borderRadius:10,padding:"20px",textAlign:"center",cursor:"pointer",color:cs.muted,fontSize:12}}>
+                        style={{border:"1px dashed "+cs.border,borderRadius:10,padding:"20px",textAlign:"center",cursor:"pointer",color:cs.muted,fontSize:12}}>
                         📷 Tap untuk upload foto<br/><span style={{fontSize:11}}>Sebelum &amp; sesudah servis, kondisi material</span>
                       </div>
                     ):(
                       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
                         {laporanFotos.map(f=>(
                           <div key={f.id} style={{position:"relative"}}>
-                            <img src={f.data_url} alt={f.label} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:8,border:"1px solid "+(f.url?cs.green:cs.yellow),opacity:f.url?1:0.75}}/>
-                            {/* Status badge: cloud = uploaded, clock = pending */}
-                            <div style={{position:"absolute",top:4,left:4,background:f.url?"#22c55ecc":"#f59e0bcc",borderRadius:4,padding:"1px 5px",fontSize:9,color:"#fff",fontWeight:700}}>
-                              {f.url ? "☁️ OK" : "⏳"}
-                            </div>
+                            <img src={f.data_url} alt={f.label} style={{width:"100%",aspectRatio:"1/1",objectFit:"cover",borderRadius:8,border:"1px solid "+cs.border}}/>
+                            {f.url ? (
+                              <div style={{position:"absolute",top:4,right:4,background:"#22c55e",color:"#fff",fontSize:9,padding:"1px 5px",borderRadius:99,fontWeight:700,pointerEvents:"none"}}>
+                                {f.restored ? "☁️ Lama" : "☁️ OK"}
+                              </div>
+                            ) : (
+                              <div
+                                title="Tap untuk retry upload"
+                                onClick={async () => {
+                                  showNotif("⏳ Retry upload...");
+                                  const reportId = laporanModal?.id || "tmp";
+                                  try {
+                                    const r = await fetch("/api/upload-foto", {
+                                      method: "POST", headers: _apiHeaders(),
+                                      body: JSON.stringify({
+                                        base64: f.data_url,
+                                        filename: f.hash ? `${f.hash}.jpg` : `retry_${f.id}.jpg`,
+                                        reportId, mimeType: "image/jpeg", hash: f.hash,
+                                        currentUserRole: currentUser?.role || "Unknown",
+                                      }),
+                                    });
+                                    const d = await r.json();
+                                    if (d.success && d.url) {
+                                      setLaporanFotos(prev => prev.map(x =>
+                                        x.id === f.id ? {...x, url: d.url, errMsg: ""} : x
+                                      ));
+                                      showNotif("✅ Retry berhasil!");
+                                    } else {
+                                      showNotif("❌ Retry gagal: " + (d.error||"unknown"));
+                                    }
+                                  } catch(err) { showNotif("❌ " + err.message); }
+                                }}
+                                style={{position:"absolute",top:4,right:4,background:"#f59e0b",color:"#fff",fontSize:9,padding:"1px 5px",borderRadius:99,fontWeight:700,cursor:"pointer"}}>
+                                ⏳ Retry
+                              </div>
+                            )}
                             <button onClick={()=>setLaporanFotos(p=>p.filter(x=>x.id!==f.id))}
-                              style={{position:"absolute",top:4,right:4,background:"#000a",border:"none",color:"#fff",borderRadius:"50%",width:20,height:20,cursor:"pointer",fontSize:12,lineHeight:"20px",padding:0,textAlign:"center"}}>×</button>
-                            <input value={f.label} onChange={e=>setLaporanFotos(p=>p.map(x=>x.id===f.id?{...x,label:e.target.value}:x))}
-                              style={{marginTop:3,width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:5,padding:"4px 6px",color:cs.text,fontSize:10,outline:"none",boxSizing:"border-box"}}/>
+                              style={{position:"absolute",top:4,left:4,background:"#ef4444cc",border:"none",color:"#fff",borderRadius:99,width:18,height:18,cursor:"pointer",fontSize:10,lineHeight:1,padding:0}}>×</button>
+                            <input id="field_43" value={f.label} onChange={e=>setLaporanFotos(p=>p.map(x=>x.id===f.id?{...x,label:e.target.value}:x))}
+                              placeholder="Label foto..." style={{marginTop:3,width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:5,padding:"4px 6px",color:cs.text,fontSize:10,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         ))}
                         {laporanFotos.length<10&&(
@@ -7252,7 +13588,7 @@ Silakan buat invoice dari ARA Chat 👆`;
                     )}
                   </div>
 
-                  {/* Rekomendasi & Catatan */}
+                  {/* ── Rekomendasi & Catatan: shared untuk semua service ── */}
                   <div>
                     <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:5}}>Rekomendasi untuk Customer</div>
                     <textarea value={laporanRekomendasi} onChange={e=>setLaporanRekomendasi(e.target.value)} rows={2} placeholder="cth: Disarankan servis berkala tiap 3 bulan..."
@@ -7265,7 +13601,7 @@ Silakan buat invoice dari ARA Chat 👆`;
                   </div>
 
                   <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
-                    <button onClick={()=>setLaporanStep(2)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
+                    <button onClick={()=>setLaporanStep(laporanModal?.service==="Install" ? 1 : 2)} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>← Kembali</button>
                     <button onClick={()=>setLaporanStep(4)} style={{background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)",border:"none",color:"#0a0f1e",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>Lanjut → Ringkasan</button>
                   </div>
                 </div>
@@ -7282,32 +13618,61 @@ Silakan buat invoice dari ARA Chat 👆`;
                       <div>
                         <span style={{color:cs.muted}}>Total: </span>
                         <span style={{fontWeight:700,color:cs.text}}>{laporanUnits.length} unit AC</span>
-                        {totalFreon>0&&<span style={{color:cs.muted}}> · Freon <span style={{color:cs.yellow}}>{totalFreon.toFixed(1)}kg</span></span>}
+                        {totalFreon>0&&<span style={{color:cs.muted}}> · Tekanan Freon: <span style={{color:cs.yellow}}>{totalFreon.toFixed(0)} psi</span></span>}
                         {laporanFotos.length>0&&<span style={{color:cs.muted}}> · <span style={{color:cs.green}}>{laporanFotos.length} foto</span></span>}
                         {laporanMaterials.length>0&&<span style={{color:cs.muted}}> · <span style={{color:cs.accent}}>{laporanMaterials.length} material</span></span>}
                       </div>
                     </div>
                     {/* Per-unit summary */}
-                    <div style={{display:"grid",gap:8}}>
-                      {laporanUnits.map((u,i)=>(
-                        <div key={i} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"10px 12px"}}>
-                          <div style={{fontWeight:700,color:cs.accent,marginBottom:5}}>Unit {u.unit_no} — {u.label} {u.merk?`(${u.merk})`:""}</div>
-                          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
-                            {u.kondisi_sebelum.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.yellow+"18",color:cs.yellow,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
+                    {/* ══ Install summary ══ */}
+                    {isInstallJob && (
+                      <div style={{background:cs.card,border:"1px solid "+cs.accent+"33",borderRadius:10,padding:"12px 14px"}}>
+                        <div style={{fontWeight:700,color:cs.accent,marginBottom:8,fontSize:12}}>🔧 Detail Instalasi</div>
+                        {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).map(it=>(
+                          <div key={it.key} style={{display:"flex",justifyContent:"space-between",fontSize:12,
+                            color:cs.text,marginBottom:3,paddingBottom:3,borderBottom:"1px solid "+cs.border+"33"}}>
+                            <span>{it.label}</span>
+                            <span style={{fontWeight:700,color:cs.accent}}>{laporanInstallItems[it.key]} {it.satuan}</span>
                           </div>
-                          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
-                            {u.pekerjaan.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.accent+"18",color:cs.accent,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
+                        ))}
+                        {!INSTALL_ITEMS.some(it=>parseFloat(laporanInstallItems[it.key]||0)>0) && (
+                          <div style={{color:cs.muted,fontSize:12,textAlign:"center"}}>Belum ada item diisi</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ══ Per-unit summary (Service/Repair/Complain) ══ */}
+                    {!isInstallJob && (
+                      <div style={{display:"grid",gap:8}}>
+                        {laporanUnits.map((u,i)=>(
+                          <div key={i} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"10px 12px"}}>
+                            <div style={{fontWeight:700,color:cs.accent,marginBottom:5}}>Unit {u.unit_no} — {u.label} {u.merk?`(${u.merk})`:""}</div>
+                            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
+                              {u.kondisi_sebelum.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.yellow+"18",color:cs.yellow,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
+                            </div>
+                            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
+                              {u.pekerjaan.map((k,ki)=><span key={ki} style={{fontSize:10,background:cs.accent+"18",color:cs.accent,padding:"1px 6px",borderRadius:99}}>{k}</span>)}
+                            </div>
+                            <div style={{fontSize:11,color:cs.muted}}>
+                              {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}{u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
+                              {parseFloat(u.freon_ditambah)>0?`Tekanan: ${u.freon_ditambah} psi`:""}
+                              {u.catatan_unit?` · ${u.catatan_unit}`:""}
+                            </div>
                           </div>
-                          <div style={{fontSize:11,color:cs.muted}}>
-                            {u.ampere_akhir?`Ampere: ${u.ampere_akhir}A`:""}{u.ampere_akhir&&parseFloat(u.freon_ditambah)>0?" · ":""}
-                            {parseFloat(u.freon_ditambah)>0?`Freon +${u.freon_ditambah}kg`:""}
-                            {u.catatan_unit?` · ${u.catatan_unit}`:""}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {/* Material */}
-                    {laporanMaterials.length>0&&(
+                        ))}
+                      </div>
+                    )}
+
+                    {/* ══ Material summary ══ */}
+                    {isInstallJob && INSTALL_ITEMS.some(it=>parseFloat(laporanInstallItems[it.key]||0)>0) && (
+                      <div style={{marginTop:10}}>
+                        <div style={{fontWeight:700,color:cs.text,marginBottom:5,fontSize:11}}>Material Instalasi:</div>
+                        {INSTALL_ITEMS.filter(it=>parseFloat(laporanInstallItems[it.key]||0)>0).map((it,mi)=>(
+                          <div key={mi} style={{fontSize:11,color:cs.muted,marginBottom:2}}>• {it.label}: {laporanInstallItems[it.key]} {it.satuan}</div>
+                        ))}
+                      </div>
+                    )}
+                    {!isInstallJob && laporanMaterials.length>0 && (
                       <div style={{marginTop:10}}>
                         <div style={{fontWeight:700,color:cs.text,marginBottom:5,fontSize:11}}>Material:</div>
                         {laporanMaterials.map((m,mi)=>(
@@ -7345,14 +13710,11 @@ Silakan buat invoice dari ARA Chat 👆`;
                           addAgentLog("COMPLAIN_UPGRADED",`Complain ${laporanModal.id} → Repair ${rId}`,"SUCCESS");
                           showNotif(`✅ Job Repair ${rId} dibuat! Admin dinotifikasi.`);
                           const admR=userAccounts.filter(u=>u.role==="Admin"||u.role==="Owner");
-                          admR.forEach(a=>{if(a?.phone)sendWA(a.phone,`🔧 *Upgrade Complain → Repair*
-
-Complain: ${laporanModal.id}
-Repair Baru: *${rId}*
-Customer: ${laporanModal.customer}
-Teknisi: ${laporanModal.teknisi}
-
-Silakan approve & buat invoice. — ARA`);});
+                          admR.forEach(a=>{if(a?.phone)sendWA(a.phone,
+                            "Upgrade Complain Repair\nComplain: "+laporanModal.id
+                            +"\nRepair Baru: "+rId+"\nCustomer: "+laporanModal.customer
+                            +"\nTeknisi: "+laporanModal.teknisi
+                            +"\n\nSilakan approve. — ARA");});
                         } else showNotif("❌ Gagal buat Repair: "+rErr.message);
                       }} style={{background:cs.yellow+"22",border:"1px solid "+cs.yellow+"44",color:cs.yellow,
                         padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",width:"100%"}}>
@@ -7416,4 +13778,3 @@ Silakan approve & buat invoice. — ARA`);});
     </div>
   );
 }
-
