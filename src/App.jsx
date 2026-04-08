@@ -1119,8 +1119,27 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   { key:"freon_r32",        label:"Freon R-32",                       satuan:"KG",    default:0 },
   { key:"freon_r410",       label:"Freon R-410A",                     satuan:"KG",    default:0 },
   ];
-  const TIPE_AC_OPT = ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"];
-  const PK_OPT = ["1/2PK","3/4PK","1PK","1,5PK","2PK","2,5PK","3PK","3,5PK","4PK","4,5PK","5PK"];
+  const TIPE_AC_OPT = [
+    "AC Split 0.5PK",
+    "AC Split 0.75PK",
+    "AC Split 1PK",
+    "AC Split 1.5PK",
+    "AC Split 2PK",
+    "AC Split 2.5PK",
+    "AC Split 3PK",
+    "AC Cassette 2PK",
+    "AC Cassette 2.5PK",
+    "AC Cassette 3PK",
+    "AC Cassette 3.5PK",
+    "AC Cassette 4PK",
+    "AC Cassette 4.5PK",
+    "AC Cassette 5PK",
+    "AC Cassette 6PK",
+    "AC Split Duct 2PK",
+    "AC Split Duct 3PK",
+    "AC Split Duct 4PK",
+    "AC Split Duct 5PK"
+  ];
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
 
   const mkUnit = (no, hist=null) => {
@@ -1129,7 +1148,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       return {
         unit_no: no,
         label: hist.label || `Unit ${no}`,
-        tipe: hist.tipe || "AC Split 0.5-1PK",
+        tipe: hist.tipe || "AC Split 0.5PK",
         merk: hist.merk || "",
         pk: hist.pk || "1PK",
         model: hist.model || "",
@@ -13038,24 +13057,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
                             </select>
 
-                            {/* PK — Dropdown with manual input option */}
-                            {!u.pk||PK_OPT.includes(u.pk)?(
-                              <select value={u.pk||""} onChange={e=>{
-                                const val = e.target.value;
-                                if (val==="__MANUAL__") updateUnit(idx,{...u,pk:""});
-                                else updateUnit(idx,{...u,pk:val});
-                              }} style={{background:cs.card,border:"1px solid "+(u.pk&&u.pk.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.pk&&u.pk.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.pk&&u.pk.trim()?600:400}}>
-                                <option value="">Pilih PK</option>
-                                {PK_OPT.map(pk=><option key={pk} value={pk}>{pk}</option>)}
-                                <option value="__MANUAL__" style={{fontStyle:"italic"}}>Ketik manual</option>
-                              </select>
-                            ):(
-                              <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                                <input value={u.pk} onChange={e=>updateUnit(idx,{...u,pk:e.target.value})} placeholder="Ketik PK (contoh: 0.5PK, 7.5PK)"
-                                  style={{background:cs.card,border:"1px solid "+cs.accent+"44",borderRadius:6,padding:"6px 8px",color:cs.accent,fontSize:11,outline:"none",fontWeight:600,textAlign:"center",boxSizing:"border-box",flex:1}}/>
-                                <button onClick={()=>updateUnit(idx,{...u,pk:""})} title="Kembali ke dropdown PK" style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:6,padding:"4px 6px",cursor:"pointer",fontSize:10,fontWeight:700,minWidth:24}}>↩</button>
-                              </div>
-                            )}
+                            {/* PK — Text input */}
+                            <input value={u.pk||""} onChange={e=>updateUnit(idx,{...u,pk:e.target.value})} placeholder="Contoh: 0.5PK, 1PK, 2.5PK"
+                              style={{background:cs.card,border:"1px solid "+(u.pk&&u.pk.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.pk&&u.pk.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.pk&&u.pk.trim()?600:400,boxSizing:"border-box"}}/>
 
                             {/* Delete button */}
                             {laporanUnits.length>1&&(
