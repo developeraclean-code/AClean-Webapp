@@ -660,6 +660,10 @@ export default function ACleanWebApp() {
   const [matSearchQuery, setMatSearchQuery] = useState(""); // query search per baris
   const [activeUnitIdx,      setActiveUnitIdx]      = useState(0);
   const [showMatPreset,      setShowMatPreset]      = useState(false);
+  // ── Smart AC Unit Preset ──
+  const [showUnitPresetModal, setShowUnitPresetModal] = useState(false);
+  const [unitPresetHistory,   setUnitPresetHistory]   = useState(null);  // customer history data
+  const [unitPresetSelected,  setUnitPresetSelected]  = useState(new Set()); // Set of unit indices from history to use
   const fotoInputRef = useRef();
 
   // ── Session Management ──
@@ -1117,7 +1121,41 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   const TIPE_AC_OPT = ["AC Split 0.5-1PK","AC Split 1.5-2.5PK","AC Cassette 2-2.5PK","AC Cassette 3PK","AC Cassette 4PK","AC Standing","AC Duct"];
   const SATUAN_OPT = ["pcs","kg","liter","meter","set","titik","roll"];
 
-  const mkUnit = (no) => ({ unit_no:no, label:`Unit ${no}`, tipe:"AC Split 0.5-1PK", merk:"", pk:"1PK", kondisi_sebelum:[], kondisi_setelah:[], pekerjaan:[], freon_ditambah:"", ampere_akhir:"", catatan_unit:"" });
+  const mkUnit = (no, hist=null) => {
+    if (hist) {
+      // Preset dari history: copy tipe, merk, pk, model dari unit history
+      return {
+        unit_no: no,
+        label: hist.label || `Unit ${no}`,
+        tipe: hist.tipe || "AC Split 0.5-1PK",
+        merk: hist.merk || "",
+        pk: hist.pk || "1PK",
+        model: hist.model || "",
+        kondisi_sebelum: [],
+        kondisi_setelah: [],
+        pekerjaan: [],
+        freon_ditambah: "",
+        ampere_akhir: "",
+        catatan_unit: "",
+        from_history_job_id: hist.from_history_job_id || null
+      };
+    }
+    return {
+      unit_no: no,
+      label: `Unit ${no}`,
+      tipe: "AC Split 0.5-1PK",
+      merk: "",
+      pk: "1PK",
+      model: "",
+      kondisi_sebelum: [],
+      kondisi_setelah: [],
+      pekerjaan: [],
+      freon_ditambah: "",
+      ampere_akhir: "",
+      catatan_unit: "",
+      from_history_job_id: null
+    };
+  };
   // isUnitDone untuk Step 2: cek pekerjaan + kondisi (tipe & pk sudah di Step 1)
   const isUnitDone = (u) => u.pekerjaan.length > 0 && (u.kondisi_sebelum.length > 0 || u.kondisi_setelah.length > 0);
   const compressImg = (file) => new Promise((res) => {
@@ -1642,6 +1680,31 @@ ${matRowsHtml}
     setLaporanCatatan("");
     setActiveUnitIdx(0);
     setShowMatPreset(false);
+
+    // ── Smart Unit Preset: Cek customer history ──
+    const customer = customersData.find(c => c.name === order.customer);
+    if (customer) {
+      const custHistory = buildCustomerHistory(customer, ordersData, laporanReports, invoicesData);
+      // Ambil unit detail dari job sebelumnya (terbaru)
+      const historyUnits = custHistory.flatMap((h, idx) =>
+        (h.unit_detail || []).map((u, uidx) => ({
+          ...u,
+          from_history_job_id: h.job_id,
+          history_job_idx: idx,
+          history_unit_idx: uidx,
+          history_date: h.date,
+          history_service: h.service
+        }))
+      );
+
+      // Jika ada history units, tampilkan unit preset modal
+      if (historyUnits.length > 0) {
+        setUnitPresetHistory(historyUnits);
+        setUnitPresetSelected(new Set());
+        setShowUnitPresetModal(true);
+      }
+    }
+
     setLaporanModal(order);
     setLaporanStep(1);
     setLaporanSubmitted(false);
@@ -12672,18 +12735,102 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           color:active?color:cs.muted,userSelect:"none"
         });
 
-        return (
-          <div style={{position:"fixed",inset:0,background:"#000d",zIndex:600,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={()=>setLaporanModal(null)}>
-            <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:560,maxHeight:"94vh",overflowY:"auto",padding:24}} onClick={e=>e.stopPropagation()}>
+        // ── UNIT PRESET MODAL ──
+        const UnitPresetModal = () => {
+          if (!showUnitPresetModal || !unitPresetHistory || unitPresetHistory.length === 0) return null;
 
-              {/* Header */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
-                <div>
-                  <div style={{fontWeight:800,fontSize:16,color:cs.text}}>📝 Laporan Servis</div>
-                  <div style={{fontSize:12,color:cs.muted,marginTop:2}}>{laporanModal.id} · {laporanModal.customer} · {laporanModal.service}</div>
+          const selectedUnits = Array.from(unitPresetSelected).map(idx => unitPresetHistory[idx]);
+          const orderUnitCount = laporanModal?.units || 1;
+          const newUnitsNeeded = Math.max(0, orderUnitCount - selectedUnits.length);
+
+          const handleConfirm = () => {
+            // Build laporanUnits dari selected history units + new empty units
+            const newUnits = selectedUnits.map((hist, idx) => mkUnit(idx + 1, hist));
+            for (let i = 0; i < newUnitsNeeded; i++) {
+              newUnits.push(mkUnit(selectedUnits.length + i + 1));
+            }
+            setLaporanUnits(newUnits);
+            setShowUnitPresetModal(false);
+            setUnitPresetHistory(null);
+            setUnitPresetSelected(new Set());
+          };
+
+          return (
+            <div style={{position:"fixed",inset:0,background:"#000d",zIndex:700,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>{setShowUnitPresetModal(false);setUnitPresetHistory(null);}}>
+              <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:14,width:"100%",maxWidth:500,maxHeight:"80vh",overflowY:"auto",padding:20}} onClick={e=>e.stopPropagation()}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                  <h3 style={{fontWeight:800,fontSize:16,color:cs.text,margin:0}}>📋 Pilih AC Unit dari History</h3>
+                  <button onClick={()=>{setShowUnitPresetModal(false);setUnitPresetHistory(null);}} style={{background:"none",border:"none",color:cs.muted,fontSize:20,cursor:"pointer"}}>×</button>
                 </div>
-                <button onClick={()=>setLaporanModal(null)} style={{background:"none",border:"none",color:cs.muted,fontSize:24,cursor:"pointer",lineHeight:1,padding:0}}>×</button>
+
+                <div style={{fontSize:12,color:cs.muted,marginBottom:14}}>
+                  Order: <b>{orderUnitCount} unit AC</b>
+                  {selectedUnits.length > 0 && <span> · Dipilih: <b style={{color:cs.accent}}>{selectedUnits.length}/{orderUnitCount}</b></span>}
+                </div>
+
+                {/* History Units List */}
+                <div style={{display:"grid",gap:8,marginBottom:16}}>
+                  {unitPresetHistory.map((h, idx) => {
+                    const isSelected = unitPresetSelected.has(idx);
+                    return (
+                      <div key={idx} style={{display:"flex",gap:10,alignItems:"center",background:cs.card,border:"1px solid "+(isSelected?cs.accent:cs.border),borderRadius:10,padding:12,cursor:"pointer",transition:"all 0.2s"}} onClick={()=>{
+                        const newSet = new Set(unitPresetSelected);
+                        if (isSelected) newSet.delete(idx);
+                        else if (newSet.size < orderUnitCount) newSet.add(idx);
+                        setUnitPresetSelected(newSet);
+                      }}>
+                        <input type="checkbox" checked={isSelected} onChange={()=>{}} style={{cursor:"pointer",width:18,height:18}}/>
+                        <div style={{flex:1,display:"grid",gap:4}}>
+                          <div style={{fontWeight:600,color:cs.text,fontSize:12}}>
+                            {h.label || `Unit ${h.unit_no}`} — {h.merk || "?"} {h.tipe || "?"}
+                          </div>
+                          <div style={{fontSize:10,color:cs.muted}}>
+                            {h.pk && <span>{h.pk}</span>}
+                            {h.model && <span> · Model: {h.model}</span>}
+                            {h.history_date && <span> · {h.history_date}</span>}
+                            {h.history_service && <span> · {h.history_service}</span>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* New Units Needed */}
+                {newUnitsNeeded > 0 && (
+                  <div style={{background:cs.accent+"10",border:"1px solid "+cs.accent+"33",borderRadius:10,padding:12,marginBottom:16,fontSize:11,color:cs.accent}}>
+                    ℹ️ Perlu {newUnitsNeeded} unit baru (totalnya {selectedUnits.length} dari history + {newUnitsNeeded} baru)
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div style={{display:"flex",gap:10}}>
+                  <button onClick={()=>{setShowUnitPresetModal(false);setUnitPresetHistory(null);}} style={{flex:1,background:cs.border,color:cs.muted,border:"none",borderRadius:8,padding:"10px 14px",cursor:"pointer",fontWeight:600,fontSize:12}}>
+                    Batal
+                  </button>
+                  <button onClick={handleConfirm} style={{flex:1,background:cs.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 14px",cursor:"pointer",fontWeight:600,fontSize:12}} disabled={selectedUnits.length === 0}>
+                    Gunakan {selectedUnits.length} Unit {newUnitsNeeded > 0 ? `+ ${newUnitsNeeded} Baru` : ""}
+                  </button>
+                </div>
               </div>
+            </div>
+          );
+        };
+
+        return (
+          <>
+            <UnitPresetModal/>
+            <div style={{position:"fixed",inset:0,background:"#000d",zIndex:600,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={()=>setLaporanModal(null)}>
+              <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:560,maxHeight:"94vh",overflowY:"auto",padding:24}} onClick={e=>e.stopPropagation()}>
+
+                {/* Header */}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+                  <div>
+                    <div style={{fontWeight:800,fontSize:16,color:cs.text}}>📝 Laporan Servis</div>
+                    <div style={{fontSize:12,color:cs.muted,marginTop:2}}>{laporanModal.id} · {laporanModal.customer} · {laporanModal.service}</div>
+                  </div>
+                  <button onClick={()=>setLaporanModal(null)} style={{background:"none",border:"none",color:cs.muted,fontSize:24,cursor:"pointer",lineHeight:1,padding:0}}>×</button>
+                </div>
 
               {/* Step bar */}
               <div style={{display:"flex",gap:4,marginBottom:8}}>
@@ -12824,31 +12971,50 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       ⚠️ <strong>Wajib isi Tipe AC & PK</strong> — Contoh: Cassette 5PK, Split 1PK, Window 0.5PK. Data ini langsung masuk invoice!
                     </div>
 
-                    <div style={{display:"grid",gap:8}}>
+                    <div style={{display:"grid",gap:10}}>
                       {laporanUnits.map((u,idx)=>(
-                        <div key={idx} style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr auto",gap:6,alignItems:"center",background:cs.surface,borderRadius:8,padding:"10px 12px",border:"1px solid "+(u.tipe&&u.tipe.trim()&&u.pk&&u.pk.trim()?cs.green+"33":cs.border)}}>
-                          {/* Unit number */}
-                          <div style={{fontSize:11,fontWeight:700,color:cs.accent,minWidth:50}}>Unit {u.unit_no}</div>
+                        <div key={idx} style={{background:cs.surface,borderRadius:10,border:"1px solid "+(u.tipe&&u.tipe.trim()&&u.pk&&u.pk.trim()?cs.green+"33":cs.border),overflow:"hidden"}}>
+                          {/* Row 1: Unit no, Label, Tipe, PK, Delete */}
+                          <div style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr auto",gap:8,alignItems:"center",padding:"10px 12px"}}>
+                            {/* Unit number */}
+                            <div style={{fontSize:11,fontWeight:700,color:cs.accent,minWidth:50}}>Unit {u.unit_no}</div>
 
-                          {/* Label/lokasi */}
-                          <input id="field_30" value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Ruang/lokasi..."
-                            style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
+                            {/* Label/lokasi */}
+                            <input value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Ruang/lokasi..."
+                              style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
 
-                          {/* Tipe AC — Required */}
-                          <select value={u.tipe} onChange={e=>updateUnit(idx,{...u,tipe:e.target.value})}
-                            style={{background:cs.card,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.tipe&&u.tipe.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.tipe&&u.tipe.trim()?600:400}}>
-                            {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
-                          </select>
+                            {/* Tipe AC — Required */}
+                            <select value={u.tipe} onChange={e=>updateUnit(idx,{...u,tipe:e.target.value})}
+                              style={{background:cs.card,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.tipe&&u.tipe.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.tipe&&u.tipe.trim()?600:400}}>
+                              {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
+                            </select>
 
-                          {/* PK — Required */}
-                          <input value={u.pk} onChange={e=>updateUnit(idx,{...u,pk:e.target.value})} placeholder="PK"
-                            style={{background:cs.card,border:"1px solid "+(u.pk&&u.pk.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.pk&&u.pk.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.pk&&u.pk.trim()?600:400,textAlign:"center"}}/>
+                            {/* PK — Required */}
+                            <input value={u.pk} onChange={e=>updateUnit(idx,{...u,pk:e.target.value})} placeholder="PK"
+                              style={{background:cs.card,border:"1px solid "+(u.pk&&u.pk.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.pk&&u.pk.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.pk&&u.pk.trim()?600:400,textAlign:"center"}}/>
 
-                          {/* Delete button */}
-                          {laporanUnits.length>1&&(
-                            <button onClick={()=>{const nu=laporanUnits.filter((_,i)=>i!==idx).map((u2,i)=>({...u2,unit_no:i+1}));setLaporanUnits(nu);setActiveUnitIdx(Math.max(0,idx-1));}}
-                              style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700,lineHeight:1}}>×</button>
-                          )}
+                            {/* Delete button */}
+                            {laporanUnits.length>1&&(
+                              <button onClick={()=>{const nu=laporanUnits.filter((_,i)=>i!==idx).map((u2,i)=>({...u2,unit_no:i+1}));setLaporanUnits(nu);setActiveUnitIdx(Math.max(0,idx-1));}}
+                                style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700,lineHeight:1}}>×</button>
+                            )}
+                          </div>
+
+                          {/* Row 2: Merk & Model (optional, collapsible) */}
+                          <details style={{padding:"0 12px 10px 12px",borderTop:"1px solid "+cs.border}}>
+                            <summary style={{fontSize:10,color:cs.muted,cursor:"pointer",fontWeight:600,marginBottom:8}}>📋 Merk & Model (opsional)</summary>
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                              <input value={u.merk||""} onChange={e=>updateUnit(idx,{...u,merk:e.target.value})} placeholder="Brand AC (Daikin, Panasonic, etc)"
+                                style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
+                              <input value={u.model||""} onChange={e=>updateUnit(idx,{...u,model:e.target.value})} placeholder="Model variant (RCS Plus, Standard, etc)"
+                                style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
+                            </div>
+                            {u.from_history_job_id && (
+                              <div style={{fontSize:9,color:cs.muted,marginTop:6,fontStyle:"italic"}}>
+                                ✓ Dari history: {u.from_history_job_id}
+                              </div>
+                            )}
+                          </details>
                         </div>
                       ))}
                     </div>
@@ -13726,6 +13892,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
             </div>
           </div>
+            </>
         );
       })()}
 
