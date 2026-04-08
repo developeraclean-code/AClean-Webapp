@@ -1862,12 +1862,42 @@ ${matRowsHtml}
   }, []);
 
   useEffect(() => { _lsSave("llmProvider", llmProvider); }, [llmProvider]);
+  // Sync llmProvider to Supabase app_settings so Owner/Admin use same provider globally
+  useEffect(() => {
+    if (!isLoggedIn || !llmProvider) return;
+    (async () => {
+      try {
+        await supabase.from("app_settings").upsert({ key: "llm_provider", value: llmProvider }, { onConflict: "key" });
+        console.log("[Settings] Synced llmProvider to DB:", llmProvider);
+      } catch(e) { console.warn("[Settings] Failed to sync llmProvider:", e.message); }
+    })();
+  }, [llmProvider, isLoggedIn]);
+  // Sync llmModel to Supabase app_settings for global consistency
+  useEffect(() => {
+    if (!isLoggedIn || !llmModel) return;
+    (async () => {
+      try {
+        await supabase.from("app_settings").upsert({ key: "llm_model", value: llmModel }, { onConflict: "key" });
+        console.log("[Settings] Synced llmModel to DB:", llmModel);
+      } catch(e) { console.warn("[Settings] Failed to sync llmModel:", e.message); }
+    })();
+  }, [llmModel, isLoggedIn]);
   // SECURITY: Never store API keys in localStorage — keys are managed on backend only
   useEffect(() => { _lsSave("llmModel",    llmModel);    }, [llmModel]);
   useEffect(() => { _lsSave("ollamaUrl",   ollamaUrl);   }, [ollamaUrl]);
   useEffect(() => { _lsSave("brainMd",        brainMd);           }, [brainMd]);
   useEffect(() => { _lsSave("brainMdCustomer", brainMdCustomer); }, [brainMdCustomer]);
   useEffect(() => { _lsSave("waProvider",  waProvider);  }, [waProvider]);
+  // Sync waProvider to Supabase app_settings for global consistency
+  useEffect(() => {
+    if (!isLoggedIn || !waProvider) return;
+    (async () => {
+      try {
+        await supabase.from("app_settings").upsert({ key: "wa_provider", value: waProvider }, { onConflict: "key" });
+        console.log("[Settings] Synced waProvider to DB:", waProvider);
+      } catch(e) { console.warn("[Settings] Failed to sync waProvider:", e.message); }
+    })();
+  }, [waProvider, isLoggedIn]);
   useEffect(() => { _lsSave("waToken",     waToken);     }, [waToken]);
   useEffect(() => { _lsSave("waDevice",    waDevice);    }, [waDevice]);
 
@@ -2072,6 +2102,12 @@ ${matRowsHtml}
             setLlmModel(sMap.llm_model);
           } else if (sMap.llm_model && sMap.llm_model.includes("gemini")) {
             console.warn("[Settings] Rejecting gemini model dari DB:", sMap.llm_model, "→ pakai default MiniMax-M2.5");
+          }
+          // Load wa_provider (WhatsApp provider) from DB — global setting for Owner/Admin
+          const VALID_WA_PROVIDERS = ["fonnte", "wa_cloud", "twilio"];
+          if (sMap.wa_provider && VALID_WA_PROVIDERS.includes(sMap.wa_provider)) {
+            console.log("[Settings] Loading wa_provider dari DB:", sMap.wa_provider);
+            setWaProvider(sMap.wa_provider);
           }
         // Load bank & phone settings dari DB
         if (sMap.bank_number) setAppSettings(prev=>({...prev,
