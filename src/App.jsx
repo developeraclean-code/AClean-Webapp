@@ -3124,7 +3124,7 @@ ${matRowsHtml}
 
       const r = await fetch("/api/ara-chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Internal-Token": internalToken },
+        headers: _apiHeaders(),
         body: JSON.stringify(testPayload)
       });
 
@@ -7591,7 +7591,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
             {/* ── Foto grid untuk Admin/Owner ── */}
             {(() => {
-              const fotoArray = r.fotos || (r.foto_urls||[]).map((url,i)=>({id:i,label:`Foto ${i+1}`,url})) || [];
+              const fotoArray = (r.fotos?.length > 0 ? r.fotos : null) || (r.foto_urls||[]).map((url,i)=>({id:i,label:`Foto ${i+1}`,url}));
               const fotoWithUrl = safeArr(fotoArray).filter(f=>f.url||typeof f==="string");
               return fotoWithUrl.length > 0 ? (
                 <div style={{marginBottom:8}}>
