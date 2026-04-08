@@ -2087,21 +2087,32 @@ ${matRowsHtml}
         const setRes = await supabase.from("app_settings").select("*");
         if (!setRes.error && setRes.data) {
           const sMap = Object.fromEntries(setRes.data.map(s=>[s.key, s.value]));
-          // ── FIXED: selalu sync dari DB (override localStorage jika DB punya nilai) ──
-          // Validasi provider sebelum apply agar tidak pakai stale/invalid value dari DB
+          // ── FIXED: Load dari DB dan LOG untuk debugging ──
+          // PRIORITAS: DB > localStorage > default "minimax"
           const VALID_PROVIDERS = ["minimax", "claude", "openai", "groq", "ollama"];
+          const currentLS = _ls("llmProvider", null);
+          console.log("[Settings] DEBUG — localStorage llmProvider:", currentLS, "DB llm_provider:", sMap.llm_provider);
+
           if (sMap.llm_provider && VALID_PROVIDERS.includes(sMap.llm_provider)) {
-            console.log("[Settings] Loading provider dari DB:", sMap.llm_provider);
+            console.log("[Settings] ✓ Loading provider dari DB:", sMap.llm_provider);
             setLlmProvider(sMap.llm_provider);
+            // Also sync to localStorage to keep in sync
+            _lsSave("llmProvider", sMap.llm_provider);
           } else if (sMap.llm_provider) {
-            console.warn("[Settings] Invalid provider di DB:", sMap.llm_provider, "→ skip, pakai default minimax");
+            console.warn("[Settings] ✗ Invalid provider di DB:", sMap.llm_provider, "→ keep current:", currentLS || "minimax");
+          } else {
+            console.log("[Settings] No provider in DB, keeping current value:", currentLS || "minimax");
           }
           // Validasi model — reject gemini atau yang tidak sesuai
+          const currentModelLS = _ls("llmModel", null);
           if (sMap.llm_model && !sMap.llm_model.includes("gemini")) {
-            console.log("[Settings] Loading model dari DB:", sMap.llm_model);
+            console.log("[Settings] ✓ Loading model dari DB:", sMap.llm_model);
             setLlmModel(sMap.llm_model);
+            _lsSave("llmModel", sMap.llm_model);
           } else if (sMap.llm_model && sMap.llm_model.includes("gemini")) {
-            console.warn("[Settings] Rejecting gemini model dari DB:", sMap.llm_model, "→ pakai default MiniMax-M2.5");
+            console.warn("[Settings] ✗ Rejecting gemini model dari DB:", sMap.llm_model, "→ keep current:", currentModelLS || "MiniMax-M2.5");
+          } else {
+            console.log("[Settings] No model in DB, keeping current value:", currentModelLS || "MiniMax-M2.5");
           }
           // Load wa_provider (WhatsApp provider) from DB — global setting for Owner/Admin
           const VALID_WA_PROVIDERS = ["fonnte", "wa_cloud", "twilio"];
@@ -3194,6 +3205,7 @@ ${matRowsHtml}
 
       // ── Coba backend proxy dulu (API key aman di server) ──
       console.log("[ARA-CHAT Frontend] Sending request:", { provider: llmProvider, model: llmModel, hasMessage: newMessages.length > 0 });
+      console.log("[ARA-CHAT DEBUG] Current state: llmProvider=" + llmProvider + ", llmModel=" + llmModel + ", localStorage llmProvider=" + _ls("llmProvider", "N/A"));
       const backendRes = await fetch("/api/ara-chat", {
         method:"POST", headers:_apiHeaders(),
         body: JSON.stringify({
