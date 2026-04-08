@@ -12109,7 +12109,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     // Save ke Supabase — only use valid fields that exist in schema
                     const updatePayload = {
                       status: newStatus,
-                      notes: (editLaporanForm.catatan_global || editLaporanForm.rekomendasi || "").slice(0, 500),
+                      catatan_global: editLaporanForm.catatan_global || "",
+                      rekomendasi: editLaporanForm.rekomendasi || "",
                     };
 
                     const {error:elErr} = await supabase.from("service_reports").update(updatePayload).eq("id", selectedLaporan.id);
