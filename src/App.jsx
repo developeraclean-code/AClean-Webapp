@@ -6882,19 +6882,32 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               </div>
             ))}
           </div>
-          {/* Revenue bar per layanan */}
+          {/* Revenue cards per layanan */}
           <div style={{ borderTop:"1px solid "+cs.border, paddingTop:14 }}>
-            <div style={{ fontSize:12, color:cs.muted, marginBottom:10, fontWeight:600 }}>Komposisi Revenue per Layanan</div>
-            {revBreakdown.map(([svc,rev,col])=>(
-              <div key={svc} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
-                <span style={{ fontSize:12, color:cs.text, fontWeight:600, minWidth:70 }}>{svc}</span>
-                <div style={{ flex:1, background:cs.border, borderRadius:99, height:8, overflow:"hidden" }}>
-                  <div style={{ height:"100%", background:col, width:totalRevenue>0?(rev/totalRevenue*100)+"%":"0%", borderRadius:99, transition:"width 0.4s" }} />
-                </div>
-                <span style={{ color:col, fontWeight:700, fontFamily:"monospace", minWidth:100, textAlign:"right", fontSize:12 }}>{fmt(rev)}</span>
-                <span style={{ color:cs.muted, fontSize:10, minWidth:36, textAlign:"right" }}>{fmtPct(rev,totalRevenue)}</span>
-              </div>
-            ))}
+            <div style={{ fontSize:12, color:cs.muted, marginBottom:12, fontWeight:600 }}>📊 Komposisi Revenue per Layanan</div>
+            <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"repeat(auto-fit,minmax(140px,1fr))", gap:10 }}>
+              {revBreakdown.map(([svc,rev,col,cnt])=>{
+                const pct = totalRevenue>0?(rev/totalRevenue*100):0;
+                return (
+                  <div key={svc} style={{ background:cs.surface, border:"1px solid "+col+"33", borderRadius:10, padding:"12px 14px", textAlign:"center", transition:"all 0.2s", cursor:"pointer" }}>
+                    {/* Service Name */}
+                    <div style={{ fontSize:13, fontWeight:700, color:col, marginBottom:6 }}>{svc}</div>
+
+                    {/* Revenue Amount */}
+                    <div style={{ fontSize:16, fontWeight:800, color:col, fontFamily:"monospace", marginBottom:4 }}>{fmt(rev)}</div>
+
+                    {/* Percentage */}
+                    <div style={{ fontSize:11, color:cs.muted, marginBottom:8 }}>{pct.toFixed(1)}%</div>
+
+                    {/* Invoice Count & Average */}
+                    <div style={{ fontSize:9, color:cs.muted, paddingTop:8, borderTop:"1px solid "+cs.border }}>
+                      <div>{cnt} invoice</div>
+                      <div style={{ marginTop:2, color:col, fontWeight:600 }}>{(rev/Math.max(1,cnt)).toFixed(0)} rata²</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 
