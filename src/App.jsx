@@ -2049,7 +2049,7 @@ ${matRowsHtml}
           ...r,
           units:     r.units_json ? safeJsonParse(r.units_json, `laporan_units_${r.id}`, r.units||[]) : (r.units||[]),
           materials: r.materials_json ? safeJsonParse(r.materials_json, `laporan_materials_${r.id}`, r.materials||[]) : (r.materials||[]),
-          fotos:     r.fotos || (r.foto_urls||[]).map((url,i) => ({id:i, label:`Foto ${i+1}`, url})),
+          fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:(r.fotos||[])[i]?.id||i,label:(r.fotos||[])[i]?.label||`Foto ${i+1}`,url})) : (r.fotos||[]).filter(f=>f.url),
           editLog:   safeArr(r.edit_log ?? r.editLog),
           rekomendasi:    r.rekomendasi    || "",
           catatan_global: r.catatan_global || r.catatan || "",
@@ -2362,7 +2362,7 @@ ${matRowsHtml}
                         ...r,
                         units:     r.units_json     ? (() => { try { return JSON.parse(r.units_json);     } catch(_){ return r.units     || []; } })() : (r.units     || []),
                         materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch(_){ return r.materials || []; } })() : (r.materials || []),
-                        fotos:     r.fotos || (r.foto_urls||[]).map((u,idx)=>({id:idx,label:`Foto ${idx+1}`,url:u})),
+                        fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:(r.fotos||[])[i]?.id||i,label:(r.fotos||[])[i]?.label||`Foto ${i+1}`,url})) : (r.fotos||[]).filter(f=>f.url),
                         editLog:   safeArr(r.edit_log ?? r.editLog),
                       })));
                     }
@@ -2377,7 +2377,7 @@ ${matRowsHtml}
                   .then(({data}) => { if(data) setLaporanReports(data.map(r => ({...r,
                     units:     r.units_json     ? (() => { try{return JSON.parse(r.units_json);}     catch(_){return [];} })() : (r.units||[]),
                     materials: r.materials_json ? (() => { try{return JSON.parse(r.materials_json);} catch(_){return [];} })() : (r.materials||[]),
-                    fotos:     r.fotos||(r.foto_urls||[]).map((u,idx)=>({id:idx,label:`Foto ${idx+1}`,url:u})),
+                    fotos:     (r.foto_urls||[]).length>0 ? (r.foto_urls).map((url,i)=>({id:(r.fotos||[])[i]?.id||i,label:(r.fotos||[])[i]?.label||`Foto ${i+1}`,url})) : (r.fotos||[]).filter(f=>f.url),
                     editLog:   safeArr(r.edit_log??r.editLog),
                   }))); }), 30000);
               }
@@ -3115,11 +3115,13 @@ ${matRowsHtml}
         throw new Error("Brain data not found in database");
       }
 
-      // Test connection with Minimax
+      // Test connection with Minimax — backend requires messages array
       const testPayload = {
         provider: "minimax",
-        message: "Test koneksi brain ARA",
-        brain_md: brainMap.brain_md.slice(0, 500) // Send first 500 chars for test
+        model: "MiniMax-M2.5",
+        messages: [{ role: "user", content: "Halo, test koneksi." }],
+        bizContext: {},
+        brainMd: brainMap.brain_md.slice(0, 300),
       };
 
       const r = await fetch("/api/ara-chat", {
@@ -3128,7 +3130,10 @@ ${matRowsHtml}
         body: JSON.stringify(testPayload)
       });
 
-      if (!r.ok) throw new Error("Connection test failed: " + r.status);
+      if (!r.ok) {
+        const errBody = await r.json().catch(() => ({}));
+        throw new Error(errBody.error || "Connection test failed: " + r.status);
+      }
 
       setBrainMd(brainMap.brain_md);
       _lsSave("brainMd", brainMap.brain_md);
@@ -7495,7 +7500,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div><span style={{color:cs.muted}}>Tanggal: </span><span style={{color:cs.text}}>{r.date}</span></div>
               <div><span style={{color:cs.muted}}>Jumlah Unit: </span><span style={{color:cs.accent,fontWeight:700}}>{r.total_units||1} unit</span></div>
               {safeArr(r.materials).length>0&&<div><span style={{color:cs.muted}}>Material: </span><span style={{color:cs.text}}>{r.materials.length} item</span></div>}
-              {(() => {const fotoCnt=(r.fotos||r.foto_urls||[]).length; return fotoCnt>0?<div><span style={{color:cs.green}}>📸 {fotoCnt} foto</span></div>:null;})()}
+              {(() => {const fotoCnt=safeArr(r.fotos).filter(f=>f.url).length; return fotoCnt>0?<div><span style={{color:cs.green}}>📸 {fotoCnt} foto</span></div>:null;})()}
               {(()=>{const tF=(r.units||[]).reduce((s,u)=>s+(parseFloat(u.freon_ditambah)||0),0); return tF>0?<div><span style={{color:cs.muted}}>Freon: </span><span style={{color:cs.text}}>{tF.toFixed(1)} kg</span></div>:null;})()}
               {/* Summary PK + brand semua unit */}
               {(r.units||[]).length > 0 && (()=>{
@@ -7591,8 +7596,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
             {/* ── Foto grid untuk Admin/Owner ── */}
             {(() => {
-              const fotoArray = (r.fotos?.length > 0 ? r.fotos : null) || (r.foto_urls||[]).map((url,i)=>({id:i,label:`Foto ${i+1}`,url}));
-              const fotoWithUrl = safeArr(fotoArray).filter(f=>f.url||typeof f==="string");
+              const fotoWithUrl = safeArr(r.fotos).filter(f=>f.url);
               return fotoWithUrl.length > 0 ? (
                 <div style={{marginBottom:8}}>
                   <div style={{fontSize:11,fontWeight:700,color:cs.green,marginBottom:6}}>📸 Foto Laporan ({fotoWithUrl.length})</div>
