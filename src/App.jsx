@@ -12447,7 +12447,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       submitted_at: new Date().toISOString(),
       notes:        (newReport.catatan_global || newReport.rekomendasi || "").slice(0,500),
       foto_urls:    laporanFotos.filter(f=>f.url).map(f=>f.url) || [],
-      fotos:        laporanFotos.map(f => ({ id: f.id, label: f.label })) || [],
+      fotos:        laporanFotos.map(f => ({ id: f.id, label: f.label, url: f.url })) || [],
     };
 
     let savedOk = false;
