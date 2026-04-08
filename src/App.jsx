@@ -785,6 +785,7 @@ export default function ACleanWebApp() {
     wa_autoreply_enabled: "false",
     ara_training_rules:   "",
     wa_forward_to_owner:  "true",
+    foto_compression_quality: "0.70", // 30%-100%, default 70%
   });
 
   // ── Settings: _ls HARUS dideklarasi SEBELUM useState yang memakainya ──
@@ -1158,7 +1159,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   };
   // isUnitDone untuk Step 2: cek pekerjaan + kondisi (tipe & pk sudah di Step 1)
   const isUnitDone = (u) => u.pekerjaan.length > 0 && (u.kondisi_sebelum.length > 0 || u.kondisi_setelah.length > 0);
-  const compressImg = (file) => new Promise((res) => {
+  const compressImg = (file, quality = 0.70) => new Promise((res, rej) => {
     const r = new FileReader();
     r.onload = (e) => {
       const img = new Image();
@@ -1170,14 +1171,16 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
         const c   = document.createElement("canvas");
         c.width = w; c.height = h;
         c.getContext("2d").drawImage(img, 0, 0, w, h);
-        // Quality 0.70 = 70% JPEG — sesuai permintaan, hemat ~78% ukuran vs original
-        const dataUrl = c.toDataURL("image/jpeg", 0.70);
+        // Quality adjustable dari settings (default 0.70 = 70% JPEG — hemat ~78% ukuran vs original)
+        const dataUrl = c.toDataURL("image/jpeg", quality);
         const sizeKB  = Math.round((dataUrl.length * 3/4) / 1024);
-        console.log(`📸 Compress: ${img.width}x${img.height} → ${w}x${h}px, ~${sizeKB}KB`);
+        console.log(`📸 Compress: ${img.width}x${img.height} → ${w}x${h}px, ~${sizeKB}KB (quality: ${quality})`);
         res(dataUrl);
       };
+      img.onerror = () => rej(new Error("Invalid image file"));
       img.src = e.target.result;
     };
+    r.onerror = () => rej(new Error("Failed to read file"));
     r.readAsDataURL(file);
   });
 
@@ -12027,8 +12030,28 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const toggleArr = (arr, val) => arr.includes(val)?arr.filter(x=>x!==val):[...arr,val];
 
         const handleFotoUpload = async (e) => {
-          const rawFiles = Array.from(e.target.files||[]).slice(0, 10 - laporanFotos.length);
-          if (rawFiles.length === 0) return;
+          const MAX_PHOTOS = 20;
+          const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+
+          // ── Validasi format file — reject video ──
+          const rawFiles = Array.from(e.target.files||[]);
+          const invalidFiles = rawFiles.filter(f => !ALLOWED_TYPES.includes(f.type));
+
+          if (invalidFiles.length > 0) {
+            showNotif(`❌ Format tidak didukung: ${invalidFiles.map(f => f.name.split(".").pop().toUpperCase()).join(", ")}. Hanya JPG, PNG, WEBP.`);
+            e.target.value = "";
+            return;
+          }
+
+          // ── Cek max 20 foto ──
+          if (laporanFotos.length >= MAX_PHOTOS) {
+            showNotif(`❌ Maksimal ${MAX_PHOTOS} foto per job. Hapus foto lain untuk upload baru.`);
+            e.target.value = "";
+            return;
+          }
+
+          const validFiles = rawFiles.slice(0, MAX_PHOTOS - laporanFotos.length);
+          if (validFiles.length === 0) return;
           const reportId = laporanModal?.id || "tmp";
 
           // ── LAYER 1: Hash setiap file SEBELUM compress ──
@@ -12041,14 +12064,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           };
 
           // Hitung hash semua file sebelum compress
-          const fileHashes = await Promise.all(rawFiles.map(hashFile));
+          const fileHashes = await Promise.all(validFiles.map(hashFile));
+
+          // ── Get compression quality dari settings (default 0.70) ──
+          const fotoQualityValue = parseFloat(appSettings?.foto_compression_quality) || 0.70;
+          const fotoQuality = Math.max(0.3, Math.min(1, fotoQualityValue)); // Clamp: 30% - 100%
 
           // ── LAYER 2: Cek duplikat vs foto yang sudah ada di state (per sesi) ──
           const existingHashes = new Set(laporanFotos.map(f => f.hash).filter(Boolean));
           const files = [];
           const hashes = [];
           let skippedCount = 0;
-          rawFiles.forEach((file, i) => {
+          validFiles.forEach((file, i) => {
             if (existingHashes.has(fileHashes[i])) {
               skippedCount++;
             } else {
@@ -12062,8 +12089,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           }
           if (files.length === 0) { e.target.value = ""; return; }
 
-          showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2...`);
-          const compressed = await Promise.all(files.map(compressImg));
+          showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2 (quality: ${Math.round(fotoQuality*100)}%)...`);
+          let compressed = [];
+          try {
+            compressed = await Promise.all(files.map(f => compressImg(f, fotoQuality)));
+          } catch (compErr) {
+            console.error("[COMPRESS_ERROR]", compErr.message);
+            showNotif(`❌ Gagal kompresi foto: ${compErr.message}. Pastikan file adalah gambar valid.`);
+            e.target.value = "";
+            return;
+          }
 
           // ── Upload satu per satu (bukan parallel) agar tidak timeout ──
           const uploaded = [];
@@ -12095,11 +12130,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 url = d.url;
               } else {
                 errMsg = d.error || "Upload gagal";
-                console.error("R2 upload error:", errMsg);
+                console.error("[UPLOAD_ERROR] R2 upload failed:", {file: label, error: errMsg});
               }
             } catch (err) {
               errMsg = err.message;
-              console.error("R2 fetch error:", err);
+              console.error("[UPLOAD_ERROR] Network/fetch error:", {file: label, error: errMsg});
             }
 
             uploaded.push({ id: localId, label, data_url: dataUrl, url, errMsg, hash });
@@ -13674,7 +13709,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   {/* ── Foto: tampil untuk semua service ── */}
                   <div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>📸 Foto Dokumentasi ({laporanFotos.length}/10)
+                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>📸 Foto Dokumentasi ({laporanFotos.length}/20)
                         {laporanFotos.length > 0 && (
                           <span style={{marginLeft:8,fontSize:11}}>
                             <span style={{color:cs.green}}>☁️ {laporanFotos.filter(f=>f.url).length} tersimpan</span>
@@ -13684,12 +13719,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           </span>
                         )}
                       </div>
-                      {laporanFotos.length<10&&(
+                      {laporanFotos.length<20&&(
                         <button onClick={()=>fotoInputRef.current?.click()}
                           style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>+ Foto</button>
                       )}
                     </div>
-                    <input id="field_file_42" ref={fotoInputRef} type="file" accept="image/*" multiple onChange={handleFotoUpload} style={{display:"none"}}/>
+                    <input id="field_file_42" ref={fotoInputRef} type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple onChange={handleFotoUpload} style={{display:"none"}}/>
                     {laporanFotos.length===0?(
                       <div onClick={()=>fotoInputRef.current?.click()}
                         style={{border:"1px dashed "+cs.border,borderRadius:10,padding:"20px",textAlign:"center",cursor:"pointer",color:cs.muted,fontSize:12}}>
@@ -13741,7 +13776,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               placeholder="Label foto..." style={{marginTop:3,width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:5,padding:"4px 6px",color:cs.text,fontSize:10,outline:"none",boxSizing:"border-box"}}/>
                           </div>
                         ))}
-                        {laporanFotos.length<10&&(
+                        {laporanFotos.length<20&&(
                           <div onClick={()=>fotoInputRef.current?.click()}
                             style={{aspectRatio:"1/1",border:"1px dashed "+cs.border,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22,color:cs.muted}}>+</div>
                         )}
