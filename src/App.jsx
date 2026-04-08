@@ -9663,7 +9663,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           )}
         </div>
         <nav style={{ flex:1, padding:"10px 8px" }}>
-          {menuItems.map(item => (
+          {menuItems.filter(item => {
+            // Hide Settings (⚙️) untuk Admin — hanya Owner yang bisa akses
+            if (item.id === "settings" && currentUser?.role !== "Owner") return false;
+            return true;
+          }).map(item => (
             <button key={item.id} onClick={() => setActiveMenu(item.id)}
               style={{ width:"100%", display:"flex", alignItems:"center", gap:9, padding:"9px 10px", borderRadius:9, border:"none", background:activeMenu===item.id?cs.accent+"22":"transparent", color:activeMenu===item.id?cs.accent:cs.muted, cursor:"pointer", fontSize:13, fontWeight:activeMenu===item.id?700:400, marginBottom:1, textAlign:"left", borderLeft:activeMenu===item.id?"3px solid "+cs.accent:"3px solid transparent" }}>
               <span>{item.icon}</span> {item.label}
