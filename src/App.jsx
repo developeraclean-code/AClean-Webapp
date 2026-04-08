@@ -196,6 +196,7 @@ const buildCustomerHistory = (customer, ordersData, laporanReports, invoicesData
         catatan:        lap?.catatan_global || "",
         foto_urls:      lap?.foto_urls
                           || (lap?.fotos||[]).filter(f=>f.url).map(f=>f.url)
+                          || (lap?.fotos||[]).map(f=>typeof f==="string"?f:f.url).filter(Boolean)
                           || [],
         total_freon:    lap?.total_freon || 0,
       };
@@ -688,10 +689,10 @@ export default function ACleanWebApp() {
   const [expensePage,      setExpensePage]      = useState(1);
   const [modalExpense,     setModalExpense]     = useState(false);
   const [editExpenseItem,  setEditExpenseItem]  = useState(null);
-  const [newExpenseForm,   setNewExpenseForm]   = useState({
-    category:"petty_cash", subcategory:"", amount:"", date:"",
+  const [newExpenseForm,   setNewExpenseForm]   = useState(() => ({
+    category:"petty_cash", subcategory:"", amount:"", date:getLocalDate(),
     description:"", teknisi_name:"", item_name:"", freon_type:""
-  });
+  }));
   const EXPENSE_PAGE_SIZE = 20;
 
   // ── ARA Log filters ──
@@ -8680,9 +8681,71 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     return (
       <div style={{ display:"grid", gap:20 }}>
         <div style={{ fontWeight:700, fontSize:18, color:cs.text }}>⚙️ Pengaturan Sistem</div>
+
+        {/* ── ARA CHAT CONNECTION — Accessible to Owner & Admin ── */}
+        {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (() => {
+          const LLM_PROVIDERS_ADMIN = [
+            { id:"minimax", label:"Minimax" },
+            { id:"claude",  label:"Anthropic Claude" },
+            { id:"openai",  label:"ChatGPT (OpenAI)" },
+            { id:"groq",    label:"Groq" },
+            { id:"ollama",  label:"Ollama (Lokal/Free)" }
+          ];
+          const activeLLM_Admin = LLM_PROVIDERS_ADMIN.find(p => p.id === llmProvider) || LLM_PROVIDERS_ADMIN[0];
+          return (
+            <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:14,padding:20}}>
+              <div style={{fontWeight:800,color:cs.text,fontSize:15,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
+                🤖 Koneksi ARA Chat — {llmStatus==="connected"?<span style={{color:cs.green}}>✅ Tersambung</span>:<span style={{color:cs.yellow}}>⚠️ Belum Tersambung</span>}
+              </div>
+              <div style={{display:"grid",gap:12,marginBottom:16}}>
+                <div>
+                  <label style={{fontSize:12,color:cs.muted,marginBottom:4,display:"block",fontWeight:600}}>Provider</label>
+                  <select value={llmProvider} onChange={e=>setLlmProvider(e.target.value)}
+                    style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:9,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none"}}>
+                    {LLM_PROVIDERS_ADMIN.map(p=>
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    )}
+                  </select>
+                </div>
+              </div>
+              <button onClick={async () => {
+                if (llmProvider !== "ollama" && !llmApiKey) { showNotif("❌ Masukkan API Key dulu"); return; }
+                if (llmProvider === "ollama" && !ollamaUrl) { showNotif("❌ Masukkan URL Ollama dulu (contoh: http://localhost:11434)"); return; }
+                setLlmStatus("testing");
+                try {
+                  if (llmProvider === "ollama") {
+                    const baseUrl = (ollamaUrl||"http://localhost:11434").replace(/\/+$/, "");
+                    const r = await fetch(baseUrl + "/api/tags", { method:"GET" }).catch(e=>{throw new Error("Tidak bisa koneksi ke "+baseUrl+" — pastikan Ollama berjalan & URL benar. Error: "+e.message);});
+                    const d = await r.json().catch(()=>({}));
+                    if (!r.ok) throw new Error("Ollama server error " + r.status);
+                    const models = (d.models||[]).map(m=>m.name||m.model||m).join(", ");
+                    setLlmStatus("connected");
+                    showNotif("✅ Ollama terkoneksi! Model tersedia: " + (models||"(kosong — jalankan: ollama pull llama3)"));
+                    return;
+                  } else {
+                    const type = llmProvider === "minimax" ? "minimax"
+                               : llmProvider === "groq"    ? "groq"
+                               : llmProvider === "openai"  ? "llm"
+                               : "llm";
+                    const r = await fetch("/api/test-connection?type=" + type, { headers: _apiHeaders() });
+                    const d = await r.json();
+                    if (!r.ok || !d.ok) throw new Error(d.error || d.message || "Test gagal");
+                  }
+                  setLlmStatus("connected");
+                  const modelInfo = llmModel ? " ("+llmModel+")" : "";
+                  showNotif("✅ Koneksi " + activeLLM_Admin.label + modelInfo + " berhasil! ARA Chat siap digunakan.");
+                } catch(e) { setLlmStatus("not_connected"); showNotif("❌ Koneksi gagal: " + e.message); }
+              }}
+                style={{width:"100%",background:llmStatus==="testing"?cs.muted:cs.green+"22",border:"1px solid "+cs.green+"33",color:cs.green,padding:"10px",borderRadius:10,cursor:"pointer",fontWeight:700,fontSize:13,transition:"all 0.2s"}}>
+                {llmStatus==="testing"?"⏳ Testing...":"🔌 Test & Simpan — " + activeLLM_Admin.label}
+              </button>
+            </div>
+          );
+        })()}
+
         {currentUser?.role !== "Owner" && (
           <div style={{ background:cs.red+"12", border:"1px solid "+cs.red+"33", borderRadius:12, padding:"14px 18px", fontSize:13, color:cs.red }}>
-            🔒 Halaman Pengaturan hanya dapat diakses oleh Owner.
+            🔒 Halaman Pengaturan lengkap hanya dapat diakses oleh Owner. Admin hanya bisa mengatur ARA Chat di atas.
           </div>
         )}
         {currentUser?.role === "Owner" && (<>
@@ -12378,6 +12441,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     };
 
     let savedOk = false;
+    let lastError = null;
     { // Attempt 1: dengan materials_json & units_json
       try {
         const { error: e1 } = await supabase.from("service_reports").upsert({
@@ -12386,8 +12450,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           units_json:     JSON.stringify(laporanUnits),
         }, { onConflict: "id" });
         if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
-        else console.warn("❌ Attempt 1 failed:", e1.message);
-      } catch(ex) { console.warn("❌ Attempt 1 error:", ex.message); }
+        else { lastError = e1; console.warn("❌ Attempt 1 failed:", e1.message); }
+      } catch(ex) { lastError = ex; console.warn("❌ Attempt 1 error:", ex.message); }
     }
     if (!savedOk) { // Attempt 2: tanpa JSON cols (core fields only)
       try {
@@ -12395,8 +12459,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           basePayload, { onConflict: "id" }
         );
         if (!e2) { savedOk = true; console.log("✅ Laporan saved (no json cols):", newReport.id); }
-        else console.warn("❌ Attempt 2 failed:", e2.message);
-      } catch(ex) { console.warn("❌ Attempt 2 error:", ex.message); }
+        else { lastError = e2; console.warn("❌ Attempt 2 failed:", e2.message); }
+      } catch(ex) { lastError = ex; console.warn("❌ Attempt 2 error:", ex.message); }
     }
     if (!savedOk) { // Attempt 3: minimal
       try {
@@ -12408,8 +12472,37 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           submitted_at: new Date().toISOString(),
         }, { onConflict: "id" });
         if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
-        else { console.error("❌ All upsert attempts failed:", e3.message); showNotif("❌ Gagal simpan: " + e3.message); }
-      } catch(ex) { console.error("❌ Attempt 3 error:", ex.message); showNotif("❌ Gagal simpan: "+ex.message); }
+        else { lastError = e3; console.warn("❌ Attempt 3 failed:", e3.message); }
+      } catch(ex) { lastError = ex; console.warn("❌ Attempt 3 error:", ex.message); }
+    }
+
+    // Fallback: If upsert failed, explicitly DELETE old laporan (if rewriting) then try INSERT
+    if (!savedOk && laporanModal._rewriteId) {
+      console.warn("🔄 Upsert failed, trying DELETE + INSERT fallback for rewrite:", newReport.id);
+      try {
+        // First, try to delete the old laporan
+        await supabase.from("service_reports").delete().eq("id", newReport.id).select();
+        // Then insert the new one
+        const { error: insertErr } = await supabase.from("service_reports").insert(basePayload).select().single();
+        if (!insertErr) {
+          savedOk = true;
+          console.log("✅ Laporan saved via DELETE+INSERT fallback:", newReport.id);
+        } else {
+          lastError = insertErr;
+          console.error("❌ DELETE+INSERT fallback failed:", insertErr.message);
+        }
+      } catch(fx) {
+        lastError = fx;
+        console.error("❌ Fallback error:", fx.message);
+      }
+    }
+
+    // Final error handling
+    if (!savedOk) {
+      const errMsg = lastError?.message || "Unknown error";
+      console.error("❌ All save attempts failed:", errMsg);
+      showNotif("❌ Gagal simpan laporan: " + errMsg + ". Coba lagi atau hubungi admin.");
+      return; // Don't proceed to reload/notify if save failed
     }
 
     // ── 8. Reload laporan (backup, realtime juga akan trigger) ──
