@@ -1212,6 +1212,10 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     if (!url) return "";
     // Sudah pakai proxy → langsung
     if (url.startsWith("/api/foto")) return url;
+    // Plain path (laporan/JOB-ID/file.jpg) → proxy via /api/foto
+    if (url.startsWith("laporan/")) {
+      return "/api/foto?key=" + encodeURIComponent(url);
+    }
     // URL r2.dev atau r2.cloudflarestorage.com → extract key → proxy
     if (url.includes(".r2.dev/")) {
       const keyMatch = url.match(/\.r2\.dev\/(.+)$/);
