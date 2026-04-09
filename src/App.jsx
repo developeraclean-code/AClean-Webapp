@@ -14161,14 +14161,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       </div>
                     )}
                     {laporanJasaItems.map((item,idx)=>{
-                      const jasaLookup = priceListData
+                      // OPTION A FIX: Only pull from "Jasa" category, NOT service-specific items
+                      // This prevents AC types from showing up in Jasa dropdown for Cleaning service
+                      const allJasaOpt = priceListData
                         .filter(r=>r.category==="Jasa" && parseInt(r.price||0)>0)
-                        .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}));
-                      const svcLookup = priceListData
-                        .filter(r=>r.service===laporanModal?.service && parseInt(r.price||0)>0)
-                        .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}));
-                      const allJasaOpt = [...jasaLookup,...svcLookup]
-                        .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,20);
+                        .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}))
+                        .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i)
+                        .slice(0,20);
                       return (
                       <div key={item.id} style={{background:cs.card,border:"1px solid "+(item.nama?cs.accent+"44":cs.border),
                         borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
