@@ -284,6 +284,17 @@ const INVOICES_DATA = [
     "Pengecekan Ulang":                 0,
     "default":                          0,
   },
+  // ✨ PHASE 3: Add Maintenance service support
+  "Maintenance": {
+    "Perawatan AC Preventif 0,5PK - 1PK":  150000,
+    "Perawatan AC Preventif 1,5PK - 2,5PK": 200000,
+    "Perawatan AC Musiman":                 200000,
+    "Pemeriksaan Berkala AC":              100000,
+    "Pembersihan Filter AC":                50000,
+    "Penggantian Filter AC":               100000,
+    "Lubrikasi Kompresor":                 250000,
+    "default":                             150000,
+  },
   "freon_R22":   450000,
   "freon_R410A": 450000,
   "freon_R32":   450000,
@@ -647,6 +658,7 @@ export default function ACleanWebApp() {
   const [jasaManualText,    setJasaManualText]    = useState({});  // {item.id: text} untuk input manual jasa
   const [repairManualText,  setRepairManualText]  = useState({});  // {item.id: text} untuk input manual repair
   const [laporanRepairItems, setLaporanRepairItems] = useState([]);  // Repair/Sparepart B
+  const [laporanRepairType,  setLaporanRepairType]  = useState("berbayar");  // ✨ NEW: Repair type (berbayar/gratis-garansi/gratis-customer)
   const [showJasaSearch,     setShowJasaSearch]     = useState(false);
   const [jasaSearchQ,        setJasaSearchQ]        = useState("");
   const [showRepairSearch,   setShowRepairSearch]   = useState(false);
@@ -2655,19 +2667,59 @@ ${matRowsHtml}
   const hitungLabor = (service, type, units) => {
     const plItem = priceListData.find(r => r.service === service && r.type === type);
     if (plItem && plItem.price > 0) return plItem.price * (units || 1);
-    const svcMap = PRICE_LIST[service] || PRICE_LIST["Cleaning"];
+    // ✨ PHASE 3: Handle unknown services by defaulting to Cleaning
+    const svcMap = PRICE_LIST[service] || PRICE_LIST["Maintenance"] || PRICE_LIST["Cleaning"];
     const hargaPerUnit = svcMap[type] || svcMap["default"] || 85000;
     return hargaPerUnit * (units || 1);
+  };
+
+  // ✨ PHASE 2 FIX: Unified lookupHarga function — used across all 3 invoice paths
+  const lookupHargaGlobal = (nama, satuanHint) => {
+    const nama2 = (nama||"").toLowerCase();
+    const isF   = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
+    const norm  = nama2.replace(/,/g,".").replace(/eterna\s*/g,"")
+      .replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+    let h = 0;
+
+    // 1. Cari di inventory
+    const inv = inventoryData.find(i=>{
+      const n=(i.name||"").toLowerCase().replace(/,/g,".").replace(/eterna\s*/g,"")
+        .replace(/[-\s]/g,"").replace(/r410a?$/,"r410").replace(/r22a?$/,"r22").replace(/r32a?$/,"r32");
+      return n===norm||n.includes(norm)||norm.includes(n);
+    });
+    h = inv?.price || 0;
+
+    // 2. Fallback priceListData exact match (high priority)
+    if (!h) {
+      const plIt = priceListData.find(r => r.type && r.type.trim() === nama.trim());
+      if (plIt) h = plIt.price || 0;
+    }
+
+    // 3. Fallback PRICE_LIST by service
+    if (!h) {
+      for (const sv of ["Material","Repair","Install","Cleaning","Complain"]) {
+        if (PRICE_LIST[sv]?.[nama]) { h=PRICE_LIST[sv][nama]; break; }
+      }
+    }
+
+    // 4. Fallback freon specific
+    if (!h && isF) {
+      h = nama2.includes("r22")?PRICE_LIST["freon_R22"]||450000 :
+          nama2.includes("r32")?PRICE_LIST["freon_R32"]||450000 :
+          PRICE_LIST["freon_R410A"]||450000;
+    }
+
+    return h;
   };
 
   const hitungMaterialTotal = (materials) => {
     return materials.reduce((sum, m) => {
       const raw  = (m.nama||"").toLowerCase().trim();
       const norm = raw
-        .replace(/,/g, ".")         
-        .replace(/eterna\s*/g, "")  
-        .replace(/[-\s]/g, "")      
-        .replace(/r410a?$/, "r410") 
+        .replace(/,/g, ".")
+        .replace(/eterna\s*/g, "")
+        .replace(/[-\s]/g, "")
+        .replace(/r410a?$/, "r410")
         .replace(/r22a?$/,  "r22")
         .replace(/r32a?$/,  "r32");
       const isJasaItem = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama||"").trim());
@@ -2716,7 +2768,8 @@ ${matRowsHtml}
       showNotif("❌ Invoice ID tidak valid");
       return null;
     }
-    if (!validatePositiveNumber(inv.total)) {
+    // Allow Rp 0 for repair_gratis (free repairs), but require positive for regular invoices
+    if (!inv.repair_gratis && !validatePositiveNumber(inv.total)) {
       showNotif("❌ Invoice total harus lebih dari 0");
       return null;
     }
@@ -5258,7 +5311,41 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           setEditInvoiceItems(_matItems); setModalEditInvoice(true); }}
                   style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600 }}>✏️ Edit Nilai</button>
               )}
-              {inv.status === "PENDING_APPROVAL" && (
+              {/* FREE REPAIR APPROVAL — Special handling for zero-cost repairs */}
+              {inv.status === "PENDING_APPROVAL" && inv.repair_gratis && (
+                <div style={{gridColumn:"1 / -1",padding:"10px 12px",background:cs.yellow+"15",border:"1px dashed "+cs.yellow+"44",borderRadius:8,display:"grid",gap:8}}>
+                  <div style={{fontSize:11,color:cs.yellow,fontWeight:700}}>
+                    🎁 {inv.repair_gratis === "gratis-garansi" ? "REPAIR GRATIS (Garansi Aktif)" : inv.repair_gratis === "gratis-customer" ? "REPAIR GRATIS (Arrangement)" : "REPAIR GRATIS"}
+                  </div>
+                  <div style={{fontSize:11,color:cs.muted}}>
+                    Invoice Rp {fmt(inv.total)} untuk {inv.customer}.
+                    {" "}
+                    <b>Perlu disetujui Owner/Admin</b> sebelum dikirim ke customer atau dianggap PAID.
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={() => {
+                      if(!approveInvoice) return;
+                      const approved = approveInvoice(inv);
+                      if(approved) {
+                        addAgentLog("REPAIR_GRATIS_APPROVED", `Invoice ${inv.id} repair gratis APPROVED oleh ${currentUser?.name}`, "SUCCESS");
+                        showNotif("✅ Repair gratis APPROVED — siap dikirim ke customer");
+                      }
+                    }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12, flex:1 }}>✅ Setuju Gratis</button>
+                    <button onClick={async () => {
+                      if(!await showConfirm({ icon:"❌", title:"Tolak Repair Gratis?",
+                        message:`Tolak invoice ${inv.id} repair gratis?\n\nInvoice akan dihapus dan laporan perlu diedit ulang.`,
+                        confirmText:"Tolak & Hapus" })) return;
+                      setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
+                      await supabase.from("invoices").delete().eq("id", inv.id);
+                      if(inv.job_id) await supabase.from("orders").update({ status:"COMPLETED", invoice_id:null }).eq("id", inv.job_id);
+                      addAgentLog("REPAIR_GRATIS_REJECTED", `Invoice ${inv.id} repair gratis REJECTED oleh ${currentUser?.name}`, "WARNING");
+                      showNotif("❌ Repair gratis ditolak — laporan kembali ke status COMPLETED");
+                    }} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12, flex:1 }}>❌ Tolak & Edit</button>
+                  </div>
+                </div>
+              )}
+
+              {inv.status === "PENDING_APPROVAL" && !inv.repair_gratis && (
                 <>
                   <button onClick={() => approveInvoice(inv)} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>✅ Approve</button>
                   <span style={{fontSize:11,color:cs.accent,alignSelf:"center"}}>Belum dikirim ke customer</span>
@@ -7681,12 +7768,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       const isF = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
                       const rawQ = parseFloat(m.jumlah)||0;
                       const qty  = isF ? Math.max(1,Math.ceil(rawQ)) : rawQ;
+                      // ✨ PHASE 2: Use unified lookupHargaGlobal instead of inline lookup
                       let hSat   = parseFloat(m.harga_satuan)||0;
                       if (!hSat) {
-                        const inv2 = inventoryData.find(i=>(i.name||"").toLowerCase().includes(nama2)||nama2.includes((i.name||"").toLowerCase()));
-                        hSat = inv2?.price || 0;
+                        hSat = lookupHargaGlobal(m.nama, m.satuan);
                       }
-                      if (!hSat && isF) hSat = nama2.includes("r22")?450000:nama2.includes("r32")?450000:450000;
                       return { nama:m.nama, jumlah:qty, satuan:m.satuan||"pcs", harga_satuan:hSat, subtotal:hSat*qty, keterangan:m.keterangan||"" };
                     });
 
@@ -7694,24 +7780,55 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     if (!vMDetail.some(m=>m.keterangan==="jasa")) {
                       const svcFeeV = hitungLabor(r.service, ord?.type, r.units||ord?.units||1);
                       if (svcFeeV > 0) {
-                        const uCount = r.units||ord?.units||1;
+                        // ✨ FIX #4: Unit validation - prevent division by zero
+                        const uCount = Math.max(1, parseInt(r.units) || parseInt(ord?.units) || 1);
                         vMDetail.unshift({ nama:(r.service||"")+(ord?.type?" - "+ord.type:"")+" (Servis)", jumlah:uCount, satuan:"unit", harga_satuan:Math.round(svcFeeV/uCount), subtotal:svcFeeV, keterangan:"jasa" });
                       }
                     }
 
                     const laborV   = vMDetail.filter(m=>m.keterangan==="jasa"||m.keterangan==="repair").reduce((s,m)=>s+m.subtotal,0) || hitungLabor(r.service, ord?.type, r.units||ord?.units||1);
                     const matV     = vMDetail.filter(m=>m.keterangan!=="jasa"&&m.keterangan!=="repair").reduce((s,m)=>s+m.subtotal,0);
-                    const totalInv = laborV + matV;
+
+                    // ✨ FIX #2: Add garansi logic ke verify button
+                    const todayInv2 = new Date().toISOString().slice(0, 10);
+                    const isComplainSvc2 = r.service === "Complain";
+                    const prevGaransiActive2 = isComplainSvc2
+                      ? invoicesData.filter(inv =>
+                          inv.customer === r.customer && inv.service !== "Complain" &&
+                          inv.garansi_expires && inv.garansi_expires >= todayInv2 &&
+                          ["PAID","UNPAID","APPROVED","PENDING_APPROVAL"].includes(inv.status)
+                        ).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
+                      : null;
+
+                    let finalLabor2 = laborV;
+                    let finalMat2 = matV;
+                    let finalTotal2 = laborV + matV;
+                    let finalStatus2 = "PENDING_APPROVAL";
+
+                    if (isComplainSvc2 && prevGaransiActive2) {
+                      finalLabor2 = 0;
+                      finalTotal2 = matV;
+                      if (finalTotal2 === 0) finalStatus2 = "PAID";
+                    } else if (isComplainSvc2 && laborV + matV === 0) {
+                      const BIAYA_CEK2 = (() => {
+                        const pl = priceListData.find(r2=>r2.service==="Repair"&&r2.type==="Biaya Pengecekan AC");
+                        return (pl&&pl.price>0) ? pl.price : 100000;
+                      })();
+                      finalLabor2 = BIAYA_CEK2;
+                      finalTotal2 = BIAYA_CEK2;
+                    }
+
+                    const totalInv = finalTotal2;
                     const newInv = {
                       id:invId, job_id:r.job_id, laporan_id:r.id,
                       customer:r.customer, phone:r.phone||ord?.phone||"",
                       service:r.service+(ord?.type?" - "+ord.type:""), units:r.units||ord?.units||1,
                       teknisi:r.teknisi||"",
-                      labor:laborV, material:matV,
+                      labor:finalLabor2, material:finalMat2,
                       materials_detail: vMDetail.length > 0 ? JSON.stringify(vMDetail) : null,
                       dadakan:0, discount:0,
                       total:totalInv,
-                      status:"PENDING_APPROVAL",
+                      status:finalStatus2,
                       garansi_days:30, garansi_expires:new Date(Date.now()+30*86400000).toISOString().slice(0,10),
                       due: new Date(Date.now()+3*86400000).toISOString().slice(0,10),
                       sent:false, created_at:new Date().toISOString()
@@ -12310,12 +12427,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           const isF = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
                           const rawQ = parseFloat(m.jumlah)||0;
                           const qty  = isF ? Math.max(1,Math.ceil(rawQ)) : rawQ;
+                          // ✨ PHASE 2: Use unified lookupHargaGlobal instead of inline lookup
                           let hSat   = parseFloat(m.harga_satuan)||0;
                           if (!hSat) {
-                            const inv2 = inventoryData.find(i=>(i.name||"").toLowerCase().includes(nama2)||nama2.includes((i.name||"").toLowerCase()));
-                            hSat = inv2?.price || 0;
+                            hSat = lookupHargaGlobal(m.nama, m.satuan);
                           }
-                          if (!hSat && isF) hSat = 450000;
                           return { nama:m.nama, jumlah:qty, satuan:m.satuan||"pcs", harga_satuan:hSat, subtotal:hSat*qty, keterangan:m.keterangan||"" };
                         });
 
@@ -12323,23 +12439,48 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         if (!vMDetail.some(m=>m.keterangan==="jasa")) {
                           const svcFee = hitungLabor(selectedLaporan.service, ord?.type, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1);
                           if (svcFee > 0) {
-                            const uCount = editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1;
+                            // ✨ FIX #4: Unit validation - prevent division by zero
+                            const uCount = Math.max(1, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1);
                             vMDetail.unshift({ nama:selectedLaporan.service+(ord?.type?" - "+ord.type:"")+" (Servis)", jumlah:uCount, satuan:"unit", harga_satuan:Math.round(svcFee/uCount), subtotal:svcFee, keterangan:"jasa" });
                           }
                         }
 
                         const laborV = vMDetail.filter(m=>m.keterangan==="jasa"||m.keterangan==="repair").reduce((s,m)=>s+m.subtotal,0) || hitungLabor(selectedLaporan.service, ord?.type, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1);
                         const matV   = vMDetail.filter(m=>m.keterangan!=="jasa"&&m.keterangan!=="repair").reduce((s,m)=>s+m.subtotal,0);
-                        const totalInv = laborV + matV;
 
-                        // Delete old invoice + insert new (preserve PAID status)
+                        // ✨ FIX #3: Add garansi logic ke edit handler
+                        const todayInv3 = new Date().toISOString().slice(0, 10);
+                        const isComplainSvc3 = selectedLaporan.service === "Complain";
+
+                        let finalLabor3 = laborV;
+                        let finalMat3 = matV;
+                        let finalTotal3 = laborV + matV;
+                        let newInvoiceStatus3 = existInv.status === "PAID" ? "PAID" : "PENDING_APPROVAL";
+
+                        if (isComplainSvc3) {
+                          const prevGaransiActive3 = invoicesData.filter(inv =>
+                              inv.customer === selectedLaporan.customer && inv.service !== "Complain" &&
+                              inv.garansi_expires && inv.garansi_expires >= todayInv3 &&
+                              ["PAID","UNPAID","APPROVED","PENDING_APPROVAL"].includes(inv.status)
+                            ).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null;
+
+                          if (prevGaransiActive3) {
+                            finalLabor3 = 0;
+                            finalTotal3 = finalMat3;
+                            newInvoiceStatus3 = finalTotal3 === 0 ? "PAID" : "PENDING_APPROVAL";
+                          }
+                        }
+
+                        const totalInv = finalTotal3;
+
+                        // Delete old invoice + insert new (preserve PAID status via garansi check)
                         const { error: delInvErr } = await supabase.from("invoices").delete().eq("id", existInv.id);
                         if (!delInvErr) {
                           const newInv = {
                             ...existInv,
                             materials_detail: JSON.stringify(vMDetail),
-                            labor: laborV, material: matV, total: totalInv,
-                            status: existInv.status === "PAID" ? "PAID" : "PENDING_APPROVAL",
+                            labor: finalLabor3, material: finalMat3, total: totalInv,
+                            status: newInvoiceStatus3,
                             updated_at: new Date().toISOString(),
                           };
                           delete newInv.id;
@@ -12998,6 +13139,30 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const noGaransiComplain = isComplainSvc && !prevGaransiActive && !prevGaransiExpired;
     let finalLabor = laborTotalInv;
     let finalTotal = invoiceTotal;
+
+    // ✨ FIX #1 (CORRECTED): Repair service tanpa items → conditional BIAYA_CEK based on repair type
+    const isRepairServiceNoItems = laporanModal?.service === "Repair" &&
+                                   laporanRepairItems.filter(r=>r.nama).length === 0 &&
+                                   laporanMaterials.filter(m=>m.nama).length === 0;
+    let isRepairGratis = false;
+
+    if (isRepairServiceNoItems) {
+      // If teknisi selected "Berbayar" (standard paid repair) → inject BIAYA_CEK
+      if (laporanRepairType === "berbayar" && (!finalLabor || finalLabor === 0)) {
+        finalLabor = BIAYA_CEK;
+        finalTotal = BIAYA_CEK;
+        addAgentLog("REPAIR_BIAYA_CEK_INJECTED", `Repair ${laporanModal.id} (berbayar) tanpa items → inject BIAYA_CEK ${BIAYA_CEK}`, "INFO");
+      }
+      // If teknisi selected "Gratis" (garansi atau customer arrangement) → allow Rp 0
+      else if ((laporanRepairType === "gratis-garansi" || laporanRepairType === "gratis-customer") && invoiceTotal === 0) {
+        isRepairGratis = true;
+        finalLabor = 0;
+        finalTotal = 0;
+        const alasan = laporanRepairType === "gratis-garansi" ? "garansi aktif" : "arrangement customer";
+        addAgentLog("REPAIR_GRATIS_CREATED", `Repair ${laporanModal.id} (${alasan}) tanpa items/material → invoice Rp 0, awaiting approval`, "INFO");
+      }
+    }
+
     if (isComplainSvc) {
       if (prevGaransiActive) {
         // Garansi aktif: jasa gratis, material tetap bayar
@@ -13142,6 +13307,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         material: matTotalInv,
         materials_detail: mDetail,           // array untuk state/display
         garansi_status: garansiStatusLocal,  // hanya state, tidak ke DB
+        repair_gratis: isRepairGratis ? laporanRepairType : undefined,  // NEW: store repair type (gratis-garansi/gratis-customer)
         dadakan:  0,
         total:    finalTotal,
         status:   "PENDING_APPROVAL",
@@ -13151,7 +13317,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       };
 
       // Status override
-      if (isComplainSvc && finalTotal === 0) {
+      if (isRepairGratis && finalTotal === 0) {
+        // FREE REPAIR (garansi atau arrangement) → stays PENDING_APPROVAL (requires Owner/Admin approval)
+        newInvoice.status = "PENDING_APPROVAL";
+        addAgentLog("REPAIR_GRATIS_APPROVAL_NEEDED",
+          `Invoice ${invId} Repair Rp 0 (${laporanRepairType}) — PENDING_APPROVAL (awaiting Owner/Admin approval)`,
+          "WARNING");
+      } else if (isComplainSvc && finalTotal === 0) {
         newInvoice.status   = "PAID";
         newInvoice.paid_at  = new Date().toISOString();
         addAgentLog("GARANSI_AUTO_PAID", `Invoice ${invId} Rp 0 → auto PAID`, "SUCCESS");
@@ -13168,6 +13340,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       const invPayload = {
         ...invBase,
         materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
+        repair_gratis: invBase.repair_gratis || undefined,  // Only include if true
       };
       // ── 1 invoice per job: cek existing, delete + insert baru ──
       // Hapus invoice lama untuk job ini (jika ada) agar tidak double
@@ -13878,6 +14051,28 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         + Tambah Repair
                       </button>
                     </div>
+
+                    {/* ══ REPAIR TYPE SELECTOR ══ */}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"end"}}>
+                      <div>
+                        <div style={{fontSize:10,color:cs.muted,marginBottom:4,fontWeight:600}}>💵 Tipe Repair</div>
+                        <select
+                          value={laporanRepairType||"berbayar"}
+                          onChange={e=>setLaporanRepairType(e.target.value)}
+                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.yellow+"55",
+                            borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",fontWeight:500}}>
+                          <option value="berbayar">💰 Servis Berbayar (Standard)</option>
+                          <option value="gratis-garansi">🎁 Gratis - Garansi Aktif</option>
+                          <option value="gratis-customer">🎁 Gratis - Arrangement Customer</option>
+                        </select>
+                        <div style={{fontSize:10,color:cs.muted,marginTop:4}}>
+                          {laporanRepairType==="gratis-garansi"&&"Servis gratis karena garansi masih berlaku."}
+                          {laporanRepairType==="gratis-customer"&&"Servis gratis sebagai arrangement dengan customer."}
+                          {laporanRepairType==="berbayar"&&"Servis akan di-charge ke customer (normal)."}
+                        </div>
+                      </div>
+                    </div>
+
                     {laporanRepairItems.length===0&&(
                       <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:cs.muted,
                         background:cs.surface,borderRadius:8,border:"1px dashed "+cs.border}}>
