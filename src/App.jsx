@@ -7768,6 +7768,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               </>)}
               {/* Delete laporan — Owner & Admin */}
               {(currentUser?.role==="Owner" || currentUser?.role==="Admin") && (
+                <button onClick={()=>{
+                  setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||""});
+                  setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
+                }}
+                  style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                  ✏️ Edit Laporan
+                </button>
+              )}
+              {(currentUser?.role==="Owner" || currentUser?.role==="Admin") && (
                 <button onClick={async()=>{
                   const ok = await showConfirm({
                     icon:"🗑️", title:"Hapus Laporan?",
@@ -8003,15 +8012,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <button onClick={()=>{setSelectedLaporan(r);setEditLaporanMode(false);setModalLaporanDetail(true);}}
                       style={{background:cs.surface,border:"1px solid "+cs.border,color:cs.muted,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12}}>
                       Lihat Detail
-                    </button>
-                  )}
-                {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
-                    <button onClick={()=>{
-                      setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||""});
-                      setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
-                    }}
-                      style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
-                      ✏️ Edit Laporan
                     </button>
                   )}
                 </div>
