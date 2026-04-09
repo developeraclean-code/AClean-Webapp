@@ -14163,8 +14163,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   {/* ══ JASA SECTION: [+] Jasa ══ */}
                   {!isInstallJob && (
                   <div style={{display:"grid",gap:8}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.accent}}>⚡ Jasa / Layanan ({laporanJasaItems.length})</div>
+                    <div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                        <div style={{fontSize:12,fontWeight:700,color:cs.accent}}>⚡ Jasa / Layanan ({laporanJasaItems.length})</div>
                       <button onClick={()=>{
                         const svc = laporanModal?.service||"";
                         const plJasa = priceListData.filter(r=>
@@ -14178,6 +14179,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>
                         + Tambah Jasa
                       </button>
+                    </div>
+                    <div style={{fontSize:11,color:cs.muted,background:cs.surface,borderRadius:8,padding:"8px 10px",lineHeight:"1.4"}}>
+                      💡 <strong>Pekerjaan yang ditagih.</strong> Contoh: Biaya cek AC, kuras vacum, pasang kompresor, jasa pemasangan, dll.
                     </div>
                     {laporanJasaItems.length===0&&(
                       <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:cs.muted,
@@ -14272,23 +14276,28 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   {/* ══ BARANG / SPAREPART SECTION: [+] Barang (dari price_list category=Barang) ══ */}
                   {!isInstallJob && (
                   <div style={{display:"grid",gap:8}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.cyan}}>📦 Material & Barang ({laporanBarangItems.length})</div>
-                      <button onClick={()=>{
-                        if(laporanBarangItems.length<10) setLaporanBarangItems(p=>[...p,{
-                          id:Date.now(), nama:"", jumlah:1, satuan:"pcs", harga_satuan:0, _isManual:false
-                        }]);
-                      }}
-                        style={{fontSize:11,background:cs.cyan+"15",border:"1px solid "+cs.cyan+"33",color:cs.cyan,
-                          borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>
-                        + Tambah Barang
-                      </button>
+                    <div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                        <div style={{fontSize:12,fontWeight:700,color:cs.cyan}}>📦 Sparepart & Material ({laporanBarangItems.length})</div>
+                        <button onClick={()=>{
+                          if(laporanBarangItems.length<10) setLaporanBarangItems(p=>[...p,{
+                            id:Date.now(), nama:"", jumlah:1, satuan:"pcs", harga_satuan:0, _isManual:false
+                          }]);
+                        }}
+                          style={{fontSize:11,background:cs.cyan+"15",border:"1px solid "+cs.cyan+"33",color:cs.cyan,
+                            borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>
+                          + Tambah Barang
+                        </button>
+                      </div>
+                      <div style={{fontSize:11,color:cs.muted,background:cs.surface,borderRadius:8,padding:"8px 10px",lineHeight:"1.4"}}>
+                        💡 <strong>Barang fisik yang ditagih.</strong> Contoh: Kapasitor, pipa AC, kabel, NAPLE, paralon, armaplex, dll.
+                      </div>
                     </div>
 
                     {laporanBarangItems.length===0&&(
                       <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:cs.muted,
                         background:cs.surface,borderRadius:8,border:"1px dashed "+cs.border}}>
-                        Belum ada barang. Klik + Tambah Barang untuk input material yang ditagih.
+                        Belum ada barang. Klik + Tambah Barang untuk input sparepart/material yang ditagih.
                       </div>
                     )}
                     {laporanBarangItems.map((bItem,bIdx)=>{
@@ -14380,18 +14389,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   {/* ══ NORMAL MATERIAL FORM (Service/Repair/Complain) ══ */}
                   {!isInstallJob && (
                   <div style={{display:"grid",gap:10}}>
-                  {/* Material */}
+                  {/* Material Tracking */}
                   <div>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>🔧 Material Digunakan ({laporanMaterials.length}/20)</div>
-                      <button onClick={()=>setShowMatPreset(v=>!v)}
-                        style={{fontSize:11,background:cs.accent+"15",border:"1px solid "+cs.accent+"33",color:cs.accent,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>
-                        {showMatPreset?"✕ Tutup":"📦 Preset Material"}
-                      </button>
+                    <div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                        <div style={{fontSize:12,fontWeight:700,color:cs.muted}}>📊 Stok Terpakai (Tracking) ({laporanMaterials.length}/20)</div>
+                        <button onClick={()=>setShowMatPreset(v=>!v)}
+                          style={{fontSize:11,background:cs.muted+"15",border:"1px solid "+cs.muted+"33",color:cs.muted,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>
+                          {showMatPreset?"✕ Tutup":"📦 Preset"}
+                        </button>
+                      </div>
+                      <div style={{fontSize:11,color:cs.muted,background:cs.surface,borderRadius:8,padding:"8px 10px",lineHeight:"1.4",marginBottom:8}}>
+                        ℹ️ <strong>Hanya tracking stok, TIDAK masuk invoice.</strong> Pilih material yang pakai (freon tabung, pipa roll, kabel). Harga otomatis terdebit dari stok internal.
+                      </div>
                     </div>
                     {showMatPreset&&(
                       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
-                        <div style={{fontSize:11,color:cs.muted,width:"100%",marginBottom:2}}>Tap untuk tambah:</div>
+                        <div style={{fontSize:11,color:cs.muted,width:"100%",marginBottom:2}}>Klik untuk tambah material tracking:</div>
                         {presets.map(p=>(
                           <button key={p.nama||p} onClick={()=>{if(laporanMaterials.length<20)setLaporanMaterials(prev=>[...prev,{id:Date.now(),nama:p.nama||p,jumlah:"",satuan:p.satuan||"pcs",keterangan:""}]);setShowMatPreset(false);}}
                             style={{fontSize:11,background:cs.surface,border:"1px solid "+cs.border,color:cs.text,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>
@@ -14400,7 +14414,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         ))}
                       </div>
                     )}
-                    {laporanMaterials.length===0&&<div style={{textAlign:"center",padding:"14px 0",fontSize:12,color:cs.muted,fontStyle:"italic"}}>Belum ada material. Tap + Tambah atau pakai Preset.</div>}
+                    {laporanMaterials.length===0&&<div style={{textAlign:"center",padding:"14px 0",fontSize:12,color:cs.muted,fontStyle:"italic"}}>Belum ada. Klik + Tambah atau pakai Preset untuk catat stok yang terpakai.</div>}
               {laporanMaterials.map(mat=>{
                 // Build lookup: inventory + price_list Material (tanpa harga)
                 const matLookup = [
