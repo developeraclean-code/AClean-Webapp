@@ -536,6 +536,18 @@ Jika user upload gambar bersamaan dengan pesan:
 - Jika gambar tidak jelas → minta user kirim ulang dengan resolusi lebih baik
 `.trim();
 
+// A.2 OPTIMIZATION: Custom hook untuk debounce nilai (prevent excessive re-renders saat typing)
+function useDebounce(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+  return debouncedValue;
+}
+
 export { ErrorBoundary };
 export default function ACleanWebApp() {
   // ── Auth & Role ──
@@ -674,6 +686,8 @@ export default function ACleanWebApp() {
   const [historyPreview, setHistoryPreview] = useState(null); // customer untuk preview history
   const [matSearchId, setMatSearchId] = useState(null); // id material yang sedang di-search
   const [matSearchQuery, setMatSearchQuery] = useState(""); // query search per baris
+  // A.2 OPTIMIZATION: Debounce material search query untuk prevent excessive filtering
+  const debouncedMatSearchQuery = useDebounce(matSearchQuery, 200);
   const [activeUnitIdx,      setActiveUnitIdx]      = useState(0);
   const [showMatPreset,      setShowMatPreset]      = useState(false);
   // ── Smart AC Unit Preset ──
@@ -830,7 +844,8 @@ export default function ACleanWebApp() {
 
   // ── Settings state ──
   const [waProvider,      setWaProvider]      = useState(() => _ls("waProvider", "fonnte"));
-  const [waToken,         setWaToken]         = useState(() => _ls("waToken",    ""));
+  // B.5 SECURITY: WA token di sessionStorage (tidak persistent) daripada localStorage
+  const [waToken,         setWaToken]         = useState(() => sessionStorage.getItem("aclean_waToken") || "");
   const [waDevice,        setWaDevice]        = useState(() => _ls("waDevice",   ""));
   const [waStatus,        setWaStatus]        = useState("not_connected");
 
@@ -1446,8 +1461,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
         : (hSatFix > 0 && m.jumlah > 0 ? (hSatFix * m.jumlah).toLocaleString("id-ID") : "—");
       matRowsHtml +=
         "<tr>" +
-        "<td>" + m.nama + "</td>" +
-        '<td style="text-align:right;width:72px;white-space:nowrap">' + m.jumlah + " " + (m.satuan||"") + "</td>" +
+        "<td>" + escHtml(m.nama) + "</td>" +
+        '<td style="text-align:right;width:72px;white-space:nowrap">' + escHtml(String(m.jumlah)) + " " + escHtml(m.satuan||"") + "</td>" +
         '<td style="text-align:right;font-family:monospace">' + hSatStr + "</td>" +
         '<td style="text-align:right;font-family:monospace;font-weight:600">' + subStr + "</td>" +
         "</tr>";
@@ -1565,9 +1580,9 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       </div>
     </div>
     <div class="header-sub">
-      <span>📍 ${appSettings.company_addr}</span>
-      <span>📞 ${appSettings.wa_number}</span>
-      <span>🏦 ${appSettings.bank_name} ${appSettings.bank_number} a.n. ${appSettings.bank_holder}</span>
+      <span>📍 ${escHtml(appSettings.company_addr)}</span>
+      <span>📞 ${escHtml(appSettings.wa_number)}</span>
+      <span>🏦 ${escHtml(appSettings.bank_name)} ${escHtml(appSettings.bank_number)} a.n. ${escHtml(appSettings.bank_holder)}</span>
     </div>
   </div>
 
@@ -1583,9 +1598,9 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     </div>
     <div class="box box-white">
       <div class="box-title">Tagihan Kepada</div>
-      <div style="font-weight:700;font-size:14px;color:#1e293b;margin-bottom:6px">${inv.customer}</div>
-      <div style="color:#64748b">📱 ${inv.phone || "—"}</div>
-      <div style="color:#64748b;margin-top:4px">🔧 ${inv.service || "—"}</div>
+      <div style="font-weight:700;font-size:14px;color:#1e293b;margin-bottom:6px">${escHtml(inv.customer)}</div>
+      <div style="color:#64748b">📱 ${escHtml(inv.phone || "—")}</div>
+      <div style="color:#64748b;margin-top:4px">🔧 ${escHtml(inv.service || "—")}</div>
     </div>
   </div>
 
@@ -1617,8 +1632,8 @@ ${matRowsHtml}
     <div class="bank-box">
       <div class="box-title">Informasi Pembayaran</div>
       <div style="color:#475569;font-size:11px">Transfer Bank BCA</div>
-    <div class="bank-num">${appSettings.bank_number}</div>
-    <div style="color:#475569;font-size:11px">a.n. ${appSettings.bank_holder}</div>
+    <div class="bank-num">${escHtml(appSettings.bank_number)}</div>
+    <div style="color:#475569;font-size:11px">a.n. ${escHtml(appSettings.bank_holder)}</div>
       <div style="margin-top:8px;font-size:11px;color:#64748b">Kirim bukti transfer via WhatsApp ke nomor di atas</div>
     </div>
     <div class="status-box ${inv.status==="PAID"?"status-paid":inv.status==="OVERDUE"?"status-overdue":"status-unpaid"}">
@@ -1632,8 +1647,8 @@ ${matRowsHtml}
   </div>
 
   <div class="footer-note">
-    <p>Pertanyaan? Hubungi kami via WhatsApp: ${appSettings.wa_number}</p>
-    <p style="font-style:italic;margin-top:4px;color:#94a3b8">Terima kasih telah mempercayakan perawatan AC Anda kepada ${appSettings.company_name} 🙏</p>
+    <p>Pertanyaan? Hubungi kami via WhatsApp: ${escHtml(appSettings.wa_number)}</p>
+    <p style="font-style:italic;margin-top:4px;color:#94a3b8">Terima kasih telah mempercayakan perawatan AC Anda kepada ${escHtml(appSettings.company_name)} 🙏</p>
   </div>
 </div>
 <script>window.onload = () => { window.print(); }</script>
@@ -1918,7 +1933,8 @@ ${matRowsHtml}
       } catch(e) { console.warn("[Settings] Failed to sync waProvider:", e.message); }
     })();
   }, [waProvider, isLoggedIn]);
-  useEffect(() => { _lsSave("waToken",     waToken);     }, [waToken]);
+  // B.5 SECURITY: WA token di sessionStorage (hilang saat browser ditutup)
+  useEffect(() => { if (waToken) sessionStorage.setItem("aclean_waToken", waToken); }, [waToken]);
   useEffect(() => { _lsSave("waDevice",    waDevice);    }, [waDevice]);
 
   // ── Helper: Check session expiry and auto-logout ──
@@ -1958,7 +1974,7 @@ ${matRowsHtml}
   useEffect(() => {
     // ── Restore session saat refresh ──
     const restoreSession = async () => {
-      // 1. Coba restore dari localStorage dulu (akun lokal/demo) — tidak butuh auth
+      // 1. Coba restore dari localStorage dulu (akun lokal/demo) — dengan server verification
       const saved = _ls("localSession", null);
       if (saved && saved.id && saved.role) {
         // SEC-08: Cek expiry session — auto logout setelah 8 jam
@@ -1967,10 +1983,30 @@ ${matRowsHtml}
           console.warn("SEC-08: Session expired, auto-logout");
           // jatuh ke Supabase auth check
         } else {
-          setCurrentUser(saved);
-          setIsLoggedIn(true);
-          setActiveRole(saved.role.toLowerCase());
-          return;
+          // B.3 SECURITY: Verify role dari server sebelum trust localStorage
+          try {
+            const { data: profile } = await supabase
+              .from("user_profiles")
+              .select("role, name, is_active")
+              .eq("id", saved.id)
+              .single();
+
+            if (profile && profile.is_active !== false) {
+              // Override localStorage role dengan server role (prevent tampering)
+              const verified = { ...saved, role: profile.role, name: profile.name };
+              setCurrentUser(verified);
+              setIsLoggedIn(true);
+              setActiveRole(profile.role.toLowerCase());
+              return;
+            } else {
+              // Invalid session atau user tidak aktif
+              _lsSave("localSession", null);
+              console.warn("SEC-08: Session invalid atau user tidak aktif");
+            }
+          } catch(e) {
+            console.warn("SEC-08: Error verify session role:", e?.message);
+            // Fallback ke Supabase auth check
+          }
         }
       }
       // 2. Fallback: Supabase Auth session (akun real) — wrapped try/catch agar tidak spam 400
@@ -2031,15 +2067,16 @@ ${matRowsHtml}
       if (!isValid) return; // Session expired, abort load
 
       const loadAll = async () => {
+        // A.4 OPTIMIZATION: Add LIMIT to initial queries untuk faster page load
         const results = await Promise.allSettled([
-        supabase.from("orders").select("*").order("date", { ascending: false }),
-        supabase.from("invoices").select("*").order("created_at", { ascending: false }),
-        supabase.from("customers").select("*").order("name"),
-        supabase.from("inventory").select("*").order("code"),
-        supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }),
+        supabase.from("orders").select("*").order("date", { ascending: false }).limit(500),
+        supabase.from("invoices").select("*").order("created_at", { ascending: false }).limit(300),
+        supabase.from("customers").select("*").order("name"),  // reference data, no limit
+        supabase.from("inventory").select("*").order("code"),  // reference data, no limit
+        supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }).limit(200),
         supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(100),
         supabase.from("inventory_transactions").select("*").order("created_at",{ascending:false}).limit(500),
-        supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label"),
+        supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label"),  // reference data
       ]);
       const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
       // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
@@ -2482,6 +2519,11 @@ ${matRowsHtml}
           }
 
           return () => {
+            // A.5 OPTIMIZATION: Clear polling intervals untuk prevent memory leak
+            clearInterval(window._rtPoll_1617); delete window._rtPoll_1617;
+            clearInterval(window._rtPoll_1645); delete window._rtPoll_1645;
+            clearInterval(window._rtPoll_1673); delete window._rtPoll_1673;
+
             clearInterval(_statsTimer);
             if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
             [ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8].forEach(ch => {
@@ -2665,18 +2707,30 @@ ${matRowsHtml}
     sendWA(inv.phone, msg);
   };
 
+  // ── SEC-01: HTML Escape helper untuk prevent XSS di PDF generator ──
+  const escHtml = (str) => {
+    if (!str) return "—";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  };
+
   // ── GAP 2: Hitung labor dari price list ──
-  const hitungLabor = (service, type, units) => {
+  const hitungLabor = useCallback((service, type, units) => {
     const plItem = priceListData.find(r => r.service === service && r.type === type);
     if (plItem && plItem.price > 0) return plItem.price * (units || 1);
     // ✨ PHASE 3: Handle unknown services by defaulting to Cleaning
     const svcMap = PRICE_LIST[service] || PRICE_LIST["Maintenance"] || PRICE_LIST["Cleaning"];
     const hargaPerUnit = svcMap[type] || svcMap["default"] || 85000;
     return hargaPerUnit * (units || 1);
-  };
+  }, [priceListData]);
 
   // ✨ PHASE 2 FIX: Unified lookupHarga function — used across all 3 invoice paths
-  const lookupHargaGlobal = (nama, satuanHint) => {
+  // A.1 OPTIMIZATION: Memoize dengan useCallback untuk prevent recreation setiap render
+  const lookupHargaGlobal = useCallback((nama, satuanHint) => {
     const nama2 = (nama||"").toLowerCase();
     const isF   = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
     const norm  = nama2.replace(/,/g,".").replace(/eterna\s*/g,"")
@@ -2712,7 +2766,7 @@ ${matRowsHtml}
     }
 
     return h;
-  };
+  }, [inventoryData, priceListData]);
 
   const hitungMaterialTotal = (materials) => {
     return materials.reduce((sum, m) => {
@@ -5085,7 +5139,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   // RENDER INVOICE
   // ============================================================
-  const renderInvoice = () => {
+  // A.3 OPTIMIZATION: Memoize invoice filtering untuk prevent re-filter setiap render
+  const invoiceFilterMemo = useMemo(() => {
     // ── SIM-3+2: status filter + search + pagination ──
     // ══ GAP 7: Warranty tracker — filter garansi aktif ══
     const garansiAktif = invoicesData.filter(inv => {
@@ -5119,10 +5174,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       );
     }
     filteredInv.sort((a,b) => (b.created_at||b.sent||"").localeCompare(a.created_at||a.sent||""));
-    const totPgI = Math.ceil(filteredInv.length / INV_PAGE_SIZE) || 1;
-    const curPgI = Math.min(invoicePage, totPgI);
-    const pageInv = filteredInv.slice((curPgI-1)*INV_PAGE_SIZE, curPgI*INV_PAGE_SIZE);
     const unpaidCnt = invoicesData.filter(i=>i.status==="UNPAID"||i.status==="OVERDUE").length;
+
+    return { filteredInv, garansiAktif, garansiKritis, unpaidCnt };
+  }, [invoicesData, invoiceFilter, invoiceDateFrom, invoiceDateTo, searchInvoice]);
+
+  const renderInvoice = () => {
+    const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
+    const todayDateStr = getLocalDate();
     return (
     <div style={{ display:"grid", gap:14 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
@@ -14268,7 +14327,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   ...priceListData.filter(r=>r.service==="Material").map(r=>({nama:r.type,satuan:r.unit||"pcs"}))
                 ].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i); // dedupe
                 const isSearching = matSearchId === mat.id;
-                const query = isSearching ? matSearchQuery : "";
+                // A.2: Use debouncedMatSearchQuery untuk filtering (bukan langsung matSearchQuery per keystroke)
+                const query = isSearching ? debouncedMatSearchQuery : "";
                 const filtered = matLookup.filter(x=>
                   x.nama.toLowerCase().includes(query.toLowerCase())
                 ).slice(0,12);
