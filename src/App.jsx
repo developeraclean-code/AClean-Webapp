@@ -8151,8 +8151,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </div>
           : filtReps.map(r=>{
             const isPending = r.status==="PENDING";
-            const canEdit = (r.status==="SUBMITTED" || r.status==="REVISION") && r.teknisi === myName;
-            const isReadOnly = (r.status==="SUBMITTED" || r.status==="REVISION") && r.teknisi !== myName && r.helper === myName;
+            const canEdit = (r.status==="SUBMITTED" || r.status==="REVISION") &&
+              ((currentUser?.role==="Owner" || currentUser?.role==="Admin") || r.teknisi === myName);
+            const isReadOnly = (r.status==="SUBMITTED" || r.status==="REVISION") && r.teknisi !== myName && r.helper === myName && currentUser?.role !== "Owner" && currentUser?.role !== "Admin";
             const isHelper = r.helper===myName;
             return (
               <div key={r.id} style={{background:cs.card,border:"1px solid "+(r.status==="REVISION"?cs.yellow:r.status==="VERIFIED"?cs.green:cs.border)+"44",borderRadius:14,padding:18}}>
