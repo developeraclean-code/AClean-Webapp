@@ -7985,7 +7985,17 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               {((currentUser?.role==="Owner" || currentUser?.role==="Admin") || (currentUser?.role==="Teknisi" && r.teknisi===currentUser?.name)) && (
                 <button onClick={()=>{
                   const mats=JSON.parse(JSON.stringify(r.materials||[]));
-                  setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editJasaItems:mats.filter(m=>m.keterangan==="jasa"),editMatItems:mats.filter(m=>m.keterangan!=="jasa")});
+                  // ✨ PHASE 2: Load barang items separately from existing laporan
+                  const barangFromMats = mats.filter(m=>m.keterangan==="barang").map(b=>({
+                    id:Date.now()+Math.random(),
+                    nama:b.nama,
+                    jumlah:b.jumlah,
+                    satuan:b.satuan||"pcs",
+                    harga_satuan:b.harga_satuan||0,
+                    _isManual:false
+                  }));
+                  setLaporanBarangItems(barangFromMats);
+                  setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editJasaItems:mats.filter(m=>m.keterangan==="jasa"),editMatItems:mats.filter(m=>m.keterangan!=="jasa"&&m.keterangan!=="barang")});
                   // ✨ Load repair type from existing invoice
                   const existInvForEdit = invoicesData.find(i => i.job_id === r.id);
                   setEditRepairType(existInvForEdit?.repair_gratis || "berbayar");
@@ -8224,12 +8234,24 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     {/* Edit biasa — edit catatan/rekomendasi saja */}
                     <button onClick={()=>{
                       const mats=JSON.parse(JSON.stringify(r.materials||[]));
-                      setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editJasaItems:mats.filter(m=>m.keterangan==="jasa"),editMatItems:mats.filter(m=>m.keterangan!=="jasa")});
+                      // ✨ PHASE 2: Load barang items separately from existing laporan
+                      const barangFromMats = mats.filter(m=>m.keterangan==="barang").map(b=>({
+                        id:Date.now()+Math.random(),
+                        nama:b.nama,
+                        jumlah:b.jumlah,
+                        satuan:b.satuan||"pcs",
+                        harga_satuan:b.harga_satuan||0,
+                        _isManual:false
+                      }));
+                      setLaporanBarangItems(barangFromMats);
+                      setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editJasaItems:mats.filter(m=>m.keterangan==="jasa"),editMatItems:mats.filter(m=>m.keterangan!=="jasa"&&m.keterangan!=="barang")});
                       // ✨ Load repair type from existing invoice
                       const existInvForEdit = invoicesData.find(i => i.job_id === r.id);
                       setEditRepairType(existInvForEdit?.repair_gratis || "berbayar");
                       setEditGratisAlasan("");
                       setActiveEditUnitIdx(0);
+                      setEditPhotoMode(false); // Reset photo mode
+                      setEditLaporanFotos([]); // Clear any previous photo uploads
                       setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                     }}
                       style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
@@ -12588,9 +12610,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const allLogs = [...safeArr(selectedLaporan.editLog),...newLogs];
                     const newStatus = selectedLaporan.status==="REVISION"?"SUBMITTED":selectedLaporan.status;
 
-                    // Recombine jasa + material items
+                    // Recombine jasa + barang + material items
                     const combinedMats = [
                       ...(editLaporanForm.editJasaItems||[]).map(j=>({...j,keterangan:"jasa"})),
+                      ...(laporanBarangItems||[]).filter(b=>b.nama).map(b=>({...b,keterangan:"barang"})),
                       ...(editLaporanForm.editMatItems||[])
                     ];
 
@@ -12598,10 +12621,27 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
                     // ✨ NEW: Handle photo re-upload option
                     if (editPhotoMode && editLaporanFotos.length > 0) {
-                      // Upload new photos and get URLs
-                      const newFotoUrls = editLaporanFotos.filter(f=>f.url).map(f=>f.url); // Use blob URLs or uploaded URLs
-                      if (newFotoUrls.length > 0) {
-                        updatePayload.foto_urls = newFotoUrls; // Replace old fotos with new ones
+                      // Upload new photos to R2 and get URLs
+                      const uploadedUrls = [];
+                      for (const foto of editLaporanFotos.filter(f=>f.file)) {
+                        try {
+                          const formData = new FormData();
+                          formData.append("file", foto.file);
+                          formData.append("orderId", selectedLaporan.job_id);
+                          formData.append("token", INTERNAL_API_SECRET);
+                          const uploadRes = await fetch("/api/upload-foto", {method:"POST", body:formData});
+                          if (uploadRes.ok) {
+                            const uploadData = await uploadRes.json();
+                            if (uploadData.url) uploadedUrls.push(uploadData.url);
+                          }
+                        } catch(uploadErr) {
+                          console.warn("Photo upload failed:", uploadErr.message);
+                        }
+                      }
+                      // Also include blob URLs that are already uploaded (from file selection display)
+                      const existingUrls = editLaporanFotos.filter(f=>!f.file && f.url).map(f=>f.url);
+                      if (uploadedUrls.length > 0 || existingUrls.length > 0) {
+                        updatePayload.foto_urls = [...uploadedUrls, ...existingUrls]; // Replace old fotos with new ones
                       }
                     }
                     // If editPhotoMode = false, skip foto_urls → keep old photos
@@ -12640,8 +12680,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           }
                         }
 
-                        const laborV = vMDetail.filter(m=>m.keterangan==="jasa"||m.keterangan==="repair").reduce((s,m)=>s+m.subtotal,0) || hitungLabor(selectedLaporan.service, ord?.type, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1);
-                        const matV   = vMDetail.filter(m=>m.keterangan!=="jasa"&&m.keterangan!=="repair").reduce((s,m)=>s+m.subtotal,0);
+                        const laborV = vMDetail.filter(m=>m.keterangan==="jasa").reduce((s,m)=>s+m.subtotal,0) || hitungLabor(selectedLaporan.service, ord?.type, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1);
+                        const matV   = vMDetail.filter(m=>m.keterangan!=="jasa").reduce((s,m)=>s+m.subtotal,0);
 
                         // ✨ FIX #3: Add garansi logic ke edit handler
                         const todayInv3 = new Date().toISOString().slice(0, 10);
