@@ -672,7 +672,8 @@ export default function ACleanWebApp() {
   const [laporanJasaItems,   setLaporanJasaItems]   = useState([]);  // Jasa section A
   const [jasaManualText,    setJasaManualText]    = useState({});  // {item.id: text} untuk input manual jasa
   const [repairManualText,  setRepairManualText]  = useState({});  // {item.id: text} untuk input manual repair
-  const [laporanRepairItems, setLaporanRepairItems] = useState([]);  // Repair/Sparepart B
+  const [laporanRepairItems, setLaporanRepairItems] = useState([]);  // Repair/Sparepart B (legacy, tetap ada)
+  const [laporanBarangItems, setLaporanBarangItems] = useState([]);  // ✨ NEW: Barang/Material billed (dari price_list category=Barang)
   const [laporanRepairType,  setLaporanRepairType]  = useState("berbayar");  // ✨ NEW: Repair type (berbayar/gratis-garansi/gratis-customer)
   const [editRepairType,     setEditRepairType]     = useState("berbayar");  // ✨ NEW: Admin edit modal repair type selector
   const [editGratisAlasan,   setEditGratisAlasan]   = useState("");  // ✨ NEW: Admin must provide reason if choosing gratis
@@ -1700,6 +1701,7 @@ ${matRowsHtml}
     setLaporanMaterials([]);
     setLaporanJasaItems([]); setJasaManualText({});
     setLaporanRepairItems([]); setRepairManualText({});
+    setLaporanBarangItems([]); // ✨ NEW: reset barang items
     setShowJasaSearch(false);  setJasaSearchQ("");
     setShowRepairSearch(false); setRepairSearchQ("");
     setShowMatSearch(false);   setMatSearchQ2("");
@@ -2783,19 +2785,13 @@ ${matRowsHtml}
         .replace(/r22a?$/,  "r22")
         .replace(/r32a?$/,  "r32");
       const isJasaItem = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama||"").trim());
-      // 1. Cari di inventory (skip jasa)
-      const invItem = isJasaItem ? null : inventoryData.find(inv => {
-        const n = inv.name.toLowerCase()
-          .replace(/,/g, ".").replace(/eterna\s*/g, "")
-          .replace(/[-\s]/g, "").replace(/r410a?$/, "r410")
-          .replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
-        if (n === norm) return true;
-        if (norm.length > 6 && n.includes(norm)) return true;
-        if (n.length > 6 && norm.includes(n)) return true;
-        return false;
-      });
-      let harga = invItem ? invItem.price : 0;
-      // 2. Fallback ke PRICE_LIST (semua service: Install, Material, Repair, dll)
+
+      // PRIORITY 1: priceListData DB exact (source of truth untuk harga jual)
+      let harga = 0;
+      const plIt = priceListData.find(r => r.type && r.type.trim() === (m.nama||"").trim());
+      if (plIt && plIt.price > 0) harga = parseInt(plIt.price) || 0;
+
+      // PRIORITY 2: Fallback ke PRICE_LIST (semua service: Install, Material, Repair, dll)
       if (!harga) {
         const mNama = m.nama || "";
         for (const svc of ["Repair","Install","Material","Cleaning","Complain"]) {
@@ -2805,17 +2801,29 @@ ${matRowsHtml}
           }
         }
       }
-      // 2b. Fallback priceListData DB exact
-      if (!harga) {
-        const plIt = priceListData.find(r => r.type && r.type.trim() === (m.nama||"").trim());
-        if (plIt) harga = plIt.price || 0;
+
+      // PRIORITY 3: Cari di inventory (hanya fallback, jangan gunakan sebagai primary)
+      if (!harga && !isJasaItem) {
+        const invItem = inventoryData.find(inv => {
+          const n = inv.name.toLowerCase()
+            .replace(/,/g, ".").replace(/eterna\s*/g, "")
+            .replace(/[-\s]/g, "").replace(/r410a?$/, "r410")
+            .replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
+          if (n === norm) return true;
+          if (norm.length > 6 && n.includes(norm)) return true;
+          if (n.length > 6 && norm.includes(n)) return true;
+          return false;
+        });
+        if (invItem && invItem.price > 0) harga = invItem.price;
       }
-      // 3. Fallback freon spesifik — skip jika isJasaItem
+
+      // PRIORITY 4: Fallback freon spesifik — skip jika isJasaItem
       if (!harga && !isJasaItem) {
         if      (raw.includes("r-22")||raw.includes("r22"))  harga = PRICE_LIST["freon_R22"]   || 450000;
         else if (raw.includes("r-32")||raw.includes("r32"))  harga = PRICE_LIST["freon_R32"]   || 450000;
         else if (raw.includes("r-410")||raw.includes("r410")) harga = PRICE_LIST["freon_R410A"] || 450000;
       }
+
       return sum + (harga * (parseFloat(m.jumlah) || 0));
     }, 0);
   };
@@ -12980,6 +12988,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       "breket_outdoor": "SKU041",
     };
 
+    // ✨ CHANGE: tambah laporanBarangItems ke effectiveMaterials dengan keterangan="barang"
+    const barangAsMaterials = laporanBarangItems
+      .filter(b => b.nama)
+      .map(b => ({
+        id: b.id,
+        nama: b.nama,
+        jumlah: b.jumlah || 1,
+        satuan: b.satuan || "pcs",
+        harga_satuan: b.harga_satuan || 0,
+        subtotal: (b.harga_satuan || 0) * (b.jumlah || 1),
+        keterangan: "barang" // marking barang dari price_list, bukan material stok
+      }));
+
     const effectiveMaterials = isInstall
       ? INSTALL_ITEMS
           .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
@@ -12997,7 +13018,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               _useCode: INSTALL_INV_MAP[item.key] || null,
             };
           })
-      : [...jasaAsMaterials, ...laporanMaterials];
+      : [...jasaAsMaterials, ...barangAsMaterials, ...laporanMaterials];
 
     const now = new Date().toLocaleString("id-ID", {
       year:"numeric", month:"2-digit", day:"2-digit",
@@ -13291,9 +13312,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
       return svcFeeBaseline + jasaSumForm + repairSumForm;
     })();
+    // ✨ CHANGE: matTotalInv dari laporanBarangItems (price_list category=Barang), bukan dari laporanMaterials
+    const barangTotalInv = laporanBarangItems
+      .filter(b=>b.nama)
+      .reduce((s, b) => s + ((b.harga_satuan || 0) * (b.jumlah || 1)), 0);
     const matTotalInv = isInstallSvc
       ? hitungMaterialTotal(effectiveMaterials)
-      : hitungMaterialTotal(matOnly);
+      : barangTotalInv; // gunakan barangTotal, bukan material total
     const invoiceTotal  = laborTotalInv + matTotalInv;
     const todayInv      = new Date().toISOString().slice(0, 10);
     const isComplainSvc = laporanModal.service === "Complain";
@@ -14244,121 +14269,97 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                   )}
 
-                  {/* ══ REPAIR / SPAREPART SECTION: [+] Repair ══ */}
+                  {/* ══ BARANG / SPAREPART SECTION: [+] Barang (dari price_list category=Barang) ══ */}
                   {!isInstallJob && (
                   <div style={{display:"grid",gap:8}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                      <div style={{fontSize:12,fontWeight:700,color:cs.yellow}}>🔩 Repair / Sparepart ({laporanRepairItems.length})</div>
+                      <div style={{fontSize:12,fontWeight:700,color:cs.cyan}}>📦 Material & Barang ({laporanBarangItems.length})</div>
                       <button onClick={()=>{
-                        if(laporanRepairItems.length<10) setLaporanRepairItems(p=>[...p,{
+                        if(laporanBarangItems.length<10) setLaporanBarangItems(p=>[...p,{
                           id:Date.now(), nama:"", jumlah:1, satuan:"pcs", harga_satuan:0, _isManual:false
                         }]);
                       }}
-                        style={{fontSize:11,background:cs.yellow+"15",border:"1px solid "+cs.yellow+"33",color:cs.yellow,
+                        style={{fontSize:11,background:cs.cyan+"15",border:"1px solid "+cs.cyan+"33",color:cs.cyan,
                           borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>
-                        + Tambah Repair
+                        + Tambah Barang
                       </button>
                     </div>
 
-                    {/* ══ REPAIR TYPE SELECTOR ══ */}
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"end"}}>
-                      <div>
-                        <div style={{fontSize:10,color:cs.muted,marginBottom:4,fontWeight:600}}>💵 Tipe Repair</div>
-                        <select
-                          value={laporanRepairType||"berbayar"}
-                          onChange={e=>setLaporanRepairType(e.target.value)}
-                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.yellow+"55",
-                            borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none",fontWeight:500}}>
-                          <option value="berbayar">💰 Servis Berbayar (Standard)</option>
-                          <option value="gratis-garansi">🎁 Gratis - Garansi Aktif</option>
-                          <option value="gratis-customer">🎁 Gratis - Arrangement Customer</option>
-                        </select>
-                        <div style={{fontSize:10,color:cs.muted,marginTop:4}}>
-                          {laporanRepairType==="gratis-garansi"&&"Servis gratis karena garansi masih berlaku."}
-                          {laporanRepairType==="gratis-customer"&&"Servis gratis sebagai arrangement dengan customer."}
-                          {laporanRepairType==="berbayar"&&"Servis akan di-charge ke customer (normal)."}
-                        </div>
-                      </div>
-                    </div>
-
-                    {laporanRepairItems.length===0&&(
+                    {laporanBarangItems.length===0&&(
                       <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:cs.muted,
                         background:cs.surface,borderRadius:8,border:"1px dashed "+cs.border}}>
-                        Belum ada item repair. Klik + Tambah Repair untuk input sparepart/perbaikan.
+                        Belum ada barang. Klik + Tambah Barang untuk input material yang ditagih.
                       </div>
                     )}
-                    {laporanRepairItems.map((rItem,rIdx)=>{
-                      const repairOpt = priceListData
-                        .filter(r=>r.service==="Repair" && parseInt(r.price||0)>0)
+                    {laporanBarangItems.map((bItem,bIdx)=>{
+                      const barangOpt = priceListData
+                        .filter(r=>r.category==="Barang" && parseInt(r.price||0)>0)
                         .map(r=>({nama:r.type, satuan:r.unit||"pcs", harga:parseInt(r.price||0)}));
-                      const invRepairOpt = inventoryData
-                        .filter(r=>parseInt(r.price||0)>0)
-                        .map(r=>({nama:r.name, satuan:r.unit||"pcs", harga:parseInt(r.price||0)}));
-                      const allRepairOpt = [...repairOpt,...invRepairOpt]
+                      const allBarangOpt = barangOpt
                         .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,30);
                       return (
-                      <div key={rItem.id} style={{background:cs.card,border:"1px solid "+(rItem.nama?cs.yellow+"44":cs.border),
+                      <div key={bItem.id} style={{background:cs.card,border:"1px solid "+(bItem.nama?cs.cyan+"44":cs.border),
                         borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
-                        {/* Nama repair */}
+                        {/* Nama barang */}
                         <div style={{display:"flex",alignItems:"center",gap:6}}>
                           <select
-                            value={rItem._isManual?"__manual__":rItem.nama}
+                            value={bItem._isManual?"__manual__":bItem.nama}
                             onChange={e=>{
                               const val=e.target.value;
                               if(val==="__manual__"){
-                                setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
-                                  ?{...r,nama:"__manual__",_isManual:true,harga_satuan:0,satuan:"pcs"}:r));
-                                setRepairManualText(p=>({...p,[rItem.id]:""}));
+                                setLaporanBarangItems(p=>p.map(b=>b.id===bItem.id
+                                  ?{...b,nama:"__manual__",_isManual:true,harga_satuan:0,satuan:"pcs"}:b));
+                                setRepairManualText(p=>({...p,[bItem.id]:""}));
                               } else {
-                                const sel=allRepairOpt.find(x=>x.nama===val);
-                                setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
-                                  ?{...r,nama:val,_isManual:false,harga_satuan:sel?.harga||0,satuan:sel?.satuan||"pcs"}:r));
+                                const sel=allBarangOpt.find(x=>x.nama===val);
+                                setLaporanBarangItems(p=>p.map(b=>b.id===bItem.id
+                                  ?{...b,nama:val,_isManual:false,harga_satuan:sel?.harga||0,satuan:sel?.satuan||"pcs"}:b));
                               }
                             }}
                             style={{flex:1,background:cs.surface,border:"1px solid "+cs.border,
-                              borderRadius:8,padding:"8px 10px",color:rItem.nama&&!rItem._isManual?cs.text:cs.muted,fontSize:13}}>
-                            <option value="">-- Pilih repair/sparepart --</option>
-                            {allRepairOpt.map(o=>(
+                              borderRadius:8,padding:"8px 10px",color:bItem.nama&&!bItem._isManual?cs.text:cs.muted,fontSize:13}}>
+                            <option value="">-- Pilih barang/material --</option>
+                            {allBarangOpt.map(o=>(
                               <option key={o.nama} value={o.nama}>{o.nama}</option>
                             ))}
                             <option value="__manual__">✏️ Input manual...</option>
                           </select>
-                          <button onMouseDown={()=>setLaporanRepairItems(p=>p.filter(r=>r.id!==rItem.id))}
+                          <button onMouseDown={()=>setLaporanBarangItems(p=>p.filter(b=>b.id!==bItem.id))}
                             style={{background:"#ef444420",border:"none",color:"#ef4444",
                               borderRadius:7,padding:"6px 10px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>
                             ×
                           </button>
                         </div>
-                        {/* Manual input untuk repair */}
-                        {rItem._isManual&&(
+                        {/* Manual input untuk barang */}
+                        {bItem._isManual&&(
                           <input
-                            value={repairManualText[rItem.id]??""}
-                            onChange={e=>setRepairManualText(p=>({...p,[rItem.id]:e.target.value}))}
+                            value={repairManualText[bItem.id]??""}
+                            onChange={e=>setRepairManualText(p=>({...p,[bItem.id]:e.target.value}))}
                             onBlur={e=>{
-                              const txt=(repairManualText[rItem.id]||"").trim();
-                              if(txt) setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
-                                ?{...r,nama:txt,_isManual:true}:r));
+                              const txt=(repairManualText[bItem.id]||"").trim();
+                              if(txt) setLaporanBarangItems(p=>p.map(b=>b.id===bItem.id
+                                ?{...b,nama:txt,_isManual:true}:b));
                             }}
                             onKeyDown={e=>{
                               if(e.key==="Enter"){
-                                const txt=(repairManualText[rItem.id]||"").trim();
-                                if(txt) setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
-                                  ?{...r,nama:txt,_isManual:true}:r));
+                                const txt=(repairManualText[bItem.id]||"").trim();
+                                if(txt) setLaporanBarangItems(p=>p.map(b=>b.id===bItem.id
+                                  ?{...b,nama:txt,_isManual:true}:b));
                                 e.target.blur();
                               }
                             }}
-                            placeholder="Ketik nama repair/sparepart..."
+                            placeholder="Ketik nama barang/material..."
                             autoFocus
-                            style={{width:"100%",background:cs.surface,border:"1px solid "+cs.yellow+"55",
+                            style={{width:"100%",background:cs.surface,border:"1px solid "+cs.cyan+"55",
                               borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
                         )}
                         {/* Qty — satuan otomatis dari DB */}
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"center"}}>
                           <div>
                             <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Jumlah</div>
-                            <input type="number" min="1" step="1" value={rItem.jumlah||1}
-                              onChange={e=>setLaporanRepairItems(p=>p.map(r=>r.id===rItem.id
-                                ?{...r,jumlah:parseFloat(e.target.value)||1}:r))}
+                            <input type="number" min="1" step="1" value={bItem.jumlah||1}
+                              onChange={e=>setLaporanBarangItems(p=>p.map(b=>b.id===bItem.id
+                                ?{...b,jumlah:parseFloat(e.target.value)||1}:b))}
                               style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,
                                 borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:13,outline:"none"}}/>
                           </div>
@@ -14366,7 +14367,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             <div style={{fontSize:10,color:cs.muted,marginBottom:3}}>Satuan</div>
                             <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,
                               padding:"8px 10px",color:cs.muted,fontSize:13,textAlign:"center"}}>
-                              {rItem.satuan||"pcs"}
+                              {bItem.satuan||"pcs"}
                             </div>
                           </div>
                         </div>
