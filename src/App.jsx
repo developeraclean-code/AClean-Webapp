@@ -13776,30 +13776,30 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
                     {/* Info banner */}
                     <div style={{background:cs.accent+"08",border:"1px solid "+cs.accent+"33",borderRadius:8,padding:"8px 10px",marginBottom:10,fontSize:10,color:cs.accent}}>
-                      ⚠️ <strong>Wajib isi Tipe AC & PK</strong> — Contoh: Cassette 5PK, Split 1PK, Window 0.5PK. Data ini langsung masuk invoice!
+                      ⚠️ <strong>Wajib isi Tipe AC, Nama Ruangan & Merk</strong> — PK sudah termasuk dalam pilihan Tipe AC. Data ini langsung masuk invoice!
                     </div>
 
                     <div style={{display:"grid",gap:10}}>
                       {laporanUnits.map((u,idx)=>(
-                        <div key={idx} style={{background:cs.surface,borderRadius:10,border:"1px solid "+(u.tipe&&u.tipe.trim()&&u.pk&&u.pk.trim()?cs.green+"33":cs.border),overflow:"hidden"}}>
-                          {/* Row 1: Unit no, Label, Tipe, PK, Delete */}
+                        <div key={idx} style={{background:cs.surface,borderRadius:10,border:"1px solid "+(u.tipe&&u.tipe.trim()&&u.label&&u.label.trim()&&u.merk&&u.merk.trim()?cs.green+"33":cs.border),overflow:"hidden"}}>
+                          {/* Row 1: Unit no, Nama Ruangan, Tipe AC, Merk, Delete */}
                           <div style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr auto",gap:8,alignItems:"center",padding:"10px 12px"}}>
                             {/* Unit number */}
                             <div style={{fontSize:11,fontWeight:700,color:cs.accent,minWidth:50}}>Unit {u.unit_no}</div>
 
-                            {/* Label/lokasi */}
-                            <input value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Contoh: Kamar Utama, Ruang Tamu, Dapur"
-                              style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
+                            {/* Nama Ruangan — Required */}
+                            <input value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Nama Ruangan (wajib)"
+                              style={{background:cs.card,border:"1px solid "+(u.label&&u.label.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
 
-                            {/* Tipe AC — Required */}
-                            <select value={u.tipe} onChange={e=>updateUnit(idx,{...u,tipe:e.target.value})}
+                            {/* Tipe AC — Required (auto-extract PK) */}
+                            <select value={u.tipe} onChange={e=>{const newTipe=e.target.value;const pkMatch=newTipe.match(/(\d[\d.,]*PK)/i);updateUnit(idx,{...u,tipe:newTipe,pk:pkMatch?pkMatch[1]:u.pk});}}
                               style={{background:cs.card,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.tipe&&u.tipe.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.tipe&&u.tipe.trim()?600:400}}>
                               {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
                             </select>
 
-                            {/* PK — Text input */}
-                            <input value={u.pk||""} onChange={e=>updateUnit(idx,{...u,pk:e.target.value})} placeholder="Contoh: 0.5PK, 1PK, 2.5PK"
-                              style={{background:cs.card,border:"1px solid "+(u.pk&&u.pk.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.pk&&u.pk.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.pk&&u.pk.trim()?600:400,boxSizing:"border-box"}}/>
+                            {/* Merk — Required */}
+                            <input value={u.merk||""} onChange={e=>updateUnit(idx,{...u,merk:e.target.value})} placeholder="Merk AC (wajib)"
+                              style={{background:cs.card,border:"1px solid "+(u.merk&&u.merk.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",fontWeight:u.merk&&u.merk.trim()?600:400,boxSizing:"border-box"}}/>
 
                             {/* Delete button */}
                             {laporanUnits.length>1&&(
@@ -13808,21 +13808,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             )}
                           </div>
 
-                          {/* Row 2: Merk & Model (optional, collapsible) */}
-                          <details style={{padding:"0 12px 10px 12px",borderTop:"1px solid "+cs.border}}>
-                            <summary style={{fontSize:10,color:cs.muted,cursor:"pointer",fontWeight:600,marginBottom:8}}>📋 Merk & Model (opsional)</summary>
-                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                              <input value={u.merk||""} onChange={e=>updateUnit(idx,{...u,merk:e.target.value})} placeholder="Brand AC (Daikin, Panasonic, etc)"
-                                style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
-                              <input value={u.model||""} onChange={e=>updateUnit(idx,{...u,model:e.target.value})} placeholder="Model variant (RCS Plus, Standard, etc)"
-                                style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
+                          {/* Row 2: Model AC (optional, visible) */}
+                          <div style={{padding:"0 12px 10px 12px",borderTop:"1px solid "+cs.border+"33"}}>
+                            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                              <span style={{fontSize:11,color:cs.muted,flexShrink:0,fontWeight:600}}>Model (opsional):</span>
+                              <input value={u.model||""} onChange={e=>updateUnit(idx,{...u,model:e.target.value})} placeholder="Contoh: RCS Plus, Standard, Inverter"
+                                style={{flex:1,background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
                             </div>
                             {u.from_history_job_id && (
                               <div style={{fontSize:9,color:cs.muted,marginTop:6,fontStyle:"italic"}}>
                                 ✓ Dari history: {u.from_history_job_id}
                               </div>
                             )}
-                          </details>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -13839,20 +13837,24 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     </div>
                   )}
 
-                  {/* Validate Tipe AC & PK untuk semua unit */}
+                  {/* Validate Tipe AC, Nama Ruangan, & Merk untuk semua unit */}
                   {(() => {
-                    const incompleteUnits = laporanUnits.filter(u => !u.tipe || !u.tipe.trim() || !u.pk || !u.pk.trim());
+                    const incompleteUnits = laporanUnits.filter(u =>
+                      !u.tipe || !u.tipe.trim() ||   // Tipe AC required
+                      !u.label || !u.label.trim() || // Nama Ruangan required
+                      !u.merk || !u.merk.trim()      // Merk required
+                    );
                     return incompleteUnits.length > 0 ? (
                       <div style={{background:"#ef444410",border:"1px solid #ef444430",borderRadius:9,padding:"10px 13px",fontSize:11,color:"#ef4444",fontWeight:600}}>
-                        ❌ Lengkapi dulu: {incompleteUnits.map(u=>`Unit ${u.unit_no}`).join(", ")} — Pastikan Tipe AC & PK terisi!
+                        ❌ Lengkapi dulu: {incompleteUnits.map(u=>`Unit ${u.unit_no}`).join(", ")} — Pastikan Tipe AC, Nama Ruangan & Merk terisi!
                       </div>
                     ) : null;
                   })()}
 
                   <button onClick={()=>{
-                    const incomplete = laporanUnits.filter(u => !u.tipe || !u.tipe.trim() || !u.pk || !u.pk.trim());
+                    const incomplete = laporanUnits.filter(u => !u.tipe || !u.tipe.trim() || !u.label || !u.label.trim() || !u.merk || !u.merk.trim());
                     if (incomplete.length > 0) {
-                      showNotif(`⚠️ Lengkapi: ${incomplete.map(u=>`Unit ${u.unit_no}`).join(", ")} — Tipe AC & PK wajib diisi!`);
+                      showNotif(`⚠️ Lengkapi: ${incomplete.map(u=>`Unit ${u.unit_no}`).join(", ")} — Tipe AC, Nama Ruangan & Merk wajib diisi!`);
                       return;
                     }
                     setLaporanStep(laporanModal?.service==="Install" ? 3 : 2);
@@ -13891,26 +13893,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const upd=(f)=>updateUnit(activeUnitIdx,{...u,...f});
                     return(
                       <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:12,padding:14,display:"grid",gap:12}}>
-                        <div style={{fontSize:11,fontWeight:700,color:cs.accent,marginBottom:2}}>Unit {u.unit_no} — {u.label}</div>
-                        {/* Tipe & Merk — Tipe AC sudah diisi di Step 1, cuma display + bisa edit */}
-                        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:8}}>
-                          <div>
-                            <div style={{fontSize:11,fontWeight:700,color:cs.text,marginBottom:4}}>Tipe AC (dari Step 1)</div>
-                            <select value={u.tipe} onChange={e=>upd({tipe:e.target.value})}
-                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
-                              {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
-                            </select>
+                        {/* Unit info strip — read-only, dari Step 1 */}
+                        <div style={{background:cs.surface,border:"1px solid "+cs.accent+"22",borderRadius:10,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                          <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
+                            <span style={{fontSize:13,fontWeight:700,color:cs.text}}>{u.tipe}</span>
+                            {u.merk && <span style={{fontSize:12,color:cs.muted}}>🏷 {u.merk}</span>}
+                            {u.model && <span style={{fontSize:11,color:cs.muted}}>{u.model}</span>}
+                            {u.label && <span style={{fontSize:11,color:cs.accent}}>📍 {u.label}</span>}
                           </div>
-                          <div>
-                            <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>Merk</div>
-                            <input id="field_31" value={u.merk} onChange={e=>upd({merk:e.target.value})} placeholder="Daikin..."
-                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
-                          </div>
-                          <div>
-                            <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:4}}>PK (dari Step 1)</div>
-                            <input id="field_32" value={u.pk} onChange={e=>upd({pk:e.target.value})} placeholder="1PK"
-                              style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
-                          </div>
+                          <button onClick={()=>setLaporanStep(1)}
+                            style={{fontSize:11,color:cs.accent,background:cs.accent+"12",border:"1px solid "+cs.accent+"33",borderRadius:6,padding:"4px 10px",cursor:"pointer",flexShrink:0,fontWeight:600}}>
+                            ✏️ Edit Info
+                          </button>
                         </div>
                         {/* Kondisi Sebelum */}
                         <div>
