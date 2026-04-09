@@ -4953,7 +4953,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         📤
                       </button>
                       {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
-                        <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,type:o.type||"",units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }}
+                        <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",area:o.area||"",service:o.service,type:o.type||"",units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",teknisi2:o.teknisi2||"",helper2:o.helper2||"",teknisi3:o.teknisi3||"",helper3:o.helper3||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }}
                           style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"4px 9px", borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
                       )}
                       {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
@@ -6112,7 +6112,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             <button onClick={() => sendDispatchWA(o)} style={{ background:"#25D36622", border:"1px solid #25D36644", color:"#25D366", padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>📱 Dispatch</button>
                           )}
                           {!isTekRole && (
-                            <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",service:o.service,units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
+                            <button onClick={() => { setEditOrderItem(o); setEditOrderForm({customer:o.customer,phone:o.phone||"",address:o.address||"",area:o.area||"",service:o.service,type:o.type||"",units:o.units||1,teknisi:o.teknisi,helper:o.helper||"",teknisi2:o.teknisi2||"",helper2:o.helper2||"",teknisi3:o.teknisi3||"",helper3:o.helper3||"",date:o.date,time:o.time||"09:00",status:o.status,notes:o.notes||""}); setModalEditOrder(true); }} style={{ background:cs.yellow+"22", border:"1px solid "+cs.yellow+"44", color:cs.yellow, padding:"6px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>✏️ Edit</button>
                           )}
                           {currentUser?.role==="Owner" && !(["COMPLETED","PAID"].includes(o.status)) && (
                             <button onClick={async()=>{
@@ -8003,6 +8003,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <button onClick={()=>{setSelectedLaporan(r);setEditLaporanMode(false);setModalLaporanDetail(true);}}
                       style={{background:cs.surface,border:"1px solid "+cs.border,color:cs.muted,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12}}>
                       Lihat Detail
+                    </button>
+                  )}
+                {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && !isPending && (
+                    <button onClick={()=>{
+                      setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||""});
+                      setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
+                    }}
+                      style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                      ✏️ Edit Laporan
                     </button>
                   )}
                 </div>
@@ -11906,7 +11915,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:10,padding:"12px 14px"}}>
                 <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.5px"}}>Data Customer</div>
                 <div style={{display:"grid",gap:8}}>
-                  {[["Nama Customer","customer","text"],["No. HP","phone","text"],["Alamat Lengkap","address","text"]].map(([lbl,key,type])=>(
+                  {[["Nama Customer","customer","text"],["No. HP","phone","text"],["Alamat Lengkap","address","text"],["Area / Kota","area","text"]].map(([lbl,key,type])=>(
                     <div key={key}>
                       <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>{lbl}</div>
                       <input type={type} value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
@@ -11932,6 +11941,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <input id="field_number_26" type="number" min="1" max="20" value={editOrderForm.units||1} onChange={e=>setEditOrderForm(f=>({...f,units:parseInt(e.target.value)||1}))}
                       style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none",boxSizing:"border-box"}} />
                   </div>
+                </div>
+                <div style={{marginTop:8}}>
+                  <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Tipe AC</div>
+                  <select value={editOrderForm.type||""} onChange={e=>setEditOrderForm(f=>({...f,type:e.target.value}))}
+                    style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none"}}>
+                    <option value="">Pilih Tipe...</option>
+                    {(priceListData||[]).map(p=><option key={p.id||p.type} value={p.type}>{p.type}</option>)}
+                  </select>
                 </div>
               </div>
 
@@ -11979,6 +11996,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     </select>
                   </div>
                 </div>
+                <div style={{marginTop:8}}>
+                  <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.5px"}}>Tim Tambahan (opsional)</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    {[["Teknisi ke-2","teknisi2","Teknisi"],["Helper ke-2","helper2","Helper"],["Teknisi ke-3","teknisi3","Teknisi"],["Helper ke-3","helper3","Helper"]].map(([lbl,key,role])=>(
+                      <div key={key}>
+                        <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>{lbl}</div>
+                        <select value={editOrderForm[key]||""} onChange={e=>setEditOrderForm(f=>({...f,[key]:e.target.value}))}
+                          style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px 11px",color:cs.text,fontSize:13,outline:"none"}}>
+                          <option value="">Tidak ada</option>
+                          {teknisiData.filter(t=>t.role===role).map(t=><option key={t.id} value={t.name}>{t.name}</option>)}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               {/* Section: Status & Catatan */}
@@ -12022,7 +12054,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   const timeEnd = hitungJamSelesai(editOrderForm.time||"09:00", editOrderForm.service||"Cleaning", editOrderForm.units||1);
                   const updated = {...editOrderItem,...editOrderForm,time_end:timeEnd};
                   setOrdersData(prev=>prev.map(o=>o.id===editOrderItem.id?updated:o));
-                  const dbUpd = {customer:editOrderForm.customer,phone:editOrderForm.phone,address:editOrderForm.address,service:editOrderForm.service,units:editOrderForm.units,teknisi:editOrderForm.teknisi,helper:editOrderForm.helper||null,date:editOrderForm.date,time:editOrderForm.time,time_end:timeEnd,status:editOrderForm.status,notes:editOrderForm.notes||""};
+                  const dbUpd = {customer:editOrderForm.customer,phone:editOrderForm.phone,address:editOrderForm.address,area:editOrderForm.area||"",service:editOrderForm.service,type:editOrderForm.type||"",units:editOrderForm.units,teknisi:editOrderForm.teknisi,helper:editOrderForm.helper||null,teknisi2:editOrderForm.teknisi2||null,helper2:editOrderForm.helper2||null,teknisi3:editOrderForm.teknisi3||null,helper3:editOrderForm.helper3||null,date:editOrderForm.date,time:editOrderForm.time,time_end:timeEnd,status:editOrderForm.status,notes:editOrderForm.notes||""};
                   const {error:eoErr} = await supabase.from("orders").update(dbUpd).eq("id",editOrderItem.id);
           // ── GAP-10 FIX: Hapus schedule lama & insert baru setelah edit order ──
           if (!eoErr) {
