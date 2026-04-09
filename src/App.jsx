@@ -12219,24 +12219,55 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   );
                 })()}
 
-                {/* MATERIALS */}
-                <div>
-                  <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.5px"}}>Material Terpakai</div>
-                  <div style={{display:"grid",gap:6}}>
-                    {(editLaporanForm.editMaterials||[]).map((m,mi)=>(
-                      <div key={m.id||mi} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr auto",gap:6,alignItems:"center",background:cs.card,padding:"10px",borderRadius:7}}>
-                        <input type="text" value={m.nama||""} onChange={e=>setEditLaporanForm(f=>({...f,editMaterials:f.editMaterials.map((x,i)=>i===mi?{...x,nama:e.target.value}:x)}))} placeholder="Nama material" style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}} />
-                        <input type="number" value={m.jumlah||""} onChange={e=>setEditLaporanForm(f=>({...f,editMaterials:f.editMaterials.map((x,i)=>i===mi?{...x,jumlah:e.target.value}:x)}))} placeholder="Qty" style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}} />
-                        <select value={m.satuan||"pcs"} onChange={e=>setEditLaporanForm(f=>({...f,editMaterials:f.editMaterials.map((x,i)=>i===mi?{...x,satuan:e.target.value}:x)}))} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}}>
-                          {SATUAN_OPT.map(s=><option key={s} value={s}>{s}</option>)}
-                        </select>
-                        <input type="text" value={m.keterangan||""} onChange={e=>setEditLaporanForm(f=>({...f,editMaterials:f.editMaterials.map((x,i)=>i===mi?{...x,keterangan:e.target.value}:x)}))} placeholder="Ket" style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}} />
-                        <button onClick={()=>setEditLaporanForm(f=>({...f,editMaterials:f.editMaterials.filter((_,i)=>i!==mi)}))} style={{background:cs.red+"18",border:"1px solid "+cs.red+"33",color:cs.red,padding:"6px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:700}}>🗑️</button>
+                {/* JASA SECTION */}
+                {(() => {
+                  const jasaLookup = [...priceListData.filter(r=>r.category==="Jasa" && parseInt(r.price||0)>0).map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)})),...priceListData.filter(r=>r.service===selectedLaporan?.service && parseInt(r.price||0)>0).map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}))].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,20);
+                  return (
+                    <div>
+                      <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.5px"}}>⚡ Jasa / Layanan ({(editLaporanForm.editJasaItems||[]).length})</div>
+                      <div style={{display:"grid",gap:6}}>
+                        {(editLaporanForm.editJasaItems||[]).map((j,ji)=>(
+                          <div key={j.id||ji} style={{display:"grid",gridTemplateColumns:"2fr 1fr auto",gap:6,alignItems:"center",background:cs.card,padding:"10px",borderRadius:7}}>
+                            <select value={j.nama||""} onChange={e=>{const jasa=jasaLookup.find(x=>x.nama===e.target.value);setEditLaporanForm(f=>({...f,editJasaItems:f.editJasaItems.map((x,i)=>i===ji?{...x,nama:e.target.value,satuan:jasa?.satuan||"pcs",harga_satuan:jasa?.harga||0}:x)}));}} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}}>
+                              <option value="">Pilih Jasa...</option>
+                              {jasaLookup.map(jl=><option key={jl.nama} value={jl.nama}>{jl.nama}</option>)}
+                            </select>
+                            <input type="number" value={j.jumlah||1} onChange={e=>setEditLaporanForm(f=>({...f,editJasaItems:f.editJasaItems.map((x,i)=>i===ji?{...x,jumlah:parseInt(e.target.value)||1}:x)}))} placeholder="Qty" style={{width:"60px",background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}} />
+                            <button onClick={()=>setEditLaporanForm(f=>({...f,editJasaItems:f.editJasaItems.filter((_,i)=>i!==ji)}))} style={{background:cs.red+"18",border:"1px solid "+cs.red+"33",color:cs.red,padding:"6px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:700}}>🗑️</button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <button onClick={()=>setEditLaporanForm(f=>({...f,editMaterials:[...(f.editMaterials||[]),{id:Date.now(),nama:"",jumlah:"",satuan:"pcs",keterangan:""}]}))} style={{marginTop:8,background:cs.accent+"18",border:"1px solid "+cs.accent+"33",color:cs.accent,padding:"8px 12px",borderRadius:7,cursor:"pointer",fontSize:11,fontWeight:700}}>+ Tambah Material</button>
-                </div>
+                      <button onClick={()=>setEditLaporanForm(f=>({...f,editJasaItems:[...(f.editJasaItems||[]),{id:Date.now(),nama:"",jumlah:1,satuan:"pcs",harga_satuan:0,keterangan:"jasa"}]}))} style={{marginTop:8,background:cs.accent+"18",border:"1px solid "+cs.accent+"33",color:cs.accent,padding:"8px 12px",borderRadius:7,cursor:"pointer",fontSize:11,fontWeight:700}}>+ Tambah Jasa</button>
+                    </div>
+                  );
+                })()}
+
+                {/* MATERIAL SECTION */}
+                {(() => {
+                  const matLookup = [...inventoryData.map(r=>({nama:r.name,satuan:r.unit||"pcs"})),...priceListData.filter(r=>r.service==="Material").map(r=>({nama:r.type,satuan:r.unit||"pcs"}))].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i);
+                  return (
+                    <div>
+                      <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.5px"}}>🔧 Material Terpakai ({(editLaporanForm.editMatItems||[]).length}/20)</div>
+                      <div style={{display:"grid",gap:6}}>
+                        {(editLaporanForm.editMatItems||[]).map((m,mi)=>(
+                          <div key={m.id||mi} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr auto",gap:6,alignItems:"center",background:cs.card,padding:"10px",borderRadius:7}}>
+                            <input list="matOpts" value={m.nama||""} onChange={e=>setEditLaporanForm(f=>({...f,editMatItems:f.editMatItems.map((x,i)=>i===mi?{...x,nama:e.target.value}:x)}))} placeholder="Nama material" style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}} />
+                            <datalist id="matOpts">
+                              {matLookup.map(ml=><option key={ml.nama} value={ml.nama} />)}
+                            </datalist>
+                            <input type="number" value={m.jumlah||""} onChange={e=>setEditLaporanForm(f=>({...f,editMatItems:f.editMatItems.map((x,i)=>i===mi?{...x,jumlah:e.target.value}:x)}))} placeholder="Qty" style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}} />
+                            <select value={m.satuan||"pcs"} onChange={e=>setEditLaporanForm(f=>({...f,editMatItems:f.editMatItems.map((x,i)=>i===mi?{...x,satuan:e.target.value}:x)}))} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}}>
+                              {SATUAN_OPT.map(s=><option key={s} value={s}>{s}</option>)}
+                            </select>
+                            <input type="text" value={m.keterangan||""} onChange={e=>setEditLaporanForm(f=>({...f,editMatItems:f.editMatItems.map((x,i)=>i===mi?{...x,keterangan:e.target.value}:x)}))} placeholder="Ket" style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}} />
+                            <button onClick={()=>setEditLaporanForm(f=>({...f,editMatItems:f.editMatItems.filter((_,i)=>i!==mi)}))} style={{background:cs.red+"18",border:"1px solid "+cs.red+"33",color:cs.red,padding:"6px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:700}}>🗑️</button>
+                          </div>
+                        ))}
+                      </div>
+                      <button onClick={()=>setEditLaporanForm(f=>({...f,editMatItems:[...(f.editMatItems||[]),{id:Date.now(),nama:"",jumlah:"",satuan:"pcs",keterangan:""}]}))} style={{marginTop:8,background:cs.accent+"18",border:"1px solid "+cs.accent+"33",color:cs.accent,padding:"8px 12px",borderRadius:7,cursor:"pointer",fontSize:11,fontWeight:700}}>+ Tambah Material</button>
+                    </div>
+                  );
+                })()}
 
                 {/* REKOMENDASI & CATATAN */}
                 {[["Rekomendasi","rekomendasi"],["Catatan Tambahan","catatan_global"]].map(([lbl,key])=>(
@@ -12254,10 +12285,74 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const newLogs = [{by:currentUser?.name||"?",at:now,field:"units+materials",old:"previous",new:"Admin edited unit & material details"}];
                     const allLogs = [...safeArr(selectedLaporan.editLog),...newLogs];
                     const newStatus = selectedLaporan.status==="REVISION"?"SUBMITTED":selectedLaporan.status;
-                    setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,units:editLaporanForm.editUnits,materials:editLaporanForm.editMaterials,status:newStatus,editLog:allLogs}:r));
-                    const updatePayload = {status:newStatus,catatan_global:editLaporanForm.catatan_global||"",rekomendasi:editLaporanForm.rekomendasi||"",units_json:JSON.stringify(editLaporanForm.editUnits||[]),materials_json:JSON.stringify(editLaporanForm.editMaterials||[]),edit_log:JSON.stringify(allLogs)};
+
+                    // Recombine jasa + material items
+                    const combinedMats = [
+                      ...(editLaporanForm.editJasaItems||[]).map(j=>({...j,keterangan:"jasa"})),
+                      ...(editLaporanForm.editMatItems||[])
+                    ];
+
+                    const updatePayload = {status:newStatus,catatan_global:editLaporanForm.catatan_global||"",rekomendasi:editLaporanForm.rekomendasi||"",units_json:JSON.stringify(editLaporanForm.editUnits||[]),materials_json:JSON.stringify(combinedMats),edit_log:JSON.stringify(allLogs)};
                     const {error:elErr} = await supabase.from("service_reports").update(updatePayload).eq("id", selectedLaporan.id);
                     if(elErr) {console.warn("❌ update service_reports failed:",elErr.message,"payload:",updatePayload);addAgentLog("LAPORAN_UPDATE_ERROR",`Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0,100)}`,"WARNING");}
+
+                    // Update local state
+                    setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,units:editLaporanForm.editUnits,materials:combinedMats,status:newStatus,editLog:allLogs}:r));
+
+                    if (!elErr) {
+                      // Rule: admin edit = sumber invoice paling benar → regenerate invoice jika ada
+                      const existInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id);
+                      if (existInv) {
+                        const ord = ordersData.find(o => o.id === selectedLaporan.job_id);
+                        const vMats = combinedMats.filter(m => m.nama && parseFloat(m.jumlah||0) > 0);
+                        const vMDetail = vMats.map(m => {
+                          const nama2 = (m.nama||"").toLowerCase();
+                          const isF = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k=>nama2.includes(k));
+                          const rawQ = parseFloat(m.jumlah)||0;
+                          const qty  = isF ? Math.max(1,Math.ceil(rawQ)) : rawQ;
+                          let hSat   = parseFloat(m.harga_satuan)||0;
+                          if (!hSat) {
+                            const inv2 = inventoryData.find(i=>(i.name||"").toLowerCase().includes(nama2)||nama2.includes((i.name||"").toLowerCase()));
+                            hSat = inv2?.price || 0;
+                          }
+                          if (!hSat && isF) hSat = 450000;
+                          return { nama:m.nama, jumlah:qty, satuan:m.satuan||"pcs", harga_satuan:hSat, subtotal:hSat*qty, keterangan:m.keterangan||"" };
+                        });
+
+                        // Inject service fee jika tidak ada jasa row
+                        if (!vMDetail.some(m=>m.keterangan==="jasa")) {
+                          const svcFee = hitungLabor(selectedLaporan.service, ord?.type, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1);
+                          if (svcFee > 0) {
+                            const uCount = editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1;
+                            vMDetail.unshift({ nama:selectedLaporan.service+(ord?.type?" - "+ord.type:"")+" (Servis)", jumlah:uCount, satuan:"unit", harga_satuan:Math.round(svcFee/uCount), subtotal:svcFee, keterangan:"jasa" });
+                          }
+                        }
+
+                        const laborV = vMDetail.filter(m=>m.keterangan==="jasa"||m.keterangan==="repair").reduce((s,m)=>s+m.subtotal,0) || hitungLabor(selectedLaporan.service, ord?.type, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1);
+                        const matV   = vMDetail.filter(m=>m.keterangan!=="jasa"&&m.keterangan!=="repair").reduce((s,m)=>s+m.subtotal,0);
+                        const totalInv = laborV + matV;
+
+                        // Delete old invoice + insert new (preserve PAID status)
+                        const { error: delInvErr } = await supabase.from("invoices").delete().eq("id", existInv.id);
+                        if (!delInvErr) {
+                          const newInv = {
+                            ...existInv,
+                            materials_detail: JSON.stringify(vMDetail),
+                            labor: laborV, material: matV, total: totalInv,
+                            status: existInv.status === "PAID" ? "PAID" : "PENDING_APPROVAL",
+                            updated_at: new Date().toISOString(),
+                          };
+                          delete newInv.id;
+                          const { error: insertErr } = await supabase.from("invoices").insert({...newInv,id:existInv.id});
+                          if (!insertErr) {
+                            setInvoicesData(prev => [...prev.filter(i => i.id !== existInv.id), { ...newInv, id: existInv.id }]);
+                            addAgentLog("INVOICE_REGEN", `Invoice ${existInv.id} diupdate dari edit laporan oleh ${currentUser?.name}`, "SUCCESS");
+                            showNotif(`✅ Laporan + Invoice ${existInv.id} diperbarui dari data admin`);
+                          }
+                        }
+                      }
+                    }
+
                     addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit lengkap oleh ${currentUser?.name}`,"SUCCESS");
                     showNotif("✅ Laporan "+selectedLaporan.job_id+" diupdate (unit+material+catatan)");
                     setModalLaporanDetail(false); setEditLaporanMode(false);
