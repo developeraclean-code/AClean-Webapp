@@ -227,6 +227,7 @@ const INVOICES_DATA = [
     "default":                       85000,
   },
   "Install": {
+    "Jasa Pergantian Instalasi AC":          300000,
     "Pemasangan AC Baru 0,5PK - 1PK":       350000,
     "Pemasangan AC Baru 1,5PK - 2PK":       400000,
     "Pasang AC Split 3PK":                   450000,
@@ -1126,6 +1127,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   };
   // ── INSTALL_ITEMS: preset form instalasi ──
   const INSTALL_ITEMS = [
+    { key:"jasa_ganti_instalasi", label:"Jasa Pergantian Instalasi AC",   satuan:"Unit",  default:0 },
     { key:"pasang_05_1pk",   label:"Pemasangan AC Baru 0,5PK - 1PK",      satuan:"Unit",  default:0 },
     { key:"pasang_15_2pk",   label:"Pemasangan AC Baru 1,5PK - 2PK",      satuan:"Unit",  default:0 },
     { key:"bongkar_05_1pk",  label:"Bongkar Unit AC 0.5-1PK",             satuan:"Unit",  default:0 },
