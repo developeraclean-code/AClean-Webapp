@@ -13859,23 +13859,31 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             Unit {u.unit_no}
                           </div>
 
-                          {/* Row 1: Nama Ruangan, Tipe AC, Delete */}
-                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"center",padding:"10px 12px"}}>
+                          {/* Row 1: Nama Ruangan + Delete button */}
+                          <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",padding:"10px 12px"}}>
                             {/* Nama Ruangan — Required */}
-                            <input value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Nama Ruangan (wajib)"
-                              style={{background:cs.card,border:"1px solid "+(u.label&&u.label.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"8px 10px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
-
-                            {/* Tipe AC — Required (auto-extract PK) */}
-                            <select value={u.tipe} onChange={e=>{const newTipe=e.target.value;const pkMatch=newTipe.match(/(\d[\d.,]*PK)/i);updateUnit(idx,{...u,tipe:newTipe,pk:pkMatch?pkMatch[1]:u.pk});}}
-                              style={{background:cs.card,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"8px 10px",color:u.tipe&&u.tipe.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.tipe&&u.tipe.trim()?600:400}}>
-                              {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
-                            </select>
+                            <div style={{display:"grid",gap:4}}>
+                              <span style={{fontSize:10,color:cs.muted,fontWeight:600}}>Nama Ruangan *</span>
+                              <input value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Contoh: Kamar Utama, Ruang Tamu, Dapur"
+                                style={{background:cs.card,border:"1px solid "+(u.label&&u.label.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"8px 10px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
+                            </div>
 
                             {/* Delete button */}
                             {laporanUnits.length>1&&(
                               <button onClick={()=>{const nu=laporanUnits.filter((_,i)=>i!==idx).map((u2,i)=>({...u2,unit_no:i+1}));setLaporanUnits(nu);setActiveUnitIdx(Math.max(0,idx-1));}}
-                                style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:6,padding:"8px 10px",cursor:"pointer",fontSize:12,fontWeight:700,lineHeight:1}}>×</button>
+                                style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:6,padding:"8px 10px",cursor:"pointer",fontSize:12,fontWeight:700,lineHeight:1,alignSelf:"flex-end"}}>×</button>
                             )}
+                          </div>
+
+                          {/* Row 2: Tipe AC — Required (full width) */}
+                          <div style={{padding:"0 12px 10px 12px",borderTop:"1px solid "+cs.border+"22"}}>
+                            <div style={{display:"grid",gap:4}}>
+                              <span style={{fontSize:10,color:cs.muted,fontWeight:600}}>Tipe AC *</span>
+                              <select value={u.tipe} onChange={e=>{const newTipe=e.target.value;const pkMatch=newTipe.match(/(\d[\d.,]*PK)/i);updateUnit(idx,{...u,tipe:newTipe,pk:pkMatch?pkMatch[1]:u.pk});}}
+                                style={{background:cs.card,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"8px 10px",color:u.tipe&&u.tipe.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.tipe&&u.tipe.trim()?600:400,boxSizing:"border-box",width:"100%"}}>
+                                {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
+                              </select>
+                            </div>
                           </div>
 
                           {/* Row 2: Merk AC — Required */}
