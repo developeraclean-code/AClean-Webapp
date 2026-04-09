@@ -8005,7 +8005,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       Lihat Detail
                     </button>
                   )}
-                {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && !isPending && (
+                {(currentUser?.role==="Owner"||currentUser?.role==="Admin") && (
                     <button onClick={()=>{
                       setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||""});
                       setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
