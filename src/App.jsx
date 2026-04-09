@@ -5186,6 +5186,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const renderInvoice = () => {
     const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
     const todayDateStr = getLocalDate();
+    const totPgI = Math.ceil(filteredInv.length / INV_PAGE_SIZE) || 1;
+    const curPgI = Math.min(invoicePage, totPgI);
+    const pageInv = filteredInv.slice((curPgI-1)*INV_PAGE_SIZE, curPgI*INV_PAGE_SIZE);
     return (
     <div style={{ display:"grid", gap:14 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
