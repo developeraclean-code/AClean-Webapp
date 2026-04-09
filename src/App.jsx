@@ -13999,7 +13999,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div style={{fontSize:11,color:cs.muted,marginBottom:4}}>Isi 0 jika tidak dikerjakan.</div>
                 {/* ── Group 1: Jasa Pemasangan ── */}
                 <div style={{fontSize:10,fontWeight:700,color:cs.muted,letterSpacing:1,textTransform:"uppercase",marginTop:2}}>Jasa Pemasangan</div>
-                {INSTALL_ITEMS.filter(it=>["pasang_05_1pk","pasang_15_2pk","bongkar_05_1pk","bongkar_15_25pk","vacum_05_25pk"].includes(it.key)).map(item=>(
+                {INSTALL_ITEMS.filter(it=>["jasa_ganti_instalasi","pasang_05_1pk","pasang_15_2pk","bongkar_05_1pk","bongkar_15_25pk","vacum_05_25pk"].includes(it.key)).map(item=>(
                 <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
                   background:parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"08":cs.card,
                   border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?cs.accent+"44":cs.border),
