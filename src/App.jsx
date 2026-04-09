@@ -644,6 +644,8 @@ export default function ACleanWebApp() {
   const [editLaporanMode, setEditLaporanMode] = useState(false);
   const [editLaporanForm, setEditLaporanForm] = useState({});
   const [activeEditUnitIdx, setActiveEditUnitIdx] = useState(0);
+  const [editPhotoMode, setEditPhotoMode] = useState(false); // Whether to re-upload photos
+  const [editLaporanFotos, setEditLaporanFotos] = useState([]); // New photos for re-upload
 
   // ── WA panel ──
   const [waPanel,      setWaPanel]      = useState(false);
@@ -7966,8 +7968,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   showNotif("❌ Laporan "+r.job_id+" ditolak");
                 }} style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",color:cs.red,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>Tolak</button>
               </>)}
-              {/* Delete laporan — Owner & Admin */}
-              {(currentUser?.role==="Owner" || currentUser?.role==="Admin") && (
+              {/* Edit laporan — Owner, Admin, atau Teknisi yang membuat laporan */}
+              {((currentUser?.role==="Owner" || currentUser?.role==="Admin") || (currentUser?.role==="Teknisi" && r.teknisi===currentUser?.name)) && (
                 <button onClick={()=>{
                   const mats=JSON.parse(JSON.stringify(r.materials||[]));
                   setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editJasaItems:mats.filter(m=>m.keterangan==="jasa"),editMatItems:mats.filter(m=>m.keterangan!=="jasa")});
@@ -7976,6 +7978,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   setEditRepairType(existInvForEdit?.repair_gratis || "berbayar");
                   setEditGratisAlasan("");
                   setActiveEditUnitIdx(0);
+                  setEditPhotoMode(false); // Reset photo mode to default (don't re-upload)
+                  setEditLaporanFotos([]); // Clear any previous photo uploads
                   setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                 }}
                   style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
@@ -12310,7 +12314,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
       {/* ═══════ MODAL EDIT / DETAIL LAPORAN ═══════ */}
       {modalLaporanDetail && selectedLaporan && (
-        <div style={{position:"fixed",inset:0,background:"#000d",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>{setModalLaporanDetail(false);setEditLaporanMode(false);}}>
+        <div style={{position:"fixed",inset:0,background:"#000d",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>{setModalLaporanDetail(false);setEditLaporanMode(false);setEditPhotoMode(false);setEditLaporanFotos([]);}}>
           <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:isMobile?"16px 16px 0 0":20,width:"100%",maxWidth:isMobile?"100%":640,maxHeight:"90vh",overflowY:"auto",padding:28}} onClick={e=>e.stopPropagation()}>
 
             {/* Header */}
@@ -12319,14 +12323,31 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div style={{fontWeight:800,fontSize:16,color:cs.text}}>{editLaporanMode?"Edit Laporan":"Detail Laporan"}</div>
                 <div style={{fontSize:12,color:cs.muted,marginTop:2}}>{selectedLaporan.job_id} — {selectedLaporan.customer}</div>
               </div>
-              <button onClick={()=>{setModalLaporanDetail(false);setEditLaporanMode(false);}} style={{background:"none",border:"none",color:cs.muted,fontSize:24,cursor:"pointer",lineHeight:1}}>x</button>
+              <button onClick={()=>{setModalLaporanDetail(false);setEditLaporanMode(false);setEditPhotoMode(false);setEditLaporanFotos([]);}} style={{background:"none",border:"none",color:cs.muted,fontSize:24,cursor:"pointer",lineHeight:1}}>x</button>
             </div>
 
             {editLaporanMode ? (
               /* EDIT MODE — FULL FORM */
               <div style={{display:"grid",gap:14}}>
-                <div style={{background:cs.yellow+"10",border:"1px solid "+cs.yellow+"33",borderRadius:10,padding:"10px 14px",fontSize:12,color:cs.yellow}}>
-                  🚫 Foto tidak diedit — foto asli teknisi tetap tersimpan. Edit hanya unit, material, & catatan.
+                {/* Photo Re-Upload Option */}
+                <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:10,padding:"12px",display:"grid",gap:10}}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                    <input type="checkbox" id="editPhotoCheck" checked={editPhotoMode} onChange={e=>{setEditPhotoMode(e.target.checked);if(!e.target.checked)setEditLaporanFotos([]);}}
+                      style={{marginTop:2,cursor:"pointer",width:18,height:18,accentColor:cs.accent}}/>
+                    <label htmlFor="editPhotoCheck" style={{fontSize:12,color:cs.text,cursor:"pointer",flex:1}}>
+                      <div style={{fontWeight:600,marginBottom:4}}>📸 Input Ulang Foto</div>
+                      <div style={{fontSize:11,color:cs.muted}}>
+                        {editPhotoMode
+                          ? "Foto lama akan dihapus & diganti dengan foto baru"
+                          : "Foto tetap sama, hanya data yang diedit"}
+                      </div>
+                    </label>
+                  </div>
+                  {editPhotoMode && (
+                    <div style={{background:cs.card,border:"1px solid "+cs.accent+"33",borderRadius:8,padding:"10px",fontSize:11,color:cs.accent}}>
+                      ⚠️ Pilih foto baru di bawah. Foto lama akan dihapus saat save.
+                    </div>
+                  )}
                 </div>
 
                 {/* ══ REPAIR/COMPLAIN TYPE SELECTOR — ✨ NEW ══ */}
@@ -12510,9 +12531,44 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                 ))}
 
+                {/* PHOTO RE-UPLOAD SECTION */}
+                {editPhotoMode && (
+                  <div style={{background:cs.card,border:"2px solid "+cs.accent+"44",borderRadius:10,padding:"14px",display:"grid",gap:10}}>
+                    <div style={{fontSize:12,fontWeight:700,color:cs.accent}}>📸 Pilih Foto Baru</div>
+                    <input type="file" multiple accept="image/*"
+                      onChange={async(e)=>{
+                        const files = Array.from(e.target.files||[]);
+                        const newFotos = [];
+                        for(const file of files) {
+                          const url = URL.createObjectURL(file);
+                          newFotos.push({id:Date.now()+Math.random(),label:file.name,file:file,url:url,uploaded:false});
+                        }
+                        setEditLaporanFotos([...editLaporanFotos,...newFotos]);
+                      }}
+                      style={{padding:"10px",background:cs.surface,border:"1px dashed "+cs.accent+"66",borderRadius:8,cursor:"pointer",fontSize:12}}/>
+
+                    {editLaporanFotos.length > 0 && (
+                      <div style={{display:"grid",gap:8}}>
+                        <div style={{fontSize:11,color:cs.muted}}>Foto dipilih: {editLaporanFotos.length}</div>
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:8}}>
+                          {editLaporanFotos.map((f)=>(
+                            <div key={f.id} style={{position:"relative",borderRadius:8,overflow:"hidden",border:"1px solid "+cs.border}}>
+                              <img src={f.url} style={{width:"100%",height:80,objectFit:"cover"}} alt={f.label}/>
+                              <button onClick={()=>setEditLaporanFotos(editLaporanFotos.filter(x=>x.id!==f.id))}
+                                style={{position:"absolute",top:2,right:2,background:cs.red,color:"#fff",border:"none",borderRadius:"50%",width:24,height:24,padding:0,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* BUTTONS */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
-                  <button onClick={()=>{setEditLaporanMode(false);}} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
+                  <button onClick={()=>{setEditLaporanMode(false);setEditPhotoMode(false);setEditLaporanFotos([]);}} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
                   <button onClick={async()=>{
                     const now = new Date().toLocaleString("id-ID",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).replace(/\//g,"-");
                     const newLogs = [{by:currentUser?.name||"?",at:now,field:"units+materials",old:"previous",new:"Admin edited unit & material details"}];
@@ -12526,6 +12582,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     ];
 
                     const updatePayload = {status:newStatus,catatan_global:editLaporanForm.catatan_global||"",rekomendasi:editLaporanForm.rekomendasi||"",units_json:JSON.stringify(editLaporanForm.editUnits||[]),materials_json:JSON.stringify(combinedMats),edit_log:JSON.stringify(allLogs)};
+
+                    // ✨ NEW: Handle photo re-upload option
+                    if (editPhotoMode && editLaporanFotos.length > 0) {
+                      // Upload new photos and get URLs
+                      const newFotoUrls = editLaporanFotos.filter(f=>f.url).map(f=>f.url); // Use blob URLs or uploaded URLs
+                      if (newFotoUrls.length > 0) {
+                        updatePayload.foto_urls = newFotoUrls; // Replace old fotos with new ones
+                      }
+                    }
+                    // If editPhotoMode = false, skip foto_urls → keep old photos
                     const {error:elErr} = await supabase.from("service_reports").update(updatePayload).eq("id", selectedLaporan.id);
                     if(elErr) {console.warn("❌ update service_reports failed:",elErr.message,"payload:",updatePayload);addAgentLog("LAPORAN_UPDATE_ERROR",`Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0,100)}`,"WARNING");}
 
@@ -12624,9 +12690,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       }
                     }
 
-                    addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit lengkap oleh ${currentUser?.name}`,"SUCCESS");
-                    showNotif("✅ Laporan "+selectedLaporan.job_id+" diupdate (unit+material+catatan)");
-                    setModalLaporanDetail(false); setEditLaporanMode(false);
+                    const photoMsg = editPhotoMode && editLaporanFotos.length > 0 ? "+foto" : "";
+                    addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit lengkap oleh ${currentUser?.name} ${photoMsg?'(with photo update)':''}`,"SUCCESS");
+                    showNotif(`✅ Laporan ${selectedLaporan.job_id} diupdate (unit+material+catatan${photoMsg?'+foto':''})`);
+                    setModalLaporanDetail(false); setEditLaporanMode(false); setEditPhotoMode(false); setEditLaporanFotos([]);
                   }} style={{background:"linear-gradient(135deg,"+cs.green+",#059669)",border:"none",color:"#fff",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
                     ✓ Simpan Semua Perubahan
                   </button>
