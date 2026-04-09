@@ -684,6 +684,8 @@ export default function ACleanWebApp() {
   const [showMatSearch,      setShowMatSearch]      = useState(false);
   const [matSearchQ2,        setMatSearchQ2]        = useState("");
   const [laporanFotos,       setLaporanFotos]       = useState([]);
+  const [editPhotoMode,      setEditPhotoMode]      = useState(false);  // true = re-upload photos, false = keep existing
+  const [editLaporanFotos,   setEditLaporanFotos]   = useState([]);     // new photos for re-upload
   const [laporanRekomendasi, setLaporanRekomendasi] = useState("");
   const [laporanCatatan,     setLaporanCatatan]     = useState("");
   const [laporanInstallItems, setLaporanInstallItems] = useState({}); // key→qty untuk Report Install
@@ -12963,14 +12965,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
     // ── 4. Siapkan materials yang efektif ──
     // Install: pakai laporanInstallItems, lainnya: pakai laporanMaterials
+    // Only jasa items here — barang items are now consolidated into laporanBarangItems
     const jasaAsMaterials = [
       ...laporanJasaItems.map(j => ({
         id:"jasa_"+j.id, nama:j.nama, jumlah:j.jumlah||1,
         satuan:j.satuan||"pcs", harga_satuan:j.harga_satuan||0, keterangan:"jasa"
-      })),
-      ...laporanRepairItems.map(r => ({
-        id:"repair_"+(r.id||r.nama), nama:r.nama, jumlah:r.jumlah||1,
-        satuan:r.satuan||"pcs", harga_satuan:r.harga_satuan||0, keterangan:"repair"
       })),
     ];
     // Mapping INSTALL_ITEMS key → inventory code untuk deduct stok spesifik
@@ -13205,8 +13204,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
     // ── 11. Deduct stok material (non-Install) ──
     // Install: deduct dari effectiveMaterials (sudah punya _useCode untuk pipa/kabel)
-    // Non-install: deduct dari laporanMaterials (freon/pipa/kabel dipilih via selector)
-    const materialsToDeduct = isInstall ? effectiveMaterials : laporanMaterials;
+    // Non-install: deduct dari laporanMaterials + laporanBarangItems (billable items dari price_list)
+    const barangAsDeducts = laporanBarangItems.filter(b => b.nama && parseFloat(b.jumlah||0) > 0)
+      .map(b => ({
+        nama: b.nama,
+        jumlah: parseFloat(b.jumlah) || 1,
+        satuan: b.satuan || "pcs",
+        keterangan: "barang"
+      }));
+    const materialsToDeduct = isInstall ? effectiveMaterials : [...laporanMaterials, ...barangAsDeducts];
 
     // Deduct unit fisik: freon (tabung spesifik), pipa (roll), kabel (roll)
     // freon_tabung_code = UUID dari inventory_units yang dipilih teknisi
@@ -13294,23 +13300,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       !repairNamesInMat.has(m.nama) && parseFloat(m.jumlah||0)>0
     );
     const laborTotalInv = isInstallSvc ? 0 : (() => {
-      // Labor = service fee (cleaning/repair baseline) + jasa items + repair items
-      // ALL bisa hadir bersamaan dalam 1 job
+      // Labor = service fee (cleaning/repair baseline) + jasa items only
+      // Barang items are now separate (in laporanBarangItems → matTotalInv)
       const jasaSumForm   = laporanJasaItems.filter(j=>j.nama)
         .reduce((s,j)=>s+((j.harga_satuan||0)*(parseFloat(j.jumlah)||1)),0);
-      const repairSumForm = laporanRepairItems.filter(r=>r.nama)
-        .reduce((s,r)=>s+((r.harga_satuan||0)*(parseFloat(r.jumlah)||1)),0);
 
       // Service fee baseline (dari hitungLabor) — HANYA jika tidak ada jasa via form
       const svcFeeBaseline = jasaSumForm > 0
         ? 0  // teknisi sudah pilih jasa manual via form → pakai itu
         : (laporanModal?.service==="Complain"
           ? 0  // Complain → handle via garansi logic
-          : repairSumForm > 0
-            ? 0  // Repair items sudah capture service cost → tidak perlu baseline
-            : hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length));
+          : hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length));
 
-      return svcFeeBaseline + jasaSumForm + repairSumForm;
+      return svcFeeBaseline + jasaSumForm;
     })();
     // ✨ CHANGE: matTotalInv dari laporanBarangItems (price_list category=Barang), bukan dari laporanMaterials
     const barangTotalInv = laporanBarangItems
@@ -13367,7 +13369,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
     // ✨ FIX #1 (CORRECTED): Repair service tanpa items → conditional BIAYA_CEK based on repair type
     const isRepairServiceNoItems = laporanModal?.service === "Repair" &&
-                                   laporanRepairItems.filter(r=>r.nama).length === 0 &&
+                                   laporanBarangItems.filter(b=>b.nama).length === 0 &&
+                                   laporanJasaItems.filter(j=>j.nama).length === 0 &&
                                    laporanMaterials.filter(m=>m.nama).length === 0;
     let isRepairGratis = false;
 
