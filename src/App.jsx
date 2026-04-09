@@ -13782,38 +13782,45 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <div style={{display:"grid",gap:10}}>
                       {laporanUnits.map((u,idx)=>(
                         <div key={idx} style={{background:cs.surface,borderRadius:10,border:"1px solid "+(u.tipe&&u.tipe.trim()&&u.label&&u.label.trim()&&u.merk&&u.merk.trim()?cs.green+"33":cs.border),overflow:"hidden"}}>
-                          {/* Row 1: Unit no, Nama Ruangan, Tipe AC, Merk, Delete */}
-                          <div style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr auto",gap:8,alignItems:"center",padding:"10px 12px"}}>
-                            {/* Unit number */}
-                            <div style={{fontSize:11,fontWeight:700,color:cs.accent,minWidth:50}}>Unit {u.unit_no}</div>
+                          {/* Card header with unit number */}
+                          <div style={{fontSize:10,fontWeight:700,color:cs.accent,padding:"8px 12px",background:cs.card+"33",borderBottom:"1px solid "+cs.border+"22"}}>
+                            Unit {u.unit_no}
+                          </div>
 
+                          {/* Row 1: Nama Ruangan, Tipe AC, Delete */}
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"center",padding:"10px 12px"}}>
                             {/* Nama Ruangan — Required */}
                             <input value={u.label} onChange={e=>updateUnit(idx,{...u,label:e.target.value})} placeholder="Nama Ruangan (wajib)"
-                              style={{background:cs.card,border:"1px solid "+(u.label&&u.label.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
+                              style={{background:cs.card,border:"1px solid "+(u.label&&u.label.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"8px 10px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
 
                             {/* Tipe AC — Required (auto-extract PK) */}
                             <select value={u.tipe} onChange={e=>{const newTipe=e.target.value;const pkMatch=newTipe.match(/(\d[\d.,]*PK)/i);updateUnit(idx,{...u,tipe:newTipe,pk:pkMatch?pkMatch[1]:u.pk});}}
-                              style={{background:cs.card,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:u.tipe&&u.tipe.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.tipe&&u.tipe.trim()?600:400}}>
+                              style={{background:cs.card,border:"1px solid "+(u.tipe&&u.tipe.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"8px 10px",color:u.tipe&&u.tipe.trim()?cs.text:cs.muted,fontSize:11,outline:"none",fontWeight:u.tipe&&u.tipe.trim()?600:400}}>
                               {TIPE_AC_OPT.map(t=><option key={t}>{t}</option>)}
                             </select>
-
-                            {/* Merk — Required */}
-                            <input value={u.merk||""} onChange={e=>updateUnit(idx,{...u,merk:e.target.value})} placeholder="Merk AC (wajib)"
-                              style={{background:cs.card,border:"1px solid "+(u.merk&&u.merk.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",fontWeight:u.merk&&u.merk.trim()?600:400,boxSizing:"border-box"}}/>
 
                             {/* Delete button */}
                             {laporanUnits.length>1&&(
                               <button onClick={()=>{const nu=laporanUnits.filter((_,i)=>i!==idx).map((u2,i)=>({...u2,unit_no:i+1}));setLaporanUnits(nu);setActiveUnitIdx(Math.max(0,idx-1));}}
-                                style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700,lineHeight:1}}>×</button>
+                                style={{background:"#ef444415",border:"1px solid #ef444430",color:"#ef4444",borderRadius:6,padding:"8px 10px",cursor:"pointer",fontSize:12,fontWeight:700,lineHeight:1}}>×</button>
                             )}
                           </div>
 
-                          {/* Row 2: Model AC (optional, visible) */}
-                          <div style={{padding:"0 12px 10px 12px",borderTop:"1px solid "+cs.border+"33"}}>
-                            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                              <span style={{fontSize:11,color:cs.muted,flexShrink:0,fontWeight:600}}>Model (opsional):</span>
-                              <input value={u.model||""} onChange={e=>updateUnit(idx,{...u,model:e.target.value})} placeholder="Contoh: RCS Plus, Standard, Inverter"
-                                style={{flex:1,background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"6px 8px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
+                          {/* Row 2: Merk AC — Required */}
+                          <div style={{padding:"0 12px 10px 12px",borderTop:"1px solid "+cs.border+"22"}}>
+                            <div style={{display:"grid",gap:4,marginBottom:6}}>
+                              <span style={{fontSize:10,color:cs.muted,fontWeight:600}}>Merk AC *</span>
+                              <input value={u.merk||""} onChange={e=>updateUnit(idx,{...u,merk:e.target.value})} placeholder="Contoh: Daikin, Panasonic, Mitsubishi"
+                                style={{background:cs.card,border:"1px solid "+(u.merk&&u.merk.trim()?cs.green+"44":"#ef444430"),borderRadius:6,padding:"8px 10px",color:cs.text,fontSize:11,outline:"none",fontWeight:u.merk&&u.merk.trim()?600:400,boxSizing:"border-box"}}/>
+                            </div>
+                          </div>
+
+                          {/* Row 3: Model AC (optional) */}
+                          <div style={{padding:"0 12px 10px 12px",borderTop:"1px solid "+cs.border+"22"}}>
+                            <div style={{display:"grid",gap:4}}>
+                              <span style={{fontSize:10,color:cs.muted,fontWeight:600}}>Model (opsional)</span>
+                              <input value={u.model||""} onChange={e=>updateUnit(idx,{...u,model:e.target.value})} placeholder="Kode Unit Indoor / Outdoor"
+                                style={{background:cs.card,border:"1px solid "+cs.border,borderRadius:6,padding:"8px 10px",color:cs.text,fontSize:11,outline:"none",boxSizing:"border-box"}}/>
                             </div>
                             {u.from_history_job_id && (
                               <div style={{fontSize:9,color:cs.muted,marginTop:6,fontStyle:"italic"}}>
