@@ -644,8 +644,6 @@ export default function ACleanWebApp() {
   const [editLaporanMode, setEditLaporanMode] = useState(false);
   const [editLaporanForm, setEditLaporanForm] = useState({});
   const [activeEditUnitIdx, setActiveEditUnitIdx] = useState(0);
-  const [editPhotoMode, setEditPhotoMode] = useState(false); // Whether to re-upload photos
-  const [editLaporanFotos, setEditLaporanFotos] = useState([]); // New photos for re-upload
 
   // ── WA panel ──
   const [waPanel,      setWaPanel]      = useState(false);
