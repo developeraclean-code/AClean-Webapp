@@ -7770,7 +7770,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               {/* Delete laporan — Owner & Admin */}
               {(currentUser?.role==="Owner" || currentUser?.role==="Admin") && (
                 <button onClick={()=>{
-                  setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editMaterials:JSON.parse(JSON.stringify(r.materials||[]))});
+                  const mats=JSON.parse(JSON.stringify(r.materials||[]));
+                  setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editJasaItems:mats.filter(m=>m.keterangan==="jasa"),editMatItems:mats.filter(m=>m.keterangan!=="jasa")});
                   setActiveEditUnitIdx(0);
                   setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                 }}
@@ -8002,7 +8003,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     </button>
                     {/* Edit biasa — edit catatan/rekomendasi saja */}
                     <button onClick={()=>{
-                      setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editMaterials:JSON.parse(JSON.stringify(r.materials||[]))});
+                      const mats=JSON.parse(JSON.stringify(r.materials||[]));
+                      setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editJasaItems:mats.filter(m=>m.keterangan==="jasa"),editMatItems:mats.filter(m=>m.keterangan!=="jasa")});
                       setActiveEditUnitIdx(0);
                       setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                     }}
