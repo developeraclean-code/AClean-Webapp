@@ -619,6 +619,7 @@ export default function ACleanWebApp() {
   const [modalLaporanDetail, setModalLaporanDetail] = useState(false);
   const [editLaporanMode, setEditLaporanMode] = useState(false);
   const [editLaporanForm, setEditLaporanForm] = useState({});
+  const [activeEditUnitIdx, setActiveEditUnitIdx] = useState(0);
 
   // ── WA panel ──
   const [waPanel,      setWaPanel]      = useState(false);
@@ -7769,7 +7770,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               {/* Delete laporan — Owner & Admin */}
               {(currentUser?.role==="Owner" || currentUser?.role==="Admin") && (
                 <button onClick={()=>{
-                  setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||""});
+                  setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editMaterials:JSON.parse(JSON.stringify(r.materials||[]))});
+                  setActiveEditUnitIdx(0);
                   setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                 }}
                   style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
@@ -8000,7 +8002,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     </button>
                     {/* Edit biasa — edit catatan/rekomendasi saja */}
                     <button onClick={()=>{
-                      setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||""});
+                      setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editMaterials:JSON.parse(JSON.stringify(r.materials||[]))});
+                      setActiveEditUnitIdx(0);
                       setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                     }}
                       style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
@@ -12099,7 +12102,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* ═══════ MODAL EDIT / DETAIL LAPORAN ═══════ */}
       {modalLaporanDetail && selectedLaporan && (
         <div style={{position:"fixed",inset:0,background:"#000d",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>{setModalLaporanDetail(false);setEditLaporanMode(false);}}>
-          <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:isMobile?"16px 16px 0 0":20,width:"100%",maxWidth:isMobile?"100%":540,maxHeight:"90vh",overflowY:"auto",padding:28}} onClick={e=>e.stopPropagation()}>
+          <div style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:isMobile?"16px 16px 0 0":20,width:"100%",maxWidth:isMobile?"100%":640,maxHeight:"90vh",overflowY:"auto",padding:28}} onClick={e=>e.stopPropagation()}>
 
             {/* Header */}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -12111,55 +12114,153 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </div>
 
             {editLaporanMode ? (
-              /* EDIT MODE */
+              /* EDIT MODE — FULL FORM */
               <div style={{display:"grid",gap:14}}>
                 <div style={{background:cs.yellow+"10",border:"1px solid "+cs.yellow+"33",borderRadius:10,padding:"10px 14px",fontSize:12,color:cs.yellow}}>
-                  Perubahan akan dicatat otomatis — nama kamu, waktu edit, dan field yang diubah akan tersimpan di log.
+                  🚫 Foto tidak diedit — foto asli teknisi tetap tersimpan. Edit hanya unit, material, & catatan.
                 </div>
+
+                {/* UNIT TABS */}
+                {(editLaporanForm.editUnits||[]).length > 1 && (
+                  <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:8,borderBottom:"1px solid "+cs.border}}>
+                    {(editLaporanForm.editUnits||[]).map((_,idx)=>(
+                      <button key={idx} onClick={()=>setActiveEditUnitIdx(idx)}
+                        style={{padding:"8px 12px",borderRadius:7,background:activeEditUnitIdx===idx?cs.accent:cs.card,color:activeEditUnitIdx===idx?"#fff":cs.text,border:"1px solid "+(activeEditUnitIdx===idx?cs.accent:cs.border),cursor:"pointer",fontSize:12,fontWeight:activeEditUnitIdx===idx?700:500,whiteSpace:"nowrap"}}>
+                        Unit {idx+1}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* PER-UNIT FORM */}
+                {editLaporanForm.editUnits && editLaporanForm.editUnits[activeEditUnitIdx] && (() => {
+                  const u = editLaporanForm.editUnits[activeEditUnitIdx];
+                  const updateU = (field, val) => setEditLaporanForm(f=>{const units=[...f.editUnits];units[activeEditUnitIdx]={...u,[field]:val};return {...f,editUnits:units};});
+                  const toggleUArr = (field,val) => {const arr=u[field]||[];updateU(field,arr.includes(val)?arr.filter(x=>x!==val):[...arr,val]);};
+                  return (
+                    <div style={{background:cs.card,borderRadius:10,border:"1px solid "+cs.border,padding:"14px"}}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+                        <div>
+                          <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Tipe AC</div>
+                          <select value={u.tipe||""} onChange={e=>updateU("tipe",e.target.value)} style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px",color:cs.text,fontSize:12,outline:"none"}}>
+                            <option value="">Pilih...</option>
+                            {TIPE_AC_OPT.map(t=><option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Merk</div>
+                          <input type="text" value={u.merk||""} onChange={e=>updateU("merk",e.target.value)} placeholder="Daikin..." style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}} />
+                        </div>
+                        <div>
+                          <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>PK</div>
+                          <input type="text" value={u.pk||""} onChange={e=>updateU("pk",e.target.value)} placeholder="0.5, 1, 1.5..." style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}} />
+                        </div>
+                      </div>
+
+                      {/* Kondisi Sebelum */}
+                      <div style={{marginBottom:10}}>
+                        <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:6}}>Kondisi Sebelum</div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                          {KONDISI_SBL.map(k=>(
+                            <label key={k} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                              <input type="checkbox" checked={(u.kondisi_sebelum||[]).includes(k)} onChange={()=>toggleUArr("kondisi_sebelum",k)} style={{cursor:"pointer"}} />
+                              <span style={{fontSize:11,color:cs.text}}>{k}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Pekerjaan */}
+                      <div style={{marginBottom:10}}>
+                        <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:6}}>Pekerjaan Dilakukan</div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                          {PEKERJAAN_OPT(selectedLaporan.service||"Cleaning").map(p=>(
+                            <label key={p} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                              <input type="checkbox" checked={(u.pekerjaan||[]).includes(p)} onChange={()=>toggleUArr("pekerjaan",p)} style={{cursor:"pointer"}} />
+                              <span style={{fontSize:11,color:cs.text}}>{p}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Kondisi Sesudah */}
+                      <div style={{marginBottom:10}}>
+                        <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:6}}>Kondisi Sesudah</div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                          {KONDISI_SDH.map(k=>(
+                            <label key={k} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                              <input type="checkbox" checked={(u.kondisi_setelah||[]).includes(k)} onChange={()=>toggleUArr("kondisi_setelah",k)} style={{cursor:"pointer"}} />
+                              <span style={{fontSize:11,color:cs.text}}>{k}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Freon & Ampere */}
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                        <div>
+                          <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Tekanan Freon (psi)</div>
+                          <input type="number" value={u.freon_ditambah||""} onChange={e=>updateU("freon_ditambah",e.target.value)} style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}} />
+                        </div>
+                        <div>
+                          <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Ampere Akhir (A)</div>
+                          <input type="number" value={u.ampere_akhir||""} onChange={e=>updateU("ampere_akhir",e.target.value)} style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box"}} />
+                        </div>
+                      </div>
+
+                      {/* Catatan Unit */}
+                      <div>
+                        <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:3}}>Catatan Unit</div>
+                        <textarea value={u.catatan_unit||""} onChange={e=>updateU("catatan_unit",e.target.value)} rows={2} style={{width:"100%",background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"8px",color:cs.text,fontSize:12,outline:"none",boxSizing:"border-box",fontFamily:"inherit",resize:"vertical"}} />
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* MATERIALS */}
+                <div>
+                  <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.5px"}}>Material Terpakai</div>
+                  <div style={{display:"grid",gap:6}}>
+                    {(editLaporanForm.editMaterials||[]).map((m,mi)=>(
+                      <div key={m.id||mi} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr auto",gap:6,alignItems:"center",background:cs.card,padding:"10px",borderRadius:7}}>
+                        <input type="text" value={m.nama||""} onChange={e=>setEditLaporanForm(f=>({...f,editMaterials:f.editMaterials.map((x,i)=>i===mi?{...x,nama:e.target.value}:x)}))} placeholder="Nama material" style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}} />
+                        <input type="number" value={m.jumlah||""} onChange={e=>setEditLaporanForm(f=>({...f,editMaterials:f.editMaterials.map((x,i)=>i===mi?{...x,jumlah:e.target.value}:x)}))} placeholder="Qty" style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}} />
+                        <select value={m.satuan||"pcs"} onChange={e=>setEditLaporanForm(f=>({...f,editMaterials:f.editMaterials.map((x,i)=>i===mi?{...x,satuan:e.target.value}:x)}))} style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}}>
+                          {SATUAN_OPT.map(s=><option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <input type="text" value={m.keterangan||""} onChange={e=>setEditLaporanForm(f=>({...f,editMaterials:f.editMaterials.map((x,i)=>i===mi?{...x,keterangan:e.target.value}:x)}))} placeholder="Ket" style={{background:cs.surface,border:"1px solid "+cs.border,borderRadius:5,padding:"6px",color:cs.text,fontSize:11,outline:"none"}} />
+                        <button onClick={()=>setEditLaporanForm(f=>({...f,editMaterials:f.editMaterials.filter((_,i)=>i!==mi)}))} style={{background:cs.red+"18",border:"1px solid "+cs.red+"33",color:cs.red,padding:"6px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:700}}>🗑️</button>
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={()=>setEditLaporanForm(f=>({...f,editMaterials:[...(f.editMaterials||[]),{id:Date.now(),nama:"",jumlah:"",satuan:"pcs",keterangan:""}]}))} style={{marginTop:8,background:cs.accent+"18",border:"1px solid "+cs.accent+"33",color:cs.accent,padding:"8px 12px",borderRadius:7,cursor:"pointer",fontSize:11,fontWeight:700}}>+ Tambah Material</button>
+                </div>
+
+                {/* REKOMENDASI & CATATAN */}
                 {[["Rekomendasi","rekomendasi"],["Catatan Tambahan","catatan_global"]].map(([lbl,key])=>(
                   <div key={key}>
-                    <div style={{fontSize:12,fontWeight:700,color:cs.muted,marginBottom:5}}>{lbl}</div>
-                    <textarea value={editLaporanForm[key]||""} onChange={e=>setEditLaporanForm(f=>({...f,[key]:e.target.value}))} rows={3}
-                      style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",fontFamily:"inherit"}} />
+                    <div style={{fontSize:11,fontWeight:700,color:cs.muted,marginBottom:5}}>{lbl}</div>
+                    <textarea value={editLaporanForm[key]||""} onChange={e=>setEditLaporanForm(f=>({...f,[key]:e.target.value}))} rows={3} style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"9px 12px",color:cs.text,fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",fontFamily:"inherit"}} />
                   </div>
                 ))}
-                <div style={{background:cs.accent+"10",border:"1px solid "+cs.accent+"22",borderRadius:8,padding:"8px 12px",fontSize:11,color:cs.muted}}>
-                  💡 Edit rekomendasi & catatan global. Untuk perbaikan detail unit, gunakan tombol Laporan baru.
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10,marginTop:4}}>
+
+                {/* BUTTONS */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10}}>
                   <button onClick={()=>{setEditLaporanMode(false);}} style={{background:cs.card,border:"1px solid "+cs.border,color:cs.muted,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:600}}>Batal</button>
                   <button onClick={async()=>{
                     const now = new Date().toLocaleString("id-ID",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).replace(/\//g,"-");
-                    const fields = ["rekomendasi","catatan_global"];
-                    const newLogs = [];
-                    fields.forEach(f=>{
-                      const oldVal = (f==="catatan_global"?selectedLaporan.catatan_global||selectedLaporan.catatan:selectedLaporan[f])||"";
-                      const newVal = editLaporanForm[f]||"";
-                      if(oldVal!==newVal) newLogs.push({by:currentUser?.name||"?",at:now,field:f,old:String(oldVal).slice(0,80),new:String(newVal).slice(0,80)});
-                    });
-                    if(newLogs.length===0){showNotif("Tidak ada perubahan");return;}
+                    const newLogs = [{by:currentUser?.name||"?",at:now,field:"units+materials",old:"previous",new:"Admin edited unit & material details"}];
                     const allLogs = [...safeArr(selectedLaporan.editLog),...newLogs];
                     const newStatus = selectedLaporan.status==="REVISION"?"SUBMITTED":selectedLaporan.status;
-                    setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id
-                      ?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,status:newStatus,editLog:allLogs}:r));
-                    // Save ke Supabase — only use valid fields that exist in schema
-                    const updatePayload = {
-                      status: newStatus,
-                      catatan_global: editLaporanForm.catatan_global || "",
-                      rekomendasi: editLaporanForm.rekomendasi || "",
-                    };
-
+                    setLaporanReports(prev=>prev.map(r=>r.id===selectedLaporan.id?{...r,rekomendasi:editLaporanForm.rekomendasi,catatan_global:editLaporanForm.catatan_global,units:editLaporanForm.editUnits,materials:editLaporanForm.editMaterials,status:newStatus,editLog:allLogs}:r));
+                    const updatePayload = {status:newStatus,catatan_global:editLaporanForm.catatan_global||"",rekomendasi:editLaporanForm.rekomendasi||"",units_json:JSON.stringify(editLaporanForm.editUnits||[]),materials_json:JSON.stringify(editLaporanForm.editMaterials||[]),edit_log:JSON.stringify(allLogs)};
                     const {error:elErr} = await supabase.from("service_reports").update(updatePayload).eq("id", selectedLaporan.id);
-                    if(elErr) {
-                      console.warn("❌ update service_reports failed:", elErr.message, "payload:", updatePayload);
-                      addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0,100)}`, "WARNING");
-                    }
-                    addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name} (${newLogs.length} perubahan)`,"SUCCESS");
-                    showNotif("✅ Laporan "+selectedLaporan.job_id+" diupdate ("+newLogs.length+" perubahan dicatat)");
+                    if(elErr) {console.warn("❌ update service_reports failed:",elErr.message,"payload:",updatePayload);addAgentLog("LAPORAN_UPDATE_ERROR",`Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0,100)}`,"WARNING");}
+                    addAgentLog("LAPORAN_EDITED",`Laporan ${selectedLaporan.job_id} diedit lengkap oleh ${currentUser?.name}`,"SUCCESS");
+                    showNotif("✅ Laporan "+selectedLaporan.job_id+" diupdate (unit+material+catatan)");
                     setModalLaporanDetail(false); setEditLaporanMode(false);
-                  }}
-                    style={{background:"linear-gradient(135deg,"+cs.green+",#059669)",border:"none",color:"#fff",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
-                    Simpan Perubahan
+                  }} style={{background:"linear-gradient(135deg,"+cs.green+",#059669)",border:"none",color:"#fff",padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:14}}>
+                    ✓ Simpan Semua Perubahan
                   </button>
                 </div>
               </div>
