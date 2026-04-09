@@ -659,6 +659,8 @@ export default function ACleanWebApp() {
   const [repairManualText,  setRepairManualText]  = useState({});  // {item.id: text} untuk input manual repair
   const [laporanRepairItems, setLaporanRepairItems] = useState([]);  // Repair/Sparepart B
   const [laporanRepairType,  setLaporanRepairType]  = useState("berbayar");  // ✨ NEW: Repair type (berbayar/gratis-garansi/gratis-customer)
+  const [editRepairType,     setEditRepairType]     = useState("berbayar");  // ✨ NEW: Admin edit modal repair type selector
+  const [editGratisAlasan,   setEditGratisAlasan]   = useState("");  // ✨ NEW: Admin must provide reason if choosing gratis
   const [showJasaSearch,     setShowJasaSearch]     = useState(false);
   const [jasaSearchQ,        setJasaSearchQ]        = useState("");
   const [showRepairSearch,   setShowRepairSearch]   = useState(false);
@@ -5323,12 +5325,26 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <b>Perlu disetujui Owner/Admin</b> sebelum dikirim ke customer atau dianggap PAID.
                   </div>
                   <div style={{display:"flex",gap:8}}>
-                    <button onClick={() => {
-                      if(!approveInvoice) return;
-                      const approved = approveInvoice(inv);
-                      if(approved) {
-                        addAgentLog("REPAIR_GRATIS_APPROVED", `Invoice ${inv.id} repair gratis APPROVED oleh ${currentUser?.name}`, "SUCCESS");
-                        showNotif("✅ Repair gratis APPROVED — siap dikirim ke customer");
+                    <button onClick={async () => {
+                      if (!await showConfirm({ icon:"🎁", title:"Setuju Repair Gratis?",
+                        message:`Setujui invoice ${inv.id} Repair Gratis (Rp 0) untuk ${inv.customer}?\n\nInvoice akan dicatat LUNAS. TIDAK ada WA yang dikirim ke customer.`,
+                        confirmText:"Setuju & Catat Lunas" })) return;
+
+                      const paidAt = new Date().toISOString();
+                      setInvoicesData(prev => prev.map(i => i.id === inv.id
+                        ? {...i, status:"PAID", paid_at: paidAt} : i));
+                      setOrdersData(prev => prev.map(o => o.id === inv.job_id
+                        ? {...o, status:"PAID"} : o));
+
+                      const {error: upErr} = await supabase.from("invoices").update({ status:"PAID", paid_at: paidAt }).eq("id", inv.id);
+                      if (!upErr) {
+                        await supabase.from("orders").update({ status:"PAID" }).eq("id", inv.job_id);
+                        addAgentLog("REPAIR_GRATIS_APPROVED",
+                          `Invoice ${inv.id} (${inv.repair_gratis}) APPROVED & PAID oleh ${currentUser?.name}. Tidak ada WA terkirim.`,
+                          "SUCCESS");
+                        showNotif(`✅ Repair gratis disetujui dan dicatat LUNAS. Tidak dikirim ke customer.`);
+                      } else {
+                        showNotif("⚠️ Persetujuan lokal berhasil, tapi DB update gagal: " + upErr.message);
                       }
                     }} style={{ background:cs.green+"22", border:"1px solid "+cs.green+"44", color:cs.green, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12, flex:1 }}>✅ Setuju Gratis</button>
                     <button onClick={async () => {
@@ -5339,7 +5355,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       await supabase.from("invoices").delete().eq("id", inv.id);
                       if(inv.job_id) await supabase.from("orders").update({ status:"COMPLETED", invoice_id:null }).eq("id", inv.job_id);
                       addAgentLog("REPAIR_GRATIS_REJECTED", `Invoice ${inv.id} repair gratis REJECTED oleh ${currentUser?.name}`, "WARNING");
-                      showNotif("❌ Repair gratis ditolak — laporan kembali ke status COMPLETED");
+                      showNotif(`❌ Repair gratis ditolak — laporan ${inv.job_id} kembali ke COMPLETED`);
+                      // Navigate to laporan page for quick edit
+                      setActiveMenu("laporan");
+                      setTimeout(() => {
+                        showNotif(`💡 Cari laporan Job ID: ${inv.job_id} di halaman Laporan untuk diedit ulang.`);
+                      }, 1500);
                     }} style={{ background:cs.red+"22", border:"1px solid "+cs.red+"44", color:cs.red, padding:"7px 14px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12, flex:1 }}>❌ Tolak & Edit</button>
                   </div>
                 </div>
@@ -7889,6 +7910,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <button onClick={()=>{
                   const mats=JSON.parse(JSON.stringify(r.materials||[]));
                   setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editJasaItems:mats.filter(m=>m.keterangan==="jasa"),editMatItems:mats.filter(m=>m.keterangan!=="jasa")});
+                  // ✨ Load repair type from existing invoice
+                  const existInvForEdit = invoicesData.find(i => i.job_id === r.id);
+                  setEditRepairType(existInvForEdit?.repair_gratis || "berbayar");
+                  setEditGratisAlasan("");
                   setActiveEditUnitIdx(0);
                   setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                 }}
@@ -8122,6 +8147,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <button onClick={()=>{
                       const mats=JSON.parse(JSON.stringify(r.materials||[]));
                       setEditLaporanForm({rekomendasi:r.rekomendasi||"",catatan_global:r.catatan_global||r.catatan||"",editUnits:JSON.parse(JSON.stringify(r.units||[])),editJasaItems:mats.filter(m=>m.keterangan==="jasa"),editMatItems:mats.filter(m=>m.keterangan!=="jasa")});
+                      // ✨ Load repair type from existing invoice
+                      const existInvForEdit = invoicesData.find(i => i.job_id === r.id);
+                      setEditRepairType(existInvForEdit?.repair_gratis || "berbayar");
+                      setEditGratisAlasan("");
                       setActiveEditUnitIdx(0);
                       setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                     }}
@@ -12239,6 +12268,32 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   🚫 Foto tidak diedit — foto asli teknisi tetap tersimpan. Edit hanya unit, material, & catatan.
                 </div>
 
+                {/* ══ REPAIR/COMPLAIN TYPE SELECTOR — ✨ NEW ══ */}
+                {(selectedLaporan?.service === "Repair" || selectedLaporan?.service === "Complain") && (
+                  <div style={{background:cs.surface,border:"1px solid "+cs.yellow+"33",borderRadius:10,padding:"12px",display:"grid",gap:8}}>
+                    <div style={{fontSize:11,fontWeight:700,color:cs.yellow}}>
+                      💵 Tipe Layanan — {selectedLaporan?.service}
+                    </div>
+                    <select value={editRepairType} onChange={e=>setEditRepairType(e.target.value)}
+                      style={{width:"100%",background:cs.card,border:"1px solid "+cs.border,borderRadius:8,padding:"8px 10px",color:cs.text,fontSize:12,outline:"none"}}>
+                      <option value="berbayar">💰 Berbayar (Standard)</option>
+                      <option value="gratis-garansi">🎁 Gratis - Garansi Aktif</option>
+                      <option value="gratis-customer">🎁 Gratis - Arrangement Customer</option>
+                    </select>
+                    {editRepairType !== "berbayar" && (
+                      <input
+                        placeholder="Alasan gratis (wajib diisi)..."
+                        value={editGratisAlasan}
+                        onChange={e=>setEditGratisAlasan(e.target.value)}
+                        style={{width:"100%",background:cs.card,border:"1px solid "+cs.yellow+"44",borderRadius:8,padding:"7px 10px",color:cs.text,fontSize:11,outline:"none"}} />
+                    )}
+                    <div style={{fontSize:10,color:cs.muted}}>
+                      {editRepairType==="berbayar"&&"Invoice akan dihitung normal dari material + jasa."}
+                      {editRepairType!=="berbayar"&&"Invoice Rp 0 akan langsung dicatat LUNAS. Tidak dikirim ke customer."}
+                    </div>
+                  </div>
+                )}
+
                 {/* UNIT TABS */}
                 {(editLaporanForm.editUnits||[]).length > 1 && (
                   <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:8,borderBottom:"1px solid "+cs.border}}>
@@ -12471,6 +12526,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           }
                         }
 
+                        // ✨ NEW: Admin edit repair type selector → override repair_gratis
+                        const isEditGratis = editRepairType === "gratis-garansi" || editRepairType === "gratis-customer";
+                        const newRepairGratis = isEditGratis ? editRepairType : (existInv?.repair_gratis || undefined);
+
+                        // If admin explicitly chose gratis → override status to PAID
+                        if (isEditGratis && finalTotal3 === 0) {
+                          newInvoiceStatus3 = "PAID";
+                          const alasan = editGratisAlasan.trim() || "(tidak ada alasan)";
+                          addAgentLog("ADMIN_EDIT_GRATIS_APPROVED",
+                            `Invoice ${existInv.id} diedit ke GRATIS (${editRepairType}) oleh ${currentUser?.name}. Alasan: ${alasan}`,
+                            "WARNING");
+                        }
+
                         const totalInv = finalTotal3;
 
                         // Delete old invoice + insert new (preserve PAID status via garansi check)
@@ -12481,6 +12549,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             materials_detail: JSON.stringify(vMDetail),
                             labor: finalLabor3, material: finalMat3, total: totalInv,
                             status: newInvoiceStatus3,
+                            repair_gratis: newRepairGratis,  // ✨ NEW: carry repair_gratis flag
                             updated_at: new Date().toISOString(),
                           };
                           delete newInv.id;
