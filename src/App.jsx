@@ -3603,11 +3603,12 @@ ${matRowsHtml}
               const today = getLocalDate();
               const seq2  = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
               const invId = "INV-" + today.replace(/-/g,"").slice(2,8) + "-" + seq2;
+            }
         // Cek pekerjaan aktual + tipe AC dari laporan teknisi
         const lapRepForLabor = laporanReports.find(r => r.job_id === ord.id);
         const hasServiceBesar = lapRepForLabor?.units
           ? lapRepForLabor.units.some(u => (u.pekerjaan||[]).some(p =>
-              p.toLowerCase().includes("besar") || p.toLowerCase().includes("deep")))
+              p.toLowerCase().includes("besar") || p.toLowerCase().includes("deep"))
           : false;
 
         // ── BUILD EFFECTIVE TYPE untuk invoice ──
