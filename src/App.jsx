@@ -612,6 +612,7 @@ export default function ACleanWebApp() {
   const [scheduleView,   setScheduleView]   = useState("week");
   const [teknisiTab,     setTeknisiTab]     = useState("jadwal");
   const [filterTeknisi, setFilterTeknisi]  = useState("Semua");
+  const [calLaporanFilter, setCalLaporanFilter] = useState("semua"); // "semua" | "sudah" | "belum"
 
   // ── Search ──
   const [searchCustomer,  setSearchCustomer]  = useState("");
@@ -6016,6 +6017,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           </div>
         )}
 
+        {/* Laporan status filter — Owner/Admin, week view only */}
+        {!isTekRole && scheduleView === "week" && (
+          <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+            <span style={{ fontSize:11, color:cs.muted, fontWeight:600, marginRight:4 }}>Laporan:</span>
+            {[["semua","Semua"], ["sudah","✅ Sudah"], ["belum","⏳ Belum"]].map(([v,lbl]) => (
+              <button key={v} onClick={() => setCalLaporanFilter(v)}
+                style={{
+                  padding:"4px 10px", borderRadius:99,
+                  border:"1px solid "+(calLaporanFilter===v?(v==="sudah"?cs.green:v==="belum"?cs.yellow:cs.accent):cs.border),
+                  background: calLaporanFilter===v?(v==="sudah"?cs.green+"22":v==="belum"?cs.yellow+"22":cs.accent+"22"):"transparent",
+                  color: calLaporanFilter===v?(v==="sudah"?cs.green:v==="belum"?cs.yellow:cs.accent):cs.muted,
+                  cursor:"pointer", fontSize:11, fontWeight:calLaporanFilter===v?700:400
+                }}>{lbl}</button>
+            ))}
+          </div>
+        )}
+
         {/* Search bar di Jadwal — Owner & Admin */}
         {!isTekRole && (
           <div style={{ position:"relative", marginTop:4 }}>
@@ -6194,14 +6212,32 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                   {weekDays.map(d => {
                     // SIM-6: tampilkan job dimana tek adalah teknisi ATAU helper
-                    const jobs = ordersData.filter(o => (o.teknisi===tek || o.helper===tek) && o.date===d.date);
+                    const jobs = ordersData
+                      .filter(o => (o.teknisi===tek || o.helper===tek) && o.date===d.date)
+                      .filter(o => {
+                        if (calLaporanFilter === "semua") return true;
+                        const hasL = laporanReports.some(r => r.job_id === o.id);
+                        return calLaporanFilter === "sudah" ? hasL : !hasL;
+                      });
                     return (
                       <div key={d.date} style={{ background:cs.card, border:"1px solid "+cs.border, borderRadius:7, padding:4, minHeight:60 }}>
                         {jobs.map(j => {
+                          const hasLaporan = laporanReports.some(r => r.job_id === j.id);
+                          const lapStatus = laporanReports.find(r => r.job_id === j.id)?.status;
+                          const lapVerified = lapStatus === "VERIFIED";
                           const isHelper = j.teknisi !== tek && j.helper === tek;
                           const col = techColors[tek] || cs.accent;
+                          const borderHL = hasLaporan ? (lapVerified ? cs.green : "#facc15") : col;
                           return (
-                            <div key={j.id} style={{ background:col+(isHelper?"10":"22"), border:"1px solid "+col+(isHelper?"33":"44"), borderRadius:5, padding:"3px 5px", marginBottom:2, opacity:isHelper?0.85:1 }}>
+                            <div key={j.id} style={{ background:col+(isHelper?"10":"22"), border:"1px solid "+borderHL+(isHelper?"44":"66"), borderLeft:"3px solid "+borderHL, borderRadius:5, padding:"3px 5px 3px 4px", marginBottom:2, opacity:isHelper?0.85:1, position:"relative" }}>
+                              {hasLaporan && (
+                                <span style={{ position:"absolute", top:1, right:2, fontSize:7, fontWeight:800,
+                                  color: lapVerified ? cs.green : "#facc15",
+                                  background: (lapVerified ? cs.green : "#facc15")+"22",
+                                  borderRadius:3, padding:"0 2px" }}>
+                                  {lapVerified ? "✓VRF" : "✓LAP"}
+                                </span>
+                              )}
                               <div style={{ fontSize:9, fontWeight:800, color:col }}>{j.time} {isHelper?"🤝":""}</div>
                               <div style={{ fontSize:9, color:cs.text }}>{(j.customer||"").slice(0,13)}{(j.customer||"").length>13?"…":""}</div>
                               <div style={{ fontSize:8, color:cs.muted }}>{j.service}</div>
@@ -14281,6 +14317,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       // Pull from "Jasa" category + freon/vacum items (may have null category)
                       const _isJasaItem = (r) => {
                         if (r.category==="Jasa") return true;
+                        const cat = (r.category||"").toLowerCase();
+                        if (cat.startsWith("freon")) return true; // freon_R22, freon_R32, freon_R410
                         const t = (r.type||"").toLowerCase();
                         return t.includes("kuras vacum") || t.includes("tambah freon") || t.includes("penambahan freon")
                           || t.includes("biaya transport") || t.includes("biaya pengecekan");
@@ -14396,6 +14434,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     {laporanBarangItems.map((bItem,bIdx)=>{
                       const _isBarangItem = (r) => {
                         if (r.category==="Barang") return true;
+                        const cat = (r.category||"").toLowerCase();
+                        if (cat.startsWith("freon")) return true; // freon gas juga muncul di section material
                         const t = (r.type||"").toLowerCase();
                         return t.includes("kapasitor") || t.includes("naple") || t.includes("breket")
                           || t.includes("dinabolt") || t.includes("armaflex") || t.includes("freon r-")
