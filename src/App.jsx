@@ -14315,6 +14315,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     )}
                     {laporanJasaItems.map((item,idx)=>{
                       // Pull from "Jasa" category + freon/vacum items (may have null category)
+                      // Note: tidak filter by service — items dari semua service (Cleaning, Repair, Install, dll) bisa digunakan di laporan manapun
                       const _isJasaItem = (r) => {
                         if (r.category==="Jasa") return true;
                         const cat = (r.category||"").toLowerCase();
