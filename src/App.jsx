@@ -12590,7 +12590,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
                 {/* JASA SECTION (non-Install only) */}
                 {selectedLaporan?.service !== "Install" && (() => {
-                  const jasaLookup = [...priceListData.filter(r=>r.category==="Jasa" && parseInt(r.price||0)>0).map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)})),...priceListData.filter(r=>r.service===selectedLaporan?.service && parseInt(r.price||0)>0).map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}))].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,20);
+                  // Include: category="Jasa", OR category starts with "freon", OR service matches laporan
+                  const jasaLookup = priceListData
+                    .filter(r => {
+                      if (parseInt(r.price||0) <= 0) return false; // exclude zero price
+                      if (r.category==="Jasa") return true; // standard jasa category
+                      const cat = (r.category||"").toLowerCase();
+                      if (cat.startsWith("freon")) return true; // freon_R22, freon_R32, freon_R410
+                      if (r.service===selectedLaporan?.service) return true; // items dari laporan service
+                      return false;
+                    })
+                    .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}))
+                    .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i)
+                    .slice(0,20);
                   return (
                     <div>
                       <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.5px"}}>⚡ Jasa / Layanan ({(editLaporanForm.editJasaItems||[]).length})</div>
@@ -14290,10 +14302,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                         <div style={{fontSize:12,fontWeight:700,color:cs.accent}}>⚡ Jasa / Layanan ({laporanJasaItems.length})</div>
                       <button onClick={()=>{
-                        const svc = laporanModal?.service||"";
-                        const plJasa = priceListData.filter(r=>
-                          r.service===svc && r.category==="Jasa" && parseInt(r.price||0)>0
-                        );
+                        // Note: Jangan filter by service — items dari semua service (Cleaning, Repair, Install, dll) bisa digunakan
                         if(laporanJasaItems.length<10) setLaporanJasaItems(p=>[...p,{
                           id:Date.now(),nama:"",jumlah:1,satuan:"pcs",harga_satuan:0
                         }]);
