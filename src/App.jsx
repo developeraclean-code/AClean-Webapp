@@ -3603,64 +3603,63 @@ ${matRowsHtml}
               const today = getLocalDate();
               const seq2  = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
               const invId = "INV-" + today.replace(/-/g,"").slice(2,8) + "-" + seq2;
-            }
-        // Cek pekerjaan aktual + tipe AC dari laporan teknisi
-        const lapRepForLabor = laporanReports.find(r => r.job_id === ord.id);
-        const hasServiceBesar = lapRepForLabor?.units
-          ? lapRepForLabor.units.some(u => (u.pekerjaan||[]).some(p =>
-              p.toLowerCase().includes("besar") || p.toLowerCase().includes("deep")))
-          : false;
+              // Cek pekerjaan aktual + tipe AC dari laporan teknisi
+              const lapRepForLabor = laporanReports.find(r => r.job_id === ord.id);
+              const hasServiceBesar = lapRepForLabor?.units
+                ? lapRepForLabor.units.some(u => (u.pekerjaan||[]).some(p =>
+                    p.toLowerCase().includes("besar") || p.toLowerCase().includes("deep")))
+                : false;
 
-        // ── BUILD EFFECTIVE TYPE untuk invoice ──
-        // Priority: 1) Laporan tipe AC+PK detail, 2) Service besar detection, 3) Order type, 4) Default
-        let effectiveType = "default";
-        if (lapRepForLabor?.units && lapRepForLabor.units.length > 0) {
-          // Build type dari tipe AC + PK di laporan (Step 1 detail)
-          const typeList = lapRepForLabor.units
-            .filter(u => u.tipe && u.pk)
-            .map(u => `${u.tipe} ${u.pk}`)
-            .join(", ");
-          if (typeList) effectiveType = typeList; // Contoh: "Cassette 5PK, Split 1PK"
-        }
+              // ── BUILD EFFECTIVE TYPE untuk invoice ──
+              // Priority: 1) Laporan tipe AC+PK detail, 2) Service besar detection, 3) Order type, 4) Default
+              let effectiveType = "default";
+              if (lapRepForLabor?.units && lapRepForLabor.units.length > 0) {
+                // Build type dari tipe AC + PK di laporan (Step 1 detail)
+                const typeList = lapRepForLabor.units
+                  .filter(u => u.tipe && u.pk)
+                  .map(u => `${u.tipe} ${u.pk}`)
+                  .join(", ");
+                if (typeList) effectiveType = typeList; // Contoh: "Cassette 5PK, Split 1PK"
+              }
 
-        // Jika service besar → gunakan harga service besar (override tipe jika ada)
-        if (hasServiceBesar && ord.service === "Cleaning") {
-          effectiveType = (ord.units||1) > 1
-            ? "Jasa Service Besar 1,5PK - 2,5PK"
-            : "Jasa Service Besar 0,5PK - 1PK";
-        }
+              // Jika service besar → gunakan harga service besar (override tipe jika ada)
+              if (hasServiceBesar && ord.service === "Cleaning") {
+                effectiveType = (ord.units||1) > 1
+                  ? "Jasa Service Besar 1,5PK - 2,5PK"
+                  : "Jasa Service Besar 0,5PK - 1PK";
+              }
 
-        // Fallback ke order type jika laporan tidak ada
-        if (effectiveType === "default" && ord.type) {
-          effectiveType = ord.type;
-        }
+              // Fallback ke order type jika laporan tidak ada
+              if (effectiveType === "default" && ord.type) {
+                effectiveType = ord.type;
+              }
 
-        const labor = PRICE_LIST[ord.service]?.[effectiveType] ||
-          PRICE_LIST[ord.service]?.["default"] || 85000;
+              const labor = PRICE_LIST[ord.service]?.[effectiveType] ||
+                PRICE_LIST[ord.service]?.["default"] || 85000;
               const laborTotal = labor * (ord.units || 1);
 
               // ── Baca material + freon dari laporan teknisi ──
               const lapRep = laporanReports.find(r => r.job_id === ord.id);
               const materialCost = lapRep?.materials
                 ? lapRep.materials.reduce((sum, m) => {
-          // Lookup harga dari inventory (sama seperti hitungMaterialTotal)
-          const _mNama = (m.nama||"").toLowerCase();
-          const _invItem = inventoryData.find(inv =>
-            inv.name.toLowerCase().includes(_mNama) || _mNama.includes(inv.name.toLowerCase())
-          );
-          let harga = _invItem?.price || m.harga || m.price || 0;
-          // Fallback ke PRICE_LIST freon jika tidak ada di inventory
-          if (!harga) {
-            if (_mNama.includes("r-22")||_mNama.includes("r22")) harga = PRICE_LIST["freon_R22"]||150000;
-            else if (_mNama.includes("r-32")||_mNama.includes("r32")) harga = PRICE_LIST["freon_R32"]||450000;
-            else if (_mNama.includes("r-410")||_mNama.includes("r410")) harga = PRICE_LIST["freon_R410A"]||450000;
-          }
-          const qty = parseFloat(m.jumlah || m.qty || m.quantity || 1);
+                    // Lookup harga dari inventory (sama seperti hitungMaterialTotal)
+                    const _mNama = (m.nama||"").toLowerCase();
+                    const _invItem = inventoryData.find(inv =>
+                      inv.name.toLowerCase().includes(_mNama) || _mNama.includes(inv.name.toLowerCase())
+                    );
+                    let harga = _invItem?.price || m.harga || m.price || 0;
+                    // Fallback ke PRICE_LIST freon jika tidak ada di inventory
+                    if (!harga) {
+                      if (_mNama.includes("r-22")||_mNama.includes("r22")) harga = PRICE_LIST["freon_R22"]||150000;
+                      else if (_mNama.includes("r-32")||_mNama.includes("r32")) harga = PRICE_LIST["freon_R32"]||450000;
+                      else if (_mNama.includes("r-410")||_mNama.includes("r410")) harga = PRICE_LIST["freon_R410A"]||450000;
+                    }
+                    const qty = parseFloat(m.jumlah || m.qty || m.quantity || 1);
                     return sum + (harga * qty);
                   }, 0)
                 : 0;
-          // [OPSI A] Freon tidak dihitung dari total_freon (psi data)
-          const freonCost  = 0; // freon masuk via material manual
+              // [OPSI A] Freon tidak dihitung dari total_freon (psi data)
+              const freonCost  = 0; // freon masuk via material manual
               // Freon: hitung dari total_freon × harga freon (R32=200rb, R22=150rb default R32)
 
               // Dadakan jika booking H-0
