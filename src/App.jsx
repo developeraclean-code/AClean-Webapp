@@ -12602,7 +12602,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     })
                     .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}))
                     .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i)
-                    .slice(0,20);
+                    .slice(0,100);
                   return (
                     <div>
                       <div style={{fontSize:11,fontWeight:800,color:cs.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.5px"}}>⚡ Jasa / Layanan ({(editLaporanForm.editJasaItems||[]).length})</div>
@@ -14337,7 +14337,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         .filter(r=>_isJasaItem(r) && parseInt(r.price||0)>0)
                         .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}))
                         .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i)
-                        .slice(0,30);
+                        .slice(0,100);
                       return (
                       <div key={item.id} style={{background:cs.card,border:"1px solid "+(item.nama?cs.accent+"44":cs.border),
                         borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
@@ -14456,7 +14456,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         .filter(r=>_isBarangItem(r) && parseInt(r.price||0)>0)
                         .map(r=>({nama:r.type, satuan:r.unit||"pcs", harga:parseInt(r.price||0)}));
                       const allBarangOpt = barangOpt
-                        .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,30);
+                        .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,100);
                       return (
                       <div key={bItem.id} style={{background:cs.card,border:"1px solid "+(bItem.nama?cs.cyan+"44":cs.border),
                         borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
