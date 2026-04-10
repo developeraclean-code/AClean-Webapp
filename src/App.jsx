@@ -14225,6 +14225,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <div style={{fontSize:11,color:cs.muted,background:cs.surface,borderRadius:8,padding:"8px 10px",lineHeight:"1.4"}}>
                       💡 <strong>Pekerjaan yang ditagih.</strong> Contoh: Biaya cek AC, kuras vacum, pasang kompresor, jasa pemasangan, dll.
                     </div>
+                    </div>
                     {laporanJasaItems.length===0&&(
                       <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:cs.muted,
                         background:cs.surface,borderRadius:8,border:"1px dashed "+cs.border}}>
@@ -14635,6 +14636,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       + Tambah Material
                     </button>
                   )}
+                  </div>
                   </div>
                   )}{/* end !isInstallJob */}
 
