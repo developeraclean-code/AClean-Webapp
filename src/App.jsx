@@ -624,7 +624,7 @@ export default function ACleanWebApp() {
   const [plEditItem,      setPlEditItem]       = useState(null);
   const [plEditForm,      setPlEditForm]       = useState({});
   const [plAddModal,      setPlAddModal]       = useState(false);
-  const [plNewForm,       setPlNewForm]        = useState({ service:"Cleaning", type:"", code:"", price:"", unit:"unit", notes:"" });
+  const [plNewForm,       setPlNewForm]        = useState({ service:"Cleaning", type:"", code:"", price:"", unit:"unit", notes:"", category:"" });
   const [searchLaporan,   setSearchLaporan]   = useState("");
   const [laporanSvcFilter, setLaporanSvcFilter] = useState("Semua");
   const [laporanStatusFilter, setLaporanStatusFilter] = useState("Semua");
@@ -5631,9 +5631,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       const freshList = priceListData.map(r => r.id===updated.id ? {...r,...updated} : r);
       setPriceListData(freshList);
       // Rebuild PRICE_LIST dari freshList (bukan priceListData yang stale)
-      PRICE_LIST = buildPriceListFromDB(data.filter(r => r.is_active !== false));
+      PRICE_LIST = buildPriceListFromDB(freshList.filter(r => r.is_active !== false));
       setPriceListSyncedAt(new Date());
-      console.log("✅ PRICE_LIST updated after save:", Object.keys(newPL));
+      console.log("✅ PRICE_LIST updated after save:", Object.keys(PRICE_LIST));
       setPlEditItem(null);
       showNotif("✅ Harga diperbarui — ARA langsung pakai harga baru");
       addAgentLog("PRICELIST_UPDATE", `Harga "${updated.type}" diupdate → Rp${fmt(updated.price)}`, "SUCCESS");
@@ -5660,7 +5660,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             }} style={{ background:cs.accent+"22", border:"1px solid "+cs.accent+"44", color:cs.accent, padding:"8px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
               🔄 Refresh
             </button>
-            <button onClick={()=>{ setPlNewForm({ service:"Cleaning", type:"", code:"", price:"", unit:"unit", notes:"" }); setPlAddModal(true); }}
+            <button onClick={()=>{ setPlNewForm({ service:"Cleaning", type:"", code:"", price:"", unit:"unit", notes:"", category:"" }); setPlAddModal(true); }}
               style={{ background:"linear-gradient(135deg,"+cs.accent+",#3b82f6)", border:"none", color:"#0a0f1e", padding:"8px 16px", borderRadius:9, cursor:"pointer", fontWeight:700, fontSize:12 }}>
               + Tambah Item
             </button>
@@ -5780,8 +5780,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                       const { error: delErr } = await supabase.from("price_list").delete().eq("id", r.id);
                                       if (delErr) { showNotif("❌ Gagal hapus: "+delErr.message); }
                                       else {
-                                        setPriceListData(prev => prev.filter(p => p.id !== r.id));
-                                        PRICE_LIST = buildPriceListFromDB(data.filter(r => r.is_active !== false));
+                                        setPriceListData(prev => {
+                                          const updated = prev.filter(p => p.id !== r.id);
+                                          PRICE_LIST = buildPriceListFromDB(updated.filter(r => r.is_active !== false));
+                                          return updated;
+                                        });
                                         addAgentLog("PRICELIST_DELETE",`Hapus "${r.type}" (${r.service})`,"WARNING");
                                         showNotif("✅ Item dihapus dari database");
                                       }
@@ -5824,6 +5827,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           <div style={{ fontWeight:800, fontSize:16, color:cs.text, marginBottom:16 }}>➕ Tambah Item Harga Baru</div>
           {[
             { label:"Jenis Layanan", key:"service", type:"select", opts:["Cleaning","Install","Repair","Complain"] },
+            { label:"Kategori", key:"category", type:"select", opts:["","Jasa","Barang"] },
             { label:"Tipe AC / Nama Item", key:"type", type:"text", ph:"contoh: AC 1 PK, AC 2 PK" },
             { label:"Kode", key:"code", type:"text", ph:"contoh: CLN-1PK" },
             { label:"Harga (Rp)", key:"price", type:"number", ph:"contoh: 150000" },
@@ -5854,6 +5858,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               if (!plNewForm.price || isNaN(Number(plNewForm.price))) { showNotif("❌ Harga harus berupa angka"); return; }
               const newItem = {
                 service: plNewForm.service,
+                category: plNewForm.category || null,
                 type: plNewForm.type.trim(),
                 code: plNewForm.code.trim() || (plNewForm.service.slice(0,3).toUpperCase()+"-"+Date.now().toString().slice(-4)),
                 price: Number(plNewForm.price),
@@ -7979,8 +7984,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   showNotif("❌ Laporan "+r.job_id+" ditolak");
                 }} style={{background:cs.red+"22",border:"1px solid "+cs.red+"44",color:cs.red,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>Tolak</button>
               </>)}
-              {/* Edit laporan — Owner, Admin, atau Teknisi yang membuat laporan */}
-              {((currentUser?.role==="Owner" || currentUser?.role==="Admin") || (currentUser?.role==="Teknisi" && r.teknisi===currentUser?.name)) && (
+              {/* Edit laporan — Owner, Admin, atau Teknisi/Helper yang membuat laporan */}
+              {((currentUser?.role==="Owner" || currentUser?.role==="Admin") || r.teknisi===currentUser?.name || r.helper===currentUser?.name) && (
                 <button onClick={()=>{
                   const mats=JSON.parse(JSON.stringify(r.materials||[]));
                   // ✨ PHASE 2: Load barang items separately from existing laporan
@@ -8001,6 +8006,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   setActiveEditUnitIdx(0);
                   setEditPhotoMode(false); // Reset photo mode to default (don't re-upload)
                   setEditLaporanFotos([]); // Clear any previous photo uploads
+                  // ── Install: rebuild laporanInstallItems from existing materials ──
+                  if (r.service === "Install") {
+                    const installMap = {};
+                    (r.materials || []).forEach(mat => {
+                      const ii = INSTALL_ITEMS.find(item => item.label === mat.nama || item.key === mat.id);
+                      if (ii) installMap[ii.key] = String(mat.jumlah || 0);
+                    });
+                    setLaporanInstallItems(installMap);
+                  }
                   setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                 }}
                   style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
@@ -8152,8 +8166,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           : filtReps.map(r=>{
             const isPending = r.status==="PENDING";
             const canEdit = (r.status==="SUBMITTED" || r.status==="REVISION") &&
-              ((currentUser?.role==="Owner" || currentUser?.role==="Admin") || r.teknisi === myName);
-            const isReadOnly = (r.status==="SUBMITTED" || r.status==="REVISION") && r.teknisi !== myName && r.helper === myName && currentUser?.role !== "Owner" && currentUser?.role !== "Admin";
+              ((currentUser?.role==="Owner" || currentUser?.role==="Admin") || r.teknisi === myName || r.helper === myName);
+            const isReadOnly = false;
             const isHelper = r.helper===myName;
             return (
               <div key={r.id} style={{background:cs.card,border:"1px solid "+(r.status==="REVISION"?cs.yellow:r.status==="VERIFIED"?cs.green:cs.border)+"44",borderRadius:14,padding:18}}>
@@ -8251,6 +8265,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       setActiveEditUnitIdx(0);
                       setEditPhotoMode(false); // Reset photo mode
                       setEditLaporanFotos([]); // Clear any previous photo uploads
+                      // ── Install: rebuild laporanInstallItems from existing materials ──
+                      if (r.service === "Install") {
+                        const installMap = {};
+                        (r.materials || []).forEach(mat => {
+                          const ii = INSTALL_ITEMS.find(item => item.label === mat.nama || item.key === mat.id);
+                          if (ii) installMap[ii.key] = String(mat.jumlah || 0);
+                        });
+                        setLaporanInstallItems(installMap);
+                      }
                       setSelectedLaporan(r); setEditLaporanMode(true); setModalLaporanDetail(true);
                     }}
                       style={{background:cs.accent+"22",border:"1px solid "+cs.accent+"44",color:cs.accent,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
@@ -12507,8 +12530,30 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   );
                 })()}
 
-                {/* JASA SECTION */}
-                {(() => {
+                {/* ══ INSTALL ITEMS FORM (Edit Mode) ══ */}
+                {selectedLaporan?.service === "Install" && (
+                  <div style={{display:"grid",gap:8}}>
+                    <div style={{fontSize:11,fontWeight:800,color:cs.accent,textTransform:"uppercase",letterSpacing:"0.5px"}}>🔧 Detail Pekerjaan Instalasi</div>
+                    {INSTALL_ITEMS.map(item=>(
+                      <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
+                        background:parseFloat(laporanInstallItems[item.key]||0)>0?cs.green+"08":cs.card,
+                        border:"1px solid "+(parseFloat(laporanInstallItems[item.key]||0)>0?cs.green+"44":cs.border),
+                        borderRadius:8,padding:"8px 10px"}}>
+                        <div style={{fontSize:12,color:cs.text,fontWeight:parseFloat(laporanInstallItems[item.key]||0)>0?700:400}}>
+                          {item.label}<span style={{fontSize:10,color:cs.muted,marginLeft:4}}>({item.satuan})</span>
+                        </div>
+                        <input type="number" min="0" step={item.satuan==="Meter"||item.satuan==="KG"?"0.5":"1"}
+                          value={laporanInstallItems[item.key]??""}
+                          onChange={e=>setLaporanInstallItems(prev=>({...prev,[item.key]:e.target.value}))}
+                          placeholder="0"
+                          style={{width:64,background:cs.surface,border:"1px solid "+cs.border,borderRadius:7,padding:"6px 8px",color:cs.text,fontSize:13,outline:"none",textAlign:"center"}}/>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* JASA SECTION (non-Install only) */}
+                {selectedLaporan?.service !== "Install" && (() => {
                   const jasaLookup = [...priceListData.filter(r=>r.category==="Jasa" && parseInt(r.price||0)>0).map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)})),...priceListData.filter(r=>r.service===selectedLaporan?.service && parseInt(r.price||0)>0).map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}))].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,20);
                   return (
                     <div>
@@ -12530,8 +12575,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   );
                 })()}
 
-                {/* MATERIAL SECTION */}
-                {(() => {
+                {/* MATERIAL SECTION (non-Install only) */}
+                {selectedLaporan?.service !== "Install" && (() => {
                   const matLookup = [...inventoryData.map(r=>({nama:r.name,satuan:r.unit||"pcs"})),...priceListData.filter(r=>r.service==="Material").map(r=>({nama:r.type,satuan:r.unit||"pcs"}))].filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i);
                   return (
                     <div>
@@ -14233,13 +14278,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       </div>
                     )}
                     {laporanJasaItems.map((item,idx)=>{
-                      // OPTION A FIX: Only pull from "Jasa" category, NOT service-specific items
-                      // This prevents AC types from showing up in Jasa dropdown for Cleaning service
+                      // Pull from "Jasa" category + freon/vacum items (may have null category)
+                      const _isJasaItem = (r) => {
+                        if (r.category==="Jasa") return true;
+                        const t = (r.type||"").toLowerCase();
+                        return t.includes("kuras vacum") || t.includes("tambah freon") || t.includes("penambahan freon")
+                          || t.includes("biaya transport") || t.includes("biaya pengecekan");
+                      };
                       const allJasaOpt = priceListData
-                        .filter(r=>r.category==="Jasa" && parseInt(r.price||0)>0)
+                        .filter(r=>_isJasaItem(r) && parseInt(r.price||0)>0)
                         .map(r=>({nama:r.type,satuan:r.unit||"pcs",harga:parseInt(r.price||0)}))
                         .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i)
-                        .slice(0,20);
+                        .slice(0,30);
                       return (
                       <div key={item.id} style={{background:cs.card,border:"1px solid "+(item.nama?cs.accent+"44":cs.border),
                         borderRadius:10,padding:"10px 12px",display:"grid",gap:8}}>
@@ -14344,8 +14394,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       </div>
                     )}
                     {laporanBarangItems.map((bItem,bIdx)=>{
+                      const _isBarangItem = (r) => {
+                        if (r.category==="Barang") return true;
+                        const t = (r.type||"").toLowerCase();
+                        return t.includes("kapasitor") || t.includes("naple") || t.includes("breket")
+                          || t.includes("dinabolt") || t.includes("armaflex") || t.includes("freon r-")
+                          || t.includes("freon r3") || t.includes("freon r4") || t.includes("freon r2")
+                          || t.includes("pipa ac") || t.includes("kabel eterna") || t.includes("duct tape");
+                      };
                       const barangOpt = priceListData
-                        .filter(r=>r.category==="Barang" && parseInt(r.price||0)>0)
+                        .filter(r=>_isBarangItem(r) && parseInt(r.price||0)>0)
                         .map(r=>({nama:r.type, satuan:r.unit||"pcs", harga:parseInt(r.price||0)}));
                       const allBarangOpt = barangOpt
                         .filter((v,i,a)=>a.findIndex(x=>x.nama===v.nama)===i).slice(0,30);
