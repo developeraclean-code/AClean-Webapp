@@ -3736,13 +3736,13 @@ ${matRowsHtml}
             } else {
               setOrdersData(prev=>prev.map(o=>o.id===act.id?{...o,...upd}:o));
               await supabase.from("orders").update(upd).eq("id",act.id);
-            // Auto-kirim WA notifikasi reschedule ke teknisi
-            const rOrd = ordersData.find(o=>o.id===act.id);
-            if (rOrd) {
-              const tekData = teknisiData.find(t=>t.name===(act.teknisi||rOrd.teknisi));
-              // Notif customer
-              if (rOrd.phone) {
-                const custMsg = `📅 *Info Perubahan Jadwal*
+              // Auto-kirim WA notifikasi reschedule ke teknisi
+              const rOrd = ordersData.find(o=>o.id===act.id);
+              if (rOrd) {
+                const tekData = teknisiData.find(t=>t.name===(act.teknisi||rOrd.teknisi));
+                // Notif customer
+                if (rOrd.phone) {
+                  const custMsg = `📅 *Info Perubahan Jadwal*
 
 Yth. ${rOrd.customer},
 Jadwal layanan AC Anda *${act.id}* telah diubah:
@@ -3752,10 +3752,10 @@ Jadwal layanan AC Anda *${act.id}* telah diubah:
 
 Mohon pastikan ada di lokasi pada waktu tersebut.
 Terima kasih — *AClean Service* 😊`;
-                if (rOrd?.phone) sendWA(rOrd.phone, custMsg);
-              }
-              if (tekData?.phone) {
-                const rMsg = `📅 *Jadwal Diubah*
+                  if (rOrd?.phone) sendWA(rOrd.phone, custMsg);
+                }
+                if (tekData?.phone) {
+                  const rMsg = `📅 *Jadwal Diubah*
 
 Halo ${tekData.name}, jadwal order *${act.id}* telah diubah:
 👤 Customer: ${rOrd.customer}
@@ -3765,11 +3765,11 @@ Halo ${tekData.name}, jadwal order *${act.id}* telah diubah:
 ⏰ Jam: ${act.time||"09:00"}
 
 Mohon sesuaikan jadwal Anda. Terima kasih!`;
-                sendWA(tekData.phone, rMsg);
+                  sendWA(tekData.phone, rMsg);
+                }
               }
-            }
-            addAgentLog("ARA_RESCHEDULE",`ARA reschedule ${act.id} → ${act.date} ${act.time||"09:00"}`,"SUCCESS");
-            ar=`\n✅ *Order ${act.id} dijadwal ulang → ${act.date} jam ${act.time||"09:00"}*`;
+              addAgentLog("ARA_RESCHEDULE",`ARA reschedule ${act.id} → ${act.date} ${act.time||"09:00"}`,"SUCCESS");
+              ar=`\n✅ *Order ${act.id} dijadwal ulang → ${act.date} jam ${act.time||"09:00"}*`;
             } // end konflik check
           } else if (act.type==="MARK_INVOICE_OVERDUE") {
             setInvoicesData(prev=>prev.map(i=>i.status==="UNPAID"&&i.due&&i.due<TODAY?{...i,status:"OVERDUE"}:i));
