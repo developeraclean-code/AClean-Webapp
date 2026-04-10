@@ -3608,7 +3608,7 @@ ${matRowsHtml}
         const lapRepForLabor = laporanReports.find(r => r.job_id === ord.id);
         const hasServiceBesar = lapRepForLabor?.units
           ? lapRepForLabor.units.some(u => (u.pekerjaan||[]).some(p =>
-              p.toLowerCase().includes("besar") || p.toLowerCase().includes("deep"))
+              p.toLowerCase().includes("besar") || p.toLowerCase().includes("deep")))
           : false;
 
         // ── BUILD EFFECTIVE TYPE untuk invoice ──
