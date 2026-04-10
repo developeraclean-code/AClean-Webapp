@@ -14629,7 +14629,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 </div>
                 );
               })}
-                  </div>
                   {laporanMaterials.length<20&&(
                     <button onClick={()=>setLaporanMaterials(p=>[...p,{id:Date.now(),nama:"",jumlah:1,satuan:"pcs",keterangan:""}])}
                       style={{marginTop:8,width:"100%",background:cs.green+"10",border:"1px dashed "+cs.green+"33",color:cs.green,borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>
