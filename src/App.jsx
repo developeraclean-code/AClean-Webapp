@@ -14856,9 +14856,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                 </div>
               )}
-
+              </div>
             </div>
-          </div>
             </>
         );
       })()}
