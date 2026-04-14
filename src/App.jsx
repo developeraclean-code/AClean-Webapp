@@ -755,6 +755,10 @@ export default function ACleanWebApp() {
   const [laporanRepairItems, setLaporanRepairItems] = useState([]);  // Repair/Sparepart B (legacy, tetap ada)
   const [laporanBarangItems, setLaporanBarangItems] = useState([]);  // ✨ NEW: Barang/Material billed (dari price_list category=Barang)
   const [laporanRepairType, setLaporanRepairType] = useState("berbayar");  // ✨ NEW: Repair type (berbayar/gratis-garansi/gratis-customer)
+  // ✨ NEW: Cleaning-in-Repair — teknisi centang unit yang juga dicuci saat repair, harga dari PRICE_LIST bracket PK
+  const [laporanCleaningInRepair, setLaporanCleaningInRepair] = useState([]); // array of unit_no yang dicentang
+  // ✨ NEW: Complain garansi override (Owner/Admin only, di halaman approval)
+  const [complainGaransiOverride, setComplainGaransiOverride] = useState({}); // { [reportId]: "free" | "paid" | null }
   const [editRepairType, setEditRepairType] = useState("berbayar");  // ✨ NEW: Admin edit modal repair type selector
   const [editGratisAlasan, setEditGratisAlasan] = useState("");  // ✨ NEW: Admin must provide reason if choosing gratis
   const [showJasaSearch, setShowJasaSearch] = useState(false);
@@ -1787,6 +1791,7 @@ ${matRowsHtml}
     setLaporanJasaItems([]); setJasaManualText({});
     setLaporanRepairItems([]); setRepairManualText({});
     setLaporanBarangItems([]); // ✨ NEW: reset barang items
+    setLaporanCleaningInRepair([]); // ✨ NEW: reset cleaning-in-repair checkboxes
     setShowJasaSearch(false); setJasaSearchQ("");
     setShowRepairSearch(false); setRepairSearchQ("");
     setShowMatSearch(false); setMatSearchQ2("");
@@ -2204,7 +2209,17 @@ ${matRowsHtml}
             submitted: r.submitted || (r.submitted_at || "").slice(0, 16).replace("T", " "),
             status: r.status || "SUBMITTED",
           });
-          setLaporanReports(laporanRes.data.map(parseLaporan));
+          // ✨ DEDUP by job_id — keep latest submitted (prevents double laporan bug on rewrite)
+          const allReports = laporanRes.data.map(parseLaporan);
+          const dedupedMap = new Map();
+          allReports.forEach(r => {
+            const existing = dedupedMap.get(r.job_id);
+            if (!existing) { dedupedMap.set(r.job_id, r); return; }
+            const rTime = r.submitted_at || r.submitted || "";
+            const eTime = existing.submitted_at || existing.submitted || "";
+            if (rTime > eTime) dedupedMap.set(r.job_id, r);
+          });
+          setLaporanReports(Array.from(dedupedMap.values()));
         }
         // Jika DB error total, keep demo data (already in useState init)
         if (!logsRes.error && logsRes.data && logsRes.data.length > 0) setAgentLogs(logsRes.data);
@@ -2515,13 +2530,20 @@ ${matRowsHtml}
           supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }).limit(200)
             .then(({ data }) => {
               if (data && data.length > 0) {
-                setLaporanReports(data.map(r => ({
+                const mapped = data.map(r => ({
                   ...r,
                   units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return r.units || []; } })() : (r.units || []),
                   materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return r.materials_used || []; } })() : (r.materials_used || []),
                   fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
                   editLog: safeArr(r.edit_log ?? r.editLog),
-                })));
+                }));
+                // ✨ DEDUP by job_id — prevents double laporan bug
+                const dm = new Map();
+                mapped.forEach(r => {
+                  const ex = dm.get(r.job_id);
+                  if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
+                });
+                setLaporanReports(Array.from(dm.values()));
               }
             })
         ))
@@ -2532,13 +2554,21 @@ ${matRowsHtml}
           window._rtPoll_1645 = setInterval(() => supabase.from("service_reports").select("*")
             .order("submitted_at", { ascending: false }).limit(200)
             .then(({ data }) => {
-              if (data) setLaporanReports(data.map(r => ({
-                ...r,
-                units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return []; } })() : (r.units || []),
-                materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return []; } })() : (r.materials_used || []),
-                fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
-                editLog: safeArr(r.edit_log ?? r.editLog),
-              })));
+              if (data) {
+                const mapped = data.map(r => ({
+                  ...r,
+                  units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return []; } })() : (r.units || []),
+                  materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return []; } })() : (r.materials_used || []),
+                  fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
+                  editLog: safeArr(r.edit_log ?? r.editLog),
+                }));
+                const dm = new Map();
+                mapped.forEach(r => {
+                  const ex = dm.get(r.job_id);
+                  if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
+                });
+                setLaporanReports(Array.from(dm.values()));
+              }
             }), 30000);
         }
       });
@@ -5660,6 +5690,57 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                 )}
 
+                {/* COMPLAIN GARANSI OVERRIDE — Owner/Admin override auto-detect */}
+                {inv.status === "PENDING_APPROVAL" && (inv.service || "").startsWith("Complain") &&
+                  (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                    <div style={{ gridColumn: "1 / -1", padding: "10px 12px", background: "#8b5cf615", border: "1px dashed #8b5cf644", borderRadius: 8, display: "grid", gap: 8 }}>
+                      <div style={{ fontSize: 11, color: "#a78bfa", fontWeight: 700 }}>
+                        🛡️ Status Garansi: {inv.garansi_status === "GARANSI_AKTIF" || inv.garansi_status === "GARANSI_DENGAN_MATERIAL"
+                          ? <span style={{ color: cs.green }}>Dalam Garansi (auto-detect)</span>
+                          : inv.garansi_status === "GARANSI_EXPIRED"
+                            ? <span style={{ color: cs.yellow }}>Garansi Expired</span>
+                            : <span style={{ color: cs.muted }}>Tidak Ada Garansi</span>}
+                      </div>
+                      <div style={{ fontSize: 11, color: cs.muted }}>
+                        Override manual jika perlu: paksa Gratis atau paksa Berbayar sebelum approve.
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={async () => {
+                          if (!await showConfirm({
+                            icon: "🎁", title: "Override → Gratis?",
+                            message: `Ubah invoice ${inv.id} menjadi GRATIS (Rp 0) dan langsung LUNAS?\n\nTidak ada WA terkirim ke customer.`,
+                            confirmText: "Override Gratis & Lunas"
+                          })) return;
+                          const paidAt = new Date().toISOString();
+                          const upd = { total: 0, labor: 0, material: 0, dadakan: 0, garansi_status: "GARANSI_OVERRIDE_FREE", status: "PAID", paid_at: paidAt };
+                          setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
+                          setOrdersData(prev => prev.map(o => o.id === inv.job_id ? { ...o, status: "PAID" } : o));
+                          const { error } = await supabase.from("invoices").update(upd).eq("id", inv.id);
+                          if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
+                          if (inv.job_id) await supabase.from("orders").update({ status: "PAID" }).eq("id", inv.job_id);
+                          addAgentLog("COMPLAIN_OVERRIDE_FREE", `Invoice ${inv.id} override GRATIS & LUNAS oleh ${currentUser?.name}`, "SUCCESS");
+                          showNotif("✅ Invoice di-override GRATIS dan dicatat LUNAS");
+                        }} style={{ flex: 1, background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                          Override: Gratis
+                        </button>
+                        <button onClick={async () => {
+                          if (!await showConfirm({
+                            icon: "💰", title: "Override → Berbayar?",
+                            message: `Ubah invoice ${inv.id} menjadi BERBAYAR?\n\nJika total sekarang Rp 0, silakan edit nilai dulu via tombol Edit Nilai.`,
+                            confirmText: "Override Berbayar"
+                          })) return;
+                          const upd = { garansi_status: "GARANSI_OVERRIDE_PAID" };
+                          setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
+                          const { error } = await supabase.from("invoices").update(upd).eq("id", inv.id);
+                          if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
+                          addAgentLog("COMPLAIN_OVERRIDE_PAID", `Invoice ${inv.id} di-override BERBAYAR oleh ${currentUser?.name}`, "INFO");
+                          showNotif("✅ Invoice di-override menjadi BERBAYAR — edit nilai jika perlu sebelum approve");
+                        }} style={{ flex: 1, background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                          Override: Berbayar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 {inv.status === "PENDING_APPROVAL" && !inv.repair_gratis && (
                   <>
                     <button onClick={() => approveInvoice(inv)} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>✅ Approve</button>
@@ -13777,6 +13858,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
           // ── 7. Simpan laporan ke Supabase (multi-attempt with fallback fields) ──
           showNotif("⏳ Menyimpan laporan ke server...");
+          // ✨ DEDUP: hapus ghost rows dgn job_id yg sama tapi id berbeda (prevent double laporan)
+          try {
+            await supabase.from("service_reports")
+              .delete()
+              .eq("job_id", newReport.job_id)
+              .neq("id", newReport.id);
+          } catch (dx) { console.warn("[LAPORAN_DEDUP] cleanup ghost rows failed:", dx.message); }
           const basePayload = {
             id: newReport.id,
             job_id: newReport.job_id,
@@ -14002,20 +14090,28 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             m.nama && !jasaNamesSet2.has(m.nama.trim()) &&
             !repairNamesInMat.has(m.nama) && parseFloat(m.jumlah || 0) > 0
           );
+          // ✨ NEW: Cleaning-in-Repair — hitung total tambahan cleaning saat job Repair
+          const cleaningInRepairTotal = (laporanModal?.service === "Repair" && Array.isArray(laporanCleaningInRepair) && laporanCleaningInRepair.length > 0)
+            ? (laporanUnits || [])
+              .filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no))
+              .reduce((s, u) => s + hargaPerUnitFromTipe("Cleaning", u.tipe, priceListData), 0)
+            : 0;
+
           const laborTotalInv = isInstallSvc ? 0 : (() => {
-            // Labor = service fee (cleaning/repair baseline) + jasa items only
-            // Barang items are now separate (in laporanBarangItems → matTotalInv)
+            const svc = laporanModal?.service;
             const jasaSumForm = laporanJasaItems.filter(j => j.nama)
               .reduce((s, j) => s + ((j.harga_satuan || 0) * (parseFloat(j.jumlah) || 1)), 0);
 
-            // Service fee baseline (dari hitungLabor) — HANYA jika tidak ada jasa via form
-            const svcFeeBaseline = jasaSumForm > 0
-              ? 0  // teknisi sudah pilih jasa manual via form → pakai itu
-              : (laporanModal?.service === "Complain"
-                ? 0  // Complain → handle via garansi logic
-                : hitungLabor(laporanModal?.service, laporanModal.type, laporanUnits.length));
+            // Base labor per service type:
+            // - Cleaning/Maintenance: service fee baseline dari Card 1/4 (hitungLabor)
+            // - Repair: NO baseline — hanya dari form jasa + cleaning-in-repair
+            // - Complain: handle via garansi logic (skip baseline)
+            const isCleaningMaint = svc === "Cleaning" || svc === "Maintenance";
+            const svcFeeBaseline = jasaSumForm > 0 || !isCleaningMaint
+              ? 0
+              : hitungLabor(svc, laporanModal.type, laporanUnits.length);
 
-            return svcFeeBaseline + jasaSumForm;
+            return svcFeeBaseline + jasaSumForm + cleaningInRepairTotal;
           })();
           // ✨ CHANGE: matTotalInv dari laporanBarangItems (price_list category=Barang), bukan dari laporanMaterials
           const barangTotalInv = laporanBarangItems
@@ -14074,7 +14170,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           const isRepairServiceNoItems = laporanModal?.service === "Repair" &&
             laporanBarangItems.filter(b => b.nama).length === 0 &&
             laporanJasaItems.filter(j => j.nama).length === 0 &&
-            laporanMaterials.filter(m => m.nama).length === 0;
+            laporanMaterials.filter(m => m.nama).length === 0 &&
+            cleaningInRepairTotal === 0;
           let isRepairGratis = false;
 
           if (isRepairServiceNoItems) {
@@ -14183,62 +14280,73 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               });
             }
 
-            // E. AUTO-INJECT service fee jika tidak ada jasa item dari form
-            //    Rules:
-            //    - Cleaning/Install: inject service fee per unit SELALU (kecuali ada jasaItems)
-            //    - Repair: HANYA inject "Biaya Pengecekan" jika tidak ada repairItems
-            //      (jika ada repairItems, repair items sudah merepresentasikan biaya jasa)
-            //    - Complain: tidak inject (handled oleh garansi logic → finalLabor/finalTotal)
-            if (!isInstallSvc && !mDetail.some(m => m.keterangan === "jasa")) {
+            // E. AUTO-INJECT per-service (planning final 2026-04-14):
+            //    - Cleaning/Maintenance: inject per-unit dari Card 1/4 tipe PK (base labor)
+            //    - Repair: NO auto-inject base. Inject "Biaya Pengecekan" jika card 3/4 kosong.
+            //             Checkbox "Cleaning in Repair" → inject Cleaning rows untuk unit yg dicentang.
+            //    - Install: semua dari Card 3/4 (handled di branch D di atas)
+            //    - Complain: inject biaya cek hanya jika tanpa-garansi & finalLabor > 0
+            if (!isInstallSvc) {
+              const svc = laporanModal?.service;
               const hasRepairItems = mDetail.some(m => m.keterangan === "repair");
-              const isRepairSvc = laporanModal?.service === "Repair";
-              const isComplainSvc2 = laporanModal?.service === "Complain";
-              // Inject hanya jika:
-              // - Bukan Complain (Complain punya garansi logic sendiri)
-              // - Bukan Repair dengan repair items (repair items = service cost)
-              const shouldInject = !isComplainSvc2 && !(isRepairSvc && hasRepairItems);
-              if (shouldInject) {
-                const hasJasaForm = laporanJasaItems.filter(j => j.nama).length > 0;
-                const useRepairBase = isRepairSvc;
-                if (!hasJasaForm && !useRepairBase) {
-                  // ✨ FIX #4: Per-unit pricing berdasarkan tipe PK dari Report Card 1/4
-                  // Setiap unit dihitung harganya sendiri berdasarkan bracket PK-nya
-                  const svc = laporanModal?.service;
-                  const unitsWithTipe = (laporanUnits || []).filter(u => u && u.tipe);
-                  if (unitsWithTipe.length > 0) {
-                    [...unitsWithTipe].reverse().forEach((u) => {
-                      const hargaUnit = hargaPerUnitFromTipe(svc, u.tipe, priceListData);
-                      if (hargaUnit > 0) {
-                        const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
-                        const bracketLabel = getBracketKey(svc, u.tipe) || u.tipe;
-                        const namaJasa = (svc || "") + " " + bracketLabel + " (" + unitLabel + ")";
-                        mDetail.unshift({
-                          nama: namaJasa, jumlah: 1, satuan: "unit",
-                          harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
-                        });
-                      }
-                    });
-                  } else {
-                    // Fallback jika units belum lengkap — pakai order type lama
-                    const svcFee = hitungLabor(svc, laporanModal.type, laporanUnits.length);
-                    if (svcFee > 0) {
-                      const unitCount = laporanUnits.length || 1;
-                      const hPerUnit = Math.round(svcFee / unitCount);
-                      [...laporanUnits].reverse().forEach((u, idx) => {
-                        const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || (unitCount - idx)));
-                        const namaJasa = (svc || "") + (laporanModal.type ? " - " + laporanModal.type : "") + " (" + unitLabel + ")";
-                        mDetail.unshift({ nama: namaJasa, jumlah: 1, satuan: "unit", harga_satuan: hPerUnit, subtotal: hPerUnit, keterangan: "jasa" });
+              const isRepairSvc = svc === "Repair";
+              const isComplainSvc2 = svc === "Complain";
+              const isCleaningOrMaint = svc === "Cleaning" || svc === "Maintenance";
+
+              // ── Cleaning & Maintenance: per-unit base labor dari Card 1/4 tipe ──
+              if (isCleaningOrMaint && !mDetail.some(m => m.keterangan === "jasa")) {
+                const unitsWithTipe = (laporanUnits || []).filter(u => u && u.tipe);
+                if (unitsWithTipe.length > 0) {
+                  [...unitsWithTipe].reverse().forEach((u) => {
+                    const hargaUnit = hargaPerUnitFromTipe(svc, u.tipe, priceListData);
+                    if (hargaUnit > 0) {
+                      const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
+                      const bracketLabel = getBracketKey(svc, u.tipe) || u.tipe;
+                      const namaJasa = (svc || "") + " " + bracketLabel + " (" + unitLabel + ")";
+                      mDetail.unshift({
+                        nama: namaJasa, jumlah: 1, satuan: "unit",
+                        harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
                       });
                     }
+                  });
+                } else {
+                  const svcFee = hitungLabor(svc, laporanModal.type, laporanUnits.length);
+                  if (svcFee > 0) {
+                    const unitCount = laporanUnits.length || 1;
+                    const hPerUnit = Math.round(svcFee / unitCount);
+                    [...laporanUnits].reverse().forEach((u, idx) => {
+                      const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || (unitCount - idx)));
+                      const namaJasa = (svc || "") + (laporanModal.type ? " - " + laporanModal.type : "") + " (" + unitLabel + ")";
+                      mDetail.unshift({ nama: namaJasa, jumlah: 1, satuan: "unit", harga_satuan: hPerUnit, subtotal: hPerUnit, keterangan: "jasa" });
+                    });
                   }
                 }
               }
-              // Repair tanpa items: inject "Biaya Pengecekan" dari finalLabor (BIAYA_CEK)
-              if (isRepairSvc && !hasRepairItems && finalLabor > 0) {
+
+              // ── Repair: Cleaning-in-Repair checkbox → append per unit yg dicentang ──
+              if (isRepairSvc && Array.isArray(laporanCleaningInRepair) && laporanCleaningInRepair.length > 0) {
+                const checkedUnits = (laporanUnits || []).filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no));
+                checkedUnits.forEach((u) => {
+                  const hargaUnit = hargaPerUnitFromTipe("Cleaning", u.tipe, priceListData);
+                  if (hargaUnit > 0) {
+                    const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
+                    const bracketLabel = getBracketKey("Cleaning", u.tipe) || u.tipe;
+                    mDetail.push({
+                      nama: "Cleaning " + bracketLabel + " (" + unitLabel + ") [+Repair]",
+                      jumlah: 1, satuan: "unit",
+                      harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
+                    });
+                  }
+                });
+              }
+
+              // ── Repair tanpa items: inject "Biaya Pengecekan" ──
+              if (isRepairSvc && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa") && finalLabor > 0) {
                 mDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: finalLabor, subtotal: finalLabor, keterangan: "jasa" });
               }
-              // Complain biaya cek: inject dari finalLabor jika ada
-              if (isComplainSvc2 && finalLabor > 0 && finalLabor <= 200000) {
+
+              // ── Complain biaya cek: inject dari finalLabor (tanpa garansi) ──
+              if (isComplainSvc2 && finalLabor > 0 && finalLabor <= 200000 && !mDetail.some(m => m.keterangan === "jasa")) {
                 mDetail.unshift({ nama: "Biaya Pengecekan (Tanpa Garansi)", jumlah: 1, satuan: "unit", harga_satuan: finalLabor, subtotal: finalLabor, keterangan: "jasa" });
               }
             }
@@ -14891,6 +14999,56 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         {Object.values(laporanInstallItems).some(v => parseFloat(v || 0) > 0) && (
                           <div style={{ background: cs.green + "10", border: "1px solid " + cs.green + "33", borderRadius: 9, padding: "8px 12px", fontSize: 11, color: cs.green, marginTop: 4 }}>
                             ✅ {INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length} item diisi
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ══ CLEANING-IN-REPAIR CHECKBOX (Repair only) ══ */}
+                    {laporanModal?.service === "Repair" && (laporanUnits || []).some(u => u && u.tipe) && (
+                      <div style={{ background: "#06b6d408", border: "1px solid #06b6d433", borderRadius: 10, padding: "12px 14px", display: "grid", gap: 8 }}>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: "#06b6d4" }}>🧽 Tambahan Cleaning (opsional)</div>
+                          <div style={{ fontSize: 11, color: cs.muted, marginTop: 3, lineHeight: 1.4 }}>
+                            Centang unit yang juga dicuci. Harga otomatis dari PRICE_LIST berdasarkan PK unit.
+                            <br /><strong style={{ color: "#06b6d4" }}>Isi hanya jika job Repair ini berubah / menambah pekerjaan Cleaning.</strong>
+                          </div>
+                        </div>
+                        <div style={{ display: "grid", gap: 6 }}>
+                          {(laporanUnits || []).filter(u => u && u.tipe).map(u => {
+                            const hargaUnit = hargaPerUnitFromTipe("Cleaning", u.tipe, priceListData);
+                            const bracket = getBracketKey("Cleaning", u.tipe) || u.tipe;
+                            const checked = laporanCleaningInRepair.includes(u.unit_no);
+                            const unitLabel = u.label || u.merk || ("Unit " + u.unit_no);
+                            return (
+                              <label key={u.unit_no} style={{
+                                display: "flex", alignItems: "center", gap: 10,
+                                background: checked ? "#06b6d412" : cs.surface,
+                                border: "1px solid " + (checked ? "#06b6d466" : cs.border),
+                                borderRadius: 8, padding: "8px 12px", cursor: "pointer"
+                              }}>
+                                <input type="checkbox" checked={checked} onChange={() => {
+                                  setLaporanCleaningInRepair(prev => checked
+                                    ? prev.filter(n => n !== u.unit_no)
+                                    : [...prev, u.unit_no]);
+                                }} style={{ cursor: "pointer" }} />
+                                <div style={{ flex: 1, fontSize: 12, color: cs.text }}>
+                                  <div style={{ fontWeight: 700 }}>Unit {u.unit_no} — {unitLabel}</div>
+                                  <div style={{ fontSize: 10, color: cs.muted }}>{bracket} · {u.tipe}</div>
+                                </div>
+                                <div style={{ fontSize: 12, fontWeight: 800, color: "#06b6d4", fontFamily: "monospace" }}>
+                                  Rp {hargaUnit.toLocaleString("id-ID")}
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {laporanCleaningInRepair.length > 0 && (
+                          <div style={{ fontSize: 11, color: "#06b6d4", fontWeight: 700, textAlign: "right" }}>
+                            Total tambahan cleaning: Rp {((laporanUnits || [])
+                              .filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no))
+                              .reduce((s, u) => s + hargaPerUnitFromTipe("Cleaning", u.tipe, priceListData), 0)
+                            ).toLocaleString("id-ID")}
                           </div>
                         )}
                       </div>
