@@ -599,10 +599,17 @@ export default async function handler(req, res) {
       if (process.env.MINIMAX_API_KEY) providers.push({name: "minimax", label: "MiniMax 2.5", disabled: false});
       if (process.env.GROQ_API_KEY) providers.push({name: "groq", label: "Groq (Llama)", disabled: false});
 
-      // Determine default provider based on what's available
-      let defaultProvider = "claude"; // preferred default
-      if (!process.env.ANTHROPIC_API_KEY && providers.length > 0) {
-        defaultProvider = providers[0].name; // use first available
+      // Determine default provider based on what's actually available
+      // Priority: claude > openai > minimax > groq > first available
+      let defaultProvider = "minimax"; // fallback default
+      if (process.env.ANTHROPIC_API_KEY) {
+        defaultProvider = "claude";
+      } else if (process.env.OPENAI_API_KEY) {
+        defaultProvider = "openai";
+      } else if (process.env.MINIMAX_API_KEY) {
+        defaultProvider = "minimax";
+      } else if (process.env.GROQ_API_KEY) {
+        defaultProvider = "groq";
       }
 
       return res.status(200).json({
