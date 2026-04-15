@@ -1,5 +1,22 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { normalizePhone, samePhone } from "./lib/phone.js";
+import { getLocalDate, getLocalDateObj, getLocalISOString } from "./lib/dateTime.js";
+import { safeJsonParse } from "./lib/safeJson.js";
+import {
+  validateEmail, validatePhone, validateTime, validateDate,
+  validatePositiveNumber, validateAddressLength, validateNameLength,
+  validateFileSize, validationError, validationOk,
+} from "./lib/validators.js";
+import { isFreonItem, displayStock, computeStockStatus } from "./lib/inventory.js";
+import { TECH_PALETTE, getTechColor as getTechColorFromLib } from "./lib/techColor.js";
+import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
+import {
+  PRICE_LIST_DEFAULT, tipeToPkNumber, getBracketKey,
+  hargaPerUnitFromTipe as hargaPerUnitFromTipeLib,
+  hitungLaborFromUnits as hitungLaborFromUnitsLib,
+  buildPriceListFromDB as buildPriceListFromDBLib,
+} from "./lib/pricing.js";
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -45,392 +62,28 @@ const TEKNISI_DATA = [
 const CUSTOMERS_DATA = [
 ];
 
-// ── buildCustomerHistory: LIVE dari ordersData + laporanReports + invoicesData
-// Dipanggil di: renderCustomers(), laporan step-1, order detail
-// ── normalizePhone: 08xxx / +62xxx / 628xxx → 628xxx ──────────────
-const normalizePhone = (p) => {
-  if (!p) return "";
-  const d = p.toString().replace(/[\s\-().+]/g, ""); // hapus spasi, strip, plus, kurung
-  if (d.startsWith("08")) return "62" + d.slice(1);   // 08xxx → 628xxx
-  if (d.startsWith("62")) return d;                    // 628xxx → tetap
-  if (d.startsWith("8")) return "62" + d;             // 8xxx → 628xxx (tanpa 0)
-  return d;
-};
-
-// samePhone: bandingkan 2 nomor, dianggap sama jika normalisasi sama
-const samePhone = (a, b) => {
-  if (!a || !b) return false;
-  return normalizePhone(a) === normalizePhone(b);
-};
-
-// ── getLocalDate: Convert UTC to Indonesia local time (UTC+7) ──
-// Returns YYYY-MM-DD in local timezone (Jakarta)
-const getLocalDate = () => {
-  const offset = 7 * 60 * 60 * 1000; // UTC+7 in milliseconds
-  const localDate = new Date(Date.now() + offset);
-  return localDate.toISOString().slice(0, 10);
-};
-
-// ── getLocalDateObj: Get Date object representing Indonesia local date ──
-const getLocalDateObj = () => {
-  const offset = 7 * 60 * 60 * 1000;
-  return new Date(Date.now() + offset);
-};
-
-// ── getLocalISOString: Get ISO string with local timezone context ──
-const getLocalISOString = () => {
-  const offset = 7 * 60 * 60 * 1000;
-  return new Date(Date.now() + offset).toISOString();
-};
-
-// ── safeJsonParse: Parse JSON with error logging (don't silently fail) ──
-const safeJsonParse = (jsonStr, context = "", defaultValue = null) => {
-  if (!jsonStr) return defaultValue;
-  try {
-    return JSON.parse(jsonStr);
-  } catch (err) {
-    console.error(`[JSON_PARSE_ERROR] ${context}:`, {
-      error: err.message,
-      inputLength: String(jsonStr).length,
-      inputPreview: String(jsonStr).slice(0, 100)
-    });
-    // Add to agent logs so we can monitor data corruption
-    if (window.addAgentLog) {
-      window.addAgentLog("JSON_PARSE_ERROR", `${context}: ${err.message}`, "ERROR");
-    }
-    return defaultValue;
-  }
-};
-
-// ── Form Validation Helpers ──
-const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
-const validatePhone = (phone) => /^(08|62|0|6)[0-9]{8,12}$/.test(String(phone || "").replace(/\D/g, ""));
-const validateTime = (time) => /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(String(time || ""));
-const validateDate = (date) => /^\d{4}-\d{2}-\d{2}$/.test(String(date || "")) && !isNaN(new Date(date));
-const validatePositiveNumber = (num) => !isNaN(num) && Number(num) > 0;
-const validateAddressLength = (addr) => String(addr || "").trim().length >= 5 && String(addr || "").length <= 255;
-const validateNameLength = (name) => String(name || "").trim().length >= 2 && String(name || "").length <= 100;
-const validateFileSize = (bytes, maxMB = 5) => bytes <= (maxMB * 1024 * 1024);
-
-// Validation result object
-const validationError = (field, message) => ({ ok: false, field, message });
-const validationOk = () => ({ ok: true });
-
-// sameCustomer: unik berdasarkan phone + nama lengkap (case insensitive, trim)
-// "Bapak Dedy Jelita" vs "Bapak Dedy Aruna" = BEDA meski phone sama
-const sameCustomer = (c, phone, name) => {
-  if (!c || !phone || !name) return false;
-  return samePhone(c.phone, phone) &&
-    c.name.trim().toLowerCase() === name.trim().toLowerCase();
-};
-
-// findCustomer: cari customer paling tepat — prioritas (phone+name) > phone saja
-const findCustomer = (customers, phone, name) => {
-  if (!phone && !name) return null;
-  // 1. Exact match phone + nama lengkap
-  if (phone && name) {
-    const exact = customers.find(c => sameCustomer(c, phone, name));
-    if (exact) return exact;
-  }
-  // 2. Phone sama + nama depan sama (misal "Bapak Dedy" match "Bapak Dedy Jelita")
-  if (phone && name) {
-    const firstName = name.trim().toLowerCase().split(" ").slice(0, 2).join(" ");
-    const partial = customers.find(c =>
-      samePhone(c.phone, phone) &&
-      c.name.trim().toLowerCase().startsWith(firstName)
-    );
-    if (partial) return partial;
-  }
-  // 3. Phone saja (fallback — hanya jika nama tidak disediakan)
-  if (phone && !name) {
-    return customers.find(c => samePhone(c.phone, phone)) || null;
-  }
-  // 4. Nama saja (fallback terakhir)
-  if (name && !phone) {
-    return customers.find(c => c.name.trim().toLowerCase() === name.trim().toLowerCase()) || null;
-  }
-  return null;
-};
-
-const buildCustomerHistory = (customer, ordersData, laporanReports, invoicesData) => {
-  if (!customer) return [];
-  const nm = (s) => (s || "").trim().toLowerCase();
-  const matchName = (o) => nm(o.customer) === nm(customer.name);
-  const matchPhone = (o) => customer.phone && o.phone && samePhone(o.phone, customer.phone);
-
-  return ordersData
-    .filter(o => matchName(o) || matchPhone(o))
-    .map(o => {
-      // Cari laporan teknisi untuk job ini
-      const lap = laporanReports.find(r => r.job_id === o.id);
-      // Cari invoice untuk job ini (by job_id atau order_id)
-      const inv = invoicesData
-        ? invoicesData.find(i => i.job_id === o.id || i.order_id === o.id)
-        : null;
-      // unit_detail: array unit AC dari laporan — field dari mkUnit()
-      // { unit_no, label, tipe, merk, pk, kondisi_sebelum[], kondisi_setelah[], pekerjaan[], freon_ditambah, ampere_akhir, catatan_unit }
-      const unitDetail = lap?.units || [];
-      return {
-        // ── data dari orders ──
-        id: o.id,
-        job_id: o.id,
-        date: o.date,
-        service: o.service,
-        type: o.type || "",
-        units: o.units || 1,
-        teknisi: o.teknisi || "",
-        helper: o.helper || "",
-        status: o.status || "PENDING",
-        notes: o.notes || "",
-        area: o.area || "",
-        // ── data dari invoice ──
-        invoice_id: inv?.id || o.invoice_id || null,
-        invoice_total: inv?.total || 0,
-        invoice_status: inv?.status || null,
-        // ── data dari laporan teknisi ──
-        laporan_id: lap?.id || null,
-        laporan_status: lap?.status || null,
-        unit_detail: unitDetail,
-        materials: lap?.materials || [],
-        rekomendasi: lap?.rekomendasi || "",
-        catatan: lap?.catatan_global || "",
-        foto_urls: lap?.foto_urls
-          || (lap?.fotos || []).filter(f => f.url).map(f => f.url)
-          || (lap?.fotos || []).map(f => typeof f === "string" ? f : f.url).filter(Boolean)
-          || [],
-        total_freon: lap?.total_freon || 0,
-      };
-    })
-    .sort((a, b) => (b.date || "").localeCompare(a.date || "")); // terbaru dulu
-};
+// ── Helpers murni sudah dipindahkan ke src/lib/ (Stabilisasi #1 Fase 1):
+//    phone.js · dateTime.js · safeJson.js · validators.js · customers.js
+//    pricing.js · inventory.js · techColor.js
 const ORDERS_DATA = [
 ];
 
 const INVOICES_DATA = [
 ];
 
-// GAP 13 — Price list untuk auto-hitung invoice dari laporan
-// ── PRICE_LIST: default fallback (akan di-override oleh DB price_list tabel) ──
-const PRICE_LIST_DEFAULT = {
-  "Cleaning": {
-    "AC Split 0.5-1PK": 85000,
-    "AC Split 1.5-2.5PK": 100000,
-    "AC Cassette 2-2.5PK": 250000,
-    "AC Cassette 3PK": 300000,
-    "AC Cassette 4PK": 400000,
-    "AC Cassette 5PK": 500000,
-    "AC Cassette 6PK": 600000,
-    "AC Standing": 100000,
-    "AC Split Duct": 100000,
-    "Jasa Service Besar 0,5PK - 1PK": 400000,
-    "Jasa Service Besar 1,5PK - 2,5PK": 450000,
-    "default": 85000,
-  },
-  "Install": {
-    "Jasa Pergantian Instalasi AC": 300000,
-    "Pemasangan AC Baru 0,5PK - 1PK": 350000,
-    "Pemasangan AC Baru 1,5PK - 2PK": 400000,
-    "Pasang AC Split 3PK": 450000,
-    "Bongkar Pasang AC Split 1/2 - 1PK": 500000,
-    "Bongkar Pasang AC Split 1,5 - 2,5PK": 550000,
-    "Bongkar Unit AC 0.5-1PK": 150000,
-    "Bongkar Unit AC 1.5-2.5PK": 200000,
-    "Bongkar Pasang Indoor AC": 200000,
-    "Bongkar Pasang Outdoor AC": 200000,
-    "Jasa Vacum AC 0,5PK - 2,5PK": 50000,
-    "Jasa Vacum Unit AC >3PK": 150000,
-    "Jasa Penarikan Pipa AC": 25000,
-    "Jasa Penarikan Pipa Ruko": 35000,
-    "Pasang AC Cassette": 900000,
-    "Pasang AC Standing": 600000,
-    "Pemasangan AC Baru Apartemen": 350000,
-    "Jasa Instalasi Pipa AC": 200000,
-    "Jasa Instalasi Listrik": 150000,
-    "Flaring Pipa": 100000,
-    "Flushing Pipa": 200000,
-    "Jasa Bobok Tembok": 150000,
-    "Jasa Pengelasan Pipa AC": 100000,
-    "Jasa Pembuatan Saluran Pembuangan": 150000,
-    "default": 350000,
-  },
-  "Repair": {
-    "Biaya Pengecekan AC": 100000,
-    "Perbaikan Hermaplex": 150000,
-    "Jasa Pemasangan Sparepart": 250000,
-    "Perbaikan PCB/Elektrik": 250000,
-    "Pergantian Kapasitor Fan Indoor": 250000,
-    "Pergantian Sensor Indoor": 250000,
-    "Pergantian Overload Outdoor": 300000,
-    "Jasa Pemasangan Sparepart Daikin": 330000,
-    "Kapasitor AC 0.5-1.5PK": 350000,
-    "Pergantian Kapasitor Outdoor 1PK": 350000,
-    "Pergantian Modul Indoor Standart": 400000,
-    "Kapasitor AC 2-2.5PK": 450000,
-    "Pergantian Kapasitor Outdoor 1,5-2,5PK": 450000,
-    "Test Press Unit": 450000,
-    "Jasa Pemasangan Kompresor": 500000,
-    "Pergantian Modul Indoor Inverter": 500000,
-    "Kuras Vacum + Isi Freon R32/R410": 600000,
-    "Kuras Vacum Freon R22": 600000,
-    "default": 100000,
-  },
-  "Complain": {
-    "Garansi Servis (gratis)": 0,
-    "Komplain AC Tidak Dingin": 0,
-    "Komplain Bising/Berisik": 0,
-    "Komplain Bocor Air": 0,
-    "Komplain Garansi": 0,
-    "Komplain Setelah Servis": 0,
-    "Pengecekan AC Gratis": 0,
-    "Pengecekan Ulang": 0,
-    "default": 0,
-  },
-  // ✨ PHASE 3: Add Maintenance service support
-  "Maintenance": {
-    "Perawatan AC Preventif 0,5PK - 1PK": 150000,
-    "Perawatan AC Preventif 1,5PK - 2,5PK": 200000,
-    "Perawatan AC Musiman": 200000,
-    "Pemeriksaan Berkala AC": 100000,
-    "Pembersihan Filter AC": 50000,
-    "Penggantian Filter AC": 100000,
-    "Lubrikasi Kompresor": 250000,
-    "default": 150000,
-  },
-  "freon_R22": 450000,
-  "freon_R410A": 450000,
-  "freon_R32": 450000,
-};
-// PRICE_LIST akan di-replace oleh data DB setelah loadAll() — jangan edit langsung
+// PRICE_LIST mutable cache — di-hydrate dari DB via buildPriceListFromDB() setelah loadAll().
+// Jangan edit langsung; pakai setPriceList() untuk trigger re-assign.
 let PRICE_LIST = { ...PRICE_LIST_DEFAULT };
 
-// ── Helper: Map unit tipe → price bracket key (per-unit pricing) ──
-// Teknisi isi tipe di Report Card 1/4 → mapping ke bracket harga PRICE_LIST
-const tipeToPkNumber = (tipe) => {
-  if (!tipe) return 1;
-  const m = String(tipe).match(/([\d.,]+)\s*PK/i);
-  if (!m) return 1;
-  const num = parseFloat(m[1].replace(",", "."));
-  return isNaN(num) ? 1 : num;
-};
+// Wrapper: pass PRICE_LIST cache sebagai fallback ke lib pricing.
+const hargaPerUnitFromTipe = (service, tipe, priceListData = []) =>
+  hargaPerUnitFromTipeLib(service, tipe, priceListData, PRICE_LIST);
+const hitungLaborFromUnits = (service, units, priceListData = []) =>
+  hitungLaborFromUnitsLib(service, units, priceListData, PRICE_LIST);
+const buildPriceListFromDB = (rows) => buildPriceListFromDBLib(rows, PRICE_LIST_DEFAULT);
 
-const getBracketKey = (service, tipe) => {
-  const pk = tipeToPkNumber(tipe);
-  const t = String(tipe || "").toLowerCase();
-  const isCassette = t.includes("cassette");
-  const isDuct = t.includes("duct") || t.includes("standing");
-
-  if (service === "Cleaning") {
-    if (isCassette) {
-      if (pk <= 2.5) return "AC Cassette 2-2.5PK";
-      if (pk <= 3) return "AC Cassette 3PK";
-      if (pk <= 4) return "AC Cassette 4PK";
-      if (pk <= 5) return "AC Cassette 5PK";
-      return "AC Cassette 6PK";
-    }
-    if (isDuct) return "AC Split Duct";
-    if (pk <= 1) return "AC Split 0.5-1PK";
-    if (pk <= 2.5) return "AC Split 1.5-2.5PK";
-    return "AC Split 1.5-2.5PK";
-  }
-  if (service === "Install") {
-    if (pk <= 1) return "Pemasangan AC Baru 0,5PK - 1PK";
-    if (pk <= 2) return "Pemasangan AC Baru 1,5PK - 2PK";
-    return "Pasang AC Split 3PK";
-  }
-  if (service === "Maintenance") {
-    if (pk <= 1) return "Perawatan AC Preventif 0,5PK - 1PK";
-    return "Perawatan AC Preventif 1,5PK - 2,5PK";
-  }
-  return null;
-};
-
-// Harga per unit berdasarkan tipe (bracket PK) — untuk Cleaning/Install/Maintenance
-const hargaPerUnitFromTipe = (service, tipe, priceListData = []) => {
-  const bracket = getBracketKey(service, tipe);
-  if (!bracket) return 0;
-  // 1) Coba priceListData (live dari Supabase)
-  const dbRow = priceListData.find(r =>
-    r.is_active !== false && r.service === service && r.type === bracket);
-  if (dbRow && dbRow.price > 0) return Number(dbRow.price);
-  // 2) Fallback PRICE_LIST
-  return PRICE_LIST[service]?.[bracket] || PRICE_LIST[service]?.default || 85000;
-};
-
-// Hitung total labor berdasarkan array units (masing-masing punya tipe sendiri)
-const hitungLaborFromUnits = (service, units, priceListData = []) => {
-  if (!Array.isArray(units) || units.length === 0) return 0;
-  return units.reduce((sum, u) => sum + hargaPerUnitFromTipe(service, u.tipe, priceListData), 0);
-};
-
-// ── Freon helpers: decimal stock display + status logic ──
-const isFreonItem = (item) => {
-  if (!item) return false;
-  const n = String(item.name || "").toLowerCase();
-  const u = String(item.unit || "").toLowerCase();
-  return n.includes("freon") || n.includes("r-22") || n.includes("r-32") || n.includes("r-410")
-    || n.includes("r22") || n.includes("r32") || n.includes("r410") || u === "kg";
-};
-const displayStock = (item) => {
-  const s = Number(item?.stock ?? 0);
-  return isFreonItem(item) ? s.toFixed(1) : String(Math.floor(s));
-};
-// Status: 0 → OUT, ≤1 → CRITICAL, ≤reorder → WARNING, else OK
-const computeStockStatus = (stock, reorder = 5) => {
-  const s = Number(stock) || 0;
-  if (s === 0) return "OUT";
-  if (s <= 1) return "CRITICAL";
-  if (s <= (Number(reorder) || 5)) return "WARNING";
-  return "OK";
-};
-
-// ── buildPriceListFromDB: bangun PRICE_LIST dari data DB ──
-// Menggantikan 5 loader duplikat yang tersebar di kode
-// Normalisasi: service/type key dari DB di-trim & lowercase untuk match
-const buildPriceListFromDB = (rows) => {
-  const pl = { ...PRICE_LIST_DEFAULT };
-  const active = rows.filter(r => r.is_active !== false);
-  active.forEach(row => {
-    const price = Number(row.price) || 0;
-    const notes = (row.notes || "").trim().toLowerCase();
-    const svc = (row.service || "").trim();
-    const type = (row.type || "").trim();
-
-    // Freon: identifikasi via notes field
-    if (notes === "freon_r22" || notes === "freon_r22") { pl["freon_R22"] = price; return; }
-    if (notes === "freon_r410a" || notes === "freon_r410") { pl["freon_R410A"] = price; return; }
-    if (notes === "freon_r32") { pl["freon_R32"] = price; return; }
-
-    // Freon via service name (kalau ada row khusus freon di price_list)
-    if (svc.toLowerCase().includes("freon")) {
-      if (svc.toLowerCase().includes("r22")) { pl["freon_R22"] = price; return; }
-      if (svc.toLowerCase().includes("r32")) { pl["freon_R32"] = price; return; }
-      if (svc.toLowerCase().includes("r410")) { pl["freon_R410A"] = price; return; }
-    }
-
-    // Service/type normal
-    if (svc) {
-      if (!pl[svc]) pl[svc] = {};
-      if (type) pl[svc][type] = price;
-    }
-  });
-  return pl;
-};
-
-
-// ── Dynamic tech color — deterministik berdasarkan hash nama ──
-const TECH_PALETTE = [
-  "#38bdf8", "#22c55e", "#a78bfa", "#f59e0b", "#f97316",
-  "#ec4899", "#14b8a6", "#ef4444", "#84cc16", "#06b6d4",
-  "#8b5cf6", "#d946ef", "#fb923c", "#4ade80", "#60a5fa",
-];
-const getTechColor = (name, teknisiDataArr) => {
-  if (!name) return "#64748b";
-  const tekFromDB = (teknisiDataArr || []).find(t => t.name === name);
-  if (tekFromDB?.color) return tekFromDB.color;
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff;
-  return TECH_PALETTE[Math.abs(h) % TECH_PALETTE.length];
-};
+// getTechColor wrapper — signature sama.
+const getTechColor = (name, teknisiDataArr) => getTechColorFromLib(name, teknisiDataArr);
 
 const INVENTORY_DATA = [
 ];
