@@ -20,6 +20,20 @@ import {
 import { cs } from "./theme/cs.js";
 import { statusColor, statusLabel } from "./constants/status.js";
 import { SERVICE_TYPES } from "./constants/services.js";
+import {
+  fetchOrders, fetchInvoices, fetchCustomers, fetchInventory,
+  fetchServiceReports, fetchAgentLogs, fetchInventoryTransactions,
+  fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
+  fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
+  fetchWaConversations, fetchPriceList, fetchAraBrain,
+} from "./data/reads.js";
+import {
+  insertOrder, updateOrder, updateOrderStatus, deleteOrder,
+  insertInvoice, updateInvoice, markInvoicePaid, deleteInvoice,
+  updateServiceReport, deleteServiceReport,
+  insertExpense, updateExpense, deleteExpense,
+  insertCustomer, upsertCustomer, updateCustomer, deleteCustomer,
+} from "./data/writes.js";
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -847,7 +861,7 @@ export default function ACleanWebApp() {
   // ── FORCE RELOAD PRICE LIST: dipanggil dari tombol "Sync Harga" di panel ARA ──
   const forceReloadPriceList = async () => {
     try {
-      const { data, error } = await supabase.from("price_list").select("*").order("service").order("type");
+      const { data, error } = await fetchPriceList(supabase);
       if (error) { showNotif("❌ Gagal sync harga: " + error.message); return; }
       if (!data || data.length === 0) { showNotif("⚠️ Tabel price_list kosong di Supabase"); return; }
       setPriceListData(data);
@@ -1972,14 +1986,14 @@ ${matRowsHtml}
       const loadAll = async () => {
         // A.4 OPTIMIZATION: Add LIMIT to initial queries untuk faster page load
         const results = await Promise.allSettled([
-          supabase.from("orders").select("*").order("date", { ascending: false }).limit(500),
-          supabase.from("invoices").select("*").order("created_at", { ascending: false }).limit(300),
-          supabase.from("customers").select("*").order("name"),  // reference data, no limit
-          supabase.from("inventory").select("*").order("code"),  // reference data, no limit
-          supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }).limit(200),
-          supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(100),
-          supabase.from("inventory_transactions").select("*").order("created_at", { ascending: false }).limit(500),
-          supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label"),  // reference data
+          fetchOrders(supabase),
+          fetchInvoices(supabase),
+          fetchCustomers(supabase),
+          fetchInventory(supabase),
+          fetchServiceReports(supabase),
+          fetchAgentLogs(supabase),
+          fetchInventoryTransactions(supabase),
+          fetchInventoryUnits(supabase),
         ]);
         const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
         // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
@@ -2032,7 +2046,7 @@ ${matRowsHtml}
 
         // ── Load Expenses ──
         try {
-          const expRes = await supabase.from("expenses").select("*").order("date", { ascending: false });
+          const expRes = await fetchExpenses(supabase);
           if (!expRes.error && expRes.data) setExpensesData(expRes.data);
         } catch (e) { /* tabel belum ada, skip */ }
 
@@ -2045,8 +2059,8 @@ ${matRowsHtml}
         // GAP 3: Load payments summary & dispatch recent (untuk dashboard)
         try {
           const [payRes, dispRes] = await Promise.all([
-            supabase.from("payments").select("invoice_id,amount,method,paid_at").order("paid_at", { ascending: false }).limit(20),
-            supabase.from("dispatch_logs").select("order_id,teknisi,status,sent_at").order("sent_at", { ascending: false }).limit(30),
+            fetchPayments(supabase),
+            fetchDispatchLogs(supabase),
           ]);
           if (!payRes.error && payRes.data) setPaymentsData(payRes.data);
           if (!dispRes.error && dispRes.data) setDispatchLogs(dispRes.data);
@@ -2054,7 +2068,7 @@ ${matRowsHtml}
 
         // Load app_settings dari Supabase DB (backup dari localStorage)
         try {
-          const setRes = await supabase.from("app_settings").select("*");
+          const setRes = await fetchAppSettings(supabase);
           if (!setRes.error && setRes.data) {
             const sMap = Object.fromEntries(setRes.data.map(s => [s.key, s.value]));
             // ── FIXED: Load dari DB dan LOG untuk debugging ──
@@ -2121,7 +2135,7 @@ ${matRowsHtml}
 
         // Load Teknisi dari Supabase — fallback ke TEKNISI_DATA jika kosong/error
         try {
-          const tekRes = await supabase.from("user_profiles").select("*").order("name");
+          const tekRes = await fetchUserProfiles(supabase);
           if (!tekRes.error && tekRes.data && tekRes.data.length > 0) {
             const tekList = tekRes.data.filter(u => {
               const r = (u.role || "").toLowerCase();
@@ -2143,8 +2157,7 @@ ${matRowsHtml}
 
         // Load Owner & Admin → userAccounts (dari user_profiles yang sama)
         try {
-          const uaRes = await supabase.from("user_profiles").select("*")
-            .in("role", ["Owner", "Admin", "owner", "admin"]).order("name");
+          const uaRes = await fetchUserAccounts(supabase);
           if (!uaRes.error && uaRes.data && uaRes.data.length > 0) {
             const roleColors = { owner: "#f59e0b", admin: "#38bdf8" };
             const normalized = uaRes.data.map(u => ({
@@ -2163,13 +2176,13 @@ ${matRowsHtml}
 
         // Load WA conversations dari Supabase (tabel opsional)
         try {
-          const waRes = await supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false }).limit(50);
+          const waRes = await fetchWaConversations(supabase, 50);
           if (!waRes.error && waRes.data && waRes.data.length > 0) setWaConversations(waRes.data);
         } catch (e) { /* WA tabel belum ada - skip */ }
 
         // ── GAP-03 FIX + PriceList state: Load price_list dari DB ──
         try {
-          const plRes = await supabase.from("price_list").select("*").order("service").order("type");
+          const plRes = await fetchPriceList(supabase);
           if (!plRes.error && plRes.data && plRes.data.length > 0) {
             // Set state untuk renderPriceList UI
             setPriceListData(plRes.data);
@@ -2183,7 +2196,7 @@ ${matRowsHtml}
 
         // ── BRAIN LOAD: Baca brain.md & brain_customer dari Supabase ara_brain ──
         try {
-          const brainRes = await supabase.from("ara_brain").select("key,value");
+          const brainRes = await fetchAraBrain(supabase);
           if (!brainRes.error && brainRes.data && brainRes.data.length > 0) {
             const brainMap = Object.fromEntries(brainRes.data.map(r => [r.key, r.value]));
             // Load dari DB, TAPI skip jika v4.0 (use hardcoded v5.1 instead)
@@ -2241,9 +2254,7 @@ ${matRowsHtml}
           console.log(`⏱️ Auto-verify: ${staleLaporan.length} laporan > 48 jam ditemukan`);
           for (const r of staleLaporan) {
             try {
-              await supabase.from("service_reports").update({
-                status: "VERIFIED"
-              }).eq("id", r.id);
+              await updateServiceReport(supabase, r.id, { status: "VERIFIED" }, "system_auto_verify");
               setLaporanReports(prev => prev.map(x =>
                 x.id === r.id ? {
                   ...x, status: "VERIFIED",
@@ -2288,8 +2299,7 @@ ${matRowsHtml}
     const ch1 = supabase.channel("rt-orders")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () =>
         rtDebounced("orders", () =>
-          supabase.from("orders").select("*").order("date", { ascending: false }).limit(500)
-            .then(({ data }) => { if (data) setOrdersData(data); })
+          fetchOrders(supabase).then(({ data }) => { if (data) setOrdersData(data); })
         ))
       .subscribe((status) => {
         if (status === "SUBSCRIBED") console.log("✅ RT orders connected");
@@ -2300,8 +2310,7 @@ ${matRowsHtml}
     const ch2 = supabase.channel("rt-invoices")
       .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, () =>
         rtDebounced("invoices", () =>
-          supabase.from("invoices").select("*").order("created_at", { ascending: false }).limit(300)
-            .then(({ data }) => {
+          fetchInvoices(supabase).then(({ data }) => {
               if (data) setInvoicesData(data.map(inv => ({
                 ...inv,
                 materials_detail: (() => {
@@ -2318,8 +2327,7 @@ ${matRowsHtml}
           console.warn("⚠️ RT invoices error — fallback polling aktif");
           // Polling manual setiap 30 detik
           if (window._rtPoll_1617) clearInterval(window._rtPoll_1617);
-          window._rtPoll_1617 = setInterval(() => supabase.from("invoices").select("*")
-            .order("created_at", { ascending: false }).limit(300)
+          window._rtPoll_1617 = setInterval(() => fetchInvoices(supabase)
             .then(({ data }) => {
               if (data) setInvoicesData(data.map(inv => ({
                 ...inv,
@@ -2333,8 +2341,7 @@ ${matRowsHtml}
     const ch3 = supabase.channel("rt-laporan")
       .on("postgres_changes", { event: "*", schema: "public", table: "service_reports" }, () =>
         rtDebounced("laporan", () =>
-          supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }).limit(200)
-            .then(({ data }) => {
+          fetchServiceReports(supabase).then(({ data }) => {
               if (data && data.length > 0) {
                 const mapped = data.map(r => ({
                   ...r,
@@ -2357,8 +2364,7 @@ ${matRowsHtml}
         if (status === "CHANNEL_ERROR") {
           console.warn("⚠️ RT laporan error — fallback polling aktif");
           if (window._rtPoll_1645) clearInterval(window._rtPoll_1645);
-          window._rtPoll_1645 = setInterval(() => supabase.from("service_reports").select("*")
-            .order("submitted_at", { ascending: false }).limit(200)
+          window._rtPoll_1645 = setInterval(() => fetchServiceReports(supabase)
             .then(({ data }) => {
               if (data) {
                 const mapped = data.map(r => ({
@@ -2383,8 +2389,7 @@ ${matRowsHtml}
     const ch4 = supabase.channel("rt-pricelist")
       .on("postgres_changes", { event: "*", schema: "public", table: "price_list" }, () =>
         rtDebounced("pricelist", () =>
-          supabase.from("price_list").select("*").order("service").order("type")
-            .then(({ data }) => {
+          fetchPriceList(supabase).then(({ data }) => {
               if (data) {
                 setPriceListData(data);
                 const activePL = data.filter(r => r.is_active !== false);
@@ -2397,8 +2402,7 @@ ${matRowsHtml}
         if (status === "CHANNEL_ERROR") {
           console.warn("⚠️ RT pricelist error — fallback polling aktif");
           if (window._rtPoll_1673) clearInterval(window._rtPoll_1673);
-          window._rtPoll_1673 = setInterval(() => supabase.from("price_list").select("*")
-            .order("service").order("type")
+          window._rtPoll_1673 = setInterval(() => fetchPriceList(supabase)
             .then(({ data }) => {
               if (data) {
                 setPriceListData(data);
@@ -2412,8 +2416,7 @@ ${matRowsHtml}
     const ch5 = supabase.channel("rt-inventory")
       .on("postgres_changes", { event: "*", schema: "public", table: "inventory" }, () =>
         rtDebounced("inventory", () =>
-          supabase.from("inventory").select("*").order("code")
-            .then(({ data }) => { if (data) setInventoryData(data); })
+          fetchInventory(supabase).then(({ data }) => { if (data) setInventoryData(data); })
         ))
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") console.warn("⚠️ RT inventory error — skip");
@@ -2423,8 +2426,7 @@ ${matRowsHtml}
     const ch6 = supabase.channel("rt-customers")
       .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, () =>
         rtDebounced("customers", () =>
-          supabase.from("customers").select("*").order("name")
-            .then(({ data }) => { if (data) setCustomersData(data); })
+          fetchCustomers(supabase).then(({ data }) => { if (data) setCustomersData(data); })
         ))
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") console.warn("⚠️ RT customers error — skip");
@@ -2435,7 +2437,7 @@ ${matRowsHtml}
     try {
       ch7 = supabase.channel("rt-wa-conv")
         .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, () =>
-          supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
+          fetchWaConversations(supabase, null)
             .then(({ data, error }) => { if (data && !error) setWaConversations(data); }))
         .subscribe((status) => {
           if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
@@ -2450,7 +2452,7 @@ ${matRowsHtml}
             if (prev[0]?.phone === phone) return [...prev, payload.new];
             return prev;
           });
-          supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false })
+          fetchWaConversations(supabase, null)
             .then(({ data, error }) => { if (data && !error) setWaConversations(data); });
         })
         .subscribe((status) => {
@@ -2553,7 +2555,7 @@ ${matRowsHtml}
   const dispatchStatus = async (order) => {
     const dispatchAt = new Date().toISOString();
     setOrdersData(prev => prev.map(o => o.id === order.id ? { ...o, dispatch: true, dispatch_at: dispatchAt, status: "DISPATCHED" } : o));
-    await supabase.from("orders").update({ dispatch: true, dispatch_at: dispatchAt, status: "DISPATCHED" }).eq("id", order.id);
+    await updateOrderStatus(supabase, order.id, "DISPATCHED", auditUserName(), { dispatch: true, dispatch_at: dispatchAt });
     const dispTek = teknisiData.find(t => t.name === order.teknisi);
     if (dispTek?.id) {
       setTeknisiData(prev => prev.map(t => t.name === order.teknisi ? { ...t, status: "on-job" } : t));
@@ -2764,28 +2766,23 @@ ${matRowsHtml}
     await setAuditUser();
     // Update invoice — try full, fallback minimal
     {
-      const { error: apErr } = await supabase.from("invoices").update({
+      const { error: apErr } = await updateInvoice(supabase, inv.id, {
         status: "UNPAID", sent: true, due,
         approved_by: currentUser?.name || null,
         approved_at: approvedAt,
-        last_changed_by: auditUserName(),
-      }).eq("id", inv.id);
+      }, auditUserName());
       if (apErr) {
         console.warn("invoice approve full failed:", apErr.message);
-        // Fallback: only safe columns
-        const { error: apErr2 } = await supabase.from("invoices").update({
-          status: "UNPAID",
-          last_changed_by: auditUserName(),
-        }).eq("id", inv.id);
+        const { error: apErr2 } = await updateInvoice(supabase, inv.id, { status: "UNPAID" }, auditUserName());
         if (apErr2) console.error("invoice approve minimal failed:", apErr2.message);
       }
     }
     // Update order status — with fallback
     {
-      const { error: oErr } = await supabase.from("orders").update({ invoice_id: inv.id, status: "INVOICE_APPROVED", last_changed_by: auditUserName() }).eq("id", inv.job_id);;
+      const { error: oErr } = await updateOrderStatus(supabase, inv.job_id, "INVOICE_APPROVED", auditUserName(), { invoice_id: inv.id });
       if (oErr) {
         console.warn("orders INVOICE_APPROVED failed:", oErr.message);
-        await supabase.from("orders").update({ status: "COMPLETED", last_changed_by: auditUserName() }).eq("id", inv.job_id);
+        await updateOrderStatus(supabase, inv.job_id, "COMPLETED", auditUserName());
       }
     }
     addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} approve oleh ${currentUser?.name || "—"} — ${inv.customer} ${fmt(inv.total)}`, "SUCCESS");
@@ -2840,10 +2837,10 @@ ${matRowsHtml}
     ));
     await setAuditUser();
     {
-      const { error: mpErr } = await supabase.from("invoices").update({ status: "PAID", paid_at: paidAt, last_changed_by: auditUserName() }).eq("id", inv.id);
+      const { error: mpErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName());
       if (mpErr) {
         console.warn("mark paid with paid_at failed:", mpErr.message);
-        await supabase.from("invoices").update({ status: "PAID", last_changed_by: auditUserName() }).eq("id", inv.id);
+        await updateInvoice(supabase, inv.id, { status: "PAID" }, auditUserName());
       }
     }
 
@@ -2992,7 +2989,7 @@ ${matRowsHtml}
 
     // Attempt 1: full payload
     {
-      const { error: e1 } = await supabase.from("orders").insert(newOrder);
+      const { error: e1 } = await insertOrder(supabase, newOrder);
       if (!e1) { orderSaved = true; console.log("✅ Order saved full:", newOrder.id); }
       else console.warn("❌ A1 full:", e1.message, "| hint:", e1.hint, "| detail:", e1.details);
     }
@@ -3006,7 +3003,7 @@ ${matRowsHtml}
         helper: newOrder.helper, time: newOrder.time, time_end: newOrder.time_end,
         customer_id: newOrder.customer_id,
       };
-      const { error: e2 } = await supabase.from("orders").insert(safe2);
+      const { error: e2 } = await insertOrder(supabase, safe2);
       if (!e2) { orderSaved = true; console.log("✅ Order saved safe2:", newOrder.id); }
       else console.warn("❌ A2 safe:", e2.message, "| hint:", e2.hint);
     }
@@ -3017,7 +3014,7 @@ ${matRowsHtml}
         id: newOrder.id, date: newOrder.date,
         service: newOrder.service, units: newOrder.units, status: newOrder.status
       };
-      const { error: e3 } = await supabase.from("orders").insert(minimal);
+      const { error: e3 } = await insertOrder(supabase, minimal);
       if (!e3) { orderSaved = true; console.log("✅ Order saved minimal:", newOrder.id); }
       else {
         console.error("❌ A3 minimal:", e3.message, "| hint:", e3.hint, "| detail:", e3.details);
@@ -3056,9 +3053,9 @@ ${matRowsHtml}
       setOrdersData(prev => prev.map(o =>
         o.id === newId ? { ...o, status: "DISPATCHED", dispatch: true, dispatch_at: new Date().toISOString() } : o
       ));
-      await supabase.from("orders").update({
-        status: "DISPATCHED", dispatch: true, dispatch_at: new Date().toISOString()
-      }).eq("id", newId);
+      await updateOrderStatus(supabase, newId, "DISPATCHED", auditUserName(), {
+        dispatch: true, dispatch_at: new Date().toISOString()
+      });
 
       // Kirim WA ke teknisi (dan helper jika ada) + customer
       await sendDispatchWA(newOrder);
@@ -3149,7 +3146,7 @@ ${matRowsHtml}
   const connectAraBrain = async () => {
     setAraLoading(true);
     try {
-      const { data: brainData } = await supabase.from("ara_brain").select("key,value");
+      const { data: brainData } = await fetchAraBrain(supabase);
       const brainMap = Object.fromEntries((brainData || []).map(row => [row.key, row.value]));
 
       if (!brainMap.brain_md || brainMap.brain_md.length < 10) {
@@ -3367,7 +3364,7 @@ ${matRowsHtml}
           if (act.type === "UPDATE_INVOICE") {
             setInvoicesData(prev => prev.map(i => { if (i.id !== act.id) return i; const u = { ...i, [act.field]: act.value }; u.total = (u.labor || 0) + (u.material || 0) + (u.dadakan || 0); return u; }));
             await setAuditUser();
-            await supabase.from("invoices").update({ [act.field]: act.value, last_changed_by: auditUserName() }).eq("id", act.id);
+            await updateInvoice(supabase, act.id, { [act.field]: act.value }, auditUserName());
             addAgentLog("ARA_ACTION", `ARA update ${act.id}: ${act.field}=${fmt(act.value)}`, "SUCCESS");
             ar = `\n✅ *Invoice ${act.id} diupdate — ${act.field}: ${fmt(act.value)}*`;
           } else if (act.type === "MARK_PAID") {
@@ -3382,7 +3379,7 @@ ${matRowsHtml}
           } else if (act.type === "UPDATE_ORDER_STATUS") {
             setOrdersData(prev => prev.map(o => o.id === act.id ? { ...o, status: act.status } : o));
             await setAuditUser();
-            await supabase.from("orders").update({ status: act.status, last_changed_by: auditUserName() }).eq("id", act.id);
+            await updateOrderStatus(supabase, act.id, act.status, auditUserName());
             addAgentLog("ARA_ACTION", `ARA update status ${act.id} → ${act.status}`, "SUCCESS");
             ar = `\n✅ *Order ${act.id} → ${act.status}*`;
           } else if (act.type === "DISPATCH_WA") {
@@ -3417,7 +3414,7 @@ ${matRowsHtml}
                 ar = `\n✅ *Stok ${item.name} diupdate → ${newStock} ${item.unit}*`;
               } else {
                 // Reload inventory dari DB setelah trigger update
-                const { data: freshInv } = await supabase.from("inventory").select("*").order("code");
+                const { data: freshInv } = await fetchInventory(supabase);
                 if (freshInv) setInventoryData(freshInv);
                 const newStock = item.stock + delta;
                 ar = `\n✅ *Stok ${item.name} ${delta >= 0 ? "ditambah +" + delta : "dikurangi " + delta} → ${newStock} ${item.unit}*`;
@@ -3469,7 +3466,7 @@ ${matRowsHtml}
               }
             }
             setOrdersData(prev => [...prev, newOrd]);
-            const { error: oErr } = await supabase.from("orders").insert(newOrd);
+            const { error: oErr } = await insertOrder(supabase, newOrd);
             if (oErr) console.warn("Create order DB:", oErr.message);
             addAgentLog("ARA_CREATE_ORDER", "ARA buat order " + newId + " untuk " + newOrd.customer, "SUCCESS");
 
@@ -3485,9 +3482,10 @@ ${matRowsHtml}
                 };
                 setCustomersData(prev => [...prev, newCust]);
                 try {
-                  await supabase.from("customers").upsert(
+                  await upsertCustomer(
+                    supabase,
                     { name: newOrd.customer, phone: newOrd.phone, address: newOrd.address || "", joined_date: newOrd.date },
-                    { onConflict: "phone", ignoreDuplicates: false }
+                    "phone"
                   );
                 } catch (e) { console.warn("Customer upsert:", e?.message); }
                 ar += "\n👤 *Customer baru ditambahkan: " + newOrd.customer + "*";
@@ -3619,17 +3617,17 @@ ${matRowsHtml}
                 sent: false, created_at: getLocalISOString()
               };
               setInvoicesData(prev => [...prev, newInv]);
-              const { error: invErr } = await supabase.from("invoices").insert(newInv);
+              const { error: invErr } = await insertInvoice(supabase, newInv);
               if (invErr) console.warn("Create invoice DB:", invErr.message);
               // Link invoice ke order
               setOrdersData(prev => prev.map(o => o.id === ord.id ? { ...o, invoice_id: invId } : o));
-              await supabase.from("orders").update({ invoice_id: invId }).eq("id", ord.id);
+              await updateOrder(supabase, ord.id, { invoice_id: invId }, auditUserName());
               addAgentLog("ARA_CREATE_INVOICE", "ARA buat invoice " + invId + " dari " + ord.id + " — " + newInv.customer, "SUCCESS");
               ar = "\n✅ *Invoice " + invId + " dibuat untuk " + newInv.customer + " — Total: " + (newInv.total || 0).toLocaleString("id-ID") + "*";
             }
           } else if (act.type === "CANCEL_ORDER") {
             setOrdersData(prev => prev.map(o => o.id === act.id ? { ...o, status: "CANCELLED" } : o));
-            await supabase.from("orders").update({ status: "CANCELLED" }).eq("id", act.id);
+            await updateOrderStatus(supabase, act.id, "CANCELLED", auditUserName());
             addAgentLog("ARA_CANCEL", `ARA cancel order ${act.id}: ${act.reason || ""}`, "WARNING");
             ar = `\n✅ *Order ${act.id} dibatalkan*${act.reason ? " — " + act.reason : ""}`;
           } else if (act.type === "RESCHEDULE_ORDER") {
@@ -3652,7 +3650,7 @@ ${matRowsHtml}
               ar = `\n⚠️ *Konflik Jadwal Reschedule!*\n\nTeknisi *${tekForReschedule}* sudah ada job di *${act.date} jam ${act.time}*:\n${typeof rescheduleConflict === "string" ? rescheduleConflict : "Ada order lain di waktu tersebut"}\n\n*Apakah tetap ingin reschedule?* (ketik: "ya, tetap reschedule ORD-xxx" atau pilih waktu lain)`;
             } else {
               setOrdersData(prev => prev.map(o => o.id === act.id ? { ...o, ...upd } : o));
-              await supabase.from("orders").update(upd).eq("id", act.id);
+              await updateOrder(supabase, act.id, upd, auditUserName());
               // Auto-kirim WA notifikasi reschedule ke teknisi
               const rOrd = ordersData.find(o => o.id === act.id);
               if (rOrd) {
@@ -3731,7 +3729,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               ar = "\n⚠️ *Jumlah biaya (amount) wajib diisi*";
             } else {
               await setAuditUser();
-              const { data: expData, error: expErr } = await supabase.from("expenses").insert(expPayload).select().single();
+              const { data: expData, error: expErr } = await insertExpense(supabase, expPayload);
               if (expErr) {
                 ar = `\n⚠️ *Gagal catat biaya: ${expErr.message}*`;
               } else {
@@ -3783,7 +3781,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   if (avH) bOrd.helper = avH.name;
                 }
                 setOrdersData(prev => [...prev, bOrd]);
-                const { error: bErr } = await supabase.from("orders").insert(bOrd);
+                const { error: bErr } = await insertOrder(supabase, bOrd);
                 results.push({ id: bId, customer: bOrd.customer, service: bOrd.service, date: bOrd.date, ok: !bErr });
                 // Small delay agar ID unik
                 await new Promise(r => setTimeout(r, 60));
@@ -4445,10 +4443,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>
             {selectedCustomer ? (
-              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <button onClick={() => { setSelectedCustomer(null); setCustomerTab("list"); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>← Kembali</button>
                 <span>👤 {selectedCustomer.name}</span>
                 {selectedCustomer.is_vip && <span style={{ background: cs.yellow + "22", color: cs.yellow, fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 99, border: "1px solid " + cs.yellow + "44" }}>⭐ VIP</span>}
+                {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                  <button onClick={() => { setNewCustomerForm({ name: selectedCustomer.name, phone: selectedCustomer.phone, address: selectedCustomer.address, area: selectedCustomer.area, notes: selectedCustomer.notes || "", is_vip: selectedCustomer.is_vip }); setModalAddCustomer(true); }}
+                    style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✏️ Edit</button>
+                )}
               </span>
             ) : "👥 Data Customer"}
           </div>
@@ -4549,7 +4551,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             confirmText: "Hapus"
                           })) return;
                           setCustomersData(prev => prev.filter(c => c.id !== cu.id));
-                          const { error } = await supabase.from("customers").delete().eq("id", cu.id);
+                          const { error } = await deleteCustomer(supabase, cu.id);
                           if (error) showNotif("⚠️ " + error.message);
                           else { addAgentLog("CUSTOMER_DELETED", cu.name + " dihapus", "WARNING"); showNotif("🗑️ Dihapus"); }
                         }} style={{
@@ -4847,7 +4849,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       }))
                         setCustomersData(prev => prev.map(cu => cu.id === selectedCustomer.id ? { ...cu, is_vip: !cu.is_vip } : cu));
                       setSelectedCustomer(prev => ({ ...prev, is_vip: !prev.is_vip }));
-                      supabase.from("customers").update({ is_vip: !selectedCustomer.is_vip }).eq("id", selectedCustomer.id);
+                      updateCustomer(supabase, selectedCustomer.id, { is_vip: !selectedCustomer.is_vip });
                       showNotif(selectedCustomer.name + (selectedCustomer.is_vip ? " diturunkan ke Regular" : " dijadikan VIP ⭐"));
                     }}
                       style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>{selectedCustomer.is_vip ? "⭐ Hapus VIP" : "⭐ Jadikan VIP"}</button>
@@ -5096,7 +5098,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             showNotif("❌ Admin tidak bisa hapus order yang sudah selesai. Hubungi Owner.");
                             return;
                           }
-                          const { error: delErr } = await supabase.from("orders").delete().eq("id", o.id);
+                          const { error: delErr } = await deleteOrder(supabase, o.id, auditUserName());
                           if (delErr) { showNotif("❌ Gagal hapus: " + delErr.message); return; }
                           try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch (_) { }
                           setOrdersData(prev => prev.filter(x => x.id !== o.id));
@@ -5440,9 +5442,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         setOrdersData(prev => prev.map(o => o.id === inv.job_id
                           ? { ...o, status: "PAID" } : o));
 
-                        const { error: upErr } = await supabase.from("invoices").update({ status: "PAID", paid_at: paidAt }).eq("id", inv.id);
+                        const { error: upErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName());
                         if (!upErr) {
-                          await supabase.from("orders").update({ status: "PAID" }).eq("id", inv.job_id);
+                          await updateOrderStatus(supabase, inv.job_id, "PAID", auditUserName());
                           addAgentLog("REPAIR_GRATIS_APPROVED",
                             `Invoice ${inv.id} (${inv.repair_gratis}) APPROVED & PAID oleh ${currentUser?.name}. Tidak ada WA terkirim.`,
                             "SUCCESS");
@@ -5458,8 +5460,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           confirmText: "Tolak & Hapus"
                         })) return;
                         setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
-                        await supabase.from("invoices").delete().eq("id", inv.id);
-                        if (inv.job_id) await supabase.from("orders").update({ status: "COMPLETED", invoice_id: null }).eq("id", inv.job_id);
+                        await deleteInvoice(supabase, inv.id, auditUserName());
+                        if (inv.job_id) await updateOrderStatus(supabase, inv.job_id, "COMPLETED", auditUserName(), { invoice_id: null });
                         addAgentLog("REPAIR_GRATIS_REJECTED", `Invoice ${inv.id} repair gratis REJECTED oleh ${currentUser?.name}`, "WARNING");
                         showNotif(`❌ Repair gratis ditolak — laporan ${inv.job_id} kembali ke COMPLETED`);
                         // Navigate to laporan page for quick edit
@@ -5494,13 +5496,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             confirmText: "Override Gratis & Lunas"
                           })) return;
                           const paidAt = new Date().toISOString();
-                          const upd = { total: 0, labor: 0, material: 0, dadakan: 0, garansi_status: "GARANSI_OVERRIDE_FREE", status: "PAID", paid_at: paidAt, last_changed_by: auditUserName() };
+                          const upd = { total: 0, labor: 0, material: 0, dadakan: 0, garansi_status: "GARANSI_OVERRIDE_FREE", status: "PAID", paid_at: paidAt };
                           setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
                           setOrdersData(prev => prev.map(o => o.id === inv.job_id ? { ...o, status: "PAID" } : o));
-                          await setAuditUser();
-                          const { error } = await supabase.from("invoices").update(upd).eq("id", inv.id);
+                          const { error } = await updateInvoice(supabase, inv.id, upd, auditUserName());
                           if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
-                          if (inv.job_id) await supabase.from("orders").update({ status: "PAID", last_changed_by: auditUserName() }).eq("id", inv.job_id);
+                          if (inv.job_id) await updateOrderStatus(supabase, inv.job_id, "PAID", auditUserName());
                           addAgentLog("COMPLAIN_OVERRIDE_FREE", `Invoice ${inv.id} override GRATIS & LUNAS oleh ${currentUser?.name}`, "SUCCESS");
                           showNotif("✅ Invoice di-override GRATIS dan dicatat LUNAS");
                         }} style={{ flex: 1, background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
@@ -5512,10 +5513,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             message: `Ubah invoice ${inv.id} menjadi BERBAYAR?\n\nJika total sekarang Rp 0, silakan edit nilai dulu via tombol Edit Nilai.`,
                             confirmText: "Override Berbayar"
                           })) return;
-                          const upd = { garansi_status: "GARANSI_OVERRIDE_PAID", last_changed_by: auditUserName() };
+                          const upd = { garansi_status: "GARANSI_OVERRIDE_PAID" };
                           setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
-                          await setAuditUser();
-                          const { error } = await supabase.from("invoices").update(upd).eq("id", inv.id);
+                          const { error } = await updateInvoice(supabase, inv.id, upd, auditUserName());
                           if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
                           addAgentLog("COMPLAIN_OVERRIDE_PAID", `Invoice ${inv.id} di-override BERBAYAR oleh ${currentUser?.name}`, "INFO");
                           showNotif("✅ Invoice di-override menjadi BERBAYAR — edit nilai jika perlu sebelum approve");
@@ -5560,10 +5560,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       confirmText: "Hapus Permanen"
                     })) return;
                     setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
-                    await supabase.from("invoices").update({ last_changed_by: auditUserName() }).eq("id", inv.id);
-                    const { error } = await supabase.from("invoices").delete().eq("id", inv.id);
+                    const { error } = await deleteInvoice(supabase, inv.id, auditUserName());
                     if (error) { showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message); return; }
-                    if (inv.job_id) await supabase.from("orders").update({ status: "COMPLETED", invoice_id: null, last_changed_by: auditUserName() }).eq("id", inv.job_id);
+                    if (inv.job_id) await updateOrderStatus(supabase, inv.job_id, "COMPLETED", auditUserName(), { invoice_id: null });
                     addAgentLog("INVOICE_DELETED", `Invoice ${inv.id} (${inv.customer}) dihapus oleh ${currentUser?.name}`, "WARNING");
                     showNotif("🗑️ Invoice " + inv.id + " berhasil dihapus");
                   }} style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🗑️ Hapus Invoice</button>
@@ -5753,7 +5752,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={async () => {
-                const { data } = await supabase.from("price_list").select("*").order("service").order("type");
+                const { data } = await fetchPriceList(supabase);
                 if (data) { setPriceListData(data); showNotif("✅ Price list di-refresh dari DB"); }
               }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "8px 16px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
                 🔄 Refresh
@@ -6272,7 +6271,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         <>
                           {o.status !== "ON_SITE" && (
                             <button onClick={async () => {
-                              await supabase.from("orders").update({ status: "ON_SITE" }).eq("id", o.id);
+                              await updateOrderStatus(supabase, o.id, "ON_SITE", auditUserName());
                               setOrdersData(prev => prev.map(ord => ord.id === o.id ? { ...ord, status: "ON_SITE" } : ord));
                               showNotif("✅ Status → On Site!");
                               const admins = teknisiData.filter(u => u.role === "Admin" || u.role === "Owner")
@@ -6460,7 +6459,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                     message: `Hapus order ${o.id} — ${o.customer}?\nOrder COMPLETED/PAID tidak bisa dihapus.`,
                                     confirmText: "Hapus"
                                   })) return;
-                                  const { error: delOrdErr } = await supabase.from("orders").delete().eq("id", o.id);
+                                  const { error: delOrdErr } = await deleteOrder(supabase, o.id, auditUserName());
                                   if (delOrdErr) { showNotif("❌ Gagal hapus order: " + delOrdErr.message); return; }
                                   // Hapus schedule terkait
                                   try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch (_) { }
@@ -6492,7 +6491,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                 {/* ── Konfirmasi Tiba: 1 tombol, update status ON_SITE, tanpa WA Admin ── */}
                                 {o.status !== "ON_SITE" && (
                                   <button onClick={async () => {
-                                    await supabase.from("orders").update({ status: "ON_SITE", on_site_at: new Date().toISOString() }).eq("id", o.id);
+                                    await updateOrderStatus(supabase, o.id, "ON_SITE", auditUserName(), { on_site_at: new Date().toISOString() });
                                     setOrdersData(prev => prev.map(ord => ord.id === o.id ? { ...ord, status: "ON_SITE" } : ord));
                                     showNotif("✅ Status → Sudah di Lokasi!");
                                     addAgentLog("ON_SITE", `${currentUser?.name} tiba di lokasi — ${o.id}`, "SUCCESS");
@@ -8048,11 +8047,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <button onClick={async () => {
                     // ── SIM-10: Verify laporan + AUTO-CREATE invoice ──
                     setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "VERIFIED" } : x));
-                    await setAuditUser();
-                    const { error: vErr } = await supabase.from("service_reports").update({
-                      status: "VERIFIED",
-                      last_changed_by: auditUserName(),
-                    }).eq("id", r.id);
+                    const { error: vErr } = await updateServiceReport(supabase, r.id, { status: "VERIFIED" }, auditUserName());
                     if (vErr) {
                       console.warn("❌ verify laporan failed:", vErr.message);
                       await supabase.from("service_reports").update({ status: "VERIFIED" }).eq("id", r.id).catch(e => console.warn("retry also failed:", e.message));
@@ -8169,14 +8164,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       // 1 invoice per job — hapus invoice lama jika ada
                       const oldInvs = invoicesData.filter(inv => inv.job_id === r.job_id);
                       if (oldInvs.length > 0) {
-                        await Promise.all(oldInvs.map(oi => supabase.from("invoices").delete().eq("id", oi.id)));
+                        await Promise.all(oldInvs.map(oi => deleteInvoice(supabase, oi.id, auditUserName())));
                         setInvoicesData(prev => prev.filter(inv => inv.job_id !== r.job_id));
                       }
                       setInvoicesData(prev => [...prev, newInv]);
-                      const { error: iErr } = await supabase.from("invoices").insert(newInv);
+                      const { error: iErr } = await insertInvoice(supabase, newInv);
                       if (iErr) showNotif("⚠️ Invoice gagal simpan: " + iErr.message);
                       else {
-                        await supabase.from("orders").update({ invoice_id: invId }).eq("id", r.job_id);
+                        await updateOrder(supabase, r.job_id, { invoice_id: invId }, auditUserName());
                         setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, invoice_id: invId } : o));
                         addAgentLog("AUTO_INVOICE", `Invoice ${invId} auto-dibuat dari laporan ${r.job_id}`, "SUCCESS");
                         showNotif(`✅ Invoice ${invId} dibuat (${fmt(totalInv)}) — tunggu approval Owner/Admin`);
@@ -8188,8 +8183,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✅ Verifikasi</button>
                   <button onClick={async () => {
                     setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "REVISION" } : x));
-                    await setAuditUser();
-                    const { error: revErr } = await supabase.from("service_reports").update({ status: "REVISION", last_changed_by: auditUserName() }).eq("id", r.id);
+                    const { error: revErr } = await updateServiceReport(supabase, r.id, { status: "REVISION" }, auditUserName());
                     if (revErr) {
                       console.warn("❌ update REVISION failed:", revErr.message);
                       addAgentLog("LAPORAN_UPDATE_ERROR", `Update status REVISION gagal: ${revErr.message.slice(0, 80)}`, "WARNING");
@@ -8207,8 +8201,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   }} style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Minta Revisi</button>
                   <button onClick={async () => {
                     setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "REJECTED" } : x));
-                    await setAuditUser();
-                    const { error: rejErr } = await supabase.from("service_reports").update({ status: "REJECTED", last_changed_by: auditUserName() }).eq("id", r.id);
+                    const { error: rejErr } = await updateServiceReport(supabase, r.id, { status: "REJECTED" }, auditUserName());
                     if (rejErr) {
                       console.warn("❌ update REJECTED failed:", rejErr.message);
                       addAgentLog("LAPORAN_UPDATE_ERROR", `Update status REJECTED gagal: ${rejErr.message.slice(0, 80)}`, "WARNING");
@@ -8265,7 +8258,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     });
                     if (!ok) return;
                     // Hapus laporan
-                    const { error: delErr } = await supabase.from("service_reports").delete().eq("id", r.id);
+                    const { error: delErr } = await deleteServiceReport(supabase, r.id, auditUserName());
                     if (delErr) {
                       console.warn("❌ delete laporan failed:", delErr.message);
                       showNotif("❌ Gagal hapus laporan: " + delErr.message.slice(0, 50));
@@ -8275,11 +8268,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     // Hapus invoice terkait jika ada
                     const relInv = invoicesData.filter(i => i.job_id === r.job_id);
                     if (relInv.length > 0) {
-                      await Promise.all(relInv.map(inv => supabase.from("invoices").delete().eq("id", inv.id)));
+                      await Promise.all(relInv.map(inv => deleteInvoice(supabase, inv.id, auditUserName())));
                       setInvoicesData(p => p.filter(i => i.job_id !== r.job_id));
                     }
                     // Reset order status ke COMPLETED (bukan INVOICED)
-                    await supabase.from("orders").update({ status: "COMPLETED", invoice_id: null }).eq("id", r.job_id);
+                    await updateOrderStatus(supabase, r.job_id, "COMPLETED", auditUserName(), { invoice_id: null });
                     setOrdersData(p => p.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED", invoice_id: null } : o));
                     addAgentLog("LAPORAN_DELETED", "Laporan " + r.job_id + " dihapus oleh " + currentUser?.name, "WARNING");
                     showNotif("🗑️ Laporan " + r.job_id + " dihapus");
@@ -8546,7 +8539,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
     // Helper: reload units dari DB
     const reloadUnits = async () => {
-      const { data } = await supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label");
+      const { data } = await fetchInventoryUnits(supabase);
       if (data) setInvUnitsData(data);
     };
 
@@ -8937,15 +8930,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         date: f.date, description: f.description, teknisi_name: f.teknisi_name || null,
         item_name: f.item_name || null, freon_type: f.freon_type || null,
         created_by: currentUser?.name || currentUser?.email || "unknown",
-        last_changed_by: auditUserName(),
       };
-      await setAuditUser();
       if (editExpenseItem) {
-        const { error } = await supabase.from("expenses").update(payload).eq("id", editExpenseItem.id);
+        const { error } = await updateExpense(supabase, editExpenseItem.id, payload, auditUserName());
         if (error) { alert("Gagal update: " + error.message); return; }
         setExpensesData(prev => prev.map(x => x.id === editExpenseItem.id ? { ...x, ...payload } : x));
       } else {
-        const { data, error } = await supabase.from("expenses").insert(payload).select().single();
+        const { data, error } = await insertExpense(supabase, { ...payload, last_changed_by: auditUserName() });
         if (error) { alert("Gagal simpan: " + error.message); return; }
         setExpensesData(prev => [data, ...prev]);
       }
@@ -8953,11 +8944,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       resetForm();
     };
 
-    const deleteExpense = async (item) => {
+    const handleDeleteExpense = async (item) => {
       if (!window.confirm(`Hapus biaya "${item.subcategory}" Rp ${Number(item.amount).toLocaleString("id-ID")}?`)) return;
-      // Set last_changed_by dulu agar audit_log (DELETE trigger) bisa resolve user dari OLD row.
-      await supabase.from("expenses").update({ last_changed_by: auditUserName() }).eq("id", item.id);
-      const { error } = await supabase.from("expenses").delete().eq("id", item.id);
+      const { error } = await deleteExpense(supabase, item.id, auditUserName());
       if (error) { alert("Gagal hapus: " + error.message); return; }
       setExpensesData(prev => prev.filter(x => x.id !== item.id));
     };
@@ -9066,7 +9055,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent,
                         borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12
                       }}>✏️</button>
-                    <button onClick={() => deleteExpense(item)}
+                    <button onClick={() => handleDeleteExpense(item)}
                       style={{
                         background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red,
                         borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12
@@ -11895,16 +11884,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       ? { ...i, labor, material: matTotal3, dadakan: 0, total: newTotalFinal, materials_detail: newMD } : i));
                     let saved = false;
                     {
-                      const { error: e1 } = await supabase.from("invoices").update({
+                      const { error: e1 } = await updateInvoice(supabase, editInvoiceData.id, {
                         labor, material: matTotal3, dadakan: 0, total: newTotalFinal,
                         materials_detail: JSON.stringify(newMD)
-                      }).eq("id", editInvoiceData.id); if (!e1) saved = true; else console.warn("editInv e1:", e1.message);
+                      }, auditUserName()); if (!e1) saved = true; else console.warn("editInv e1:", e1.message);
                     }
                     if (!saved) {
-                      const { error: e2 } = await supabase.from("invoices").update({ labor, material: matTotal3, total: newTotalFinal }).eq("id", editInvoiceData.id);
+                      const { error: e2 } = await updateInvoice(supabase, editInvoiceData.id, { labor, material: matTotal3, total: newTotalFinal }, auditUserName());
                       if (!e2) saved = true;
                     }
-                    if (!saved) await supabase.from("invoices").update({ total: newTotalFinal }).eq("id", editInvoiceData.id);
+                    if (!saved) await updateInvoice(supabase, editInvoiceData.id, { total: newTotalFinal }, auditUserName());
                     addAgentLog("INVOICE_EDITED", `Invoice ${editInvoiceData.id} diedit → ${fmt(newTotalFinal)}` + (editInvoiceForm.notes ? ` (${editInvoiceForm.notes})` : "") + ` by Owner`, "SUCCESS");
                     showNotif(`✅ Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotalFinal)}`);
                     setModalEditInvoice(false); setEditInvoiceData(null);
@@ -12541,7 +12530,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setModalAddCustomer(false)}>
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 460, padding: 28 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>👤 Customer Baru</div>
+              <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>{selectedCustomer?.id ? "✏️ Edit Customer" : "👤 Customer Baru"}</div>
               <button onClick={() => setModalAddCustomer(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 24, cursor: "pointer", lineHeight: 1 }}>×</button>
             </div>
             <div style={{ display: "grid", gap: 12 }}>
@@ -12573,10 +12562,17 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     setCustomersData(prev => prev.map(cu => cu.id === selectedCustomer.id ? { ...cu, ...newCustomerForm } : cu));
                     setSelectedCustomer(prev => ({ ...prev, ...newCustomerForm }));
                     // Hanya kolom yang ada di DB schema
-                    const dbUpdate = { name: newCustomerForm.name, phone: normalizePhone(newCustomerForm.phone), address: newCustomerForm.address, area: newCustomerForm.area, notes: newCustomerForm.notes || "", is_vip: newCustomerForm.is_vip || false };
-                    const { error: cErr } = await supabase.from("customers").update(dbUpdate).eq("id", selectedCustomer.id);
-                    if (cErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
-                    else { addAgentLog("CUSTOMER_UPDATED", "Customer " + newCustomerForm.name + " diupdate", "SUCCESS"); showNotif("✅ Data " + newCustomerForm.name + " berhasil diupdate"); }
+                    const dbUpdate = {
+                      name: newCustomerForm.name.trim(),
+                      phone: normalizePhone(newCustomerForm.phone),
+                      address: newCustomerForm.address || "",
+                      area: newCustomerForm.area || "",
+                      notes: newCustomerForm.notes || "",
+                      is_vip: newCustomerForm.is_vip || false,
+                    };
+                    const { error: cErr } = await updateCustomer(supabase, selectedCustomer.id, dbUpdate);
+                    if (cErr) showNotif("⚠️ Gagal simpan ke DB: " + cErr.message);
+                    else { addAgentLog("CUSTOMER_UPDATED", "Customer " + newCustomerForm.name + " diupdate oleh " + auditUserName(), "SUCCESS"); showNotif("✅ Data " + newCustomerForm.name + " berhasil diupdate"); }
                   } else {
                     // INSERT new customer — tanpa kirim `id`, biarkan DB generate
                     const today = getLocalDate();
@@ -12591,17 +12587,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       total_orders: 0,
                       last_service: null,
                     };
-                    const { data: savedCust, error: cErr } = await supabase
-                      .from("customers")
-                      .insert(dbCust)
-                      .select()
-                      .single();
+                    const { data: savedCust, error: cErr } = await insertCustomer(supabase, dbCust);
                     if (cErr) {
                       // Fallback upsert jika phone sudah ada di DB
-                      const { data: upsertCust, error: cErr2 } = await supabase
-                        .from("customers")
-                        .upsert(dbCust, { onConflict: "phone", ignoreDuplicates: false })
-                        .select().single();
+                      const { data: upsertCust, error: cErr2 } = await upsertCustomer(supabase, dbCust, "phone");
                       if (cErr2) {
                         showNotif("⚠️ Gagal simpan ke DB: " + cErr.message);
                         // Tetap tampil di state lokal
@@ -12620,7 +12609,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   setModalAddCustomer(false); setNewCustomerForm({ name: "", phone: "", address: "", area: "", notes: "", is_vip: false });
                 }}
                   style={{ background: "linear-gradient(135deg," + cs.green + ",#059669)", border: "none", color: "#fff", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>
-                  ✓ Simpan Customer
+                  {selectedCustomer?.id ? "✓ Simpan Perubahan" : "✓ Tambah Customer"}
                 </button>
               </div>
             </div>
@@ -12785,7 +12774,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   const updated = { ...editOrderItem, ...editOrderForm, time_end: timeEnd };
                   setOrdersData(prev => prev.map(o => o.id === editOrderItem.id ? updated : o));
                   const dbUpd = { customer: editOrderForm.customer, phone: editOrderForm.phone, address: editOrderForm.address, area: editOrderForm.area || "", service: editOrderForm.service, type: editOrderForm.type || "", units: editOrderForm.units, teknisi: editOrderForm.teknisi, helper: editOrderForm.helper || null, teknisi2: editOrderForm.teknisi2 || null, helper2: editOrderForm.helper2 || null, teknisi3: editOrderForm.teknisi3 || null, helper3: editOrderForm.helper3 || null, date: editOrderForm.date, time: editOrderForm.time, time_end: timeEnd, status: editOrderForm.status, notes: editOrderForm.notes || "" };
-                  const { error: eoErr } = await supabase.from("orders").update(dbUpd).eq("id", editOrderItem.id);
+                  const { error: eoErr } = await updateOrder(supabase, editOrderItem.id, dbUpd, auditUserName());
                   // ── GAP-10 FIX: Hapus schedule lama & insert baru setelah edit order ──
                   if (!eoErr) {
                     // Hapus schedule lama — gunakan try/catch, bukan .catch() langsung
@@ -13165,7 +13154,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       }
                     }
                     // If editPhotoMode = false, skip foto_urls → keep old photos
-                    const { error: elErr } = await supabase.from("service_reports").update(updatePayload).eq("id", selectedLaporan.id);
+                    const { error: elErr } = await updateServiceReport(supabase, selectedLaporan.id, updatePayload, auditUserName());
                     if (elErr) { console.warn("❌ update service_reports failed:", elErr.message, "payload:", updatePayload); addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0, 100)}`, "WARNING"); }
 
                     // Update local state
@@ -13258,7 +13247,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         const totalInv = finalTotal3;
 
                         // Delete old invoice + insert new (preserve PAID status via garansi check)
-                        const { error: delInvErr } = await supabase.from("invoices").delete().eq("id", existInv.id);
+                        const { error: delInvErr } = await deleteInvoice(supabase, existInv.id, auditUserName());
                         if (!delInvErr) {
                           const newInv = {
                             ...existInv,
@@ -13269,7 +13258,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             updated_at: new Date().toISOString(),
                           };
                           delete newInv.id;
-                          const { error: insertErr } = await supabase.from("invoices").insert({ ...newInv, id: existInv.id });
+                          const { error: insertErr } = await insertInvoice(supabase, { ...newInv, id: existInv.id });
                           if (!insertErr) {
                             setInvoicesData(prev => [...prev.filter(i => i.id !== existInv.id), { ...newInv, id: existInv.id }]);
                             addAgentLog("INVOICE_REGEN", `Invoice ${existInv.id} diupdate dari edit laporan oleh ${currentUser?.name}`, "SUCCESS");
@@ -13779,7 +13768,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               .update({ status: "REPORT_SUBMITTED" }).eq("id", laporanModal.id);
             if (ordErr) {
               console.warn("REPORT_SUBMITTED rejected — fallback COMPLETED:", ordErr.message);
-              await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", laporanModal.id);
+              await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName());
             }
           }
 
@@ -14011,7 +14000,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             setOrdersData(prev => prev.map(o =>
               o.id === laporanModal.id ? { ...o, status: "COMPLETED" } : o
             ));
-            try { await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", laporanModal.id); } catch (_) { }
+            try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName()); } catch (_) { }
             addAgentLog("GARANSI_SKIP_INVOICE",
               `Complain ${laporanModal.id} — dalam garansi s/d ${prevGaransiActive.garansi_expires} ` +
               `(ref: ${prevGaransiActive.id}) → invoice di-skip`, "SUCCESS");
@@ -14208,16 +14197,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             const existingInvForJob = invoicesData.filter(i => i.job_id === laporanModal.id);
             if (existingInvForJob.length > 0) {
               await Promise.all(existingInvForJob.map(old =>
-                supabase.from("invoices").delete().eq("id", old.id)
+                deleteInvoice(supabase, old.id, auditUserName())
               ));
               setInvoicesData(prev => prev.filter(i => i.job_id !== laporanModal.id));
               addAgentLog("INVOICE_REWRITE", "Invoice lama dihapus untuk " + laporanModal.id + " (rewrite)", "INFO");
             }
-            const { error: invErr } = await supabase.from("invoices").insert(invPayload);
+            const { error: invErr } = await insertInvoice(supabase, invPayload);
             if (invErr) {
               console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
               for (const st of ["PENDING_APPROVAL", "UNPAID"]) {
-                const { error: e2 } = await supabase.from("invoices").insert({
+                const { error: e2 } = await insertInvoice(supabase, {
                   id: newInvoice.id, job_id: newInvoice.job_id,
                   customer: newInvoice.customer, service: newInvoice.service,
                   units: newInvoice.units, labor: newInvoice.labor,
@@ -15598,7 +15587,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             notes: "Upgrade dari Complain " + laporanModal.id
                           };
                           setOrdersData(prev => [...prev, rJob]);
-                          const { error: rErr } = await supabase.from("orders").insert(rJob);
+                          const { error: rErr } = await insertOrder(supabase, rJob);
                           if (!rErr) {
                             addAgentLog("COMPLAIN_UPGRADED", `Complain ${laporanModal.id} → Repair ${rId}`, "SUCCESS");
                             showNotif(`✅ Job Repair ${rId} dibuat! Admin dinotifikasi.`);
