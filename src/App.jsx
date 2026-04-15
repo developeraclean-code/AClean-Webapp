@@ -631,6 +631,144 @@ function useDebounce(value, delay) {
 }
 
 export { ErrorBoundary };
+
+// ── AuditHistory (stabilisasi #2B) — tampilkan riwayat perubahan per row ──
+// Fetch dari tabel audit_log, tampilkan diff field-by-field.
+function AuditHistory({ tableName, rowId, open, onClose, cs = {} }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!open || !tableName || !rowId) return;
+    let alive = true;
+    setLoading(true);
+    supabase.from("audit_log")
+      .select("*")
+      .eq("table_name", tableName)
+      .eq("row_id", String(rowId))
+      .order("changed_at", { ascending: false })
+      .limit(50)
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) console.warn("[audit] fetch failed:", error.message);
+        setRows(data || []);
+        setLoading(false);
+      });
+    return () => { alive = false; };
+  }, [tableName, rowId, open]);
+  if (!open) return null;
+
+  const fmtVal = (v) => {
+    if (v === null || v === undefined) return <span style={{ color: "#64748b" }}>∅</span>;
+    if (typeof v === "boolean") return String(v);
+    if (typeof v === "number") return v.toLocaleString("id-ID");
+    const s = String(v);
+    return s.length > 60 ? s.slice(0, 60) + "…" : s;
+  };
+
+  const C = {
+    bg: cs.bg || "#0f172a", surface: cs.surface || "#1e293b",
+    border: cs.border || "#334155", text: cs.text || "#e2e8f0",
+    muted: cs.muted || "#94a3b8", accent: cs.accent || "#06b6d4",
+    green: cs.green || "#22c55e", red: cs.red || "#ef4444", yellow: cs.yellow || "#eab308",
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 16
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: C.bg, border: "1px solid " + C.border, borderRadius: 12,
+        maxWidth: 720, width: "100%", maxHeight: "85vh", overflow: "auto",
+        padding: 20
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>📜 Riwayat Perubahan</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{tableName} · {rowId}</div>
+          </div>
+          <button onClick={onClose} style={{
+            background: "transparent", border: "1px solid " + C.border, color: C.text,
+            padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13
+          }}>Tutup</button>
+        </div>
+
+        {loading && <div style={{ color: C.muted, fontSize: 12, padding: 16, textAlign: "center" }}>Memuat...</div>}
+        {!loading && rows.length === 0 && (
+          <div style={{
+            color: C.muted, fontSize: 12, padding: 24, textAlign: "center",
+            border: "1px dashed " + C.border, borderRadius: 8
+          }}>
+            Belum ada riwayat perubahan untuk row ini.
+          </div>
+        )}
+
+        <div style={{ display: "grid", gap: 10 }}>
+          {rows.map((r) => {
+            const actColor = r.action === "INSERT" ? C.green : r.action === "DELETE" ? C.red : C.yellow;
+            const dt = r.changed_at ? new Date(r.changed_at).toLocaleString("id-ID") : "-";
+            const diffs = Array.isArray(r.diff_keys) ? r.diff_keys : [];
+            return (
+              <div key={r.id} style={{
+                background: C.surface, border: "1px solid " + C.border,
+                borderRadius: 10, padding: "10px 14px"
+              }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{
+                    background: actColor + "22", color: actColor,
+                    border: "1px solid " + actColor + "44",
+                    padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700
+                  }}>{r.action}</span>
+                  <span style={{ fontSize: 11, color: C.muted }}>{dt}</span>
+                  <span style={{ fontSize: 11, color: C.text, marginLeft: "auto" }}>
+                    👤 <strong>{r.changed_by}</strong>
+                  </span>
+                </div>
+                {r.action === "UPDATE" && diffs.length > 0 && (
+                  <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                    {diffs.filter(k => k !== "updated_at" && k !== "edit_log").map(k => (
+                      <div key={k} style={{
+                        fontSize: 11, display: "grid",
+                        gridTemplateColumns: "110px 1fr 20px 1fr", gap: 6, alignItems: "center"
+                      }}>
+                        <div style={{ color: C.accent, fontWeight: 700 }}>{k}</div>
+                        <div style={{
+                          color: C.muted, fontFamily: "monospace",
+                          textDecoration: "line-through"
+                        }}>{fmtVal((r.before_data || {})[k])}</div>
+                        <div style={{ color: C.muted, textAlign: "center" }}>→</div>
+                        <div style={{ color: C.text, fontFamily: "monospace", fontWeight: 600 }}>
+                          {fmtVal((r.after_data || {})[k])}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {r.action === "INSERT" && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: C.muted }}>
+                    Dibuat dengan {Object.keys(r.after_data || {}).length} field.
+                  </div>
+                )}
+                {r.action === "DELETE" && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: C.red }}>
+                    Row dihapus.
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {rows.length >= 50 && (
+          <div style={{ textAlign: "center", fontSize: 10, color: C.muted, marginTop: 10 }}>
+            Menampilkan 50 perubahan terbaru.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ACleanWebApp() {
   // ── Auth & Role ──
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -688,6 +826,7 @@ export default function ACleanWebApp() {
   const [modalPDF, setModalPDF] = useState(false);
   const [modalApproveInv, setModalApproveInv] = useState(false); // popup pilihan approve
   const [pendingApproveInv, setPendingApproveInv] = useState(null); // invoice yang menunggu approve
+  const [auditModal, setAuditModal] = useState(null); // { tableName, rowId } | null — Stabilisasi #2B
 
   // ── Schedule ──
   const [scheduleView, setScheduleView] = useState("week");
@@ -894,6 +1033,17 @@ export default function ACleanWebApp() {
       });
       if (alErr) console.warn("agent_logs insert:", alErr.message, alErr.hint);
     } catch (e) { console.warn("agent_logs catch:", e.message); }
+  };
+
+  // ── AUDIT TRAIL (stabilisasi #2B) ──
+  // Pooler Supabase = transaction mode → session var ga persist. Solusi:
+  // inject kolom last_changed_by langsung ke payload. Trigger baca dari NEW/OLD row.
+  // auditUserName() = helper nama string user aktif.
+  // setAuditUser() = legacy (coba set session var juga, fail-silent backup).
+  const auditUserName = () => currentUser?.name || currentUser?.email || currentUser?.id || "system";
+  const setAuditUser = async () => {
+    try { await supabase.rpc("set_current_user", { uid: auditUserName() }); }
+    catch { /* pooler ga support, diabaikan — last_changed_by di payload sudah cukup */ }
   };
 
   // ── App Settings: bank, phone, nama — load dari DB tabel app_settings ──
@@ -2144,8 +2294,8 @@ ${matRowsHtml}
           // ❌ JANGAN setLlmProvider di sini — biarkan DB app_settings yang menentukan.
           // Hanya log untuk debugging.
           console.log("[LLM Config] Available:", config.providers?.map(p => p.name),
-                      "| Backend default (ignored):", config.defaultProvider,
-                      "| DB app_settings.llm_provider akan override.");
+            "| Backend default (ignored):", config.defaultProvider,
+            "| DB app_settings.llm_provider akan override.");
         }
       } catch (err) {
         console.warn("[LLM Config Load Error]", err.message, "— will use default minimax");
@@ -2987,28 +3137,31 @@ ${matRowsHtml}
       o.id === inv.job_id ? { ...o, invoice_id: inv.id, status: "INVOICE_APPROVED" } : o
     ));
     // GAP 4: simpan approved_by, trigger DB akan catat audit_log
+    await setAuditUser();
     // Update invoice — try full, fallback minimal
     {
       const { error: apErr } = await supabase.from("invoices").update({
         status: "UNPAID", sent: true, due,
         approved_by: currentUser?.name || null,
         approved_at: approvedAt,
+        last_changed_by: auditUserName(),
       }).eq("id", inv.id);
       if (apErr) {
         console.warn("invoice approve full failed:", apErr.message);
         // Fallback: only safe columns
         const { error: apErr2 } = await supabase.from("invoices").update({
           status: "UNPAID",
+          last_changed_by: auditUserName(),
         }).eq("id", inv.id);
         if (apErr2) console.error("invoice approve minimal failed:", apErr2.message);
       }
     }
     // Update order status — with fallback
     {
-      const { error: oErr } = await supabase.from("orders").update({ invoice_id: inv.id, status: "INVOICE_APPROVED" }).eq("id", inv.job_id);;
+      const { error: oErr } = await supabase.from("orders").update({ invoice_id: inv.id, status: "INVOICE_APPROVED", last_changed_by: auditUserName() }).eq("id", inv.job_id);;
       if (oErr) {
         console.warn("orders INVOICE_APPROVED failed:", oErr.message);
-        await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", inv.job_id);
+        await supabase.from("orders").update({ status: "COMPLETED", last_changed_by: auditUserName() }).eq("id", inv.job_id);
       }
     }
     addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} approve oleh ${currentUser?.name || "—"} — ${inv.customer} ${fmt(inv.total)}`, "SUCCESS");
@@ -3061,11 +3214,12 @@ ${matRowsHtml}
     setOrdersData(prev => prev.map(o =>
       (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: "PAID" } : o
     ));
+    await setAuditUser();
     {
-      const { error: mpErr } = await supabase.from("invoices").update({ status: "PAID", paid_at: paidAt }).eq("id", inv.id);
+      const { error: mpErr } = await supabase.from("invoices").update({ status: "PAID", paid_at: paidAt, last_changed_by: auditUserName() }).eq("id", inv.id);
       if (mpErr) {
         console.warn("mark paid with paid_at failed:", mpErr.message);
-        await supabase.from("invoices").update({ status: "PAID" }).eq("id", inv.id);
+        await supabase.from("invoices").update({ status: "PAID", last_changed_by: auditUserName() }).eq("id", inv.id);
       }
     }
 
@@ -3588,7 +3742,8 @@ ${matRowsHtml}
           const act = JSON.parse(am[1].trim());
           if (act.type === "UPDATE_INVOICE") {
             setInvoicesData(prev => prev.map(i => { if (i.id !== act.id) return i; const u = { ...i, [act.field]: act.value }; u.total = (u.labor || 0) + (u.material || 0) + (u.dadakan || 0); return u; }));
-            await supabase.from("invoices").update({ [act.field]: act.value }).eq("id", act.id);
+            await setAuditUser();
+            await supabase.from("invoices").update({ [act.field]: act.value, last_changed_by: auditUserName() }).eq("id", act.id);
             addAgentLog("ARA_ACTION", `ARA update ${act.id}: ${act.field}=${fmt(act.value)}`, "SUCCESS");
             ar = `\n✅ *Invoice ${act.id} diupdate — ${act.field}: ${fmt(act.value)}*`;
           } else if (act.type === "MARK_PAID") {
@@ -3602,7 +3757,8 @@ ${matRowsHtml}
             if (inv) { invoiceReminderWA(inv); ar = `\n✅ *Reminder dikirim ke ${inv.customer}*`; }
           } else if (act.type === "UPDATE_ORDER_STATUS") {
             setOrdersData(prev => prev.map(o => o.id === act.id ? { ...o, status: act.status } : o));
-            await supabase.from("orders").update({ status: act.status }).eq("id", act.id);
+            await setAuditUser();
+            await supabase.from("orders").update({ status: act.status, last_changed_by: auditUserName() }).eq("id", act.id);
             addAgentLog("ARA_ACTION", `ARA update status ${act.id} → ${act.status}`, "SUCCESS");
             ar = `\n✅ *Order ${act.id} → ${act.status}*`;
           } else if (act.type === "DISPATCH_WA") {
@@ -3945,10 +4101,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               item_name: act.item_name || act.nama_barang || null,
               freon_type: act.freon_type || null,
               created_by: currentUser?.name || "ARA",
+              last_changed_by: auditUserName(),
             };
             if (!expPayload.amount) {
               ar = "\n⚠️ *Jumlah biaya (amount) wajib diisi*";
             } else {
+              await setAuditUser();
               const { data: expData, error: expErr } = await supabase.from("expenses").insert(expPayload).select().single();
               if (expErr) {
                 ar = `\n⚠️ *Gagal catat biaya: ${expErr.message}*`;
@@ -5712,12 +5870,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             confirmText: "Override Gratis & Lunas"
                           })) return;
                           const paidAt = new Date().toISOString();
-                          const upd = { total: 0, labor: 0, material: 0, dadakan: 0, garansi_status: "GARANSI_OVERRIDE_FREE", status: "PAID", paid_at: paidAt };
+                          const upd = { total: 0, labor: 0, material: 0, dadakan: 0, garansi_status: "GARANSI_OVERRIDE_FREE", status: "PAID", paid_at: paidAt, last_changed_by: auditUserName() };
                           setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
                           setOrdersData(prev => prev.map(o => o.id === inv.job_id ? { ...o, status: "PAID" } : o));
+                          await setAuditUser();
                           const { error } = await supabase.from("invoices").update(upd).eq("id", inv.id);
                           if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
-                          if (inv.job_id) await supabase.from("orders").update({ status: "PAID" }).eq("id", inv.job_id);
+                          if (inv.job_id) await supabase.from("orders").update({ status: "PAID", last_changed_by: auditUserName() }).eq("id", inv.job_id);
                           addAgentLog("COMPLAIN_OVERRIDE_FREE", `Invoice ${inv.id} override GRATIS & LUNAS oleh ${currentUser?.name}`, "SUCCESS");
                           showNotif("✅ Invoice di-override GRATIS dan dicatat LUNAS");
                         }} style={{ flex: 1, background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
@@ -5729,8 +5888,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             message: `Ubah invoice ${inv.id} menjadi BERBAYAR?\n\nJika total sekarang Rp 0, silakan edit nilai dulu via tombol Edit Nilai.`,
                             confirmText: "Override Berbayar"
                           })) return;
-                          const upd = { garansi_status: "GARANSI_OVERRIDE_PAID" };
+                          const upd = { garansi_status: "GARANSI_OVERRIDE_PAID", last_changed_by: auditUserName() };
                           setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
+                          await setAuditUser();
                           const { error } = await supabase.from("invoices").update(upd).eq("id", inv.id);
                           if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
                           addAgentLog("COMPLAIN_OVERRIDE_PAID", `Invoice ${inv.id} di-override BERBAYAR oleh ${currentUser?.name}`, "INFO");
@@ -5776,13 +5936,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       confirmText: "Hapus Permanen"
                     })) return;
                     setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
+                    await supabase.from("invoices").update({ last_changed_by: auditUserName() }).eq("id", inv.id);
                     const { error } = await supabase.from("invoices").delete().eq("id", inv.id);
                     if (error) { showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message); return; }
-                    if (inv.job_id) await supabase.from("orders").update({ status: "COMPLETED", invoice_id: null }).eq("id", inv.job_id);
+                    if (inv.job_id) await supabase.from("orders").update({ status: "COMPLETED", invoice_id: null, last_changed_by: auditUserName() }).eq("id", inv.job_id);
                     addAgentLog("INVOICE_DELETED", `Invoice ${inv.id} (${inv.customer}) dihapus oleh ${currentUser?.name}`, "WARNING");
                     showNotif("🗑️ Invoice " + inv.id + " berhasil dihapus");
                   }} style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🗑️ Hapus Invoice</button>
                 )}
+                <button
+                  onClick={() => setAuditModal({ tableName: "invoices", rowId: inv.id })}
+                  style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
+                >📜 Riwayat</button>
               </div>
             </div>
           ))}
@@ -8259,8 +8424,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <button onClick={async () => {
                     // ── SIM-10: Verify laporan + AUTO-CREATE invoice ──
                     setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "VERIFIED" } : x));
+                    await setAuditUser();
                     const { error: vErr } = await supabase.from("service_reports").update({
-                      status: "VERIFIED"
+                      status: "VERIFIED",
+                      last_changed_by: auditUserName(),
                     }).eq("id", r.id);
                     if (vErr) {
                       console.warn("❌ verify laporan failed:", vErr.message);
@@ -8397,7 +8564,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✅ Verifikasi</button>
                   <button onClick={async () => {
                     setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "REVISION" } : x));
-                    const { error: revErr } = await supabase.from("service_reports").update({ status: "REVISION" }).eq("id", r.id);
+                    await setAuditUser();
+                    const { error: revErr } = await supabase.from("service_reports").update({ status: "REVISION", last_changed_by: auditUserName() }).eq("id", r.id);
                     if (revErr) {
                       console.warn("❌ update REVISION failed:", revErr.message);
                       addAgentLog("LAPORAN_UPDATE_ERROR", `Update status REVISION gagal: ${revErr.message.slice(0, 80)}`, "WARNING");
@@ -8415,7 +8583,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   }} style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Minta Revisi</button>
                   <button onClick={async () => {
                     setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "REJECTED" } : x));
-                    const { error: rejErr } = await supabase.from("service_reports").update({ status: "REJECTED" }).eq("id", r.id);
+                    await setAuditUser();
+                    const { error: rejErr } = await supabase.from("service_reports").update({ status: "REJECTED", last_changed_by: auditUserName() }).eq("id", r.id);
                     if (rejErr) {
                       console.warn("❌ update REJECTED failed:", rejErr.message);
                       addAgentLog("LAPORAN_UPDATE_ERROR", `Update status REJECTED gagal: ${rejErr.message.slice(0, 80)}`, "WARNING");
@@ -9143,8 +9312,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         category: f.category, subcategory: f.subcategory, amount: Number(f.amount),
         date: f.date, description: f.description, teknisi_name: f.teknisi_name || null,
         item_name: f.item_name || null, freon_type: f.freon_type || null,
-        created_by: currentUser?.name || currentUser?.email || "unknown"
+        created_by: currentUser?.name || currentUser?.email || "unknown",
+        last_changed_by: auditUserName(),
       };
+      await setAuditUser();
       if (editExpenseItem) {
         const { error } = await supabase.from("expenses").update(payload).eq("id", editExpenseItem.id);
         if (error) { alert("Gagal update: " + error.message); return; }
@@ -9160,6 +9331,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
     const deleteExpense = async (item) => {
       if (!window.confirm(`Hapus biaya "${item.subcategory}" Rp ${Number(item.amount).toLocaleString("id-ID")}?`)) return;
+      // Set last_changed_by dulu agar audit_log (DELETE trigger) bisa resolve user dari OLD row.
+      await supabase.from("expenses").update({ last_changed_by: auditUserName() }).eq("id", item.id);
       const { error } = await supabase.from("expenses").delete().eq("id", item.id);
       if (error) { alert("Gagal hapus: " + error.message); return; }
       setExpensesData(prev => prev.filter(x => x.id !== item.id));
@@ -9274,6 +9447,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red,
                         borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12
                       }}>🗑️</button>
+                    <button onClick={() => setAuditModal({ tableName: "expenses", rowId: item.id })}
+                      style={{
+                        background: cs.surface, border: "1px solid " + cs.border, color: cs.muted,
+                        borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12
+                      }}>📜</button>
                   </div>
                 )}
               </div>
@@ -15858,6 +16036,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           {notification}
         </div>
       )}
+
+      {/* Audit History Modal (Stabilisasi #2B) */}
+      <AuditHistory
+        open={!!auditModal}
+        tableName={auditModal?.tableName}
+        rowId={auditModal?.rowId}
+        onClose={() => setAuditModal(null)}
+        cs={cs}
+      />
 
       <style>{`
         @keyframes pulse { 0%,100%{opacity:.3;transform:scale(.8)} 50%{opacity:1;transform:scale(1.1)} }
