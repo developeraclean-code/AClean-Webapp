@@ -3507,10 +3507,13 @@ ${matRowsHtml}
           } else if (act.type === "CREATE_INVOICE") {
             // Buat invoice dari order yang sudah COMPLETED
             const ord = ordersData.find(o => o.id === act.order_id);
+            // Query DB langsung untuk cegah race (local state bisa stale saat ARA dispatch cepat).
+            const { data: existingDBInv } = await supabase
+              .from("invoices").select("id,status")
+              .eq("job_id", act.order_id).neq("status", "CANCELLED").limit(1);
             if (!ord) { ar = "\n⚠️ *Order " + act.order_id + " tidak ditemukan*"; }
-            else if (invoicesData.find(inv => inv.job_id === act.order_id && inv.status !== "CANCELLED")) {
-              // ── PREVENT DUPLICATE: Jika invoice sudah ada untuk order ini, skip ──
-              const existing = invoicesData.find(inv => inv.job_id === act.order_id && inv.status !== "CANCELLED");
+            else if (existingDBInv && existingDBInv.length > 0) {
+              const existing = existingDBInv[0];
               ar = `\n⚠️ *Invoice untuk order ini sudah ada: ${existing.id}* (status: ${existing.status})`;
               addAgentLog("ARA_DUPLICATE_INVOICE", `Duplicate invoice attempt for order ${act.order_id} — existing: ${existing.id}`, "WARNING");
             }
@@ -8161,10 +8164,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         due: new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
                         sent: false, created_at: new Date().toISOString()
                       };
-                      // 1 invoice per job — hapus invoice lama jika ada
-                      const oldInvs = invoicesData.filter(inv => inv.job_id === r.job_id);
-                      if (oldInvs.length > 0) {
-                        await Promise.all(oldInvs.map(oi => deleteInvoice(supabase, oi.id, auditUserName())));
+                      // 1 invoice per job — query DB langsung untuk cegah race (local state bisa stale).
+                      const { data: oldDB, error: fetchOldErr } = await supabase
+                        .from("invoices").select("id").eq("job_id", r.job_id);
+                      if (fetchOldErr) {
+                        console.error("[AUTO_INVOICE] gagal cek existing:", fetchOldErr.message);
+                        showNotif("❌ Gagal verifikasi invoice existing — coba lagi.");
+                        return;
+                      }
+                      if (oldDB && oldDB.length > 0) {
+                        for (const oi of oldDB) {
+                          const { error: delErr } = await deleteInvoice(supabase, oi.id, auditUserName());
+                          if (delErr) {
+                            console.error("[AUTO_INVOICE] gagal hapus", oi.id, delErr.message);
+                            showNotif("❌ Gagal hapus invoice lama — coba lagi.");
+                            return;
+                          }
+                        }
                         setInvoicesData(prev => prev.filter(inv => inv.job_id !== r.job_id));
                       }
                       setInvoicesData(prev => [...prev, newInv]);
@@ -13518,6 +13534,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const submitLaporan = async () => {
           if (submitLaporan._running) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
           submitLaporan._running = true;
+          try {
           // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
           const isInstall = laporanModal?.service === "Install";
 
@@ -13894,13 +13911,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               .reduce((s, j) => s + ((j.harga_satuan || 0) * (parseFloat(j.jumlah) || 1)), 0);
 
             // Base labor per service type:
-            // - Cleaning/Maintenance: service fee baseline dari Card 1/4 (hitungLabor)
+            // - Cleaning/Maintenance: service fee baseline per-unit dari Card 1/4 tipe PK
             // - Repair: NO baseline — hanya dari form jasa + cleaning-in-repair
             // - Complain: handle via garansi logic (skip baseline)
             const isCleaningMaint = svc === "Cleaning" || svc === "Maintenance";
-            const svcFeeBaseline = jasaSumForm > 0 || !isCleaningMaint
-              ? 0
-              : hitungLabor(svc, laporanModal.type, laporanUnits.length);
+            // Skip baseline hanya jika jasa items sudah mengandung cleaning/maintenance jasa.
+            // Bug lama: transport/biaya-cek jadi jasa → baseline Cleaning ke-skip → total = transport saja.
+            const hasCleaningJasa = laporanJasaItems.some(j => {
+              const n = (j.nama || "").toLowerCase();
+              return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
+            });
+            let svcFeeBaseline = 0;
+            if (isCleaningMaint && !hasCleaningJasa) {
+              const unitsWithTipe = (laporanUnits || []).filter(u => u && u.tipe);
+              svcFeeBaseline = unitsWithTipe.length > 0
+                ? unitsWithTipe.reduce((s, u) => s + hargaPerUnitFromTipe(svc, u.tipe, priceListData), 0)
+                : hitungLabor(svc, laporanModal.type, laporanUnits.length);
+            }
 
             return svcFeeBaseline + jasaSumForm + cleaningInRepairTotal;
           })();
@@ -14085,7 +14112,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               const isCleaningOrMaint = svc === "Cleaning" || svc === "Maintenance";
 
               // ── Cleaning & Maintenance: per-unit base labor dari Card 1/4 tipe ──
-              if (isCleaningOrMaint && !mDetail.some(m => m.keterangan === "jasa")) {
+              // Skip hanya jika mDetail sudah ada row jasa cleaning/maintenance/cuci.
+              // Bug lama: transport jasa bikin baseline ter-skip → laporan Cleaning hilang.
+              const alreadyHasCleaningRow = mDetail.some(m => {
+                if (m.keterangan !== "jasa") return false;
+                const n = (m.nama || "").toLowerCase();
+                return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
+              });
+              if (isCleaningOrMaint && !alreadyHasCleaningRow) {
                 const unitsWithTipe = (laporanUnits || []).filter(u => u && u.tipe);
                 if (unitsWithTipe.length > 0) {
                   [...unitsWithTipe].reverse().forEach((u) => {
@@ -14192,15 +14226,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
               repair_gratis: invBase.repair_gratis || undefined,  // Only include if true
             };
-            // ── 1 invoice per job: cek existing, delete + insert baru ──
-            // Hapus invoice lama untuk job ini (jika ada) agar tidak double
-            const existingInvForJob = invoicesData.filter(i => i.job_id === laporanModal.id);
-            if (existingInvForJob.length > 0) {
-              await Promise.all(existingInvForJob.map(old =>
-                deleteInvoice(supabase, old.id, auditUserName())
-              ));
+            // ── 1 invoice per job: query DB langsung (bukan local state) untuk cegah race ──
+            const { data: existingDB, error: fetchExistingErr } = await supabase
+              .from("invoices").select("id").eq("job_id", laporanModal.id);
+            if (fetchExistingErr) {
+              console.error("[INVOICE_PRECHECK] gagal cek existing:", fetchExistingErr.message);
+              showNotif("❌ Gagal verifikasi invoice existing — submit dibatalkan. Coba lagi.");
+              return;
+            }
+            if (existingDB && existingDB.length > 0) {
+              for (const old of existingDB) {
+                const { error: delErr } = await deleteInvoice(supabase, old.id, auditUserName());
+                if (delErr) {
+                  console.error("[INVOICE_REWRITE] gagal hapus", old.id, delErr.message);
+                  showNotif("❌ Gagal hapus invoice lama — submit dibatalkan. Coba lagi.");
+                  return;
+                }
+              }
               setInvoicesData(prev => prev.filter(i => i.job_id !== laporanModal.id));
-              addAgentLog("INVOICE_REWRITE", "Invoice lama dihapus untuk " + laporanModal.id + " (rewrite)", "INFO");
+              addAgentLog("INVOICE_REWRITE", `${existingDB.length} invoice lama dihapus untuk ${laporanModal.id} (rewrite)`, "INFO");
             }
             const { error: invErr } = await insertInvoice(supabase, invPayload);
             if (invErr) {
@@ -14255,7 +14299,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           setLaporanSubmitted(true);
           pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
           showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan dikirim ke Owner/Admin untuk verifikasi.`);
-          submitLaporan._running = false;
+          } catch (err) {
+            console.error("submitLaporan fatal:", err);
+            showNotif("❌ Submit error: " + (err?.message || String(err)));
+          } finally {
+            submitLaporan._running = false;
+          }
         };
 
         const tagStyle = (active, color) => ({
