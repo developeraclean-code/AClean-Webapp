@@ -17,6 +17,9 @@ import {
   hitungLaborFromUnits as hitungLaborFromUnitsLib,
   buildPriceListFromDB as buildPriceListFromDBLib,
 } from "./lib/pricing.js";
+import { cs } from "./theme/cs.js";
+import { statusColor, statusLabel } from "./constants/status.js";
+import { SERVICE_TYPES } from "./constants/services.js";
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -2483,39 +2486,7 @@ ${matRowsHtml}
     return [];
   };
 
-  // ── Colors ──
-  const cs = {
-    bg: "#0a0f1e",
-    surface: "#0d1526",
-    card: "#111827",
-    border: "#1e2d4a",
-    text: "#e2e8f0",
-    muted: "#64748b",
-    accent: "#38bdf8",
-    green: "#22c55e",
-    yellow: "#f59e0b",
-    red: "#ef4444",
-    ara: "#a78bfa",
-  };
-
-  const statusColor = {
-    // Order workflow statuses (GAP 1.4)
-    PENDING: "#64748b", CONFIRMED: "#f59e0b", DISPATCHED: "#06b6d4",
-    ON_SITE: "#8b5cf6", WORKING: "#a78bfa", REPORT_SUBMITTED: "#10b981",
-    INVOICE_CREATED: "#3b82f6", INVOICE_APPROVED: "#6366f1",
-    PAID: "#22c55e", COMPLETED: "#22c55e", CANCELLED: "#ef4444", RESCHEDULED: "#f97316",
-    IN_PROGRESS: "#38bdf8",
-    // Invoice statuses
-    UNPAID: "#f59e0b", OVERDUE: "#ef4444", PENDING_APPROVAL: "#a78bfa", PARTIAL: "#06b6d4"
-  };
-  const statusLabel = {
-    PENDING: "Pending", CONFIRMED: "Dikonfirmasi", DISPATCHED: "Dikirim",
-    ON_SITE: "Di Lokasi", WORKING: "Sedang Kerja", REPORT_SUBMITTED: "Laporan Masuk",
-    INVOICE_CREATED: "Invoice Dibuat", INVOICE_APPROVED: "Invoice Dikirim",
-    PAID: "Lunas", COMPLETED: "Selesai", CANCELLED: "Dibatalkan", RESCHEDULED: "Dijadwal Ulang",
-    IN_PROGRESS: "Sedang Dikerjakan",
-    UNPAID: "Belum Bayar", OVERDUE: "Terlambat", PENDING_APPROVAL: "Menunggu Approve", PARTIAL: "Bayar Sebagian"
-  };
+  // cs / statusColor / statusLabel sudah di-import dari src/theme & src/constants (Fase 2)
 
   const fmt = (n) => "Rp " + (n || 0).toLocaleString("id-ID");
   // safeArr: handle Supabase returning JSON arrays as strings
@@ -5943,7 +5914,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           <div>ARA membaca price list <b style={{ color: cs.text }}>langsung dari tabel Supabase</b> setiap kali app di-load. Tidak perlu update brain.md atau brain_customer.md manual.</div>
           <div style={{ marginTop: 6 }}>Saat ARA membuat invoice, kalkulasi otomatis pakai harga dari tabel ini. Update harga di sini → langsung berlaku di seluruh sistem.</div>
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {["Cleaning", "Install", "Repair", "Complain"].map(svc => (
+            {SERVICE_TYPES.map(svc => (
               <span key={svc} style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "4px 10px", fontSize: 11 }}>
                 {svc}: {priceListData.filter(r => r.service === svc && r.is_active !== false).length} item
               </span>
@@ -5957,7 +5928,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 16, padding: 24, width: "100%", maxWidth: 420 }}>
               <div style={{ fontWeight: 800, fontSize: 16, color: cs.text, marginBottom: 16 }}>➕ Tambah Item Harga Baru</div>
               {[
-                { label: "Jenis Layanan", key: "service", type: "select", opts: ["Cleaning", "Install", "Repair", "Complain"] },
+                { label: "Jenis Layanan", key: "service", type: "select", opts: SERVICE_TYPES },
                 { label: "Kategori", key: "category", type: "select", opts: ["", "Jasa", "Barang"] },
                 { label: "Tipe AC / Nama Item", key: "type", type: "text", ph: "contoh: AC 1 PK, AC 2 PK" },
                 { label: "Kode", key: "code", type: "text", ph: "contoh: CLN-1PK" },
@@ -10694,7 +10665,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Jenis Layanan</div>
                   <select value={newOrderForm.service} onChange={e => setNewOrderForm(f => ({ ...f, service: e.target.value }))}
                     style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none" }}>
-                    {["Cleaning", "Install", "Repair", "Complain"].map(s => <option key={s}>{s}</option>)}
+                    {SERVICE_TYPES.map(s => <option key={s}>{s}</option>)}
                   </select>
                 </div>
                 <div>
@@ -12692,7 +12663,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 3 }}>Layanan</div>
                     <select value={editOrderForm.service || "Cleaning"} onChange={e => setEditOrderForm(f => ({ ...f, service: e.target.value }))}
                       style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 11px", color: cs.text, fontSize: 13, outline: "none" }}>
-                      {["Cleaning", "Install", "Repair", "Complain"].map(s => <option key={s}>{s}</option>)}
+                      {SERVICE_TYPES.map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>
