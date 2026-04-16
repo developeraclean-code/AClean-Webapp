@@ -117,14 +117,30 @@ export default async function handler(req, res) {
         }
       }
 
-      // Save to DB
+      const nowIso = new Date().toISOString();
+      const senderName = sanitizeName(wb.name || ("+" + sender));
+
+      // ── Save inbound message ke wa_messages (schema: phone,name,content,role,created_at) ──
       if (SU && SK) fetch(SU + "/rest/v1/wa_messages", {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-        body: JSON.stringify({ sender, sender_name: wb.name||null, message, direction: "inbound", received_at: new Date().toISOString() })
-      }).catch(err => {
-        console.error("[WA_MESSAGE_DB_SAVE_ERROR]", {sender, messageLen: message.length, error: err.message});
-      });
+        body: JSON.stringify({ phone: sender, name: senderName, content: message, role: "customer", created_at: nowIso })
+      }).catch(err => console.error("[WA_MSG_SAVE]", err.message));
+
+      // ── Upsert wa_conversations (phone unik, increment unread, update last) ──
+      if (SU && SK) {
+        // Fetch existing unread count, then upsert
+        fetch(SU + "/rest/v1/wa_conversations?phone=eq." + encodeURIComponent(sender) + "&select=unread", {
+          headers: { apikey: SK, Authorization: "Bearer " + SK }
+        }).then(r => r.json()).then(rows => {
+          const prevUnread = (rows?.[0]?.unread) || 0;
+          return fetch(SU + "/rest/v1/wa_conversations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "resolution=merge-duplicates,return=minimal" },
+            body: JSON.stringify({ phone: sender, name: senderName, last: message.slice(0, 80), updated_at: nowIso, unread: prevUnread + 1 })
+          });
+        }).catch(err => console.error("[WA_CONV_UPSERT]", err.message));
+      }
 
       // Auto-reply
       const ml = message.toLowerCase().trim();
@@ -140,7 +156,6 @@ export default async function handler(req, res) {
         if (SALAM.some(k => ml.startsWith(k) || ml.includes(k + " ")))
           reply = "Halo! 👋 Selamat datang di *AClean Service AC*.\n\nKami melayani:\n✅ Cuci/Service AC\n✅ Perbaikan & Isi Freon\n✅ Pasang AC Baru\n✅ Bongkar & Pindah AC\n\nKetik *HARGA* untuk info tarif, atau *ORDER* untuk pesan layanan. Ada yang bisa kami bantu? 😊";
         else if (HARGA_KW.some(k => ml.includes(k))) {
-          // Fetch dynamic price list from Supabase
           try {
             const pR = await fetch(SU + "/rest/v1/harga_layanan?select=service,type,harga&order=service.asc,type.asc", {
               headers: { apikey: SK, Authorization: "Bearer " + SK }
@@ -149,48 +164,53 @@ export default async function handler(req, res) {
               const prices = await pR.json();
               if (prices && prices.length > 0) {
                 const priceText = prices.map(p => `  • ${p.service} ${p.type}: Rp${(p.harga||0).toLocaleString("id-ID")}`).join("\n");
-                reply = `💰 *Harga AClean Service AC*\n\n${priceText}\n\nCatatan: Biaya tambahan mungkin berlaku untuk area jauh atau layanan khusus.\n\nKetik *ORDER* untuk pesan! 😊\n\n_Jam operasional: 08.00–17.00 WIB_`;
+                reply = `💰 *Harga AClean Service AC*\n\n${priceText}\n\nKetik *ORDER* untuk pesan! 😊\n\n_Jam operasional: 08.00–17.00 WIB_`;
               } else {
-                reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru & promo, silakan hubungi admin kami.\n\nAdmin akan segera membalas! 😊\n\n_Jam operasional: 08.00–17.00 WIB_";
+                reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru, hubungi admin kami.\n\nAdmin akan segera membalas! 😊";
               }
             } else {
-              reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru & promo, silakan hubungi admin kami.\n\nAdmin akan segera membalas! 😊\n\n_Jam operasional: 08.00–17.00 WIB_";
+              reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru, hubungi admin kami.\n\nAdmin akan segera membalas! 😊";
             }
           } catch(_) {
-            reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru & promo, silakan hubungi admin kami.\n\nAdmin akan segera membalas! 😊\n\n_Jam operasional: 08.00–17.00 WIB_";
+            reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru, hubungi admin kami.\n\nAdmin akan segera membalas! 😊";
           }
         }
         else if (LOKASI_KW.some(k => ml.includes(k)))
-          reply = "📍 *Area Layanan AClean*\n\nKami melayani area:\nAlam Sutera • BSD • Gading Serpong • Graha Raya • Karawaci • Tangerang Selatan\n\nArea lain (Jakarta Barat/Selatan): ada biaya transport tambahan.\n\nKetik *ORDER* untuk pesan layanan! 😊";
+          reply = "📍 *Area Layanan AClean*\n\nKami melayani area:\nAlam Sutera • BSD • Gading Serpong • Graha Raya • Karawaci • Tangerang Selatan\n\nArea lain: ada biaya transport tambahan.\n\nKetik *ORDER* untuk pesan layanan! 😊";
         else if (ORDER_KW.some(k => ml.includes(k)) || ml === "order")
           reply = "📋 *Pesan Layanan AClean*\n\nSilakan kirim info berikut:\n1️⃣ Nama lengkap\n2️⃣ Alamat lengkap\n3️⃣ Jenis layanan (Cuci AC / Perbaikan / Pasang / dll)\n4️⃣ Jumlah unit AC\n5️⃣ Tanggal & jam yang diinginkan\n\nAdmin akan konfirmasi jadwal & harga segera! ⚡";
         else if (STATUS_KW.some(k => ml.includes(k)))
-          reply = "🔍 Untuk cek status order, sebutkan *nama* dan *nomor order* (contoh: ORD-240401-XXX) atau nomor HP yang didaftarkan.\n\nAdmin akan segera membantu! 😊";
+          reply = "🔍 Untuk cek status order, sebutkan *nama* dan *nomor order* atau nomor HP yang didaftarkan.\n\nAdmin akan segera membantu! 😊";
         else if (BAYAR_KW.some(k => ml.includes(k)))
-          reply = "💳 *Info Pembayaran AClean*\n\nSetelah transfer, kirim bukti pembayaran ke sini beserta:\n📌 Nama & nomor order\n💰 Nominal transfer\n\nAdmin konfirmasi dalam 30 menit. Terima kasih! 🙏";
+          reply = "💳 *Info Pembayaran AClean*\n\nSetelah transfer, kirim bukti pembayaran beserta:\n📌 Nama & nomor order\n💰 Nominal transfer\n\nAdmin konfirmasi dalam 30 menit. Terima kasih! 🙏";
 
-        if (reply && FT) fetch("https://api.fonnte.com/send", {
-          method: "POST",
-          headers: { Authorization: FT, "Content-Type": "application/json" },
-          body: JSON.stringify({ target: sender, message: reply, delay: "1", countryCode: "62" })
-        }).catch(err => {
-          console.error("[WA_AUTO_REPLY_FAILED]", {target: sender, replyLen: reply.length, error: err.message});
-        });
+        if (reply && FT) {
+          fetch("https://api.fonnte.com/send", {
+            method: "POST",
+            headers: { Authorization: FT, "Content-Type": "application/json" },
+            body: JSON.stringify({ target: sender, message: reply, delay: "1", countryCode: "62" })
+          }).catch(err => console.error("[WA_AUTO_REPLY_FAILED]", err.message));
+          // Simpan auto-reply ke wa_messages
+          if (SU && SK) fetch(SU + "/rest/v1/wa_messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+            body: JSON.stringify({ phone: sender, name: "ARA", content: reply, role: "ara", created_at: new Date().toISOString() })
+          }).catch(() => {});
+        }
       }
 
-      // Forward to owner — only forward messages that were NOT auto-replied (customer needs attention)
-      if (!reply && fwdOn && FT && OP) {
-        const fwdMsg = "📲 WA Masuk\nDari: " + sanitizeName(wb.name||("+" + sender)) + "\nPesan: " + message;
+      // Forward ke Owner — hanya jika toggle ON, pesan tidak di-auto-reply,
+      // dan pesan bukan dari Owner itu sendiri (cegah loop)
+      if (!reply && fwdOn && FT && OP && sender !== OP.replace(/^0/, "62").replace(/[^0-9]/g, "")) {
+        const fwdMsg = "📲 *WA Masuk*\nDari: " + senderName + " (" + sender + ")\nPesan: " + message + "\n\n_Balas langsung di app WA Monitor_";
         fetch("https://api.fonnte.com/send", {
           method: "POST",
           headers: { Authorization: FT, "Content-Type": "application/json" },
           body: JSON.stringify({ target: OP, message: fwdMsg, delay: "2", countryCode: "62" })
-        }).catch(err => {
-          console.error("[WA_FORWARD_TO_OWNER_FAILED]", {ownerPhone: OP, from: sender, msgLen: fwdMsg.length, error: err.message});
-        });
+        }).catch(err => console.error("[WA_FORWARD_FAILED]", err.message));
       }
 
-      return res.status(200).json({ status: "ok", sender, autoreply: autoOn, replied: !!reply, forwarded: fwdOn });
+      return res.status(200).json({ status: "ok", sender, autoreply: autoOn, replied: !!reply, forwarded: !reply && fwdOn });
     }
 
     // ── ARA-CHAT ──

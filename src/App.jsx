@@ -6355,19 +6355,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div style={{ fontWeight: 800, color: "#25D366", fontSize: 14 }}>📱 WhatsApp Monitor</div>
                 <div style={{ fontSize: 11, color: cs.muted }}>via {waProvider === "fonnte" ? "Fonnte" : waProvider === "wa_cloud" ? "WA Cloud API" : "Twilio"} · Real-time</div>
               </div>
-              <button onClick={() => setWaPanel(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button onClick={() => fetchWaConversations(supabase, null).then(({ data }) => { if (data) setWaConversations(data); })}
+                  style={{ background: "none", border: "1px solid " + cs.border, color: cs.muted, fontSize: 12, padding: "4px 10px", borderRadius: 8, cursor: "pointer" }}>🔄</button>
+                <button onClick={() => setWaPanel(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+              </div>
             </div>
             <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
               <div style={{ width: 160, borderRight: "1px solid " + cs.border, overflowY: "auto" }}>
                 {waConversations.map(conv => (
                   <div key={conv.id} onClick={() => {
                     setSelectedConv(conv);
-                    // Load chat history dari wa_messages
-                    supabase.from("wa_messages").select("*")
+                    // Load chat history dari wa_messages (schema: phone,name,content,role,created_at)
+                    supabase.from("wa_messages").select("id,phone,name,content,role,created_at")
                       .eq("phone", conv.phone)
                       .order("created_at", { ascending: true })
-                      .limit(50)
+                      .limit(100)
                       .then(({ data }) => { if (data) setWaMessages(data); });
+                    // Reset unread di DB + state
+                    supabase.from("wa_conversations").update({ unread: 0 }).eq("phone", conv.phone).then(() => {});
                     setWaConversations(prev => prev.map(cv => cv.id === conv.id ? { ...cv, unread: 0 } : cv));
                   }}
                     style={{ padding: "10px 12px", borderBottom: "1px solid " + cs.border, cursor: "pointer", background: selectedConv?.id === conv.id ? cs.accent + "12" : "transparent" }}>
@@ -6389,34 +6395,49 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     </div>
                     <div style={{ flex: 1, padding: "12px 14px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
                       {waMessages.length === 0 ? (
-                        <div style={{ textAlign: "center", color: cs.muted, fontSize: 12, paddingTop: 30 }}>Memuat riwayat pesan...</div>
-                      ) : waMessages.map((msg, mi) => (
-                        <div key={msg.id || mi} style={{ display: "flex", justifyContent: msg.role === "ara" || msg.role === "admin" ? "flex-end" : "flex-start" }}>
-                          <div style={{ maxWidth: "80%", background: msg.role === "customer" ? cs.card : cs.accent + "22", borderRadius: 10, padding: "8px 12px", fontSize: 12 }}>
-                            {msg.role !== "customer" && <div style={{ fontSize: 10, color: cs.accent, fontWeight: 700, marginBottom: 3 }}>{msg.role === "ara" ? "🤖 ARA" : "👤 Admin"}</div>}
-                            <div style={{ color: cs.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{msg.content}</div>
-                            <div style={{ fontSize: 9, color: cs.muted, marginTop: 3, textAlign: "right" }}>{msg.created_at ? new Date(msg.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : ""}</div>
+                        <div style={{ textAlign: "center", color: cs.muted, fontSize: 12, paddingTop: 30 }}>Belum ada riwayat pesan.<br/>Pesan masuk dari customer akan muncul di sini.</div>
+                      ) : waMessages.map((msg, mi) => {
+                        const isOut = msg.role === "ara" || msg.role === "admin";
+                        return (
+                          <div key={msg.id || mi} style={{ display: "flex", justifyContent: isOut ? "flex-end" : "flex-start" }}>
+                            <div style={{ maxWidth: "80%", background: isOut ? "#25D36622" : cs.card, border: "1px solid " + (isOut ? "#25D36633" : cs.border), borderRadius: isOut ? "12px 2px 12px 12px" : "2px 12px 12px 12px", padding: "8px 12px", fontSize: 12 }}>
+                              {isOut && <div style={{ fontSize: 10, color: "#25D366", fontWeight: 700, marginBottom: 3 }}>{msg.role === "ara" ? "🤖 ARA" : "👤 Admin"}</div>}
+                              <div style={{ color: cs.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{msg.content}</div>
+                              <div style={{ fontSize: 9, color: cs.muted, marginTop: 3, textAlign: "right" }}>{msg.created_at ? new Date(msg.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : ""}</div>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                     <div style={{ padding: "10px 14px", borderTop: "1px solid " + cs.border, display: "flex", gap: 8, flexShrink: 0 }}>
                       <input id="waInput" value={waInput} onChange={e => setWaInput(e.target.value)}
                         onKeyDown={async e => {
                           if (e.key === "Enter" && waInput.trim() && selectedConv) {
-                            const ok = await sendWA(selectedConv.phone, waInput);
-                            addAgentLog("WA_SENT_MANUAL", `Manual reply ke ${selectedConv.name}: "${waInput.slice(0, 40)}"`, "SUCCESS");
-                            setWaConversations(prev => prev.map(cv => cv.id === selectedConv.id ? { ...cv, last: waInput, unread: 0 } : cv));
-                            setWaInput(""); showNotif(ok ? "✅ Pesan terkirim via Fonnte" : "📱 WA dibuka manual");
+                            const txt = waInput; setWaInput("");
+                            const ok = await sendWA(selectedConv.phone, txt);
+                            if (ok) {
+                              const newMsg = { id: Date.now(), phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin", created_at: new Date().toISOString() };
+                              setWaMessages(prev => [...prev, newMsg]);
+                              await supabase.from("wa_messages").insert({ phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin" }).then(() => {});
+                            }
+                            setWaConversations(prev => prev.map(cv => cv.id === selectedConv.id ? { ...cv, last: txt } : cv));
+                            addAgentLog("WA_SENT_MANUAL", `Manual reply ke ${selectedConv.name}: "${txt.slice(0, 40)}"`, "SUCCESS");
+                            showNotif(ok ? "✅ Pesan terkirim via Fonnte" : "📱 Fonnte gagal — cek koneksi");
                           }
                         }}
                         placeholder="Balas manual..." style={{ flex: 1, background: cs.bg, border: "1px solid " + cs.border, borderRadius: 10, padding: "8px 12px", color: cs.text, fontSize: 12, outline: "none" }} />
                       <button onClick={async () => {
                         if (waInput.trim() && selectedConv) {
-                          const ok = await sendWA(selectedConv.phone, waInput);
-                          addAgentLog("WA_SENT_MANUAL", `Manual reply ke ${selectedConv.name}: "${waInput.slice(0, 40)}"`, "SUCCESS");
-                          setWaConversations(prev => prev.map(cv => cv.id === selectedConv.id ? { ...cv, last: waInput, unread: 0 } : cv));
-                          setWaInput(""); showNotif(ok ? "✅ Pesan terkirim via Fonnte" : "📱 WA dibuka manual");
+                          const txt = waInput; setWaInput("");
+                          const ok = await sendWA(selectedConv.phone, txt);
+                          if (ok) {
+                            const newMsg = { id: Date.now(), phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin", created_at: new Date().toISOString() };
+                            setWaMessages(prev => [...prev, newMsg]);
+                            await supabase.from("wa_messages").insert({ phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin" }).then(() => {});
+                          }
+                          setWaConversations(prev => prev.map(cv => cv.id === selectedConv.id ? { ...cv, last: txt } : cv));
+                          addAgentLog("WA_SENT_MANUAL", `Manual reply ke ${selectedConv.name}: "${txt.slice(0, 40)}"`, "SUCCESS");
+                          showNotif(ok ? "✅ Pesan terkirim via Fonnte" : "📱 Fonnte gagal — cek koneksi");
                         }
                       }}
                         style={{ background: "#25D366", border: "none", color: "#fff", padding: "8px 14px", borderRadius: 10, cursor: "pointer", fontWeight: 700 }}>Kirim</button>
