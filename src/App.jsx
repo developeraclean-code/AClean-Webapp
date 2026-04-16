@@ -35,6 +35,8 @@ import {
   insertCustomer, upsertCustomer, updateCustomer, deleteCustomer,
 } from "./data/writes.js";
 import DashboardView from "./views/DashboardView.jsx";
+import ViewErrorBoundary from "./components/ViewErrorBoundary.jsx";
+import { AppContext } from "./context/AppContext.js";
 const AgentLogView = lazy(() => import("./views/AgentLogView.jsx"));
 const MonitoringView = lazy(() => import("./views/MonitoringView.jsx"));
 const InventoryView = lazy(() => import("./views/InventoryView.jsx"));
@@ -1156,7 +1158,6 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
         // Quality adjustable dari settings (default 0.70 = 70% JPEG — hemat ~78% ukuran vs original)
         const dataUrl = c.toDataURL("image/jpeg", quality);
         const sizeKB = Math.round((dataUrl.length * 3 / 4) / 1024);
-        console.log(`📸 Compress: ${img.width}x${img.height} → ${w}x${h}px, ~${sizeKB}KB (quality: ${quality})`);
         res(dataUrl);
       };
       img.onerror = () => rej(new Error("Invalid image file"));
@@ -1836,7 +1837,6 @@ ${matRowsHtml}
     (async () => {
       try {
         await supabase.from("app_settings").upsert({ key: "llm_provider", value: llmProvider }, { onConflict: "key" });
-        console.log("[Settings] Synced llmProvider to DB:", llmProvider);
       } catch (e) { console.warn("[Settings] Failed to sync llmProvider:", e.message); }
     })();
   }, [llmProvider, isLoggedIn]);
@@ -1846,7 +1846,6 @@ ${matRowsHtml}
     (async () => {
       try {
         await supabase.from("app_settings").upsert({ key: "llm_model", value: llmModel }, { onConflict: "key" });
-        console.log("[Settings] Synced llmModel to DB:", llmModel);
       } catch (e) { console.warn("[Settings] Failed to sync llmModel:", e.message); }
     })();
   }, [llmModel, isLoggedIn]);
@@ -1862,7 +1861,6 @@ ${matRowsHtml}
     (async () => {
       try {
         await supabase.from("app_settings").upsert({ key: "wa_provider", value: waProvider }, { onConflict: "key" });
-        console.log("[Settings] Synced waProvider to DB:", waProvider);
       } catch (e) { console.warn("[Settings] Failed to sync waProvider:", e.message); }
     })();
   }, [waProvider, isLoggedIn]);
@@ -2095,30 +2093,25 @@ ${matRowsHtml}
             console.log("[Settings] DEBUG — localStorage llmProvider:", currentLS, "DB llm_provider:", sMap.llm_provider);
 
             if (sMap.llm_provider && VALID_PROVIDERS.includes(sMap.llm_provider)) {
-              console.log("[Settings] ✓ Loading provider dari DB:", sMap.llm_provider);
               setLlmProvider(sMap.llm_provider);
               // Also sync to localStorage to keep in sync
               _lsSave("llmProvider", sMap.llm_provider);
             } else if (sMap.llm_provider) {
               console.warn("[Settings] ✗ Invalid provider di DB:", sMap.llm_provider, "→ keep current:", currentLS || "minimax");
             } else {
-              console.log("[Settings] No provider in DB, keeping current value:", currentLS || "minimax");
             }
             // Validasi model — reject gemini atau yang tidak sesuai
             const currentModelLS = _ls("llmModel", null);
             if (sMap.llm_model && !sMap.llm_model.includes("gemini")) {
-              console.log("[Settings] ✓ Loading model dari DB:", sMap.llm_model);
               setLlmModel(sMap.llm_model);
               _lsSave("llmModel", sMap.llm_model);
             } else if (sMap.llm_model && sMap.llm_model.includes("gemini")) {
               console.warn("[Settings] ✗ Rejecting gemini model dari DB:", sMap.llm_model, "→ keep current:", currentModelLS || "MiniMax-M2.5");
             } else {
-              console.log("[Settings] No model in DB, keeping current value:", currentModelLS || "MiniMax-M2.5");
             }
             // Load wa_provider (WhatsApp provider) from DB — global setting for Owner/Admin
             const VALID_WA_PROVIDERS = ["fonnte", "wa_cloud", "twilio"];
             if (sMap.wa_provider && VALID_WA_PROVIDERS.includes(sMap.wa_provider)) {
-              console.log("[Settings] Loading wa_provider dari DB:", sMap.wa_provider);
               setWaProvider(sMap.wa_provider);
             }
             // Load bank & phone settings dari DB
@@ -2207,7 +2200,6 @@ ${matRowsHtml}
             const activePL = plRes.data.filter(r => r.is_active !== false);
             PRICE_LIST = buildPriceListFromDB(activePL);
             setPriceListSyncedAt(new Date());
-            console.log("✅ PRICE_LIST loaded from DB:", plRes.data.length, "rows");
           }
         } catch (e) { console.warn("price_list DB fallback to default:", e?.message); }
 
@@ -2223,14 +2215,12 @@ ${matRowsHtml}
                 setBrainMd(brainMap.brain_md);
                 _lsSave("brainMd", brainMap.brain_md);
               } else {
-                console.log("⚠️ DB brain_md is v4.0 (old), using hardcoded v5.1 instead");
               }
             }
             if (brainMap.brain_customer && typeof brainMap.brain_customer === "string" && brainMap.brain_customer.length > 10) {
               setBrainMdCustomer(brainMap.brain_customer);
               _lsSave("brainMdCustomer", brainMap.brain_customer);
             }
-            console.log("✅ ARA Brain loaded from Supabase — sync ke semua device");
           }
         } catch (e) { console.warn("ara_brain DB load failed, pakai localStorage:", e?.message); }
       };
@@ -2319,7 +2309,6 @@ ${matRowsHtml}
           fetchOrders(supabase).then(({ data }) => { if (data) setOrdersData(data); })
         ))
       .subscribe((status) => {
-        if (status === "SUBSCRIBED") console.log("✅ RT orders connected");
         if (status === "CHANNEL_ERROR") console.warn("⚠️ RT orders error — akan polling manual");
       });
 
@@ -3007,7 +2996,7 @@ ${matRowsHtml}
     // Attempt 1: full payload
     {
       const { error: e1 } = await insertOrder(supabase, newOrder);
-      if (!e1) { orderSaved = true; console.log("✅ Order saved full:", newOrder.id); }
+      if (!e1) { orderSaved = true; }
       else console.warn("❌ A1 full:", e1.message, "| hint:", e1.hint, "| detail:", e1.details);
     }
 
@@ -3021,7 +3010,7 @@ ${matRowsHtml}
         customer_id: newOrder.customer_id,
       };
       const { error: e2 } = await insertOrder(supabase, safe2);
-      if (!e2) { orderSaved = true; console.log("✅ Order saved safe2:", newOrder.id); }
+      if (!e2) { orderSaved = true; }
       else console.warn("❌ A2 safe:", e2.message, "| hint:", e2.hint);
     }
 
@@ -3032,7 +3021,7 @@ ${matRowsHtml}
         service: newOrder.service, units: newOrder.units, status: newOrder.status
       };
       const { error: e3 } = await insertOrder(supabase, minimal);
-      if (!e3) { orderSaved = true; console.log("✅ Order saved minimal:", newOrder.id); }
+      if (!e3) { orderSaved = true; }
       else {
         console.error("❌ A3 minimal:", e3.message, "| hint:", e3.hint, "| detail:", e3.details);
         showNotif("❌ Gagal simpan order: " + e3.message + (e3.hint ? " — " + e3.hint : ""));
@@ -3303,8 +3292,6 @@ ${matRowsHtml}
       let fullText = "";
 
       // ── Coba backend proxy dulu (API key aman di server) ──
-      console.log("[ARA-CHAT Frontend] Sending request:", { provider: llmProvider, model: llmModel, hasMessage: newMessages.length > 0 });
-      console.log("[ARA-CHAT DEBUG] Current state: llmProvider=" + llmProvider + ", llmModel=" + llmModel + ", localStorage llmProvider=" + _ls("llmProvider", "N/A"));
       const backendRes = await fetch("/api/ara-chat", {
         method: "POST", headers: _apiHeaders(),
         body: JSON.stringify({
@@ -4408,7 +4395,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
   const isTekRoleGlobal = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
 
+  const appContextValue = {
+    currentUser, supabase, showNotif, showConfirm, addAgentLog,
+    fmt, TODAY, isMobile, auditUserName,
+  };
+
   return (
+    <AppContext.Provider value={appContextValue}>
     <div style={{ background: cs.bg, color: cs.text, minHeight: "100vh", fontFamily: "system-ui,-apple-system,sans-serif", display: isMobile ? "block" : "flex" }}>
 
       {/* ── GLOBAL MOBILE STYLES ── */}
@@ -4523,9 +4516,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               )}
             </div>
           )}
-          <Suspense fallback={<div style={{display:"flex",justifyContent:"center",alignItems:"center",minHeight:200,color:cs.muted,fontSize:14}}>Memuat...</div>}>
-            {renderContent()}
-          </Suspense>
+          <ViewErrorBoundary>
+            <Suspense fallback={<div style={{display:"flex",justifyContent:"center",alignItems:"center",minHeight:200,color:cs.muted,fontSize:14}}>Memuat...</div>}>
+              {renderContent()}
+            </Suspense>
+          </ViewErrorBoundary>
         </div>
       </div>
 
@@ -7709,7 +7704,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 units_json: JSON.stringify(laporanUnits),
                 units: laporanUnits,
               }, { onConflict: "id" });
-              if (!e1) { savedOk = true; console.log("✅ Laporan saved (full):", newReport.id); }
+              if (!e1) { savedOk = true; }
               else { lastError = e1; console.warn("❌ Attempt 1 failed:", e1.message); }
             } catch (ex) { lastError = ex; console.warn("❌ Attempt 1 error:", ex.message); }
           }
@@ -7720,7 +7715,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 units_json: JSON.stringify(laporanUnits),
                 materials_json: JSON.stringify(effectiveMaterials),
               }, { onConflict: "id" });
-              if (!e2) { savedOk = true; console.log("✅ Laporan saved (json text cols):", newReport.id); }
+              if (!e2) { savedOk = true; }
               else { lastError = e2; console.warn("❌ Attempt 2 failed:", e2.message); }
             } catch (ex) { lastError = ex; console.warn("❌ Attempt 2 error:", ex.message); }
           }
@@ -7733,7 +7728,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 status: "SUBMITTED", total_units: newReport.total_units,
                 submitted_at: new Date().toISOString(),
               }, { onConflict: "id" });
-              if (!e3) { savedOk = true; console.log("✅ Laporan saved (minimal):", newReport.id); }
+              if (!e3) { savedOk = true; }
               else { lastError = e3; console.warn("❌ Attempt 3 failed:", e3.message); }
             } catch (ex) { lastError = ex; console.warn("❌ Attempt 3 error:", ex.message); }
           }
@@ -7748,8 +7743,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               const { error: insertErr } = await supabase.from("service_reports").insert(basePayload).select().single();
               if (!insertErr) {
                 savedOk = true;
-                console.log("✅ Laporan saved via DELETE+INSERT fallback:", newReport.id);
-              } else {
+                } else {
                 lastError = insertErr;
                 console.error("❌ DELETE+INSERT fallback failed:", insertErr.message);
               }
@@ -8265,7 +8259,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   material: newInvoice.material, total: newInvoice.total,
                   status: st,
                 });
-                if (!e2) { console.log("✅ Invoice inserted:", st); break; }
               }
             }
 
@@ -9728,5 +9721,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         select{cursor:pointer}
       `}</style>
     </div>
+    </AppContext.Provider>
   );
 }

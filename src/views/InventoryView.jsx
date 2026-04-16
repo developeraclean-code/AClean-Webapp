@@ -1,9 +1,10 @@
+import { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { displayStock } from "../lib/inventory.js";
 
 const INV_PAGE_SIZE = 15;
 
-export default function InventoryView({
+function InventoryView({
   inventoryData, searchInventory, setSearchInventory, inventoryPage, setInventoryPage,
   currentUser, supabase, fmt, showConfirm, showNotif,
   setModalStok, setEditStokItem, setNewStokForm, setModalEditStok, setInventoryData,
@@ -103,3 +104,5 @@ export default function InventoryView({
     </div>
   );
 }
+
+export default memo(InventoryView);

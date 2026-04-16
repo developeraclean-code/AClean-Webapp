@@ -1,7 +1,8 @@
+import { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { displayStock } from "../lib/inventory.js";
 
-export default function MatTrackView({ inventoryData, invUnitsData, setInvUnitsData, invTxData, matTrackFilter, setMatTrackFilter, matTrackSearch, setMatTrackSearch, matTrackDateFrom, setMatTrackDateFrom, matTrackDateTo, setMatTrackDateTo, setModalStok, supabase, fetchInventoryUnits, showNotif }) {
+function MatTrackView({ inventoryData, invUnitsData, setInvUnitsData, invTxData, matTrackFilter, setMatTrackFilter, matTrackSearch, setMatTrackSearch, matTrackDateFrom, setMatTrackDateFrom, matTrackDateTo, setMatTrackDateTo, setModalStok, supabase, fetchInventoryUnits, showNotif }) {
 // Item prioritas yang perlu ditrack (freon, pipa, kabel)
 const TRACK_ITEMS = inventoryData.filter(item =>
   item.material_type === "freon" ||
@@ -341,3 +342,5 @@ return (
   </div>
 );
 }
+
+export default memo(MatTrackView);

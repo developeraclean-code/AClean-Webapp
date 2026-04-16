@@ -1,6 +1,7 @@
+import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-export default function MyReportView({ laporanReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setLaporanInstallItems, openLaporanModal, safeArr, TODAY, INSTALL_ITEMS }) {
+function MyReportView({ laporanReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setLaporanInstallItems, openLaporanModal, safeArr, TODAY, INSTALL_ITEMS }) {
 const myName = currentUser?.name || "";
 // Get all submitted reports
 const submittedReps = laporanReports.filter(r => r.teknisi === myName || r.helper === myName);
@@ -32,7 +33,6 @@ if (isTeknisiOrHelper) {
   const beforeCount = myReps.length;
   // Filter out VERIFIED — case insensitive
   myReps = myReps.filter(r => (r.status || "").toUpperCase() !== "VERIFIED");
-  console.log(`[MyReport Filter] user=${myName}, before=${beforeCount}, after=${myReps.length}, hidden=${beforeCount - myReps.length}`);
 }
 
 const filtReps = myReps.filter(r =>
@@ -217,3 +217,5 @@ return (
   </div>
 );
 }
+
+export default memo(MyReportView);

@@ -27,7 +27,7 @@ export const fetchInventoryUnits = (supabase) =>
   supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label");
 
 export const fetchExpenses = (supabase) =>
-  supabase.from("expenses").select("*").order("date", { ascending: false });
+  supabase.from("expenses").select("*").order("date", { ascending: false }).limit(500);
 
 export const fetchPayments = (supabase) =>
   supabase.from("payments").select("invoice_id,amount,method,paid_at").order("paid_at", { ascending: false }).limit(20);

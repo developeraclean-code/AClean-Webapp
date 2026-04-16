@@ -1,6 +1,7 @@
+import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-export default function SettingsView({ currentUser, isMobile, appSettings, setAppSettings, waProvider, setWaProvider, waToken, setWaToken, waDevice, setWaDevice, waStatus, setWaStatus, llmProvider, setLlmProvider, llmModel, setLlmModel, llmApiKey, setLlmApiKey, ollamaUrl, setOllamaUrl, llmStatus, setLlmStatus, storageProvider, setStorageProvider, storageStatus, setStorageStatus, brainMd, brainMdCustomer, dbProvider, setDbProvider, cronJobs, setCronJobs, userAccounts, setUserAccounts, dbHealthData, setDbHealthData, dbHealthLoading, setDbHealthLoading, vacuumLoading, setVacuumLoading, setModalBrainEdit, setModalBrainCustomerEdit, setNewUserForm, setModalAddUser, setEditPwdTarget, setEditPwdForm, setModalEditPwd, showNotif, showConfirm, addAgentLog, _apiHeaders, _ls, supabase }) {
+function SettingsView({ currentUser, isMobile, appSettings, setAppSettings, waProvider, setWaProvider, waToken, setWaToken, waDevice, setWaDevice, waStatus, setWaStatus, llmProvider, setLlmProvider, llmModel, setLlmModel, llmApiKey, setLlmApiKey, ollamaUrl, setOllamaUrl, llmStatus, setLlmStatus, storageProvider, setStorageProvider, storageStatus, setStorageStatus, brainMd, brainMdCustomer, dbProvider, setDbProvider, cronJobs, setCronJobs, userAccounts, setUserAccounts, dbHealthData, setDbHealthData, dbHealthLoading, setDbHealthLoading, vacuumLoading, setVacuumLoading, setModalBrainEdit, setModalBrainCustomerEdit, setNewUserForm, setModalAddUser, setEditPwdTarget, setEditPwdForm, setModalEditPwd, showNotif, showConfirm, addAgentLog, _apiHeaders, _ls, supabase }) {
 const WA_PROVIDERS = [
   {
     id: "fonnte", label: "Fonnte", icon: "🟢", active: true, tagline: "WA Gateway lokal Indonesia",
@@ -905,3 +906,5 @@ return (
   </div>
 );
 }
+
+export default memo(SettingsView);

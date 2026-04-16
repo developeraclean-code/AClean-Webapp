@@ -1,7 +1,8 @@
+import { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { SERVICE_TYPES } from "../constants/services.js";
 
-export default function PriceListView({ priceListData, setPriceListData, priceListSvcTab, setPriceListSvcTab, searchPriceList, setSearchPriceList, plEditItem, setPlEditItem, plEditForm, setPlEditForm, plAddModal, setPlAddModal, plNewForm, setPlNewForm, currentUser, setPriceListSyncedAt, showConfirm, showNotif, addAgentLog, fetchPriceList, fmt, buildPriceListFromDB, supabase, PRICE_LIST, setPRICE_LIST }) {
+function PriceListView({ priceListData, setPriceListData, priceListSvcTab, setPriceListSvcTab, searchPriceList, setSearchPriceList, plEditItem, setPlEditItem, plEditForm, setPlEditForm, plAddModal, setPlAddModal, plNewForm, setPlNewForm, currentUser, setPriceListSyncedAt, showConfirm, showNotif, addAgentLog, fetchPriceList, fmt, buildPriceListFromDB, supabase, PRICE_LIST, setPRICE_LIST }) {
 const SVC_TABS = ["Semua", "Cleaning", "Install", "Repair", "Complain"];
 const svcColors = { Cleaning: "#22c55e", Install: "#3b82f6", Repair: "#f59e0b", Complain: "#ef4444" };
 
@@ -35,7 +36,6 @@ const handleSavePrice = async () => {
   // Rebuild PRICE_LIST dari freshList (bukan priceListData yang stale)
   setPRICE_LIST(buildPriceListFromDB(freshList.filter(r => r.is_active !== false)));
   setPriceListSyncedAt(new Date());
-  console.log("✅ PRICE_LIST updated after save");
   setPlEditItem(null);
   showNotif("✅ Harga diperbarui — ARA langsung pakai harga baru");
   addAgentLog("PRICELIST_UPDATE", `Harga "${updated.type}" diupdate → Rp${fmt(updated.price)}`, "SUCCESS");
@@ -290,3 +290,5 @@ return (
   </div>
 );
 }
+
+export default memo(PriceListView);

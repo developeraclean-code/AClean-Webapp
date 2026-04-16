@@ -1,6 +1,7 @@
+import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-export default function AraView({
+function AraView({
   araMessages, setAraMessages, araInput, setAraInput, araLoading,
   araImageData, setAraImageData, setAraImageType, araImagePreview, setAraImagePreview,
   araBottomRef, priceListSyncedAt, llmStatus,
@@ -136,3 +137,5 @@ export default function AraView({
     </div>
   );
 }
+
+export default memo(AraView);

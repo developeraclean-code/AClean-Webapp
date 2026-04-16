@@ -1,6 +1,7 @@
+import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-export default function ReportsView({ ordersData, invoicesData, laporanReports, customersData, teknisiData, inventoryData, isMobile, currentUser, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, fmt, invoiceReminderWA, getTechColor, TODAY }) {
+function ReportsView({ ordersData, invoicesData, laporanReports, customersData, teknisiData, inventoryData, isMobile, currentUser, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, fmt, invoiceReminderWA, getTechColor, TODAY }) {
 const techColors = Object.fromEntries([...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(n => [n, getTechColor(n, teknisiData)]))
 // ── Filter helper berdasarkan periode yang dipilih ──
 const tahunIni = TODAY.slice(0, 4);
@@ -361,3 +362,5 @@ return (
   </div>
 );
 }
+
+export default memo(ReportsView);

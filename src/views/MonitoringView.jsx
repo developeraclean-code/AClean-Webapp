@@ -1,6 +1,7 @@
+import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-export default function MonitoringView({ monitorData, setMonitorLoading, setMonitorData }) {
+function MonitoringView({ monitorData, setMonitorLoading, setMonitorData }) {
   const data = monitorData;
   if (!data) return <div style={{ padding: 24, color: cs.muted }}>⏳ Loading monitoring data...</div>;
 
@@ -112,3 +113,5 @@ export default function MonitoringView({ monitorData, setMonitorLoading, setMoni
     </div>
   );
 }
+
+export default memo(MonitoringView);

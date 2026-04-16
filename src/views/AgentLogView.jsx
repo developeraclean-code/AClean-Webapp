@@ -1,8 +1,9 @@
+import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
 const AGENT_LOG_PAGE_SIZE = 20;
 
-export default function AgentLogView({ agentLogs, logDateFilter, setLogDateFilter, logActionFilter, setLogActionFilter, agentLogPage, setAgentLogPage }) {
+function AgentLogView({ agentLogs, logDateFilter, setLogDateFilter, logActionFilter, setLogActionFilter, agentLogPage, setAgentLogPage }) {
   const logDates = [...new Set(agentLogs.map(l => (l.created_at || "").slice(0, 10)).filter(Boolean))].sort().reverse();
   const filteredLogs = agentLogs.filter(l => {
     const dayMatch = logDateFilter === "Semua" || (l.created_at || "").slice(0, 10) === logDateFilter;
@@ -68,3 +69,5 @@ export default function AgentLogView({ agentLogs, logDateFilter, setLogDateFilte
     </div>
   );
 }
+
+export default memo(AgentLogView);
