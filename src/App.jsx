@@ -1656,7 +1656,7 @@ ${matRowsHtml}
     setShowMatPreset(false);
 
     // ── Smart Unit Preset: Cek customer history ──
-    const customer = customersData.find(c => c.name === order.customer);
+    const customer = findCustomer(customersData, order.phone, order.customer);
     if (customer) {
       const custHistory = buildCustomerHistory(customer, ordersData, laporanReports, invoicesData);
       // Ambil unit detail dari job sebelumnya (terbaru)
