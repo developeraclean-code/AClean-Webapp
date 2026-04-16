@@ -149,7 +149,11 @@ export const hitungLaborFromUnits = (service, units, priceListData = [], priceFa
 // Bangun PRICE_LIST shape dari rows DB. Menggantikan duplikasi loader.
 // Normalisasi: service/type di-trim. Freon diidentifikasi via notes atau service name.
 export const buildPriceListFromDB = (rows, baseDefault = PRICE_LIST_DEFAULT) => {
-  const pl = { ...baseDefault };
+  const pl = Object.fromEntries(
+    Object.entries(baseDefault).map(([k, v]) =>
+      [k, v && typeof v === "object" ? { ...v } : v]
+    )
+  );
   const active = rows.filter(r => r.is_active !== false);
   active.forEach(row => {
     const price = Number(row.price) || 0;
