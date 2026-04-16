@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Suspense } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { normalizePhone, samePhone } from "./lib/phone.js";
 import { getLocalDate, getLocalDateObj, getLocalISOString } from "./lib/dateTime.js";
@@ -34,23 +34,23 @@ import {
   insertExpense, updateExpense, deleteExpense,
   insertCustomer, upsertCustomer, updateCustomer, deleteCustomer,
 } from "./data/writes.js";
-import AgentLogView from "./views/AgentLogView.jsx";
-import MonitoringView from "./views/MonitoringView.jsx";
-import InventoryView from "./views/InventoryView.jsx";
-import AraView from "./views/AraView.jsx";
 import DashboardView from "./views/DashboardView.jsx";
-import CustomersView from "./views/CustomersView.jsx";
-import OrdersView from "./views/OrdersView.jsx";
-import InvoiceView from "./views/InvoiceView.jsx";
-import PriceListView from "./views/PriceListView.jsx";
-import ScheduleView from "./views/ScheduleView.jsx";
-import TeknisiAdminView from "./views/TeknisiAdminView.jsx";
-import ReportsView from "./views/ReportsView.jsx";
-import LaporanTimView from "./views/LaporanTimView.jsx";
-import MyReportView from "./views/MyReportView.jsx";
-import MatTrackView from "./views/MatTrackView.jsx";
-import ExpensesView from "./views/ExpensesView.jsx";
-import SettingsView from "./views/SettingsView.jsx";
+const AgentLogView = lazy(() => import("./views/AgentLogView.jsx"));
+const MonitoringView = lazy(() => import("./views/MonitoringView.jsx"));
+const InventoryView = lazy(() => import("./views/InventoryView.jsx"));
+const AraView = lazy(() => import("./views/AraView.jsx"));
+const CustomersView = lazy(() => import("./views/CustomersView.jsx"));
+const OrdersView = lazy(() => import("./views/OrdersView.jsx"));
+const InvoiceView = lazy(() => import("./views/InvoiceView.jsx"));
+const PriceListView = lazy(() => import("./views/PriceListView.jsx"));
+const ScheduleView = lazy(() => import("./views/ScheduleView.jsx"));
+const TeknisiAdminView = lazy(() => import("./views/TeknisiAdminView.jsx"));
+const ReportsView = lazy(() => import("./views/ReportsView.jsx"));
+const LaporanTimView = lazy(() => import("./views/LaporanTimView.jsx"));
+const MyReportView = lazy(() => import("./views/MyReportView.jsx"));
+const MatTrackView = lazy(() => import("./views/MatTrackView.jsx"));
+const ExpensesView = lazy(() => import("./views/ExpensesView.jsx"));
+const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -4523,7 +4523,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               )}
             </div>
           )}
-          {renderContent()}
+          <Suspense fallback={<div style={{display:"flex",justifyContent:"center",alignItems:"center",minHeight:200,color:cs.muted,fontSize:14}}>Memuat...</div>}>
+            {renderContent()}
+          </Suspense>
         </div>
       </div>
 
