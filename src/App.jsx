@@ -1515,6 +1515,10 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .page { padding: 20px; }
   }
+  @page {
+    size: A4;
+    margin: 10mm 12mm;
+  }
 </style>
 </head>
 <body>
@@ -1522,11 +1526,11 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   <!-- Header -->
   <div class="header">
     <div class="header-top">
-      <div style="display:flex;align-items:center;gap:12px">
+      <div style="display:flex;align-items:center;gap:14px">
         ${logoUrl
-          ? `<img src="${logoUrl}" alt="AClean" style="height:52px;width:auto;object-fit:contain;filter:brightness(0) invert(1)" />`
+          ? `<div style="background:#fff;border-radius:8px;padding:4px 8px;display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:56px"><img src="${logoUrl}" alt="AClean" style="height:48px;max-width:140px;width:auto;object-fit:contain;display:block" /></div>`
           : `<div class="brand"><span>AC</span>lean Service</div>`}
-        <div class="brand-sub" style="color:#93c5fd;font-size:12px;margin-top:4px">Jasa Servis AC Profesional · Tangerang Selatan</div>
+        <div class="brand-sub" style="color:#93c5fd;font-size:12px;margin-top:0">Jasa Servis AC Profesional · Tangerang Selatan</div>
       </div>
       <div>
         <div class="inv-label">INVOICE</div>
