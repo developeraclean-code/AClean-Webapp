@@ -111,6 +111,24 @@ const INVOICES_DATA = [
 // Jangan edit langsung; pakai setPriceList() untuk trigger re-assign.
 let PRICE_LIST = { ...PRICE_LIST_DEFAULT };
 
+// Cache logo AClean sebagai base64 agar bisa diembed di invoice HTML (blob URL)
+// Relative path tidak reliable saat dibuka di popup blob: context
+let _logoDataUrlCache = null;
+async function fetchInvoiceLogoUrl() {
+  if (_logoDataUrlCache) return _logoDataUrlCache;
+  try {
+    const r = await fetch("/aclean-logo.png");
+    if (!r.ok) return null;
+    const blob = await r.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => { _logoDataUrlCache = reader.result; resolve(reader.result); };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch { return null; }
+}
+
 // Wrapper: pass PRICE_LIST cache sebagai fallback ke lib pricing.
 const hargaPerUnitFromTipe = (service, tipe, priceListData = []) =>
   hargaPerUnitFromTipeLib(service, tipe, priceListData, PRICE_LIST);
@@ -1334,7 +1352,9 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     showNotif(`✅ Rekap ${tglLabel} berhasil didownload!`);
   };
 
-  const downloadInvoicePDF = (inv) => {
+  // Build invoice HTML string — reused by PDF download AND WA attachment upload
+  // logoUrl: base64 data URL atau null (fallback ke teks merek)
+  const buildInvoiceHTML = (inv, logoUrl = null) => {
     const fmt2 = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
     const perUnit = inv.units > 0 ? Math.round((inv.labor || 0) / inv.units) : (inv.labor || 0);
 
@@ -1502,9 +1522,11 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   <!-- Header -->
   <div class="header">
     <div class="header-top">
-      <div>
-        <div class="brand"><span>AC</span>lean Service</div>
-        <div class="brand-sub">Jasa Servis AC Profesional · Tangerang Selatan</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        ${logoUrl
+          ? `<img src="${logoUrl}" alt="AClean" style="height:52px;width:auto;object-fit:contain;filter:brightness(0) invert(1)" />`
+          : `<div class="brand"><span>AC</span>lean Service</div>`}
+        <div class="brand-sub" style="color:#93c5fd;font-size:12px;margin-top:4px">Jasa Servis AC Profesional · Tangerang Selatan</div>
       </div>
       <div>
         <div class="inv-label">INVOICE</div>
@@ -1557,7 +1579,7 @@ ${matRowsHtml}
     </tbody>
   </table>
 
-  ${inv.garansi_expires ? '<div class="garansi-box">🛡️ <strong>Garansi Servis ${inv.garansi_days || 30} Hari</strong> — berlaku sampai ${inv.garansi_expires}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</div>' : ""}
+  ${inv.garansi_expires ? '<div class="garansi-box">🛡️ <strong>Garansi Servis ' + (inv.garansi_days || 30) + ' Hari</strong> — berlaku sampai ' + inv.garansi_expires + '. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</div>' : ""}
 
   <!-- Footer -->
   <div class="footer-grid">
@@ -1587,6 +1609,12 @@ ${matRowsHtml}
 </body>
 </html>`;
 
+    return html;
+  };
+
+  const downloadInvoicePDF = async (inv) => {
+    const logoUrl = await fetchInvoiceLogoUrl();
+    const html = buildInvoiceHTML(inv, logoUrl);
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     // SEC-09: Audit log setiap kali invoice dicetak/download
@@ -1604,6 +1632,34 @@ ${matRowsHtml}
       showNotif("PDF disimpan sebagai file HTML — buka lalu Ctrl+P untuk cetak");
     } else {
       setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+  };
+
+  // Upload invoice HTML ke R2 untuk WA attachment — returns public URL or null
+  // Hanya berhasil jika R2_PUBLIC_URL dikonfigurasi di Vercel env vars
+  const uploadInvoiceForWA = async (inv) => {
+    try {
+      const logoUrl = await fetchInvoiceLogoUrl();
+      const html = buildInvoiceHTML(inv, logoUrl);
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const res = await fetch("/api/upload-foto", {
+        method: "POST", headers: _apiHeaders(),
+        body: JSON.stringify({
+          base64, filename: `Invoice_${inv.id}.html`,
+          folder: "invoices", mimeType: "text/html"
+        })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.success && d.url?.startsWith("http")) return d.url;
+      return null;
+    } catch {
+      return null;
     }
   };
 
@@ -2508,15 +2564,18 @@ ${matRowsHtml}
 
   // ── Helpers ──
   // ── WA: kirim via Fonnte backend, fallback wa.me ──
-  const sendWA = async (phone, message) => {
+  // opts.url + opts.filename → Fonnte Premium attachment (opsional)
+  const sendWA = async (phone, message, opts = {}) => {
     if (!phone || !message) {
       console.warn("sendWA skip: phone/message kosong", { phone, message: message?.slice(0, 30) });
       return false;
     }
     try {
+      const body = { phone, message, currentUserRole: currentUser?.role || "Unknown" };
+      if (opts.url) { body.url = opts.url; if (opts.filename) body.filename = opts.filename; }
       const r = await fetch("/api/send-wa", {
         method: "POST", headers: _apiHeaders(),
-        body: JSON.stringify({ phone, message, currentUserRole: currentUser?.role || "Unknown" })
+        body: JSON.stringify(body)
       });
       const d = await r.json().catch(() => ({}));
       if (r.ok && d.success) return true;
@@ -2619,10 +2678,12 @@ ${matRowsHtml}
     await sendDispatchWA(order);
   };
 
-  const invoiceReminderWA = (inv) => {
+  const invoiceReminderWA = async (inv) => {
     if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
     const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
-    sendWA(inv.phone, msg);
+    const invoiceUrl = await uploadInvoiceForWA(inv);
+    const opts = invoiceUrl ? { url: invoiceUrl, filename: `Invoice_${inv.id}.html` } : {};
+    sendWA(inv.phone, msg, opts);
   };
 
   // ── SEC-01: HTML Escape helper untuk prevent XSS di PDF generator ──
@@ -2801,12 +2862,14 @@ ${matRowsHtml}
     setModalApproveInv(true);
   };
 
-  // ── Approve + kirim WA ke customer ──
+  // ── Approve + kirim WA ke customer (+ lampiran invoice jika R2_PUBLIC_URL diset) ──
   const approveAndSend = async (inv) => {
     const due = await approveInvoiceCore(inv);
     const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
-    const sent = await sendWA(inv.phone, waMsg);
-    if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}`);
+    const invoiceUrl = await uploadInvoiceForWA(inv);
+    const opts = invoiceUrl ? { url: invoiceUrl, filename: `Invoice_${inv.id}.html` } : {};
+    const sent = await sendWA(inv.phone, waMsg, opts);
+    if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 📎" : ""}`);
     else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
     setModalApproveInv(false); setPendingApproveInv(null);
   };

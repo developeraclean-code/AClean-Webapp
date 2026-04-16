@@ -543,6 +543,61 @@ return (
         </div>
       </div>
 
+      {/* ── OTOMASI & CRON TOGGLES ── */}
+      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <span style={{ fontSize: 20 }}>⏰</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, color: cs.text, fontSize: 14 }}>Otomasi & Cron</div>
+            <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>Aktifkan / matikan tugas otomatis yang berjalan terjadwal di server</div>
+          </div>
+        </div>
+        {[
+          { key: "invoice_reminder_enabled", label: "Reminder Invoice Otomatis", desc: "Kirim WA pengingat ke customer yang belum bayar (cron harian jam 10:00 WIB — hari ke-1–7, 8–14, 15–21)", icon: "📨" },
+          { key: "daily_report_enabled",     label: "Laporan Harian ke Owner",   desc: "Kirim ringkasan order & pemasukan hari ini ke Owner setiap hari jam 18:00 WIB", icon: "📊" },
+          { key: "stock_alert_enabled",      label: "Alert Stok Kritis",         desc: "Notif WA ke Owner jika ada stok inventory HABIS atau KRITIS (cron jam 08:00 WIB)", icon: "⚠️" },
+        ].map(({ key, label, desc, icon }) => {
+          // Default ON jika belum pernah diset
+          const isOn = appSettings[key] !== "false";
+          return (
+            <div key={key} style={{
+              display: "flex", alignItems: "center", gap: 14, padding: "12px 0",
+              borderBottom: "1px solid " + cs.border
+            }}>
+              <span style={{ fontSize: 18, minWidth: 24 }}>{icon}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, color: isOn ? cs.text : cs.muted, fontSize: 13 }}>{label}</div>
+                <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{desc}</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: isOn ? cs.green : cs.muted }}>{isOn ? "ON" : "OFF"}</span>
+                <div onClick={async () => {
+                  const newVal = isOn ? "false" : "true";
+                  setAppSettings(prev => ({ ...prev, [key]: newVal }));
+                  await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
+                  showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
+                }}
+                  style={{
+                    width: 44, height: 24, borderRadius: 99,
+                    background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface,
+                    border: "1px solid " + (isOn ? cs.green : cs.border),
+                    cursor: "pointer", position: "relative", transition: "all .2s"
+                  }}>
+                  <div style={{
+                    position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff",
+                    top: 2, left: isOn ? 22 : 2, transition: "left .2s",
+                    boxShadow: "0 1px 3px #0004"
+                  }} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        <div style={{ marginTop: 12, padding: "10px 12px", background: cs.surface, borderRadius: 8, fontSize: 11, color: cs.muted }}>
+          💡 Default semua <b>ON</b>. Matikan jika ingin kirim reminder/laporan manual saja, atau saat maintenance.
+        </div>
+      </div>
+
       {/* ── ARA TRAINING RULES UPLOAD (Owner only) ── */}
       <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>

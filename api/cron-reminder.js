@@ -56,11 +56,17 @@ async function taskReminder() {
   const today = new Date(Date.now() + 7*60*60*1000).toISOString().slice(0,10);
   const res = { reminder1:0, reminder2:0, reminder3:0, escalated:0, autoapproved:0 };
 
-  // Fetch bank details from app_settings (with env var fallback)
+  // Fetch settings (bank details + cron toggles) from app_settings
   const { data: bankData } = await sb.from("app_settings")
     .select("key,value")
-    .in("key", ["bank_name","bank_number","bank_holder","company_name"]);
+    .in("key", ["bank_name","bank_number","bank_holder","company_name","invoice_reminder_enabled"]);
   const bankMap = Object.fromEntries((bankData||[]).map(s=>[s.key, s.value]));
+
+  // Cek toggle — default ON jika belum diset
+  if (bankMap.invoice_reminder_enabled === "false") {
+    await log("CRON_REMINDER", "Dilewati — invoice_reminder_enabled = false", "INFO");
+    return { skipped: true, reason: "invoice_reminder_enabled dinonaktifkan via Settings" };
+  }
   const BANK_NAME   = bankMap.bank_name   || process.env.BANK_NAME   || "BCA";
   const BANK_NUMBER = bankMap.bank_number || process.env.BANK_NUMBER || "8830883011";
   const BANK_HOLDER = bankMap.bank_holder || process.env.BANK_HOLDER || "Malda Retta";
@@ -105,6 +111,12 @@ async function taskReminder() {
 // TASK 2: Daily Report
 // ══════════════════════════════════════════════════
 async function taskDaily() {
+  // Cek toggle
+  const { data: tog } = await sb.from("app_settings").select("value").eq("key","daily_report_enabled").single();
+  if (tog?.value === "false") {
+    await log("DAILY_REPORT", "Dilewati — daily_report_enabled = false", "INFO");
+    return { skipped: true };
+  }
   // Indonesia timezone (UTC+7)
   const today = new Date(Date.now() + 7*60*60*1000).toISOString().slice(0,10);
   const [{ data:orders }, { data:invoices }, { data:laporan }] = await Promise.all([
@@ -127,6 +139,12 @@ async function taskDaily() {
 // TASK 3: Stock Alert
 // ══════════════════════════════════════════════════
 async function taskStock() {
+  // Cek toggle
+  const { data: tog } = await sb.from("app_settings").select("value").eq("key","stock_alert_enabled").single();
+  if (tog?.value === "false") {
+    await log("STOCK_ALERT", "Dilewati — stock_alert_enabled = false", "INFO");
+    return { skipped: true };
+  }
   const { data:items } = await sb.from("inventory").select("*").in("status",["CRITICAL","OUT"]);
   if (!items?.length) return { message:"Semua stok aman" };
   const out  = items.filter(i=>i.status==="OUT");
