@@ -7049,8 +7049,30 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   )}
                 </div>
 
-                {/* ══ REPAIR/COMPLAIN TYPE SELECTOR — ✨ NEW ══ */}
-                {(selectedLaporan?.service === "Repair" || selectedLaporan?.service === "Complain") && (
+                {/* ══ UBAH JENIS LAYANAN — Owner/Admin only ══ */}
+                {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                  <div style={{ background: cs.surface, border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "12px", display: "grid", gap: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent }}>
+                      🔄 Jenis Layanan
+                    </div>
+                    <select value={editLaporanForm.editService || selectedLaporan?.service}
+                      onChange={e => setEditLaporanForm(f => ({ ...f, editService: e.target.value }))}
+                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none" }}>
+                      {["Cleaning", "Install", "Repair", "Complain", "Maintenance"].map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    {editLaporanForm.editService && editLaporanForm.editService !== selectedLaporan?.service && (
+                      <div style={{ fontSize: 10, color: cs.yellow, background: cs.yellow + "15", border: "1px solid " + cs.yellow + "33", borderRadius: 6, padding: "6px 8px" }}>
+                        ⚠️ Layanan akan diubah dari <b>{selectedLaporan?.service}</b> ke <b>{editLaporanForm.editService}</b>.
+                        {editLaporanForm.editService === "Complain" && " Invoice akan di-recalculate sebagai Complain (Rp 0 jika garansi aktif)."}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ══ REPAIR/COMPLAIN TYPE SELECTOR ══ */}
+                {((editLaporanForm.editService || selectedLaporan?.service) === "Repair" || (editLaporanForm.editService || selectedLaporan?.service) === "Complain") && (
                   <div style={{ background: cs.surface, border: "1px solid " + cs.yellow + "33", borderRadius: 10, padding: "12px", display: "grid", gap: 8 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: cs.yellow }}>
                       💵 Tipe Layanan — {selectedLaporan?.service}
@@ -7306,7 +7328,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <button onClick={() => { setEditLaporanMode(false); setEditPhotoMode(false); setEditLaporanFotos([]); }} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
                   <button onClick={async () => {
                     const now = new Date().toLocaleString("id-ID", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(/\//g, "-");
-                    const newLogs = [{ by: currentUser?.name || "?", at: now, field: "units+materials", old: "previous", new: "Admin edited unit & material details" }];
+                    const newService = editLaporanForm.editService || selectedLaporan.service;
+                    const serviceChanged = newService !== selectedLaporan.service;
+                    const changeDesc = serviceChanged
+                      ? `Service changed ${selectedLaporan.service} → ${newService}, unit & material edited`
+                      : "Admin edited unit & material details";
+                    const newLogs = [{ by: currentUser?.name || "?", at: now, field: serviceChanged ? "service+units+materials" : "units+materials", old: serviceChanged ? selectedLaporan.service : "previous", new: changeDesc }];
                     const allLogs = [...safeArr(selectedLaporan.editLog), ...newLogs];
                     const newStatus = selectedLaporan.status === "REVISION" ? "SUBMITTED" : selectedLaporan.status;
 
@@ -7317,7 +7344,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       ...(editLaporanForm.editMatItems || [])
                     ];
 
-                    const updatePayload = { status: newStatus, catatan_global: editLaporanForm.catatan_global || "", rekomendasi: editLaporanForm.rekomendasi || "", units_json: JSON.stringify(editLaporanForm.editUnits || []), materials_json: JSON.stringify(combinedMats), edit_log: JSON.stringify(allLogs) };
+                    const updatePayload = { status: newStatus, service: newService, catatan_global: editLaporanForm.catatan_global || "", rekomendasi: editLaporanForm.rekomendasi || "", units_json: JSON.stringify(editLaporanForm.editUnits || []), materials_json: JSON.stringify(combinedMats), edit_log: JSON.stringify(allLogs) };
 
                     // ✨ NEW: Handle photo re-upload option
                     if (editPhotoMode && editLaporanFotos.length > 0) {
@@ -7354,7 +7381,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     if (elErr) { console.warn("❌ update service_reports failed:", elErr.message, "payload:", updatePayload); addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0, 100)}`, "WARNING"); }
 
                     // Update local state
-                    setLaporanReports(prev => prev.map(r => r.id === selectedLaporan.id ? { ...r, rekomendasi: editLaporanForm.rekomendasi, catatan_global: editLaporanForm.catatan_global, units: editLaporanForm.editUnits, materials: combinedMats, status: newStatus, editLog: allLogs } : r));
+                    setLaporanReports(prev => prev.map(r => r.id === selectedLaporan.id ? { ...r, service: newService, rekomendasi: editLaporanForm.rekomendasi, catatan_global: editLaporanForm.catatan_global, units: editLaporanForm.editUnits, materials: combinedMats, status: newStatus, editLog: allLogs } : r));
+                    if (serviceChanged) selectedLaporan.service = newService;
 
                     if (!elErr) {
                       // Rule: admin edit = sumber invoice paling benar → regenerate invoice jika ada
@@ -7447,10 +7475,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         if (!delInvErr) {
                           const newInv = {
                             ...existInv,
+                            service: newService,
                             materials_detail: JSON.stringify(vMDetail),
                             labor: finalLabor3, material: finalMat3, total: totalInv,
                             status: newInvoiceStatus3,
-                            repair_gratis: newRepairGratis,  // ✨ NEW: carry repair_gratis flag
+                            repair_gratis: newRepairGratis,
                             updated_at: new Date().toISOString(),
                           };
                           delete newInv.id;
@@ -7465,8 +7494,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     }
 
                     const photoMsg = editPhotoMode && editLaporanFotos.length > 0 ? "+foto" : "";
-                    addAgentLog("LAPORAN_EDITED", `Laporan ${selectedLaporan.job_id} diedit lengkap oleh ${currentUser?.name} ${photoMsg ? '(with photo update)' : ''}`, "SUCCESS");
-                    showNotif(`✅ Laporan ${selectedLaporan.job_id} diupdate (unit+material+catatan${photoMsg ? '+foto' : ''})`);
+                    const svcMsg = serviceChanged ? ` [${selectedLaporan.service}]` : "";
+                    addAgentLog("LAPORAN_EDITED", `Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name}${serviceChanged ? ` (service: ${selectedLaporan.service})` : ""} ${photoMsg ? '(+foto)' : ''}`, "SUCCESS");
+                    showNotif(`✅ Laporan ${selectedLaporan.job_id} diupdate${svcMsg} (unit+material+catatan${photoMsg ? '+foto' : ''})`);
                     setModalLaporanDetail(false); setEditLaporanMode(false); setEditPhotoMode(false); setEditLaporanFotos([]);
                   }} style={{ background: "linear-gradient(135deg," + cs.green + ",#059669)", border: "none", color: "#fff", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>
                     ✓ Simpan Semua Perubahan
