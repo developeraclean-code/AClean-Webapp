@@ -6356,13 +6356,35 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div style={{ fontSize: 11, color: cs.muted }}>via {waProvider === "fonnte" ? "Fonnte" : waProvider === "wa_cloud" ? "WA Cloud API" : "Twilio"} · Real-time</div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button onClick={() => fetchWaConversations(supabase, null).then(({ data }) => { if (data) setWaConversations(data); })}
+                <button onClick={async () => {
+                  const { data, error } = await fetchWaConversations(supabase, null);
+                  if (error) {
+                    if (error.code === "42P01") showNotif("⚠️ Tabel wa_conversations belum dibuat — jalankan SQL setup di Supabase");
+                    else showNotif("⚠️ WA Monitor error: " + (error.message || error.code));
+                    console.error("[WA_MONITOR_REFRESH]", error);
+                  } else {
+                    if (data) setWaConversations(data);
+                    showNotif(data?.length > 0 ? `✅ ${data.length} percakapan dimuat` : "ℹ️ Belum ada percakapan masuk");
+                  }
+                }}
                   style={{ background: "none", border: "1px solid " + cs.border, color: cs.muted, fontSize: 12, padding: "4px 10px", borderRadius: 8, cursor: "pointer" }}>🔄</button>
                 <button onClick={() => setWaPanel(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
               </div>
             </div>
             <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
               <div style={{ width: 160, borderRight: "1px solid " + cs.border, overflowY: "auto" }}>
+                {waConversations.length === 0 && (
+                  <div style={{ padding: 12, fontSize: 10, color: cs.muted, textAlign: "center", lineHeight: 1.6 }}>
+                    <div style={{ fontSize: 20, marginBottom: 6 }}>📭</div>
+                    <div>Belum ada pesan masuk</div>
+                    <div style={{ marginTop: 6, color: cs.accent, fontSize: 9 }}>
+                      Pastikan:<br/>
+                      1. Tabel SQL sudah dibuat<br/>
+                      2. Webhook Fonnte aktif<br/>
+                      3. Klik 🔄 setelah kirim WA test
+                    </div>
+                  </div>
+                )}
                 {waConversations.map(conv => (
                   <div key={conv.id} onClick={() => {
                     setSelectedConv(conv);
