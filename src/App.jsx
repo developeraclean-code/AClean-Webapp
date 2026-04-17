@@ -2716,32 +2716,58 @@ ${matRowsHtml}
   const lookupHargaGlobal = useCallback((nama, satuanHint) => {
     const nama2 = (nama || "").toLowerCase();
     const isF = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => nama2.includes(k));
-    const norm = nama2.replace(/,/g, ".").replace(/eterna\s*/g, "")
+    // norm: stripped untuk fuzzy match (hapus spasi, koma→titik, "eterna", brand noise)
+    const mkNorm = (s) => (s || "").toLowerCase()
+      .replace(/,/g, ".").replace(/eterna\s*/g, "").replace(/hoda\s*/g, "")
       .replace(/[-\s]/g, "").replace(/r410a?$/, "r410").replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
+    const norm = mkNorm(nama);
     let h = 0;
 
-    // 1. Cari di inventory
+    // 1. Cari di inventory (fuzzy — includes/contains)
     const inv = inventoryData.find(i => {
-      const n = (i.name || "").toLowerCase().replace(/,/g, ".").replace(/eterna\s*/g, "")
-        .replace(/[-\s]/g, "").replace(/r410a?$/, "r410").replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
-      return n === norm || n.includes(norm) || norm.includes(n);
+      const n = mkNorm(i.name);
+      return n === norm || (norm.length >= 4 && (n.includes(norm) || norm.includes(n)));
     });
     h = inv?.price || 0;
 
-    // 2. Fallback priceListData exact match (high priority)
+    // 2a. priceListData — exact match (prioritas tertinggi)
     if (!h) {
       const plIt = priceListData.find(r => r.type && r.type.trim() === nama.trim());
-      if (plIt) h = plIt.price || 0;
+      if (plIt && plIt.price > 0) h = plIt.price;
     }
 
-    // 3. Fallback PRICE_LIST by service
+    // 2b. priceListData — fuzzy match (untuk item seperti "Kabel Eterna 3x1,5", "Breket Outdoor")
     if (!h) {
-      for (const sv of ["Material", "Repair", "Install", "Cleaning", "Complain"]) {
+      const plFuzzy = priceListData.find(r => {
+        if (!r.type || !r.price) return false;
+        const t = mkNorm(r.type);
+        return norm.length >= 4 && (t === norm || t.includes(norm) || norm.includes(t));
+      });
+      if (plFuzzy && plFuzzy.price > 0) h = plFuzzy.price;
+    }
+
+    // 3a. PRICE_LIST map — exact name match
+    if (!h) {
+      for (const sv of ["Material", "Repair", "Install", "Cleaning", "Complain", "Maintenance"]) {
         if (PRICE_LIST[sv]?.[nama]) { h = PRICE_LIST[sv][nama]; break; }
       }
     }
 
-    // 4. Fallback freon specific
+    // 3b. PRICE_LIST map — fuzzy match (fallback untuk default prices)
+    if (!h) {
+      outer: for (const sv of ["Install", "Material", "Repair"]) {
+        if (!PRICE_LIST[sv]) continue;
+        for (const [k, v] of Object.entries(PRICE_LIST[sv])) {
+          if (k === "default" || !v) continue;
+          const kn = mkNorm(k);
+          if (norm.length >= 4 && (kn === norm || kn.includes(norm) || norm.includes(kn))) {
+            h = v; break outer;
+          }
+        }
+      }
+    }
+
+    // 4. Freon specific
     if (!h && isF) {
       h = nama2.includes("r22") ? PRICE_LIST["freon_R22"] || 450000 :
         nama2.includes("r32") ? PRICE_LIST["freon_R32"] || 450000 :
@@ -2763,18 +2789,45 @@ ${matRowsHtml}
         .replace(/r32a?$/, "r32");
       const isJasaItem = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama || "").trim());
 
-      // PRIORITY 1: priceListData DB exact (source of truth untuk harga jual)
+      const mkN = (s) => (s || "").toLowerCase()
+        .replace(/,/g, ".").replace(/eterna\s*/g, "").replace(/hoda\s*/g, "")
+        .replace(/[-\s]/g, "").replace(/r410a?$/, "r410").replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
+
+      // PRIORITY 1a: priceListData DB exact match
       let harga = 0;
-      const plIt = priceListData.find(r => r.type && r.type.trim() === (m.nama || "").trim());
+      const mNama = m.nama || "";
+      const plIt = priceListData.find(r => r.type && r.type.trim() === mNama.trim());
       if (plIt && plIt.price > 0) harga = parseInt(plIt.price) || 0;
 
-      // PRIORITY 2: Fallback ke PRICE_LIST (semua service: Install, Material, Repair, dll)
+      // PRIORITY 1b: priceListData fuzzy match (kabel, breket, dll)
       if (!harga) {
-        const mNama = m.nama || "";
-        for (const svc of ["Repair", "Install", "Material", "Cleaning", "Complain"]) {
-          if (PRICE_LIST[svc] && PRICE_LIST[svc][mNama]) {
-            harga = PRICE_LIST[svc][mNama];
-            break;
+        const nNorm = mkN(mNama);
+        const plFuzzy = priceListData.find(r => {
+          if (!r.type || !r.price) return false;
+          const t = mkN(r.type);
+          return nNorm.length >= 4 && (t === nNorm || t.includes(nNorm) || nNorm.includes(t));
+        });
+        if (plFuzzy && plFuzzy.price > 0) harga = plFuzzy.price;
+      }
+
+      // PRIORITY 2a: PRICE_LIST exact name match
+      if (!harga) {
+        for (const svc of ["Install", "Material", "Repair", "Cleaning", "Complain"]) {
+          if (PRICE_LIST[svc]?.[mNama]) { harga = PRICE_LIST[svc][mNama]; break; }
+        }
+      }
+
+      // PRIORITY 2b: PRICE_LIST fuzzy match (default prices untuk install materials)
+      if (!harga) {
+        const nNorm = mkN(mNama);
+        outer: for (const svc of ["Install", "Material", "Repair"]) {
+          if (!PRICE_LIST[svc]) continue;
+          for (const [k, v] of Object.entries(PRICE_LIST[svc])) {
+            if (k === "default" || !v) continue;
+            const kn = mkN(k);
+            if (nNorm.length >= 4 && (kn === nNorm || kn.includes(nNorm) || nNorm.includes(kn))) {
+              harga = v; break outer;
+            }
           }
         }
       }
