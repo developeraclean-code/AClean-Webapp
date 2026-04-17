@@ -5818,8 +5818,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const jasaLookup = priceListData
           .filter(r => r.service !== 'Material' && (r.price || 0) > 0)
           .map(r => ({ label: r.service + ' / ' + r.type, harga: r.price || 0, satuan: r.unit || 'Unit' }));
-        const matLookup = inventoryData
-          .map(r => ({ label: r.name, harga: r.price || 0, satuan: r.unit || 'pcs' }));
+        const matLookup = (() => {
+          const seen = new Set();
+          const items = [];
+          inventoryData.forEach(r => {
+            const harga = lookupHargaGlobal(r.name, r.unit);
+            items.push({ label: r.name, harga, satuan: r.unit || 'pcs' });
+            seen.add(r.name);
+          });
+          priceListData.filter(r => r.service === 'Material' || r.service === 'Install')
+            .forEach(r => {
+              if (r.type && !seen.has(r.type)) {
+                items.push({ label: r.type, harga: r.price || 0, satuan: r.unit || 'pcs' });
+                seen.add(r.type);
+              }
+            });
+          return items;
+        })();
 
         const filteredJasa = jasaLookup.filter(x =>
           x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
@@ -7761,11 +7776,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             ? INSTALL_ITEMS
               .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
               .map(item => {
-                const plItem = priceListData.find(r => r.type && r.type.trim() === item.label.trim());
-                const inv2 = inventoryData.find(r => r.name && r.name.trim() === item.label.trim());
-                const hargaSat = plItem?.price || inv2?.price
-                  || PRICE_LIST["Install"]?.[item.label]
-                  || PRICE_LIST["Repair"]?.[item.label] || 0;
+                const hargaSat = lookupHargaGlobal(item.label, item.satuan);
                 const qty = parseFloat(laporanInstallItems[item.key] || 0);
                 return {
                   id: item.key, nama: item.label, jumlah: qty, satuan: item.satuan,
