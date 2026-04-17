@@ -2716,27 +2716,17 @@ ${matRowsHtml}
   const lookupHargaGlobal = useCallback((nama, satuanHint) => {
     const nama2 = (nama || "").toLowerCase();
     const isF = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => nama2.includes(k));
-    // norm: stripped untuk fuzzy match (hapus spasi, koma→titik, "eterna", brand noise)
     const mkNorm = (s) => (s || "").toLowerCase()
       .replace(/,/g, ".").replace(/eterna\s*/g, "").replace(/hoda\s*/g, "")
       .replace(/[-\s]/g, "").replace(/r410a?$/, "r410").replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
     const norm = mkNorm(nama);
     let h = 0;
 
-    // 1. Cari di inventory (fuzzy — includes/contains)
-    const inv = inventoryData.find(i => {
-      const n = mkNorm(i.name);
-      return n === norm || (norm.length >= 4 && (n.includes(norm) || norm.includes(n)));
-    });
-    h = inv?.price || 0;
+    // 1a. priceListData DB — exact match (PRIORITAS TERTINGGI = harga jual)
+    const plIt = priceListData.find(r => r.type && r.type.trim() === nama.trim());
+    if (plIt && plIt.price > 0) h = plIt.price;
 
-    // 2a. priceListData — exact match (prioritas tertinggi)
-    if (!h) {
-      const plIt = priceListData.find(r => r.type && r.type.trim() === nama.trim());
-      if (plIt && plIt.price > 0) h = plIt.price;
-    }
-
-    // 2b. priceListData — fuzzy match (untuk item seperti "Kabel Eterna 3x1,5", "Breket Outdoor")
+    // 1b. priceListData DB — fuzzy match
     if (!h) {
       const plFuzzy = priceListData.find(r => {
         if (!r.type || !r.price) return false;
@@ -2746,14 +2736,14 @@ ${matRowsHtml}
       if (plFuzzy && plFuzzy.price > 0) h = plFuzzy.price;
     }
 
-    // 3a. PRICE_LIST map — exact name match
+    // 2a. PRICE_LIST hardcode — exact name match
     if (!h) {
       for (const sv of ["Material", "Repair", "Install", "Cleaning", "Complain", "Maintenance"]) {
         if (PRICE_LIST[sv]?.[nama]) { h = PRICE_LIST[sv][nama]; break; }
       }
     }
 
-    // 3b. PRICE_LIST map — fuzzy match (fallback untuk default prices)
+    // 2b. PRICE_LIST hardcode — fuzzy match
     if (!h) {
       outer: for (const sv of ["Install", "Material", "Repair"]) {
         if (!PRICE_LIST[sv]) continue;
@@ -2765,6 +2755,15 @@ ${matRowsHtml}
           }
         }
       }
+    }
+
+    // 3. Inventory — last resort (inventory = stok, price sering 0)
+    if (!h) {
+      const inv = inventoryData.find(i => {
+        const n = mkNorm(i.name);
+        return n === norm || (norm.length >= 4 && (n.includes(norm) || norm.includes(n)));
+      });
+      if (inv?.price > 0) h = inv.price;
     }
 
     // 4. Freon specific
@@ -8206,22 +8205,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
             // ── BUILD mDetail — BREAKDOWN 1-1, SINGLE SOURCE OF TRUTH ──────────────
             // Helper: lookup harga dari inventory/pricelist jika tidak ada di item
-            const lookupHarga = (nama, satuanHint) => {
-              const nama2 = (nama || "").toLowerCase();
-              const isF = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => nama2.includes(k));
-              const norm = nama2.replace(/,/g, ".").replace(/eterna\s*/g, "")
-                .replace(/[-\s]/g, "").replace(/r410a?$/, "r410").replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
-              let h = 0;
-              const inv = inventoryData.find(i => {
-                const n = (i.name || "").toLowerCase().replace(/,/g, ".").replace(/eterna\s*/g, "")
-                  .replace(/[-\s]/g, "").replace(/r410a?$/, "r410").replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
-                return n === norm || n.includes(norm) || norm.includes(n);
-              });
-              h = inv?.price || 0;
-              if (!h) { for (const sv of ["Material", "Repair", "Install", "Cleaning", "Complain"]) { if (PRICE_LIST[sv]?.[nama]) { h = PRICE_LIST[sv][nama]; break; } } }
-              if (!h && isF) { h = nama2.includes("r22") ? PRICE_LIST["freon_R22"] || 450000 : nama2.includes("r32") ? PRICE_LIST["freon_R32"] || 450000 : PRICE_LIST["freon_R410A"] || 450000; }
-              return h;
-            };
+            const lookupHarga = (nama, satuanHint) => lookupHargaGlobal(nama, satuanHint);
             const mkRow = (nama, jumlah, satuan, hSat, ket) => {
               const nama2 = (nama || "").toLowerCase();
               const isF = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => nama2.includes(k));
