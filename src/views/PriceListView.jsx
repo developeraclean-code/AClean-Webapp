@@ -1,10 +1,10 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
-import { SERVICE_TYPES } from "../constants/services.js";
+
 
 function PriceListView({ priceListData, setPriceListData, priceListSvcTab, setPriceListSvcTab, searchPriceList, setSearchPriceList, plEditItem, setPlEditItem, plEditForm, setPlEditForm, plAddModal, setPlAddModal, plNewForm, setPlNewForm, currentUser, setPriceListSyncedAt, showConfirm, showNotif, addAgentLog, fetchPriceList, fmt, buildPriceListFromDB, supabase, PRICE_LIST, setPRICE_LIST }) {
-const SVC_TABS = ["Semua", "Cleaning", "Install", "Repair", "Complain"];
-const svcColors = { Cleaning: "#22c55e", Install: "#3b82f6", Repair: "#f59e0b", Complain: "#ef4444" };
+const SVC_TABS = ["Semua", "Cleaning", "Install", "Material", "Repair", "Maintenance", "Complain"];
+const svcColors = { Cleaning: "#22c55e", Install: "#3b82f6", Material: "#8b5cf6", Repair: "#f59e0b", Maintenance: "#06b6d4", Complain: "#ef4444" };
 
 let filtered = [...priceListData];
 if (priceListSvcTab !== "Semua") filtered = filtered.filter(r => r.service === priceListSvcTab);
@@ -218,8 +218,8 @@ return (
       <div>ARA membaca price list <b style={{ color: cs.text }}>langsung dari tabel Supabase</b> setiap kali app di-load. Tidak perlu update brain.md atau brain_customer.md manual.</div>
       <div style={{ marginTop: 6 }}>Saat ARA membuat invoice, kalkulasi otomatis pakai harga dari tabel ini. Update harga di sini → langsung berlaku di seluruh sistem.</div>
       <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {SERVICE_TYPES.map(svc => (
-          <span key={svc} style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "4px 10px", fontSize: 11 }}>
+        {SVC_TABS.filter(t => t !== "Semua").map(svc => (
+          <span key={svc} style={{ background: cs.surface, border: "1px solid " + (svcColors[svc] || cs.border), borderRadius: 8, padding: "4px 10px", fontSize: 11, color: svcColors[svc] || cs.text }}>
             {svc}: {priceListData.filter(r => r.service === svc && r.is_active !== false).length} item
           </span>
         ))}
@@ -232,7 +232,7 @@ return (
         <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 16, padding: 24, width: "100%", maxWidth: 420 }}>
           <div style={{ fontWeight: 800, fontSize: 16, color: cs.text, marginBottom: 16 }}>➕ Tambah Item Harga Baru</div>
           {[
-            { label: "Jenis Layanan", key: "service", type: "select", opts: SERVICE_TYPES },
+            { label: "Jenis Layanan", key: "service", type: "select", opts: SVC_TABS.filter(t => t !== "Semua") },
             { label: "Kategori", key: "category", type: "select", opts: ["", "Jasa", "Barang"] },
             { label: "Tipe AC / Nama Item", key: "type", type: "text", ph: "contoh: AC 1 PK, AC 2 PK" },
             { label: "Kode", key: "code", type: "text", ph: "contoh: CLN-1PK" },
