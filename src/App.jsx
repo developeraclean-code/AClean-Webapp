@@ -1680,10 +1680,10 @@ ${matRowsHtml}
     try {
       let fetchUrl;
       if (url.startsWith("http")) {
-        // R2 URL — proxy via /api/foto?key= agar tidak kena CORS/auth issue
-        // Ekstrak key dari URL (path setelah bucket name)
         const urlObj = new URL(url);
-        const key = urlObj.pathname.replace(/^\/[^/]+\//, ""); // strip /bucket-name/
+        let key = urlObj.pathname.replace(/^\/+/, "");
+        const lapIdx = key.indexOf("laporan/");
+        if (lapIdx >= 0) key = key.slice(lapIdx);
         fetchUrl = `${origin}/api/foto?key=${encodeURIComponent(key)}`;
       } else if (url.startsWith("/api/foto")) {
         fetchUrl = origin + url;

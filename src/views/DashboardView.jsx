@@ -14,7 +14,6 @@ if (role === "Teknisi" || role === "Helper") {
   const myColor = techColors[myName] || cs.accent;
   const myJobs = ordersData.filter(o => o.teknisi === myName);
   const todayJobs = myJobs.filter(o => o.date === TODAY);
-  const upcomingJobs = myJobs.filter(o => o.date > TODAY).slice(0, 3);
   const doneCount = myJobs.filter(o => o.status === "COMPLETED").length;
 
   return (
@@ -29,11 +28,10 @@ if (role === "Teknisi" || role === "Helper") {
       </div>
 
       {/* My stats */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: isMobile ? 10 : 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: isMobile ? 10 : 12 }}>
         {[
           { icon: "📋", label: "Job Hari Ini", value: todayJobs.length, color: cs.accent },
           { icon: "✅", label: "Total Selesai", value: doneCount, color: cs.green },
-          { icon: "📅", label: "Job Mendatang", value: upcomingJobs.length, color: cs.yellow },
         ].map(k => (
           <div key={k.label} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 16, textAlign: "center" }}>
             <div style={{ fontSize: 24, marginBottom: 6 }}>{k.icon}</div>
@@ -71,24 +69,6 @@ if (role === "Teknisi" || role === "Helper") {
         }
       </div>
 
-      {/* Upcoming */}
-      {upcomingJobs.length > 0 && (
-        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 18 }}>
-          <div style={{ fontWeight: 700, color: cs.text, fontSize: 14, marginBottom: 12 }}>📆 Job Mendatang</div>
-          {upcomingJobs.map(o => (
-            <div key={o.id} style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ background: myColor + "22", border: "1px solid " + myColor + "44", borderRadius: 8, padding: "6px 10px", textAlign: "center", minWidth: 44, flexShrink: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: myColor }}>{o.time}</div>
-                <div style={{ fontSize: 9, color: cs.muted }}>{(o.date || "").slice(5)}</div>
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{o.customer}</div>
-                <div style={{ fontSize: 11, color: cs.muted }}>{o.service} · {o.units} unit · {(o.address || "-").slice(0, 35)}...</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
