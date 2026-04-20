@@ -1356,7 +1356,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
 
   // Build invoice HTML string — reused by PDF download AND WA attachment upload
   // logoUrl: base64 data URL atau null (fallback ke teks merek)
-  const buildInvoiceHTML = (inv, logoUrl = null) => {
+  // forWA: true = hapus script print otomatis (untuk link WA, bukan download)
+  const buildInvoiceHTML = (inv, logoUrl = null, forWA = false) => {
     const fmt2 = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
     const perUnit = inv.units > 0 ? Math.round((inv.labor || 0) / inv.units) : (inv.labor || 0);
 
@@ -1614,7 +1615,7 @@ ${matRowsHtml}
     <p style="font-style:italic;margin-top:4px;color:#94a3b8">Terima kasih telah mempercayakan perawatan AC Anda kepada ${escHtml(appSettings.company_name)} 🙏</p>
   </div>
 </div>
-<script>window.onload = () => { window.print(); }</script>
+${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
 </body>
 </html>`;
 
@@ -1682,7 +1683,7 @@ ${matRowsHtml}
   const uploadInvoiceForWA = async (inv) => {
     try {
       const logoUrl = await fetchInvoiceLogoUrl();
-      const html = buildInvoiceHTML(inv, logoUrl);
+      const html = buildInvoiceHTML(inv, logoUrl, true); // forWA=true: hapus script print
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -1742,7 +1743,7 @@ ${matRowsHtml}
     }
   };
 
-  const buildServiceReportHTML = (laporan, inv, logoUrl, origin, photoDataUrls = {}) => {
+  const buildServiceReportHTML = (laporan, inv, logoUrl, origin, photoDataUrls = {}, forWA = false) => {
     const escH = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const ord = ordersData.find(o => o.id === laporan.job_id) || {};
     const units = laporan.units || [];
@@ -1849,7 +1850,7 @@ ${matRowsHtml}
 </style>
 </head>
 <body>
-<script>window.onload = () => { window.print(); }</script>
+${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
 
 <!-- ═══════ HALAMAN 1 — DATA PEKERJAAN ═══════ -->
 <div class="header">
@@ -2036,7 +2037,7 @@ ${photoPageHTML}
         const dataUrl = await fetchFotoAsDataUrl(url, origin);
         if (dataUrl) photoDataUrls[url] = dataUrl;
       }));
-      const html = buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataUrls);
+      const html = buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataUrls, true); // forWA=true
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
