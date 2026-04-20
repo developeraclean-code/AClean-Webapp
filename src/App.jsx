@@ -1657,25 +1657,24 @@ ${matRowsHtml}
   // Convert HTML string → PDF blob via html2pdf.js
   const htmlToPdfBlob = async (html, filename) => {
     const h2p = await loadHtml2Pdf();
-    // Buat iframe tersembunyi — lebih reliable dari div offscreen untuk html2canvas
-    const iframe = document.createElement("iframe");
-    iframe.style.cssText = "position:fixed;top:0;left:0;width:794px;height:1123px;opacity:0;pointer-events:none;z-index:-1;border:none;";
-    document.body.appendChild(iframe);
+    const el = document.createElement("div");
+    el.innerHTML = html;
+    // Harus visible di viewport agar html2canvas bisa capture
+    el.style.cssText = "position:absolute;top:0;left:0;width:794px;z-index:9999;background:white;";
+    document.body.appendChild(el);
+    // Tunggu gambar & font load
+    await new Promise(r => setTimeout(r, 1200));
     try {
-      const doc = iframe.contentDocument || iframe.contentWindow.document;
-      doc.open(); doc.write(html); doc.close();
-      // Tunggu iframe selesai render
-      await new Promise(r => setTimeout(r, 800));
       const pdfBlob = await h2p().set({
-        margin: [0, 0, 0, 0],
+        margin: [5, 5, 5, 5],
         filename,
         image: { type: "jpeg", quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true, logging: false, allowTaint: true },
+        html2canvas: { scale: 2, useCORS: true, logging: false, allowTaint: true, scrollX: 0, scrollY: 0 },
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      }).from(doc.body).outputPdf("blob");
+      }).from(el).outputPdf("blob");
       return pdfBlob;
     } finally {
-      document.body.removeChild(iframe);
+      document.body.removeChild(el);
     }
   };
 
@@ -1700,8 +1699,9 @@ ${matRowsHtml}
         })
       });
       const d = await res.json().catch(() => ({}));
-      // Pakai R2 public URL langsung — tidak expose domain sistem ke customer
-      if (res.ok && d.success && d.url?.startsWith("http")) return d.url;
+      if (res.ok && d.success && d.key) {
+        return `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+      }
       return null;
     } catch (err) {
       console.warn("[uploadInvoiceForWA] PDF gagal:", err.message);
@@ -2054,8 +2054,9 @@ ${photoPageHTML}
         })
       });
       const d = await res.json().catch(() => ({}));
-      // Pakai R2 public URL langsung — tidak expose domain sistem ke customer
-      if (res.ok && d.success && d.url?.startsWith("http")) return d.url;
+      if (res.ok && d.success && d.key) {
+        return `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+      }
       return null;
     } catch (err) {
       console.warn("[uploadServiceReportForWA] PDF gagal:", err.message);
