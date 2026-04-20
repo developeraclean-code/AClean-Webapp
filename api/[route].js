@@ -55,27 +55,44 @@ export default async function handler(req, res) {
       const FT = process.env.FONNTE_TOKEN;
       if (!FT) return res.status(500).json({ error: "FONNTE_TOKEN belum diset", detail: "FONNTE_TOKEN_NOT_SET" });
 
-      // ── ATTACHMENT: Fonnte Premium — gunakan multipart/form-data untuk attachment ──
-      // JSON mode tidak support attachment; harus form-data dengan field "url" berisi URL publik file
+      // ── ATTACHMENT: Download file dari R2 proxy → upload binary langsung ke Fonnte ──
+      // Fonnte butuh URL dengan ekstensi jelas ATAU file binary langsung
+      // Karena /api/foto?key=... tidak punya ekstensi di URL, kita fetch dulu lalu kirim binary
       const hasAttachment = b.url && typeof b.url === "string" && b.url.startsWith("http");
 
       let fonnteRes;
       if (hasAttachment) {
-        // Fonnte attachment: multipart/form-data
-        const form = new FormData();
-        form.append("target", target);
-        form.append("message", msg);
-        form.append("delay", "2");
-        form.append("countryCode", "62");
-        form.append("url", b.url);
-        if (b.filename) form.append("filename", String(b.filename).slice(0, 100));
-        fonnteRes = await fetch("https://api.fonnte.com/send", {
-          method: "POST",
-          headers: { "Authorization": FT },
-          body: form
-        });
-      } else {
-        // Teks saja: JSON mode
+        try {
+          // Fetch file dari R2 proxy (server-side, bisa akses internal)
+          const fileRes = await fetch(b.url);
+          if (!fileRes.ok) throw new Error("Gagal fetch file: " + fileRes.status);
+          const fileBuffer = await fileRes.arrayBuffer();
+          const ct = fileRes.headers.get("content-type") || "image/jpeg";
+          const fname = b.filename || "invoice.jpg";
+
+          // Kirim ke Fonnte sebagai binary upload (multipart form-data dengan field "file")
+          const { FormData: NodeFormData, File: NodeFile } = await import("node:buffer").catch(() => ({}));
+          const form = new FormData();
+          form.append("target", target);
+          form.append("message", msg);
+          form.append("delay", "2");
+          form.append("countryCode", "62");
+          // Kirim sebagai Blob dengan nama file yang jelas berekstensi .jpg
+          const blob = new Blob([fileBuffer], { type: ct });
+          form.append("file", blob, fname);
+          console.log("[send-wa] Sending binary attachment:", fname, "size:", fileBuffer.byteLength, "type:", ct);
+          fonnteRes = await fetch("https://api.fonnte.com/send", {
+            method: "POST",
+            headers: { "Authorization": FT },
+            body: form
+          });
+        } catch (fetchErr) {
+          console.warn("[send-wa] Gagal fetch/upload file, fallback teks:", fetchErr.message);
+          fonnteRes = null;
+        }
+      }
+
+      if (!hasAttachment || !fonnteRes) {
         fonnteRes = await fetch("https://api.fonnte.com/send", {
           method: "POST",
           headers: { "Authorization": FT, "Content-Type": "application/json" },
@@ -84,12 +101,12 @@ export default async function handler(req, res) {
       }
 
       const d = await fonnteRes.json().catch(() => ({}));
-      console.log("[send-wa] Fonnte response:", JSON.stringify({ status: fonnteRes.status, ok: fonnteRes.ok, body: d, hasAttachment, url: b.url?.slice(0,80) }));
+      console.log("[send-wa] Fonnte response:", JSON.stringify({ status: fonnteRes.status, body: d, hasAttachment }));
 
-      // Jika attachment gagal, fallback: kirim ulang sebagai teks + link
+      // Jika attachment gagal, fallback: teks + link
       if (hasAttachment && (!fonnteRes.ok || d.status === false)) {
         const reason = d.reason || JSON.stringify(d);
-        console.warn("[send-wa] Attachment REJECTED:", reason, "| url:", b.url?.slice(0,80));
+        console.warn("[send-wa] Attachment REJECTED:", reason);
         const msgWithLink = msg + "\n\n📄 " + b.url;
         const fallbackRes = await fetch("https://api.fonnte.com/send", {
           method: "POST",
@@ -97,7 +114,6 @@ export default async function handler(req, res) {
           body: JSON.stringify({ target, message: msgWithLink, delay: "2", countryCode: "62" })
         });
         const fd = await fallbackRes.json().catch(() => ({}));
-        console.log("[send-wa] Fallback result:", JSON.stringify(fd));
         if (!fallbackRes.ok || fd.status === false) return res.status(502).json({ success: false, error: fd.reason || "Fonnte error" });
         return res.status(200).json({ success: true, target, withAttachment: false, fallback: true, fallbackReason: reason });
       }
