@@ -2096,6 +2096,50 @@ ${photoPageHTML}
     }
   };
 
+  // Upload service report sebagai PDF ke R2 menggunakan @react-pdf/renderer
+  const uploadServiceReportPDFForWA = async (laporan, inv) => {
+    try {
+      const { pdf } = await import("@react-pdf/renderer");
+      const { default: ServiceReportPDF } = await import("./components/ServiceReportPDF.jsx");
+      const logoUrl = await fetchInvoiceLogoUrl();
+      const origin = window.location.origin;
+      const fotoUrls = (laporan.foto_urls || []).filter(Boolean);
+      const photoDataUrls = {};
+      await Promise.all(fotoUrls.map(async (url) => {
+        const dataUrl = await fetchFotoAsDataUrl(url, origin);
+        if (dataUrl) photoDataUrls[url] = dataUrl;
+      }));
+      const ord = ordersData.find(o => o.id === laporan.job_id) || {};
+      const blob = await pdf(
+        <ServiceReportPDF
+          laporan={laporan} inv={inv} logoUrl={logoUrl}
+          photoDataUrls={photoDataUrls} appSettings={appSettings} ord={ord}
+        />
+      ).toBlob();
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const res = await fetch("/api/upload-foto", {
+        method: "POST", headers: _apiHeaders(),
+        body: JSON.stringify({
+          base64, filename: `ServiceReport_${laporan.job_id}.pdf`,
+          folder: "service-reports", mimeType: "application/pdf"
+        })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.success && d.key) {
+        return `${origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+      }
+      return null;
+    } catch (err) {
+      console.warn("[uploadServiceReportPDFForWA] gagal:", err.message);
+      return null;
+    }
+  };
+
   const openLaporanModal = (order) => {
     // ANTI-DUPLIKAT: cek apakah sudah ada laporan untuk job ini
     const existingReport = laporanReports.find(r => r.job_id === (order._rewriteId ? order.id : order.id) && r.status !== "PENDING");
@@ -3114,9 +3158,8 @@ ${photoPageHTML}
   const invoiceReminderWA = async (inv) => {
     if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
     const invoiceUrl = await uploadInvoicePDFForWA(inv);
-    const invoiceLinkLine = invoiceUrl ? `\n\n📄 Lihat invoice: ${invoiceUrl}` : "";
-    const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*BCA 8830883011 a.n. Malda Retta*${invoiceLinkLine}\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
-    sendWA(inv.phone, msg);
+    const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
+    sendWA(inv.phone, msg, invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {});
   };
 
   // ── SEC-01: HTML Escape helper untuk prevent XSS di PDF generator ──
@@ -3347,23 +3390,27 @@ ${photoPageHTML}
     setModalApproveInv(true);
   };
 
-  // ── Approve + kirim WA ke customer (invoice + service report card) ──
+  // ── Approve + kirim WA ke customer (invoice + service report card sebagai PDF attachment) ──
   const approveAndSend = async (inv) => {
     const due = await approveInvoiceCore(inv);
+
+    // Generate PDF invoice → upload → kirim sebagai attachment Fonnte
     const invoiceUrl = await uploadInvoicePDFForWA(inv);
-    const invoiceLinkLine = invoiceUrl ? `\n\n📄 Lihat invoice: ${invoiceUrl}` : "";
-    const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*${invoiceLinkLine}\n\nTerima kasih! 🙏`;
-    const sent = await sendWA(inv.phone, waMsg);
-    if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 🔗" : ""}`);
+    const waMsg = `Halo ${inv.customer}, invoice *AClean Service* telah disiapkan:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nTerima kasih! 🙏`;
+    const sent = await sendWA(inv.phone, waMsg, invoiceUrl
+      ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` }
+      : {}
+    );
+    if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 📎" : ""}`);
     else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
 
-    // ── Kirim Service Report Card sebagai pesan kedua ──
+    // ── Kirim Service Report Card sebagai PDF attachment (pesan kedua) ──
     const terkaitLaporan = laporanReports.find(r => r.job_id === inv.job_id);
     if (terkaitLaporan) {
-      const srUrl = await uploadServiceReportForWA(terkaitLaporan, inv);
+      const srUrl = await uploadServiceReportPDFForWA(terkaitLaporan, inv);
       if (srUrl) {
-        const srMsg = `📋 *Service Report Card* — ${inv.service || "Servis AC"} untuk ${inv.customer}\n\nDokumen ini berisi detail pengerjaan & dokumentasi foto.\n\n🔗 Lihat laporan: ${srUrl}\n\nTerima kasih telah mempercayai AClean Service! 🙏`;
-        sendWA(inv.phone, srMsg);
+        const srMsg = `📋 *Service Report Card* — ${inv.service || "Servis AC"} untuk ${inv.customer}\n\nDokumen ini berisi detail pengerjaan & dokumentasi foto teknisi.\n\nTerima kasih telah mempercayai AClean Service! 🙏`;
+        sendWA(inv.phone, srMsg, { url: srUrl, filename: `ServiceReport-${terkaitLaporan.job_id}.pdf` });
         showNotif(`📋 Service Report Card terkirim ke ${inv.customer}`);
       }
     }
