@@ -502,6 +502,8 @@ return (
         {[
           { key: "wa_autoreply_enabled", label: "Auto-Reply Aktif", desc: "Balas pesan customer otomatis berdasarkan keyword (halo, harga, order, dll)", icon: "🤖" },
           { key: "wa_forward_to_owner", label: "Forward ke Owner", desc: "Teruskan semua pesan WA masuk ke nomor Owner sebagai notifikasi", icon: "📨" },
+          { key: "wa_chatbot_enabled", label: "ARA Chatbot Customer", desc: "ARA balas WA customer secara AI (terima order, info harga, komplain). Keyword auto-reply tetap jadi fallback jika ARA gagal.", icon: "🧠" },
+          { key: "wa_payment_detect", label: "Deteksi Bukti Bayar", desc: "Deteksi otomatis pesan/foto bukti transfer dari customer, beri notif konfirmasi ke admin", icon: "💳" },
         ].map(({ key, label, desc, icon }) => {
           const isOn = appSettings[key] === "true";
           return (
