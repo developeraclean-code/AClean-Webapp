@@ -55,23 +55,37 @@ export default async function handler(req, res) {
       const FT = process.env.FONNTE_TOKEN;
       if (!FT) return res.status(500).json({ error: "FONNTE_TOKEN belum diset", detail: "FONNTE_TOKEN_NOT_SET" });
 
-      // ── ATTACHMENT: Fonnte Premium supports sending file via url field ──
-      // b.url = publicly accessible file URL (PDF, image, etc)
-      // b.filename = optional display filename
-      const payload = { target, message: msg, delay: "2", countryCode: "62" };
-      if (b.url && typeof b.url === "string" && b.url.startsWith("http")) {
-        payload.url = b.url;
-        if (b.filename) payload.filename = String(b.filename).slice(0, 100);
+      // ── ATTACHMENT: Fonnte Premium — gunakan multipart/form-data untuk attachment ──
+      // JSON mode tidak support attachment; harus form-data dengan field "url" berisi URL publik file
+      const hasAttachment = b.url && typeof b.url === "string" && b.url.startsWith("http");
+
+      let fonnteRes;
+      if (hasAttachment) {
+        // Fonnte attachment: multipart/form-data
+        const form = new FormData();
+        form.append("target", target);
+        form.append("message", msg);
+        form.append("delay", "2");
+        form.append("countryCode", "62");
+        form.append("url", b.url);
+        if (b.filename) form.append("filename", String(b.filename).slice(0, 100));
+        fonnteRes = await fetch("https://api.fonnte.com/send", {
+          method: "POST",
+          headers: { "Authorization": FT },
+          body: form
+        });
+      } else {
+        // Teks saja: JSON mode
+        fonnteRes = await fetch("https://api.fonnte.com/send", {
+          method: "POST",
+          headers: { "Authorization": FT, "Content-Type": "application/json" },
+          body: JSON.stringify({ target, message: msg, delay: "2", countryCode: "62" })
+        });
       }
 
-      const r = await fetch("https://api.fonnte.com/send", {
-        method: "POST",
-        headers: { "Authorization": FT, "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || d.status === false) return res.status(502).json({ success: false, error: d.reason || "Fonnte error" });
-      return res.status(200).json({ success: true, target, withAttachment: !!b.url });
+      const d = await fonnteRes.json().catch(() => ({}));
+      if (!fonnteRes.ok || d.status === false) return res.status(502).json({ success: false, error: d.reason || "Fonnte error" });
+      return res.status(200).json({ success: true, target, withAttachment: hasAttachment });
     }
 
     // ── RECEIVE-WA (public) ──
