@@ -782,12 +782,14 @@ export default function ACleanWebApp() {
   };
   const _lsSave = (key, val) => { try { localStorage.setItem("aclean_" + key, JSON.stringify(val)); } catch { } };
   // SEC-02: internal token untuk API calls (dibaca dari Vite env, TIDAK disimpan di localStorage)
-  const _apiHeaders = () => ({
-    "Content-Type": "application/json",
-    ...(import.meta.env.VITE_INTERNAL_API_SECRET
-      ? { "X-Internal-Token": import.meta.env.VITE_INTERNAL_API_SECRET }
-      : {})
-  });
+  const _apiHeaders = () => {
+    const secret = import.meta.env.VITE_INTERNAL_API_SECRET;
+    console.log("[_apiHeaders] VITE_INTERNAL_API_SECRET set:", !!secret, "| length:", secret?.length ?? 0);
+    return {
+      "Content-Type": "application/json",
+      ...(secret ? { "X-Internal-Token": secret } : {})
+    };
+  };
   // SEC-07: brute force states — harus setelah _ls didefinisikan
   const [loginAttempts, setLoginAttempts] = useState(() => _ls("loginAttempts", 0));
   const [lockoutUntil, setLockoutUntil] = useState(() => _ls("lockoutUntil", 0));
