@@ -2332,11 +2332,11 @@ ${photoPageHTML}
           try {
             const { data: profile } = await supabase
               .from("user_profiles")
-              .select("role, name, is_active")
+              .select("role, name, active")
               .eq("id", saved.id)
               .single();
 
-            if (profile && profile.is_active !== false) {
+            if (profile && profile.active !== false) {
               // Override localStorage role dengan server role (prevent tampering)
               const verified = { ...saved, role: profile.role, name: profile.name };
               setCurrentUser(verified);
