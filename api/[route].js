@@ -33,8 +33,8 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
 
   if (!PUBLIC_ROUTES.includes(route)) {
-    const authErr = validateInternalToken(req, res);
-    if (authErr) return res.status(401).json({ error: "Unauthorized", message: authErr });
+    const authOk = validateInternalToken(req, res);
+    if (!authOk) return; // validateInternalToken sudah kirim response 401/500
   }
 
   try {
