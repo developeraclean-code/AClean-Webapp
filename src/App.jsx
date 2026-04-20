@@ -1709,6 +1709,39 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
     }
   };
 
+  // Upload invoice sebagai PDF ke R2 menggunakan @react-pdf/renderer
+  const uploadInvoicePDFForWA = async (inv) => {
+    try {
+      const { pdf } = await import("@react-pdf/renderer");
+      const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
+      const logoUrl = await fetchInvoiceLogoUrl();
+      const blob = await pdf(
+        <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} />
+      ).toBlob();
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const res = await fetch("/api/upload-foto", {
+        method: "POST", headers: _apiHeaders(),
+        body: JSON.stringify({
+          base64, filename: `Invoice_${inv.id}.pdf`,
+          folder: "invoices", mimeType: "application/pdf"
+        })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.success && d.key) {
+        return `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+      }
+      return null;
+    } catch (err) {
+      console.warn("[uploadInvoicePDFForWA] gagal:", err.message);
+      return null;
+    }
+  };
+
   // ─────────────────────────────────────────────────────────────────────────────
   // SERVICE REPORT CARD — HTML builder + preview + WA upload
   // ─────────────────────────────────────────────────────────────────────────────
@@ -3080,7 +3113,7 @@ ${photoPageHTML}
 
   const invoiceReminderWA = async (inv) => {
     if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
-    const invoiceUrl = await uploadInvoiceForWA(inv);
+    const invoiceUrl = await uploadInvoicePDFForWA(inv);
     const invoiceLinkLine = invoiceUrl ? `\n\n📄 Lihat invoice: ${invoiceUrl}` : "";
     const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*BCA 8830883011 a.n. Malda Retta*${invoiceLinkLine}\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
     sendWA(inv.phone, msg);
@@ -3317,7 +3350,7 @@ ${photoPageHTML}
   // ── Approve + kirim WA ke customer (invoice + service report card) ──
   const approveAndSend = async (inv) => {
     const due = await approveInvoiceCore(inv);
-    const invoiceUrl = await uploadInvoiceForWA(inv);
+    const invoiceUrl = await uploadInvoicePDFForWA(inv);
     const invoiceLinkLine = invoiceUrl ? `\n\n📄 Lihat invoice: ${invoiceUrl}` : "";
     const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*${invoiceLinkLine}\n\nTerima kasih! 🙏`;
     const sent = await sendWA(inv.phone, waMsg);
