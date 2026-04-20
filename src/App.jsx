@@ -2115,6 +2115,8 @@ ${photoPageHTML}
   // Upload service report sebagai PDF ke R2 menggunakan @react-pdf/renderer
   const uploadServiceReportPDFForWA = async (laporan, inv) => {
     try {
+      const { pdf } = await import("@react-pdf/renderer");
+      const { default: ServiceReportPDF } = await import("./components/ServiceReportPDF.jsx");
       const logoUrl = await fetchInvoiceLogoUrl();
       const origin = window.location.origin;
       const fotoUrls = (laporan.foto_urls || []).filter(Boolean);
@@ -2123,14 +2125,24 @@ ${photoPageHTML}
         const dataUrl = await fetchFotoAsDataUrl(url, origin);
         if (dataUrl) photoDataUrls[url] = dataUrl;
       }));
-      const html = buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataUrls, true);
-      const base64 = await htmlToImageBase64(html, 1123);
-      if (!base64) return null;
+      const ord = ordersData.find(o => o.id === laporan.job_id) || {};
+      const blob = await pdf(
+        <ServiceReportPDF
+          laporan={laporan} inv={inv} logoUrl={logoUrl}
+          photoDataUrls={photoDataUrls} appSettings={appSettings} ord={ord}
+        />
+      ).toBlob();
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
       const res = await fetch("/api/upload-foto", {
         method: "POST", headers: _apiHeaders(),
         body: JSON.stringify({
-          base64, filename: `ServiceReport_${laporan.job_id}.jpg`,
-          folder: "service-reports", mimeType: "image/jpeg"
+          base64, filename: `ServiceReport_${laporan.job_id}.pdf`,
+          folder: "service-reports", mimeType: "application/pdf"
         })
       });
       const d = await res.json().catch(() => ({}));
