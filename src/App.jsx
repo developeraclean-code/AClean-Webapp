@@ -3046,10 +3046,10 @@ ${photoPageHTML}
 
   const invoiceReminderWA = async (inv) => {
     if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
-    const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
     const invoiceUrl = await uploadInvoiceForWA(inv);
-    const opts = invoiceUrl ? { url: invoiceUrl, filename: `Invoice_${inv.id}.html` } : {};
-    sendWA(inv.phone, msg, opts);
+    const invoiceLinkLine = invoiceUrl ? `\n\n📄 Lihat invoice: ${invoiceUrl}` : "";
+    const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*BCA 8830883011 a.n. Malda Retta*${invoiceLinkLine}\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
+    sendWA(inv.phone, msg);
   };
 
   // ── SEC-01: HTML Escape helper untuk prevent XSS di PDF generator ──
@@ -3283,11 +3283,11 @@ ${photoPageHTML}
   // ── Approve + kirim WA ke customer (invoice + service report card) ──
   const approveAndSend = async (inv) => {
     const due = await approveInvoiceCore(inv);
-    const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
     const invoiceUrl = await uploadInvoiceForWA(inv);
-    const opts = invoiceUrl ? { url: invoiceUrl, filename: `Invoice_${inv.id}.html` } : {};
-    const sent = await sendWA(inv.phone, waMsg, opts);
-    if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 📎" : ""}`);
+    const invoiceLinkLine = invoiceUrl ? `\n\n📄 Lihat invoice: ${invoiceUrl}` : "";
+    const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*${invoiceLinkLine}\n\nTerima kasih! 🙏`;
+    const sent = await sendWA(inv.phone, waMsg);
+    if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 🔗" : ""}`);
     else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
 
     // ── Kirim Service Report Card sebagai pesan kedua ──
@@ -3295,8 +3295,8 @@ ${photoPageHTML}
     if (terkaitLaporan) {
       const srUrl = await uploadServiceReportForWA(terkaitLaporan, inv);
       if (srUrl) {
-        const srMsg = `📋 *Service Report Card* pekerjaan ${inv.service || "Servis AC"} untuk ${inv.customer} telah disiapkan.\n\nDokumen ini berisi detail pengerjaan & dokumentasi foto. Silakan simpan sebagai referensi.\n\nTerima kasih telah mempercayai AClean Service! 🙏`;
-        sendWA(inv.phone, srMsg, { url: srUrl, filename: `ServiceReport_${inv.job_id}.html` });
+        const srMsg = `📋 *Service Report Card* — ${inv.service || "Servis AC"} untuk ${inv.customer}\n\nDokumen ini berisi detail pengerjaan & dokumentasi foto.\n\n🔗 Lihat laporan: ${srUrl}\n\nTerima kasih telah mempercayai AClean Service! 🙏`;
+        sendWA(inv.phone, srMsg);
         showNotif(`📋 Service Report Card terkirim ke ${inv.customer}`);
       }
     }
