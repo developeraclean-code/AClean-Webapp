@@ -1,7 +1,7 @@
 // api/[route].js - AClean Unified API Router
 import { setCorsHeaders, checkRateLimit, validateInternalToken } from "./_auth.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "monitor", "get-llm-config", "sync-fotos"];
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto"];
 
 // ── VALIDATION HELPERS ──
 function validateAndNormalizePhone(phone) {
@@ -32,9 +32,9 @@ export default async function handler(req, res) {
   setCorsHeaders(req, res);
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const token = process.env.VITE_INTERNAL_API_SECRET || process.env.INTERNAL_API_SECRET;
-  if (token && !PUBLIC_ROUTES.includes(route) && req.headers["x-internal-token"] !== token) {
-    return res.status(401).json({ error: "Unauthorized", message: "Missing or invalid X-Internal-Token header" });
+  if (!PUBLIC_ROUTES.includes(route)) {
+    const authErr = validateInternalToken(req, res);
+    if (authErr) return res.status(401).json({ error: "Unauthorized", message: authErr });
   }
 
   try {

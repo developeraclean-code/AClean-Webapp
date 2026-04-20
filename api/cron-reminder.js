@@ -67,9 +67,13 @@ async function taskReminder() {
     await log("CRON_REMINDER", "Dilewati — invoice_reminder_enabled = false", "INFO");
     return { skipped: true, reason: "invoice_reminder_enabled dinonaktifkan via Settings" };
   }
-  const BANK_NAME   = bankMap.bank_name   || process.env.BANK_NAME   || "BCA";
-  const BANK_NUMBER = bankMap.bank_number || process.env.BANK_NUMBER || "8830883011";
-  const BANK_HOLDER = bankMap.bank_holder || process.env.BANK_HOLDER || "Malda Retta";
+  const BANK_NAME   = bankMap.bank_name   || process.env.BANK_NAME;
+  const BANK_NUMBER = bankMap.bank_number || process.env.BANK_NUMBER;
+  const BANK_HOLDER = bankMap.bank_holder || process.env.BANK_HOLDER;
+  if (!BANK_NAME || !BANK_NUMBER || !BANK_HOLDER) {
+    await log("CRON_REMINDER", "❌ Bank details tidak lengkap — set BANK_NAME, BANK_NUMBER, BANK_HOLDER di env", "ERROR");
+    return { error: "Bank details incomplete", skipped: true };
+  }
 
   // Limit to prevent timeout (Vercel max 30s). Process in batches if needed.
   const { data: invs } = await sb.from("invoices").select("*").in("status",["UNPAID","OVERDUE"]).limit(500);
@@ -217,7 +221,7 @@ async function deleteR2Object(key) {
 async function taskCleanup() {
   // Ambil laporan > 360 hari lalu
   const cutoff = new Date(Date.now()-360*86400000).toISOString();
-  const { data: old } = await sb.from("service_reports").select("id,fotos").lt("created_at",cutoff);
+  const { data: old } = await sb.from("service_reports").select("id,fotos").lt("created_at",cutoff).limit(100);
   let deleted = 0, r2deleted = 0;
   for (const rep of old||[]) {
     const fotos = rep.fotos||[];
@@ -253,8 +257,9 @@ export default async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "POST") return res.status(405).end();
 
   const auth   = req.headers.authorization || "";
-  const secret = process.env.CRON_SECRET   || "";
-  if (secret && auth !== `Bearer ${secret}`) return res.status(401).json({error:"Unauthorized"});
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return res.status(500).json({error:"CRON_SECRET not configured"});
+  if (auth !== `Bearer ${secret}`) return res.status(401).json({error:"Unauthorized"});
 
   const task = req.query.task || "reminder";
 

@@ -1479,31 +1479,31 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family: Arial, sans-serif; font-size: 12px; color: #1e293b; background: #fff; }
   .page { width: 794px; min-height: 1123px; margin: 0 auto; padding: 40px; }
-  .header { background: #1E3A5F; border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
-  .header-top { padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; }
-  .brand { font-size: 22px; font-weight: 800; color: #fff; }
-  .brand span { color: #60a5fa; }
-  .brand-sub { font-size: 11px; color: #93c5fd; margin-top: 2px; }
-  .inv-badge { background: #2563EB; color: #fff; padding: 6px 14px; border-radius: 6px; font-family: monospace; font-weight: 800; font-size: 15px; }
-  .inv-label { font-size: 10px; color: #93c5fd; font-weight: 600; text-align: right; margin-bottom: 4px; }
-  .header-sub { background: #0f2744; padding: 8px 24px; font-size: 10px; color: #94a3b8; display: flex; gap: 24px; }
+  .header { background: #fff; border-radius: 8px; overflow: hidden; margin-bottom: 20px; box-shadow: 0 2px 12px rgba(30,91,168,0.12); border: 2px solid #1E5BA8; }
+  .header-top { padding: 24px 28px; display: flex; justify-content: space-between; align-items: center; }
+  .brand { font-size: 26px; font-weight: 900; color: #1E5BA8; letter-spacing: -0.5px; }
+  .brand span { color: #1E5BA8; }
+  .brand-sub { font-size: 12px; color: #6b7280; margin-top: 4px; font-weight: 500; }
+  .inv-badge { background: #1E5BA8; color: #fff; padding: 8px 16px; border-radius: 6px; font-family: monospace; font-weight: 900; font-size: 16px; box-shadow: 0 2px 4px rgba(30,91,168,0.15); }
+  .inv-label { font-size: 10px; color: #1E5BA8; font-weight: 700; text-align: right; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .header-sub { background: #f0f4f8; padding: 12px 28px; font-size: 11px; color: #1e293b; display: flex; gap: 28px; border-top: 1px solid #e2e8f0; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
   .box { border-radius: 8px; padding: 14px 16px; }
-  .box-blue { background: #EFF6FF; }
-  .box-white { background: #fff; border: 1px solid #e2e8f0; }
-  .box-title { font-size: 10px; font-weight: 800; color: #1e40af; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
+  .box-blue { background: #e3f2fd; border: 1px solid #90caf9; border-radius: 8px; }
+  .box-white { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; }
+  .box-title { font-size: 11px; font-weight: 900; color: #1E5BA8; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.6px; }
   .row { display: flex; gap: 8px; margin-bottom: 4px; }
   .row-label { color: #64748b; min-width: 90px; }
   .row-val { color: #1e293b; font-weight: 600; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12px; }
-  thead tr { background: #1E3A5F; }
-  thead th { padding: 9px 12px; text-align: left; color: #fff; font-weight: 700; font-size: 10px; }
+  thead tr { background: #1E5BA8; }
+  thead th { padding: 12px 12px; text-align: left; color: #fff; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
   tbody tr:nth-child(even) { background: #f8fafc; }
-  tbody td { padding: 9px 12px; color: #1e293b; border-bottom: 1px solid #f1f5f9; }
-  .total-row { background: #1E3A5F !important; }
-  .total-row td { color: #fff !important; font-weight: 800; font-size: 14px; border: none; }
+  tbody td { padding: 10px 12px; color: #1e293b; border-bottom: 1px solid #f1f5f9; }
+  .total-row { background: #1E5BA8 !important; }
+  .total-row td { color: #fff !important; font-weight: 800; font-size: 14px; border: none; padding: 12px; }
   .footer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-  .bank-box { background: #EFF6FF; border-radius: 8px; padding: 14px 16px; }
+  .bank-box { background: #e3f2fd; border: 1px solid #90caf9; border-radius: 8px; padding: 14px 16px; }
   .bank-num { font-weight: 800; font-size: 16px; color: #1e293b; margin: 4px 0; }
   .status-box { border-radius: 8px; padding: 14px 16px; }
   .footer-note { text-align: center; padding-top: 16px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 11px; }
@@ -1529,8 +1529,11 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       <div style="display:flex;align-items:center;gap:14px">
         ${logoUrl
           ? `<div style="background:#fff;border-radius:8px;padding:4px 8px;display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:56px"><img src="${logoUrl}" alt="AClean" style="height:48px;max-width:140px;width:auto;object-fit:contain;display:block" /></div>`
-          : `<div class="brand"><span>AC</span>lean Service</div>`}
-        <div class="brand-sub" style="color:#93c5fd;font-size:12px;margin-top:0">Jasa Servis AC Profesional · Tangerang Selatan</div>
+          : ``}
+        <div>
+          <div class="brand">AClean Service</div>
+          <div class="brand-sub">Jasa Servis &amp; Perawatan AC Profesional</div>
+        </div>
       </div>
       <div>
         <div class="inv-label">INVOICE</div>
@@ -1657,6 +1660,323 @@ ${matRowsHtml}
         body: JSON.stringify({
           base64, filename: `Invoice_${inv.id}.html`,
           folder: "invoices", mimeType: "text/html"
+        })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.success && d.url?.startsWith("http")) return d.url;
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // SERVICE REPORT CARD — HTML builder + preview + WA upload
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // Konversi foto URL ke absolute URL untuk blob popup (relative path tidak bisa di blob:)
+  const photoSrcForReport = (url, origin) => {
+    if (!url) return "";
+    if (url.startsWith("http")) return url;
+    if (url.startsWith("/api/foto")) return origin + url;
+    // R2 key / plain path → proxy
+    return `${origin}/api/foto?key=${encodeURIComponent(url)}`;
+  };
+
+  const buildServiceReportHTML = (laporan, inv, logoUrl, origin) => {
+    const escH = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const ord = ordersData.find(o => o.id === laporan.job_id) || {};
+    const units = laporan.units || [];
+    const materials = (laporan.materials || []).filter(m => m.nama && m.keterangan !== "jasa");
+    const jasaItems = (laporan.materials || []).filter(m => m.keterangan === "jasa");
+    const fotos = (laporan.foto_urls || []).filter(Boolean);
+    const printDate = new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" });
+    const svcDate = laporan.date || (laporan.submitted_at || "").slice(0, 10);
+
+    // ── Photo pages: chunk 8 per page ──
+    const photoPages = [];
+    for (let i = 0; i < fotos.length; i += 8) photoPages.push(fotos.slice(i, i + 8));
+
+    const photoPageHTML = photoPages.map((chunk, pi) => `
+      <div class="photo-page" style="page-break-before:always">
+        <div class="photo-page-header">
+          <div class="photo-page-title">DOKUMENTASI FOTO — Lembar ${pi + 2}</div>
+          <div class="photo-page-sub">${escH(laporan.job_id)} · ${escH(laporan.customer)}</div>
+        </div>
+        <div class="photo-grid">
+          ${chunk.map((url, idx) => `
+            <div class="photo-cell">
+              <img src="${escH(photoSrcForReport(url, origin))}" alt="Foto ${pi * 8 + idx + 1}" loading="eager" onerror="this.style.background='#f1f5f9';this.alt='Foto tidak tersedia'" />
+              <div class="photo-num">${pi * 8 + idx + 1}</div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `).join("");
+
+    return `<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Service Report Card — ${escH(laporan.job_id)}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #1e293b; background: #fff; }
+  @page { size: A4; margin: 10mm 12mm; }
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .no-print { display: none !important; }
+  }
+
+  /* ── HEADER ── */
+  .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 10px; border-bottom: 2.5px solid #1e3a5f; margin-bottom: 12px; }
+  .header-left { display: flex; align-items: center; gap: 10px; }
+  .logo-wrap { background: #fff; display: flex; align-items: center; justify-content: center; height: 70px; }
+  .logo-wrap img { height: 66px; max-width: 200px; width: auto; object-fit: contain; }
+  .brand-text { font-size: 18px; font-weight: 800; color: #1e3a5f; letter-spacing: -0.5px; }
+  .brand-sub { font-size: 9px; color: #64748b; margin-top: 2px; }
+  .header-right { text-align: right; }
+  .doc-title { font-size: 16px; font-weight: 800; color: #1e3a5f; letter-spacing: 0.5px; }
+  .doc-sub { font-size: 9px; color: #64748b; margin-top: 2px; }
+
+  /* ── INFO GRID ── */
+  .section { margin-bottom: 10px; }
+  .section-title { font-size: 9px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1px solid #e2e8f0; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; }
+  .info-row { display: flex; gap: 4px; }
+  .info-label { color: #64748b; min-width: 85px; font-size: 10px; }
+  .info-val { color: #1e293b; font-weight: 600; font-size: 10px; }
+  .info-val.accent { color: #1e40af; }
+  .info-val.full { grid-column: span 2; }
+
+  /* ── UNIT TABLE ── */
+  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  th { background: #1e3a5f; color: #fff; font-size: 9px; font-weight: 700; padding: 5px 6px; text-align: left; }
+  td { font-size: 9.5px; padding: 5px 6px; border-bottom: 1px solid #f1f5f9; vertical-align: top; color: #1e293b; }
+  tr:nth-child(even) td { background: #f8fafc; }
+  .badge { display: inline-block; background: #eff6ff; color: #1d4ed8; font-size: 8px; padding: 1px 5px; border-radius: 99px; margin: 1px 1px 1px 0; }
+  .badge.yellow { background: #fefce8; color: #854d0e; }
+  .badge.green { background: #f0fdf4; color: #166534; }
+
+  /* ── MATERIALS ── */
+  .mat-table th { background: #334155; }
+  .mat-row { display: grid; grid-template-columns: 2fr 1fr 1fr; }
+
+  /* ── CATATAN ── */
+  .catatan-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; font-size: 10px; color: #334155; min-height: 28px; }
+
+  /* ── SIGNATURE ── */
+  .sig-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 8px; }
+  .sig-box { border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px; }
+  .sig-label { font-size: 9px; color: #64748b; margin-bottom: 32px; }
+  .sig-name { font-size: 10px; font-weight: 700; color: #1e293b; margin-top: 6px; padding-top: 6px; border-top: 1px solid #cbd5e1; }
+  .sig-date { font-size: 9px; color: #64748b; }
+
+  /* ── FOOTER ── */
+  .footer { margin-top: 10px; padding-top: 6px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; }
+  .footer-left { font-size: 8.5px; color: #94a3b8; }
+  .footer-right { font-size: 8px; color: #cbd5e1; font-style: italic; }
+
+  /* ── PHOTO PAGE ── */
+  .photo-page { padding: 0; }
+  .photo-page-header { background: #1e3a5f; color: #fff; padding: 8px 12px; margin-bottom: 10px; border-radius: 4px; }
+  .photo-page-title { font-size: 14px; font-weight: 800; letter-spacing: 0.5px; }
+  .photo-page-sub { font-size: 9px; color: #93c5fd; margin-top: 2px; }
+  .photo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .photo-cell { border: 1px solid #e2e8f0; border-radius: 4px; overflow: hidden; position: relative; background: #f8fafc; }
+  .photo-cell img { width: 100%; height: 120px; object-fit: cover; display: block; }
+  .photo-num { position: absolute; bottom: 3px; right: 5px; background: rgba(0,0,0,0.55); color: #fff; font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<script>window.onload = () => { window.print(); }</script>
+
+<!-- ═══════ HALAMAN 1 — DATA PEKERJAAN ═══════ -->
+<div class="header">
+  <div class="header-left">
+    ${logoUrl
+      ? `<div class="logo-wrap"><img src="${logoUrl}" alt="AClean"/></div>`
+      : `<div style="font-size:22px;font-weight:900;color:#1e3a5f;line-height:1">AC<span style="color:#3b82f6">lean</span><div style="font-size:9px;font-weight:400;color:#64748b;margin-top:2px">We clean with heart</div></div>`}
+  </div>
+  <div class="header-right">
+    <div class="doc-title">SERVICE REPORT CARD</div>
+    <div class="doc-sub">Dicetak: ${printDate}</div>
+    <div class="doc-sub" style="margin-top:2px;font-weight:700;color:#1e3a5f">${escH(laporan.job_id)}</div>
+  </div>
+</div>
+
+<!-- INFO PEKERJAAN -->
+<div class="section">
+  <div class="section-title">Informasi Pekerjaan</div>
+  <div class="info-grid">
+    <div class="info-row"><span class="info-label">Job ID</span><span class="info-val accent">${escH(laporan.job_id)}</span></div>
+    <div class="info-row"><span class="info-label">Tanggal Service</span><span class="info-val">${escH(svcDate)}</span></div>
+    <div class="info-row"><span class="info-label">Jenis Layanan</span><span class="info-val">${escH(laporan.service)}</span></div>
+    <div class="info-row"><span class="info-label">Jumlah Unit</span><span class="info-val">${escH(laporan.total_units || units.length || "-")}</span></div>
+    <div class="info-row"><span class="info-label">Teknisi</span><span class="info-val">${escH(laporan.teknisi)}${laporan.helper ? " · " + escH(laporan.helper) : ""}${laporan.teknisi2 ? " · " + escH(laporan.teknisi2) : ""}</span></div>
+    <div class="info-row"><span class="info-label">Status</span><span class="info-val">${escH(laporan.status)}</span></div>
+  </div>
+</div>
+
+<!-- INFO CUSTOMER -->
+<div class="section">
+  <div class="section-title">Informasi Customer</div>
+  <div class="info-grid">
+    <div class="info-row"><span class="info-label">Nama</span><span class="info-val">${escH(laporan.customer)}</span></div>
+    <div class="info-row"><span class="info-label">No. HP</span><span class="info-val">${escH(laporan.phone || ord.phone || "-")}</span></div>
+    ${ord.address ? `<div class="info-row" style="grid-column:span 2"><span class="info-label">Alamat</span><span class="info-val">${escH(ord.address)}${ord.area ? ", " + escH(ord.area) : ""}</span></div>` : ""}
+  </div>
+</div>
+
+<!-- DETAIL UNIT -->
+${units.length > 0 ? `
+<div class="section">
+  <div class="section-title">Detail Unit AC</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:24px">No</th>
+        <th>Tipe / Merk</th>
+        <th>Kondisi Sebelum</th>
+        <th>Pekerjaan Dilakukan</th>
+        <th>Kondisi Sesudah</th>
+        <th style="width:52px">Freon / Ampere</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${units.map((u, ui) => `
+        <tr>
+          <td style="text-align:center;font-weight:700">${u.unit_no || ui + 1}</td>
+          <td>
+            <div style="font-weight:700">${escH(u.tipe || "-")}</div>
+            ${u.merk ? `<div style="color:#64748b;font-size:8.5px">${escH(u.merk)}${u.model ? " · " + escH(u.model) : ""}</div>` : ""}
+          </td>
+          <td>${(u.kondisi_sebelum || []).map(k => `<span class="badge yellow">${escH(k)}</span>`).join("") || "-"}</td>
+          <td>${(u.pekerjaan || []).map(p => `<span class="badge">${escH(p)}</span>`).join("") || "-"}</td>
+          <td>${(u.kondisi_setelah || []).map(k => `<span class="badge green">${escH(k)}</span>`).join("") || "-"}</td>
+          <td style="font-size:8.5px">
+            ${parseFloat(u.freon_ditambah) > 0 ? `<div>${u.freon_ditambah} psi</div>` : ""}
+            ${u.ampere_akhir ? `<div>${u.ampere_akhir} A</div>` : ""}
+            ${!parseFloat(u.freon_ditambah) && !u.ampere_akhir ? "—" : ""}
+          </td>
+        </tr>
+        ${u.catatan_unit ? `<tr><td></td><td colspan="5" style="color:#64748b;font-size:8.5px;font-style:italic">📝 ${escH(u.catatan_unit)}</td></tr>` : ""}
+      `).join("")}
+    </tbody>
+  </table>
+</div>
+` : ""}
+
+<!-- MATERIAL TERPAKAI -->
+${materials.length > 0 ? `
+<div class="section">
+  <div class="section-title">Material Terpakai</div>
+  <table class="mat-table">
+    <thead><tr><th>Nama Material</th><th>Jumlah</th><th>Satuan</th></tr></thead>
+    <tbody>
+      ${materials.map(m => `<tr><td>${escH(m.nama)}</td><td>${escH(m.jumlah)}</td><td>${escH(m.satuan || "pcs")}</td></tr>`).join("")}
+    </tbody>
+  </table>
+</div>
+` : ""}
+
+<!-- JASA DILAKUKAN -->
+${jasaItems.length > 0 ? `
+<div class="section">
+  <div class="section-title">Jasa / Layanan Dilakukan</div>
+  <table class="mat-table">
+    <thead><tr><th>Jasa</th><th>Jumlah</th><th>Satuan</th></tr></thead>
+    <tbody>
+      ${jasaItems.map(j => `<tr><td>${escH(j.nama)}</td><td>${escH(j.jumlah)}</td><td>${escH(j.satuan || "unit")}</td></tr>`).join("")}
+    </tbody>
+  </table>
+</div>
+` : ""}
+
+<!-- CATATAN & REKOMENDASI -->
+<div class="section">
+  <div class="section-title">Catatan & Rekomendasi</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    <div>
+      <div style="font-size:9px;color:#64748b;margin-bottom:3px">Catatan Teknisi</div>
+      <div class="catatan-box">${escH(laporan.catatan_global || laporan.catatan || "—")}</div>
+    </div>
+    <div>
+      <div style="font-size:9px;color:#64748b;margin-bottom:3px">Rekomendasi</div>
+      <div class="catatan-box">${escH(laporan.rekomendasi || "—")}</div>
+    </div>
+  </div>
+</div>
+
+<!-- TANDA TANGAN -->
+<div class="section">
+  <div class="section-title">Persetujuan</div>
+  <div class="sig-row">
+    <div class="sig-box">
+      <div class="sig-label">Tanda Tangan Customer</div>
+      <div class="sig-name">${escH(laporan.customer)}</div>
+      <div class="sig-date">Tanggal: ${escH(svcDate)}</div>
+    </div>
+    <div class="sig-box">
+      <div class="sig-label">Tanda Tangan Teknisi</div>
+      <div class="sig-name">${escH(laporan.teknisi)}</div>
+      <div class="sig-date">Tanggal: ${escH(svcDate)}</div>
+    </div>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  <div class="footer-left">AClean Service · Jasa Servis AC Profesional · aclean.id</div>
+  <div class="footer-right">Dokumen ini dicetak otomatis oleh sistem AClean</div>
+</div>
+
+<!-- ═══════ HALAMAN FOTO ═══════ -->
+${photoPageHTML}
+
+</body>
+</html>`;
+  };
+
+  // Preview / download Service Report Card di browser
+  const downloadServiceReportPDF = async (laporan, inv) => {
+    const logoUrl = await fetchInvoiceLogoUrl();
+    const origin = window.location.origin;
+    const html = buildServiceReportHTML(laporan, inv, logoUrl, origin);
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    addAgentLog("REPORT_PRINT", `Service Report ${laporan.job_id} (${laporan.customer}) dicetak oleh ${currentUser?.name || "Unknown"}`, "SUCCESS");
+    const win = window.open(url, "_blank", "width=860,height=1000,scrollbars=yes");
+    if (!win) {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ServiceReport_${laporan.job_id}_${laporan.customer.replace(/\s+/g, "_")}.html`;
+      a.click();
+      showNotif("Report disimpan sebagai file HTML — buka lalu Ctrl+P untuk cetak");
+    } else {
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+  };
+
+  // Upload Service Report ke R2 untuk WA attachment
+  const uploadServiceReportForWA = async (laporan, inv) => {
+    try {
+      const logoUrl = await fetchInvoiceLogoUrl();
+      const origin = typeof window !== "undefined" ? window.location.origin : "https://a-clean-webapp.vercel.app";
+      const html = buildServiceReportHTML(laporan, inv, logoUrl, origin);
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const res = await fetch("/api/upload-foto", {
+        method: "POST", headers: _apiHeaders(),
+        body: JSON.stringify({
+          base64, filename: `ServiceReport_${laporan.job_id}.html`,
+          folder: "service-reports", mimeType: "text/html"
         })
       });
       const d = await res.json().catch(() => ({}));
@@ -2298,7 +2618,7 @@ ${matRowsHtml}
     initLoadAll();
 
     // ── AUTO-VERIFY CLIENT: Cek laporan SUBMITTED > 48 jam saat data selesai load ──
-    setTimeout(async () => {
+    const autoVerifyTimer = setTimeout(async () => {
       try {
         const now = Date.now();
         const LIMIT_MS = 48 * 60 * 60 * 1000; // 48 jam
@@ -2346,11 +2666,6 @@ ${matRowsHtml}
     const _statsTimer = setInterval(() => {
       loadAll().catch(e => console.warn("Auto-refresh skip:", e?.message));
     }, 30 * 60 * 1000);
-
-    // ── GAP-08 FIX: Auto-refresh statistik setiap 30 menit ──
-    const statsRefreshInterval = setInterval(() => {
-      loadAll().catch(e => console.warn("Auto-refresh error:", e));
-    }, 30 * 60 * 1000); // 30 menit
 
     // ══ Supabase Realtime Channels ══
     // Hanya 4 channel kritis (Supabase free tier: max concurrent realtime)
@@ -2503,7 +2818,7 @@ ${matRowsHtml}
     try {
       ch7 = supabase.channel("rt-wa-conv")
         .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, () =>
-          fetchWaConversations(supabase, null)
+          fetchWaConversations(supabase, 50)
             .then(({ data, error }) => { if (data && !error) setWaConversations(data); }))
         .subscribe((status) => {
           if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
@@ -2518,7 +2833,7 @@ ${matRowsHtml}
             if (prev[0]?.phone === phone) return [...prev, payload.new];
             return prev;
           });
-          fetchWaConversations(supabase, null)
+          fetchWaConversations(supabase, 50)
             .then(({ data, error }) => { if (data && !error) setWaConversations(data); });
         })
         .subscribe((status) => {
@@ -2534,6 +2849,7 @@ ${matRowsHtml}
       clearInterval(window._rtPoll_1645); delete window._rtPoll_1645;
       clearInterval(window._rtPoll_1673); delete window._rtPoll_1673;
 
+      clearTimeout(autoVerifyTimer);
       clearInterval(_statsTimer);
       if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
       [ch1, ch2, ch3, ch4, ch5, ch6, ch7, ch8].forEach(ch => {
@@ -2876,7 +3192,7 @@ ${matRowsHtml}
     }
 
     const today = getLocalDate();
-    const due = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000 + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const due = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const approvedAt = getLocalISOString(); // Indonesia timezone (UTC+7)
     const sentAt = getLocalISOString(); // When invoice sent/approved timestamp
     setInvoicesData(prev => prev.map(i =>
@@ -2918,7 +3234,7 @@ ${matRowsHtml}
     setModalApproveInv(true);
   };
 
-  // ── Approve + kirim WA ke customer (+ lampiran invoice jika R2_PUBLIC_URL diset) ──
+  // ── Approve + kirim WA ke customer (invoice + service report card) ──
   const approveAndSend = async (inv) => {
     const due = await approveInvoiceCore(inv);
     const waMsg = `Halo ${inv.customer}, invoice AClean Service telah dikirim:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*BCA 8830883011 a.n. Malda Retta*\n\nTerima kasih! 🙏`;
@@ -2927,6 +3243,17 @@ ${matRowsHtml}
     const sent = await sendWA(inv.phone, waMsg, opts);
     if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 📎" : ""}`);
     else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
+
+    // ── Kirim Service Report Card sebagai pesan kedua ──
+    const terkaitLaporan = laporanReports.find(r => r.job_id === inv.job_id);
+    if (terkaitLaporan) {
+      const srUrl = await uploadServiceReportForWA(terkaitLaporan, inv);
+      if (srUrl) {
+        const srMsg = `📋 *Service Report Card* pekerjaan ${inv.service || "Servis AC"} untuk ${inv.customer} telah disiapkan.\n\nDokumen ini berisi detail pengerjaan & dokumentasi foto. Silakan simpan sebagai referensi.\n\nTerima kasih telah mempercayai AClean Service! 🙏`;
+        sendWA(inv.phone, srMsg, { url: srUrl, filename: `ServiceReport_${inv.job_id}.html` });
+        showNotif(`📋 Service Report Card terkirim ke ${inv.customer}`);
+      }
+    }
     setModalApproveInv(false); setPendingApproveInv(null);
   };
 
@@ -4327,7 +4654,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       updateServiceReport={updateServiceReport} deleteServiceReport={deleteServiceReport} insertInvoice={insertInvoice} deleteInvoice={deleteInvoice}
       updateOrder={updateOrder} updateOrderStatus={updateOrderStatus} markInvoicePaid={markInvoicePaid}
       lookupHargaGlobal={lookupHargaGlobal} hargaPerUnitFromTipe={hargaPerUnitFromTipe} getBracketKey={getBracketKey} hitungLabor={hitungLabor}
-      sendWA={sendWA} supabase={supabase} LAP_PAGE_SIZE={LAP_PAGE_SIZE} INSTALL_ITEMS={INSTALL_ITEMS} />
+      sendWA={sendWA} supabase={supabase} LAP_PAGE_SIZE={LAP_PAGE_SIZE} INSTALL_ITEMS={INSTALL_ITEMS}
+      downloadServiceReportPDF={downloadServiceReportPDF} />
   );
 
   // ============================================================
@@ -6095,7 +6423,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <div style={{ fontWeight: 800, color: "#fff", fontSize: 18 }}>
                         <span style={{ color: "#60a5fa" }}>AC</span>lean Service
                       </div>
-                      <div style={{ fontSize: 11, color: "#93c5fd" }}>Jasa Servis AC Profesional</div>
+                      <div style={{ fontSize: 11, color: "#93c5fd", marginTop: 3 }}>Jasa Servis &amp; Perawatan AC Profesional</div>
                     </div>
                     <div style={{ textAlign: "right" }}>
                       <div style={{ fontSize: 10, color: "#93c5fd", fontWeight: 600 }}>INVOICE</div>
@@ -6424,7 +6752,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <button onClick={async () => {
-                  const { data, error } = await fetchWaConversations(supabase, null);
+                  const { data, error } = await fetchWaConversations(supabase, 50);
                   if (error) {
                     if (error.code === "42P01") showNotif("⚠️ Tabel wa_conversations belum dibuat — jalankan SQL setup di Supabase");
                     else showNotif("⚠️ WA Monitor error: " + (error.message || error.code));
@@ -7565,6 +7893,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
                 {selectedLaporan.rekomendasi && <div style={{ fontSize: 11, marginBottom: 4 }}><span style={{ color: cs.muted }}>Rekomendasi: </span><span style={{ color: cs.text }}>{selectedLaporan.rekomendasi}</span></div>}
                 {(selectedLaporan.catatan_global || selectedLaporan.catatan) && <div style={{ fontSize: 11 }}><span style={{ color: cs.muted }}>Catatan: </span><span style={{ color: cs.text }}>{selectedLaporan.catatan_global || selectedLaporan.catatan}</span></div>}
+
+                {/* ── Preview Service Report Card (Owner/Admin only) ── */}
+                {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <button onClick={() => {
+                      const relInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id) || {};
+                      downloadServiceReportPDF(selectedLaporan, relInv);
+                    }} style={{ flex: 1, background: "#1e3a5f", border: "none", color: "#fff", padding: "10px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                      📋 Preview Report Card
+                    </button>
+                  </div>
+                )}
 
                 {safeArr(selectedLaporan.editLog).length > 0 && (
                   <div style={{ background: cs.yellow + "08", border: "1px solid " + cs.yellow + "22", borderRadius: 10, padding: "10px 14px" }}>

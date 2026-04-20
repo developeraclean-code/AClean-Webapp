@@ -9,10 +9,10 @@ export const fetchInvoices = (supabase) =>
   supabase.from("invoices").select("*").order("created_at", { ascending: false }).limit(300);
 
 export const fetchCustomers = (supabase) =>
-  supabase.from("customers").select("*").order("name");
+  supabase.from("customers").select("*").order("name").limit(1000);
 
 export const fetchInventory = (supabase) =>
-  supabase.from("inventory").select("*").order("code");
+  supabase.from("inventory").select("*").order("code").limit(500);
 
 export const fetchServiceReports = (supabase) =>
   supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }).limit(200);
@@ -24,7 +24,7 @@ export const fetchInventoryTransactions = (supabase) =>
   supabase.from("inventory_transactions").select("*").order("created_at", { ascending: false }).limit(500);
 
 export const fetchInventoryUnits = (supabase) =>
-  supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label");
+  supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label").limit(2000);
 
 export const fetchExpenses = (supabase) =>
   supabase.from("expenses").select("*").order("date", { ascending: false }).limit(500);
@@ -36,14 +36,14 @@ export const fetchDispatchLogs = (supabase) =>
   supabase.from("dispatch_logs").select("order_id,teknisi,status,sent_at").order("sent_at", { ascending: false }).limit(30);
 
 export const fetchAppSettings = (supabase) =>
-  supabase.from("app_settings").select("*");
+  supabase.from("app_settings").select("*").limit(100);
 
 export const fetchUserProfiles = (supabase) =>
-  supabase.from("user_profiles").select("*").order("name");
+  supabase.from("user_profiles").select("*").order("name").limit(100);
 
 export const fetchUserAccounts = (supabase) =>
   supabase.from("user_profiles").select("*")
-    .in("role", ["Owner", "Admin", "owner", "admin"]).order("name");
+    .in("role", ["Owner", "Admin", "owner", "admin"]).order("name").limit(100);
 
 export const fetchWaConversations = (supabase, limit = 50) => {
   const q = supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false });
@@ -51,7 +51,7 @@ export const fetchWaConversations = (supabase, limit = 50) => {
 };
 
 export const fetchPriceList = (supabase) =>
-  supabase.from("price_list").select("*").order("service").order("type");
+  supabase.from("price_list").select("*").order("service").order("type").limit(200);
 
 export const fetchAraBrain = (supabase) =>
-  supabase.from("ara_brain").select("key,value");
+  supabase.from("ara_brain").select("key,value").limit(50);
