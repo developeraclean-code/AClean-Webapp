@@ -1674,16 +1674,37 @@ ${matRowsHtml}
   // SERVICE REPORT CARD — HTML builder + preview + WA upload
   // ─────────────────────────────────────────────────────────────────────────────
 
-  // Konversi foto URL ke absolute URL untuk blob popup (relative path tidak bisa di blob:)
-  const photoSrcForReport = (url, origin) => {
+  // Fetch foto URL → base64 data URL (agar embedded dalam HTML, tidak butuh network saat print)
+  const fetchFotoAsDataUrl = async (url, origin) => {
     if (!url) return "";
-    if (url.startsWith("http")) return url;
-    if (url.startsWith("/api/foto")) return origin + url;
-    // R2 key / plain path → proxy
-    return `${origin}/api/foto?key=${encodeURIComponent(url)}`;
+    try {
+      let fetchUrl;
+      if (url.startsWith("http")) {
+        // R2 URL — proxy via /api/foto?key= agar tidak kena CORS/auth issue
+        // Ekstrak key dari URL (path setelah bucket name)
+        const urlObj = new URL(url);
+        const key = urlObj.pathname.replace(/^\/[^/]+\//, ""); // strip /bucket-name/
+        fetchUrl = `${origin}/api/foto?key=${encodeURIComponent(key)}`;
+      } else if (url.startsWith("/api/foto")) {
+        fetchUrl = origin + url;
+      } else {
+        fetchUrl = `${origin}/api/foto?key=${encodeURIComponent(url)}`;
+      }
+      const res = await fetch(fetchUrl, { headers: _apiHeaders() });
+      if (!res.ok) return "";
+      const blob = await res.blob();
+      return await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => resolve("");
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return "";
+    }
   };
 
-  const buildServiceReportHTML = (laporan, inv, logoUrl, origin) => {
+  const buildServiceReportHTML = (laporan, inv, logoUrl, origin, photoDataUrls = {}) => {
     const escH = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const ord = ordersData.find(o => o.id === laporan.job_id) || {};
     const units = laporan.units || [];
@@ -1704,12 +1725,12 @@ ${matRowsHtml}
           <div class="photo-page-sub">${escH(laporan.job_id)} · ${escH(laporan.customer)}</div>
         </div>
         <div class="photo-grid">
-          ${chunk.map((url, idx) => `
-            <div class="photo-cell">
-              <img src="${escH(photoSrcForReport(url, origin))}" alt="Foto ${pi * 8 + idx + 1}" loading="eager" onerror="this.style.background='#f1f5f9';this.alt='Foto tidak tersedia'" />
-              <div class="photo-num">${pi * 8 + idx + 1}</div>
-            </div>
-          `).join("")}
+          ${chunk.map((url, idx) => {
+            const dataUrl = photoDataUrls[url] || "";
+            return dataUrl
+              ? `<div class="photo-cell"><img src="${dataUrl}" alt="Foto ${pi * 8 + idx + 1}" /><div class="photo-num">${pi * 8 + idx + 1}</div></div>`
+              : `<div class="photo-cell" style="background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:11px">Foto tidak tersedia<div class="photo-num">${pi * 8 + idx + 1}</div></div>`;
+          }).join("")}
         </div>
       </div>
     `).join("");
@@ -1943,7 +1964,14 @@ ${photoPageHTML}
   const downloadServiceReportPDF = async (laporan, inv) => {
     const logoUrl = await fetchInvoiceLogoUrl();
     const origin = window.location.origin;
-    const html = buildServiceReportHTML(laporan, inv, logoUrl, origin);
+    // Pre-fetch semua foto sebagai base64 data URL agar embedded dalam HTML (tidak butuh network saat print)
+    const fotoUrls = (laporan.foto_urls || []).filter(Boolean);
+    const photoDataUrls = {};
+    await Promise.all(fotoUrls.map(async (url) => {
+      const dataUrl = await fetchFotoAsDataUrl(url, origin);
+      if (dataUrl) photoDataUrls[url] = dataUrl;
+    }));
+    const html = buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataUrls);
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     addAgentLog("REPORT_PRINT", `Service Report ${laporan.job_id} (${laporan.customer}) dicetak oleh ${currentUser?.name || "Unknown"}`, "SUCCESS");
@@ -1964,7 +1992,13 @@ ${photoPageHTML}
     try {
       const logoUrl = await fetchInvoiceLogoUrl();
       const origin = typeof window !== "undefined" ? window.location.origin : "https://a-clean-webapp.vercel.app";
-      const html = buildServiceReportHTML(laporan, inv, logoUrl, origin);
+      const fotoUrls = (laporan.foto_urls || []).filter(Boolean);
+      const photoDataUrls = {};
+      await Promise.all(fotoUrls.map(async (url) => {
+        const dataUrl = await fetchFotoAsDataUrl(url, origin);
+        if (dataUrl) photoDataUrls[url] = dataUrl;
+      }));
+      const html = buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataUrls);
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
