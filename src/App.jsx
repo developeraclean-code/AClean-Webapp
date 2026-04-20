@@ -1690,7 +1690,7 @@ ${matRowsHtml}
       } else {
         fetchUrl = `${origin}/api/foto?key=${encodeURIComponent(url)}`;
       }
-      const res = await fetch(fetchUrl, { headers: _apiHeaders() });
+      const res = await fetch(fetchUrl);
       if (!res.ok) return "";
       const blob = await res.blob();
       return await new Promise((resolve) => {
