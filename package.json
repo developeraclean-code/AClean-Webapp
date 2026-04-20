@@ -13,6 +13,8 @@
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",
     "@supabase/supabase-js": "^2.39.0",
+    "dom-to-image-more": "^3.7.2",
+    "html2canvas": "^1.4.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "vite-plugin-node-polyfills": "^0.26.0"

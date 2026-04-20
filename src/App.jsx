@@ -1710,25 +1710,41 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
   };
 
   // Upload invoice sebagai PDF ke R2 menggunakan @react-pdf/renderer
+  // Helper: render HTML string → JPG base64 via html2canvas (offscreen div)
+  const htmlToImageBase64 = (htmlString, width = 794) => new Promise((resolve) => {
+    const wrapper = document.createElement("div");
+    Object.assign(wrapper.style, {
+      position: "fixed", left: "-9999px", top: "0",
+      width: width + "px", background: "#fff", zIndex: "-1"
+    });
+    wrapper.innerHTML = htmlString;
+    document.body.appendChild(wrapper);
+    import("html2canvas").then(({ default: html2canvas }) => {
+      html2canvas(wrapper, {
+        scale: 2, useCORS: true, allowTaint: false,
+        backgroundColor: "#ffffff", logging: false,
+        width, windowWidth: width
+      }).then(canvas => {
+        document.body.removeChild(wrapper);
+        resolve(canvas.toDataURL("image/jpeg", 0.92).split(",")[1]);
+      }).catch(() => {
+        document.body.removeChild(wrapper);
+        resolve(null);
+      });
+    }).catch(() => { document.body.removeChild(wrapper); resolve(null); });
+  });
+
   const uploadInvoicePDFForWA = async (inv) => {
     try {
-      const { pdf } = await import("@react-pdf/renderer");
-      const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
       const logoUrl = await fetchInvoiceLogoUrl();
-      const blob = await pdf(
-        <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} />
-      ).toBlob();
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(",")[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+      const html = buildInvoiceHTML(inv, logoUrl, true);
+      const base64 = await htmlToImageBase64(html);
+      if (!base64) return null;
       const res = await fetch("/api/upload-foto", {
         method: "POST", headers: _apiHeaders(),
         body: JSON.stringify({
-          base64, filename: `Invoice_${inv.id}.pdf`,
-          folder: "invoices", mimeType: "application/pdf"
+          base64, filename: `Invoice_${inv.id}.jpg`,
+          folder: "invoices", mimeType: "image/jpeg"
         })
       });
       const d = await res.json().catch(() => ({}));
@@ -2099,8 +2115,6 @@ ${photoPageHTML}
   // Upload service report sebagai PDF ke R2 menggunakan @react-pdf/renderer
   const uploadServiceReportPDFForWA = async (laporan, inv) => {
     try {
-      const { pdf } = await import("@react-pdf/renderer");
-      const { default: ServiceReportPDF } = await import("./components/ServiceReportPDF.jsx");
       const logoUrl = await fetchInvoiceLogoUrl();
       const origin = window.location.origin;
       const fotoUrls = (laporan.foto_urls || []).filter(Boolean);
@@ -2109,24 +2123,14 @@ ${photoPageHTML}
         const dataUrl = await fetchFotoAsDataUrl(url, origin);
         if (dataUrl) photoDataUrls[url] = dataUrl;
       }));
-      const ord = ordersData.find(o => o.id === laporan.job_id) || {};
-      const blob = await pdf(
-        <ServiceReportPDF
-          laporan={laporan} inv={inv} logoUrl={logoUrl}
-          photoDataUrls={photoDataUrls} appSettings={appSettings} ord={ord}
-        />
-      ).toBlob();
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(",")[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+      const html = buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataUrls, true);
+      const base64 = await htmlToImageBase64(html, 1123);
+      if (!base64) return null;
       const res = await fetch("/api/upload-foto", {
         method: "POST", headers: _apiHeaders(),
         body: JSON.stringify({
-          base64, filename: `ServiceReport_${laporan.job_id}.pdf`,
-          folder: "service-reports", mimeType: "application/pdf"
+          base64, filename: `ServiceReport_${laporan.job_id}.jpg`,
+          folder: "service-reports", mimeType: "image/jpeg"
         })
       });
       const d = await res.json().catch(() => ({}));
