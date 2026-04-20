@@ -1642,8 +1642,8 @@ ${matRowsHtml}
     }
   };
 
-  // Upload invoice HTML ke R2 untuk WA attachment — returns public URL or null
-  // Hanya berhasil jika R2_PUBLIC_URL dikonfigurasi di Vercel env vars
+  // Upload invoice HTML ke R2 untuk WA attachment — returns public /api/foto URL
+  // Menggunakan /api/foto proxy (selalu public) bukan direct R2 URL
   const uploadInvoiceForWA = async (inv) => {
     try {
       const logoUrl = await fetchInvoiceLogoUrl();
@@ -1663,7 +1663,10 @@ ${matRowsHtml}
         })
       });
       const d = await res.json().catch(() => ({}));
-      if (res.ok && d.success && d.url?.startsWith("http")) return d.url;
+      if (res.ok && d.success && d.key) {
+        const origin = window.location.origin;
+        return `${origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+      }
       return null;
     } catch {
       return null;
@@ -2014,7 +2017,10 @@ ${photoPageHTML}
         })
       });
       const d = await res.json().catch(() => ({}));
-      if (res.ok && d.success && d.url?.startsWith("http")) return d.url;
+      if (res.ok && d.success && d.key) {
+        const origin = window.location.origin;
+        return `${origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+      }
       return null;
     } catch {
       return null;
@@ -2927,12 +2933,16 @@ ${photoPageHTML}
     try {
       const body = { phone, message, currentUserRole: currentUser?.role || "Unknown" };
       if (opts.url) { body.url = opts.url; if (opts.filename) body.filename = opts.filename; }
+      console.log("[sendWA] Sending to", phone, opts.url ? `| attachment: ${opts.url}` : "| no attachment");
       const r = await fetch("/api/send-wa", {
         method: "POST", headers: _apiHeaders(),
         body: JSON.stringify(body)
       });
       const d = await r.json().catch(() => ({}));
-      if (r.ok && d.success) return true;
+      if (r.ok && d.success) {
+        console.log("[sendWA] OK — withAttachment:", d.withAttachment);
+        return true;
+      }
       // Log error detail — informasi berguna untuk debugging
       const errMsg = d.error || d.detail || String(r.status);
       console.warn("sendWA failed:", errMsg, "| target:", phone);
