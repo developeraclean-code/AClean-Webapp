@@ -84,6 +84,24 @@ export default async function handler(req, res) {
       }
 
       const d = await fonnteRes.json().catch(() => ({}));
+      // Jika attachment gagal (file format not supported), fallback: kirim ulang sebagai teks + link
+      if (hasAttachment && (!fonnteRes.ok || d.status === false)) {
+        const reason = d.reason || "";
+        const isFormatErr = reason.toLowerCase().includes("format") || reason.toLowerCase().includes("file") || reason.toLowerCase().includes("type");
+        if (isFormatErr) {
+          console.warn("[send-wa] Attachment rejected by Fonnte, fallback ke link teks:", reason);
+          const msgWithLink = msg + "\n\n📄 " + b.url;
+          const fallbackRes = await fetch("https://api.fonnte.com/send", {
+            method: "POST",
+            headers: { "Authorization": FT, "Content-Type": "application/json" },
+            body: JSON.stringify({ target, message: msgWithLink, delay: "2", countryCode: "62" })
+          });
+          const fd = await fallbackRes.json().catch(() => ({}));
+          if (!fallbackRes.ok || fd.status === false) return res.status(502).json({ success: false, error: fd.reason || "Fonnte error" });
+          return res.status(200).json({ success: true, target, withAttachment: false, fallback: true, fallbackReason: reason });
+        }
+        return res.status(502).json({ success: false, error: reason || "Fonnte error" });
+      }
       if (!fonnteRes.ok || d.status === false) return res.status(502).json({ success: false, error: d.reason || "Fonnte error" });
       return res.status(200).json({ success: true, target, withAttachment: hasAttachment });
     }
