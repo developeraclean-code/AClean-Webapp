@@ -563,6 +563,10 @@ export default async function handler(req, res) {
         const ct = r2res.headers.get("content-type") || "image/jpeg";
         res.setHeader("Content-Type", ct);
         res.setHeader("Cache-Control", "public, max-age=86400");
+        // Untuk HTML/PDF — inline agar browser render langsung, bukan download/print dialog
+        if (ct.includes("text/html") || ct.includes("application/pdf")) {
+          res.setHeader("Content-Disposition", "inline");
+        }
         const buf = await r2res.arrayBuffer();
         return res.status(200).send(Buffer.from(buf));
       } catch (err) {

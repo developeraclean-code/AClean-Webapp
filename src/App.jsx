@@ -1678,24 +1678,23 @@ ${matRowsHtml}
     }
   };
 
-  // Upload invoice sebagai PDF ke R2 — returns public URL
+  // Upload invoice sebagai HTML ke R2 — returns /api/foto URL (served inline, no print dialog)
   const uploadInvoiceForWA = async (inv) => {
     try {
       const logoUrl = await fetchInvoiceLogoUrl();
       const html = buildInvoiceHTML(inv, logoUrl);
-      const filename = `Invoice_${inv.id}.pdf`;
-      const pdfBlob = await htmlToPdfBlob(html, filename);
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result.split(",")[1]);
         reader.onerror = reject;
-        reader.readAsDataURL(pdfBlob);
+        reader.readAsDataURL(blob);
       });
       const res = await fetch("/api/upload-foto", {
         method: "POST", headers: _apiHeaders(),
         body: JSON.stringify({
-          base64, filename,
-          folder: "invoices", mimeType: "application/pdf"
+          base64, filename: `Invoice_${inv.id}.html`,
+          folder: "invoices", mimeType: "text/html"
         })
       });
       const d = await res.json().catch(() => ({}));
@@ -1704,7 +1703,7 @@ ${matRowsHtml}
       }
       return null;
     } catch (err) {
-      console.warn("[uploadInvoiceForWA] PDF gagal:", err.message);
+      console.warn("[uploadInvoiceForWA] gagal:", err.message);
       return null;
     }
   };
@@ -2026,7 +2025,7 @@ ${photoPageHTML}
     }
   };
 
-  // Upload Service Report sebagai PDF ke R2
+  // Upload Service Report sebagai HTML ke R2 (foto di-embed sebagai base64)
   const uploadServiceReportForWA = async (laporan, inv) => {
     try {
       const logoUrl = await fetchInvoiceLogoUrl();
@@ -2038,28 +2037,27 @@ ${photoPageHTML}
         if (dataUrl) photoDataUrls[url] = dataUrl;
       }));
       const html = buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataUrls);
-      const filename = `ServiceReport_${laporan.job_id}.pdf`;
-      const pdfBlob = await htmlToPdfBlob(html, filename);
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result.split(",")[1]);
         reader.onerror = reject;
-        reader.readAsDataURL(pdfBlob);
+        reader.readAsDataURL(blob);
       });
       const res = await fetch("/api/upload-foto", {
         method: "POST", headers: _apiHeaders(),
         body: JSON.stringify({
-          base64, filename,
-          folder: "service-reports", mimeType: "application/pdf"
+          base64, filename: `ServiceReport_${laporan.job_id}.html`,
+          folder: "service-reports", mimeType: "text/html"
         })
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok && d.success && d.key) {
-        return `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+        return `${origin}/api/foto?key=${encodeURIComponent(d.key)}`;
       }
       return null;
     } catch (err) {
-      console.warn("[uploadServiceReportForWA] PDF gagal:", err.message);
+      console.warn("[uploadServiceReportForWA] gagal:", err.message);
       return null;
     }
   };
