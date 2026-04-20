@@ -55,6 +55,7 @@ export function validateInternalToken(req, res) {
   }
 
   const token = req.headers["x-internal-token"] || req.headers["x-api-key"];
+  console.log("[SEC-02] token received length:", token?.length ?? 0, "| secret length:", secret?.length ?? 0, "| match:", token === secret);
   if (!token || token !== secret) {
     res.status(401).json({
       error: "Unauthorized",
