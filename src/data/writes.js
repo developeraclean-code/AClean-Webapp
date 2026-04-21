@@ -35,8 +35,8 @@ export const markInvoicePaid = (supabase, id, paidAt, userName) =>
     status: "PAID", paid_at: paidAt, last_changed_by: userName
   }).eq("id", id);
 
-export const deleteInvoice = async (supabase, id, userName) => {
-  await supabase.from("invoices").update({ last_changed_by: userName }).eq("id", id);
+export const deleteInvoice = async (supabase, id, userName, reason = "MANUAL_DELETE") => {
+  await supabase.from("invoices").update({ last_changed_by: `${userName}::${reason}` }).eq("id", id);
   return supabase.from("invoices").delete().eq("id", id);
 };
 

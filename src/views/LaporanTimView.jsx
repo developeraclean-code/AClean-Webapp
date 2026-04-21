@@ -200,7 +200,7 @@ const verifyLaporan = async (r) => {
     }
     if (oldDB && oldDB.length > 0) {
       for (const oi of oldDB) {
-        const { error: delErr } = await deleteInvoice(supabase, oi.id, auditUserName());
+        const { error: delErr } = await deleteInvoice(supabase, oi.id, auditUserName(), "ADMIN_EDIT_LAPORAN");
         if (delErr) {
           console.error("[AUTO_INVOICE] gagal hapus", oi.id, delErr.message);
           showNotif("❌ Gagal hapus invoice lama — coba lagi.");
@@ -738,7 +738,7 @@ return (
                 // Hapus invoice terkait jika ada
                 const relInv = invoicesData.filter(i => i.job_id === r.job_id);
                 if (relInv.length > 0) {
-                  await Promise.all(relInv.map(inv => deleteInvoice(supabase, inv.id, auditUserName())));
+                  await Promise.all(relInv.map(inv => deleteInvoice(supabase, inv.id, auditUserName(), "LAPORAN_DIHAPUS")));
                   setInvoicesData(p => p.filter(i => i.job_id !== r.job_id));
                 }
                 // Reset order status ke COMPLETED (bukan INVOICED)

@@ -261,7 +261,7 @@ return (
                       confirmText: "Tolak & Hapus"
                     })) return;
                     setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
-                    await deleteInvoice(supabase, inv.id, auditUserName());
+                    await deleteInvoice(supabase, inv.id, auditUserName(), "REPAIR_GRATIS_REJECTED");
                     if (inv.job_id) await updateOrderStatus(supabase, inv.job_id, "COMPLETED", auditUserName(), { invoice_id: null });
                     addAgentLog("REPAIR_GRATIS_REJECTED", `Invoice ${inv.id} repair gratis REJECTED oleh ${currentUser?.name}`, "WARNING");
                     showNotif(`❌ Repair gratis ditolak — laporan ${inv.job_id} kembali ke COMPLETED`);
@@ -361,7 +361,7 @@ return (
                   confirmText: "Hapus Permanen"
                 })) return;
                 setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
-                const { error } = await deleteInvoice(supabase, inv.id, auditUserName());
+                const { error } = await deleteInvoice(supabase, inv.id, auditUserName(), "OWNER_HAPUS_MANUAL");
                 if (error) { showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message); return; }
                 if (inv.job_id) await updateOrderStatus(supabase, inv.job_id, "COMPLETED", auditUserName(), { invoice_id: null });
                 addAgentLog("INVOICE_DELETED", `Invoice ${inv.id} (${inv.customer}) dihapus oleh ${currentUser?.name}`, "WARNING");

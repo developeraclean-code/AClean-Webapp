@@ -8008,7 +8008,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         const totalInv = finalTotal3;
 
                         // Delete old invoice + insert new (preserve PAID status via garansi check)
-                        const { error: delInvErr } = await deleteInvoice(supabase, existInv.id, auditUserName());
+                        const { error: delInvErr } = await deleteInvoice(supabase, existInv.id, auditUserName(), "ADMIN_EDIT_GRATIS");
                         if (!delInvErr) {
                           const newInv = {
                             ...existInv,
@@ -8975,7 +8975,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             }
             if (existingDB && existingDB.length > 0) {
               for (const old of existingDB) {
-                const { error: delErr } = await deleteInvoice(supabase, old.id, auditUserName());
+                const { error: delErr } = await deleteInvoice(supabase, old.id, auditUserName(), "TEKNISI_REWRITE_LAPORAN");
                 if (delErr) {
                   console.error("[INVOICE_REWRITE] gagal hapus", old.id, delErr.message);
                   showNotif("❌ Gagal hapus invoice lama — submit dibatalkan. Coba lagi.");

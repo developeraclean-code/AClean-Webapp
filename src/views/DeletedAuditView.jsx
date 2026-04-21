@@ -25,6 +25,41 @@ function fmtDate(str) {
   });
 }
 
+// Parse reason dari changed_by format "Nama::REASON"
+function parseReason(changedBy) {
+  if (!changedBy) return null;
+  const i = changedBy.indexOf("::");
+  return i !== -1 ? changedBy.slice(i + 2) : null;
+}
+
+function parseUserName(changedBy) {
+  if (!changedBy) return changedBy;
+  const i = changedBy.indexOf("::");
+  return i !== -1 ? changedBy.slice(0, i) : changedBy;
+}
+
+const REASON_META = {
+  TEKNISI_REWRITE_LAPORAN: { label: "Teknisi tulis ulang laporan", color: "#38bdf8", risk: false },
+  ADMIN_EDIT_LAPORAN:      { label: "Admin edit laporan",          color: "#a78bfa", risk: false },
+  ADMIN_EDIT_GRATIS:       { label: "Admin ubah ke Gratis",        color: "#f59e0b", risk: true  },
+  REPAIR_GRATIS_REJECTED:  { label: "Gratis ditolak Owner",        color: "#f59e0b", risk: true  },
+  OWNER_HAPUS_MANUAL:      { label: "Owner hapus manual",          color: "#ef4444", risk: true  },
+  LAPORAN_DIHAPUS:         { label: "Laporan dihapus",             color: "#ef4444", risk: true  },
+  MANUAL_DELETE:           { label: "Hapus manual",                color: "#ef4444", risk: true  },
+};
+
+function ReasonBadge({ reason, C }) {
+  const meta = REASON_META[reason];
+  if (!meta) return <span style={{ color: C.muted, fontSize: 11 }}>{reason || "-"}</span>;
+  return (
+    <span style={{
+      fontSize: 10, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap",
+      background: meta.color + "22", color: meta.color,
+      border: "1px solid " + meta.color + "44", fontWeight: 700,
+    }}>{meta.label}</span>
+  );
+}
+
 // Parse "Customer: Nama | ..." format dari detail string
 function parseCustomerFromDetail(detail) {
   if (!detail) return null;
@@ -168,6 +203,7 @@ function DeletedAuditView({ supabase }) {
   const [dateFilter, setDateFilter] = useState("Semua");
   const [userFilter, setUserFilter] = useState("Semua");
   const [actionFilter, setActionFilter] = useState("Semua");
+  const [reasonFilter, setReasonFilter] = useState("Semua");
   const [customerSearch, setCustomerSearch] = useState("");
   const [page, setPage] = useState(1);
 
@@ -218,17 +254,21 @@ function DeletedAuditView({ supabase }) {
     : highRiskLogs;
 
   const allDates = [...new Set(activeRows.map(getDateStr).filter(Boolean))].sort().reverse();
-  const allUsers = [...new Set(activeRows.map(getUserStr).filter(Boolean))].sort();
+  const allUsers = [...new Set(activeRows.map(r => parseUserName(getUserStr(r))).filter(Boolean))].sort();
   const allActions = tab === "highrisk"
     ? [...new Set(highRiskLogs.map(l => l.action).filter(Boolean))].sort()
+    : [];
+  const allReasons = tab === "deleted"
+    ? [...new Set(deletedRows.map(r => parseReason(r.changed_by)).filter(Boolean))].sort()
     : [];
 
   const filtered = activeRows.filter(row => {
     const d = dateFilter === "Semua" || getDateStr(row) === dateFilter;
-    const u = userFilter === "Semua" || getUserStr(row) === userFilter;
+    const u = userFilter === "Semua" || parseUserName(getUserStr(row)) === userFilter;
     const a = actionFilter === "Semua" || row.action === actionFilter;
+    const r = reasonFilter === "Semua" || parseReason(row.changed_by) === reasonFilter;
     const c = !customerSearch || getCustomerStr(row).toLowerCase().includes(customerSearch.toLowerCase());
-    return d && u && a && c;
+    return d && u && a && r && c;
   });
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
@@ -237,11 +277,11 @@ function DeletedAuditView({ supabase }) {
 
   const resetFilters = () => {
     setDateFilter("Semua"); setUserFilter("Semua");
-    setActionFilter("Semua"); setCustomerSearch(""); setPage(1);
+    setActionFilter("Semua"); setReasonFilter("Semua"); setCustomerSearch(""); setPage(1);
   };
   const changeTab = (t) => { setTab(t); resetFilters(); };
 
-  const hasFilter = dateFilter !== "Semua" || userFilter !== "Semua" || actionFilter !== "Semua" || customerSearch;
+  const hasFilter = dateFilter !== "Semua" || userFilter !== "Semua" || actionFilter !== "Semua" || reasonFilter !== "Semua" || customerSearch;
 
   const C = cs;
 
@@ -324,6 +364,15 @@ function DeletedAuditView({ supabase }) {
             {allUsers.map(u => <option key={u} value={u}>{u}</option>)}
           </select>
         </div>
+        {tab === "deleted" && allReasons.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Penyebab:</span>
+            <select value={reasonFilter} onChange={e => { setReasonFilter(e.target.value); setPage(1); }} style={selectStyle}>
+              <option value="Semua">Semua</option>
+              {allReasons.map(r => <option key={r} value={r}>{REASON_META[r]?.label || r}</option>)}
+            </select>
+          </div>
+        )}
         {tab === "highrisk" && (
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Action:</span>
@@ -398,7 +447,7 @@ function DeletedTable({ rows, onViewSnapshot, C }) {
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
       <thead>
         <tr style={{ background: C.surface }}>
-          {["Waktu Hapus", "Invoice ID", "Pelanggan", "Total", "Teknisi", "Status Lama", "Dihapus Oleh", "Bukti"].map(h => (
+          {["Waktu Hapus", "Penyebab", "Invoice ID", "Pelanggan", "Total", "Status Lama", "Oleh", "Bukti"].map(h => (
             <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: C.muted, fontWeight: 600, fontSize: 11, borderBottom: "1px solid " + C.border, whiteSpace: "nowrap" }}>{h}</th>
           ))}
         </tr>
@@ -406,13 +455,20 @@ function DeletedTable({ rows, onViewSnapshot, C }) {
       <tbody>
         {rows.map((row, i) => {
           const d = row.before_data || {};
+          const reason = parseReason(row.changed_by);
+          const userName = parseUserName(row.changed_by);
+          const meta = REASON_META[reason];
+          const isRisky = meta?.risk ?? true;
           return (
-            <tr key={row.id} style={{ borderBottom: "1px solid " + C.border, background: i % 2 === 0 ? "transparent" : C.surface + "44" }}>
-              <td style={{ padding: "10px 14px", color: C.muted, whiteSpace: "nowrap" }}>{fmtDate(row.changed_at)}</td>
+            <tr key={row.id} style={{
+              borderBottom: "1px solid " + C.border,
+              background: i % 2 === 0 ? "transparent" : C.surface + "44",
+            }}>
+              <td style={{ padding: "10px 14px", color: C.muted, whiteSpace: "nowrap", fontSize: 11 }}>{fmtDate(row.changed_at)}</td>
+              <td style={{ padding: "10px 14px" }}><ReasonBadge reason={reason} C={C} /></td>
               <td style={{ padding: "10px 14px", fontFamily: "monospace", color: C.accent, fontSize: 11, whiteSpace: "nowrap" }}>{d.invoice_number || row.row_id}</td>
               <td style={{ padding: "10px 14px", color: C.text, fontWeight: 600 }}>{d.customer || d.customer_name || <span style={{ color: C.muted }}>-</span>}</td>
-              <td style={{ padding: "10px 14px", color: C.green, fontWeight: 700, whiteSpace: "nowrap" }}>{fmtRupiah(d.total)}</td>
-              <td style={{ padding: "10px 14px", color: C.text }}>{d.teknisi_name || d.technician_name || "-"}</td>
+              <td style={{ padding: "10px 14px", color: isRisky ? C.red : C.green, fontWeight: 700, whiteSpace: "nowrap" }}>{fmtRupiah(d.total)}</td>
               <td style={{ padding: "10px 14px" }}>
                 <span style={{
                   fontSize: 10, padding: "2px 8px", borderRadius: 4,
@@ -420,11 +476,11 @@ function DeletedTable({ rows, onViewSnapshot, C }) {
                   fontFamily: "monospace", fontWeight: 700,
                 }}>{d.status || "-"}</span>
               </td>
-              <td style={{ padding: "10px 14px", color: C.red, fontWeight: 600 }}>{row.changed_by || "system"}</td>
+              <td style={{ padding: "10px 14px", color: isRisky ? C.red : C.muted, fontWeight: isRisky ? 600 : 400 }}>{userName || "system"}</td>
               <td style={{ padding: "10px 14px" }}>
                 <button onClick={() => onViewSnapshot(row)} style={{
-                  padding: "4px 12px", borderRadius: 6, border: "1px solid " + C.red + "66",
-                  background: C.red + "15", color: C.red, cursor: "pointer", fontSize: 11, fontWeight: 600,
+                  padding: "4px 12px", borderRadius: 6, border: "1px solid " + C.border,
+                  background: C.surface, color: C.muted, cursor: "pointer", fontSize: 11, fontWeight: 600,
                 }}>Lihat Data</button>
               </td>
             </tr>
