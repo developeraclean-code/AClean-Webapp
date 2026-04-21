@@ -35,6 +35,20 @@ async function sendWA(phone, message) {
   } catch(e) { return false; }
 }
 
+// Cek toggle dari cron_jobs JSON (sumber utama) atau key lama (fallback)
+// Mengembalikan true jika job aktif, default ON jika belum diset
+function isCronJobEnabled(settingsMap, backendKey) {
+  if (settingsMap.cron_jobs) {
+    try {
+      const jobs = JSON.parse(settingsMap.cron_jobs);
+      const job = jobs.find(j => j.backendKey === backendKey);
+      if (job) return job.active !== false;
+    } catch (_) {}
+  }
+  // Fallback ke key lama
+  return settingsMap[backendKey] !== "false";
+}
+
 function fmt(n) { return "Rp" + (Number(n)||0).toLocaleString("id-ID"); }
 function daysSince(d) { return d ? Math.floor((Date.now()-new Date(d).getTime())/86400000) : 0; }
 
@@ -56,16 +70,17 @@ async function taskReminder() {
   const today = new Date(Date.now() + 7*60*60*1000).toISOString().slice(0,10);
   const res = { reminder1:0, reminder2:0, reminder3:0, escalated:0, autoapproved:0 };
 
-  // Fetch settings (bank details + cron toggles) from app_settings
+  // Fetch settings dari app_settings
   const { data: bankData } = await sb.from("app_settings")
     .select("key,value")
-    .in("key", ["bank_name","bank_number","bank_holder","company_name","invoice_reminder_enabled"]);
+    .in("key", ["bank_name","bank_number","bank_holder","company_name","invoice_reminder_enabled","cron_jobs"]);
   const bankMap = Object.fromEntries((bankData||[]).map(s=>[s.key, s.value]));
 
-  // Cek toggle — default ON jika belum diset
-  if (bankMap.invoice_reminder_enabled === "false") {
-    await log("CRON_REMINDER", "Dilewati — invoice_reminder_enabled = false", "INFO");
-    return { skipped: true, reason: "invoice_reminder_enabled dinonaktifkan via Settings" };
+  // Cek toggle — prioritas: cron_jobs JSON > key lama invoice_reminder_enabled
+  const isEnabled = isCronJobEnabled(bankMap, "invoice_reminder_enabled");
+  if (!isEnabled) {
+    await log("CRON_REMINDER", "Dilewati — Payment Reminder dinonaktifkan via Settings", "INFO");
+    return { skipped: true, reason: "Payment Reminder dinonaktifkan via Settings" };
   }
   const BANK_NAME   = bankMap.bank_name   || process.env.BANK_NAME;
   const BANK_NUMBER = bankMap.bank_number || process.env.BANK_NUMBER;
@@ -115,10 +130,11 @@ async function taskReminder() {
 // TASK 2: Daily Report
 // ══════════════════════════════════════════════════
 async function taskDaily() {
-  // Cek toggle
-  const { data: tog } = await sb.from("app_settings").select("value").eq("key","daily_report_enabled").single();
-  if (tog?.value === "false") {
-    await log("DAILY_REPORT", "Dilewati — daily_report_enabled = false", "INFO");
+  // Cek toggle — prioritas: cron_jobs JSON > key lama daily_report_enabled
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["daily_report_enabled","cron_jobs"]);
+  const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "daily_report_enabled")) {
+    await log("DAILY_REPORT", "Dilewati — Laporan Harian dinonaktifkan via Settings", "INFO");
     return { skipped: true };
   }
   // Indonesia timezone (UTC+7)
@@ -143,10 +159,11 @@ async function taskDaily() {
 // TASK 3: Stock Alert
 // ══════════════════════════════════════════════════
 async function taskStock() {
-  // Cek toggle
-  const { data: tog } = await sb.from("app_settings").select("value").eq("key","stock_alert_enabled").single();
-  if (tog?.value === "false") {
-    await log("STOCK_ALERT", "Dilewati — stock_alert_enabled = false", "INFO");
+  // Cek toggle — prioritas: cron_jobs JSON > key lama stock_alert_enabled
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["stock_alert_enabled","cron_jobs"]);
+  const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "stock_alert_enabled")) {
+    await log("STOCK_ALERT", "Dilewati — Stok Alert dinonaktifkan via Settings", "INFO");
     return { skipped: true };
   }
   const { data:items } = await sb.from("inventory").select("*").in("status",["CRITICAL","OUT"]);
