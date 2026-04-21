@@ -61,11 +61,11 @@ function SnapshotModal({ row, onClose }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 20px" }}>
             {[
               ["No. Invoice", data.invoice_number || data.id],
-              ["Pelanggan", data.customer_name],
+              ["Pelanggan", data.customer || data.customer_name],
               ["Total", fmtRupiah(data.total)],
               ["Status", data.status],
               ["Tipe Repair", data.repair_type],
-              ["Teknisi", data.technician_name],
+              ["Teknisi", data.teknisi_name || data.technician_name],
               ["Dibuat", fmtDate(data.created_at)],
               ["Catatan", data.notes],
             ].map(([label, val]) => (
@@ -352,9 +352,9 @@ function DeletedTable({ rows, onViewSnapshot, C }) {
             <tr key={row.id} style={{ borderBottom: "1px solid " + C.border, background: i % 2 === 0 ? "transparent" : C.surface + "44" }}>
               <td style={{ padding: "10px 14px", color: C.muted, whiteSpace: "nowrap" }}>{fmtDate(row.changed_at)}</td>
               <td style={{ padding: "10px 14px", fontFamily: "monospace", color: C.accent, fontSize: 11 }}>{d.invoice_number || row.row_id}</td>
-              <td style={{ padding: "10px 14px", color: C.text }}>{d.customer_name || "-"}</td>
+              <td style={{ padding: "10px 14px", color: C.text }}>{d.customer || d.customer_name || "-"}</td>
               <td style={{ padding: "10px 14px", color: C.green, fontWeight: 700, whiteSpace: "nowrap" }}>{fmtRupiah(d.total)}</td>
-              <td style={{ padding: "10px 14px", color: C.text }}>{d.technician_name || "-"}</td>
+              <td style={{ padding: "10px 14px", color: C.text }}>{d.teknisi_name || d.technician_name || "-"}</td>
               <td style={{ padding: "10px 14px" }}>
                 <span style={{
                   fontSize: 10, padding: "2px 8px", borderRadius: 4,
