@@ -38,6 +38,7 @@ import DashboardView from "./views/DashboardView.jsx";
 import ViewErrorBoundary from "./components/ViewErrorBoundary.jsx";
 import { AppContext } from "./context/AppContext.js";
 const AgentLogView = lazy(() => import("./views/AgentLogView.jsx"));
+const DeletedAuditView = lazy(() => import("./views/DeletedAuditView.jsx"));
 const MonitoringView = lazy(() => import("./views/MonitoringView.jsx"));
 const InventoryView = lazy(() => import("./views/InventoryView.jsx"));
 const AraView = lazy(() => import("./views/AraView.jsx"));
@@ -2342,7 +2343,7 @@ ${photoPageHTML}
     // Admin: semua operasional + pricelist (kecuali settings & myreport)
     // Rule: Admin = input & edit only (NO delete)
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport"];
+      const adminBlocked = ["settings", "myreport", "deletedaudit"];
       return !adminBlocked.includes(menu);
     }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
@@ -4456,6 +4457,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id: "ara", icon: "🤖", label: "ARA Chat" },
     { id: "reports", icon: "📊", label: "Statistik" },
     { id: "agentlog", icon: "📡", label: "ARA Log" },
+    { id: "deletedaudit", icon: "🗑", label: "Deleted Audit" },
     { id: "monitoring", icon: "🔍", label: "Monitoring" },
     { id: "settings", icon: "⚙️", label: "Pengaturan" },
     { id: "mattrack", icon: "🧮", label: "Stok Material" },
@@ -4804,6 +4806,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       agentLogPage={agentLogPage} setAgentLogPage={setAgentLogPage} />
   );
 
+  const renderDeletedAudit = () => <DeletedAuditView />;
+
   // ============================================================
   // RENDER REPORTS
   // ============================================================
@@ -4943,6 +4947,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       case "ara": return renderAra();
       case "reports": return renderReports();
       case "agentlog": return renderAgentLog();
+      case "deletedaudit": return renderDeletedAudit();
       case "mattrack": return renderMatTrack();
       case "biaya": return renderExpenses();
       case "monitoring": return renderMonitoring();
