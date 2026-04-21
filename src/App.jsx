@@ -4062,7 +4062,7 @@ ${photoPageHTML}
             const _helperValid = (nm) => !nm || teknisiData.some(t => t.role === "Helper" && t.name.toLowerCase() === (nm || "").toLowerCase());
             const normService = _normSvc(act.service);
             const normTeknisi = act.teknisi
-              ? (teknisiData.find(t => t.role === "Teknisi" && t.name.toLowerCase() === (act.teknisi || "").toLowerCase())?.name || act.teknisi)
+              ? (teknisiData.find(t => (t.role === "Teknisi" || t.role === "Helper") && t.name.toLowerCase() === (act.teknisi || "").toLowerCase())?.name || act.teknisi)
               : "";
             const newOrd = {
               id: newId,
@@ -5363,15 +5363,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <select value={newOrderForm.teknisi} onChange={e => setNewOrderForm(f => ({ ...f, teknisi: e.target.value, helper: "" }))}
                         style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none" }}>
                         <option value="">Pilih teknisi...</option>
-                        {teknisiData.filter(t => t.role === "Teknisi").map(t => {
+                        {teknisiData.filter(t => t.role === "Teknisi" || t.role === "Helper").map(t => {
                           const jobHariIni = tgl ? ordersData.filter(o =>
                             o.teknisi === t.name && o.date === tgl &&
                             ["PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "IN_PROGRESS"].includes(o.status)
                           ).length : 0;
                           const penuh = jobHariIni >= MAX_LOKASI_PER_HARI;
+                          const roleLabel = t.role === "Helper" ? " [H]" : "";
                           return (
                             <option key={t.id} value={t.name} disabled={penuh}>
-                              {penuh ? "🔴" : jobHariIni >= 4 ? "🟡" : "🟢"} {t.name} — {jobHariIni}/6 job{penuh ? " (PENUH)" : ""}
+                              {penuh ? "🔴" : jobHariIni >= 4 ? "🟡" : "🟢"} {t.name}{roleLabel} — {jobHariIni}/6 job{penuh ? " (PENUH)" : ""}
                             </option>
                           );
                         })}
@@ -5491,8 +5492,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <select value={newOrderForm.teknisi2 || ""} onChange={e => setNewOrderForm(f => ({ ...f, teknisi2: e.target.value }))}
                       style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12 }}>
                       <option value="">— Tidak ada —</option>
-                      {teknisiData.filter(t => t.role === "Teknisi" && t.name !== newOrderForm.teknisi).map(t => (
-                        <option key={t.id} value={t.name}>{t.name}</option>
+                      {teknisiData.filter(t => (t.role === "Teknisi" || t.role === "Helper") && t.name !== newOrderForm.teknisi).map(t => (
+                        <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>
                       ))}
                     </select>
                   </div>
@@ -5514,8 +5515,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <select value={newOrderForm.teknisi3 || ""} onChange={e => setNewOrderForm(f => ({ ...f, teknisi3: e.target.value }))}
                       style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12 }}>
                       <option value="">— Tidak ada —</option>
-                      {teknisiData.filter(t => t.role === "Teknisi" && t.name !== newOrderForm.teknisi && t.name !== newOrderForm.teknisi2).map(t => (
-                        <option key={t.id} value={t.name}>{t.name}</option>
+                      {teknisiData.filter(t => (t.role === "Teknisi" || t.role === "Helper") && t.name !== newOrderForm.teknisi && t.name !== newOrderForm.teknisi2).map(t => (
+                        <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>
                       ))}
                     </select>
                   </div>
@@ -7418,8 +7419,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <select value={editOrderForm.teknisi || ""} onChange={e => setEditOrderForm(f => ({ ...f, teknisi: e.target.value, helper: "" }))}
                       style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 11px", color: cs.text, fontSize: 13, outline: "none" }}>
                       <option value="">Pilih Teknisi...</option>
-                      {teknisiData.filter(t => t.role === "Teknisi").map(t =>
-                        <option key={t.id} value={t.name}>{t.name}{cekTeknisiAvailable(t.name, editOrderForm.date || "", editOrderForm.time || "09:00", editOrderForm.service || "Cleaning", editOrderForm.units || 1) ? "" : " (penuh)"}</option>
+                      {teknisiData.filter(t => t.role === "Teknisi" || t.role === "Helper").map(t =>
+                        <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}{cekTeknisiAvailable(t.name, editOrderForm.date || "", editOrderForm.time || "09:00", editOrderForm.service || "Cleaning", editOrderForm.units || 1) ? "" : " (penuh)"}</option>
                       )}
                     </select>
                   </div>
