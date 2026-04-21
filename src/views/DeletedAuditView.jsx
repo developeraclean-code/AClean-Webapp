@@ -1,10 +1,5 @@
 import { memo, useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
-import { createClient } from "@supabase/supabase-js";
-
-const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase = createClient(SUPA_URL, SUPA_KEY);
 
 const PAGE_SIZE = 25;
 
@@ -163,7 +158,7 @@ const selectStyle = {
   color: cs.text, padding: "5px 10px", fontSize: 12, cursor: "pointer",
 };
 
-function DeletedAuditView() {
+function DeletedAuditView({ supabase }) {
   const [tab, setTab] = useState("deleted"); // "deleted" | "gratis" | "highrisk"
   const [deletedRows, setDeletedRows] = useState([]);
   const [highRiskLogs, setHighRiskLogs] = useState([]);

@@ -4806,7 +4806,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       agentLogPage={agentLogPage} setAgentLogPage={setAgentLogPage} />
   );
 
-  const renderDeletedAudit = () => <DeletedAuditView />;
+  const renderDeletedAudit = () => <DeletedAuditView supabase={supabase} />;
 
   // ============================================================
   // RENDER REPORTS
