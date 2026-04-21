@@ -8001,7 +8001,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           newInvoiceStatus3 = "PAID";
                           const alasan = editGratisAlasan.trim() || "(tidak ada alasan)";
                           addAgentLog("ADMIN_EDIT_GRATIS_APPROVED",
-                            `Invoice ${existInv.id} diedit ke GRATIS (${editRepairType}) oleh ${currentUser?.name}. Alasan: ${alasan}`,
+                            `Invoice ${existInv.id} | Customer: ${existInv.customer || "-"} | diedit ke GRATIS (${editRepairType}) oleh ${currentUser?.name}. Alasan: ${alasan}`,
                             "WARNING");
                         }
 

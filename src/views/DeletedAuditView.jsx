@@ -30,6 +30,27 @@ function fmtDate(str) {
   });
 }
 
+// Parse "Customer: Nama | ..." format dari detail string
+function parseCustomerFromDetail(detail) {
+  if (!detail) return null;
+  const m = detail.match(/Customer:\s*([^|]+)/i);
+  return m ? m[1].trim() : null;
+}
+
+// Parse invoice ID dari detail string
+function parseInvoiceFromDetail(detail) {
+  if (!detail) return null;
+  const m = detail.match(/Invoice\s+(INV-[^\s|]+)/i);
+  return m ? m[1].trim() : null;
+}
+
+// Parse alasan dari detail string
+function parseAlasanFromDetail(detail) {
+  if (!detail) return null;
+  const m = detail.match(/Alasan:\s*(.+)$/i);
+  return m ? m[1].trim() : null;
+}
+
 function SnapshotModal({ row, onClose }) {
   if (!row) return null;
   const data = row.before_data || row.after_data || {};
@@ -93,6 +114,9 @@ function SnapshotModal({ row, onClose }) {
 function GratisDetailModal({ log, onClose }) {
   if (!log) return null;
   const C = cs;
+  const customer = parseCustomerFromDetail(log.detail);
+  const invoiceId = parseInvoiceFromDetail(log.detail);
+  const alasan = parseAlasanFromDetail(log.detail);
   return (
     <div onClick={onClose} style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 9999,
@@ -103,26 +127,29 @@ function GratisDetailModal({ log, onClose }) {
         maxWidth: 520, width: "100%", padding: 22,
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: C.yellow }}>⚠ Detail Edit Gratis</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.yellow }}>⚠ Detail Aksi High-Risk</div>
           <button onClick={onClose} style={{
             background: "transparent", border: "1px solid " + C.border, color: C.text,
             padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13,
           }}>Tutup</button>
         </div>
-        <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ display: "grid", gap: 8 }}>
           {[
             ["Waktu", fmtDate(log.created_at)],
-            ["Admin", log.user_name || "-"],
+            ["Admin / User", log.user_name || "-"],
             ["Action", log.action],
-            ["Detail", log.detail],
-            ["Status", log.status],
+            ["Invoice ID", invoiceId || "-"],
+            ["Pelanggan", customer || "-"],
+            ["Alasan", alasan || "-"],
+            ["Status Log", log.status],
+            ["Detail Lengkap", log.detail],
           ].map(([label, val]) => (
             <div key={label} style={{
               background: C.surface, borderRadius: 8, padding: "10px 14px",
-              display: "grid", gridTemplateColumns: "120px 1fr", gap: 8,
+              display: "grid", gridTemplateColumns: "130px 1fr", gap: 8, alignItems: "start",
             }}>
               <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>{label}</span>
-              <span style={{ fontSize: 12, color: C.text }}>{val}</span>
+              <span style={{ fontSize: 12, color: label === "Alasan" ? C.yellow : C.text, wordBreak: "break-word" }}>{val}</span>
             </div>
           ))}
         </div>
@@ -131,8 +158,13 @@ function GratisDetailModal({ log, onClose }) {
   );
 }
 
+const selectStyle = {
+  background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
+  color: cs.text, padding: "5px 10px", fontSize: 12, cursor: "pointer",
+};
+
 function DeletedAuditView() {
-  const [tab, setTab] = useState("deleted"); // "deleted" | "highrisk" | "gratis"
+  const [tab, setTab] = useState("deleted"); // "deleted" | "gratis" | "highrisk"
   const [deletedRows, setDeletedRows] = useState([]);
   const [highRiskLogs, setHighRiskLogs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -140,10 +172,12 @@ function DeletedAuditView() {
 
   const [dateFilter, setDateFilter] = useState("Semua");
   const [userFilter, setUserFilter] = useState("Semua");
+  const [actionFilter, setActionFilter] = useState("Semua");
+  const [customerSearch, setCustomerSearch] = useState("");
   const [page, setPage] = useState(1);
 
   const [snapshotRow, setSnapshotRow] = useState(null);
-  const [gratisLog, setGratisLog] = useState(null);
+  const [detailLog, setDetailLog] = useState(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -177,9 +211,12 @@ function DeletedAuditView() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Filter helpers
   const getDateStr = (row) => (row.changed_at || row.created_at || "").slice(0, 10);
   const getUserStr = (row) => row.changed_by || row.user_name || "system";
+  const getCustomerStr = (row) => {
+    if (row.before_data) return row.before_data.customer || row.before_data.customer_name || "";
+    return parseCustomerFromDetail(row.detail) || "";
+  };
 
   const activeRows = tab === "deleted" ? deletedRows
     : tab === "gratis" ? highRiskLogs.filter(l => l.action === "ADMIN_EDIT_GRATIS_APPROVED")
@@ -187,19 +224,29 @@ function DeletedAuditView() {
 
   const allDates = [...new Set(activeRows.map(getDateStr).filter(Boolean))].sort().reverse();
   const allUsers = [...new Set(activeRows.map(getUserStr).filter(Boolean))].sort();
+  const allActions = tab === "highrisk"
+    ? [...new Set(highRiskLogs.map(l => l.action).filter(Boolean))].sort()
+    : [];
 
   const filtered = activeRows.filter(row => {
     const d = dateFilter === "Semua" || getDateStr(row) === dateFilter;
     const u = userFilter === "Semua" || getUserStr(row) === userFilter;
-    return d && u;
+    const a = actionFilter === "Semua" || row.action === actionFilter;
+    const c = !customerSearch || getCustomerStr(row).toLowerCase().includes(customerSearch.toLowerCase());
+    return d && u && a && c;
   });
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
   const curPage = Math.min(page, totalPages);
   const pageRows = filtered.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
 
-  const resetFilters = () => { setDateFilter("Semua"); setUserFilter("Semua"); setPage(1); };
+  const resetFilters = () => {
+    setDateFilter("Semua"); setUserFilter("Semua");
+    setActionFilter("Semua"); setCustomerSearch(""); setPage(1);
+  };
   const changeTab = (t) => { setTab(t); resetFilters(); };
+
+  const hasFilter = dateFilter !== "Semua" || userFilter !== "Semua" || actionFilter !== "Semua" || customerSearch;
 
   const C = cs;
 
@@ -217,7 +264,7 @@ function DeletedAuditView() {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       {snapshotRow && <SnapshotModal row={snapshotRow} onClose={() => setSnapshotRow(null)} />}
-      {gratisLog && <GratisDetailModal log={gratisLog} onClose={() => setGratisLog(null)} />}
+      {detailLog && <GratisDetailModal log={detailLog} onClose={() => setDetailLog(null)} />}
 
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
@@ -270,21 +317,37 @@ function DeletedAuditView() {
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Tanggal:</span>
-          <select value={dateFilter} onChange={e => { setDateFilter(e.target.value); setPage(1); }}
-            style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 8, color: C.text, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>
+          <select value={dateFilter} onChange={e => { setDateFilter(e.target.value); setPage(1); }} style={selectStyle}>
             <option value="Semua">Semua</option>
             {allDates.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>User:</span>
-          <select value={userFilter} onChange={e => { setUserFilter(e.target.value); setPage(1); }}
-            style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 8, color: C.text, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>
+          <select value={userFilter} onChange={e => { setUserFilter(e.target.value); setPage(1); }} style={selectStyle}>
             <option value="Semua">Semua</option>
             {allUsers.map(u => <option key={u} value={u}>{u}</option>)}
           </select>
         </div>
-        {(dateFilter !== "Semua" || userFilter !== "Semua") && (
+        {tab === "highrisk" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Action:</span>
+            <select value={actionFilter} onChange={e => { setActionFilter(e.target.value); setPage(1); }} style={selectStyle}>
+              <option value="Semua">Semua</option>
+              {allActions.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Customer:</span>
+          <input
+            value={customerSearch}
+            onChange={e => { setCustomerSearch(e.target.value); setPage(1); }}
+            placeholder="Cari nama..."
+            style={{ ...selectStyle, padding: "5px 10px", width: 140, outline: "none" }}
+          />
+        </div>
+        {hasFilter && (
           <button onClick={resetFilters} style={{
             padding: "5px 12px", borderRadius: 8, border: "1px solid " + C.border,
             background: C.surface, color: C.muted, cursor: "pointer", fontSize: 11,
@@ -302,17 +365,17 @@ function DeletedAuditView() {
       )}
 
       {/* Table */}
-      <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 14, overflow: "hidden" }}>
+      <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 14, overflow: "hidden", overflowX: "auto" }}>
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: C.muted, fontSize: 13 }}>Memuat data audit...</div>
         ) : pageRows.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: C.muted, fontSize: 13 }}>
-            {filtered.length === 0 ? "Tidak ada data untuk filter ini." : "Tidak ada data."}
+            Tidak ada data untuk filter ini.
           </div>
         ) : tab === "deleted" ? (
           <DeletedTable rows={pageRows} onViewSnapshot={setSnapshotRow} C={C} />
         ) : (
-          <HighRiskTable rows={pageRows} onViewDetail={setGratisLog} C={C} />
+          <HighRiskTable rows={pageRows} onViewDetail={setDetailLog} isGratis={tab === "gratis"} C={C} />
         )}
       </div>
 
@@ -351,8 +414,8 @@ function DeletedTable({ rows, onViewSnapshot, C }) {
           return (
             <tr key={row.id} style={{ borderBottom: "1px solid " + C.border, background: i % 2 === 0 ? "transparent" : C.surface + "44" }}>
               <td style={{ padding: "10px 14px", color: C.muted, whiteSpace: "nowrap" }}>{fmtDate(row.changed_at)}</td>
-              <td style={{ padding: "10px 14px", fontFamily: "monospace", color: C.accent, fontSize: 11 }}>{d.invoice_number || row.row_id}</td>
-              <td style={{ padding: "10px 14px", color: C.text }}>{d.customer || d.customer_name || "-"}</td>
+              <td style={{ padding: "10px 14px", fontFamily: "monospace", color: C.accent, fontSize: 11, whiteSpace: "nowrap" }}>{d.invoice_number || row.row_id}</td>
+              <td style={{ padding: "10px 14px", color: C.text, fontWeight: 600 }}>{d.customer || d.customer_name || <span style={{ color: C.muted }}>-</span>}</td>
               <td style={{ padding: "10px 14px", color: C.green, fontWeight: 700, whiteSpace: "nowrap" }}>{fmtRupiah(d.total)}</td>
               <td style={{ padding: "10px 14px", color: C.text }}>{d.teknisi_name || d.technician_name || "-"}</td>
               <td style={{ padding: "10px 14px" }}>
@@ -377,18 +440,23 @@ function DeletedTable({ rows, onViewSnapshot, C }) {
   );
 }
 
-function HighRiskTable({ rows, onViewDetail, C }) {
+function HighRiskTable({ rows, onViewDetail, isGratis, C }) {
   const actionColor = (action) => {
     if (action === "INVOICE_DELETED") return C.red;
     if (action === "ADMIN_EDIT_GRATIS_APPROVED") return C.yellow;
     if (action === "REPAIR_GRATIS_REJECTED") return C.muted;
     return C.accent;
   };
+
+  const headers = isGratis
+    ? ["Waktu", "Invoice ID", "Pelanggan", "Alasan", "Admin", "Status", ""]
+    : ["Waktu", "Action", "Invoice ID", "Pelanggan", "Admin", "Status", ""];
+
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
       <thead>
         <tr style={{ background: C.surface }}>
-          {["Waktu", "Action", "Status", "User", "Detail", ""].map(h => (
+          {headers.map(h => (
             <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: C.muted, fontWeight: 600, fontSize: 11, borderBottom: "1px solid " + C.border, whiteSpace: "nowrap" }}>{h}</th>
           ))}
         </tr>
@@ -397,28 +465,41 @@ function HighRiskTable({ rows, onViewDetail, C }) {
         {rows.map((row, i) => {
           const aC = actionColor(row.action);
           const statusC = row.status === "ERROR" ? C.red : row.status === "WARNING" ? C.yellow : C.green;
+          const customer = parseCustomerFromDetail(row.detail);
+          const invoiceId = parseInvoiceFromDetail(row.detail);
+          const alasan = parseAlasanFromDetail(row.detail);
           return (
             <tr key={row.id || i} style={{ borderBottom: "1px solid " + C.border, background: i % 2 === 0 ? "transparent" : C.surface + "44" }}>
               <td style={{ padding: "10px 14px", color: C.muted, whiteSpace: "nowrap", fontSize: 11 }}>{fmtDate(row.created_at)}</td>
-              <td style={{ padding: "10px 14px" }}>
-                <span style={{
-                  fontSize: 10, padding: "2px 8px", borderRadius: 4,
-                  background: aC + "22", color: aC, border: "1px solid " + aC + "44",
-                  fontFamily: "monospace", fontWeight: 700, whiteSpace: "nowrap",
-                }}>{row.action}</span>
+              {!isGratis && (
+                <td style={{ padding: "10px 14px" }}>
+                  <span style={{
+                    fontSize: 10, padding: "2px 8px", borderRadius: 4,
+                    background: aC + "22", color: aC, border: "1px solid " + aC + "44",
+                    fontFamily: "monospace", fontWeight: 700, whiteSpace: "nowrap",
+                  }}>{row.action}</span>
+                </td>
+              )}
+              <td style={{ padding: "10px 14px", fontFamily: "monospace", color: C.accent, fontSize: 11, whiteSpace: "nowrap" }}>
+                {invoiceId || "-"}
               </td>
+              <td style={{ padding: "10px 14px", color: C.text, fontWeight: 600 }}>
+                {customer || <span style={{ color: C.muted }}>-</span>}
+              </td>
+              {isGratis ? (
+                <td style={{ padding: "10px 14px", color: C.yellow, maxWidth: 220 }}>
+                  <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                    {alasan || <span style={{ color: C.muted }}>-</span>}
+                  </span>
+                </td>
+              ) : null}
+              <td style={{ padding: "10px 14px", color: C.text }}>{row.user_name || "-"}</td>
               <td style={{ padding: "10px 14px" }}>
                 <span style={{
                   fontSize: 10, padding: "2px 6px", borderRadius: 4,
                   background: statusC + "22", color: statusC, border: "1px solid " + statusC + "44",
                   fontFamily: "monospace", fontWeight: 700,
                 }}>{row.status}</span>
-              </td>
-              <td style={{ padding: "10px 14px", color: C.text, fontWeight: 600 }}>{row.user_name || "-"}</td>
-              <td style={{ padding: "10px 14px", color: C.muted, maxWidth: 320 }}>
-                <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                  {row.detail || "-"}
-                </span>
               </td>
               <td style={{ padding: "10px 14px" }}>
                 <button onClick={() => onViewDetail(row)} style={{
