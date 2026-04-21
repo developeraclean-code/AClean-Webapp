@@ -805,7 +805,7 @@ export default function ACleanWebApp() {
   // ── LLM Settings: Load from backend endpoint instead of localStorage ──
   // SECURITY FIX: Never store API keys in localStorage
   // Backend endpoint /api/get-llm-config returns available providers & default
-  const [llmProvider, setLlmProvider] = useState(() => _ls("llmProvider", "minimax")); // load from localStorage, default to minimax
+  const [llmProvider, setLlmProvider] = useState(() => { const p = _ls("llmProvider", "minimax"); return p === "claude" ? "minimax" : p; }); // minimax = default aman (claude butuh credit)
   const [llmModel, setLlmModel] = useState(() => _ls("llmModel", "MiniMax-M2.5")); // load from localStorage, default to MiniMax-M2.5
   const [llmConfig, setLlmConfig] = useState(null); // stores backend response
   const [availableProviders, setAvailableProviders] = useState([]);
@@ -2637,13 +2637,16 @@ ${photoPageHTML}
             const currentLS = _ls("llmProvider", null);
             console.log("[Settings] DEBUG — localStorage llmProvider:", currentLS, "DB llm_provider:", sMap.llm_provider);
 
-            if (sMap.llm_provider && VALID_PROVIDERS.includes(sMap.llm_provider)) {
-              setLlmProvider(sMap.llm_provider);
-              // Also sync to localStorage to keep in sync
-              _lsSave("llmProvider", sMap.llm_provider);
-            } else if (sMap.llm_provider) {
-              console.warn("[Settings] ✗ Invalid provider di DB:", sMap.llm_provider, "→ keep current:", currentLS || "minimax");
-            } else {
+            const dbProvider = sMap.llm_provider;
+            // claude hanya boleh dipakai jika ANTHROPIC_API_KEY tersedia di backend
+            // Karena kita tidak bisa tahu dari frontend, default ke minimax jika DB = claude
+            const resolvedProvider = (dbProvider && VALID_PROVIDERS.includes(dbProvider) && dbProvider !== "claude")
+              ? dbProvider
+              : "minimax";
+            setLlmProvider(resolvedProvider);
+            _lsSave("llmProvider", resolvedProvider);
+            if (dbProvider === "claude") {
+              console.warn("[Settings] DB llm_provider=claude → override ke minimax (default aman)");
             }
             // Validasi model — reject gemini atau yang tidak sesuai
             const currentModelLS = _ls("llmModel", null);
