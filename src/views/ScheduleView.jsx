@@ -44,8 +44,8 @@ const filteredOrders = !_sqSched ? _baseOrders : _baseOrders.filter(o =>
   (o.service || "").toLowerCase().includes(_sqSched) ||
   (o.phone || "").includes(searchSchedule.trim())
 );
-// Opsi A: hanya teknisi aktif (dari teknisiData) UNION teknisi yang punya job di minggu ini
-// → tidak ada baris kosong untuk teknisi lama yang sudah nonaktif
+// Smart teknisiList: aktif UNION punya job minggu ini — hanya sebagai teknisi utama
+// Helper tidak punya baris sendiri, ditampilkan sebagai chip di dalam card
 const weekDateSet = new Set(weekDays.map(d => d.date));
 const teksWithJobThisWeek = new Set(ordersData.filter(o => weekDateSet.has(o.date) && o.teknisi).map(o => o.teknisi));
 const activeTeknisiNames = new Set(teknisiData.filter(t => t.active !== false && (t.role === "Teknisi" || t.role === "Helper")).map(t => t.name));
@@ -339,9 +339,9 @@ return (
                     <span style={{ fontSize: 9, fontWeight: 800, color: techColors[tek] || cs.muted, textAlign: "center", lineHeight: 1.3 }}>{(tek || "").split(" ")[0]}</span>
                   </div>
                   {weekDays.map(d => {
-                    // SIM-6: tampilkan job dimana tek adalah teknisi ATAU helper
+                    // Job hanya muncul di baris teknisi UTAMA — helper ditampilkan sebagai chip di dalam card
                     const jobs = ordersData
-                      .filter(o => (o.teknisi === tek || o.helper === tek) && o.date === d.date)
+                      .filter(o => o.teknisi === tek && o.date === d.date)
                       .filter(o => {
                         if (calLaporanFilter === "semua") return true;
                         const hasL = laporanReports.some(r => r.job_id === o.id);
@@ -353,11 +353,10 @@ return (
                           const hasLaporan = laporanReports.some(r => r.job_id === j.id);
                           const lapStatus = laporanReports.find(r => r.job_id === j.id)?.status;
                           const lapVerified = lapStatus === "VERIFIED";
-                          const isHelper = j.teknisi !== tek && j.helper === tek;
                           const col = techColors[tek] || cs.accent;
                           const borderHL = hasLaporan ? (lapVerified ? cs.green : "#facc15") : col;
                           return (
-                            <div key={j.id} style={{ background: col + (isHelper ? "10" : "22"), border: "1px solid " + borderHL + (isHelper ? "44" : "66"), borderLeft: "3px solid " + borderHL, borderRadius: 5, padding: "3px 5px 3px 4px", marginBottom: 2, opacity: isHelper ? 0.85 : 1, position: "relative" }}>
+                            <div key={j.id} style={{ background: col + "22", border: "1px solid " + borderHL + "66", borderLeft: "3px solid " + borderHL, borderRadius: 5, padding: "3px 5px 3px 4px", marginBottom: 2, position: "relative" }}>
                               {hasLaporan && (
                                 <span style={{
                                   position: "absolute", top: 1, right: 2, fontSize: 7, fontWeight: 800,
@@ -368,9 +367,10 @@ return (
                                   {lapVerified ? "✓VRF" : "✓LAP"}
                                 </span>
                               )}
-                              <div style={{ fontSize: 9, fontWeight: 800, color: col }}>{j.time} {isHelper ? "🤝" : ""}</div>
+                              <div style={{ fontSize: 9, fontWeight: 800, color: col }}>{j.time}</div>
                               <div style={{ fontSize: 9, color: cs.text }}>{(j.customer || "").slice(0, 13)}{(j.customer || "").length > 13 ? "…" : ""}</div>
                               <div style={{ fontSize: 8, color: cs.muted }}>{j.service}</div>
+                              {j.helper && <div style={{ fontSize: 8, color: "#a78bfa", fontWeight: 700, marginTop: 1 }}>🤝 {(j.helper).split(" ")[0]}</div>}
                             </div>
                           );
                         })}
