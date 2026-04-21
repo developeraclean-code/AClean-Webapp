@@ -831,11 +831,11 @@ export default function ACleanWebApp() {
 
   // ── Cron jobs ──
   const [cronJobs, setCronJobs] = useState([
-    { id: 1, name: "Payment Reminder", time: "17:00", days: "Setiap Hari", active: true, task: "Kirim reminder invoice UNPAID/OVERDUE via WA" },
-    { id: 2, name: "Laporan Harian", time: "18:00", days: "Setiap Hari", active: true, task: "Summary order, invoice, pendapatan hari ini" },
-    { id: 3, name: "Laporan Mingguan", time: "20:00", days: "Sabtu", active: true, task: "Rekap mingguan ke Owner via WA" },
-    { id: 4, name: "Overdue Detection", time: "17:05", days: "Setiap Hari", active: true, task: "Tandai invoice melewati due date -> OVERDUE" },
-    { id: 5, name: "Stok Alert", time: "08:00", days: "Setiap Hari", active: false, task: "Cek stok kritis dan notif Owner" },
+    { id: 1, name: "Payment Reminder",  icon: "📨", time: "10:00", days: "Setiap Hari", active: true,  backendKey: "invoice_reminder_enabled", task: "Kirim WA pengingat ke customer invoice UNPAID/OVERDUE (hari ke-1–7, 8–14, 15–21)" },
+    { id: 2, name: "Laporan Harian",    icon: "📊", time: "18:00", days: "Setiap Hari", active: true,  backendKey: "daily_report_enabled",      task: "Ringkasan order & pemasukan hari ini ke Owner via WA" },
+    { id: 3, name: "Laporan Mingguan",  icon: "📅", time: "20:00", days: "Sabtu",       active: true,  backendKey: null,                        task: "Rekap mingguan order & pendapatan ke Owner via WA" },
+    { id: 4, name: "Overdue Detection", icon: "🔔", time: "17:05", days: "Setiap Hari", active: true,  backendKey: null,                        task: "Tandai invoice UNPAID melewati due date menjadi OVERDUE" },
+    { id: 5, name: "Stok Alert",        icon: "⚠️", time: "08:00", days: "Setiap Hari", active: true,  backendKey: "stock_alert_enabled",       task: "Cek stok inventory HABIS/KRITIS & notif Owner via WA" },
   ]);
 
   // ── Tanggal dinamis ──
@@ -2677,6 +2677,13 @@ ${photoPageHTML}
                 const s = JSON.parse(sMap.cron_jobs);
                 if (Array.isArray(s) && s.length > 0) setCronJobs(s);
               } catch (e) { }
+            } else {
+              // Migrasi: baca toggle lama ke active di masing-masing job
+              setCronJobs(prev => prev.map(j => {
+                if (!j.backendKey) return j;
+                const val = sMap[j.backendKey];
+                return val !== undefined ? { ...j, active: val !== "false" } : j;
+              }));
             }
             // Sync apiKey sesuai provider dari DB
             if (sMap.llm_provider) {

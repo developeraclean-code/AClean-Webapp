@@ -642,60 +642,6 @@ return (
         </div>
       </div>
 
-      {/* ── OTOMASI & CRON TOGGLES ── */}
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-          <span style={{ fontSize: 20 }}>⏰</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, color: cs.text, fontSize: 14 }}>Otomasi & Cron</div>
-            <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>Aktifkan / matikan tugas otomatis yang berjalan terjadwal di server</div>
-          </div>
-        </div>
-        {[
-          { key: "invoice_reminder_enabled", label: "Reminder Invoice Otomatis", desc: "Kirim WA pengingat ke customer yang belum bayar (cron harian jam 10:00 WIB — hari ke-1–7, 8–14, 15–21)", icon: "📨" },
-          { key: "daily_report_enabled",     label: "Laporan Harian ke Owner",   desc: "Kirim ringkasan order & pemasukan hari ini ke Owner setiap hari jam 18:00 WIB", icon: "📊" },
-          { key: "stock_alert_enabled",      label: "Alert Stok Kritis",         desc: "Notif WA ke Owner jika ada stok inventory HABIS atau KRITIS (cron jam 08:00 WIB)", icon: "⚠️" },
-        ].map(({ key, label, desc, icon }) => {
-          // Default ON jika belum pernah diset
-          const isOn = appSettings[key] !== "false";
-          return (
-            <div key={key} style={{
-              display: "flex", alignItems: "center", gap: 14, padding: "12px 0",
-              borderBottom: "1px solid " + cs.border
-            }}>
-              <span style={{ fontSize: 18, minWidth: 24 }}>{icon}</span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, color: isOn ? cs.text : cs.muted, fontSize: 13 }}>{label}</div>
-                <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{desc}</div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: isOn ? cs.green : cs.muted }}>{isOn ? "ON" : "OFF"}</span>
-                <div onClick={async () => {
-                  const newVal = isOn ? "false" : "true";
-                  setAppSettings(prev => ({ ...prev, [key]: newVal }));
-                  await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
-                  showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
-                }}
-                  style={{
-                    width: 44, height: 24, borderRadius: 99,
-                    background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface,
-                    border: "1px solid " + (isOn ? cs.green : cs.border),
-                    cursor: "pointer", position: "relative", transition: "all .2s"
-                  }}>
-                  <div style={{
-                    position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff",
-                    top: 2, left: isOn ? 22 : 2, transition: "left .2s",
-                    boxShadow: "0 1px 3px #0004"
-                  }} />
-                </div>
-              </div>
-            </div>
-          );
-        })}
-        <div style={{ marginTop: 12, padding: "10px 12px", background: cs.surface, borderRadius: 8, fontSize: 11, color: cs.muted }}>
-          💡 Default semua <b>ON</b>. Matikan jika ingin kirim reminder/laporan manual saja, atau saat maintenance.
-        </div>
-      </div>
 
       {/* ── ARA TRAINING RULES UPLOAD (Owner only) ── */}
       <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
@@ -949,43 +895,94 @@ return (
         </div>
       )}
 
-      {/* ── CRON JOBS ── */}
+      {/* ── OTOMASI & CRON JOBS (unified) ── */}
       <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ fontSize: 28 }}>⏰</div>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 22 }}>⏰</span>
             <div>
-              <div style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>Cron Jobs (Scheduler)</div>
-              <div style={{ fontSize: 12, color: cs.muted }}>Tugas otomatis ARA</div>
+              <div style={{ fontWeight: 800, color: cs.text, fontSize: 14 }}>Otomasi & Cron Jobs</div>
+              <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>Tugas terjadwal otomatis — toggle ON/OFF untuk aktifkan</div>
             </div>
           </div>
-          <button onClick={() => setCronJobs(prev => [...prev, { id: Date.now(), name: "Job Baru", time: "09:00", days: "Setiap Hari", active: false, task: "Deskripsi tugas..." }])}
-            style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>+ Tambah Job</button>
+          <button onClick={async () => {
+            const newJob = { id: Date.now(), name: "Job Baru", icon: "⚙️", time: "09:00", days: "Setiap Hari", active: false, backendKey: null, task: "Deskripsi tugas..." };
+            const upd = [...cronJobs, newJob];
+            setCronJobs(upd);
+            await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
+          }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+            + Tambah Job
+          </button>
         </div>
+
+        {/* Job list */}
         <div style={{ display: "grid", gap: 8 }}>
           {cronJobs.map((job, idx) => (
-            <div key={job.id} style={{ background: cs.surface, border: "1px solid " + (job.active ? cs.green : cs.border), borderRadius: 10, padding: "12px 14px", display: "flex", gap: 12, alignItems: "center" }}>
-              <div onClick={async () => {
-                const upd = cronJobs.map((j, ii) => ii === idx ? { ...j, active: !j.active } : j);
-                setCronJobs(upd);
-                await supabase.from("app_settings").upsert(
-                  { key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
-              }}
-                style={{ width: 34, height: 20, borderRadius: 99, background: job.active ? cs.green : cs.border, cursor: "pointer", position: "relative", flexShrink: 0 }}>
-                <div style={{ position: "absolute", width: 14, height: 14, borderRadius: "50%", background: "#fff", top: 3, left: job.active ? 17 : 3, transition: "left 0.2s" }} />
+            <div key={job.id} style={{
+              background: cs.surface,
+              border: "1px solid " + (job.active ? cs.green + "66" : cs.border),
+              borderRadius: 10, padding: "12px 14px",
+              display: "flex", gap: 12, alignItems: "center",
+              opacity: job.active ? 1 : 0.65,
+              transition: "all .2s"
+            }}>
+              {/* Icon */}
+              <span style={{ fontSize: 20, minWidth: 28, textAlign: "center" }}>{job.icon || "⚙️"}</span>
+
+              {/* Info */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, color: job.active ? cs.text : cs.muted, fontSize: 13, marginBottom: 2 }}>{job.name}</div>
+                <div style={{ fontSize: 11, color: cs.muted, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <span>🕐 {job.time} WIB</span>
+                  <span>·</span>
+                  <span>📆 {job.days}</span>
+                  <span>·</span>
+                  <span>{job.task}</span>
+                </div>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, color: job.active ? cs.text : cs.muted, fontSize: 13 }}>{job.name}</div>
-                <div style={{ fontSize: 11, color: cs.muted }}>{job.time} · {job.days} · {job.task}</div>
+
+              {/* Toggle */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: job.active ? cs.green : cs.muted, minWidth: 24 }}>
+                  {job.active ? "ON" : "OFF"}
+                </span>
+                <div onClick={async () => {
+                  const upd = cronJobs.map((j, ii) => ii === idx ? { ...j, active: !j.active } : j);
+                  setCronJobs(upd);
+                  await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
+                  // Sync backendKey agar cron-reminder.js bisa baca
+                  if (job.backendKey) {
+                    await supabase.from("app_settings").upsert({ key: job.backendKey, value: job.active ? "false" : "true" }, { onConflict: "key" });
+                  }
+                  showNotif((job.active ? "⛔ " : "✅ ") + job.name + (job.active ? " dimatikan" : " diaktifkan"));
+                }} style={{
+                  width: 44, height: 24, borderRadius: 99,
+                  background: job.active ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface,
+                  border: "1px solid " + (job.active ? cs.green : cs.border),
+                  cursor: "pointer", position: "relative", transition: "all .2s", flexShrink: 0
+                }}>
+                  <div style={{
+                    position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff",
+                    top: 2, left: job.active ? 22 : 2, transition: "left .2s", boxShadow: "0 1px 3px #0004"
+                  }} />
+                </div>
+
+                {/* Hapus — hanya untuk job custom (tanpa backendKey) */}
+                {!job.backendKey && (
+                  <button onClick={async () => {
+                    const upd = cronJobs.filter((_, ii) => ii !== idx);
+                    setCronJobs(upd);
+                    await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
+                  }} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 2px" }}>×</button>
+                )}
               </div>
-              <button onClick={async () => {
-                const upd = cronJobs.filter((_, ii) => ii !== idx);
-                setCronJobs(upd);
-                await supabase.from("app_settings").upsert(
-                  { key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
-              }} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
             </div>
           ))}
+        </div>
+
+        <div style={{ marginTop: 12, padding: "10px 12px", background: cs.surface, borderRadius: 8, fontSize: 11, color: cs.muted }}>
+          💡 Job dengan ikon <b>kunci</b> (📨 📊 ⚠️) terhubung langsung ke backend cron server. Job custom (⚙️) hanya sebagai catatan jadwal.
         </div>
       </div>
       {/* ── USER MANAGEMENT (Owner only) ── */}
