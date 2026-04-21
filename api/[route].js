@@ -199,15 +199,18 @@ export default async function handler(req, res) {
       const mediaUrl = isMediaMessage ? message : null;
 
       // ── PAYMENT DETECTION (TEXT) ──
+      console.log("[PAY_DETECT] payDetectOn=", payDetectOn, "SU=", !!SU, "SK=", !!SK);
       if (payDetectOn && SU && SK) {
         const BAYAR_KW_DETECT = ["bayar","transfer","lunas","pembayaran","invoice","tagihan","dp","uang"];
         const mlCheck = message.toLowerCase();
         const looksLikePayment = BAYAR_KW_DETECT.some(k => mlCheck.includes(k));
         const amountMatch = message.match(/(?:rp\.?\s*)?([\d.,]{4,})/i);
         const hasAmount = amountMatch && parseInt(amountMatch[1].replace(/[.,]/g,"")) >= 10000;
+        console.log("[PAY_DETECT] looksLikePayment=", looksLikePayment, "hasAmount=", hasAmount);
 
         if (looksLikePayment || hasAmount) {
           const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+          console.log("[PAY_DETECT] AK present=", !!AK);
           if (AK) {
             try {
               const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -221,9 +224,11 @@ export default async function handler(req, res) {
                   }]
                 })
               });
+              console.log("[PAY_DETECT] Claude response status=", extractRes.status);
               if (extractRes.ok) {
                 const extractData = await extractRes.json();
                 const rawText = (extractData.content||[]).map(c=>c.text||"").join("").trim();
+                console.log("[PAY_DETECT] Claude rawText=", rawText.slice(0,200));
                 const jsonMatch = rawText.match(/\{[\s\S]*\}/);
                 if (jsonMatch) {
                   const extracted = JSON.parse(jsonMatch[0]);
