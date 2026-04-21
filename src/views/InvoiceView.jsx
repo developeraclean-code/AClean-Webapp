@@ -2,7 +2,7 @@ import { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const totPgI = Math.ceil(filteredInv.length / INV_PAGE_SIZE) || 1;
@@ -367,6 +367,34 @@ return (
                 addAgentLog("INVOICE_DELETED", `Invoice ${inv.id} (${inv.customer}) dihapus oleh ${currentUser?.name}`, "WARNING");
                 showNotif("🗑️ Invoice " + inv.id + " berhasil dihapus");
               }} style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🗑️ Hapus Invoice</button>
+            )}
+            {/* Kirim Report Card manual — hanya Owner/Admin, status sudah approved, ada laporan terkait */}
+            {(inv.status === "UNPAID" || inv.status === "APPROVED" || inv.status === "PAID" || inv.status === "OVERDUE") &&
+              (currentUser?.role === "Owner" || currentUser?.role === "Admin") &&
+              inv.phone && laporanReports?.find(r => r.job_id === inv.job_id) && (
+              <button onClick={async (e) => {
+                e.currentTarget.disabled = true;
+                e.currentTarget.textContent = "⏳ Mengirim...";
+                try {
+                  const laporan = laporanReports.find(r => r.job_id === inv.job_id);
+                  const srUrl = await uploadServiceReportPDFForWA(laporan, inv);
+                  if (srUrl) {
+                    const srMsg = `📋 *Service Report Card* — ${inv.service || "Servis AC"} untuk ${inv.customer}\n\nDokumen ini berisi detail pengerjaan & dokumentasi foto teknisi.\n\nTerima kasih telah mempercayai AClean Service! 🙏`;
+                    sendWAFn(inv.phone, srMsg, { url: srUrl, filename: `ServiceReport-${inv.job_id}.pdf` });
+                    showNotif(`📋 Service Report Card terkirim ke ${inv.customer}`);
+                  } else {
+                    showNotif("⚠️ Gagal upload report card");
+                  }
+                } catch (err) {
+                  showNotif("⚠️ Error: " + err.message);
+                } finally {
+                  e.currentTarget.disabled = false;
+                  e.currentTarget.textContent = "📋 Kirim Report Card";
+                }
+              }}
+              style={{ background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#38bdf8", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                📋 Kirim Report Card
+              </button>
             )}
             <button
               onClick={() => setAuditModal({ tableName: "invoices", rowId: inv.id })}

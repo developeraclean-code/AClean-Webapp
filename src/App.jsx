@@ -3425,16 +3425,6 @@ ${photoPageHTML}
     if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 📎" : ""}`);
     else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
 
-    // ── Kirim Service Report Card sebagai PDF attachment (pesan kedua) ──
-    const terkaitLaporan = laporanReports.find(r => r.job_id === inv.job_id);
-    if (terkaitLaporan) {
-      const srUrl = await uploadServiceReportPDFForWA(terkaitLaporan, inv);
-      if (srUrl) {
-        const srMsg = `📋 *Service Report Card* — ${inv.service || "Servis AC"} untuk ${inv.customer}\n\nDokumen ini berisi detail pengerjaan & dokumentasi foto teknisi.\n\nTerima kasih telah mempercayai AClean Service! 🙏`;
-        sendWA(inv.phone, srMsg, { url: srUrl, filename: `ServiceReport-${terkaitLaporan.job_id}.pdf` });
-        showNotif(`📋 Service Report Card terkirim ke ${inv.customer}`);
-      }
-    }
     setModalApproveInv(false); setPendingApproveInv(null);
   };
 
@@ -4567,7 +4557,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog} auditUserName={auditUserName}
       markInvoicePaid={markInvoicePaid} updateOrderStatus={updateOrderStatus} deleteInvoice={deleteInvoice} updateInvoice={updateInvoice}
       getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
-      supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE} />
+      supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE}
+      laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA} />
   );
 
   // ============================================================
