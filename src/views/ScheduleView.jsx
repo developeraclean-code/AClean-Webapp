@@ -44,7 +44,13 @@ const filteredOrders = !_sqSched ? _baseOrders : _baseOrders.filter(o =>
   (o.service || "").toLowerCase().includes(_sqSched) ||
   (o.phone || "").includes(searchSchedule.trim())
 );
-const teknisiList = activeTek === "Semua" ? allTekNames : [activeTek];
+// Opsi A: hanya teknisi aktif (dari teknisiData) UNION teknisi yang punya job di minggu ini
+// → tidak ada baris kosong untuk teknisi lama yang sudah nonaktif
+const weekDateSet = new Set(weekDays.map(d => d.date));
+const teksWithJobThisWeek = new Set(ordersData.filter(o => weekDateSet.has(o.date) && o.teknisi).map(o => o.teknisi));
+const activeTeknisiNames = new Set(teknisiData.filter(t => t.active !== false && (t.role === "Teknisi" || t.role === "Helper")).map(t => t.name));
+const smartTekNames = [...new Set([...activeTeknisiNames, ...teksWithJobThisWeek])].sort();
+const teknisiList = activeTek === "Semua" ? smartTekNames : [activeTek];
 // Untuk teknisi/helper: filter hanya hari ini
 const todayOrdersTek = isTekRole ? filteredOrders.filter(o => o.date === TODAY) : filteredOrders;
 
