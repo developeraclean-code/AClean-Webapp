@@ -8887,6 +8887,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 }
               }
 
+              // ── Cleaning 1 unit: inject "Biaya Transport Bila 1 Unit" otomatis ──
+              if (svc === "Cleaning" && (laporanUnits || []).length === 1) {
+                const transportItem = priceListData.find(
+                  r => r.service === "Cleaning" && r.type === "Biaya Transport Bila 1 Unit" && r.is_active !== false
+                );
+                if (transportItem && transportItem.price > 0) {
+                  mDetail.push({
+                    nama: "Biaya Transport Bila 1 Unit", jumlah: 1, satuan: "unit",
+                    harga_satuan: transportItem.price, subtotal: transportItem.price, keterangan: "jasa"
+                  });
+                }
+              }
+
               // ── Repair: Cleaning-in-Repair checkbox → append per unit yg dicentang ──
               if (isRepairSvc && Array.isArray(laporanCleaningInRepair) && laporanCleaningInRepair.length > 0) {
                 const checkedUnits = (laporanUnits || []).filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no));
@@ -8920,6 +8933,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               ? (prevGaransiActive ? (matTotalInv > 0 ? 'GARANSI_DENGAN_MATERIAL' : 'GARANSI_AKTIF')
                 : prevGaransiExpired ? 'GARANSI_EXPIRED' : 'NO_GARANSI')
               : null;
+            // Recalculate total dari mDetail (menangkap inject transport fee dll yang bisa merubah total)
+            const finalTotalFromDetail = mDetail.reduce((s, r) => s + (r.subtotal || 0), 0);
             const newInvoice = {
               id: invId, job_id: laporanModal.id,
               customer: laporanModal.customer,
@@ -8932,7 +8947,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               garansi_status: garansiStatusLocal,  // hanya state, tidak ke DB
               repair_gratis: isRepairGratis ? laporanRepairType : undefined,  // NEW: store repair type (gratis-garansi/gratis-customer)
               dadakan: 0,
-              total: finalTotal,
+              total: finalTotalFromDetail || finalTotal,
               status: "PENDING_APPROVAL",
               garansi_days: gDays,
               garansi_expires: gExpires,
