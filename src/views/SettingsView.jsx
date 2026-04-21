@@ -1,7 +1,106 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 
-function SettingsView({ currentUser, isMobile, appSettings, setAppSettings, waProvider, setWaProvider, waToken, setWaToken, waDevice, setWaDevice, waStatus, setWaStatus, llmProvider, setLlmProvider, llmModel, setLlmModel, llmApiKey, setLlmApiKey, ollamaUrl, setOllamaUrl, llmStatus, setLlmStatus, storageProvider, setStorageProvider, storageStatus, setStorageStatus, brainMd, brainMdCustomer, dbProvider, setDbProvider, cronJobs, setCronJobs, userAccounts, setUserAccounts, dbHealthData, setDbHealthData, dbHealthLoading, setDbHealthLoading, vacuumLoading, setVacuumLoading, setModalBrainEdit, setModalBrainCustomerEdit, setNewUserForm, setModalAddUser, setEditPwdTarget, setEditPwdForm, setModalEditPwd, showNotif, showConfirm, addAgentLog, _apiHeaders, _ls, supabase }) {
+const ROLE_CFG = {
+  Owner:   { icon: "👑", color: "#f59e0b" },
+  Admin:   { icon: "🛠️", color: "#38bdf8" },
+  Teknisi: { icon: "👷", color: "#22c55e" },
+  Helper:  { icon: "🤝", color: "#a78bfa" },
+};
+
+function UserManagementPanel({ userAccounts, setUserAccounts, setTeknisiData, currentUser, setNewUserForm, setModalAddUser, setEditPwdTarget, setEditPwdForm, setModalEditPwd, showNotif, showConfirm, addAgentLog, _apiHeaders }) {
+  const [tabFilter, setTabFilter] = useState("Semua");
+  const tabs = ["Semua", "Owner", "Admin", "Teknisi", "Helper"];
+  const filtered = tabFilter === "Semua" ? userAccounts : userAccounts.filter(u => u.role === tabFilter);
+
+  const handleToggleActive = async (u) => {
+    const willActivate = u.active === false;
+    const label = willActivate ? "Aktifkan" : "Nonaktifkan";
+    const ok = await showConfirm({ icon: willActivate ? "🔓" : "🔒", title: label + " akun?", danger: !willActivate, message: `${label} akun ${u.name}?\n${willActivate ? "User bisa login kembali." : "User tidak bisa login sampai diaktifkan."}`, confirmText: label });
+    if (!ok) return;
+    const res = await fetch("/api/manage-user", { method: "POST", headers: _apiHeaders(), body: JSON.stringify({ action: "toggle-active", userId: u.id, active: willActivate }) });
+    const data = await res.json();
+    if (!data.ok) { showNotif("⚠️ " + (data.error || "Gagal")); return; }
+    setUserAccounts(prev => prev.map(acc => acc.id === u.id ? { ...acc, active: willActivate } : acc));
+    if (["Teknisi", "Helper"].includes(u.role) && setTeknisiData) {
+      setTeknisiData(prev => prev.map(t => t.id === u.id ? { ...t, status: willActivate ? "active" : "inactive" } : t));
+    }
+    addAgentLog(willActivate ? "USER_ACTIVATED" : "USER_DEACTIVATED", `Akun ${u.name} ${willActivate ? "diaktifkan" : "dinonaktifkan"}`, "WARNING");
+    showNotif((willActivate ? "🔓 Diaktifkan: " : "🔒 Dinonaktifkan: ") + u.name);
+  };
+
+  return (
+    <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div>
+          <div style={{ fontWeight: 800, color: cs.text, fontSize: 14 }}>👥 Manajemen Akun Pengguna</div>
+          <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{userAccounts.length} user terdaftar — Tambah dari sini, langsung aktif tanpa konfirmasi email.</div>
+        </div>
+        <button onClick={() => { setNewUserForm({ name: "", email: "", role: "Teknisi", password: "", phone: "" }); setModalAddUser(true); }}
+          style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "9px 16px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }}>
+          + Tambah User
+        </button>
+      </div>
+
+      {/* Tab filter per role */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {tabs.map(tab => {
+          const count = tab === "Semua" ? userAccounts.length : userAccounts.filter(u => u.role === tab).length;
+          const rc = ROLE_CFG[tab];
+          return (
+            <button key={tab} onClick={() => setTabFilter(tab)}
+              style={{ background: tabFilter === tab ? (rc?.color || cs.accent) + "22" : cs.surface, border: "1px solid " + (tabFilter === tab ? (rc?.color || cs.accent) : cs.border), borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: tabFilter === tab ? 800 : 500, color: tabFilter === tab ? (rc?.color || cs.accent) : cs.muted }}>
+              {rc?.icon || ""} {tab} ({count})
+            </button>
+          );
+        })}
+      </div>
+
+      {/* User list */}
+      <div style={{ display: "grid", gap: 8 }}>
+        {filtered.length === 0 && <div style={{ color: cs.muted, fontSize: 12, textAlign: "center", padding: 20 }}>Tidak ada user dengan role {tabFilter}</div>}
+        {filtered.map(u => {
+          const rc = ROLE_CFG[u.role] || { icon: "👤", color: cs.muted };
+          return (
+            <div key={u.id} style={{ background: cs.surface, border: "1px solid " + (u.active !== false ? cs.border : cs.red + "44"), borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: "linear-gradient(135deg," + rc.color + "," + rc.color + "88)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, color: "#fff", flexShrink: 0, opacity: u.active !== false ? 1 : 0.45 }}>
+                {u.avatar || (u.name || "?").charAt(0).toUpperCase()}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 2 }}>
+                  <span style={{ fontWeight: 700, color: u.active !== false ? cs.text : cs.muted, fontSize: 13 }}>{u.name}</span>
+                  <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: rc.color + "22", color: rc.color, fontWeight: 700, border: "1px solid " + rc.color + "33" }}>{rc.icon} {u.role}</span>
+                  {u.active === false && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: cs.red + "22", color: cs.red, fontWeight: 700 }}>🔒 Nonaktif</span>}
+                </div>
+                <div style={{ fontSize: 11, color: cs.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {u.email || "-"} {u.phone ? "· " + u.phone : ""} · Login: {u.lastLogin || "-"}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+                {u.role !== "Owner" && (
+                  <button onClick={() => { setNewUserForm({ ...u, password: "" }); setModalAddUser(true); }}
+                    style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "33", color: cs.accent, padding: "5px 8px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>✏️</button>
+                )}
+                {currentUser?.role === "Owner" && u.role !== "Owner" && (
+                  <button onClick={() => { setEditPwdTarget({ id: u.id, name: u.name }); setEditPwdForm({ newPwd: "", confirmPwd: "" }); setModalEditPwd(true); }}
+                    style={{ fontSize: 11, background: "#f59e0b18", border: "1px solid #f59e0b33", color: "#f59e0b", borderRadius: 6, padding: "5px 8px", cursor: "pointer" }}>🔑</button>
+                )}
+                {u.role !== "Owner" && (
+                  <button onClick={() => handleToggleActive(u)}
+                    style={{ background: u.active !== false ? cs.red + "18" : "#22c55e18", border: "1px solid " + (u.active !== false ? cs.red : "#22c55e") + "44", color: u.active !== false ? cs.red : "#22c55e", padding: "5px 8px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                    {u.active !== false ? "🔒" : "🔓"}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SettingsView({ currentUser, isMobile, appSettings, setAppSettings, waProvider, setWaProvider, waToken, setWaToken, waDevice, setWaDevice, waStatus, setWaStatus, llmProvider, setLlmProvider, llmModel, setLlmModel, llmApiKey, setLlmApiKey, ollamaUrl, setOllamaUrl, llmStatus, setLlmStatus, storageProvider, setStorageProvider, storageStatus, setStorageStatus, brainMd, brainMdCustomer, dbProvider, setDbProvider, cronJobs, setCronJobs, userAccounts, setUserAccounts, teknisiData, setTeknisiData, dbHealthData, setDbHealthData, dbHealthLoading, setDbHealthLoading, vacuumLoading, setVacuumLoading, setModalBrainEdit, setModalBrainCustomerEdit, setNewUserForm, setModalAddUser, setEditPwdTarget, setEditPwdForm, setModalEditPwd, showNotif, showConfirm, addAgentLog, _apiHeaders, _ls, supabase }) {
 const WA_PROVIDERS = [
   {
     id: "fonnte", label: "Fonnte", icon: "🟢", active: true, tagline: "WA Gateway lokal Indonesia",
@@ -890,73 +989,13 @@ return (
         </div>
       </div>
       {/* ── USER MANAGEMENT (Owner only) ── */}
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div>
-            <div style={{ fontWeight: 800, color: cs.text, fontSize: 14 }}>👥 Manajemen Akun Pengguna</div>
-            <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>Kelola akun Owner &amp; Admin saja. Teknisi &amp; Helper dikelola di menu <b style={{ color: cs.accent }}>Tim Teknisi</b>. Hanya Owner yang bisa menambah/nonaktifkan.</div>
-          </div>
-          <button onClick={() => { setNewUserForm({ name: "", email: "", role: "Admin", password: "", phone: "", _adminOnly: true }); setModalAddUser(true); }}
-            style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "9px 16px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
-            + Tambah Pengguna
-          </button>
-        </div>
-        {/* Role legend */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-          {[["👑 Owner", "Semua akses + Pengaturan", "#f59e0b"], ["🛠️ Admin", "Semua menu kecuali Pengaturan", "#38bdf8"], ["👷 Teknisi", "Jadwal &amp; Tim Teknisi saja", "#22c55e"]].map(([role, desc, col]) => (
-            <div key={role} style={{ background: col + "12", border: "1px solid " + col + "33", borderRadius: 8, padding: "6px 12px", fontSize: 11 }}>
-              <span style={{ color: col, fontWeight: 700 }}>{role}</span>
-              <span style={{ color: cs.muted, marginLeft: 6 }}>{desc}</span>
-            </div>
-          ))}
-        </div>
-        {/* User list — hanya Owner & Admin (Teknisi/Helper dikelola di Tim Teknisi) */}
-        <div style={{ display: "grid", gap: 8 }}>
-          {userAccounts.map(u => (
-            <div key={u.id} style={{ background: cs.surface, border: "1px solid " + (u.active ? cs.border : cs.red + "33"), borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, background: "linear-gradient(135deg," + u.color + "," + u.color + "66)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, color: "#fff", flexShrink: 0 }}>
-                {u.avatar}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-                  <span style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{u.name}</span>
-                  <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: u.color + "22", color: u.color, fontWeight: 700, border: "1px solid " + u.color + "44" }}>
-                    {u.role === "Owner" ? "👑" : u.role === "Admin" ? "🛠️" : u.role === "Helper" ? "🤝" : "👷"} {u.role}
-                  </span>
-                  {!u.active && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: cs.red + "22", color: cs.red, fontWeight: 700 }}>Nonaktif</span>}
-                </div>
-                <div style={{ fontSize: 11, color: cs.muted }}>
-                  {u.email} · {u.phone} · Login terakhir: {u.lastLogin}
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                {u.role !== "Owner" && (
-                  <button onClick={() => { setNewUserForm({ ...u, password: "" }); setModalAddUser(true); }}
-                    style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "33", color: cs.accent, padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>✏️ Edit</button>
-                )}
-                {currentUser?.role === "Owner" && (
-                  <button onClick={() => {
-                    setEditPwdTarget({ id: u.id, name: u.name });
-                    setEditPwdForm({ newPwd: "", confirmPwd: "" });
-                    setModalEditPwd(true);
-                  }} style={{
-                    fontSize: 11, background: "#f59e0b20", border: "1px solid #f59e0b44",
-                    color: "#f59e0b", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 600
-                  }}>
-                    🔑 Password
-                  </button>
-                )}
-                {u.role !== "Owner" && (
-                  <button onClick={() => { setUserAccounts(prev => prev.map(acc => acc.id === u.id ? { ...acc, active: !acc.active } : acc)); showNotif((u.active ? "Akun " : "Akun ") + (u.name) + (u.active ? " dinonaktifkan" : " diaktifkan")); }}
-                    style={{ background: (u.active ? cs.red : cs.green) + "18", border: "1px solid " + (u.active ? cs.red : cs.green) + "33", color: u.active ? cs.red : cs.green, padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>
-                    {u.active ? "Nonaktifkan" : "Aktifkan"}
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <UserManagementPanel
+        userAccounts={userAccounts} setUserAccounts={setUserAccounts}
+        setTeknisiData={setTeknisiData} currentUser={currentUser}
+        setNewUserForm={setNewUserForm} setModalAddUser={setModalAddUser}
+        setEditPwdTarget={setEditPwdTarget} setEditPwdForm={setEditPwdForm} setModalEditPwd={setModalEditPwd}
+        showNotif={showNotif} showConfirm={showConfirm} addAgentLog={addAgentLog} _apiHeaders={_apiHeaders}
+      />
     </>)}
   </div>
 );

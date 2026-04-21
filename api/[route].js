@@ -835,6 +835,95 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── MANAGE-USER: Create/Update/Deactivate/Reset-Password via Admin API ──
+    if (route === "manage-user") {
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const SU = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
+
+      const { action, userId, name, email, password, role, phone } = req.body || {};
+      const adminUrl = SU + "/auth/v1/admin/users";
+      const headers = { apikey: SK, Authorization: "Bearer " + SK, "Content-Type": "application/json" };
+
+      // ── CREATE USER ──
+      if (action === "create") {
+        if (!email || !password || !name || !role) return res.status(400).json({ error: "email, password, name, role wajib diisi" });
+        const authRes = await fetch(adminUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { name, role } })
+        });
+        const authData = await authRes.json();
+        if (!authRes.ok) return res.status(400).json({ error: authData.message || authData.error || "Gagal buat user di Auth" });
+
+        const uid = authData.id;
+        const colorMap = { Owner: "#f59e0b", Admin: "#38bdf8", Teknisi: "#22c55e", Helper: "#a78bfa" };
+        const profileRes = await fetch(SU + "/rest/v1/user_profiles", {
+          method: "POST",
+          headers: { ...headers, Prefer: "return=representation" },
+          body: JSON.stringify({ id: uid, name, role, phone: phone || "", avatar: name.charAt(0).toUpperCase(), color: colorMap[role] || "#38bdf8", active: true })
+        });
+        const profileData = await profileRes.json();
+        if (!profileRes.ok) return res.status(207).json({ ok: true, warning: "Auth OK, profile gagal: " + JSON.stringify(profileData), user: authData });
+        return res.status(200).json({ ok: true, user: { ...authData, ...profileData[0] } });
+      }
+
+      // ── UPDATE PROFILE ──
+      if (action === "update") {
+        if (!userId) return res.status(400).json({ error: "userId wajib" });
+        const upd = {};
+        if (name) upd.name = name;
+        if (role) upd.role = role;
+        if (phone !== undefined) upd.phone = phone;
+        const profileRes = await fetch(SU + "/rest/v1/user_profiles?id=eq." + userId, {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify(upd)
+        });
+        if (!profileRes.ok) { const e = await profileRes.text(); return res.status(400).json({ error: "Update gagal: " + e.slice(0, 200) }); }
+        return res.status(200).json({ ok: true });
+      }
+
+      // ── TOGGLE ACTIVE (nonaktifkan/aktifkan) ──
+      if (action === "toggle-active") {
+        if (!userId) return res.status(400).json({ error: "userId wajib" });
+        const { active } = req.body;
+        // Ban/unban di Supabase Auth
+        const authUpd = active ? { ban_duration: "none" } : { ban_duration: "876600h" };
+        await fetch(adminUrl + "/" + userId, { method: "PUT", headers, body: JSON.stringify(authUpd) });
+        // Update flag di user_profiles
+        await fetch(SU + "/rest/v1/user_profiles?id=eq." + userId, {
+          method: "PATCH", headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify({ active })
+        });
+        return res.status(200).json({ ok: true });
+      }
+
+      // ── RESET PASSWORD ──
+      if (action === "reset-password") {
+        if (!userId || !password) return res.status(400).json({ error: "userId dan password wajib" });
+        if (password.length < 6) return res.status(400).json({ error: "Password minimal 6 karakter" });
+        const authRes = await fetch(adminUrl + "/" + userId, {
+          method: "PUT", headers,
+          body: JSON.stringify({ password })
+        });
+        if (!authRes.ok) { const e = await authRes.json(); return res.status(400).json({ error: e.message || "Reset gagal" }); }
+        return res.status(200).json({ ok: true });
+      }
+
+      // ── DELETE PERMANENT ──
+      if (action === "delete") {
+        if (!userId) return res.status(400).json({ error: "userId wajib" });
+        await fetch(SU + "/rest/v1/user_profiles?id=eq." + userId, { method: "DELETE", headers });
+        const authRes = await fetch(adminUrl + "/" + userId, { method: "DELETE", headers });
+        if (!authRes.ok && authRes.status !== 404) { const e = await authRes.json(); return res.status(400).json({ error: e.message || "Delete Auth gagal" }); }
+        return res.status(200).json({ ok: true });
+      }
+
+      return res.status(400).json({ error: "Action tidak dikenal: " + action });
+    }
+
     return res.status(404).json({ error: "Route tidak ditemukan: /api/" + route });
 
   } catch(err) {

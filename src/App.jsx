@@ -2542,12 +2542,7 @@ ${photoPageHTML}
   useEffect(() => {
     if (!isLoggedIn) return;
 
-    const initLoadAll = async () => {
-      // Check session validity before loading data (must await!)
-      const isValid = await checkSessionValidity();
-      if (!isValid) return; // Session expired, abort load
-
-      const loadAll = async () => {
+    const loadAll = async () => {
         // A.4 OPTIMIZATION: Add LIMIT to initial queries untuk faster page load
         const results = await Promise.allSettled([
           fetchOrders(supabase),
@@ -2714,11 +2709,11 @@ ${photoPageHTML}
           }
         } catch (e) { console.warn("Load teknisi failed:", e); }
 
-        // Load Owner & Admin → userAccounts (dari user_profiles yang sama)
+        // Load semua user → userAccounts (untuk panel manage user)
         try {
           const uaRes = await fetchUserAccounts(supabase);
           if (!uaRes.error && uaRes.data && uaRes.data.length > 0) {
-            const roleColors = { owner: "#f59e0b", admin: "#38bdf8" };
+            const roleColors = { owner: "#f59e0b", admin: "#38bdf8", teknisi: "#22c55e", helper: "#a78bfa" };
             const normalized = uaRes.data.map(u => ({
               ...u,
               role: (u.role || "").charAt(0).toUpperCase() + (u.role || "").slice(1).toLowerCase(),
@@ -2774,6 +2769,9 @@ ${photoPageHTML}
         } catch (e) { console.warn("ara_brain DB load failed, pakai localStorage:", e?.message); }
       };
 
+    const initLoadAll = async () => {
+      const isValid = await checkSessionValidity();
+      if (!isValid) return;
       setDataLoading(true);
       loadAll().finally(() => {
         setDataLoading(false);
@@ -2783,7 +2781,6 @@ ${photoPageHTML}
       });
     };
 
-    // Call the async initialization wrapper
     initLoadAll();
 
     // ── AUTO-VERIFY CLIENT: Cek laporan SUBMITTED > 48 jam saat data selesai load ──
@@ -4880,6 +4877,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       storageProvider={storageProvider} setStorageProvider={setStorageProvider} storageStatus={storageStatus} setStorageStatus={setStorageStatus}
       brainMd={brainMd} brainMdCustomer={brainMdCustomer} dbProvider={dbProvider} setDbProvider={setDbProvider}
       cronJobs={cronJobs} setCronJobs={setCronJobs} userAccounts={userAccounts} setUserAccounts={setUserAccounts}
+      teknisiData={teknisiData} setTeknisiData={setTeknisiData}
       dbHealthData={dbHealthData} setDbHealthData={setDbHealthData} dbHealthLoading={dbHealthLoading} setDbHealthLoading={setDbHealthLoading} vacuumLoading={vacuumLoading} setVacuumLoading={setVacuumLoading}
       setModalBrainEdit={setModalBrainEdit} setModalBrainCustomerEdit={setModalBrainCustomerEdit} setNewUserForm={setNewUserForm} setModalAddUser={setModalAddUser}
       setEditPwdTarget={setEditPwdTarget} setEditPwdForm={setEditPwdForm} setModalEditPwd={setModalEditPwd}
@@ -7058,82 +7056,94 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const isAutoPass = ["Teknisi", "Helper"].includes(newUserForm.role);
         const effectivePass = isAutoPass ? cfg.autoPass : newUserForm.password;
 
+        const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
+        const isEditMode = !!(newUserForm.id && isUUID(newUserForm.id));
+
+        const callManageUser = async (body) => {
+          const res = await fetch("/api/manage-user", { method: "POST", headers: _apiHeaders(), body: JSON.stringify(body) });
+          return res.json();
+        };
+
         const handleSaveUser = async () => {
           if (!newUserForm.name || !newUserForm.email) { showNotif("Nama dan email wajib diisi"); return; }
-          if (!isAutoPass && !newUserForm.password) { showNotif("Password wajib diisi"); return; }
+          if (!isEditMode && !isAutoPass && !newUserForm.password) { showNotif("Password wajib diisi"); return; }
 
-          const password = effectivePass;
           const avatar = newUserForm.name.charAt(0).toUpperCase();
           const colorMap = { "Owner": "#f59e0b", "Admin": "#38bdf8", "Teknisi": "#22c55e", "Helper": "#a78bfa" };
           const color = colorMap[newUserForm.role] || "#38bdf8";
 
-          // Cek apakah ID adalah UUID Supabase (bukan "USR001" hardcode)
-          const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
-
-          if (newUserForm.id && isUUID(newUserForm.id)) {
-            // ── EDIT user yang ada di Supabase (UUID valid) ──
-            const upd = { name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "", avatar, color, active: true };
-            const { error } = await supabase.from("user_profiles").update(upd).eq("id", newUserForm.id);
-            if (error) showNotif("⚠️ DB error: " + error.message + " (disimpan lokal)");
-            else addAgentLog("USER_UPDATED", "Akun " + newUserForm.name + " diupdate", "SUCCESS");
-            // Selalu update local state
-            setUserAccounts(prev => prev.map(u => u.id === newUserForm.id ? { ...u, ...newUserForm, avatar, color } : u));
+          if (isEditMode) {
+            // ── EDIT via backend API ──
+            const result = await callManageUser({ action: "update", userId: newUserForm.id, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "" });
+            if (!result.ok) { showNotif("⚠️ " + (result.error || "Update gagal")); return; }
+            setUserAccounts(prev => prev.map(u => u.id === newUserForm.id ? { ...u, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "", avatar, color } : u));
+            // Sync Tim Teknisi: update jika sudah ada, tambah jika role berubah jadi Teknisi/Helper
+            if (["Teknisi", "Helper"].includes(newUserForm.role)) {
+              setTeknisiData(prev => {
+                const exists = prev.find(t => t.id === newUserForm.id);
+                if (exists) return prev.map(t => t.id === newUserForm.id ? { ...t, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "", color } : t);
+                return [...prev, { id: newUserForm.id, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "", skills: [], jobs_today: 0, status: "active", color, avatar }];
+              });
+            } else {
+              // Jika role berubah dari Teknisi/Helper ke lain → hapus dari tim
+              setTeknisiData(prev => prev.filter(t => t.id !== newUserForm.id));
+            }
+            addAgentLog("USER_UPDATED", "Akun " + newUserForm.name + " diupdate", "SUCCESS");
             showNotif("✅ Akun " + newUserForm.name + " berhasil diupdate");
 
-          } else if (newUserForm.id && !isUUID(newUserForm.id)) {
-            // ── EDIT local user (USR001 dll - belum punya UUID Supabase) ──
-            // Hanya update local state, tidak bisa ke DB tanpa UUID
-            setUserAccounts(prev => prev.map(u => u.id === newUserForm.id ? { ...u, ...newUserForm, avatar, color } : u));
-            showNotif("✅ " + newUserForm.name + " diupdate (lokal). Buat ulang akun di Supabase untuk sinkronisasi penuh.");
-
           } else {
-            // ── BUAT user baru via Supabase Auth ──
-            const { data, error } = await supabase.auth.signUp({
-              email: newUserForm.email,
-              password: password,
-              options: { data: { name: newUserForm.name, role: newUserForm.role } }
-            });
-            if (error) { showNotif("❌ Gagal buat akun: " + error.message); return; }
-
-            if (data.user) {
-              try {
-                await supabase.from("user_profiles").upsert({
-                  id: data.user.id,
-                  name: newUserForm.name, role: newUserForm.role,
-                  phone: newUserForm.phone || "", avatar, color, active: true,
-                });
-              } catch (e) { console.warn("user_profiles upsert:", e?.message); }
-            }
-
-            const newAcc = {
-              id: data.user?.id || ("USR_" + Date.now()),
-              name: newUserForm.name, email: newUserForm.email,
-              role: newUserForm.role, phone: newUserForm.phone || "",
-              avatar, color, active: true, lastLogin: "Belum login", password
-            };
+            // ── BUAT user baru via backend API (tanpa perlu konfirmasi email) ──
+            const password = effectivePass;
+            const result = await callManageUser({ action: "create", email: newUserForm.email, password, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "" });
+            if (!result.ok) { showNotif("❌ " + (result.error || "Gagal buat akun")); return; }
+            const uid = result.user?.id;
+            const newAcc = { id: uid, name: newUserForm.name, email: newUserForm.email, role: newUserForm.role, phone: newUserForm.phone || "", avatar, color, active: true, lastLogin: "Belum login" };
             setUserAccounts(prev => [...prev, newAcc]);
+            // Auto-sync Tim Teknisi jika role Teknisi atau Helper
+            if (["Teknisi", "Helper"].includes(newUserForm.role)) {
+              setTeknisiData(prev => {
+                if (prev.find(t => t.id === uid)) return prev;
+                return [...prev, { id: uid, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "", skills: [], jobs_today: 0, status: "active", color, avatar }];
+              });
+            }
             addAgentLog("USER_CREATED", "Akun baru: " + newUserForm.name + " (" + newUserForm.role + ")", "SUCCESS");
-            showNotif(`✅ Akun ${newUserForm.name} dibuat — role: ${newUserForm.role} — password: ${password}`);
+            showNotif(`✅ Akun ${newUserForm.name} dibuat — langsung aktif — password: ${password}`);
           }
           setModalAddUser(false); setNewUserForm({ name: "", email: "", role: "Admin", password: "", phone: "" });
         };
 
-        // Handle delete user
+        const handleToggleActive = async () => {
+          if (!isEditMode || newUserForm.role === "Owner") return;
+          const isCurrentlyActive = newUserForm.active !== false;
+          const label = isCurrentlyActive ? "Nonaktifkan" : "Aktifkan";
+          if (!await showConfirm({ icon: isCurrentlyActive ? "🔒" : "🔓", title: label + " Akun?", danger: isCurrentlyActive, message: `${label} akun ${newUserForm.name}?\n${isCurrentlyActive ? "User tidak bisa login sampai diaktifkan kembali." : "User bisa login kembali."}`, confirmText: label })) return;
+          const result = await callManageUser({ action: "toggle-active", userId: newUserForm.id, active: !isCurrentlyActive });
+          if (!result.ok) { showNotif("⚠️ " + (result.error || "Gagal")); return; }
+          setUserAccounts(prev => prev.map(u => u.id === newUserForm.id ? { ...u, active: !isCurrentlyActive } : u));
+          addAgentLog(isCurrentlyActive ? "USER_DEACTIVATED" : "USER_ACTIVATED", "Akun " + newUserForm.name + " " + (isCurrentlyActive ? "dinonaktifkan" : "diaktifkan"), "WARNING");
+          showNotif((isCurrentlyActive ? "🔒 Akun dinonaktifkan: " : "🔓 Akun diaktifkan: ") + newUserForm.name);
+          setModalAddUser(false); setNewUserForm({ name: "", email: "", role: "Admin", password: "", phone: "" });
+        };
+
+        const handleResetPassword = async () => {
+          if (!isEditMode) return;
+          const newPass = window.prompt(`Reset password untuk ${newUserForm.name}:\n(minimal 6 karakter)`);
+          if (!newPass) return;
+          if (newPass.length < 6) { showNotif("⚠️ Password minimal 6 karakter"); return; }
+          const result = await callManageUser({ action: "reset-password", userId: newUserForm.id, password: newPass });
+          if (!result.ok) { showNotif("⚠️ " + (result.error || "Reset gagal")); return; }
+          addAgentLog("USER_RESET_PWD", "Password " + newUserForm.name + " direset oleh " + auditUserName(), "WARNING");
+          showNotif("🔑 Password " + newUserForm.name + " berhasil direset");
+        };
+
         const handleDeleteUser = async () => {
-          if (!newUserForm.id || newUserForm.role === "Owner") return;
-          if (!await showConfirm({
-            icon: "🗑️", title: "Hapus Akun?", danger: true,
-            message: `Hapus akun ${newUserForm.name}?\n\nAkun tidak bisa dipulihkan. Data order/laporan tetap ada.`,
-            confirmText: "Hapus Akun"
-          })) return;
-          const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
-          if (isUUID(newUserForm.id)) {
-            // Nonaktifkan di DB (tidak hapus permanen — jaga data historis)
-            await supabase.from("user_profiles").update({ active: false }).eq("id", newUserForm.id);
-          }
+          if (!isEditMode || newUserForm.role === "Owner") return;
+          if (!await showConfirm({ icon: "🗑️", title: "Hapus Permanen?", danger: true, message: `Hapus akun ${newUserForm.name} dari sistem?\n\nAkun dihapus dari Supabase Auth. Data order/laporan tetap ada.\n\nGunakan "Nonaktifkan" jika hanya ingin blokir login.`, confirmText: "Hapus Permanen" })) return;
+          const result = await callManageUser({ action: "delete", userId: newUserForm.id });
+          if (!result.ok) { showNotif("⚠️ " + (result.error || "Hapus gagal")); return; }
           setUserAccounts(prev => prev.filter(u => u.id !== newUserForm.id));
-          addAgentLog("USER_DELETED", "Akun " + newUserForm.name + " dihapus/dinonaktifkan", "WARNING");
-          showNotif("🗑️ Akun " + newUserForm.name + " dihapus");
+          addAgentLog("USER_DELETED", "Akun " + newUserForm.name + " dihapus permanen", "WARNING");
+          showNotif("🗑️ Akun " + newUserForm.name + " dihapus permanen");
           setModalAddUser(false); setNewUserForm({ name: "", email: "", role: "Admin", password: "", phone: "" });
         };
 
@@ -7204,19 +7214,29 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   {newUserForm.role === "Helper" && "🤝 Akses terbatas: Dashboard, Jadwal, dan Laporan Sendiri saja. Sama seperti Teknisi."}
                 </div>
 
-                {/* Tombol aksi */}
-                {newUserForm.id && newUserForm.role !== "Owner" && (
-                  <button onClick={handleDeleteUser}
-                    style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "10px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 12, width: "100%" }}>
-                    🗑️ Hapus / Nonaktifkan Akun {newUserForm.name}
-                  </button>
+                {/* Tombol manage — hanya saat edit user UUID valid, bukan Owner */}
+                {isEditMode && newUserForm.role !== "Owner" && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <button onClick={handleResetPassword}
+                      style={{ background: "#f59e0b18", border: "1px solid #f59e0b44", color: "#f59e0b", padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 11 }}>
+                      🔑 Reset Password
+                    </button>
+                    <button onClick={handleToggleActive}
+                      style={{ background: newUserForm.active !== false ? cs.red + "18" : "#22c55e18", border: "1px solid " + (newUserForm.active !== false ? cs.red + "44" : "#22c55e44"), color: newUserForm.active !== false ? cs.red : "#22c55e", padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 11 }}>
+                      {newUserForm.active !== false ? "🔒 Nonaktifkan" : "🔓 Aktifkan"}
+                    </button>
+                    <button onClick={handleDeleteUser}
+                      style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "10px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 11, gridColumn: "1/-1" }}>
+                      🗑️ Hapus Permanen dari Supabase Auth
+                    </button>
+                  </div>
                 )}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginTop: 4 }}>
                   <button onClick={() => setModalAddUser(false)}
                     style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
                   <button onClick={handleSaveUser}
                     style={{ background: "linear-gradient(135deg," + cfg.color + "," + cfg.color + "99)", border: "none", color: "#fff", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>
-                    {cfg.icon} {newUserForm.id ? "Simpan Perubahan" : "Buat Akun " + newUserForm.role}
+                    {cfg.icon} {isEditMode ? "Simpan Perubahan" : "Buat Akun " + newUserForm.role}
                   </button>
                 </div>
               </div>

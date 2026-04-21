@@ -42,8 +42,7 @@ export const fetchUserProfiles = (supabase) =>
   supabase.from("user_profiles").select("*").order("name").limit(100);
 
 export const fetchUserAccounts = (supabase) =>
-  supabase.from("user_profiles").select("*")
-    .in("role", ["Owner", "Admin", "owner", "admin"]).order("name").limit(100);
+  supabase.from("user_profiles").select("*").order("name").limit(200);
 
 export const fetchWaConversations = (supabase, limit = 50) => {
   const q = supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false });
