@@ -199,38 +199,31 @@ export default async function handler(req, res) {
       const mediaUrl = isMediaMessage ? message : null;
 
       // ── PAYMENT DETECTION (TEXT) ──
-      console.log("[PAY_DETECT] payDetectOn=", payDetectOn, "SU=", !!SU, "SK=", !!SK);
       if (payDetectOn && SU && SK) {
         const BAYAR_KW_DETECT = ["bayar","transfer","lunas","pembayaran","invoice","tagihan","dp","uang"];
         const mlCheck = message.toLowerCase();
         const looksLikePayment = BAYAR_KW_DETECT.some(k => mlCheck.includes(k));
         const amountMatch = message.match(/(?:rp\.?\s*)?([\d.,]{4,})/i);
         const hasAmount = amountMatch && parseInt(amountMatch[1].replace(/[.,]/g,"")) >= 10000;
-        console.log("[PAY_DETECT] looksLikePayment=", looksLikePayment, "hasAmount=", hasAmount);
 
         if (looksLikePayment || hasAmount) {
-          const GK = process.env.GROQ_API_KEY;
-          console.log("[PAY_DETECT] GK present=", !!GK);
-          if (GK) {
+          const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+          if (AK) {
             try {
-              const extractRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+              const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "Authorization": "Bearer " + GK },
+                headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
                 body: JSON.stringify({
-                  model: "llama-3.1-8b-instant",
+                  model: "claude-haiku-4-5",
                   max_tokens: 150,
-                  temperature: 0,
                   messages: [{ role: "user", content:
                     `Analisa pesan ini: "${message.slice(0,500)}"\nApakah ini bukti pembayaran atau info transfer bank? Jika ya: {"is_payment":true,"amount":150000,"bank":"BCA","transfer_date":"2026-04-22"}\nJika bukan: {"is_payment":false}\nJawab HANYA JSON, tidak ada teks lain.`
                   }]
                 })
               });
-              console.log("[PAY_DETECT] Groq response status=", extractRes.status);
-              if (!extractRes.ok) { const errBody = await extractRes.text(); console.error("[PAY_DETECT] Groq error body=", errBody.slice(0,300)); }
               if (extractRes.ok) {
                 const extractData = await extractRes.json();
-                const rawText = (extractData.choices?.[0]?.message?.content || "").trim();
-                console.log("[PAY_DETECT] Groq rawText=", rawText.slice(0,200));
+                const rawText = ((extractData.content||[])[0]?.text || "").trim();
                 const jsonMatch = rawText.match(/\{[\s\S]*\}/);
                 if (jsonMatch) {
                   const extracted = JSON.parse(jsonMatch[0]);
@@ -254,7 +247,6 @@ export default async function handler(req, res) {
                         invoice_id: matchedInvoiceId, status: "PENDING", source: "text", created_at: nowIso
                       })
                     }).catch(e => console.error("[PAY_SUGGEST_SAVE]", e.message));
-                    console.log("[receive-wa] Payment suggestion (text) created for", sender, "inv:", matchedInvoiceId);
                   }
                 }
               }
@@ -313,7 +305,6 @@ export default async function handler(req, res) {
                         invoice_id: matchedInvoiceId, status: "PENDING", source: "image", image_url: mediaUrl, created_at: nowIso
                       })
                     }).catch(e => console.error("[PAY_SUGGEST_IMG_SAVE]", e.message));
-                    console.log("[receive-wa] Payment suggestion (image) created for", sender);
                   }
                 }
               }
