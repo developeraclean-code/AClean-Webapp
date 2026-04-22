@@ -339,9 +339,12 @@ export default async function handler(req, res) {
                           body: imgBuffer
                         });
                         if (r2UploadRes.ok) {
-                          savedImageUrl = r2PublicUrl ? r2PublicUrl + "/" + r2ObjectKey : r2Endpoint;
+                          // Simpan key R2 saja — frontend render via /api/foto?key=...
+                          // Hindari hardcode domain agar tidak berubah tiap deploy
+                          savedImageUrl = "/api/foto?key=" + encodeURIComponent(r2ObjectKey);
                         } else {
-                          console.warn("[WA_IMG_R2] Upload failed:", r2UploadRes.status);
+                          const errTxt = await r2UploadRes.text().catch(() => "");
+                          console.warn("[WA_IMG_R2] Upload failed:", r2UploadRes.status, errTxt.slice(0,200));
                         }
                       } catch(r2Err) {
                         console.warn("[WA_IMG_R2] R2 upload error:", r2Err.message);
