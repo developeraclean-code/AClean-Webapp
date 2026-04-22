@@ -236,13 +236,23 @@ export default async function handler(req, res) {
                   const extracted = JSON.parse(jsonMatch[0]);
                   if (extracted.is_payment) {
                     let matchedInvoiceId = null;
+                    let matchedOrderId = null;
                     try {
-                      const invRes = await fetch(
-                        SU + "/rest/v1/invoices?select=id,total,status&phone=eq." + encodeURIComponent(sender) +
-                        "&status=in.(UNPAID,OVERDUE)&order=created_at.desc&limit=1",
-                        { headers: { apikey: SK, Authorization: "Bearer " + SK } }
-                      );
-                      if (invRes.ok) { const invs = await invRes.json(); if (invs?.length > 0) matchedInvoiceId = invs[0].id; }
+                      const [invRes, ordRes] = await Promise.all([
+                        fetch(SU + "/rest/v1/invoices?select=id,total,status,order_id&phone=eq." + encodeURIComponent(sender) +
+                          "&status=in.(UNPAID,OVERDUE)&order=created_at.desc&limit=1",
+                          { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
+                        fetch(SU + "/rest/v1/orders?select=id,status&phone=eq." + encodeURIComponent(sender) +
+                          "&status=in.(PENDING,CONFIRMED,IN_PROGRESS)&order=created_at.desc&limit=1",
+                          { headers: { apikey: SK, Authorization: "Bearer " + SK } })
+                      ]);
+                      if (invRes.ok) {
+                        const invs = await invRes.json();
+                        if (invs?.length > 0) { matchedInvoiceId = invs[0].id; matchedOrderId = invs[0].order_id || null; }
+                      }
+                      if (!matchedOrderId && ordRes.ok) {
+                        const ords = await ordRes.json(); if (ords?.length > 0) matchedOrderId = ords[0].id;
+                      }
                     } catch(_) {}
                     fetch(SU + "/rest/v1/payment_suggestions", {
                       method: "POST",
@@ -251,7 +261,8 @@ export default async function handler(req, res) {
                         phone: sender, sender_name: senderName, raw_message: message.slice(0,500),
                         amount: extracted.amount || null, bank: extracted.bank || null,
                         transfer_date: extracted.transfer_date || null,
-                        invoice_id: matchedInvoiceId, status: "PENDING", source: "text", created_at: nowIso
+                        invoice_id: matchedInvoiceId, order_id: matchedOrderId,
+                        status: "PENDING", source: "text", created_at: nowIso
                       })
                     }).catch(e => console.error("[PAY_SUGGEST_SAVE]", e.message));
                   }
@@ -298,7 +309,8 @@ export default async function handler(req, res) {
                   let classified;
                   try { classified = JSON.parse(jsonMatchC[0]); } catch(_) {}
 
-                  const shouldSave = classified && (classified.category === "bukti_transfer" || classified.category === "kerusakan_ac" || classified.category === "dokumen");
+                  // Hanya simpan bukti_transfer — kategori lain tidak perlu disimpan di R2
+                  const shouldSave = classified && classified.category === "bukti_transfer";
 
                   // Step 2: Upload ke R2 hanya jika kategori relevan
                   if (shouldSave) {
@@ -362,15 +374,31 @@ export default async function handler(req, res) {
                   }
 
                   // Step 4: Payment suggestion jika bukti_transfer
-                  if (payDetectOn && classified && classified.category === "bukti_transfer" && classified.is_payment !== false) {
+                  if (payDetectOn && classified && classified.category === "bukti_transfer") {
                     let matchedInvoiceId = null;
+                    let matchedOrderId = null;
                     try {
-                      const invRes2 = await fetch(
-                        SU + "/rest/v1/invoices?select=id,total,status&phone=eq." + encodeURIComponent(sender) +
-                        "&status=in.(UNPAID,OVERDUE)&order=created_at.desc&limit=1",
-                        { headers: { apikey: SK, Authorization: "Bearer " + SK } }
-                      );
-                      if (invRes2.ok) { const invs2 = await invRes2.json(); if (invs2?.length > 0) matchedInvoiceId = invs2[0].id; }
+                      // Cari invoice UNPAID/OVERDUE by phone
+                      const [invRes2, ordRes] = await Promise.all([
+                        fetch(SU + "/rest/v1/invoices?select=id,total,status,order_id&phone=eq." + encodeURIComponent(sender) +
+                          "&status=in.(UNPAID,OVERDUE)&order=created_at.desc&limit=1",
+                          { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
+                        // Cari order aktif by phone sebagai fallback link
+                        fetch(SU + "/rest/v1/orders?select=id,status&phone=eq." + encodeURIComponent(sender) +
+                          "&status=in.(PENDING,CONFIRMED,IN_PROGRESS)&order=created_at.desc&limit=1",
+                          { headers: { apikey: SK, Authorization: "Bearer " + SK } })
+                      ]);
+                      if (invRes2.ok) {
+                        const invs2 = await invRes2.json();
+                        if (invs2?.length > 0) {
+                          matchedInvoiceId = invs2[0].id;
+                          matchedOrderId = invs2[0].order_id || null;
+                        }
+                      }
+                      if (!matchedOrderId && ordRes.ok) {
+                        const ords = await ordRes.json();
+                        if (ords?.length > 0) matchedOrderId = ords[0].id;
+                      }
                     } catch(_) {}
                     fetch(SU + "/rest/v1/payment_suggestions", {
                       method: "POST",
@@ -379,7 +407,8 @@ export default async function handler(req, res) {
                         phone: sender, sender_name: senderName, raw_message: "(gambar bukti transfer)",
                         amount: classified.amount || null, bank: classified.bank || null,
                         transfer_date: classified.transfer_date || null,
-                        invoice_id: matchedInvoiceId, status: "PENDING", source: "image",
+                        invoice_id: matchedInvoiceId, order_id: matchedOrderId,
+                        status: "PENDING", source: "image",
                         image_url: savedImageUrl || mediaUrl, created_at: nowIso
                       })
                     }).catch(e => console.error("[PAY_SUGGEST_IMG_SAVE]", e.message));

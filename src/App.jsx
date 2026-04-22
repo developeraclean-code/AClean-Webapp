@@ -7031,12 +7031,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     setWaConversations(prev => prev.map(cv => cv.id === conv.id ? { ...cv, unread: 0 } : cv));
                   }}
                     style={{ padding: "10px 12px", borderBottom: "1px solid " + cs.border, cursor: "pointer", background: selectedConv?.id === conv.id ? cs.accent + "12" : "transparent" }}>
-                    <div style={{ fontWeight: 700, color: cs.text, fontSize: 12, marginBottom: 2 }}>{conv.name}</div>
-                    <div style={{ fontSize: 10, color: cs.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{conv.last}</div>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-                      <span style={{ fontSize: 9, color: cs.muted }}>{conv.time}</span>
-                      {conv.unread > 0 && <span style={{ background: cs.green, color: "#fff", fontSize: 9, borderRadius: "50%", width: 15, height: 15, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>{conv.unread}</span>}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div style={{ fontWeight: 700, color: cs.text, fontSize: 12, marginBottom: 1 }}>{conv.name}</div>
+                      {conv.unread > 0 && <span style={{ background: cs.green, color: "#fff", fontSize: 9, borderRadius: "50%", minWidth: 15, height: 15, padding: "0 3px", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, flexShrink: 0 }}>{conv.unread}</span>}
                     </div>
+                    <div style={{ fontSize: 9, color: cs.accent, marginBottom: 2 }}>{conv.phone}</div>
+                    <div style={{ fontSize: 10, color: cs.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{conv.last_message || conv.last}</div>
                   </div>
                 ))}
               </div>
