@@ -7058,11 +7058,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             const txt = waInput; setWaInput("");
                             const ok = await sendWA(selectedConv.phone, txt);
                             if (ok) {
-                              const newMsg = { id: Date.now(), phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin", created_at: new Date().toISOString() };
-                              setWaMessages(prev => [...prev, newMsg]);
-                              await supabase.from("wa_messages").insert({ phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin" }).then(() => {});
+                              const nowIso = new Date().toISOString();
+                              setWaMessages(prev => [...prev, { id: Date.now(), phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin", created_at: nowIso }]);
+                              supabase.from("wa_messages").insert({ phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin" }).then(() => {});
+                              supabase.from("wa_conversations").update({ last_reply: txt.slice(0, 80), updated_at: nowIso }).eq("phone", selectedConv.phone).then(() => {});
+                              setWaConversations(prev => prev.map(cv => cv.id === selectedConv.id ? { ...cv, last_reply: txt.slice(0, 80) } : cv));
                             }
-                            setWaConversations(prev => prev.map(cv => cv.id === selectedConv.id ? { ...cv, last: txt } : cv));
                             addAgentLog("WA_SENT_MANUAL", `Manual reply ke ${selectedConv.name}: "${txt.slice(0, 40)}"`, "SUCCESS");
                             showNotif(ok ? "✅ Pesan terkirim via Fonnte" : "📱 Fonnte gagal — cek koneksi");
                           }
@@ -7073,11 +7074,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           const txt = waInput; setWaInput("");
                           const ok = await sendWA(selectedConv.phone, txt);
                           if (ok) {
-                            const newMsg = { id: Date.now(), phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin", created_at: new Date().toISOString() };
-                            setWaMessages(prev => [...prev, newMsg]);
-                            await supabase.from("wa_messages").insert({ phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin" }).then(() => {});
+                            const nowIso = new Date().toISOString();
+                            setWaMessages(prev => [...prev, { id: Date.now(), phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin", created_at: nowIso }]);
+                            supabase.from("wa_messages").insert({ phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin" }).then(() => {});
+                            supabase.from("wa_conversations").update({ last_reply: txt.slice(0, 80), updated_at: nowIso }).eq("phone", selectedConv.phone).then(() => {});
+                            setWaConversations(prev => prev.map(cv => cv.id === selectedConv.id ? { ...cv, last_reply: txt.slice(0, 80) } : cv));
                           }
-                          setWaConversations(prev => prev.map(cv => cv.id === selectedConv.id ? { ...cv, last: txt } : cv));
                           addAgentLog("WA_SENT_MANUAL", `Manual reply ke ${selectedConv.name}: "${txt.slice(0, 40)}"`, "SUCCESS");
                           showNotif(ok ? "✅ Pesan terkirim via Fonnte" : "📱 Fonnte gagal — cek koneksi");
                         }
