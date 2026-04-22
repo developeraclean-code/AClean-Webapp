@@ -199,23 +199,26 @@ function SettingsView({
 }) {
 
   // ── LLM Providers (Owner view: hanya Anthropic + Minimax) ─────────────────
+  // Model dibatasi 1 per provider — otomatis terset saat ganti provider
   const LLM_PROVIDERS = [
     {
       id: "minimax", label: "Minimax", icon: "🟦", default: true,
-      models: ["MiniMax-M2.5", "MiniMax-M2.7-highspeed"],
+      defaultModel: "MiniMax-M2.5",
+      models: ["MiniMax-M2.5"],
       fields: [
         { k: "key", label: "API Key", ph: "eyJhbGci...", t: "password" },
         { k: "group_id", label: "Group ID", ph: "1234567890" },
       ],
       guide: ["Buka platform.minimaxi.com", "API → API Keys → Create", "Copy API Key & Group ID, paste di sini"],
-      note: "Default ARA Brain · MiniMax-M2.5 — balanced · M2.7-highspeed — lebih cepat",
+      note: "Default ARA Brain · MiniMax-M2.5",
     },
     {
       id: "claude", label: "Anthropic Claude", icon: "🟣", default: false,
-      models: ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"],
+      defaultModel: "claude-haiku-4-5",
+      models: ["claude-haiku-4-5"],
       fields: [{ k: "key", label: "API Key", ph: "sk-ant-api03-...", t: "password" }],
       guide: ["Buka console.anthropic.com", "API Keys → Create Key", "Copy key, paste di sini"],
-      note: "claude-sonnet-4-6 — cerdas & cepat",
+      note: "claude-haiku-4-5 — cepat & hemat kredit",
     },
   ];
 
@@ -348,34 +351,20 @@ function SettingsView({
     <div style={{ display: "grid", gap: 16 }}>
       <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>⚙️ Pengaturan Sistem</div>
 
-      {/* ── ADMIN: hanya pilih LLM provider ── */}
+      {/* ── ADMIN: info read-only, tidak bisa ubah provider ── */}
       {currentUser?.role === "Admin" && (() => {
-        const activeLLM_Admin = LLM_PROVIDERS_ADMIN.find(p => p.id === llmProvider) || LLM_PROVIDERS_ADMIN[0];
+        const providerLabel = llmProvider === "minimax" ? "Minimax" : llmProvider === "claude" ? "Anthropic Claude" : llmProvider;
+        const modelLabel = llmModel || (llmProvider === "minimax" ? "MiniMax-M2.5" : "claude-haiku-4-5");
         return (
           <Card>
-            <CardHeader icon="🤖" title="Koneksi ARA Chat" subtitle="Provider LLM yang digunakan ARA saat ini"
+            <CardHeader icon="🤖" title="ARA Brain — Status" subtitle="Provider & model diatur oleh Owner"
               badge={llmStatusLabel} badgeColor={llmSC} />
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 12, color: cs.muted, marginBottom: 4, display: "block", fontWeight: 600 }}>Provider</label>
-              <select value={llmProvider} onChange={e => setLlmProvider(e.target.value)}
-                style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none" }}>
-                {LLM_PROVIDERS_ADMIN.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
+            <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "12px 14px", marginBottom: 14 }}>
+              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 6, fontWeight: 600 }}>Provider Aktif</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: cs.text }}>{providerLabel}</div>
+              <div style={{ fontSize: 11, color: cs.accent, marginTop: 4, fontFamily: "monospace" }}>{modelLabel}</div>
+              <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>🔒 Hanya Owner yang dapat mengubah provider & model ARA</div>
             </div>
-            <button onClick={async () => {
-              setLlmStatus("testing");
-              try {
-                const type = llmProvider === "minimax" ? "minimax" : llmProvider === "groq" ? "groq" : "llm";
-                const r = await fetch("/api/test-connection?type=" + type, { headers: _apiHeaders() });
-                const d = await r.json();
-                if (!r.ok || !d.ok) throw new Error(d.error || d.message || "Test gagal");
-                setLlmStatus("connected");
-                showNotif("✅ Koneksi " + activeLLM_Admin.label + " berhasil!");
-              } catch (e) { setLlmStatus("not_connected"); showNotif("❌ " + e.message); }
-            }}
-              style={{ width: "100%", background: llmStatus === "testing" ? cs.muted : cs.green + "22", border: "1px solid " + cs.green + "33", color: cs.green, padding: "10px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-              {llmStatus === "testing" ? "⏳ Testing..." : "🔌 Test & Simpan — " + activeLLM_Admin.label}
-            </button>
           </Card>
         );
       })()}
@@ -489,6 +478,7 @@ function SettingsView({
             {LLM_PROVIDERS.map(p => (
               <div key={p.id} onClick={() => {
                 setLlmProvider(p.id);
+                setLlmModel(p.defaultModel); // auto-set model yang sesuai
                 setLlmStatus("not_connected");
                 const savedKey = _ls("llmApiKey_" + p.id, "") || _ls("llmApiKey", "");
                 setLlmApiKey(savedKey);

@@ -823,8 +823,8 @@ export default function ACleanWebApp() {
   // ── LLM Settings: Load from backend endpoint instead of localStorage ──
   // SECURITY FIX: Never store API keys in localStorage
   // Backend endpoint /api/get-llm-config returns available providers & default
-  const [llmProvider, setLlmProvider] = useState(() => { const p = _ls("llmProvider", "minimax"); return p === "claude" ? "minimax" : p; }); // minimax = default aman (claude butuh credit)
-  const [llmModel, setLlmModel] = useState(() => _ls("llmModel", "MiniMax-M2.5")); // load from localStorage, default to MiniMax-M2.5
+  const [llmProvider, setLlmProvider] = useState(() => _ls("llmProvider", "minimax"));
+  const [llmModel, setLlmModel] = useState(() => { const p = _ls("llmProvider", "minimax"); const m = _ls("llmModel", ""); if (m) return m; return p === "claude" ? "claude-haiku-4-5" : "MiniMax-M2.5"; });
   const [llmConfig, setLlmConfig] = useState(null); // stores backend response
   const [availableProviders, setAvailableProviders] = useState([]);
   const [ollamaUrl, setOllamaUrl] = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
@@ -2659,25 +2659,16 @@ ${photoPageHTML}
             console.log("[Settings] DEBUG — localStorage llmProvider:", currentLS, "DB llm_provider:", sMap.llm_provider);
 
             const dbProvider = sMap.llm_provider;
-            // claude hanya boleh dipakai jika ANTHROPIC_API_KEY tersedia di backend
-            // Karena kita tidak bisa tahu dari frontend, default ke minimax jika DB = claude
-            const resolvedProvider = (dbProvider && VALID_PROVIDERS.includes(dbProvider) && dbProvider !== "claude")
-              ? dbProvider
-              : "minimax";
+            // Model default per provider — harus konsisten dengan LLM_PROVIDERS di SettingsView
+            const DEFAULT_MODEL = { minimax: "MiniMax-M2.5", claude: "claude-haiku-4-5" };
+            const resolvedProvider = (dbProvider && VALID_PROVIDERS.includes(dbProvider)) ? dbProvider : "minimax";
             setLlmProvider(resolvedProvider);
             _lsSave("llmProvider", resolvedProvider);
-            if (dbProvider === "claude") {
-              console.warn("[Settings] DB llm_provider=claude → override ke minimax (default aman)");
-            }
-            // Validasi model — reject gemini atau yang tidak sesuai
-            const currentModelLS = _ls("llmModel", null);
-            if (sMap.llm_model && !sMap.llm_model.includes("gemini")) {
-              setLlmModel(sMap.llm_model);
-              _lsSave("llmModel", sMap.llm_model);
-            } else if (sMap.llm_model && sMap.llm_model.includes("gemini")) {
-              console.warn("[Settings] ✗ Rejecting gemini model dari DB:", sMap.llm_model, "→ keep current:", currentModelLS || "MiniMax-M2.5");
-            } else {
-            }
+            // Model: pakai DB jika ada & valid, otherwise auto-set sesuai provider
+            const dbModel = sMap.llm_model;
+            const validModel = dbModel && !dbModel.includes("gemini") ? dbModel : DEFAULT_MODEL[resolvedProvider] || "MiniMax-M2.5";
+            setLlmModel(validModel);
+            _lsSave("llmModel", validModel);
             // Load wa_provider (WhatsApp provider) from DB — global setting for Owner/Admin
             const VALID_WA_PROVIDERS = ["fonnte", "wa_cloud", "twilio"];
             if (sMap.wa_provider && VALID_WA_PROVIDERS.includes(sMap.wa_provider)) {
