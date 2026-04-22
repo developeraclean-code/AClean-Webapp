@@ -188,7 +188,7 @@ export default async function handler(req, res) {
           return fetch(SU + "/rest/v1/wa_conversations", {
             method: "POST",
             headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "resolution=merge-duplicates,return=minimal" },
-            body: JSON.stringify({ phone: sender, name: senderName, last: message.slice(0, 80), updated_at: nowIso, unread: prevUnread + 1 })
+            body: JSON.stringify({ phone: sender, name: senderName, last_message: message.slice(0, 80), updated_at: nowIso, unread: prevUnread + 1 })
           });
         }).catch(err => console.error("[WA_CONV_UPSERT]", err.message));
       }
@@ -209,27 +209,28 @@ export default async function handler(req, res) {
         console.log("[PAY_DETECT] looksLikePayment=", looksLikePayment, "hasAmount=", hasAmount);
 
         if (looksLikePayment || hasAmount) {
-          const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
-          console.log("[PAY_DETECT] AK present=", !!AK);
-          if (AK) {
+          const GK = process.env.GROQ_API_KEY;
+          console.log("[PAY_DETECT] GK present=", !!GK);
+          if (GK) {
             try {
-              const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
+              const extractRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
+                headers: { "Content-Type": "application/json", "Authorization": "Bearer " + GK },
                 body: JSON.stringify({
-                  model: "claude-haiku-4-5",
+                  model: "llama-3.1-8b-instant",
                   max_tokens: 150,
+                  temperature: 0,
                   messages: [{ role: "user", content:
-                    `Analisa pesan ini: "${message.slice(0,500)}"\nApakah ini bukti pembayaran atau info transfer bank? Jika ya: {"is_payment":true,"amount":150000,"bank":"BCA","transfer_date":"2026-04-20"}\nJika bukan: {"is_payment":false}\nJawab HANYA JSON, tidak ada teks lain.`
+                    `Analisa pesan ini: "${message.slice(0,500)}"\nApakah ini bukti pembayaran atau info transfer bank? Jika ya: {"is_payment":true,"amount":150000,"bank":"BCA","transfer_date":"2026-04-22"}\nJika bukan: {"is_payment":false}\nJawab HANYA JSON, tidak ada teks lain.`
                   }]
                 })
               });
-              console.log("[PAY_DETECT] Claude response status=", extractRes.status);
-              if (!extractRes.ok) { const errBody = await extractRes.text(); console.error("[PAY_DETECT] Claude error body=", errBody.slice(0,300)); }
+              console.log("[PAY_DETECT] Groq response status=", extractRes.status);
+              if (!extractRes.ok) { const errBody = await extractRes.text(); console.error("[PAY_DETECT] Groq error body=", errBody.slice(0,300)); }
               if (extractRes.ok) {
                 const extractData = await extractRes.json();
-                const rawText = (extractData.content||[]).map(c=>c.text||"").join("").trim();
-                console.log("[PAY_DETECT] Claude rawText=", rawText.slice(0,200));
+                const rawText = (extractData.choices?.[0]?.message?.content || "").trim();
+                console.log("[PAY_DETECT] Groq rawText=", rawText.slice(0,200));
                 const jsonMatch = rawText.match(/\{[\s\S]*\}/);
                 if (jsonMatch) {
                   const extracted = JSON.parse(jsonMatch[0]);
