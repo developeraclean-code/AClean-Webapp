@@ -4516,7 +4516,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       sendWA={sendWA} dispatchWA={dispatchWA} addAgentLog={addAgentLog}
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       customersData={customersData} laporanReports={laporanReports} findCustomer={findCustomer}
-      setSelectedCustomer={setSelectedCustomer} setCustomerTab={setCustomerTab} />
+      setSelectedCustomer={setSelectedCustomer} setCustomerTab={setCustomerTab}
+      expensesData={expensesData} />
   );
 
   // ============================================================
@@ -4657,7 +4658,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const renderTeknisiAdmin = () => (
     <TeknisiAdminView teknisiData={teknisiData} setTeknisiData={setTeknisiData} ordersData={ordersData} laporanReports={laporanReports}
       currentUser={currentUser} supabase={supabase} setEditTeknisi={setEditTeknisi} setNewTeknisiForm={setNewTeknisiForm}
-      setModalTeknisi={setModalTeknisi} showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog} openWA={openWA} TODAY={TODAY} />
+      setModalTeknisi={setModalTeknisi} showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog} openWA={openWA} TODAY={TODAY}
+      invoicesData={invoicesData} />
   );
 
   // ============================================================

@@ -3,7 +3,7 @@ import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { displayStock } from "../lib/inventory.js";
 
-function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab }) {
+function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData }) {
 const role = currentUser?.role || "Admin";
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
@@ -513,6 +513,123 @@ return (
         ))}
       </div>
     </div>
+    {/* ── FINANCIAL ANALYTICS ── */}
+    {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (() => {
+      const now = new Date();
+      const months = Array.from({ length: 6 }, (_, i) => {
+        const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+        return {
+          prefix: d.toISOString().slice(0, 7),
+          label: d.toLocaleDateString("id-ID", { month: "short", year: "2-digit" }),
+        };
+      });
+
+      const revenueByMonth = months.map(m => ({
+        ...m,
+        revenue: invoicesData.filter(i => i.status === "PAID" && (i.paid_at || i.created_at || "").startsWith(m.prefix)).reduce((s, i) => s + (i.total || 0), 0),
+        expenseTotal: (expensesData || []).filter(e => (e.date || e.created_at || "").startsWith(m.prefix)).reduce((s, e) => s + (e.amount || 0), 0),
+      }));
+
+      const thisMPrefix = now.toISOString().slice(0, 7);
+      const lastMPrefix = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 7);
+      const revThisM = revenueByMonth.find(m => m.prefix === thisMPrefix)?.revenue || 0;
+      const revLastM = revenueByMonth.find(m => m.prefix === lastMPrefix)?.revenue || 0;
+      const revGrowth = revLastM > 0 ? Math.round(((revThisM - revLastM) / revLastM) * 100) : null;
+
+      const expThisM = revenueByMonth.find(m => m.prefix === thisMPrefix)?.expenseTotal || 0;
+      const profitThisM = revThisM - expThisM;
+      const unpaidTotal = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").reduce((s, i) => s + (i.total || 0), 0);
+
+      const byService = {};
+      invoicesData.filter(i => i.status === "PAID" && (i.paid_at || i.created_at || "").startsWith(thisMPrefix)).forEach(i => {
+        const s = i.service || "Lainnya";
+        byService[s] = (byService[s] || 0) + (i.total || 0);
+      });
+      const serviceEntries = Object.entries(byService).sort((a, b) => b[1] - a[1]);
+      const svcTotal = serviceEntries.reduce((s, [, v]) => s + v, 0);
+      const svcColors = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444", "#06b6d4"];
+
+      const maxBar = Math.max(...revenueByMonth.map(m => Math.max(m.revenue, m.expenseTotal)), 1);
+
+      return (
+        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: cs.text, marginBottom: 16 }}>💹 Analitik Keuangan</div>
+
+          {/* KPI Row */}
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)", gap: 10, marginBottom: 18 }}>
+            {[
+              { label: "Revenue Bulan Ini", value: fmt(revThisM), color: cs.green, icon: "💰",
+                sub: revGrowth !== null ? (revGrowth >= 0 ? "▲ " : "▼ ") + Math.abs(revGrowth) + "% vs bln lalu" : "Bulan pertama",
+                subColor: revGrowth === null ? cs.muted : revGrowth >= 0 ? cs.green : cs.red },
+              { label: "Pengeluaran Bln Ini", value: fmt(expThisM), color: cs.yellow, icon: "🧾", sub: "Dari " + (expensesData || []).filter(e => (e.date || "").startsWith(thisMPrefix)).length + " transaksi", subColor: cs.muted },
+              { label: "Estimasi Profit", value: fmt(profitThisM), color: profitThisM >= 0 ? cs.green : cs.red, icon: "📈", sub: expThisM > 0 ? "Margin " + Math.round(profitThisM / revThisM * 100) + "%" : "Belum ada pengeluaran", subColor: cs.muted },
+              { label: "Outstanding Unpaid", value: fmt(unpaidTotal), color: cs.yellow, icon: "⏳", sub: invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length + " invoice belum lunas", subColor: cs.muted },
+            ].map(k => (
+              <div key={k.label} style={{ background: cs.surface, border: "1px solid " + k.color + "33", borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ fontSize: 18, marginBottom: 6 }}>{k.icon}</div>
+                <div style={{ fontWeight: 800, fontSize: 17, color: k.color }}>{k.value}</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: cs.muted, marginTop: 2 }}>{k.label}</div>
+                <div style={{ fontSize: 10, color: k.subColor, marginTop: 3 }}>{k.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Revenue vs Expense Bar Chart — 6 bulan */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 10 }}>Tren Revenue vs Pengeluaran — 6 Bulan</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "flex-end", height: 90 }}>
+              {revenueByMonth.map((m, i) => {
+                const isThisM = m.prefix === thisMPrefix;
+                const revH = Math.max(4, Math.round(m.revenue / maxBar * 75));
+                const expH = Math.max(m.expenseTotal > 0 ? 4 : 0, Math.round(m.expenseTotal / maxBar * 75));
+                return (
+                  <div key={m.prefix} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                    {m.revenue > 0 && <div style={{ fontSize: 7, color: cs.green, marginBottom: 1 }}>{fmt(m.revenue).replace("Rp ", "").replace(/\.000$/, "rb")}</div>}
+                    <div style={{ width: "100%", display: "flex", gap: 2, alignItems: "flex-end", justifyContent: "center" }}>
+                      <div title={"Revenue: " + fmt(m.revenue)} style={{ flex: 1, height: revH, background: isThisM ? cs.green : cs.green + "55", borderRadius: "3px 3px 0 0", minHeight: 2 }} />
+                      <div title={"Pengeluaran: " + fmt(m.expenseTotal)} style={{ flex: 1, height: expH, background: isThisM ? cs.yellow : cs.yellow + "55", borderRadius: "3px 3px 0 0", minHeight: expH > 0 ? 2 : 0 }} />
+                    </div>
+                    <div style={{ fontSize: 8, color: isThisM ? cs.accent : cs.muted, fontWeight: isThisM ? 700 : 400, marginTop: 3 }}>{m.label}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 14, fontSize: 10, color: cs.muted, marginTop: 6 }}>
+              <span><span style={{ display: "inline-block", width: 8, height: 8, background: cs.green, borderRadius: 2, marginRight: 4 }} />Revenue</span>
+              <span><span style={{ display: "inline-block", width: 8, height: 8, background: cs.yellow, borderRadius: 2, marginRight: 4 }} />Pengeluaran</span>
+            </div>
+          </div>
+
+          {/* Revenue breakdown per service bulan ini */}
+          {serviceEntries.length > 0 && (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 10 }}>Breakdown Revenue per Service — Bulan Ini</div>
+              <div style={{ display: "grid", gap: 7 }}>
+                {serviceEntries.map(([svc, val], i) => {
+                  const pct = svcTotal > 0 ? Math.round(val / svcTotal * 100) : 0;
+                  const col = svcColors[i % svcColors.length];
+                  return (
+                    <div key={svc} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 8, background: col + "22", border: "1px solid " + col + "44", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: col, flexShrink: 0 }}>{svc[0]}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: cs.text }}>{svc}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: col }}>{fmt(val)} <span style={{ color: cs.muted, fontWeight: 400 }}>({pct}%)</span></span>
+                        </div>
+                        <div style={{ height: 5, background: cs.border, borderRadius: 99, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: pct + "%", background: col, borderRadius: 99 }} />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    })()}
+
     {/* ── SIM-9: Performa Tim per Teknisi ── */}
     {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (() => {
       const allTekNames2 = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];

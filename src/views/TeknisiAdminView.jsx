@@ -1,7 +1,8 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 
-function TeknisiAdminView({ teknisiData, setTeknisiData, ordersData, laporanReports, currentUser, supabase, setEditTeknisi, setNewTeknisiForm, setModalTeknisi, showConfirm, showNotif, addAgentLog, openWA, TODAY }) {
+function TeknisiAdminView({ teknisiData, setTeknisiData, ordersData, laporanReports, currentUser, supabase, setEditTeknisi, setNewTeknisiForm, setModalTeknisi, showConfirm, showNotif, addAgentLog, openWA, TODAY, invoicesData }) {
+const [activeTab, setActiveTab] = useState("tim"); // "tim" | "sla"
 // GAP-11: Rekap performa per teknisi
 const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -46,8 +47,203 @@ teknisiData.forEach(t => {
   };
 });
 
+// ── SLA Calculations (dipakai di tab SLA) ──
+const slaData = teknisiData.map(t => {
+  const allOrders = ordersData.filter(o => o.teknisi === t.name || o.helper === t.name);
+  const completed = allOrders.filter(o => ["COMPLETED","REPORT_SUBMITTED","INVOICE_APPROVED","INVOICE_CREATED","PAID"].includes(o.status));
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const completedThisM = completed.filter(o => (o.date || "").startsWith(thisMonth));
+
+  // Avg waktu submit laporan (submitted_at - order.date) dalam jam
+  const laporanWithTime = laporanReports.filter(r => {
+    const o = allOrders.find(o => o.id === r.job_id || o.id === r.order_id);
+    return o && r.submitted_at && o.date;
+  });
+  const avgSubmitHours = laporanWithTime.length > 0
+    ? laporanWithTime.reduce((s, r) => {
+        const o = allOrders.find(o => o.id === r.job_id || o.id === r.order_id);
+        const diffH = (new Date(r.submitted_at) - new Date(o.date + "T08:00:00")) / 3600000;
+        return s + Math.max(0, diffH);
+      }, 0) / laporanWithTime.length
+    : null;
+
+  // Komplain rate: order status COMPLAINT / total
+  const komplainCount = allOrders.filter(o => o.status === "COMPLAINT" || o.service === "Complain").length;
+  const komplainRate = allOrders.length > 0 ? Math.round(komplainCount / allOrders.length * 100) : 0;
+
+  // Free repair rate (invoice gratis / total invoice)
+  const allInv = (invoicesData || []).filter(i => i.teknisi === t.name);
+  const freeInv = allInv.filter(i => i.status === "GRATIS" || i.gratis === true || (i.total || 0) === 0);
+  const freeRate = allInv.length > 0 ? Math.round(freeInv.length / allInv.length * 100) : 0;
+
+  // On-time laporan: submit < 24 jam setelah order.date
+  const onTimeCount = laporanWithTime.filter(r => {
+    const o = allOrders.find(o => o.id === r.job_id || o.id === r.order_id);
+    const diffH = (new Date(r.submitted_at) - new Date(o.date + "T08:00:00")) / 3600000;
+    return diffH <= 24;
+  }).length;
+  const onTimeRate = laporanWithTime.length > 0 ? Math.round(onTimeCount / laporanWithTime.length * 100) : null;
+
+  // Skor SLA (0-100): komponen weighted
+  const completionRate = allOrders.length > 0 ? Math.round(completed.length / allOrders.length * 100) : 0;
+  const slaScore = Math.round(
+    (completionRate * 0.4) +
+    ((onTimeRate ?? 50) * 0.3) +
+    (Math.max(0, 100 - komplainRate * 5) * 0.2) +
+    (Math.max(0, 100 - freeRate * 4) * 0.1)
+  );
+
+  return {
+    name: t.name, role: t.role, id: t.id, status: t.status,
+    totalOrders: allOrders.length,
+    completedThisM: completedThisM.length,
+    completionRate,
+    avgSubmitHours,
+    onTimeRate,
+    komplainRate,
+    freeRate,
+    slaScore,
+    laporanCount: laporanWithTime.length,
+  };
+}).sort((a, b) => b.slaScore - a.slaScore);
+
 return (
   <div style={{ display: "grid", gap: 16 }}>
+    {/* Tab Navigation */}
+    <div style={{ display: "flex", gap: 8, borderBottom: "1px solid " + cs.border, paddingBottom: 0 }}>
+      {[{ key: "tim", label: "👷 Tim & Performa" }, { key: "sla", label: "📊 SLA Tracking" }].map(tab => (
+        <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{
+          padding: "10px 20px", borderRadius: "10px 10px 0 0", cursor: "pointer", fontWeight: 700, fontSize: 13,
+          border: "1px solid " + (activeTab === tab.key ? cs.accent : cs.border),
+          borderBottom: activeTab === tab.key ? "1px solid " + cs.card : "1px solid " + cs.border,
+          background: activeTab === tab.key ? cs.card : cs.surface,
+          color: activeTab === tab.key ? cs.accent : cs.muted,
+          marginBottom: activeTab === tab.key ? -1 : 0,
+        }}>{tab.label}</button>
+      ))}
+    </div>
+
+    {/* ── TAB: SLA TRACKING ── */}
+    {activeTab === "sla" && (() => {
+      const getScoreColor = s => s >= 80 ? cs.green : s >= 60 ? cs.yellow : cs.red;
+      const getScoreBadge = s => s >= 80 ? "🏆 Excellent" : s >= 60 ? "👍 Good" : s >= 40 ? "⚠️ Perlu Perhatian" : "🚨 Kritis";
+
+      // Summary stats
+      const avgScore = slaData.length > 0 ? Math.round(slaData.reduce((s, d) => s + d.slaScore, 0) / slaData.length) : 0;
+      const topPerformer = slaData[0];
+      const needAttention = slaData.filter(d => d.slaScore < 60);
+
+      return (
+        <div style={{ display: "grid", gap: 14 }}>
+          {/* Summary Banner */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+            {[
+              { icon: "⭐", label: "Avg SLA Score", value: avgScore + "/100", color: getScoreColor(avgScore) },
+              { icon: "🏆", label: "Top Performer", value: topPerformer?.name?.split(" ")[0] || "—", color: cs.green },
+              { icon: "⚠️", label: "Perlu Perhatian", value: needAttention.length + " teknisi", color: needAttention.length > 0 ? cs.red : cs.muted },
+            ].map(k => (
+              <div key={k.label} style={{ background: cs.card, border: "1px solid " + k.color + "33", borderRadius: 12, padding: "14px 16px", textAlign: "center" }}>
+                <div style={{ fontSize: 22, marginBottom: 6 }}>{k.icon}</div>
+                <div style={{ fontWeight: 800, fontSize: 18, color: k.color }}>{k.value}</div>
+                <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>{k.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* SLA Cards per Teknisi */}
+          {slaData.map((d, idx) => {
+            const scoreCol = getScoreColor(d.slaScore);
+            const badge = getScoreBadge(d.slaScore);
+            const circumference = 2 * Math.PI * 20;
+            const strokeDash = (d.slaScore / 100) * circumference;
+
+            return (
+              <div key={d.id} style={{ background: cs.card, border: "1px solid " + scoreCol + "44", borderRadius: 14, padding: 18, position: "relative", overflow: "hidden" }}>
+                {/* Rank badge */}
+                <div style={{ position: "absolute", top: 14, right: 14, fontSize: 11, background: scoreCol + "22", color: scoreCol, border: "1px solid " + scoreCol + "44", padding: "3px 10px", borderRadius: 99, fontWeight: 700 }}>
+                  #{idx + 1} {badge}
+                </div>
+
+                {/* Header */}
+                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+                  {/* Score Ring */}
+                  <div style={{ position: "relative", flexShrink: 0 }}>
+                    <svg width={52} height={52} style={{ transform: "rotate(-90deg)" }}>
+                      <circle cx={26} cy={26} r={20} fill="none" stroke={cs.border} strokeWidth={4} />
+                      <circle cx={26} cy={26} r={20} fill="none" stroke={scoreCol} strokeWidth={4}
+                        strokeDasharray={`${strokeDash} ${circumference}`} strokeLinecap="round" style={{ transition: "stroke-dasharray 0.6s ease" }} />
+                    </svg>
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, color: scoreCol }}>{d.slaScore}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>{d.name}</div>
+                    <div style={{ fontSize: 11, color: cs.muted }}>{d.role} · {d.totalOrders} total order</div>
+                    <div style={{ fontSize: 11, color: scoreCol, fontWeight: 700, marginTop: 2 }}>SLA Score: {d.slaScore}/100</div>
+                  </div>
+                </div>
+
+                {/* Metrics Grid */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
+                  {/* Completion Rate */}
+                  <div style={{ background: cs.surface, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 10, color: cs.muted, marginBottom: 4 }}>✅ Completion Rate</div>
+                    <div style={{ fontWeight: 800, fontSize: 18, color: d.completionRate >= 80 ? cs.green : d.completionRate >= 50 ? cs.yellow : cs.red }}>{d.completionRate}%</div>
+                    <div style={{ height: 4, background: cs.border, borderRadius: 99, marginTop: 6, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: d.completionRate + "%", background: d.completionRate >= 80 ? cs.green : d.completionRate >= 50 ? cs.yellow : cs.red, borderRadius: 99 }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>{d.completedThisM} selesai bulan ini</div>
+                  </div>
+
+                  {/* On-time Laporan */}
+                  <div style={{ background: cs.surface, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 10, color: cs.muted, marginBottom: 4 }}>⏱ Laporan Tepat Waktu</div>
+                    {d.onTimeRate !== null ? (
+                      <>
+                        <div style={{ fontWeight: 800, fontSize: 18, color: d.onTimeRate >= 80 ? cs.green : d.onTimeRate >= 50 ? cs.yellow : cs.red }}>{d.onTimeRate}%</div>
+                        <div style={{ height: 4, background: cs.border, borderRadius: 99, marginTop: 6, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: d.onTimeRate + "%", background: d.onTimeRate >= 80 ? cs.green : d.onTimeRate >= 50 ? cs.yellow : cs.red, borderRadius: 99 }} />
+                        </div>
+                        <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>
+                          {d.avgSubmitHours !== null ? "Avg " + Math.round(d.avgSubmitHours) + "j setelah order" : d.laporanCount + " laporan"}
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 13, color: cs.muted, marginTop: 4 }}>Belum ada data</div>
+                    )}
+                  </div>
+
+                  {/* Komplain Rate */}
+                  <div style={{ background: cs.surface, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 10, color: cs.muted, marginBottom: 4 }}>😤 Komplain Rate</div>
+                    <div style={{ fontWeight: 800, fontSize: 18, color: d.komplainRate === 0 ? cs.green : d.komplainRate <= 5 ? cs.yellow : cs.red }}>{d.komplainRate}%</div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>{d.komplainRate === 0 ? "Tidak ada komplain 🎉" : "Perlu monitoring"}</div>
+                  </div>
+
+                  {/* Free Repair Rate */}
+                  <div style={{ background: cs.surface, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 10, color: cs.muted, marginBottom: 4 }}>🔧 Free Repair Rate</div>
+                    <div style={{ fontWeight: 800, fontSize: 18, color: d.freeRate === 0 ? cs.green : d.freeRate <= 10 ? cs.yellow : cs.red }}>{d.freeRate}%</div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>{d.freeRate === 0 ? "Tidak ada garansi klaim 🎉" : freeRate + " invoice gratis"}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Metodologi */}
+          <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 16px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>ℹ️ Metodologi Skor SLA</div>
+            <div style={{ fontSize: 10, color: cs.muted, lineHeight: 1.7 }}>
+              Skor 0–100 dihitung dari: <strong style={{ color: cs.text }}>Completion Rate</strong> (40%) + <strong style={{ color: cs.text }}>Laporan Tepat Waktu</strong> (30%) + <strong style={{ color: cs.text }}>Komplain Rate</strong> (20%) + <strong style={{ color: cs.text }}>Free Repair Rate</strong> (10%).
+              Tepat waktu = laporan disubmit dalam 24 jam sejak order dibuat.
+            </div>
+          </div>
+        </div>
+      );
+    })()}
+
+    {/* ── TAB: TIM & PERFORMA ── */}
+    {activeTab === "tim" && <>
     {/* GAP-7: Banner stuck jobs */}
     {(() => {
       const stuckList = ordersData.filter(o =>
@@ -213,6 +409,7 @@ return (
         </div>
       );
     })()}
+    </>}
   </div>
 );
 }
