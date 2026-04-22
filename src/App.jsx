@@ -6986,7 +6986,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               </div>
             </div>
             <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-              <div style={{ width: 160, borderRight: "1px solid " + cs.border, overflowY: "auto" }}>
+              <div style={{ width: isMobile ? "100%" : 160, borderRight: isMobile ? "none" : "1px solid " + cs.border, overflowY: "auto", display: isMobile && selectedConv ? "none" : "block" }}>
                 {waConversations.length === 0 && (
                   <div style={{ padding: 12, fontSize: 10, color: cs.muted, textAlign: "center", lineHeight: 1.6 }}>
                     <div style={{ fontSize: 20, marginBottom: 6 }}>📭</div>
@@ -7031,12 +7031,17 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                 ))}
               </div>
-              <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <div style={{ flex: 1, flexDirection: "column", display: isMobile && !selectedConv ? "none" : "flex" }}>
                 {selectedConv ? (
                   <>
-                    <div style={{ padding: "10px 14px", borderBottom: "1px solid " + cs.border, flexShrink: 0 }}>
-                      <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{selectedConv.name}</div>
-                      <div style={{ fontSize: 10, color: cs.muted }}>{selectedConv.phone} · {selectedConv.intent}</div>
+                    <div style={{ padding: "10px 14px", borderBottom: "1px solid " + cs.border, flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                      {isMobile && (
+                        <button onClick={() => setSelectedConv(null)} style={{ background: "none", border: "none", color: cs.accent, fontSize: 20, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>‹</button>
+                      )}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{selectedConv.name}</div>
+                        <div style={{ fontSize: 10, color: cs.muted }}>{selectedConv.phone} · {selectedConv.intent}</div>
+                      </div>
                     </div>
                     <div style={{ flex: 1, padding: "12px 14px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
                       {waMessages.length === 0 ? (
