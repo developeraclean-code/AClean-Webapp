@@ -369,7 +369,7 @@ return (
               }} style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🗑️ Hapus Invoice</button>
             )}
             {/* Kirim Report Card manual — hanya Owner/Admin, status sudah approved, ada laporan terkait */}
-            {(inv.status === "UNPAID" || inv.status === "APPROVED" || inv.status === "PAID" || inv.status === "OVERDUE") &&
+            {inv.status !== "CANCELLED" &&
               (currentUser?.role === "Owner" || currentUser?.role === "Admin") &&
               inv.phone && laporanReports?.find(r => r.job_id === inv.job_id) && (
               <button onClick={async (e) => {
