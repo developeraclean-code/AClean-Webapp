@@ -54,3 +54,7 @@ export const fetchPriceList = (supabase) =>
 
 export const fetchAraBrain = (supabase) =>
   supabase.from("ara_brain").select("key,value").limit(50);
+
+export const fetchPendingPaymentSuggestions = (supabase) =>
+  supabase.from("payment_suggestions").select("*").eq("status","PENDING")
+    .order("created_at",{ascending:false}).limit(20);

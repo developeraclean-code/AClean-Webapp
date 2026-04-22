@@ -74,3 +74,11 @@ export const updateCustomer = (supabase, id, fields) =>
 
 export const deleteCustomer = (supabase, id) =>
   supabase.from("customers").delete().eq("id", id);
+
+// ───── PAYMENT SUGGESTIONS ─────
+export const resolvePaymentSuggestion = (supabase, id, status, resolvedBy) =>
+  supabase.from("payment_suggestions").update({
+    status,
+    resolved_at: new Date(Date.now() + 7*3600000).toISOString(),
+    resolved_by: resolvedBy
+  }).eq("id", id);

@@ -145,19 +145,23 @@ export default async function handler(req, res) {
       const SK = process.env.SUPABASE_SERVICE_KEY;
 
       // Read toggles
-      let autoOn = process.env.AUTOREPLY_ENABLED === "true";
-      let fwdOn  = process.env.FORWARD_TO_OWNER !== "false";
+      let autoOn     = process.env.AUTOREPLY_ENABLED === "true";
+      let fwdOn      = process.env.FORWARD_TO_OWNER !== "false";
+      let chatbotOn  = false;
+      let payDetectOn = true;
       if (SU && SK) {
         try {
           const sR = await fetch(
-            SU + "/rest/v1/app_settings?select=key,value&key=in.(wa_autoreply_enabled,wa_forward_to_owner)",
+            SU + "/rest/v1/app_settings?select=key,value&key=in.(wa_autoreply_enabled,wa_forward_to_owner,wa_chatbot_enabled,wa_payment_detect)",
             { headers: { apikey: SK, Authorization: "Bearer " + SK } }
           );
           if (sR.ok) {
             const sArr = await sR.json();
             const sMap = Object.fromEntries((sArr||[]).map(s => [s.key, s.value]));
-            if (sMap.wa_autoreply_enabled !== undefined) autoOn = sMap.wa_autoreply_enabled === "true";
-            if (sMap.wa_forward_to_owner  !== undefined) fwdOn  = sMap.wa_forward_to_owner  !== "false";
+            if (sMap.wa_autoreply_enabled !== undefined) autoOn      = sMap.wa_autoreply_enabled === "true";
+            if (sMap.wa_forward_to_owner  !== undefined) fwdOn       = sMap.wa_forward_to_owner  !== "false";
+            if (sMap.wa_chatbot_enabled   !== undefined) chatbotOn   = sMap.wa_chatbot_enabled   === "true";
+            if (sMap.wa_payment_detect    !== undefined) payDetectOn = sMap.wa_payment_detect    !== "false";
           }
         } catch(sErr) {
           console.warn("[receive-wa] settings fetch failed, using defaults:", sErr.message);
@@ -176,23 +180,200 @@ export default async function handler(req, res) {
 
       // ── Upsert wa_conversations (phone unik, increment unread, update last) ──
       if (SU && SK) {
-        // Fetch existing unread count, then upsert
         fetch(SU + "/rest/v1/wa_conversations?phone=eq." + encodeURIComponent(sender) + "&select=unread", {
           headers: { apikey: SK, Authorization: "Bearer " + SK }
         }).then(r => r.json()).then(rows => {
           const prevUnread = (rows?.[0]?.unread) || 0;
-          return fetch(SU + "/rest/v1/wa_conversations", {
+          return fetch(SU + "/rest/v1/wa_conversations?on_conflict=phone", {
             method: "POST",
             headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "resolution=merge-duplicates,return=minimal" },
-            body: JSON.stringify({ phone: sender, name: senderName, last: message.slice(0, 80), updated_at: nowIso, unread: prevUnread + 1 })
+            body: JSON.stringify({ phone: sender, name: senderName, last_message: message.slice(0, 80), updated_at: nowIso, unread: prevUnread + 1 })
           });
-        }).catch(err => console.error("[WA_CONV_UPSERT]", err.message));
+        }).then(r => { if (r && !r.ok) r.text().then(t => console.error("[WA_CONV_UPSERT] error:", r.status, t)); })
+         .catch(err => console.error("[WA_CONV_UPSERT]", err.message));
       }
 
-      // Auto-reply
+      // ── DETECT MEDIA MESSAGE (Fonnte image/document webhook) ──
+      const isMediaMessage = wb.type === "image" || wb.type === "document" ||
+        (typeof message === "string" && /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|pdf)(\?|$)/i.test(message));
+      const mediaUrl = isMediaMessage ? message : null;
+
+      // ── PAYMENT DETECTION (TEXT) ──
+      if (payDetectOn && SU && SK) {
+        const BAYAR_KW_DETECT = ["bayar","transfer","lunas","pembayaran","invoice","tagihan","dp","uang"];
+        const mlCheck = message.toLowerCase();
+        const looksLikePayment = BAYAR_KW_DETECT.some(k => mlCheck.includes(k));
+        const amountMatch = message.match(/(?:rp\.?\s*)?([\d.,]{4,})/i);
+        const hasAmount = amountMatch && parseInt(amountMatch[1].replace(/[.,]/g,"")) >= 10000;
+
+        if (looksLikePayment || hasAmount) {
+          const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+          if (AK) {
+            try {
+              const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
+                body: JSON.stringify({
+                  model: "claude-haiku-4-5",
+                  max_tokens: 150,
+                  messages: [{ role: "user", content:
+                    `Analisa pesan ini: "${message.slice(0,500)}"\nApakah ini bukti pembayaran atau info transfer bank? Jika ya: {"is_payment":true,"amount":150000,"bank":"BCA","transfer_date":"2026-04-22"}\nJika bukan: {"is_payment":false}\nJawab HANYA JSON, tidak ada teks lain.`
+                  }]
+                })
+              });
+              if (extractRes.ok) {
+                const extractData = await extractRes.json();
+                const rawText = ((extractData.content||[])[0]?.text || "").trim();
+                const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                  const extracted = JSON.parse(jsonMatch[0]);
+                  if (extracted.is_payment) {
+                    let matchedInvoiceId = null;
+                    try {
+                      const invRes = await fetch(
+                        SU + "/rest/v1/invoices?select=id,total,status&phone=eq." + encodeURIComponent(sender) +
+                        "&status=in.(UNPAID,OVERDUE)&order=created_at.desc&limit=1",
+                        { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+                      );
+                      if (invRes.ok) { const invs = await invRes.json(); if (invs?.length > 0) matchedInvoiceId = invs[0].id; }
+                    } catch(_) {}
+                    fetch(SU + "/rest/v1/payment_suggestions", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                      body: JSON.stringify({
+                        phone: sender, sender_name: senderName, raw_message: message.slice(0,500),
+                        amount: extracted.amount || null, bank: extracted.bank || null,
+                        transfer_date: extracted.transfer_date || null,
+                        invoice_id: matchedInvoiceId, status: "PENDING", source: "text", created_at: nowIso
+                      })
+                    }).catch(e => console.error("[PAY_SUGGEST_SAVE]", e.message));
+                  }
+                }
+              }
+            } catch(pe) {
+              console.warn("[receive-wa] Payment text extraction failed:", pe.message);
+            }
+          }
+        }
+      }
+
+      // ── PAYMENT DETECTION (IMAGE) ──
+      if (payDetectOn && isMediaMessage && mediaUrl && SU && SK) {
+        const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+        if (AK) {
+          try {
+            const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(8000) });
+            if (imgFetch.ok) {
+              const imgBuf = await imgFetch.arrayBuffer();
+              const base64 = Buffer.from(imgBuf).toString("base64");
+              const mimeType = imgFetch.headers.get("content-type") || "image/jpeg";
+              const visionRes = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
+                body: JSON.stringify({
+                  model: "claude-haiku-4-5",
+                  max_tokens: 200,
+                  messages: [{ role: "user", content: [
+                    { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
+                    { type: "text", text: 'Apakah ini bukti pembayaran/transfer bank? Jika ya: {"is_payment":true,"amount":150000,"bank":"BCA","transfer_date":"2026-04-20"} Jika bukan: {"is_payment":false}. HANYA JSON.' }
+                  ]}]
+                })
+              });
+              if (visionRes.ok) {
+                const vd = await visionRes.json();
+                const rawVText = (vd.content||[]).map(c=>c.text||"").join("").trim();
+                const jsonMatchV = rawVText.match(/\{[\s\S]*\}/);
+                if (jsonMatchV) {
+                  const extracted = JSON.parse(jsonMatchV[0]);
+                  if (extracted.is_payment) {
+                    let matchedInvoiceId = null;
+                    try {
+                      const invRes2 = await fetch(
+                        SU + "/rest/v1/invoices?select=id,total,status&phone=eq." + encodeURIComponent(sender) +
+                        "&status=in.(UNPAID,OVERDUE)&order=created_at.desc&limit=1",
+                        { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+                      );
+                      if (invRes2.ok) { const invs2 = await invRes2.json(); if (invs2?.length > 0) matchedInvoiceId = invs2[0].id; }
+                    } catch(_) {}
+                    fetch(SU + "/rest/v1/payment_suggestions", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                      body: JSON.stringify({
+                        phone: sender, sender_name: senderName, raw_message: "(gambar bukti transfer)",
+                        amount: extracted.amount || null, bank: extracted.bank || null,
+                        transfer_date: extracted.transfer_date || null,
+                        invoice_id: matchedInvoiceId, status: "PENDING", source: "image", image_url: mediaUrl, created_at: nowIso
+                      })
+                    }).catch(e => console.error("[PAY_SUGGEST_IMG_SAVE]", e.message));
+                  }
+                }
+              }
+            }
+          } catch(imgErr) {
+            console.warn("[receive-wa] Image payment detection failed:", imgErr.message);
+          }
+        }
+      }
+
+      // ── ARA CUSTOMER CHATBOT ──
       const ml = message.toLowerCase().trim();
       let reply = null;
-      if (autoOn) {
+      if (chatbotOn && SU && SK) {
+        const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+        if (AK) {
+          try {
+            const [brainRes, histRes] = await Promise.all([
+              fetch(SU + "/rest/v1/ara_brain?select=key,value&key=eq.brain_customer&limit=1",
+                { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
+              fetch(SU + "/rest/v1/wa_messages?phone=eq." + encodeURIComponent(sender) +
+                "&order=created_at.desc&limit=10&select=role,content",
+                { headers: { apikey: SK, Authorization: "Bearer " + SK } })
+            ]);
+            const brainRows = brainRes.ok ? await brainRes.json() : [];
+            const histRows  = histRes.ok  ? await histRes.json()  : [];
+            const customerBrain = brainRows?.[0]?.value ||
+              "Kamu adalah ARA, asisten virtual AClean Service AC. Jawab ramah dalam Bahasa Indonesia. Bantu customer soal layanan cuci/servis/pasang AC, booking, harga, dan status order.";
+            const history = [...histRows].reverse().map(r => ({
+              role: r.role === "customer" ? "user" : "assistant",
+              content: r.content
+            }));
+            history.push({ role: "user", content: message });
+
+            const araRes = await fetch("https://api.anthropic.com/v1/messages", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
+              body: JSON.stringify({
+                model: "claude-haiku-4-5",
+                max_tokens: 500,
+                system: customerBrain,
+                messages: history
+              })
+            });
+            if (araRes.ok) {
+              const araData = await araRes.json();
+              reply = (araData.content||[]).map(c=>c.text||"").join("").trim() || null;
+              if (reply && FT) {
+                fetch("https://api.fonnte.com/send", {
+                  method: "POST",
+                  headers: { Authorization: FT, "Content-Type": "application/json" },
+                  body: JSON.stringify({ target: sender, message: reply, delay: "1", countryCode: "62" })
+                }).catch(e => console.error("[WA_ARA_REPLY_FAILED]", e.message));
+                if (SU && SK) fetch(SU + "/rest/v1/wa_messages", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                  body: JSON.stringify({ phone: sender, name: "ARA", content: reply, role: "ara", created_at: new Date(Date.now() + 7*3600000).toISOString() })
+                }).catch(() => {});
+              }
+            }
+          } catch(araErr) {
+            console.warn("[receive-wa] ARA chatbot failed, falling back to keyword:", araErr.message);
+            reply = null;
+          }
+        }
+      }
+
+      // Auto-reply (keyword fallback — runs only if ARA chatbot did not reply)
+      if (autoOn && !reply) {
         const SALAM = ["halo","hi","hello","hai","pagi","siang","sore","malam","selamat","assalamu","permisi"];
         const HARGA_KW = ["harga","tarif","biaya","berapa","rate","pricelist","price","harganya"];
         const ORDER_KW = ["order","pesan","booking","buat","jadwal","service","cuci","cleaning","install","pasang","perbaikan","repair","complain","garansi","bongkar"];
@@ -380,7 +561,7 @@ export default async function handler(req, res) {
         try {
           const r = await fetch("https://api.anthropic.com/v1/messages", {
             method:"POST", headers:{ "Content-Type":"application/json", "x-api-key":AK, "anthropic-version":"2023-06-01" },
-            body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:10, messages:[{ role:"user", content:"ping" }] })
+            body: JSON.stringify({ model:"claude-haiku-4-5", max_tokens:10, messages:[{ role:"user", content:"ping" }] })
           });
           const d = await r.json().catch(()=>({}));
           return res.status(200).json({ ok: r.ok, provider: "claude", model: d.model||null, error: (d.error&&d.error.message)||null });

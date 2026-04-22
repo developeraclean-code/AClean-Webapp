@@ -850,6 +850,8 @@ export default function ACleanWebApp() {
   // ── WA Conversations reaktif ──
   const [waConversations, setWaConversations] = useState(WA_CONVERSATIONS);
   const [waMessages, setWaMessages] = useState([]);  // chat history conv aktif
+  const [paymentSuggestions, setPaymentSuggestions] = useState([]);
+  const [paymentSuggestBanner, setPaymentSuggestBanner] = useState(null);
 
   // ── Statistik periode filter ──
   const [statsPeriod, setStatsPeriod] = useState("bulan"); // "hari"|"minggu"|"bulan"|"tahun"|"custom"
@@ -2674,6 +2676,8 @@ ${photoPageHTML}
               wa_number: sMap.wa_number || prev.wa_number,
               wa_autoreply_enabled: sMap.wa_autoreply_enabled ?? prev.wa_autoreply_enabled,
               wa_forward_to_owner: sMap.wa_forward_to_owner ?? prev.wa_forward_to_owner,
+              wa_chatbot_enabled: sMap.wa_chatbot_enabled ?? prev.wa_chatbot_enabled ?? "false",
+              wa_payment_detect: sMap.wa_payment_detect ?? prev.wa_payment_detect ?? "true",
               ara_training_rules: sMap.ara_training_rules ?? prev.ara_training_rules,
             }));
             if (sMap.cron_jobs) {
@@ -2778,6 +2782,13 @@ ${photoPageHTML}
             }
           }
         } catch (e) { console.warn("ara_brain DB load failed, pakai localStorage:", e?.message); }
+
+        // ── Load pending payment suggestions ──
+        try {
+          const { data: psData } = await supabase.from("payment_suggestions")
+            .select("*").eq("status","PENDING").order("created_at",{ascending:false}).limit(20);
+          if (psData?.length > 0) setPaymentSuggestions(psData);
+        } catch(_) { /* tabel belum ada, skip */ }
       };
 
     const initLoadAll = async () => {
@@ -2991,7 +3002,7 @@ ${photoPageHTML}
       });
 
     // CH7 & CH8: WA tables — opsional, skip gracefully jika tabel tidak ada
-    let ch7 = null, ch8 = null;
+    let ch7 = null, ch8 = null, ch9 = null;
     try {
       ch7 = supabase.channel("rt-wa-conv")
         .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, () =>
@@ -3016,6 +3027,17 @@ ${photoPageHTML}
         .subscribe((status) => {
           if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_messages — tabel mungkin belum ada");
         });
+      ch9 = supabase.channel("rt-payment-suggest")
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "payment_suggestions" }, (payload) => {
+          if (payload.new?.status === "PENDING") {
+            setPaymentSuggestions(prev => [payload.new, ...prev]);
+            setPaymentSuggestBanner(payload.new);
+            showNotif("💳 Bukti bayar masuk dari " + (payload.new.sender_name || payload.new.phone), true);
+          }
+        })
+        .subscribe((status) => {
+          if (status === "CHANNEL_ERROR") console.warn("⚠️ RT payment_suggestions — tabel mungkin belum ada, skip");
+        });
     } catch (e) {
       console.warn("WA realtime channels skip:", e?.message);
     }
@@ -3029,7 +3051,7 @@ ${photoPageHTML}
       clearTimeout(autoVerifyTimer);
       clearInterval(_statsTimer);
       if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
-      [ch1, ch2, ch3, ch4, ch5, ch6, ch7, ch8].forEach(ch => {
+      [ch1, ch2, ch3, ch4, ch5, ch6, ch7, ch8, ch9].forEach(ch => {
         try { if (ch) supabase.removeChannel(ch); } catch (_) { }
       });
     };
@@ -10443,6 +10465,69 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {notification && (
         <div style={{ position: "fixed", bottom: 24, right: 24, background: "linear-gradient(135deg,#1e293b,#0f172a)", border: "1px solid " + cs.accent + "66", color: cs.text, padding: "12px 20px", borderRadius: 12, fontSize: 13, fontWeight: 600, zIndex: 1000, boxShadow: "0 8px 32px #000a", maxWidth: 360 }}>
           {notification}
+        </div>
+      )}
+
+      {/* Payment Suggestion Banner */}
+      {paymentSuggestBanner && (
+        <div style={{ position:"fixed", bottom: 80, right: 20, zIndex: 9500,
+          background: cs.surface, border: "2px solid #22c55e", borderRadius: 16,
+          padding: 18, maxWidth: 340, boxShadow: "0 8px 32px #0008", minWidth: 280 }}>
+          <div style={{ fontWeight: 800, color: "#22c55e", marginBottom: 8, fontSize: 14 }}>
+            💳 Bukti Pembayaran Masuk
+          </div>
+          <div style={{ fontSize: 12, color: cs.muted, marginBottom: 2 }}>
+            Dari: <span style={{color:cs.text, fontWeight:600}}>{paymentSuggestBanner.sender_name}</span>
+            {" "}({paymentSuggestBanner.phone})
+          </div>
+          {paymentSuggestBanner.amount && (
+            <div style={{ fontSize: 15, fontWeight: 800, color: cs.text, marginTop: 4 }}>
+              Rp {Number(paymentSuggestBanner.amount).toLocaleString("id-ID")}
+              {paymentSuggestBanner.bank ? <span style={{fontWeight:400, fontSize:12, color:cs.muted}}> via {paymentSuggestBanner.bank}</span> : null}
+            </div>
+          )}
+          {paymentSuggestBanner.invoice_id && (
+            <div style={{ fontSize: 12, color: cs.muted, marginTop: 4 }}>
+              Invoice cocok: <strong style={{color:cs.accent}}>{paymentSuggestBanner.invoice_id}</strong>
+            </div>
+          )}
+          {paymentSuggestBanner.raw_message && (
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 4, fontStyle:"italic",
+              background: cs.card, borderRadius: 6, padding: "4px 8px" }}>
+              "{paymentSuggestBanner.raw_message.slice(0,100)}"
+            </div>
+          )}
+          <div style={{ display:"flex", gap: 8, marginTop: 12 }}>
+            <button onClick={async () => {
+              const sugg = paymentSuggestBanner;
+              const inv = invoicesData.find(i => i.id === sugg.invoice_id) ||
+                invoicesData.find(i => i.phone === sugg.phone && (i.status === "UNPAID" || i.status === "OVERDUE"));
+              if (!inv) {
+                showNotif("⚠️ Invoice tidak ditemukan untuk nomor ini. Cari manual di halaman Invoice.");
+              } else {
+                const bankNote = sugg.bank ? "transfer_" + sugg.bank.toLowerCase().replace(/\s/g,"_") : "transfer";
+                await markPaid(inv, bankNote, "Auto-detect WA: " + (sugg.raw_message||"").slice(0,100), true);
+                supabase.from("payment_suggestions").update({
+                  status:"CONFIRMED", resolved_at: new Date(Date.now()+7*3600000).toISOString(), resolved_by: currentUser?.name||"Admin"
+                }).eq("id", sugg.id).then(() => {});
+                setPaymentSuggestions(prev => prev.filter(p => p.id !== sugg.id));
+              }
+              setPaymentSuggestBanner(null);
+            }} style={{ flex:1, background:"#22c55e", border:"none", color:"#fff",
+              padding:"10px 6px", borderRadius:8, fontWeight:800, cursor:"pointer", fontSize:13 }}>
+              ✅ Konfirmasi Lunas
+            </button>
+            <button onClick={async () => {
+              supabase.from("payment_suggestions").update({
+                status:"DISMISSED", resolved_at: new Date(Date.now()+7*3600000).toISOString()
+              }).eq("id", paymentSuggestBanner.id).then(() => {});
+              setPaymentSuggestions(prev => prev.filter(p => p.id !== paymentSuggestBanner.id));
+              setPaymentSuggestBanner(null);
+            }} style={{ background: cs.card, border:"1px solid "+cs.border, color:cs.muted,
+              padding:"10px 14px", borderRadius:8, cursor:"pointer", fontSize:13 }}>
+              Abaikan
+            </button>
+          </div>
         </div>
       )}
 
