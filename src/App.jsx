@@ -477,6 +477,24 @@ function AuditHistory({ tableName, rowId, open, onClose, cs = {} }) {
   );
 }
 
+// ── In-memory fetch cache (session-scoped) ──
+// Mencegah re-fetch ke Supabase pada manual refresh / navigasi ulang.
+// Data tetap fresh via Realtime channels yang sudah ada.
+const CACHE_TTL = 60_000; // 1 menit
+const _fetchCache = { store: {} };
+function cachedFetch(key, fetcher) {
+  const hit = _fetchCache.store[key];
+  if (hit && Date.now() - hit.ts < CACHE_TTL) return Promise.resolve(hit.value);
+  return fetcher().then(result => {
+    _fetchCache.store[key] = { value: result, ts: Date.now() };
+    return result;
+  });
+}
+function invalidateCache(...keys) {
+  if (keys.length === 0) { _fetchCache.store = {}; return; }
+  keys.forEach(k => delete _fetchCache.store[k]);
+}
+
 export default function ACleanWebApp() {
   // ── Auth & Role ──
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -2320,6 +2338,7 @@ ${photoPageHTML}
   };
 
   const doLogout = async () => {
+    invalidateCache(); // bersihkan semua cache saat logout
     await supabase.auth.signOut();
     _lsSave("localSession", null);
     addAgentLog("LOGOUT", `${currentUser?.name || "User"} (${currentUser?.role || ""}) keluar`, "SUCCESS");
@@ -2548,14 +2567,14 @@ ${photoPageHTML}
     const loadAll = async () => {
         // A.4 OPTIMIZATION: Add LIMIT to initial queries untuk faster page load
         const results = await Promise.allSettled([
-          fetchOrders(supabase),
-          fetchInvoices(supabase),
-          fetchCustomers(supabase),
-          fetchInventory(supabase),
-          fetchServiceReports(supabase),
-          fetchAgentLogs(supabase),
-          fetchInventoryTransactions(supabase),
-          fetchInventoryUnits(supabase),
+          cachedFetch("orders", () => fetchOrders(supabase)),
+          cachedFetch("invoices", () => fetchInvoices(supabase)),
+          cachedFetch("customers", () => fetchCustomers(supabase)),
+          cachedFetch("inventory", () => fetchInventory(supabase)),
+          cachedFetch("service_reports", () => fetchServiceReports(supabase)),
+          cachedFetch("agent_logs", () => fetchAgentLogs(supabase)),
+          cachedFetch("inv_tx", () => fetchInventoryTransactions(supabase)),
+          cachedFetch("inv_units", () => fetchInventoryUnits(supabase)),
         ]);
         const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
         // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
@@ -2608,7 +2627,7 @@ ${photoPageHTML}
 
         // ── Load Expenses ──
         try {
-          const expRes = await fetchExpenses(supabase);
+          const expRes = await cachedFetch("expenses", () => fetchExpenses(supabase));
           if (!expRes.error && expRes.data) setExpensesData(expRes.data);
         } catch (e) { /* tabel belum ada, skip */ }
 
@@ -3673,6 +3692,7 @@ ${photoPageHTML}
     if (!orderSaved) return null;
 
     // ── Only update state AFTER DB confirmation ──
+    invalidateCache("orders");
     setOrdersData(prev => [...prev, newOrder]);
 
     // GAP 1.5: Simpan ke technician_schedule untuk cegah double booking
@@ -4265,6 +4285,7 @@ ${photoPageHTML}
                 due: new Date(Date.now() + 3 * 86400000 + 7 * 60 * 60 * 1000).toISOString().slice(0, 10),
                 sent: false, created_at: getLocalISOString()
               };
+              invalidateCache("invoices", "orders");
               setInvoicesData(prev => [...prev, newInv]);
               const { error: invErr } = await insertInvoice(supabase, newInv);
               if (invErr) console.warn("Create invoice DB:", invErr.message);
@@ -4382,6 +4403,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               if (expErr) {
                 ar = `\n⚠️ *Gagal catat biaya: ${expErr.message}*`;
               } else {
+                invalidateCache("expenses");
                 setExpensesData(prev => [expData || expPayload, ...prev]);
                 addAgentLog("ARA_EXPENSE", `ARA create expense: ${expPayload.subcategory} — Rp${expPayload.amount.toLocaleString("id-ID")} (${expPayload.date})`, "SUCCESS");
                 ar = `\n✅ *Biaya dicatat:*\n📂 ${expPayload.category === "material_purchase" ? "Pembelian Material" : "Petty Cash"} — ${expPayload.subcategory}\n💰 Rp${expPayload.amount.toLocaleString("id-ID")}\n📅 ${expPayload.date}${expPayload.description ? " — " + expPayload.description : ""}`;
