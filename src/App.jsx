@@ -7010,12 +7010,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 {waConversations.map(conv => (
                   <div key={conv.id} onClick={() => {
                     setSelectedConv(conv);
-                    // Load chat history dari wa_messages (schema: phone,name,content,role,created_at,image_url)
+                    // Load chat history dari wa_messages
                     supabase.from("wa_messages").select("id,phone,name,content,role,created_at,image_url")
                       .eq("phone", conv.phone)
                       .order("created_at", { ascending: true })
                       .limit(100)
-                      .then(({ data }) => { if (data) setWaMessages(data); });
+                      .then(({ data, error }) => {
+                        if (error && error.code === "42703") {
+                          // Kolom image_url belum ada — fallback tanpa image_url
+                          supabase.from("wa_messages").select("id,phone,name,content,role,created_at")
+                            .eq("phone", conv.phone).order("created_at", { ascending: true }).limit(100)
+                            .then(({ data: d2 }) => { if (d2) setWaMessages(d2); });
+                        } else if (data) {
+                          setWaMessages(data);
+                        }
+                      });
                     // Reset unread di DB + state
                     supabase.from("wa_conversations").update({ unread: 0 }).eq("phone", conv.phone).then(() => {});
                     setWaConversations(prev => prev.map(cv => cv.id === conv.id ? { ...cv, unread: 0 } : cv));
