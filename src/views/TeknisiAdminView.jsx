@@ -223,7 +223,7 @@ return (
                   <div style={{ background: cs.surface, borderRadius: 10, padding: "10px 12px" }}>
                     <div style={{ fontSize: 10, color: cs.muted, marginBottom: 4 }}>🔧 Free Repair Rate</div>
                     <div style={{ fontWeight: 800, fontSize: 18, color: d.freeRate === 0 ? cs.green : d.freeRate <= 10 ? cs.yellow : cs.red }}>{d.freeRate}%</div>
-                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>{d.freeRate === 0 ? "Tidak ada garansi klaim 🎉" : freeRate + " invoice gratis"}</div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>{d.freeRate === 0 ? "Tidak ada garansi klaim 🎉" : d.freeRate + "% invoice gratis"}</div>
                   </div>
                 </div>
               </div>

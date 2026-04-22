@@ -600,32 +600,101 @@ return (
             </div>
           </div>
 
-          {/* Revenue breakdown per service bulan ini */}
-          {serviceEntries.length > 0 && (
+          {/* Dua kolom: Breakdown Revenue per Service + Breakdown Pengeluaran per Kategori */}
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16 }}>
+
+            {/* Kiri: Revenue per service */}
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 10 }}>Breakdown Revenue per Service — Bulan Ini</div>
-              <div style={{ display: "grid", gap: 7 }}>
-                {serviceEntries.map(([svc, val], i) => {
-                  const pct = svcTotal > 0 ? Math.round(val / svcTotal * 100) : 0;
-                  const col = svcColors[i % svcColors.length];
-                  return (
-                    <div key={svc} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 28, height: 28, borderRadius: 8, background: col + "22", border: "1px solid " + col + "44", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: col, flexShrink: 0 }}>{svc[0]}</div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: cs.text }}>{svc}</span>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: col }}>{fmt(val)} <span style={{ color: cs.muted, fontWeight: 400 }}>({pct}%)</span></span>
-                        </div>
-                        <div style={{ height: 5, background: cs.border, borderRadius: 99, overflow: "hidden" }}>
-                          <div style={{ height: "100%", width: pct + "%", background: col, borderRadius: 99 }} />
+              <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 10 }}>📊 Revenue per Service — Bulan Ini</div>
+              {serviceEntries.length > 0 ? (
+                <div style={{ display: "grid", gap: 7 }}>
+                  {serviceEntries.map(([svc, val], i) => {
+                    const pct = svcTotal > 0 ? Math.round(val / svcTotal * 100) : 0;
+                    const col = svcColors[i % svcColors.length];
+                    return (
+                      <div key={svc} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: 8, background: col + "22", border: "1px solid " + col + "44", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: col, flexShrink: 0 }}>{svc[0]}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: cs.text }}>{svc}</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: col }}>{fmt(val)} <span style={{ color: cs.muted, fontWeight: 400 }}>({pct}%)</span></span>
+                          </div>
+                          <div style={{ height: 5, background: cs.border, borderRadius: 99, overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: pct + "%", background: col, borderRadius: 99 }} />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ color: cs.muted, fontSize: 12, padding: "20px 0", textAlign: "center" }}>Belum ada invoice terbayar bulan ini</div>
+              )}
             </div>
-          )}
+
+            {/* Kanan: Pengeluaran per kategori */}
+            {(() => {
+              const catLabels = {
+                material_purchase: { label: "Pembelian Material", icon: "🔩", color: "#f59e0b" },
+                petty_cash:        { label: "Petty Cash / Operasional", icon: "💵", color: "#3b82f6" },
+                salary:            { label: "Gaji / Honor", icon: "👷", color: "#10b981" },
+                other:             { label: "Lainnya", icon: "📋", color: "#8b5cf6" },
+              };
+
+              const allExpThisM = (expensesData || []).filter(e => (e.date || e.created_at || "").startsWith(thisMPrefix));
+              const byCategory = {};
+              allExpThisM.forEach(e => {
+                const cat = e.category || "other";
+                if (!byCategory[cat]) byCategory[cat] = { total: 0, count: 0, items: [] };
+                byCategory[cat].total += (e.amount || 0);
+                byCategory[cat].count++;
+                byCategory[cat].items.push(e.subcategory || e.item_name || "—");
+              });
+
+              const catEntries = Object.entries(byCategory).sort((a, b) => b[1].total - a[1].total);
+              const expTotal = catEntries.reduce((s, [, v]) => s + v.total, 0);
+
+              return (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted }}>🧾 Pengeluaran per Kategori — Bulan Ini</div>
+                    {expTotal > 0 && <div style={{ fontSize: 11, fontWeight: 700, color: cs.yellow }}>{fmt(expTotal)}</div>}
+                  </div>
+
+                  {catEntries.length > 0 ? (
+                    <div style={{ display: "grid", gap: 7 }}>
+                      {catEntries.map(([cat, stat]) => {
+                        const meta = catLabels[cat] || catLabels.other;
+                        const pct = expTotal > 0 ? Math.round(stat.total / expTotal * 100) : 0;
+                        const pctOfRev = revThisM > 0 ? Math.round(stat.total / revThisM * 100) : 0;
+                        return (
+                          <div key={cat} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ width: 28, height: 28, borderRadius: 8, background: meta.color + "22", border: "1px solid " + meta.color + "44", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>{meta.icon}</div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                                <span style={{ fontSize: 12, fontWeight: 600, color: cs.text }}>{meta.label}</span>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: meta.color }}>{fmt(stat.total)} <span style={{ color: cs.muted, fontWeight: 400 }}>({pctOfRev}% rev)</span></span>
+                              </div>
+                              <div style={{ height: 5, background: cs.border, borderRadius: 99, overflow: "hidden" }}>
+                                <div style={{ height: "100%", width: pct + "%", background: meta.color, borderRadius: 99 }} />
+                              </div>
+                              <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>{stat.count} transaksi · {[...new Set(stat.items)].slice(0, 2).join(", ")}{stat.count > 2 ? "..." : ""}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ background: cs.surface, border: "1px dashed " + cs.border, borderRadius: 10, padding: "18px 14px", textAlign: "center" }}>
+                      <div style={{ fontSize: 20, marginBottom: 6 }}>📭</div>
+                      <div style={{ fontSize: 12, color: cs.muted }}>Belum ada pengeluaran bulan ini</div>
+                      <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>Input via menu <strong style={{ color: cs.accent }}>Biaya</strong></div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
         </div>
       );
     })()}
