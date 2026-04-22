@@ -3021,6 +3021,7 @@ ${photoPageHTML}
         });
       ch9 = supabase.channel("rt-payment-suggest")
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "payment_suggestions" }, (payload) => {
+          console.log("[RT payment_suggestions] INSERT received:", payload.new);
           if (payload.new?.status === "PENDING") {
             setPaymentSuggestions(prev => [payload.new, ...prev]);
             setPaymentSuggestBanner(payload.new);
@@ -3028,6 +3029,7 @@ ${photoPageHTML}
           }
         })
         .subscribe((status) => {
+          console.log("[RT payment_suggestions] subscribe status:", status);
           if (status === "CHANNEL_ERROR") console.warn("⚠️ RT payment_suggestions — tabel mungkin belum ada, skip");
         });
     } catch (e) {
