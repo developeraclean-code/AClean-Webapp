@@ -76,11 +76,13 @@ ${JSON.stringify(bizClean, null, 2)}
 };
 
 async function callClaude(msgs, sys, model) {
+  const ALLOWED_CLAUDE = ["claude-haiku-4-5"];
+  const safeModel = ALLOWED_CLAUDE.includes(model) ? model : "claude-haiku-4-5";
   // LLM calls can take up to 30 seconds
   const r = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method:"POST",
     headers:{"Content-Type":"application/json","x-api-key":process.env.ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01"},
-    body: JSON.stringify({model: model||"claude-sonnet-4-6", max_tokens:1024, system:sys, messages:msgs})
+    body: JSON.stringify({model: safeModel, max_tokens:1024, system:sys, messages:msgs})
   }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message||"Claude error");
@@ -102,12 +104,14 @@ async function callOpenAI(msgs, sys, model) {
 async function callMinimax(msgs, sys, model) {
   const key      = process.env.MINIMAX_API_KEY;
   const groupId  = process.env.MINIMAX_GROUP_ID || "";
+  const ALLOWED_MINIMAX = ["MiniMax-M2.5"];
+  const safeModel = ALLOWED_MINIMAX.includes(model) ? model : "MiniMax-M2.5";
   // LLM calls can take up to 30 seconds
   const r = await fetchWithTimeout("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
     body: JSON.stringify({
-      model: model||"MiniMax-M2.5",
+      model: safeModel,
       max_tokens: 1024,
       messages: [{role:"system",content:sys}, ...msgs],
       ...(groupId ? { group_id: groupId } : {})
@@ -156,34 +160,30 @@ export default async function handler(req, res) {
       hasGroqKey: !!process.env.GROQ_API_KEY
     });
 
-    if (rawProvider && rawProvider !== "claude") {
-      console.log(`[ARA-CHAT] Using frontend provider: ${rawProvider}`);
-      return rawProvider; // frontend memilih non-claude → ikuti
-    }
+    // Ikuti pilihan frontend jika key tersedia
     if (rawProvider === "claude" && process.env.ANTHROPIC_API_KEY) {
-      console.log("[ARA-CHAT] Using frontend Claude + key exists");
-      return "claude"; // claude dipilih + key ada
-    }
-    // Fallback: cek env vars yang tersedia
-    if (process.env.MINIMAX_API_KEY) {
-      console.log("[ARA-CHAT] Fallback: Using Minimax (env var available)");
-      return "minimax";
-    }
-    if (process.env.OPENAI_API_KEY) {
-      console.log("[ARA-CHAT] Fallback: Using OpenAI (env var available)");
-      return "openai";
-    }
-    if (process.env.GROQ_API_KEY) {
-      console.log("[ARA-CHAT] Fallback: Using Groq (env var available)");
-      return "groq";
-    }
-    if (process.env.ANTHROPIC_API_KEY) {
-      console.log("[ARA-CHAT] Fallback: Using Claude (env var available)");
+      console.log("[ARA-CHAT] Using Claude (frontend + key exists)");
       return "claude";
     }
-    const lastResort = rawProvider || "minimax";
-    console.log(`[ARA-CHAT] Last resort provider: ${lastResort}`);
-    return lastResort;
+    if (rawProvider === "minimax" && process.env.MINIMAX_API_KEY) {
+      console.log("[ARA-CHAT] Using Minimax (frontend + key exists)");
+      return "minimax";
+    }
+    if (rawProvider === "openai" && process.env.OPENAI_API_KEY) return "openai";
+    if (rawProvider === "groq" && process.env.GROQ_API_KEY) return "groq";
+    // Fallback: cek env vars yang tersedia, prioritas claude dulu
+    if (process.env.ANTHROPIC_API_KEY) {
+      console.log("[ARA-CHAT] Fallback: Using Claude");
+      return "claude";
+    }
+    if (process.env.MINIMAX_API_KEY) {
+      console.log("[ARA-CHAT] Fallback: Using Minimax");
+      return "minimax";
+    }
+    if (process.env.OPENAI_API_KEY) return "openai";
+    if (process.env.GROQ_API_KEY) return "groq";
+    console.log(`[ARA-CHAT] Last resort: ${rawProvider||"minimax"}`);
+    return rawProvider || "minimax";
   };
   const provider = detectProvider();
   if (!messages?.length) return res.status(400).json({error:"messages wajib diisi"});
