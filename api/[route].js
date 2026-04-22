@@ -180,17 +180,17 @@ export default async function handler(req, res) {
 
       // ── Upsert wa_conversations (phone unik, increment unread, update last) ──
       if (SU && SK) {
-        // Fetch existing unread count, then upsert
         fetch(SU + "/rest/v1/wa_conversations?phone=eq." + encodeURIComponent(sender) + "&select=unread", {
           headers: { apikey: SK, Authorization: "Bearer " + SK }
         }).then(r => r.json()).then(rows => {
           const prevUnread = (rows?.[0]?.unread) || 0;
-          return fetch(SU + "/rest/v1/wa_conversations", {
+          return fetch(SU + "/rest/v1/wa_conversations?on_conflict=phone", {
             method: "POST",
             headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "resolution=merge-duplicates,return=minimal" },
             body: JSON.stringify({ phone: sender, name: senderName, last_message: message.slice(0, 80), updated_at: nowIso, unread: prevUnread + 1 })
           });
-        }).catch(err => console.error("[WA_CONV_UPSERT]", err.message));
+        }).then(r => { if (r && !r.ok) r.text().then(t => console.error("[WA_CONV_UPSERT] error:", r.status, t)); })
+         .catch(err => console.error("[WA_CONV_UPSERT]", err.message));
       }
 
       // ── DETECT MEDIA MESSAGE (Fonnte image/document webhook) ──
