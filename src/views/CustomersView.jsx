@@ -231,7 +231,7 @@ return (
                             fontSize: 10, padding: "2px 8px", borderRadius: 99,
                             background: cs.yellow + "15", color: cs.yellow, fontWeight: 700
                           }}>
-                            🧊 Freon +{svc.total_freon}kg
+                            🧊 Freon +{svc.total_freon}psi
                           </span>
                         )}
                       </div>
