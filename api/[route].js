@@ -217,7 +217,7 @@ export default async function handler(req, res) {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
                 body: JSON.stringify({
-                  model: "claude-haiku-4-5-20251001",
+                  model: "claude-haiku-4-5",
                   max_tokens: 150,
                   messages: [{ role: "user", content:
                     `Analisa pesan ini: "${message.slice(0,500)}"\nApakah ini bukti pembayaran atau info transfer bank? Jika ya: {"is_payment":true,"amount":150000,"bank":"BCA","transfer_date":"2026-04-20"}\nJika bukan: {"is_payment":false}\nJawab HANYA JSON, tidak ada teks lain.`
@@ -225,6 +225,7 @@ export default async function handler(req, res) {
                 })
               });
               console.log("[PAY_DETECT] Claude response status=", extractRes.status);
+              if (!extractRes.ok) { const errBody = await extractRes.text(); console.error("[PAY_DETECT] Claude error body=", errBody.slice(0,300)); }
               if (extractRes.ok) {
                 const extractData = await extractRes.json();
                 const rawText = (extractData.content||[]).map(c=>c.text||"").join("").trim();
@@ -277,7 +278,7 @@ export default async function handler(req, res) {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
                 body: JSON.stringify({
-                  model: "claude-haiku-4-5-20251001",
+                  model: "claude-haiku-4-5",
                   max_tokens: 200,
                   messages: [{ role: "user", content: [
                     { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
@@ -350,7 +351,7 @@ export default async function handler(req, res) {
               method: "POST",
               headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
               body: JSON.stringify({
-                model: "claude-haiku-4-5-20251001",
+                model: "claude-haiku-4-5",
                 max_tokens: 500,
                 system: customerBrain,
                 messages: history
@@ -568,7 +569,7 @@ export default async function handler(req, res) {
         try {
           const r = await fetch("https://api.anthropic.com/v1/messages", {
             method:"POST", headers:{ "Content-Type":"application/json", "x-api-key":AK, "anthropic-version":"2023-06-01" },
-            body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:10, messages:[{ role:"user", content:"ping" }] })
+            body: JSON.stringify({ model:"claude-haiku-4-5", max_tokens:10, messages:[{ role:"user", content:"ping" }] })
           });
           const d = await r.json().catch(()=>({}));
           return res.status(200).json({ ok: r.ok, provider: "claude", model: d.model||null, error: (d.error&&d.error.message)||null });
