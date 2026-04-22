@@ -133,7 +133,10 @@ export default async function handler(req, res) {
       if (!sender) return res.status(400).json({ error: "Invalid phone number format" });
 
       // ── VALIDATION: Message length & content ──
-      const message = validateMessage(wb.message, 4096);
+      // Saat Fonnte kirim gambar, message bisa berupa URL atau kosong (ada di wb.url)
+      const isMediaType = wb.type === "image" || wb.type === "document";
+      const rawMessage = wb.message || (isMediaType && wb.url ? wb.url : "");
+      const message = validateMessage(rawMessage, 4096);
       if (!message) return res.status(400).json({ error: "Message is required and must be 1-4096 characters" });
 
       // ── VALIDATION: Group message check ──
@@ -172,10 +175,12 @@ export default async function handler(req, res) {
       const senderName = sanitizeName(wb.name || ("+" + sender));
 
       // ── Save inbound message ke wa_messages (schema: phone,name,content,role,created_at) ──
+      // Simpan created_at sebagai anchor agar image classifier bisa PATCH record yang tepat
+      const msgCreatedAt = nowIso;
       if (SU && SK) fetch(SU + "/rest/v1/wa_messages", {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-        body: JSON.stringify({ phone: sender, name: senderName, content: message, role: "customer", created_at: nowIso })
+        body: JSON.stringify({ phone: sender, name: senderName, content: message, role: "customer", created_at: msgCreatedAt })
       }).catch(err => console.error("[WA_MSG_SAVE]", err.message));
 
       // ── Upsert wa_conversations (phone unik, increment unread, update last) ──
@@ -194,9 +199,11 @@ export default async function handler(req, res) {
       }
 
       // ── DETECT MEDIA MESSAGE (Fonnte image/document webhook) ──
+      // Fonnte kirim url gambar di field "message" sebagai URL string, atau di field "url"
+      const fonnteMediaUrl = (wb.type === "image" || wb.type === "document") && wb.url ? wb.url : null;
       const isMediaMessage = wb.type === "image" || wb.type === "document" ||
         (typeof message === "string" && /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|pdf)(\?|$)/i.test(message));
-      const mediaUrl = isMediaMessage ? message : null;
+      const mediaUrl = fonnteMediaUrl || (isMediaMessage ? message : null);
 
       // ── PAYMENT DETECTION (TEXT) ──
       if (payDetectOn && SU && SK) {
@@ -257,35 +264,102 @@ export default async function handler(req, res) {
         }
       }
 
-      // ── PAYMENT DETECTION (IMAGE) ──
-      if (payDetectOn && isMediaMessage && mediaUrl && SU && SK) {
+      // ── IMAGE CLASSIFIER + SELECTIVE R2 UPLOAD (Opsi C) ──
+      if (isMediaMessage && mediaUrl && SU && SK) {
         const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
         if (AK) {
           try {
-            const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(8000) });
+            const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(10000) });
             if (imgFetch.ok) {
               const imgBuf = await imgFetch.arrayBuffer();
-              const base64 = Buffer.from(imgBuf).toString("base64");
-              const mimeType = imgFetch.headers.get("content-type") || "image/jpeg";
-              const visionRes = await fetch("https://api.anthropic.com/v1/messages", {
+              const base64Img = Buffer.from(imgBuf).toString("base64");
+              const mimeType = (imgFetch.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+
+              // Step 1: Classify gambar — satu API call untuk dua tujuan
+              const classifyRes = await fetch("https://api.anthropic.com/v1/messages", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
                 body: JSON.stringify({
                   model: "claude-haiku-4-5",
-                  max_tokens: 200,
+                  max_tokens: 250,
                   messages: [{ role: "user", content: [
-                    { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
-                    { type: "text", text: 'Apakah ini bukti pembayaran/transfer bank? Jika ya: {"is_payment":true,"amount":150000,"bank":"BCA","transfer_date":"2026-04-20"} Jika bukan: {"is_payment":false}. HANYA JSON.' }
+                    { type: "image", source: { type: "base64", media_type: mimeType, data: base64Img } },
+                    { type: "text", text: 'Klasifikasikan gambar ini. Pilih SATU kategori: "bukti_transfer" (struk transfer/screenshot m-banking), "kerusakan_ac" (foto AC rusak/error/bocor/kotor), "dokumen" (dokumen/teks lain yang relevan), atau "tidak_relevan" (foto tidak terkait AC/pembayaran). Jika bukti_transfer, ekstrak: amount (angka), bank (nama bank), transfer_date (YYYY-MM-DD). Format JSON SAJA:\n{"category":"bukti_transfer","amount":150000,"bank":"BCA","transfer_date":"2026-04-22"}\natau\n{"category":"kerusakan_ac"}\natau\n{"category":"tidak_relevan"}' }
                   ]}]
                 })
               });
-              if (visionRes.ok) {
-                const vd = await visionRes.json();
-                const rawVText = (vd.content||[]).map(c=>c.text||"").join("").trim();
-                const jsonMatchV = rawVText.match(/\{[\s\S]*\}/);
-                if (jsonMatchV) {
-                  const extracted = JSON.parse(jsonMatchV[0]);
-                  if (extracted.is_payment) {
+
+              let savedImageUrl = null;
+              if (classifyRes.ok) {
+                const classifyData = await classifyRes.json();
+                const rawClassify = (classifyData.content||[]).map(c=>c.text||"").join("").trim();
+                const jsonMatchC = rawClassify.match(/\{[\s\S]*\}/);
+                if (jsonMatchC) {
+                  let classified;
+                  try { classified = JSON.parse(jsonMatchC[0]); } catch(_) {}
+
+                  const shouldSave = classified && (classified.category === "bukti_transfer" || classified.category === "kerusakan_ac" || classified.category === "dokumen");
+
+                  // Step 2: Upload ke R2 hanya jika kategori relevan
+                  if (shouldSave) {
+                    const r2Key = process.env.R2_ACCESS_KEY;
+                    const r2Secret = process.env.R2_SECRET_KEY;
+                    const r2Account = process.env.R2_ACCOUNT_ID;
+                    const r2Bucket = process.env.R2_BUCKET_NAME || "aclean-files";
+                    const r2PublicUrl = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
+
+                    if (r2Key && r2Secret && r2Account) {
+                      try {
+                        const crypto = await import("crypto");
+                        const ext = mimeType === "image/png" ? "png" : mimeType === "image/gif" ? "gif" : mimeType === "image/webp" ? "webp" : "jpg";
+                        const r2ObjectKey = "wa-images/" + classified.category + "/" + Date.now() + "_" + sender + "." + ext;
+                        const r2Host = r2Account + ".r2.cloudflarestorage.com";
+                        const r2Endpoint = "https://" + r2Host + "/" + r2Bucket + "/" + r2ObjectKey;
+                        const imgBuffer = Buffer.from(imgBuf);
+
+                        const now2    = new Date();
+                        const dateStr = now2.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 8);
+                        const amzDate = now2.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15) + "Z";
+                        const payloadHash = crypto.createHash("sha256").update(imgBuffer).digest("hex");
+                        const canonicalHeaders = "content-type:" + mimeType + "\nhost:" + r2Host + "\nx-amz-content-sha256:" + payloadHash + "\nx-amz-date:" + amzDate + "\n";
+                        const signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
+                        const canonicalUri = "/" + r2Bucket + "/" + encodeURIComponent(r2ObjectKey).replace(/%2F/g, "/");
+                        const canonicalReq = ["PUT", canonicalUri, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
+                        const credScope = dateStr + "/auto/s3/aws4_request";
+                        const reqHash = crypto.createHash("sha256").update(canonicalReq).digest("hex");
+                        const strToSign = ["AWS4-HMAC-SHA256", amzDate, credScope, reqHash].join("\n");
+                        const hmac = (k, d) => crypto.createHmac("sha256", k).update(d).digest();
+                        const signingKey = hmac(hmac(hmac(hmac("AWS4" + r2Secret, dateStr), "auto"), "s3"), "aws4_request");
+                        const signature = crypto.createHmac("sha256", signingKey).update(strToSign).digest("hex");
+                        const authorization = "AWS4-HMAC-SHA256 Credential=" + r2Key + "/" + credScope + ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
+
+                        const r2UploadRes = await fetch(r2Endpoint, {
+                          method: "PUT",
+                          headers: { "Authorization": authorization, "Content-Type": mimeType, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash, "Content-Length": String(imgBuffer.length) },
+                          body: imgBuffer
+                        });
+                        if (r2UploadRes.ok) {
+                          savedImageUrl = r2PublicUrl ? r2PublicUrl + "/" + r2ObjectKey : r2Endpoint;
+                        } else {
+                          console.warn("[WA_IMG_R2] Upload failed:", r2UploadRes.status);
+                        }
+                      } catch(r2Err) {
+                        console.warn("[WA_IMG_R2] R2 upload error:", r2Err.message);
+                      }
+                    }
+                  }
+
+                  // Step 3: Update wa_messages dengan image_url — match exact record via phone+created_at
+                  if (savedImageUrl && SU && SK) {
+                    fetch(SU + "/rest/v1/wa_messages?phone=eq." + encodeURIComponent(sender) + "&created_at=eq." + encodeURIComponent(msgCreatedAt), {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                      body: JSON.stringify({ image_url: savedImageUrl })
+                    }).catch(e => console.warn("[WA_IMG_PATCH]", e.message));
+                  }
+
+                  // Step 4: Payment suggestion jika bukti_transfer
+                  if (payDetectOn && classified && classified.category === "bukti_transfer" && classified.is_payment !== false) {
                     let matchedInvoiceId = null;
                     try {
                       const invRes2 = await fetch(
@@ -300,9 +374,10 @@ export default async function handler(req, res) {
                       headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
                       body: JSON.stringify({
                         phone: sender, sender_name: senderName, raw_message: "(gambar bukti transfer)",
-                        amount: extracted.amount || null, bank: extracted.bank || null,
-                        transfer_date: extracted.transfer_date || null,
-                        invoice_id: matchedInvoiceId, status: "PENDING", source: "image", image_url: mediaUrl, created_at: nowIso
+                        amount: classified.amount || null, bank: classified.bank || null,
+                        transfer_date: classified.transfer_date || null,
+                        invoice_id: matchedInvoiceId, status: "PENDING", source: "image",
+                        image_url: savedImageUrl || mediaUrl, created_at: nowIso
                       })
                     }).catch(e => console.error("[PAY_SUGGEST_IMG_SAVE]", e.message));
                   }
@@ -310,7 +385,7 @@ export default async function handler(req, res) {
               }
             }
           } catch(imgErr) {
-            console.warn("[receive-wa] Image payment detection failed:", imgErr.message);
+            console.warn("[receive-wa] Image classifier failed:", imgErr.message);
           }
         }
       }

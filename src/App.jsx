@@ -7010,8 +7010,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 {waConversations.map(conv => (
                   <div key={conv.id} onClick={() => {
                     setSelectedConv(conv);
-                    // Load chat history dari wa_messages (schema: phone,name,content,role,created_at)
-                    supabase.from("wa_messages").select("id,phone,name,content,role,created_at")
+                    // Load chat history dari wa_messages (schema: phone,name,content,role,created_at,image_url)
+                    supabase.from("wa_messages").select("id,phone,name,content,role,created_at,image_url")
                       .eq("phone", conv.phone)
                       .order("created_at", { ascending: true })
                       .limit(100)
@@ -7046,6 +7046,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           <div key={msg.id || mi} style={{ display: "flex", justifyContent: isOut ? "flex-end" : "flex-start" }}>
                             <div style={{ maxWidth: "80%", background: isOut ? "#25D36622" : cs.card, border: "1px solid " + (isOut ? "#25D36633" : cs.border), borderRadius: isOut ? "12px 2px 12px 12px" : "2px 12px 12px 12px", padding: "8px 12px", fontSize: 12 }}>
                               {isOut && <div style={{ fontSize: 10, color: "#25D366", fontWeight: 700, marginBottom: 3 }}>{msg.role === "ara" ? "🤖 ARA" : "👤 Admin"}</div>}
+                              {msg.image_url && (
+                                <a href={msg.image_url} target="_blank" rel="noopener noreferrer">
+                                  <img src={msg.image_url} alt="gambar" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 8, marginBottom: 4, display: "block", cursor: "pointer" }} onError={e => { e.target.style.display="none"; }} />
+                                </a>
+                              )}
                               <div style={{ color: cs.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{msg.content}</div>
                               <div style={{ fontSize: 9, color: cs.muted, marginTop: 3, textAlign: "right" }}>{msg.created_at ? new Date(msg.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : ""}</div>
                             </div>
