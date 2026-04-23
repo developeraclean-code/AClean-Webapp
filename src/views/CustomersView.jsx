@@ -3,7 +3,7 @@ import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 import { normalizePhone } from "../lib/phone.js";
 
-function CustomersView({ selectedCustomer, setSelectedCustomer, ordersData, laporanReports, invoicesData, customersData, setCustomersData, searchCustomer, setSearchCustomer, customerPage, setCustomerPage, customerTab, setCustomerTab, currentUser, isMobile, setNewCustomerForm, setModalAddCustomer, setNewOrderForm, setModalOrder, setSelectedInvoice, setModalPDF, buildCustomerHistory, openWA, showConfirm, showNotif, deleteCustomer, addAgentLog, updateCustomer, fotoSrc, safeArr, fmt, supabase, CUST_PAGE_SIZE }) {
+function CustomersView({ selectedCustomer, setSelectedCustomer, ordersData, laporanReports, invoicesData, customersData, setCustomersData, searchCustomer, setSearchCustomer, customerPage, setCustomerPage, customerTab, setCustomerTab, currentUser, isMobile, setNewCustomerForm, setModalAddCustomer, setNewOrderForm, setModalOrder, setSelectedInvoice, setModalPDF, buildCustomerHistory, openWA, showConfirm, showNotif, deleteCustomer, addAgentLog, updateCustomer, fotoSrc, safeArr, fmt, supabase, CUST_PAGE_SIZE, downloadServiceReportPDF }) {
 // ── LIVE history: ordersData + laporanReports + invoicesData ──
 const history = selectedCustomer
   ? buildCustomerHistory(selectedCustomer, ordersData, laporanReports, invoicesData)
@@ -404,6 +404,22 @@ return (
                             background: cs.accent + "15", border: "1px solid " + cs.accent + "44", color: cs.accent
                           }}>
                           🔁 Order Ulang
+                        </button>
+                      )}
+                      {/* Report Card PDF — semua role yang punya laporan */}
+                      {downloadServiceReportPDF && svc.laporan_id && (
+                        <button
+                          onClick={() => {
+                            const fullLap = laporanReports.find(r => r.id === svc.laporan_id);
+                            if (!fullLap) return;
+                            const relInv = invoicesData.find(i => i.job_id === fullLap.job_id) || {};
+                            downloadServiceReportPDF(fullLap, relInv);
+                          }}
+                          style={{
+                            fontSize: 11, padding: "5px 12px", borderRadius: 7, cursor: "pointer",
+                            background: "#1e3a5f22", border: "1px solid #1e3a5f44", color: "#93c5fd"
+                          }}>
+                          📋 Report Card
                         </button>
                       )}
                     </div>

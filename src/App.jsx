@@ -1049,8 +1049,10 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     "Perlu Pergantian Sparepart",
     "AC Rusak Perlu Pergantian Unit",
     "Semua Fungsi Normal",
-    "Filter Bersih",
-    "Tidak Ada Bocor",
+    "Perlu Test Press",
+    "Perlu Pengisian Freon",
+    "Perlu Service Besar",
+    "Perlu Pergantian Parts",
   ];
   const PEKERJAAN_BY_SERVICE = {
     Cleaning: [
@@ -3499,7 +3501,7 @@ ${photoPageHTML}
   };
 
   // ── GAP 1.6: Mark Paid → simpan ke payments table ──
-  const markPaid = async (inv, method = "transfer", notes = "", sendCustNotif = null) => {
+  const markPaid = async (inv, method = "transfer", notes = "", sendCustNotif = null, paymentProofUrl = null) => {
     // Input validation
     if (!inv.id || inv.id.trim().length === 0) {
       showNotif("❌ Invoice ID tidak valid");
@@ -3516,7 +3518,7 @@ ${photoPageHTML}
 
     const paidAt = getLocalISOString();
     setInvoicesData(prev => prev.map(i =>
-      i.id === inv.id ? { ...i, status: "PAID", paid_at: paidAt } : i
+      i.id === inv.id ? { ...i, status: "PAID", paid_at: paidAt, ...(paymentProofUrl ? { payment_proof_url: paymentProofUrl } : {}) } : i
     ));
     setOrdersData(prev => prev.map(o =>
       (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: "PAID" } : o
@@ -3528,6 +3530,10 @@ ${photoPageHTML}
         console.warn("mark paid with paid_at failed:", mpErr.message);
         await updateInvoice(supabase, inv.id, { status: "PAID" }, auditUserName());
       }
+    }
+    // Simpan bukti bayar URL ke invoice jika ada (dari WA payment detection)
+    if (paymentProofUrl) {
+      supabase.from("invoices").update({ payment_proof_url: paymentProofUrl }).eq("id", inv.id).catch(() => {});
     }
 
     // Notif WA ke customer — hanya jika admin/owner menyetujui (sendCustNotif=true)
@@ -4588,7 +4594,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       buildCustomerHistory={buildCustomerHistory} openWA={openWA} showConfirm={showConfirm} showNotif={showNotif}
       deleteCustomer={deleteCustomer} addAgentLog={addAgentLog} updateCustomer={updateCustomer} fotoSrc={fotoSrc} safeArr={safeArr} fmt={fmt}
-      supabase={supabase} CUST_PAGE_SIZE={CUST_PAGE_SIZE} />
+      supabase={supabase} CUST_PAGE_SIZE={CUST_PAGE_SIZE} downloadServiceReportPDF={downloadServiceReportPDF} />
   );
 
   // ============================================================
@@ -4948,7 +4954,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setModalLaporanDetail={setModalLaporanDetail} setEditLaporanForm={setEditLaporanForm} setLaporanBarangItems={setLaporanBarangItems}
       setEditRepairType={setEditRepairType} setEditGratisAlasan={setEditGratisAlasan} setActiveEditUnitIdx={setActiveEditUnitIdx}
       setEditPhotoMode={setEditPhotoMode} setEditLaporanFotos={setEditLaporanFotos} setLaporanInstallItems={setLaporanInstallItems}
-      openLaporanModal={openLaporanModal} safeArr={safeArr} TODAY={TODAY} INSTALL_ITEMS={INSTALL_ITEMS} />
+      openLaporanModal={openLaporanModal} safeArr={safeArr} TODAY={TODAY} INSTALL_ITEMS={INSTALL_ITEMS}
+      downloadServiceReportPDF={downloadServiceReportPDF} />
   );
 
   // ============================================================
@@ -8856,7 +8863,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             }
           }
 
-          // ── 10. Update status teknisi → active ──
+          // ── 10. Update status teknisi & helper → active ──
           ["teknisi", "helper"].forEach(role => {
             const name = role === "teknisi" ? laporanModal.teknisi : laporanModal.helper;
             if (!name) return;
@@ -8867,6 +8874,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               supabase.from("user_profiles").update({ status: "active" }).eq("id", tek.id);
             }
           });
+
+          // ── 10b. Notif WA ke helper — laporan otomatis tercatat atas namanya ──
+          if (laporanModal.helper && currentUser?.name !== laporanModal.helper) {
+            const helperData = teknisiData.find(t => t.name === laporanModal.helper);
+            if (helperData?.phone) {
+              sendWA(helperData.phone,
+                `✅ *Laporan ${laporanModal.id} Selesai*\n`
+                + `Customer: ${laporanModal.customer}\n`
+                + `Teknisi: ${laporanModal.teknisi}\n\n`
+                + `Laporan pekerjaan sudah disubmit oleh ${currentUser?.name || laporanModal.teknisi}. `
+                + `Kamu tercatat sebagai helper. Cek di menu Laporan Saya. — AClean`
+              );
+            }
+          }
 
           // ── 11. Deduct stok material (non-Install) ──
           // Install: deduct dari effectiveMaterials (sudah punya _useCode untuk pipa/kabel)
@@ -10803,7 +10824,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 showNotif("⚠️ Invoice tidak ditemukan untuk nomor ini. Cari manual di halaman Invoice.");
               } else {
                 const bankNote = sugg.bank ? "transfer_" + sugg.bank.toLowerCase().replace(/\s/g,"_") : "transfer";
-                await markPaid(inv, bankNote, "Auto-detect WA: " + (sugg.raw_message||"").slice(0,100), true);
+                await markPaid(inv, bankNote, "Auto-detect WA: " + (sugg.raw_message||"").slice(0,100), true, sugg.image_url || null);
                 supabase.from("payment_suggestions").update({
                   status:"CONFIRMED", resolved_at: new Date(Date.now()+7*3600000).toISOString(), resolved_by: currentUser?.name||"Admin"
                 }).eq("id", sugg.id).then(() => {});

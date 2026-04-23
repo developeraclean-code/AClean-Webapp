@@ -267,6 +267,54 @@ async function taskCleanup() {
 }
 
 // ══════════════════════════════════════════════════
+// TASK 5: Cleanup WA chat lama (>14 hari)
+// ══════════════════════════════════════════════════
+async function taskWaCleanup() {
+  const cutoff = new Date(Date.now() - 14 * 86400000).toISOString();
+
+  // Hapus wa_messages lama — kecuali yang masih ada payment_suggestions PENDING terkait
+  // Ambil phone yang masih punya suggestion aktif agar tidak dihapus dulu
+  const { data: pendingSugg } = await sb.from("payment_suggestions")
+    .select("phone").eq("status", "PENDING");
+  const protectedPhones = [...new Set((pendingSugg || []).map(p => p.phone))];
+
+  // Hapus messages lama — batchkan per phone yang tidak dilindungi
+  let msgsDeleted = 0;
+  const { data: oldMsgs, error: msgErr } = await sb.from("wa_messages")
+    .select("id, phone")
+    .lt("created_at", cutoff)
+    .limit(500);
+
+  if (!msgErr && oldMsgs?.length > 0) {
+    const toDelete = oldMsgs.filter(m => !protectedPhones.includes(m.phone)).map(m => m.id);
+    if (toDelete.length > 0) {
+      const { error: delMsgErr } = await sb.from("wa_messages").delete().in("id", toDelete);
+      if (!delMsgErr) msgsDeleted = toDelete.length;
+      else console.error("[WA_CLEANUP_MSG]", delMsgErr.message);
+    }
+  }
+
+  // Hapus wa_conversations lama — updated_at > 14 hari dan bukan di protected phones
+  let convsDeleted = 0;
+  const { data: oldConvs, error: convErr } = await sb.from("wa_conversations")
+    .select("id, phone")
+    .lt("updated_at", cutoff)
+    .limit(200);
+
+  if (!convErr && oldConvs?.length > 0) {
+    const toDeleteConv = oldConvs.filter(c => !protectedPhones.includes(c.phone)).map(c => c.id);
+    if (toDeleteConv.length > 0) {
+      const { error: delConvErr } = await sb.from("wa_conversations").delete().in("id", toDeleteConv);
+      if (!delConvErr) convsDeleted = toDeleteConv.length;
+      else console.error("[WA_CLEANUP_CONV]", delConvErr.message);
+    }
+  }
+
+  await log("WA_CLEANUP", `${msgsDeleted} pesan & ${convsDeleted} conversations dihapus (>14 hari). ${protectedPhones.length} phone dilindungi (ada payment pending).`);
+  return { msgsDeleted, convsDeleted, protectedPhones: protectedPhones.length };
+}
+
+// ══════════════════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════════════════
 export default async function handler(req, res) {
@@ -282,9 +330,10 @@ export default async function handler(req, res) {
 
   try {
     let result;
-    if (task === "daily")   result = await taskDaily();
+    if (task === "daily")        result = await taskDaily();
     else if (task === "stock")   result = await taskStock();
     else if (task === "cleanup") result = await taskCleanup();
+    else if (task === "wa-cleanup") result = await taskWaCleanup();
     else                         result = await taskReminder();
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });

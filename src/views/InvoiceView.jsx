@@ -396,6 +396,13 @@ return (
                 📋 Kirim Report Card
               </button>
             )}
+            {/* Bukti bayar dari WA — tampil di semua role jika ada URL */}
+            {inv.payment_proof_url && (
+              <button
+                onClick={() => window.open(inv.payment_proof_url.startsWith("/api/") ? window.location.origin + inv.payment_proof_url : inv.payment_proof_url, "_blank")}
+                style={{ background: "#22c55e22", border: "1px solid #22c55e44", color: "#22c55e", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+              >🧾 Bukti Bayar</button>
+            )}
             <button
               onClick={() => setAuditModal({ tableName: "invoices", rowId: inv.id })}
               style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}

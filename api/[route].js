@@ -265,6 +265,20 @@ export default async function handler(req, res) {
                         status: "PENDING", source: "text", created_at: nowIso
                       })
                     }).catch(e => console.error("[PAY_SUGGEST_SAVE]", e.message));
+                    // Notif WA ke owner — agar tidak terlewat saat webapp tidak dibuka
+                    if (FT && OP) {
+                      const ownerNotif = "💰 *Bukti Bayar Masuk (Teks)*\n"
+                        + "Dari: " + senderName + " (" + sender + ")\n"
+                        + (extracted.amount ? "Nominal: Rp" + Number(extracted.amount).toLocaleString("id-ID") + "\n" : "")
+                        + (extracted.bank ? "Bank: " + extracted.bank + "\n" : "")
+                        + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + "\n" : "")
+                        + "\nPesan: \"" + message.slice(0,100) + "\"\n\n_Cek & konfirmasi di menu Invoice → WA Monitor_";
+                      fetch("https://api.fonnte.com/send", {
+                        method: "POST",
+                        headers: { Authorization: FT, "Content-Type": "application/json" },
+                        body: JSON.stringify({ target: OP, message: ownerNotif, delay: "1", countryCode: "62" })
+                      }).catch(() => {});
+                    }
                   }
                 }
               }
@@ -412,6 +426,20 @@ export default async function handler(req, res) {
                         image_url: savedImageUrl || mediaUrl, created_at: nowIso
                       })
                     }).catch(e => console.error("[PAY_SUGGEST_IMG_SAVE]", e.message));
+                    // Notif WA ke owner — agar tidak terlewat saat webapp tidak dibuka
+                    if (FT && OP) {
+                      const ownerNotifImg = "💰 *Bukti Bayar Masuk (Foto)*\n"
+                        + "Dari: " + senderName + " (" + sender + ")\n"
+                        + (classified.amount ? "Nominal: Rp" + Number(classified.amount).toLocaleString("id-ID") + "\n" : "")
+                        + (classified.bank ? "Bank: " + classified.bank + "\n" : "")
+                        + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + "\n" : "")
+                        + "\n_Foto tersimpan. Cek & konfirmasi di menu Invoice → WA Monitor_";
+                      fetch("https://api.fonnte.com/send", {
+                        method: "POST",
+                        headers: { Authorization: FT, "Content-Type": "application/json" },
+                        body: JSON.stringify({ target: OP, message: ownerNotifImg, delay: "1", countryCode: "62" })
+                      }).catch(() => {});
+                    }
                   }
                 }
               }

@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-function MyReportView({ laporanReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setLaporanInstallItems, openLaporanModal, safeArr, TODAY, INSTALL_ITEMS }) {
+function MyReportView({ laporanReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setLaporanInstallItems, openLaporanModal, safeArr, TODAY, INSTALL_ITEMS, downloadServiceReportPDF }) {
 const myName = currentUser?.name || "";
 // Get all submitted reports
 const submittedReps = laporanReports.filter(r => r.teknisi === myName || r.helper === myName);
@@ -207,6 +207,15 @@ return (
                 <button onClick={() => { setSelectedLaporan(r); setEditLaporanMode(false); setModalLaporanDetail(true); }}
                   style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>
                   Lihat Detail
+                </button>
+              )}
+              {!isPending && downloadServiceReportPDF && (
+                <button onClick={() => {
+                  const relInv = invoicesData.find(i => i.job_id === r.job_id) || {};
+                  downloadServiceReportPDF(r, relInv);
+                }}
+                  style={{ background: "#1e3a5f22", border: "1px solid #1e3a5f44", color: "#93c5fd", padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                  📋 Report Card
                 </button>
               )}
             </div>
