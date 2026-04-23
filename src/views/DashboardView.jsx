@@ -170,7 +170,7 @@ return (
       {[
         { label: "Order Hari Ini", value: todayOrders.length, sub: `${todayOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · ${todayOrders.filter(o => o.status === "COMPLETED").length} selesai`, color: cs.accent, icon: "📋", onClick: () => setActiveMenu("orders") },
         { label: "Invoice Unpaid", value: unpaidCount, sub: "Perlu follow-up", color: cs.yellow, icon: "🧾", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("UNPAID"); } },
-        { label: "Pendapatan Bln Ini", value: fmt(totalRevBulanIni), sub: "Invoice terbayar", color: cs.green, icon: "💰", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } },
+        ...(role === "Owner" ? [{ label: "Pendapatan Bln Ini", value: fmt(totalRevBulanIni), sub: "Invoice terbayar", color: cs.green, icon: "💰", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } }] : [{ label: "Invoice Selesai", value: invoicesData.filter(i => i.status === "PAID" && String(i.paid_at || "").startsWith(bulanIni)).length, sub: "Terbayar bln ini", color: cs.green, icon: "✅", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } }]),
         { label: "Stok Kritis", value: lowStock, sub: "Perlu restock", color: cs.red, icon: "📦", onClick: () => setActiveMenu("inventory") },
       ].map(kpi => (
         <div key={kpi.label} onClick={kpi.onClick} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 18, cursor: "pointer" }}>
@@ -264,8 +264,8 @@ return (
           {/* Header + filter tabs */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
             <div>
-              <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>📊 Statistik Tim & Omset</div>
-              <div style={{ fontSize: 11, color: cs.muted }}>{totalCount} transaksi terbayar</div>
+              <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>{role === "Owner" ? "📊 Statistik Tim & Omset" : "📊 Statistik Tim"}</div>
+              <div style={{ fontSize: 11, color: cs.muted }}>{role === "Owner" ? `${totalCount} transaksi terbayar` : `${todayOrders2.length} order hari ini`}</div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
               {["hari", "minggu", "bulan"].map(m => (
@@ -282,20 +282,22 @@ return (
             </div>
           </div>
 
-          {/* Total omset */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-            <div style={{ background: cs.green + "18", border: "1px solid " + cs.green + "33", borderRadius: 10, padding: "10px 14px" }}>
-              <div style={{ fontSize: 11, color: cs.muted }}>Total Omset</div>
-              <div style={{ fontWeight: 800, fontSize: 18, color: cs.green }}>{fmt(totalPeriod)}</div>
-            </div>
+          {/* Total omset — Owner only; Admin hanya lihat job count */}
+          <div style={{ display: "grid", gridTemplateColumns: role === "Owner" ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
+            {role === "Owner" && (
+              <div style={{ background: cs.green + "18", border: "1px solid " + cs.green + "33", borderRadius: 10, padding: "10px 14px" }}>
+                <div style={{ fontSize: 11, color: cs.muted }}>Total Omset</div>
+                <div style={{ fontWeight: 800, fontSize: 18, color: cs.green }}>{fmt(totalPeriod)}</div>
+              </div>
+            )}
             <div style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "10px 14px" }}>
               <div style={{ fontSize: 11, color: cs.muted }}>Job Hari Ini</div>
               <div style={{ fontWeight: 800, fontSize: 18, color: cs.accent }}>{todayOrders2.length} order</div>
             </div>
           </div>
 
-          {/* Bar chart omset */}
-          {data.length > 0 && totalPeriod > 0 && (
+          {/* Bar chart omset — Owner only */}
+          {role === "Owner" && data.length > 0 && totalPeriod > 0 && (
             <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 70, marginBottom: 12 }}>
               {data.map((d, i) => (
                 <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
@@ -345,8 +347,8 @@ return (
             </div>
           </div>
 
-          {/* Ranking omset per teknisi periode terpilih */}
-          {teamRanking.length > 0 && (
+          {/* Ranking omset per teknisi — Owner only */}
+          {role === "Owner" && teamRanking.length > 0 && (
             <div style={{ borderTop: "1px solid " + cs.border, paddingTop: 10 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 8 }}>
                 🏆 Omset {omsetView === "hari" ? "Hari Ini" : omsetView === "minggu" ? "Minggu Ini" : "Bulan Ini"} per Teknisi
@@ -513,8 +515,8 @@ return (
         ))}
       </div>
     </div>
-    {/* ── FINANCIAL ANALYTICS ── */}
-    {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (() => {
+    {/* ── FINANCIAL ANALYTICS — Owner only ── */}
+    {currentUser?.role === "Owner" && (() => {
       const now = new Date();
       const months = Array.from({ length: 6 }, (_, i) => {
         const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
@@ -701,6 +703,7 @@ return (
 
     {/* ── SIM-9: Performa Tim per Teknisi ── */}
     {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (() => {
+      const isOwner = currentUser?.role === "Owner";
       const allTekNames2 = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
       if (allTekNames2.length === 0) return null;
       const bulanIniPfx = new Date().toISOString().slice(0, 7);
@@ -735,7 +738,7 @@ return (
                     <div><span style={{ color: cs.muted }}>Laporan ✓</span><div style={{ fontWeight: 700, color: col }}>{lapVerif}</div></div>
                     <div><span style={{ color: cs.muted }}>Revisi</span><div style={{ fontWeight: 700, color: lapRevisi > 0 ? cs.yellow : cs.muted }}>{lapRevisi}</div></div>
                   </div>
-                  {revInvTek > 0 && (
+                  {isOwner && revInvTek > 0 && (
                     <div style={{ marginTop: 8, fontSize: 11, background: cs.green + "12", border: "1px solid " + cs.green + "22", borderRadius: 7, padding: "4px 8px", color: cs.green, fontWeight: 700 }}>
                       💰 Revenue: {fmt(revInvTek)}
                     </div>

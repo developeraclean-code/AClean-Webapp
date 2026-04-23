@@ -254,7 +254,7 @@ return (
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: isMobile ? 10 : 12 }}>
       {[
         { label: "Completion Rate", val: completionRate + "%", sub: ordersDone + "/" + ordersAll + " order", color: cs.green, icon: "✅" },
-        { label: "Avg. Order Value", val: fmt(avgOrderVal), sub: "per transaksi PAID", color: cs.accent, icon: "📋" },
+        ...(currentUser?.role === "Owner" ? [{ label: "Avg. Order Value", val: fmt(avgOrderVal), sub: "per transaksi PAID", color: cs.accent, icon: "📋" }] : []),
         { label: "Order " + periodLabel, val: ordersAll, sub: custBaru + " customer baru", color: cs.yellow, icon: "🗂️" },
       ].map(k => (
         <div key={k.label} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 16, textAlign: "center" }}>
