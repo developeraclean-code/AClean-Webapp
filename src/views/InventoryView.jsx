@@ -8,7 +8,9 @@ function InventoryView({
   inventoryData, searchInventory, setSearchInventory, inventoryPage, setInventoryPage,
   currentUser, supabase, fmt, showConfirm, showNotif,
   setModalStok, setEditStokItem, setNewStokForm, setModalEditStok, setInventoryData,
+  setModalRestock, setRestockItem, setRestockForm, TODAY,
 }) {
+  const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
   const filteredInvt = inventoryData.filter(item =>
     !searchInventory ||
     (item.name || "").toLowerCase().includes(searchInventory.toLowerCase()) ||
@@ -21,11 +23,14 @@ function InventoryView({
   const totPgInv = Math.ceil(filteredInvt.length / INV_PAGE_SIZE) || 1;
   const curPgInv = Math.min(inventoryPage, totPgInv);
   const pageInvt = filteredInvt.slice((curPgInv - 1) * INV_PAGE_SIZE, curPgInv * INV_PAGE_SIZE);
+
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>📦 Inventori Material</div>
-        <button onClick={() => setModalStok(true)} style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "9px 18px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>+ Tambah Material</button>
+        {isOwnerAdmin && (
+          <button onClick={() => setModalStok(true)} style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "9px 18px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>+ Tambah Material</button>
+        )}
       </div>
       <div style={{ position: "relative" }}>
         <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: cs.muted, pointerEvents: "none" }}>🔍</span>
@@ -59,31 +64,32 @@ function InventoryView({
                     <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: stC + "22", color: stC, border: "1px solid " + stC + "44", fontWeight: 700 }}>{item.status}</span>
                   </td>
                   <td style={{ padding: "9px 12px" }}>
-                    <div style={{ display: "flex", gap: 4 }}>
-                      {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-                        <button onClick={() => { setEditStokItem({ ...item }); setNewStokForm({ name: item.name, unit: item.unit, price: item.price, stock: item.stock, reorder: item.reorder, min_alert: item.min_alert }); setModalEditStok(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>✏️ Edit</button>
-                      )}
-                      {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                    {isOwnerAdmin ? (
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {/* Restock — tombol utama */}
+                        <button onClick={() => {
+                          setRestockItem(item);
+                          setRestockForm({ qty: "", harga: String(item.price || ""), tanggal: TODAY, keterangan: "", catetBiaya: true });
+                          setModalRestock(true);
+                        }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                          📥 Restock
+                        </button>
+                        <button onClick={() => { setEditStokItem({ ...item }); setNewStokForm({ name: item.name, unit: item.unit, price: item.price, stock: item.stock, reorder: item.reorder, min_alert: item.min_alert }); setModalEditStok(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>✏️</button>
                         <button onClick={async () => {
-                          if (!await showConfirm({
-                            icon: "🗑️", title: "Hapus Material?", danger: true,
-                            message: "Hapus material " + item.name + "? Tidak bisa dibatalkan.",
-                            confirmText: "Hapus"
-                          })) return;
+                          if (!await showConfirm({ icon: "🗑️", title: "Hapus Material?", danger: true, message: "Hapus material " + item.name + "? Tidak bisa dibatalkan.", confirmText: "Hapus" })) return;
                           const delQuery = item.id && !String(item.id).startsWith("INV")
                             ? supabase.from("inventory").delete().eq("id", item.id)
                             : supabase.from("inventory").delete().eq("code", item.code);
                           const { error } = await delQuery;
                           if (!error) {
                             setInventoryData(prev => prev.filter(i => i.id ? i.id !== item.id : i.code !== item.code));
-                            showNotif("🗑️ Material " + item.name + " dihapus dari DB");
+                            showNotif("🗑️ Material " + item.name + " dihapus");
                           } else showNotif("❌ Gagal hapus: " + error.message);
                         }} style={{ background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>🗑️</button>
-                      )}
-                      {currentUser?.role !== "Owner" && currentUser?.role !== "Admin" && (
-                        <span style={{ fontSize: 10, color: cs.muted, fontStyle: "italic" }}>—</span>
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: 10, color: cs.muted, fontStyle: "italic" }}>—</span>
+                    )}
                   </td>
                 </tr>
               );

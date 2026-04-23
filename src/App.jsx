@@ -631,6 +631,9 @@ export default function ACleanWebApp() {
   const [editTeknisi, setEditTeknisi] = useState(null);
   const [modalEditStok, setModalEditStok] = useState(false);
   const [editStokItem, setEditStokItem] = useState(null);
+  const [modalRestock, setModalRestock] = useState(false);
+  const [restockItem, setRestockItem] = useState(null);
+  const [restockForm, setRestockForm] = useState({ qty: "", harga: "", tanggal: "", keterangan: "", catetBiaya: true });
   const [modalBrainEdit, setModalBrainEdit] = useState(false);
 
   // ── Form laporan (teknisi) — v3 multi-unit ──
@@ -711,7 +714,7 @@ export default function ACleanWebApp() {
   const [invUnitsData, setInvUnitsData] = useState([]); // unit fisik per item (tabung/roll)
   const [showAddStock, setShowAddStock] = useState(false);
   const [newOrderForm, setNewOrderForm] = useState({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", date: "", time: "09:00", notes: "" });
-  const [newStokForm, setNewStokForm] = useState({ name: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" });
+  const [newStokForm, setNewStokForm] = useState({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" });
   const [newTeknisiForm, setNewTeknisiForm] = useState({ name: "", role: "Teknisi", phone: "", skills: [], email: "", password: "", buatAkun: false });
   const [modalAddCustomer, setModalAddCustomer] = useState(false);
   const [newCustomerForm, setNewCustomerForm] = useState({ name: "", phone: "", address: "", area: "", notes: "", is_vip: false });
@@ -4423,6 +4426,43 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 setExpensesData(prev => [expData || expPayload, ...prev]);
                 addAgentLog("ARA_EXPENSE", `ARA create expense: ${expPayload.subcategory} — Rp${expPayload.amount.toLocaleString("id-ID")} (${expPayload.date})`, "SUCCESS");
                 ar = `\n✅ *Biaya dicatat:*\n📂 ${expPayload.category === "material_purchase" ? "Pembelian Material" : "Petty Cash"} — ${expPayload.subcategory}\n💰 Rp${expPayload.amount.toLocaleString("id-ID")}\n📅 ${expPayload.date}${expPayload.description ? " — " + expPayload.description : ""}`;
+
+                // ── AUTO-LINK: material_purchase → update stok inventory ──
+                if (expPayload.category === "material_purchase") {
+                  const matQty = (() => {
+                    // Coba ekstrak qty dari item_name cth: "R32 2kg" → 2, "Pipa 10m" → 10
+                    const raw = (act.item_name || act.nama_barang || "");
+                    const m = raw.match(/(\d+(?:[.,]\d+)?)\s*(kg|m|roll|pcs|botol|unit|liter)/i);
+                    return m ? parseFloat(m[1].replace(",", ".")) : 1;
+                  })();
+                  // Cari item inventory yang cocok
+                  const _matchInv = (keyword) => inventoryData.find(i =>
+                    i.name.toLowerCase().includes(keyword.toLowerCase()) ||
+                    keyword.toLowerCase().includes(i.name.toLowerCase())
+                  );
+                  const matKeyword = act.item_name || act.freon_type
+                    ? (act.freon_type ? "Freon " + act.freon_type : act.item_name)
+                    : expPayload.subcategory;
+                  const matchedItem = matKeyword ? _matchInv(matKeyword) : null;
+
+                  if (matchedItem && matQty > 0) {
+                    const newStock = matchedItem.stock + matQty;
+                    const newStatus = computeStockStatus(newStock, matchedItem.reorder);
+                    setInventoryData(prev => prev.map(i => i.code === matchedItem.code ? { ...i, stock: newStock, status: newStatus } : i));
+                    await supabase.from("inventory_transactions").insert({
+                      inventory_code: matchedItem.code,
+                      inventory_name: matchedItem.name,
+                      qty: matQty,
+                      type: "restock",
+                      notes: `Auto dari expense ARA: ${expPayload.subcategory} (${expPayload.date})`,
+                      created_by: currentUser?.id || null,
+                      created_by_name: currentUser?.name || "ARA",
+                    }).catch(() => {});
+                    await supabase.from("inventory").update({ stock: newStock, updated_at: new Date().toISOString() }).eq("code", matchedItem.code).catch(() => {});
+                    addAgentLog("STOCK_AUTO_RESTOCK", `Auto restock ${matchedItem.name} +${matQty} ${matchedItem.unit} dari expense`, "SUCCESS");
+                    ar += `\n📦 *Stok auto-update:* ${matchedItem.name} +${matQty} ${matchedItem.unit} → ${newStock} ${matchedItem.unit}`;
+                  }
+                }
               }
             }
 
@@ -4632,7 +4672,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     <InventoryView inventoryData={inventoryData} searchInventory={searchInventory} setSearchInventory={setSearchInventory}
       inventoryPage={inventoryPage} setInventoryPage={setInventoryPage} currentUser={currentUser} supabase={supabase} fmt={fmt}
       showConfirm={showConfirm} showNotif={showNotif} setModalStok={setModalStok} setEditStokItem={setEditStokItem}
-      setNewStokForm={setNewStokForm} setModalEditStok={setModalEditStok} setInventoryData={setInventoryData} />
+      setNewStokForm={setNewStokForm} setModalEditStok={setModalEditStok} setInventoryData={setInventoryData}
+      setModalRestock={setModalRestock} setRestockItem={setRestockItem} setRestockForm={setRestockForm} TODAY={TODAY} />
   );
 
   // ============================================================
@@ -4917,7 +4958,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     <MatTrackView inventoryData={inventoryData} invUnitsData={invUnitsData} setInvUnitsData={setInvUnitsData} invTxData={invTxData}
       matTrackFilter={matTrackFilter} setMatTrackFilter={setMatTrackFilter} matTrackSearch={matTrackSearch} setMatTrackSearch={setMatTrackSearch}
       matTrackDateFrom={matTrackDateFrom} setMatTrackDateFrom={setMatTrackDateFrom} matTrackDateTo={matTrackDateTo} setMatTrackDateTo={setMatTrackDateTo}
-      setModalStok={setModalStok} supabase={supabase} fetchInventoryUnits={fetchInventoryUnits} showNotif={showNotif} />
+      setModalStok={setModalStok} supabase={supabase} fetchInventoryUnits={fetchInventoryUnits} showNotif={showNotif} currentUser={currentUser} />
   );
 
 
@@ -5673,48 +5714,116 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* ══════════════════════════════════════════════════════ */}
       {modalStok && (
         <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setModalStok(false)}>
-          <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 420, padding: 28 }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>📦 Tambah Material</div>
-              <button onClick={() => setModalStok(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+          <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 460, padding: 24, maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+              <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>📦 Tambah Material Baru</div>
+              <button onClick={() => { setModalStok(false); setNewStokForm({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" }); }} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
             </div>
             <div style={{ display: "grid", gap: 10 }}>
-              {[["Nama Material", "name", "text"], ["Satuan", "unit", "text"], ["Harga/Unit", "price", "number"], ["Stok Awal", "stock", "number"], ["Reorder Point", "reorder", "number"], ["Min Alert", "min_alert", "number"]].map(([label, key, type]) => (
-                <div key={key}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>{label}</div>
-                  <input type={type} value={newStokForm[key] || ""} onChange={e => setNewStokForm(f => ({ ...f, [key]: e.target.value }))}
+              {/* Nama + Kode berdampingan */}
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Nama Material <span style={{ color: cs.red }}>*</span></div>
+                  <input type="text" placeholder="cth: Freon R32, Pipa 1/4" value={newStokForm.name || ""} onChange={e => setNewStokForm(f => ({ ...f, name: e.target.value }))}
                     style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
                 </div>
-              ))}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginTop: 6 }}>
-                <button onClick={() => setModalStok(false)} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 700 }}>Batal</button>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Kode Manual</div>
+                  <input type="text" placeholder="cth: FRN-R32" value={newStokForm.code || ""} onChange={e => setNewStokForm(f => ({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9\-_]/g, "") }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "monospace" }} />
+                  <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>Kosong = auto</div>
+                </div>
+              </div>
+              {/* Tipe Material */}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>Tipe Material</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {[["freon","❄️ Freon"], ["pipa","🔧 Pipa"], ["kabel","⚡ Kabel"], ["sparepart","🔩 Sparepart"], ["other","📦 Lainnya"]].map(([val, lbl]) => (
+                    <button key={val} onClick={() => setNewStokForm(f => ({ ...f, material_type: val }))}
+                      style={{ padding: "5px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", border: "1px solid " + (newStokForm.material_type === val ? cs.accent : cs.border), background: newStokForm.material_type === val ? cs.accent + "22" : cs.surface, color: newStokForm.material_type === val ? cs.accent : cs.muted, fontWeight: newStokForm.material_type === val ? 700 : 400 }}>
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Satuan + Harga */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Satuan</div>
+                  <select value={newStokForm.unit || "pcs"} onChange={e => setNewStokForm(f => ({ ...f, unit: e.target.value }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none" }}>
+                    {["pcs","kg","m","roll","botol","set","liter","unit"].map(u => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga/Unit (Rp)</div>
+                  <input type="number" min="0" placeholder="0" value={newStokForm.price || ""} onChange={e => setNewStokForm(f => ({ ...f, price: e.target.value }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                </div>
+              </div>
+              {/* Stok aktual saat ini */}
+              <div style={{ background: cs.accent + "10", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent, marginBottom: 6 }}>📥 Stok Aktual Saat Ini (migrasi dari manual)</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Jumlah Stok Fisik</div>
+                    <input type="number" min="0" step={newStokForm.material_type === "freon" ? "0.1" : "1"} placeholder="0" value={newStokForm.stock || ""} onChange={e => setNewStokForm(f => ({ ...f, stock: e.target.value }))}
+                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Reorder Point</div>
+                    <input type="number" min="0" placeholder="5" value={newStokForm.reorder || ""} onChange={e => setNewStokForm(f => ({ ...f, reorder: e.target.value }))}
+                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: cs.muted, marginTop: 8 }}>
+                  Min Alert: <input type="number" min="0" placeholder="2" value={newStokForm.min_alert || ""} onChange={e => setNewStokForm(f => ({ ...f, min_alert: e.target.value }))}
+                    style={{ width: 60, background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, padding: "4px 8px", color: cs.text, fontSize: 12, outline: "none", marginLeft: 6 }} />
+                  <span style={{ marginLeft: 8 }}>{newStokForm.unit || "pcs"} (kirim WA alert)</span>
+                </div>
+              </div>
+              {/* Preview status */}
+              {(newStokForm.stock !== "" || newStokForm.reorder !== "") && (() => {
+                const s = parseFloat(newStokForm.stock) || 0;
+                const r = parseInt(newStokForm.reorder) || 5;
+                const st = computeStockStatus(s, r);
+                const stCol = st === "OK" ? cs.green : st === "OUT" ? cs.red : cs.yellow;
+                return (
+                  <div style={{ background: stCol + "12", border: "1px solid " + stCol + "33", borderRadius: 8, padding: "8px 12px", fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontWeight: 700, color: stCol }}>{st}</span>
+                    <span style={{ color: cs.muted }}>Stok {s} {newStokForm.unit || "pcs"} · Reorder saat &lt; {r}</span>
+                  </div>
+                );
+              })()}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginTop: 4 }}>
+                <button onClick={() => { setModalStok(false); setNewStokForm({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" }); }} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 700 }}>Batal</button>
                 <button onClick={async () => {
-                  // Validation
                   if (!validateNameLength(newStokForm.name)) { showNotif("❌ Nama material harus 2-100 karakter"); return; }
                   const stokAwal = parseFloat(newStokForm.stock) || 0;
                   if (stokAwal < 0) { showNotif("❌ Stok tidak boleh negatif"); return; }
                   const price = parseInt(newStokForm.price) || 0;
-                  if (price < 0 || price > 100000000) { showNotif("❌ Harga tidak valid (0-100juta)"); return; }
+                  if (price < 0 || price > 100000000) { showNotif("❌ Harga tidak valid"); return; }
                   const reorderPt = parseInt(newStokForm.reorder) || 5;
-                  if (reorderPt < 0) { showNotif("❌ Reorder point tidak boleh negatif"); return; }
                   const minAlert = parseInt(newStokForm.min_alert) || 2;
-                  if (minAlert < 0) { showNotif("❌ Min alert tidak boleh negatif"); return; }
-
-                  const newCode = "MAT" + Date.now().toString(36).slice(-4).toUpperCase();
+                  // Kode: manual jika diisi, auto-generate jika kosong
+                  const rawCode = (newStokForm.code || "").trim().toUpperCase();
+                  const codeExists = rawCode && inventoryData.some(i => i.code === rawCode);
+                  if (codeExists) { showNotif("❌ Kode " + rawCode + " sudah digunakan"); return; }
+                  const newCode = rawCode || ("MAT" + Date.now().toString(36).slice(-4).toUpperCase());
                   const stokStatus = computeStockStatus(stokAwal, reorderPt);
-                  const newItem = { code: newCode, name: newStokForm.name, unit: newStokForm.unit || "pcs", price, stock: stokAwal, reorder: reorderPt, min_alert: minAlert, status: stokStatus };
+                  const newItem = { code: newCode, name: newStokForm.name.trim(), unit: newStokForm.unit || "pcs", price, stock: stokAwal, reorder: reorderPt, min_alert: minAlert, status: stokStatus, material_type: newStokForm.material_type || "other" };
                   setInventoryData(prev => [...prev, newItem]);
-                  // Insert tanpa status — biarkan DB default, lalu update stock untuk trigger auto-status
                   const insertPayload = { ...newItem };
-                  delete insertPayload.status; // hindari check constraint — trigger set otomatis
+                  delete insertPayload.status;
                   const { error: invErr } = await supabase.from("inventory").insert(insertPayload);
                   if (!invErr && stokAwal > 0) {
-                    // Trigger inventory_auto_status hanya jalan saat UPDATE stock
                     await supabase.from("inventory").update({ stock: stokAwal }).eq("code", newCode);
+                    // Catat sebagai opening stock transaction
+                    await supabase.from("inventory_transactions").insert({ inventory_code: newCode, inventory_name: newItem.name, qty: stokAwal, type: "restock", notes: "Stok awal (migrasi manual)", created_by: currentUser?.id || null, created_by_name: currentUser?.name || "" }).catch(() => {});
                   }
                   if (invErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: " + invErr.message);
-                  else { addAgentLog("STOCK_ADDED", `Material baru: ${newStokForm.name} (stok: ${newStokForm.stock} ${newStokForm.unit || "pcs"})`, "SUCCESS"); showNotif("✅ Material " + (newStokForm.name || "baru") + " berhasil ditambah"); }
-                  setModalStok(false); setNewStokForm({ name: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" });
+                  else { addAgentLog("STOCK_ADDED", `Material baru: ${newItem.name} [${newCode}] stok: ${stokAwal} ${newItem.unit}`, "SUCCESS"); showNotif("✅ " + newItem.name + " ditambahkan [" + newCode + "]"); }
+                  setModalStok(false); setNewStokForm({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" });
                 }} style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>✓ Simpan Material</button>
               </div>
             </div>
@@ -5793,6 +5902,130 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     else { addAgentLog("STOCK_UPDATED", `Stok ${editStokItem.name}: ${editStokItem.stock}→${stokFinal} ${editStokItem.unit} (${statusBaru})`, "SUCCESS"); showNotif("✅ Stok " + editStokItem.name + " diupdate → " + stokFinal + " " + editStokItem.unit); }
                     setModalEditStok(false); setEditStokItem(null); setNewStokForm({ name: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "", tambah: "" });
                   }} style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>✓ Simpan Perubahan</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* MODAL — RESTOCK MATERIAL */}
+      {/* ══════════════════════════════════════════════════════ */}
+      {modalRestock && restockItem && (() => {
+        const isF = isFreonItem(restockItem);
+        const qtyNum = isF ? parseFloat(restockForm.qty) || 0 : parseInt(restockForm.qty) || 0;
+        const hargaNum = parseInt(restockForm.harga) || 0;
+        const totalBeli = qtyNum * hargaNum;
+        const stokBaru = restockItem.stock + qtyNum;
+        const closeRestock = () => { setModalRestock(false); setRestockItem(null); setRestockForm({ qty: "", harga: "", tanggal: TODAY, keterangan: "", catetBiaya: true }); };
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={closeRestock}>
+            <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 440, padding: 24 }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>📥 Restock Material</div>
+                  <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{restockItem.name} <span style={{ fontFamily: "monospace", fontSize: 10 }}>[{restockItem.code}]</span></div>
+                </div>
+                <button onClick={closeRestock} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+              </div>
+              {/* Stok sekarang */}
+              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", justifyContent: "space-between" }}>
+                <div><div style={{ fontSize: 11, color: cs.muted }}>Stok Sekarang</div><div style={{ fontWeight: 800, fontSize: 18, color: restockItem.status === "OUT" ? cs.red : restockItem.status === "CRITICAL" ? cs.yellow : cs.green }}>{restockItem.stock} {restockItem.unit}</div></div>
+                {qtyNum > 0 && <div style={{ textAlign: "right" }}><div style={{ fontSize: 11, color: cs.muted }}>Setelah Restock</div><div style={{ fontWeight: 800, fontSize: 18, color: cs.green }}>+{qtyNum} → {stokBaru} {restockItem.unit}</div></div>}
+              </div>
+              <div style={{ display: "grid", gap: 10 }}>
+                {/* Qty + Harga */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Qty Masuk ({restockItem.unit}) <span style={{ color: cs.red }}>*</span></div>
+                    <input type="number" min="0" step={isF ? "0.1" : "1"} autoFocus placeholder="0"
+                      value={restockForm.qty} onChange={e => setRestockForm(f => ({ ...f, qty: e.target.value }))}
+                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.green + "66", borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 14, outline: "none", boxSizing: "border-box", fontWeight: 700 }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga Beli/Unit (Rp)</div>
+                    <input type="number" min="0" placeholder={restockItem.price || "0"}
+                      value={restockForm.harga} onChange={e => setRestockForm(f => ({ ...f, harga: e.target.value }))}
+                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                </div>
+                {/* Total & tanggal */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Tanggal Beli</div>
+                    <input type="date" value={restockForm.tanggal} onChange={e => setRestockForm(f => ({ ...f, tanggal: e.target.value }))}
+                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", colorScheme: "dark" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Total Beli</div>
+                    <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", fontSize: 14, fontWeight: 800, color: totalBeli > 0 ? cs.green : cs.muted }}>
+                      {totalBeli > 0 ? "Rp" + totalBeli.toLocaleString("id-ID") : "—"}
+                    </div>
+                  </div>
+                </div>
+                {/* Keterangan */}
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Keterangan (opsional)</div>
+                  <input type="text" placeholder="cth: Beli di Toko Sejahtera, no faktur 001" value={restockForm.keterangan}
+                    onChange={e => setRestockForm(f => ({ ...f, keterangan: e.target.value }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                {/* Toggle: catat biaya otomatis */}
+                <div style={{ background: cs.green + "10", border: "1px solid " + cs.green + "33", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>💳 Catat ke Biaya Otomatis</div>
+                    <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Akan buat expense material_purchase sekaligus</div>
+                  </div>
+                  <button onClick={() => setRestockForm(f => ({ ...f, catetBiaya: !f.catetBiaya }))}
+                    style={{ width: 44, height: 24, borderRadius: 99, border: "none", cursor: "pointer", background: restockForm.catetBiaya ? cs.green : cs.border, transition: "background .2s", position: "relative", flexShrink: 0 }}>
+                    <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: restockForm.catetBiaya ? 23 : 3, transition: "left .2s" }} />
+                  </button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginTop: 4 }}>
+                  <button onClick={closeRestock} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 700 }}>Batal</button>
+                  <button onClick={async () => {
+                    if (qtyNum <= 0) { showNotif("❌ Qty harus lebih dari 0"); return; }
+                    // 1. Update stok inventory
+                    const newStatus = computeStockStatus(stokBaru, restockItem.reorder);
+                    setInventoryData(prev => prev.map(i => i.code === restockItem.code ? { ...i, stock: stokBaru, status: newStatus } : i));
+                    // Insert restock transaction
+                    await supabase.from("inventory_transactions").insert({
+                      inventory_code: restockItem.code,
+                      inventory_name: restockItem.name,
+                      qty: qtyNum,
+                      type: "restock",
+                      notes: restockForm.keterangan || ("Restock manual oleh " + (currentUser?.name || "Owner")),
+                      created_by: currentUser?.id || null,
+                      created_by_name: currentUser?.name || "",
+                    }).catch(() => {});
+                    // Update stock di DB
+                    const { error: invErr } = await supabase.from("inventory").update({ stock: stokBaru, updated_at: new Date().toISOString() }).eq("code", restockItem.code);
+                    if (invErr) showNotif("⚠️ Stok tersimpan lokal, sync DB gagal: " + invErr.message);
+                    // 2. Jika toggle aktif dan ada harga: buat expense material_purchase
+                    if (restockForm.catetBiaya && hargaNum > 0 && totalBeli > 0) {
+                      const subcat = isFreonItem(restockItem) ? "Freon" : restockItem.material_type === "pipa" ? "Pipa AC" : restockItem.material_type === "kabel" ? "Kabel" : "Material Lain";
+                      const expPayload = {
+                        category: "material_purchase",
+                        subcategory: subcat,
+                        amount: totalBeli,
+                        date: restockForm.tanggal || TODAY,
+                        description: restockForm.keterangan || `Restock ${restockItem.name} ${qtyNum} ${restockItem.unit}`,
+                        item_name: restockItem.name + " " + qtyNum + " " + restockItem.unit,
+                        freon_type: isFreonItem(restockItem) ? (restockItem.name.includes("R22") ? "R22" : restockItem.name.includes("R410") ? "R410A" : "R32") : null,
+                        created_by: currentUser?.name || "Owner",
+                        last_changed_by: currentUser?.name || "Owner",
+                      };
+                      const { error: expErr } = await supabase.from("expenses").insert(expPayload);
+                      if (expErr) showNotif("⚠️ Stok berhasil, expense gagal: " + expErr.message);
+                      else addAgentLog("RESTOCK_EXPENSE", `Restock ${restockItem.name} +${qtyNum} ${restockItem.unit} — Rp${totalBeli.toLocaleString("id-ID")} dicatat ke biaya`, "SUCCESS");
+                    }
+                    addAgentLog("STOCK_RESTOCK", `Restock ${restockItem.name}: +${qtyNum} → ${stokBaru} ${restockItem.unit}`, "SUCCESS");
+                    showNotif("✅ Restock " + restockItem.name + " +" + qtyNum + " " + restockItem.unit + (restockForm.catetBiaya && totalBeli > 0 ? " · biaya Rp" + totalBeli.toLocaleString("id-ID") + " dicatat" : ""));
+                    closeRestock();
+                  }} style={{ background: "linear-gradient(135deg," + cs.green + ",#10b981)", border: "none", color: "#fff", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>
+                    📥 Simpan Restock{restockForm.catetBiaya && totalBeli > 0 ? " + Catat Biaya" : ""}
+                  </button>
                 </div>
               </div>
             </div>
