@@ -2389,7 +2389,7 @@ ${photoPageHTML}
     // Admin: semua operasional + pricelist (kecuali settings & myreport)
     // Rule: Admin = input & edit only (NO delete)
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport", "deletedaudit"];
+      const adminBlocked = ["settings", "myreport", "deletedaudit", "monitoring", "agentlog"];
       return !adminBlocked.includes(menu);
     }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
