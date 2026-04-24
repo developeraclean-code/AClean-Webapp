@@ -214,6 +214,14 @@ function DeletedAuditView({ supabase }) {
     setLoading(true);
     setError(null);
     try {
+      // Cek session aktif sebelum query — audit_log & agent_logs butuh authenticated
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData?.session) {
+        setError("Session expired. Silakan logout dan login kembali untuk melihat data audit.");
+        setLoading(false);
+        return;
+      }
+
       const [deletedRes, highRiskRes] = await Promise.all([
         supabase
           .from("audit_log")
@@ -229,7 +237,13 @@ function DeletedAuditView({ supabase }) {
           .order("created_at", { ascending: false })
           .limit(500),
       ]);
-      if (deletedRes.error) throw new Error("audit_log: " + deletedRes.error.message);
+      if (deletedRes.error) {
+        if (deletedRes.error.code === "PGRST301" || deletedRes.error.message?.includes("JWT")) {
+          setError("Session expired. Silakan logout dan login kembali.");
+          return;
+        }
+        throw new Error("audit_log: " + deletedRes.error.message);
+      }
       if (highRiskRes.error) throw new Error("agent_logs: " + highRiskRes.error.message);
       setDeletedRows(deletedRes.data || []);
       setHighRiskLogs(highRiskRes.data || []);
@@ -238,7 +252,7 @@ function DeletedAuditView({ supabase }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [supabase]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
