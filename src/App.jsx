@@ -7355,9 +7355,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const isEditMode = !!(newUserForm.id && isUUID(newUserForm.id));
 
         const callManageUser = async (body) => {
+          // Ambil JWT dari Supabase session aktif — lebih reliable dari currentUser state
+          // yang bisa null saat session expire tapi UI belum redirect
+          let callerToken = "";
+          try {
+            const { data: sessionData } = await supabase.auth.getSession();
+            callerToken = sessionData?.session?.access_token || "";
+          } catch (_) {}
           const res = await fetch("/api/manage-user", {
             method: "POST",
-            headers: _apiHeaders(),
+            headers: { ..._apiHeaders(), ...(callerToken ? { "X-Caller-Token": callerToken } : {}) },
             body: JSON.stringify({ ...body, callerRole: currentUser?.role || "" })
           });
           return res.json();
