@@ -241,10 +241,10 @@ export default async function handler(req, res) {
                     try {
                       const [invRes, ordRes] = await Promise.all([
                         fetch(SU + "/rest/v1/invoices?select=id,total,status,order_id&phone=eq." + encodeURIComponent(sender) +
-                          "&status=in.(UNPAID,OVERDUE)&order=created_at.desc&limit=1",
+                          "&order=created_at.desc&limit=1",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
                         fetch(SU + "/rest/v1/orders?select=id,status&phone=eq." + encodeURIComponent(sender) +
-                          "&status=in.(PENDING,CONFIRMED,IN_PROGRESS)&order=created_at.desc&limit=1",
+                          "&order=created_at.desc&limit=1",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } })
                       ]);
                       if (invRes.ok) {
@@ -397,11 +397,10 @@ export default async function handler(req, res) {
                       // Cari invoice UNPAID/OVERDUE by phone
                       const [invRes2, ordRes] = await Promise.all([
                         fetch(SU + "/rest/v1/invoices?select=id,total,status,order_id&phone=eq." + encodeURIComponent(sender) +
-                          "&status=in.(UNPAID,OVERDUE)&order=created_at.desc&limit=1",
+                          "&order=created_at.desc&limit=1",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
-                        // Cari order aktif by phone sebagai fallback link
                         fetch(SU + "/rest/v1/orders?select=id,status&phone=eq." + encodeURIComponent(sender) +
-                          "&status=in.(PENDING,CONFIRMED,IN_PROGRESS)&order=created_at.desc&limit=1",
+                          "&order=created_at.desc&limit=1",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } })
                       ]);
                       if (invRes2.ok) {
