@@ -62,7 +62,10 @@ function UserManagementPanel({ userAccounts, setUserAccounts, setTeknisiData, cu
     const label = willActivate ? "Aktifkan" : "Nonaktifkan";
     const ok = await showConfirm({ icon: willActivate ? "🔓" : "🔒", title: label + " akun?", danger: !willActivate, message: `${label} akun ${u.name}?\n${willActivate ? "User bisa login kembali." : "User tidak bisa login sampai diaktifkan."}`, confirmText: label });
     if (!ok) return;
-    const res = await fetch("/api/manage-user", { method: "POST", headers: _apiHeaders(), body: JSON.stringify({ action: "toggle-active", userId: u.id, active: willActivate }) });
+    const callerRole = currentUser?.role || (() => {
+      try { return JSON.parse(localStorage.getItem("localSession") || "{}")?.role || ""; } catch { return ""; }
+    })();
+    const res = await fetch("/api/manage-user", { method: "POST", headers: _apiHeaders(), body: JSON.stringify({ action: "toggle-active", userId: u.id, active: willActivate, callerRole }) });
     const data = await res.json();
     if (!data.ok) { showNotif("⚠️ " + (data.error || "Gagal")); return; }
     setUserAccounts(prev => prev.map(acc => acc.id === u.id ? { ...acc, active: willActivate } : acc));

@@ -7355,10 +7355,17 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const isEditMode = !!(newUserForm.id && isUUID(newUserForm.id));
 
         const callManageUser = async (body) => {
+          let resolvedRole = currentUser?.role || "";
+          if (!resolvedRole) {
+            try {
+              const saved = JSON.parse(localStorage.getItem("localSession") || "{}");
+              resolvedRole = saved?.role || "";
+            } catch {}
+          }
           const res = await fetch("/api/manage-user", {
             method: "POST",
             headers: _apiHeaders(),
-            body: JSON.stringify({ ...body, callerRole: currentUser?.role || "" })
+            body: JSON.stringify({ ...body, callerRole: resolvedRole })
           });
           return res.json();
         };
