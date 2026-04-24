@@ -1,7 +1,8 @@
 // api/[route].js - AClean Unified API Router
 import { setCorsHeaders, checkRateLimit, validateInternalToken } from "./_auth.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "upload-foto", "monitor"];
+// upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config"];
 
 // ── VALIDATION HELPERS ──
 function validateAndNormalizePhone(phone) {
@@ -735,10 +736,8 @@ export default async function handler(req, res) {
         } catch(e) { return res.status(200).json({ ok:false, provider: "groq", error:e.message }); }
       }
 
-      return res.status(200).json({
-        ok: true, success: true, service: "AClean API",
-        env: { fonnte: !!process.env.FONNTE_TOKEN, llm_key: !!process.env.LLM_API_KEY, minimax: !!process.env.MINIMAX_API_KEY, groq: !!process.env.GROQ_API_KEY, cloudflare: !!process.env.CLOUDFLARE_API_TOKEN, owner_phone: !!process.env.OWNER_PHONE, supabase: !!process.env.SUPABASE_SERVICE_KEY }
-      });
+      // Jangan ekspos detail service yang aktif ke public endpoint
+      return res.status(200).json({ ok: true, success: true, service: "AClean API" });
     }
 
     // ── UPLOAD-FOTO ──
@@ -1158,7 +1157,24 @@ export default async function handler(req, res) {
       const SK = process.env.SUPABASE_SERVICE_KEY;
       if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
 
-      const { action, userId, name, email, password, role, phone } = req.body || {};
+      // ── Role check: verifikasi caller adalah Owner atau Admin ──
+      // Ambil callerUserId dari body (dikirim frontend saat memanggil endpoint ini)
+      const { action, userId, name, email, password, role, phone, callerUserId } = req.body || {};
+      if (!callerUserId) return res.status(403).json({ error: "Forbidden: callerUserId wajib disertakan" });
+
+      const callerRes = await fetch(SU + "/rest/v1/user_profiles?id=eq." + callerUserId + "&select=role", {
+        headers: { apikey: SK, Authorization: "Bearer " + SK }
+      });
+      const callerData = await callerRes.json();
+      const callerRole = callerData?.[0]?.role;
+      if (!["Owner", "Admin"].includes(callerRole)) {
+        return res.status(403).json({ error: "Forbidden: hanya Owner/Admin yang bisa manage user" });
+      }
+      // Admin tidak boleh create/delete/toggle user Owner
+      const isOwnerAction = role === "Owner" || (action === "delete" && callerRole === "Admin");
+      if (callerRole === "Admin" && isOwnerAction) {
+        return res.status(403).json({ error: "Forbidden: Admin tidak bisa kelola akun Owner" });
+      }
       const adminUrl = SU + "/auth/v1/admin/users";
       const headers = { apikey: SK, Authorization: "Bearer " + SK, "Content-Type": "application/json" };
 

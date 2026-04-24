@@ -1633,7 +1633,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       </tr>
     </thead>
     <tbody>
-      ${(inv.labor > 0 && matDetails.length === 0) ? '<tr><td>' + ((inv.service || "Jasa Servis AC") + (inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? " (Garansi Jasa Gratis)" : "")) + '</td><td style="text-align:center">' + (inv.units || 1) + '</td><td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td><td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor || 0).toLocaleString("id-ID") + '</td></tr>' : ""}
+      ${(inv.labor > 0 && matDetails.length === 0) ? '<tr><td>' + escHtml((inv.service || "Jasa Servis AC") + (inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? " (Garansi Jasa Gratis)" : "")) + '</td><td style="text-align:center">' + (inv.units || 1) + '</td><td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td><td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor || 0).toLocaleString("id-ID") + '</td></tr>' : ""}
 ${matRowsHtml}
       ${(inv.dadakan > 0) ? '<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>' : ""}
       <tr class="total-row">
@@ -7393,7 +7393,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const isEditMode = !!(newUserForm.id && isUUID(newUserForm.id));
 
         const callManageUser = async (body) => {
-          const res = await fetch("/api/manage-user", { method: "POST", headers: _apiHeaders(), body: JSON.stringify(body) });
+          // Sertakan callerUserId agar backend bisa verifikasi role caller
+          const res = await fetch("/api/manage-user", {
+            method: "POST",
+            headers: _apiHeaders(),
+            body: JSON.stringify({ ...body, callerUserId: currentUser?.id })
+          });
           return res.json();
         };
 

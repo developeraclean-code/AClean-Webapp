@@ -55,12 +55,25 @@ export function validateInternalToken(req, res) {
   }
 
   const token = req.headers["x-internal-token"] || req.headers["x-api-key"];
-  console.log("[SEC-02] token received length:", token?.length ?? 0, "| secret length:", secret?.length ?? 0, "| match:", token === secret);
-  if (!token || token !== secret) {
-    res.status(401).json({
-      error: "Unauthorized",
-      message: "Missing or invalid X-Internal-Token header"
-    });
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized", message: "Missing X-Internal-Token header" });
+    return false;
+  }
+
+  // Timing-safe comparison — mencegah timing side-channel attack
+  let match = false;
+  try {
+    const { timingSafeEqual } = require("crypto");
+    const tokenBuf  = Buffer.from(token,  "utf-8");
+    const secretBuf = Buffer.from(secret, "utf-8");
+    match = tokenBuf.length === secretBuf.length && timingSafeEqual(tokenBuf, secretBuf);
+  } catch {
+    // Fallback jika crypto tidak tersedia (seharusnya tidak terjadi di Node.js)
+    match = token === secret;
+  }
+
+  if (!match) {
+    res.status(401).json({ error: "Unauthorized", message: "Invalid X-Internal-Token" });
     return false;
   }
   return true;

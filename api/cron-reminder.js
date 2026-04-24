@@ -332,7 +332,19 @@ export default async function handler(req, res) {
   const auth   = req.headers.authorization || "";
   const secret = process.env.CRON_SECRET;
   if (!secret) return res.status(500).json({error:"CRON_SECRET not configured"});
-  if (auth !== `Bearer ${secret}`) return res.status(401).json({error:"Unauthorized"});
+
+  // Timing-safe comparison untuk CRON_SECRET
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  let cronMatch = false;
+  try {
+    const { timingSafeEqual } = require("crypto");
+    const tBuf = Buffer.from(token,  "utf-8");
+    const sBuf = Buffer.from(secret, "utf-8");
+    cronMatch = tBuf.length === sBuf.length && timingSafeEqual(tBuf, sBuf);
+  } catch {
+    cronMatch = token === secret;
+  }
+  if (!cronMatch) return res.status(401).json({error:"Unauthorized"});
 
   const task = req.query.task || "reminder";
 
