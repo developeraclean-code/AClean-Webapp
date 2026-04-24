@@ -2935,7 +2935,7 @@ ${photoPageHTML}
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") {
           console.warn("⚠️ RT invoices error — fallback polling aktif");
-          // Polling manual setiap 30 detik
+          // Polling manual setiap 60 detik (Opsi-A: hemat koneksi)
           if (window._rtPoll_1617) clearInterval(window._rtPoll_1617);
           window._rtPoll_1617 = setInterval(() => fetchInvoices(supabase)
             .then(({ data }) => {
@@ -2943,7 +2943,7 @@ ${photoPageHTML}
                 ...inv,
                 materials_detail: (() => { const md = inv.materials_detail; if (!md) return []; if (Array.isArray(md)) return md; try { return JSON.parse(md); } catch (_) { return []; } })()
               })));
-            }), 30000);
+            }), 60000);
         }
       });
 
@@ -2991,7 +2991,7 @@ ${photoPageHTML}
                 });
                 setLaporanReports(Array.from(dm.values()));
               }
-            }), 30000);
+            }), 60000);
         }
       });
 
