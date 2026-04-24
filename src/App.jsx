@@ -2664,11 +2664,8 @@ ${photoPageHTML}
           if (!expRes.error && expRes.data) setExpensesData(expRes.data);
         } catch (e) { /* tabel belum ada, skip */ }
 
-        // ── Auto-cleanup: hapus agent_logs > 90 hari ──
-        try {
-          const d90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-          await supabase.from("agent_logs").delete().lt("created_at", d90);
-        } catch (e) { /* skip jika gagal */ }
+        // ── Auto-cleanup agent_logs > 90 hari: dilakukan oleh cron backend,
+        //    bukan frontend — setelah RLS fix, anon/authenticated tidak bisa DELETE ──
 
         // GAP 3: Load payments summary & dispatch recent (untuk dashboard)
         try {

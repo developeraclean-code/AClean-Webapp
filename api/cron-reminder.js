@@ -263,6 +263,12 @@ async function taskCleanup() {
     deleted += fotos.length;
   }
   await log("CLEANUP_FOTOS",`${deleted} foto ref dihapus, ${r2deleted} file R2 deleted dari ${old?.length||0} laporan`);
+
+  // Cleanup agent_logs > 90 hari (dipindah dari frontend ke sini setelah RLS fix)
+  const cutoff90 = new Date(Date.now() - 90 * 86400000).toISOString();
+  const { error: logDelErr } = await sb.from("agent_logs").delete().lt("created_at", cutoff90);
+  if (logDelErr) console.error("[CLEANUP_AGENT_LOGS]", logDelErr.message);
+
   return { deleted, r2deleted, reports: old?.length||0 };
 }
 
