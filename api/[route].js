@@ -273,6 +273,7 @@ export default async function handler(req, res) {
                         + (extracted.amount ? "Nominal: Rp" + Number(extracted.amount).toLocaleString("id-ID") + "\n" : "")
                         + (extracted.bank ? "Bank: " + extracted.bank + "\n" : "")
                         + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + "\n" : "")
+                        + (matchedOrderId ? "Order: " + matchedOrderId + "\n" : "")
                         + "\nPesan: \"" + message.slice(0,100) + "\"\n\n_Cek & konfirmasi di menu Invoice → WA Monitor_";
                       fetch("https://api.fonnte.com/send", {
                         method: "POST",
@@ -434,6 +435,7 @@ export default async function handler(req, res) {
                         + (classified.amount ? "Nominal: Rp" + Number(classified.amount).toLocaleString("id-ID") + "\n" : "")
                         + (classified.bank ? "Bank: " + classified.bank + "\n" : "")
                         + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + "\n" : "")
+                        + (matchedOrderId ? "Order: " + matchedOrderId + "\n" : "")
                         + "\n_Foto tersimpan. Cek & konfirmasi di menu Invoice → WA Monitor_";
                       fetch("https://api.fonnte.com/send", {
                         method: "POST",

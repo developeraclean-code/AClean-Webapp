@@ -2995,55 +2995,11 @@ ${photoPageHTML}
         }
       });
 
-    // CH4: Price list — kritis untuk ARA
-    const ch4 = supabase.channel("rt-pricelist")
-      .on("postgres_changes", { event: "*", schema: "public", table: "price_list" }, () =>
-        rtDebounced("pricelist", () =>
-          fetchPriceList(supabase).then(({ data }) => {
-              if (data) {
-                setPriceListData(data);
-                const activePL = data.filter(r => r.is_active !== false);
-                PRICE_LIST = buildPriceListFromDB(activePL);
-                setPriceListSyncedAt(new Date());
-              }
-            })
-        ))
-      .subscribe((status) => {
-        if (status === "CHANNEL_ERROR") {
-          console.warn("⚠️ RT pricelist error — fallback polling aktif");
-          if (window._rtPoll_1673) clearInterval(window._rtPoll_1673);
-          window._rtPoll_1673 = setInterval(() => fetchPriceList(supabase)
-            .then(({ data }) => {
-              if (data) {
-                setPriceListData(data);
-                PRICE_LIST = buildPriceListFromDB(data.filter(r => r.is_active !== false));
-              }
-            }), 60000);
-        }
-      });
+    // CH4–CH6 dihapus (Opsi-A): pricelist, inventory, customers tidak butuh realtime ketat.
+    // Data di-refresh otomatis setiap 30 menit via _statsTimer, cukup untuk use case bisnis.
 
-    // CH5: Inventory — polling manual lebih aman (tidak perlu realtime ketat)
-    const ch5 = supabase.channel("rt-inventory")
-      .on("postgres_changes", { event: "*", schema: "public", table: "inventory" }, () =>
-        rtDebounced("inventory", () =>
-          fetchInventory(supabase).then(({ data }) => { if (data) setInventoryData(data); })
-        ))
-      .subscribe((status) => {
-        if (status === "CHANNEL_ERROR") console.warn("⚠️ RT inventory error — skip");
-      });
-
-    // CH6: Customers
-    const ch6 = supabase.channel("rt-customers")
-      .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, () =>
-        rtDebounced("customers", () =>
-          fetchCustomers(supabase).then(({ data }) => { if (data) setCustomersData(data); })
-        ))
-      .subscribe((status) => {
-        if (status === "CHANNEL_ERROR") console.warn("⚠️ RT customers error — skip");
-      });
-
-    // CH7 & CH8: WA tables — opsional, skip gracefully jika tabel tidak ada
-    let ch7 = null, ch8 = null, ch9 = null;
+    // CH7 & CH8: WA tables — pertahankan, dikelola terpisah nanti
+    let ch7 = null, ch8 = null;
     try {
       ch7 = supabase.channel("rt-wa-conv")
         .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, () =>
@@ -3068,31 +3024,40 @@ ${photoPageHTML}
         .subscribe((status) => {
           if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_messages — tabel mungkin belum ada");
         });
-      ch9 = supabase.channel("rt-payment-suggest")
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "payment_suggestions" }, (payload) => {
-          if (payload.new?.status === "PENDING") {
-            setPaymentSuggestions(prev => [payload.new, ...prev]);
-            setPaymentSuggestBanner(payload.new);
-            showNotif("💳 Bukti bayar masuk dari " + (payload.new.sender_name || payload.new.phone), true);
-          }
-        })
-        .subscribe((status) => {
-          if (status === "CHANNEL_ERROR") console.warn("⚠️ RT payment_suggestions — tabel mungkin belum ada, skip");
-        });
     } catch (e) {
       console.warn("WA realtime channels skip:", e?.message);
     }
 
+    // Payment suggestions — polling ringan 30 detik, lebih hemat dari realtime channel
+    const _payPoll = setInterval(() => {
+      const { fetchPendingPaymentSuggestions } = require ? null : null; // guard
+      supabase.from("payment_suggestions").select("*").eq("status", "PENDING")
+        .order("created_at", { ascending: false }).limit(20)
+        .then(({ data }) => {
+          if (!data) return;
+          setPaymentSuggestions(data);
+          // Cek apakah ada entry baru (lebih baru dari 35 detik lalu)
+          const newest = data[0];
+          if (newest) {
+            const age = Date.now() - new Date(newest.created_at).getTime();
+            if (age < 35000) {
+              setPaymentSuggestBanner(newest);
+              showNotif("💳 Bukti bayar masuk dari " + (newest.sender_name || newest.phone), true);
+            }
+          }
+        });
+    }, 30000);
+
     return () => {
-      // A.5 OPTIMIZATION: Clear polling intervals untuk prevent memory leak
       clearInterval(window._rtPoll_1617); delete window._rtPoll_1617;
       clearInterval(window._rtPoll_1645); delete window._rtPoll_1645;
       clearInterval(window._rtPoll_1673); delete window._rtPoll_1673;
+      clearInterval(_payPoll);
 
       clearTimeout(autoVerifyTimer);
       clearInterval(_statsTimer);
       if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
-      [ch1, ch2, ch3, ch4, ch5, ch6, ch7, ch8, ch9].forEach(ch => {
+      [ch1, ch2, ch3, ch7, ch8].forEach(ch => {
         try { if (ch) supabase.removeChannel(ch); } catch (_) { }
       });
     };
