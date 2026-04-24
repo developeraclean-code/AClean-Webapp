@@ -851,8 +851,8 @@ export default function ACleanWebApp() {
   // ── LLM Settings: Load from backend endpoint instead of localStorage ──
   // SECURITY FIX: Never store API keys in localStorage
   // Backend endpoint /api/get-llm-config returns available providers & default
-  const [llmProvider, setLlmProvider] = useState(() => _ls("llmProvider", "minimax"));
-  const [llmModel, setLlmModel] = useState(() => { const p = _ls("llmProvider", "minimax"); const m = _ls("llmModel", ""); if (m) return m; return p === "claude" ? "claude-haiku-4-5" : "MiniMax-M2.5"; });
+  const [llmProvider, setLlmProvider] = useState(() => _ls("llmProvider", "claude"));
+  const [llmModel, setLlmModel] = useState(() => { const p = _ls("llmProvider", "claude"); const m = _ls("llmModel", ""); if (m) return m; return p === "minimax" ? "MiniMax-M2.5" : "claude-haiku-4-5-20251001"; });
   const [llmConfig, setLlmConfig] = useState(null); // stores backend response
   const [availableProviders, setAvailableProviders] = useState([]);
   const [ollamaUrl, setOllamaUrl] = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
@@ -2683,20 +2683,20 @@ ${photoPageHTML}
           if (!setRes.error && setRes.data) {
             const sMap = Object.fromEntries(setRes.data.map(s => [s.key, s.value]));
             // ── FIXED: Load dari DB dan LOG untuk debugging ──
-            // PRIORITAS: DB > localStorage > default "minimax"
+            // PRIORITAS: DB > localStorage > default "claude"
             const VALID_PROVIDERS = ["minimax", "claude", "openai", "groq", "ollama"];
             const currentLS = _ls("llmProvider", null);
             console.log("[Settings] DEBUG — localStorage llmProvider:", currentLS, "DB llm_provider:", sMap.llm_provider);
 
             const dbProvider = sMap.llm_provider;
             // Model default per provider — harus konsisten dengan LLM_PROVIDERS di SettingsView
-            const DEFAULT_MODEL = { minimax: "MiniMax-M2.5", claude: "claude-haiku-4-5" };
-            const resolvedProvider = (dbProvider && VALID_PROVIDERS.includes(dbProvider)) ? dbProvider : "minimax";
+            const DEFAULT_MODEL = { minimax: "MiniMax-M2.5", claude: "claude-haiku-4-5-20251001" };
+            const resolvedProvider = (dbProvider && VALID_PROVIDERS.includes(dbProvider)) ? dbProvider : "claude";
             setLlmProvider(resolvedProvider);
             _lsSave("llmProvider", resolvedProvider);
             // Model: pakai DB jika ada & valid, otherwise auto-set sesuai provider
             const dbModel = sMap.llm_model;
-            const validModel = dbModel && !dbModel.includes("gemini") ? dbModel : DEFAULT_MODEL[resolvedProvider] || "MiniMax-M2.5";
+            const validModel = dbModel && !dbModel.includes("gemini") ? dbModel : DEFAULT_MODEL[resolvedProvider] || "claude-haiku-4-5-20251001";
             setLlmModel(validModel);
             _lsSave("llmModel", validModel);
             // Load wa_provider (WhatsApp provider) from DB — global setting for Owner/Admin
@@ -3846,10 +3846,10 @@ ${photoPageHTML}
         throw new Error("Brain data not found in database");
       }
 
-      // Test connection with Minimax — backend requires messages array
+      // Test connection — backend requires messages array
       const testPayload = {
-        provider: "minimax",
-        model: "MiniMax-M2.5",
+        provider: llmProvider || "claude",
+        model: llmModel || "claude-haiku-4-5-20251001",
         messages: [{ role: "user", content: "Halo, test koneksi." }],
         bizContext: {},
         brainMd: brainMap.brain_md.slice(0, 300),

@@ -202,7 +202,15 @@ function SettingsView({
   // Model dibatasi 1 per provider — otomatis terset saat ganti provider
   const LLM_PROVIDERS = [
     {
-      id: "minimax", label: "Minimax", icon: "🟦", default: true,
+      id: "claude", label: "Anthropic Claude", icon: "🟣", default: true,
+      defaultModel: "claude-haiku-4-5-20251001",
+      models: ["claude-haiku-4-5-20251001"],
+      fields: [{ k: "key", label: "API Key", ph: "sk-ant-api03-...", t: "password" }],
+      guide: ["Buka console.anthropic.com", "API Keys → Create Key", "Copy key, paste di sini"],
+      note: "Default ARA Brain · claude-haiku-4-5-20251001 — cepat & hemat kredit",
+    },
+    {
+      id: "minimax", label: "Minimax", icon: "🟦", default: false,
       defaultModel: "MiniMax-M2.5",
       models: ["MiniMax-M2.5"],
       fields: [
@@ -210,15 +218,7 @@ function SettingsView({
         { k: "group_id", label: "Group ID", ph: "1234567890" },
       ],
       guide: ["Buka platform.minimaxi.com", "API → API Keys → Create", "Copy API Key & Group ID, paste di sini"],
-      note: "Default ARA Brain · MiniMax-M2.5",
-    },
-    {
-      id: "claude", label: "Anthropic Claude", icon: "🟣", default: false,
-      defaultModel: "claude-haiku-4-5",
-      models: ["claude-haiku-4-5"],
-      fields: [{ k: "key", label: "API Key", ph: "sk-ant-api03-...", t: "password" }],
-      guide: ["Buka console.anthropic.com", "API Keys → Create Key", "Copy key, paste di sini"],
-      note: "claude-haiku-4-5 — cepat & hemat kredit",
+      note: "MiniMax-M2.5",
     },
   ];
 
@@ -354,7 +354,7 @@ function SettingsView({
       {/* ── ADMIN: info read-only, tidak bisa ubah provider ── */}
       {currentUser?.role === "Admin" && (() => {
         const providerLabel = llmProvider === "minimax" ? "Minimax" : llmProvider === "claude" ? "Anthropic Claude" : llmProvider;
-        const modelLabel = llmModel || (llmProvider === "minimax" ? "MiniMax-M2.5" : "claude-haiku-4-5");
+        const modelLabel = llmModel || (llmProvider === "minimax" ? "MiniMax-M2.5" : "claude-haiku-4-5-20251001");
         return (
           <Card>
             <CardHeader icon="🤖" title="ARA Brain — Status" subtitle="Provider & model diatur oleh Owner"

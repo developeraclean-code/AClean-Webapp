@@ -182,8 +182,8 @@ export default async function handler(req, res) {
     }
     if (process.env.OPENAI_API_KEY) return "openai";
     if (process.env.GROQ_API_KEY) return "groq";
-    console.log(`[ARA-CHAT] Last resort: ${rawProvider||"minimax"}`);
-    return rawProvider || "minimax";
+    console.log(`[ARA-CHAT] Last resort: ${rawProvider||"claude"}`);
+    return rawProvider || "claude";
   };
   const provider = detectProvider();
   if (!messages?.length) return res.status(400).json({error:"messages wajib diisi"});
@@ -204,7 +204,7 @@ export default async function handler(req, res) {
     } catch(primErr) {
       console.warn(`⚠️ ${provider} failed, trying fallback...`, primErr.message);
       // Fallback chain: try other providers if primary fails
-      const fallbackOrder = provider==="minimax" ? ["claude","openai","groq"] : ["minimax","claude","openai","groq"];
+      const fallbackOrder = provider==="claude" ? ["minimax","openai","groq"] : ["claude","minimax","openai","groq"];
       for (const fbProvider of fallbackOrder) {
         if (fbProvider === provider) continue; // skip primary
         try {

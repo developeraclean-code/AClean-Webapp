@@ -998,7 +998,7 @@ export default async function handler(req, res) {
 
       // Determine default provider based on what's actually available
       // Priority: claude > openai > minimax > groq > first available
-      let defaultProvider = "minimax"; // fallback default
+      let defaultProvider = "claude"; // fallback default
       if (process.env.ANTHROPIC_API_KEY) {
         defaultProvider = "claude";
       } else if (process.env.OPENAI_API_KEY) {
