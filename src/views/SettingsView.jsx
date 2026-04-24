@@ -659,6 +659,7 @@ function SettingsView({
             { key: "wa_forward_to_owner", label: "Forward ke Owner", desc: "Teruskan semua pesan WA masuk ke nomor Owner sebagai notifikasi", icon: "📨" },
             { key: "wa_chatbot_enabled", label: "ARA Chatbot Customer", desc: "ARA balas WA customer secara AI (terima order, info harga, komplain). Keyword auto-reply tetap jadi fallback jika ARA gagal.", icon: "🧠" },
             { key: "wa_payment_detect", label: "Deteksi Bukti Bayar", desc: "Deteksi otomatis pesan/foto bukti transfer dari customer, beri notif konfirmasi ke admin", icon: "💳" },
+            { key: "wa_cleanup_enabled", label: "Auto-Cleanup Chat (14 Hari)", desc: "Hapus otomatis riwayat chat WA yang lebih dari 14 hari. Phone dengan bukti bayar PENDING tetap dilindungi.", icon: "🗑️" },
           ].map(({ key, label, desc, icon }) => {
             const isOn = appSettings[key] === "true";
             return (

@@ -270,6 +270,14 @@ async function taskCleanup() {
 // TASK 5: Cleanup WA chat lama (>14 hari)
 // ══════════════════════════════════════════════════
 async function taskWaCleanup() {
+  // Cek toggle — bisa dimatikan via Settings
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["wa_cleanup_enabled"]);
+  const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
+  if (togMap.wa_cleanup_enabled === "false") {
+    await log("WA_CLEANUP", "Dilewati — WA Auto-Cleanup dinonaktifkan via Settings", "INFO");
+    return { skipped: true };
+  }
+
   const cutoff = new Date(Date.now() - 14 * 86400000).toISOString();
 
   // Hapus wa_messages lama — kecuali yang masih ada payment_suggestions PENDING terkait

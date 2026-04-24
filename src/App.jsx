@@ -812,6 +812,9 @@ export default function ACleanWebApp() {
     wa_autoreply_enabled: "false",
     ara_training_rules: "",
     wa_forward_to_owner: "true",
+    wa_chatbot_enabled: "false",
+    wa_payment_detect: "true",
+    wa_cleanup_enabled: "true",
     foto_compression_quality: "0.70", // 30%-100%, default 70%
   });
 
@@ -2718,6 +2721,7 @@ ${photoPageHTML}
               wa_forward_to_owner: sMap.wa_forward_to_owner ?? prev.wa_forward_to_owner,
               wa_chatbot_enabled: sMap.wa_chatbot_enabled ?? prev.wa_chatbot_enabled ?? "false",
               wa_payment_detect: sMap.wa_payment_detect ?? prev.wa_payment_detect ?? "true",
+              wa_cleanup_enabled: sMap.wa_cleanup_enabled ?? prev.wa_cleanup_enabled ?? "true",
               ara_training_rules: sMap.ara_training_rules ?? prev.ara_training_rules,
             }));
             if (sMap.cron_jobs) {
