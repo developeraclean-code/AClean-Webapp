@@ -7390,12 +7390,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const isEditMode = !!(newUserForm.id && isUUID(newUserForm.id));
 
         const callManageUser = async (body) => {
-          // Sertakan callerUserId — coba id, fallback ke user_id (Supabase auth field)
-          const callerUserId = currentUser?.id || currentUser?.user_id || null;
+          // Cari ID dari semua kemungkinan field — Supabase auth bisa simpan di id, user_id, atau sub
+          const callerUserId = currentUser?.id || currentUser?.user_id || currentUser?.sub || null;
+          // Jika masih tidak ada, ambil langsung dari Supabase session aktif
+          let resolvedCallerId = callerUserId;
+          if (!resolvedCallerId) {
+            const { data: sess } = await supabase.auth.getSession();
+            resolvedCallerId = sess?.session?.user?.id || null;
+          }
           const res = await fetch("/api/manage-user", {
             method: "POST",
             headers: _apiHeaders(),
-            body: JSON.stringify({ ...body, callerUserId })
+            body: JSON.stringify({ ...body, callerUserId: resolvedCallerId })
           });
           return res.json();
         };
