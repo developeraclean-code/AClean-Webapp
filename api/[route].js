@@ -127,6 +127,32 @@ export default async function handler(req, res) {
       if (req.method === "GET") return res.status(200).json({ status: "ok", service: "AClean WA Webhook" });
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       if (!await checkRateLimit(req, res, 60, 60000)) return;
+
+      // H-08: Webhook signature verification (opsional — aktif jika FONNTE_WEBHOOK_SECRET diset)
+      const webhookSecret = process.env.FONNTE_WEBHOOK_SECRET;
+      if (webhookSecret) {
+        const sig = req.headers["x-fonnte-signature"] || req.headers["x-signature"] || "";
+        if (!sig) {
+          console.warn("[receive-wa] Missing webhook signature — rejecting");
+          return res.status(401).json({ error: "Missing webhook signature" });
+        }
+        try {
+          const { createHmac } = await import("node:crypto");
+          const payload = JSON.stringify(req.body);
+          const computed = "sha256=" + createHmac("sha256", webhookSecret).update(payload).digest("hex");
+          const sigBuf = Buffer.from(sig);
+          const compBuf = Buffer.from(computed);
+          const valid = sigBuf.length === compBuf.length &&
+            (() => { try { const { timingSafeEqual } = require("crypto"); return timingSafeEqual(sigBuf, compBuf); } catch { return sig === computed; } })();
+          if (!valid) {
+            console.warn("[receive-wa] Invalid webhook signature — rejecting");
+            return res.status(401).json({ error: "Invalid webhook signature" });
+          }
+        } catch (sigErr) {
+          console.warn("[receive-wa] Signature check error:", sigErr.message, "— allowing through");
+        }
+      }
+
       const wb = req.body || {};
 
       // ── VALIDATION: Phone number ──
@@ -1154,6 +1180,8 @@ export default async function handler(req, res) {
     // ── MANAGE-USER: Create/Update/Deactivate/Reset-Password via Admin API ──
     if (route === "manage-user") {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      // M-04: Rate limiting — max 20 req/menit per IP untuk endpoint sensitif ini
+      if (!await checkRateLimit(req, res, 20, 60000)) return;
       const SU = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
       const SK = process.env.SUPABASE_SERVICE_KEY;
       if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
@@ -1184,7 +1212,12 @@ export default async function handler(req, res) {
           body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { name, role } })
         });
         const authData = await authRes.json();
-        if (!authRes.ok) return res.status(400).json({ error: authData.message || authData.error || "Gagal buat user di Auth" });
+        if (!authRes.ok) {
+          // M-03: Log detail internal, expose pesan generic ke client
+          console.warn("[manage-user] Auth create error:", authData.message || authData.error);
+          const safeMsg = authData.message?.includes("already") ? "Email sudah terdaftar" : "Gagal buat user. Coba lagi atau hubungi admin.";
+          return res.status(400).json({ error: safeMsg });
+        }
 
         const uid = authData.id;
         const colorMap = { Owner: "#f59e0b", Admin: "#38bdf8", Teknisi: "#22c55e", Helper: "#a78bfa" };
@@ -1210,7 +1243,7 @@ export default async function handler(req, res) {
           headers: { ...headers, Prefer: "return=minimal" },
           body: JSON.stringify(upd)
         });
-        if (!profileRes.ok) { const e = await profileRes.text(); return res.status(400).json({ error: "Update gagal: " + e.slice(0, 200) }); }
+        if (!profileRes.ok) { console.warn("[manage-user] update failed:", await profileRes.text()); return res.status(400).json({ error: "Update gagal. Coba lagi." }); }
         return res.status(200).json({ ok: true });
       }
 

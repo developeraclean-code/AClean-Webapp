@@ -3483,6 +3483,10 @@ ${photoPageHTML}
     }
 
     const paidAt = getLocalISOString();
+    // H-04: Simpan status original untuk rollback jika DB gagal
+    const originalInvStatus = inv.status;
+    const originalOrderStatus = ordersData.find(o => o.id === inv.job_id || o.invoice_id === inv.id)?.status;
+
     setInvoicesData(prev => prev.map(i =>
       i.id === inv.id ? { ...i, status: "PAID", paid_at: paidAt, ...(paymentProofUrl ? { payment_proof_url: paymentProofUrl } : {}) } : i
     ));
@@ -3493,8 +3497,22 @@ ${photoPageHTML}
     {
       const { error: mpErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName());
       if (mpErr) {
-        console.warn("mark paid with paid_at failed:", mpErr.message);
-        await updateInvoice(supabase, inv.id, { status: "PAID" }, auditUserName());
+        console.warn("mark paid with paid_at failed, trying fallback:", mpErr.message);
+        const { error: fbErr } = await updateInvoice(supabase, inv.id, { status: "PAID" }, auditUserName());
+        if (fbErr) {
+          // H-04: Rollback state jika semua DB update gagal
+          console.error("markPaid DB failed completely, rolling back state:", fbErr.message);
+          setInvoicesData(prev => prev.map(i =>
+            i.id === inv.id ? { ...i, status: originalInvStatus, paid_at: inv.paid_at || null } : i
+          ));
+          if (originalOrderStatus) {
+            setOrdersData(prev => prev.map(o =>
+              (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: originalOrderStatus } : o
+            ));
+          }
+          showNotif("❌ Gagal simpan ke database. Status dikembalikan. Coba lagi.");
+          return;
+        }
       }
     }
     // Simpan bukti bayar URL ke invoice jika ada (dari WA payment detection)
@@ -3978,7 +3996,23 @@ ${photoPageHTML}
 
         if (llmProvider === "ollama") {
           // ── Ollama Local / ngrok ──
-          const baseUrl = (ollamaUrl || "http://localhost:11434").replace(/\/+$/, "");
+          // H-07: SSRF validation — block internal/cloud-metadata URLs
+          const _isValidOllamaUrl = (url) => {
+            try {
+              const p = new URL(url);
+              if (!["http:","https:"].includes(p.protocol)) return false;
+              const h = p.hostname.toLowerCase();
+              if (/^(localhost|127\.|0\.0\.0\.0|169\.254\.|::1)/.test(h)) return false;
+              if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(h)) return false;
+              return true;
+            } catch { return false; }
+          };
+          const baseUrl = (ollamaUrl || "").replace(/\/+$/, "");
+          if (!baseUrl || !_isValidOllamaUrl(baseUrl)) {
+            setMessages(prev => [...prev, { role: "assistant", content: "⚠️ Ollama URL tidak valid atau menggunakan alamat internal. Masukkan URL publik (contoh: https://xxxx.ngrok.io)." }]);
+            setAraLoading(false);
+            return;
+          }
           const fr = await fetch(baseUrl + "/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -4018,6 +4052,13 @@ ${photoPageHTML}
       if (am) {
         try {
           const act = JSON.parse(am[1].trim());
+          // H-06: Role check — aksi sensitif hanya Owner/Admin
+          const ARA_SENSITIVE = ["UPDATE_INVOICE","MARK_PAID","APPROVE_INVOICE","CANCEL_ORDER","CREATE_EXPENSE","UPDATE_STOCK","MARK_INVOICE_OVERDUE"];
+          const araCallerRole = currentUser?.role || "";
+          if (ARA_SENSITIVE.includes(act.type) && !["Owner","Admin"].includes(araCallerRole)) {
+            ar = `\n⚠️ *Aksi ${act.type} hanya bisa dilakukan Owner/Admin. Hubungi Owner untuk melanjutkan.*`;
+            addAgentLog("ARA_BLOCKED", `ARA blocked ${act.type} — caller role: ${araCallerRole}`, "WARNING");
+          } else
           if (act.type === "UPDATE_INVOICE") {
             setInvoicesData(prev => prev.map(i => { if (i.id !== act.id) return i; const u = { ...i, [act.field]: act.value }; u.total = (u.labor || 0) + (u.material || 0) + (u.dadakan || 0); return u; }));
             await setAuditUser();
