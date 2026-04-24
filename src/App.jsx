@@ -7393,11 +7393,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const isEditMode = !!(newUserForm.id && isUUID(newUserForm.id));
 
         const callManageUser = async (body) => {
-          // Sertakan callerUserId agar backend bisa verifikasi role caller
+          // Sertakan callerUserId — coba id, fallback ke user_id (Supabase auth field)
+          const callerUserId = currentUser?.id || currentUser?.user_id || null;
           const res = await fetch("/api/manage-user", {
             method: "POST",
             headers: _apiHeaders(),
-            body: JSON.stringify({ ...body, callerUserId: currentUser?.id })
+            body: JSON.stringify({ ...body, callerUserId })
           });
           return res.json();
         };
