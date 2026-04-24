@@ -5018,7 +5018,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const loadMonitor = async () => {
       try {
         setMonitorLoading(true);
-        const resp = await fetch("/api/monitor");
+        const resp = await fetch("/api/monitor", { headers: _apiHeaders() });
         const data = await resp.json();
         setMonitorData(data);
       } catch (err) {
@@ -5037,7 +5037,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   }, [activeMenu, currentUser]);
 
   const renderMonitoring = () => (
-    <MonitoringView monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} />
+    <MonitoringView monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} _apiHeaders={_apiHeaders} />
   );
 
   // ============================================================

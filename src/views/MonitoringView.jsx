@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-function MonitoringView({ monitorData, setMonitorLoading, setMonitorData }) {
+function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHeaders }) {
   const data = monitorData;
   if (!data) return <div style={{ padding: 24, color: cs.muted }}>⏳ Loading monitoring data...</div>;
 
@@ -30,7 +30,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData }) {
           </div>
           <button onClick={() => {
             setMonitorLoading(true);
-            fetch("/api/monitor").then(r => r.json()).then(d => {
+            fetch("/api/monitor", { headers: _apiHeaders ? _apiHeaders() : {} }).then(r => r.json()).then(d => {
               setMonitorData(d);
               setMonitorLoading(false);
             });
