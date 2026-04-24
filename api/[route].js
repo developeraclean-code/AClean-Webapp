@@ -1158,34 +1158,13 @@ export default async function handler(req, res) {
       if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
 
       // ── Role check: verifikasi caller adalah Owner atau Admin ──
-      const { action, userId, name, email, password, role, phone, callerUserId } = req.body || {};
+      // Menggunakan callerRole dari frontend (sudah divalidasi INTERNAL_API_SECRET di atas).
+      // Tidak pakai callerUserId karena session lama bisa tidak punya UUID.
+      const { action, userId, name, email, password, role, phone, callerRole: rawCallerRole } = req.body || {};
+      const callerRole = (rawCallerRole || "").trim();
 
-      // Debug: log apa yang diterima untuk trace masalah 403
-      console.log("[manage-user] callerUserId received:", callerUserId, "| type:", typeof callerUserId);
-
-      let callerRole = null;
-      if (callerUserId) {
-        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(callerUserId));
-        console.log("[manage-user] isUUID:", isUUID);
-        if (isUUID) {
-          const callerRes = await fetch(SU + "/rest/v1/user_profiles?id=eq." + callerUserId + "&select=role", {
-            headers: { apikey: SK, Authorization: "Bearer " + SK }
-          });
-          const callerData = await callerRes.json();
-          console.log("[manage-user] callerData from DB:", JSON.stringify(callerData));
-          callerRole = callerData?.[0]?.role || null;
-        } else {
-          console.warn("[manage-user] callerUserId bukan UUID valid:", callerUserId);
-          return res.status(403).json({ error: "Forbidden: format ID tidak valid, silakan login ulang" });
-        }
-      } else {
-        console.warn("[manage-user] callerUserId kosong");
-        return res.status(403).json({ error: "Forbidden: sesi tidak valid, silakan login ulang" });
-      }
-
-      console.log("[manage-user] callerRole resolved:", callerRole);
       if (!["Owner", "Admin"].includes(callerRole)) {
-        return res.status(403).json({ error: "Forbidden: hanya Owner/Admin yang bisa manage user (role: " + callerRole + ")" });
+        return res.status(403).json({ error: "Forbidden: hanya Owner/Admin yang bisa manage user" });
       }
       // Admin tidak boleh create/delete/toggle akun Owner
       const isOwnerAction = role === "Owner" || (action === "delete" && callerRole === "Admin");
