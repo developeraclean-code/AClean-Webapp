@@ -1160,24 +1160,32 @@ export default async function handler(req, res) {
       // ── Role check: verifikasi caller adalah Owner atau Admin ──
       const { action, userId, name, email, password, role, phone, callerUserId } = req.body || {};
 
+      // Debug: log apa yang diterima untuk trace masalah 403
+      console.log("[manage-user] callerUserId received:", callerUserId, "| type:", typeof callerUserId);
+
       let callerRole = null;
-      if (callerUserId && /^[0-9a-f-]{36}$/i.test(String(callerUserId))) {
-        // callerUserId adalah UUID valid — verifikasi ke DB
-        const callerRes = await fetch(SU + "/rest/v1/user_profiles?id=eq." + callerUserId + "&select=role", {
-          headers: { apikey: SK, Authorization: "Bearer " + SK }
-        });
-        const callerData = await callerRes.json();
-        callerRole = callerData?.[0]?.role || null;
+      if (callerUserId) {
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(callerUserId));
+        console.log("[manage-user] isUUID:", isUUID);
+        if (isUUID) {
+          const callerRes = await fetch(SU + "/rest/v1/user_profiles?id=eq." + callerUserId + "&select=role", {
+            headers: { apikey: SK, Authorization: "Bearer " + SK }
+          });
+          const callerData = await callerRes.json();
+          console.log("[manage-user] callerData from DB:", JSON.stringify(callerData));
+          callerRole = callerData?.[0]?.role || null;
+        } else {
+          console.warn("[manage-user] callerUserId bukan UUID valid:", callerUserId);
+          return res.status(403).json({ error: "Forbidden: format ID tidak valid, silakan login ulang" });
+        }
       } else {
-        // callerUserId tidak ada atau bukan UUID — endpoint sudah diproteksi oleh
-        // validateInternalToken (hanya app yang bisa panggil). Tetap block aksi
-        // non-Owner dengan menolak tanpa callerUserId yang valid.
-        console.warn("[manage-user] callerUserId tidak valid:", callerUserId);
+        console.warn("[manage-user] callerUserId kosong");
         return res.status(403).json({ error: "Forbidden: sesi tidak valid, silakan login ulang" });
       }
 
+      console.log("[manage-user] callerRole resolved:", callerRole);
       if (!["Owner", "Admin"].includes(callerRole)) {
-        return res.status(403).json({ error: "Forbidden: hanya Owner/Admin yang bisa manage user" });
+        return res.status(403).json({ error: "Forbidden: hanya Owner/Admin yang bisa manage user (role: " + callerRole + ")" });
       }
       // Admin tidak boleh create/delete/toggle akun Owner
       const isOwnerAction = role === "Owner" || (action === "delete" && callerRole === "Admin");
