@@ -7355,17 +7355,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const isEditMode = !!(newUserForm.id && isUUID(newUserForm.id));
 
         const callManageUser = async (body) => {
-          // Ambil JWT dari Supabase session aktif — lebih reliable dari currentUser state
-          // yang bisa null saat session expire tapi UI belum redirect
-          let callerToken = "";
-          try {
-            const { data: sessionData } = await supabase.auth.getSession();
-            callerToken = sessionData?.session?.access_token || "";
-          } catch (_) {}
+          // Resolve callerRole: prioritas currentUser state, fallback ke localSession
+          let resolvedRole = currentUser?.role || "";
+          if (!resolvedRole) {
+            const saved = _ls("localSession", null);
+            resolvedRole = saved?.role || "";
+          }
+          if (!["Owner", "Admin"].includes(resolvedRole)) {
+            showNotif("⚠️ Session tidak valid. Silakan logout dan login kembali.");
+            return { error: "Session expired" };
+          }
           const res = await fetch("/api/manage-user", {
             method: "POST",
-            headers: { ..._apiHeaders(), ...(callerToken ? { "X-Caller-Token": callerToken } : {}) },
-            body: JSON.stringify({ ...body, callerRole: currentUser?.role || "" })
+            headers: _apiHeaders(),
+            body: JSON.stringify({ ...body, callerRole: resolvedRole })
           });
           return res.json();
         };

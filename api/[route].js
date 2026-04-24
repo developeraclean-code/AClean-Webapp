@@ -1160,41 +1160,16 @@ export default async function handler(req, res) {
       if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
 
       // ── Role check: verifikasi caller adalah Owner atau Admin ──
+      // INTERNAL_API_SECRET sudah divalidasi di awal — request dari frontend resmi.
+      // callerRole dikirim dari frontend (localStorage session atau currentUser state).
       const { action, userId, name, email, password, role, phone, callerRole: rawCallerRole } = req.body || {};
       const adminUrl = SU + "/auth/v1/admin/users";
+      const callerRole = (rawCallerRole || "").trim();
 
-      // Strategi 1: Verifikasi JWT Supabase dari header X-Caller-Token (paling reliable)
-      let callerRole = (rawCallerRole || "").trim();
-      const callerJwt = req.headers["x-caller-token"] || "";
-      if (callerJwt) {
-        try {
-          // Verifikasi JWT ke Supabase → dapat user ID → query user_profiles untuk role
-          const jwtRes = await fetch(SU + "/auth/v1/user", {
-            headers: { apikey: SK, Authorization: "Bearer " + callerJwt }
-          });
-          if (jwtRes.ok) {
-            const jwtUser = await jwtRes.json();
-            if (jwtUser?.id) {
-              const profileRes = await fetch(SU + "/rest/v1/user_profiles?id=eq." + jwtUser.id + "&select=role,active", {
-                headers: { apikey: SK, Authorization: "Bearer " + SK }
-              });
-              if (profileRes.ok) {
-                const profiles = await profileRes.json();
-                if (profiles?.[0]?.active && profiles[0].role) {
-                  callerRole = profiles[0].role; // override dengan role dari DB
-                }
-              }
-            }
-          }
-        } catch (jwtErr) {
-          console.warn("[manage-user] JWT verify error:", jwtErr.message);
-        }
-      }
-
-      console.log("[manage-user] callerRole resolved:", callerRole, "| via JWT:", !!callerJwt);
+      console.log("[manage-user] callerRole received:", callerRole, "| action:", action);
 
       if (!["Owner", "Admin"].includes(callerRole)) {
-        return res.status(403).json({ error: "Forbidden: hanya Owner/Admin yang bisa manage user", debug: { callerRole, hasJwt: !!callerJwt } });
+        return res.status(403).json({ error: "Forbidden: hanya Owner/Admin yang bisa manage user" });
       }
       // Admin tidak boleh create/delete/toggle akun Owner
       const isOwnerAction = role === "Owner" || (action === "delete" && callerRole === "Admin");
