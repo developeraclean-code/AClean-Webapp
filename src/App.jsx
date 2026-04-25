@@ -1856,9 +1856,9 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
     const printDate = new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" });
     const svcDate = laporan.date || (laporan.submitted_at || "").slice(0, 10);
 
-    // ── Photo pages: chunk 8 per page ──
+    // ── Photo pages: chunk 6 per page ──
     const photoPages = [];
-    for (let i = 0; i < fotos.length; i += 8) photoPages.push(fotos.slice(i, i + 8));
+    for (let i = 0; i < fotos.length; i += 6) photoPages.push(fotos.slice(i, i + 6));
 
     const photoPageHTML = photoPages.map((chunk, pi) => `
       <div class="photo-page" style="page-break-before:always">
@@ -1870,8 +1870,8 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
           ${chunk.map((url, idx) => {
             const dataUrl = photoDataUrls[url] || "";
             return dataUrl
-              ? `<div class="photo-cell"><img src="${dataUrl}" alt="Foto ${pi * 8 + idx + 1}" /><div class="photo-num">${pi * 8 + idx + 1}</div></div>`
-              : `<div class="photo-cell" style="background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:11px">Foto tidak tersedia<div class="photo-num">${pi * 8 + idx + 1}</div></div>`;
+              ? `<div class="photo-cell"><img src="${dataUrl}" alt="Foto ${pi * 6 + idx + 1}" /><div class="photo-num">${pi * 6 + idx + 1}</div></div>`
+              : `<div class="photo-cell" style="background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:11px">Foto tidak tersedia<div class="photo-num">${pi * 6 + idx + 1}</div></div>`;
           }).join("")}
         </div>
       </div>
@@ -1946,9 +1946,9 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
   .photo-page-header { background: #1e3a5f; color: #fff; padding: 8px 12px; margin-bottom: 10px; border-radius: 4px; }
   .photo-page-title { font-size: 14px; font-weight: 800; letter-spacing: 0.5px; }
   .photo-page-sub { font-size: 9px; color: #93c5fd; margin-top: 2px; }
-  .photo-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .photo-cell { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; position: relative; background: #f8fafc; }
-  .photo-cell img { width: 100%; height: 180px; object-fit: cover; display: block; }
+  .photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .photo-cell { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; position: relative; background: #f8fafc; aspect-ratio: 3/4; }
+  .photo-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .photo-num { position: absolute; bottom: 3px; right: 5px; background: rgba(0,0,0,0.55); color: #fff; font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 4px; }
 </style>
 </head>
