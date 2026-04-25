@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { SERVICE_TYPES } from "../constants/services.js";
 import { statusColor, statusLabel } from "../constants/status.js";
@@ -69,11 +69,17 @@ function SourceBadge({ source }) {
 
 // ── Time Grid: tampilan per jam 09:00–17:00 per teknisi per hari yang dipilih ──
 const GRID_START = 9;   // jam 09:00
-const GRID_END   = 17;  // sampai 17:00 (8 slot)
-const HOURS = Array.from({ length: GRID_END - GRID_START }, (_, i) => GRID_START + i); // [9,10,...,16]
+const GRID_END   = 18;  // render kolom 09–17, termasuk header "17:00" sebagai batas kanan
+const HOURS = Array.from({ length: GRID_END - GRID_START }, (_, i) => GRID_START + i); // [9,10,...,17]
 
-function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi, weekOrders, teknisiData, expandedId, setExpandedId, TODAY }) {
+// onDateChange: callback ke parent agar Planning Order ikut filter
+function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi, weekOrders, teknisiData, expandedId, setExpandedId, TODAY, onDateChange }) {
   const [selectedDate, setSelectedDate] = useState(weekDays.find(d => d.date === TODAY)?.date || weekDays[0]?.date);
+
+  function selectDate(d) {
+    setSelectedDate(d);
+    onDateChange && onDateChange(d);
+  }
 
   // Kalau minggu berganti, reset ke hari pertama
   const currentDate = weekDays.find(d => d.date === selectedDate) ? selectedDate : weekDays[0]?.date;
@@ -98,15 +104,13 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
     return null;
   }
 
-  // Berapa slot jam yang ditempati order ini mulai dari jam ini
+  // Berapa slot jam yang ditempati order ini mulai dari jam ini (max sampai jam 17, bukan 18)
   function spanCount(o, hour) {
     const start = toMinutes(o.time);
     const dur = hitungDurasi(o.service, o.units);
     const endMin = start + Math.round(dur * 60);
-    const slotStart = hour * 60;
-    // hitung berapa jam ke depan masih terisi
     let count = 0;
-    for (let h = hour; h < GRID_END; h++) {
+    for (let h = hour; h < 17; h++) {  // cap di 17, jam 17 adalah kolom batas
       if (h * 60 >= endMin) break;
       count++;
     }
@@ -138,7 +142,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
           const isSelected = d.date === currentDate;
           const orderCount = weekOrders.filter(o => o.date === d.date).length;
           return (
-            <button key={d.date} onClick={() => setSelectedDate(d.date)}
+            <button key={d.date} onClick={() => selectDate(d.date)}
               style={{
                 background: isSelected ? cs.accent : isToday ? cs.accent + "18" : cs.card,
                 color: isSelected ? "#fff" : isToday ? cs.accent : cs.text,
@@ -172,24 +176,29 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
           <table style={{ borderCollapse: "collapse", fontSize: 11, tableLayout: "fixed" }}>
             <colgroup>
               <col style={{ width: 90 }} />
-              {HOURS.map(h => <col key={h} style={{ width: 70 }} />)}
+              {HOURS.map(h => <col key={h} style={{ width: h === 17 ? 32 : 70 }} />)}
             </colgroup>
             <thead>
               <tr>
                 <th style={{ padding: "5px 8px", color: cs.muted, fontWeight: 700, borderBottom: "1px solid " + cs.border, textAlign: "left", fontSize: 11 }}>
                   Teknisi
                 </th>
-                {HOURS.map(h => (
-                  <th key={h} style={{
-                    padding: "5px 4px", textAlign: "center", borderBottom: "1px solid " + cs.border,
-                    color: h >= 12 && h < 14 ? cs.yellow : cs.muted,
-                    fontWeight: 600, fontSize: 10,
-                    background: h >= 12 && h < 14 ? cs.yellow + "08" : "transparent",
-                  }}>
-                    {String(h).padStart(2,"0")}:00
-                    {h >= 12 && h < 14 && <div style={{ fontSize: 8, color: cs.yellow }}>siang</div>}
-                  </th>
-                ))}
+                {HOURS.map(h => {
+                  const isEnd = h === 17;
+                  return (
+                    <th key={h} style={{
+                      padding: "5px 4px", textAlign: "center", borderBottom: "1px solid " + cs.border,
+                      color: isEnd ? cs.red + "aa" : h >= 12 && h < 14 ? cs.yellow : cs.muted,
+                      fontWeight: 600, fontSize: 10,
+                      background: isEnd ? cs.red + "06" : h >= 12 && h < 14 ? cs.yellow + "08" : "transparent",
+                      borderLeft: isEnd ? "2px solid " + cs.red + "44" : undefined,
+                    }}>
+                      {String(h).padStart(2,"0")}:00
+                      {isEnd && <div style={{ fontSize: 8, color: cs.red + "88" }}>selesai</div>}
+                      {!isEnd && h >= 12 && h < 14 && <div style={{ fontSize: 8, color: cs.yellow }}>siang</div>}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -204,6 +213,16 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                       {tek}
                     </td>
                     {HOURS.map(h => {
+                      // Jam 17 = kolom batas kanan, selalu kosong
+                      if (h === 17) return (
+                        <td key={h} style={{
+                          background: cs.red + "05",
+                          borderLeft: "2px solid " + cs.red + "33",
+                          borderBottom: "1px solid " + cs.border + "22",
+                          width: 28,
+                        }} />
+                      );
+
                       if (rendered.has(h)) return null;
                       const slot = getSlot(tek, h);
 
@@ -292,6 +311,16 @@ const DAY_NAMES  = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
 // ─────────────────────────────────────────────
 function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, toggleAvailability, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData }) {
 
+  // Berapa row yang ditampilkan per slot (2 default, bisa expand ke 4)
+  const [expandedSlots, setExpandedSlots] = useState({});
+  function visibleRows(slotName, slot) {
+    if (expandedSlots[slotName]) return 4;
+    // Tampilkan 3/4 kalau sudah ada isinya
+    if (slot.member3 || slot.member4) return 4;
+    if (slot.member2) return 3;  // kalau ada helper ke-2, tampilkan row 3 sekalian
+    return 2;  // default: teknisi + helper
+  }
+
   function isAvail(name, date) {
     const rec = availability.find(a => a.teknisi === name && a.date === date);
     return rec ? rec.is_available : true;
@@ -299,6 +328,7 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
 
   const memberFields = ["member1","member2","member3","member4"];
   const roleFields   = ["member1_role","member2_role","member3_role","member4_role"];
+  const defaultRoles = ["teknisi","helper","helper","helper"];
 
   // Hitung order count per slot per hari
   function orderCount(date, slotName) {
@@ -394,19 +424,20 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
                 </div>
               </div>
 
-              {/* 4 member slot */}
-              {memberFields.map((mf, idx) => {
+              {/* Member rows — default 2, expand ke 4 */}
+              {memberFields.slice(0, visibleRows(slotName, slot)).map((mf, idx) => {
                 const rolef = roleFields[idx];
                 const val = slot[mf] || "";
-                const roleVal = slot[rolef] || (idx === 0 ? "teknisi" : "helper");
+                const roleVal = slot[rolef] || defaultRoles[idx];
                 const memberColor = val ? getTechColor(val, teknisiData) : cs.muted;
+                const roleLabel = idx === 0 ? "tekn" : "help";
                 return (
                   <div key={mf} style={{ display: "flex", gap: 5, marginBottom: 5, alignItems: "center" }}>
-                    {/* Role toggle */}
+                    {/* Role badge */}
                     <select
                       value={roleVal}
                       onChange={e => saveSlot(slotDate, slotName, { ...slot, [rolef]: e.target.value })}
-                      style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, borderRadius: 5, padding: "3px 5px", fontSize: 10, cursor: "pointer", outline: "none", width: 62 }}>
+                      style={{ background: roleVal === "teknisi" ? cs.accent + "22" : cs.surface, border: "1px solid " + (roleVal === "teknisi" ? cs.accent + "55" : cs.border), color: roleVal === "teknisi" ? cs.accent : cs.muted, borderRadius: 5, padding: "3px 5px", fontSize: 10, cursor: "pointer", outline: "none", width: 58, fontWeight: 600 }}>
                       {MEMBER_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                     </select>
                     {/* Nama anggota */}
@@ -425,6 +456,14 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
                   </div>
                 );
               })}
+              {/* Tombol + Tambah untuk row ke-3/4 */}
+              {visibleRows(slotName, slot) < 4 && !isConfirmed && (
+                <button
+                  onClick={() => setExpandedSlots(p => ({ ...p, [slotName]: true }))}
+                  style={{ background: "transparent", border: "1px dashed " + cs.border, color: cs.muted, borderRadius: 5, padding: "2px 8px", fontSize: 10, cursor: "pointer", width: "100%", marginTop: 2 }}>
+                  + Tambah anggota
+                </button>
+              )}
 
               {/* Preview ringkas */}
               {members.length > 0 && (
@@ -486,6 +525,8 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [searchQ, setSearchQ] = useState("");
   const [expandedId, setExpandedId] = useState(null);
+  // Tanggal aktif dari klik di Time Grid — Planning Order ikut filter ke hari ini
+  const [gridDate, setGridDate] = useState(null);
 
   // ── Team slot state ──
   const [dailySlots, setDailySlots] = useState([]);   // [{date, slot, member1..4, confirmed}]
@@ -802,10 +843,11 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     setOrdersData(prev => prev.map(o => o.id === order.id ? { ...o, ...update } : o));
   }
 
-  // ── Inbox list — hanya today + ke depan, EXCLUDE cancelled lama ──
+  // ── Inbox list — hanya today + ke depan; bila gridDate aktif, filter ke hari itu ──
   const inboxOrders = useMemo(() => {
     let list = ordersData.filter(o => {
       if (!o.date) return false;
+      if (gridDate) return o.date === gridDate;                  // filter ke hari yang diklik di Time Grid
       if (o.date < TODAY) return false;                          // buang masa lalu
       if (o.status === "CANCELLED" && o.date < TODAY) return false;
       return true;
@@ -822,11 +864,11 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       );
     }
     return list.sort((a, b) => {
-      const dateComp = (a.date || "").localeCompare(b.date || "");  // ascending: terdekat dulu
+      const dateComp = (a.date || "").localeCompare(b.date || "");
       if (dateComp !== 0) return dateComp;
       return (a.time || "").localeCompare(b.time || "");
     });
-  }, [ordersData, filterStatus, searchQ, TODAY]);
+  }, [ordersData, filterStatus, searchQ, TODAY, gridDate]);
 
   const inputStyle = {
     background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
@@ -1094,6 +1136,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         weekOrders={weekOrders} teknisiData={teknisiData}
         expandedId={expandedId} setExpandedId={setExpandedId}
         TODAY={TODAY}
+        onDateChange={d => setGridDate(d)}
       />
 
       {/* ═══ DAFTAR ORDER INBOX (today + ke depan) ═══ */}
@@ -1103,8 +1146,16 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
             <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>
               📋 Planning Order
               <span style={{ color: cs.muted, fontSize: 12, fontWeight: 400, marginLeft: 6 }}>({inboxOrders.length})</span>
+              {gridDate && (
+                <span style={{ marginLeft: 10, background: cs.accent + "22", color: cs.accent, border: "1px solid " + cs.accent + "44", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                  onClick={() => setGridDate(null)}>
+                  📅 {gridDate} &nbsp;✕ hapus filter
+                </span>
+              )}
             </div>
-            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Hari ini &amp; ke depan · CONFIRMED → naik ke Order Masuk</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+              {gridDate ? `Filter: ${gridDate} · klik "✕ hapus filter" untuk lihat semua` : "Hari ini & ke depan · klik hari di Time Grid untuk filter · CONFIRMED → naik ke Order Masuk"}
+            </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
