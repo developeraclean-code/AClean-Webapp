@@ -2824,12 +2824,14 @@ ${photoPageHTML}
           }
         } catch (e) { console.warn("ara_brain DB load failed, pakai localStorage:", e?.message); }
 
-        // ── Load pending payment suggestions ──
-        try {
-          const { data: psData } = await supabase.from("payment_suggestions")
-            .select("*").eq("status","PENDING").order("created_at",{ascending:false}).limit(20);
-          if (psData?.length > 0) setPaymentSuggestions(psData);
-        } catch(_) { /* tabel belum ada, skip */ }
+        // ── Load pending payment suggestions (HANYA Owner/Admin) ──
+        if (["Owner","Admin"].includes(currentUser?.role)) {
+          try {
+            const { data: psData } = await supabase.from("payment_suggestions")
+              .select("*").eq("status","PENDING").order("created_at",{ascending:false}).limit(20);
+            if (psData?.length > 0) setPaymentSuggestions(psData);
+          } catch(_) { /* tabel belum ada, skip */ }
+        }
       };
 
     const initLoadAll = async () => {
@@ -3028,9 +3030,9 @@ ${photoPageHTML}
       console.warn("WA realtime channels skip:", e?.message);
     }
 
-    // Payment suggestions — polling ringan 30 detik, lebih hemat dari realtime channel
-    const _payPoll = setInterval(() => {
-      const { fetchPendingPaymentSuggestions } = require ? null : null; // guard
+    // Payment suggestions — HANYA Owner/Admin yang menerima notif bukti bayar
+    const _isFinanceRole = ["Owner", "Admin"].includes(currentUser?.role);
+    const _payPoll = _isFinanceRole ? setInterval(() => {
       supabase.from("payment_suggestions").select("*").eq("status", "PENDING")
         .order("created_at", { ascending: false }).limit(20)
         .then(({ data }) => {
@@ -3046,13 +3048,13 @@ ${photoPageHTML}
             }
           }
         });
-    }, 30000);
+    }, 30000) : null;
 
     return () => {
       clearInterval(window._rtPoll_1617); delete window._rtPoll_1617;
       clearInterval(window._rtPoll_1645); delete window._rtPoll_1645;
       clearInterval(window._rtPoll_1673); delete window._rtPoll_1673;
-      clearInterval(_payPoll);
+      if (_payPoll) clearInterval(_payPoll);
 
       clearTimeout(autoVerifyTimer);
       clearInterval(_statsTimer);
@@ -10805,8 +10807,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         </div>
       )}
 
-      {/* Payment Suggestion Banner */}
-      {paymentSuggestBanner && (
+      {/* Payment Suggestion Banner — hanya Owner/Admin */}
+      {paymentSuggestBanner && ["Owner","Admin"].includes(currentUser?.role) && (
         <div style={{ position:"fixed", bottom: 80, right: 20, zIndex: 9500,
           background: cs.surface, border: "2px solid #22c55e", borderRadius: 16,
           padding: 18, maxWidth: 340, boxShadow: "0 8px 32px #0008", minWidth: 280 }}>
