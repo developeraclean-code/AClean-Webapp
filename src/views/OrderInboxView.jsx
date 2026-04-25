@@ -299,8 +299,18 @@ function getWeekDays(offset = 0) {
   });
 }
 
+function calcTimeEnd(timeStart, service, units) {
+  const dur = hitungDurasi(service, parseInt(units) || 1);
+  const [h, m] = (timeStart || "09:00").split(":").map(Number);
+  const totalMin = h * 60 + m + Math.round(dur * 60);
+  const nh = Math.min(Math.floor(totalMin / 60), 20);
+  const nm = totalMin % 60;
+  return String(nh).padStart(2, "0") + ":" + String(nm).padStart(2, "0");
+}
+
 const EMPTY_FORM = {
   customer: "", phone: "", service: "Cleaning", type: "", address: "", date: "", time: "09:00",
+  time_end: "10:00",
   teknisi: "", notes: "", status: "PENDING", units: 1,
   customer_id: null,
 };
@@ -359,7 +369,14 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       .sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0] || null;
   }, [form.customer_id, ordersData]);
 
-  const setField = useCallback((k, v) => setForm(f => ({ ...f, [k]: v })), []);
+  const setField = useCallback((k, v) => setForm(f => {
+    const next = { ...f, [k]: v };
+    // Auto-recalc time_end saat time/service/units berubah, KECUALI user edit time_end langsung
+    if (k !== "time_end" && ["time", "service", "units"].includes(k)) {
+      next.time_end = calcTimeEnd(next.time, next.service, next.units);
+    }
+    return next;
+  }), []);
 
   function applyCustomer(c) {
     // Ambil alamat dari order terakhir customer ini
@@ -393,6 +410,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       notes: form.notes.trim() || null,
       status: form.status,
       units: Number(form.units) || 1,
+      time_end: form.time_end || calcTimeEnd(form.time, form.service, form.units),
       source: "whatsapp",
       ...(form.customer_id ? { customer_id: form.customer_id } : {}),
       last_changed_by: auditUserName(),
@@ -430,6 +448,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       address: order.address || "",
       date: order.date || TODAY,
       time: order.time ? order.time.slice(0, 5) : "09:00",
+      time_end: order.time_end ? order.time_end.slice(0, 5) : calcTimeEnd(order.time || "09:00", order.service || "Cleaning", order.units || 1),
       teknisi: order.teknisi || "",
       notes: order.notes || "",
       status: order.status || "PENDING",
@@ -664,11 +683,30 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
               onChange={e => setField("date", e.target.value)} />
           </div>
 
-          {/* Jam */}
+          {/* Jam Mulai */}
           <div>
             <label style={labelStyle}>Jam Mulai</label>
             <input style={inputStyle} type="time" value={form.time}
               onChange={e => setField("time", e.target.value)} />
+          </div>
+
+          {/* Jam Selesai — auto dari durasi, bisa override manual */}
+          <div>
+            <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 6 }}>
+              Jam Selesai (estimasi)
+              <button
+                type="button"
+                onClick={() => setField("time_end", calcTimeEnd(form.time, form.service, form.units))}
+                style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 5, padding: "1px 7px", fontSize: 10, cursor: "pointer", fontWeight: 600 }}>
+                Reset ↺
+              </button>
+            </label>
+            <input style={inputStyle} type="time" value={form.time_end}
+              onChange={e => setField("time_end", e.target.value)} />
+            <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>
+              Estimasi: {calcTimeEnd(form.time, form.service, form.units)}
+              {" "}({hitungDurasi(form.service, form.units)} jam)
+            </div>
           </div>
 
           {/* Teknisi */}
