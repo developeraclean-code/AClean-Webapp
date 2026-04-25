@@ -63,6 +63,7 @@ function getWeekDays(offset = 0) {
 const EMPTY_FORM = {
   customer: "", phone: "", service: "Cleaning", type: "", address: "", date: "", time: "09:00",
   teknisi: "", notes: "", status: "PENDING", units: 1,
+  customer_id: null,
 };
 
 export default function OrderInboxView({ ordersData, setOrdersData, customersData, teknisiData, currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY }) {
@@ -89,19 +90,50 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     [ordersData, form.teknisi, form.date, form.time, editId]
   );
 
-  // Autocomplete customer
+  // Autocomplete: cari by nama ATAU nomor WA
   const customerSuggest = useMemo(() => {
-    if (!form.customer || form.customer.length < 2) return [];
-    const q = form.customer.toLowerCase();
+    const raw = form.customer.trim();
+    if (raw.length < 2) return [];
+    const q = raw.toLowerCase();
+    const isPhone = /^[0-9+]/.test(raw);
     return (customersData || []).filter(c =>
-      c.name?.toLowerCase().includes(q) || c.phone?.includes(q)
-    ).slice(0, 5);
+      isPhone
+        ? (c.phone || "").replace(/\D/g, "").includes(raw.replace(/\D/g, ""))
+        : c.name?.toLowerCase().includes(q) || (c.phone || "").includes(q)
+    ).slice(0, 6);
   }, [form.customer, customersData]);
+
+  // Lookup nomor WA di field phone → suggest customer
+  const phoneSuggest = useMemo(() => {
+    const raw = form.phone.replace(/\D/g, "");
+    if (raw.length < 5) return [];
+    return (customersData || []).filter(c =>
+      (c.phone || "").replace(/\D/g, "").includes(raw)
+    ).slice(0, 4);
+  }, [form.phone, customersData]);
+
+  // Riwayat order terakhir customer yang dipilih (untuk autofill alamat)
+  const customerLastOrder = useMemo(() => {
+    if (!form.customer_id) return null;
+    return ordersData
+      .filter(o => o.customer_id === form.customer_id && o.address)
+      .sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0] || null;
+  }, [form.customer_id, ordersData]);
 
   const setField = useCallback((k, v) => setForm(f => ({ ...f, [k]: v })), []);
 
   function applyCustomer(c) {
-    setForm(f => ({ ...f, customer: c.name, phone: c.phone || f.phone }));
+    // Ambil alamat dari order terakhir customer ini
+    const lastOrder = ordersData
+      .filter(o => o.customer_id === c.id && o.address)
+      .sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
+    setForm(f => ({
+      ...f,
+      customer: c.name,
+      phone: c.phone || f.phone,
+      address: lastOrder?.address || c.address || f.address,
+      customer_id: c.id || null,
+    }));
   }
 
   async function handleSave() {
@@ -123,6 +155,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       status: form.status,
       units: Number(form.units) || 1,
       source: "whatsapp",
+      ...(form.customer_id ? { customer_id: form.customer_id } : {}),
       last_changed_by: auditUserName(),
     };
 
@@ -162,6 +195,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       notes: order.notes || "",
       status: order.status || "PENDING",
       units: order.units || 1,
+      customer_id: order.customer_id || null,
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -271,33 +305,86 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           </div>
         )}
 
+        {/* Customer existing badge */}
+        {form.customer_id && (
+          <div style={{ background: cs.green + "12", border: "1px solid " + cs.green + "44", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: cs.green, fontWeight: 700 }}>✓ Customer Existing</span>
+            <span style={{ color: cs.muted }}>Data tersinkron dari tabel customer</span>
+            {customerLastOrder && (
+              <span style={{ color: cs.muted, marginLeft: "auto" }}>
+                Order terakhir: <span style={{ color: cs.text }}>{customerLastOrder.date} — {customerLastOrder.service}</span>
+              </span>
+            )}
+            <button onClick={() => setForm(f => ({ ...f, customer_id: null }))}
+              style={{ background: "transparent", border: "none", color: cs.muted, cursor: "pointer", fontSize: 11, marginLeft: 4 }}>✕ Lepas</button>
+          </div>
+        )}
+
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           {/* Customer */}
           <div style={{ position: "relative" }}>
-            <label style={labelStyle}>Nama Customer *</label>
-            <input style={inputStyle} value={form.customer}
-              onChange={e => setField("customer", e.target.value)}
-              placeholder="Cari atau ketik nama..." />
-            {customerSuggest.length > 0 && (
-              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, zIndex: 100, overflow: "hidden" }}>
-                {customerSuggest.map(c => (
-                  <div key={c.id} onClick={() => applyCustomer(c)}
-                    style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid " + cs.border + "88", color: cs.text }}
-                    onMouseEnter={e => e.currentTarget.style.background = cs.border}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    {c.name} <span style={{ color: cs.muted }}>— {c.phone}</span>
-                  </div>
-                ))}
+            <label style={labelStyle}>
+              Nama Customer *
+              {form.customer_id && <span style={{ color: cs.green, marginLeft: 6 }}>✓ existing</span>}
+            </label>
+            <input
+              style={{ ...inputStyle, borderColor: form.customer_id ? cs.green + "88" : cs.border }}
+              value={form.customer}
+              onChange={e => {
+                setField("customer", e.target.value);
+                if (form.customer_id) setField("customer_id", null);
+              }}
+              placeholder="Ketik nama atau nomor WA..." />
+            {customerSuggest.length > 0 && !form.customer_id && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, zIndex: 100, overflow: "hidden", boxShadow: "0 4px 16px #00000066" }}>
+                {customerSuggest.map(c => {
+                  const lastOrd = ordersData.filter(o => o.customer_id === c.id).sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
+                  return (
+                    <div key={c.id} onClick={() => applyCustomer(c)}
+                      style={{ padding: "9px 12px", cursor: "pointer", borderBottom: "1px solid " + cs.border + "55" }}
+                      onMouseEnter={e => e.currentTarget.style.background = cs.border + "66"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <div style={{ color: cs.text, fontWeight: 600, fontSize: 12 }}>{c.name}</div>
+                      <div style={{ color: cs.muted, fontSize: 11, marginTop: 1 }}>
+                        {c.phone || "—"}
+                        {c.area ? " · " + c.area : ""}
+                        {lastOrd ? <span style={{ color: cs.accent, marginLeft: 6 }}>Terakhir: {lastOrd.date}</span> : ""}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
 
-          {/* WA */}
-          <div>
-            <label style={labelStyle}>No. WhatsApp</label>
-            <input style={inputStyle} value={form.phone}
-              onChange={e => setField("phone", e.target.value)}
-              placeholder="08xx atau +62xx" />
+          {/* WA — dengan lookup */}
+          <div style={{ position: "relative" }}>
+            <label style={labelStyle}>
+              No. WhatsApp
+              {form.customer_id && <span style={{ color: cs.green, marginLeft: 6 }}>✓</span>}
+            </label>
+            <input
+              style={{ ...inputStyle, borderColor: form.customer_id ? cs.green + "88" : cs.border }}
+              value={form.phone}
+              onChange={e => {
+                setField("phone", e.target.value);
+                if (form.customer_id) setField("customer_id", null);
+              }}
+              placeholder="08xx — auto-lookup customer" />
+            {phoneSuggest.length > 0 && !form.customer_id && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, zIndex: 100, overflow: "hidden", boxShadow: "0 4px 16px #00000066" }}>
+                <div style={{ padding: "5px 12px", fontSize: 10, color: cs.muted, borderBottom: "1px solid " + cs.border + "44" }}>Customer ditemukan:</div>
+                {phoneSuggest.map(c => (
+                  <div key={c.id} onClick={() => applyCustomer(c)}
+                    style={{ padding: "9px 12px", cursor: "pointer", borderBottom: "1px solid " + cs.border + "55" }}
+                    onMouseEnter={e => e.currentTarget.style.background = cs.border + "66"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <div style={{ color: cs.text, fontWeight: 600, fontSize: 12 }}>{c.name}</div>
+                    <div style={{ color: cs.muted, fontSize: 11 }}>{c.phone}{c.area ? " · " + c.area : ""}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Status */}
@@ -358,10 +445,18 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
           {/* Alamat — full width */}
           <div style={{ gridColumn: "1 / -1" }}>
-            <label style={labelStyle}>Alamat</label>
+            <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
+              Alamat
+              {customerLastOrder && !form.address && (
+                <button onClick={() => setField("address", customerLastOrder.address)}
+                  style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 5, padding: "2px 8px", fontSize: 10, cursor: "pointer", fontWeight: 600 }}>
+                  Pakai alamat terakhir ↗
+                </button>
+              )}
+            </label>
             <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }}
               value={form.address} onChange={e => setField("address", e.target.value)}
-              placeholder="Alamat lengkap, cluster, blok, no unit..." />
+              placeholder={customerLastOrder ? "Alamat terakhir: " + customerLastOrder.address : "Alamat lengkap, cluster, blok, no unit..."} />
           </div>
 
           {/* Catatan — full width */}
