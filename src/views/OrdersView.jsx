@@ -6,7 +6,10 @@ function OrdersView({ ordersData, setOrdersData, orderFilter, setOrderFilter, or
 // ── SIM-1+2: search + teknisi filter + pagination ──
 const allTekOrd = ["Semua", ...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
 const sMap2 = { "Pending": "PENDING", "Confirmed": "CONFIRMED", "In Progress": "IN_PROGRESS", "Completed": "COMPLETED", "Cancelled": "CANCELLED" };
-let filtered = [...ordersData];
+// Opsi B: order WA yang masih PENDING = draft di Inbox, belum naik ke sini
+let filtered = ordersData.filter(o =>
+  !(o.source === "whatsapp" && o.status === "PENDING")
+);
 if (orderFilter === "Hari Ini") filtered = filtered.filter(o => o.date === TODAY);
 else if (orderFilter !== "Semua") filtered = filtered.filter(o => o.status === (sMap2[orderFilter] || orderFilter));
 if (orderTekFilter !== "Semua") filtered = filtered.filter(o => o.teknisi === orderTekFilter || o.helper === orderTekFilter);

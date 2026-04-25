@@ -54,6 +54,7 @@ const MyReportView = lazy(() => import("./views/MyReportView.jsx"));
 const MatTrackView = lazy(() => import("./views/MatTrackView.jsx"));
 const ExpensesView = lazy(() => import("./views/ExpensesView.jsx"));
 const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
+const OrderInboxView = lazy(() => import("./views/OrderInboxView.jsx"));
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -2403,6 +2404,7 @@ ${photoPageHTML}
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
     if (role === "Teknisi" || role === "Helper")
       return menu === "dashboard" || menu === "schedule" || menu === "myreport";
+    // wa-inbox: Owner + Admin only (handled above — teknisi/helper excluded by default)
     return false;
   };
 
@@ -4554,6 +4556,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ── Menu items (all) ──
   const ALL_MENU = [
     { id: "dashboard", icon: "⬡", label: "Dashboard" },
+    { id: "wa-inbox", icon: "📌", label: "Planning Order" },
     { id: "orders", icon: "📋", label: "Order Masuk" },
     { id: "schedule", icon: "📅", label: "Jadwal" },
     { id: "invoice", icon: "🧾", label: "Invoice" },
@@ -4609,6 +4612,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   // RENDER ORDERS
   // ============================================================
+  const renderOrderInbox = () => (
+    <OrderInboxView
+      ordersData={ordersData} setOrdersData={setOrdersData}
+      customersData={customersData} teknisiData={teknisiData}
+      currentUser={currentUser} supabase={supabase}
+      showNotif={showNotif} showConfirm={showConfirm}
+      auditUserName={auditUserName} TODAY={TODAY} />
+  );
+
   const renderOrders = () => (
     <OrdersView ordersData={ordersData} setOrdersData={setOrdersData} orderFilter={orderFilter} setOrderFilter={setOrderFilter}
       orderTekFilter={orderTekFilter} setOrderTekFilter={setOrderTekFilter} orderDateFrom={orderDateFrom} setOrderDateFrom={setOrderDateFrom}
@@ -5049,6 +5061,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const renderContent = () => {
     switch (activeMenu) {
       case "dashboard": return renderDashboard();
+      case "wa-inbox": return renderOrderInbox();
       case "orders": return renderOrders();
       case "schedule": return renderSchedule();
       case "invoice": return renderInvoice();
