@@ -429,17 +429,27 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
                 const rolef = roleFields[idx];
                 const val = slot[mf] || "";
                 const roleVal = slot[rolef] || defaultRoles[idx];
+                const isTekn = roleVal === "teknisi";
                 const memberColor = val ? getTechColor(val, teknisiData) : cs.muted;
-                const roleLabel = idx === 0 ? "tekn" : "help";
                 return (
-                  <div key={mf} style={{ display: "flex", gap: 5, marginBottom: 5, alignItems: "center" }}>
-                    {/* Role badge */}
-                    <select
-                      value={roleVal}
-                      onChange={e => saveSlot(slotDate, slotName, { ...slot, [rolef]: e.target.value })}
-                      style={{ background: roleVal === "teknisi" ? cs.accent + "22" : cs.surface, border: "1px solid " + (roleVal === "teknisi" ? cs.accent + "55" : cs.border), color: roleVal === "teknisi" ? cs.accent : cs.muted, borderRadius: 5, padding: "3px 5px", fontSize: 10, cursor: "pointer", outline: "none", width: 58, fontWeight: 600 }}>
-                      {MEMBER_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                    </select>
+                  <div key={mf} style={{ display: "flex", gap: 6, marginBottom: 5, alignItems: "center" }}>
+                    {/* Avatar T / H — klik untuk toggle role */}
+                    <div
+                      onClick={() => !isConfirmed && saveSlot(slotDate, slotName, { ...slot, [rolef]: isTekn ? "helper" : "teknisi" })}
+                      title={isTekn ? "Teknisi — klik ganti ke Helper" : "Helper — klik ganti ke Teknisi"}
+                      style={{
+                        width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        background: isTekn ? cs.accent : cs.surface,
+                        border: "2px solid " + (isTekn ? cs.accent : cs.border),
+                        color: isTekn ? "#fff" : cs.muted,
+                        fontSize: 11, fontWeight: 800,
+                        cursor: isConfirmed ? "default" : "pointer",
+                        userSelect: "none",
+                        transition: "all 0.15s",
+                      }}>
+                      {isTekn ? "T" : "H"}
+                    </div>
                     {/* Nama anggota */}
                     <select
                       value={val}
