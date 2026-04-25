@@ -2,7 +2,7 @@ import { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 
-function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, currentUser, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, isMobile, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, addAgentLog, auditUserName, showConfirm, showNotif, openWA, openLaporanModal, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, SCHED_PAGE_SIZE, getLocalDate, userAccounts }) {
+function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, currentUser, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, isMobile, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, addAgentLog, auditUserName, showConfirm, showNotif, openWA, openLaporanModal, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
 // Hitung minggu dinamis berdasarkan weekOffset
 const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 const baseDate = new Date();
@@ -53,6 +53,34 @@ const smartTekNames = [...new Set([...activeTeknisiNames, ...teksWithJobThisWeek
 const teknisiList = activeTek === "Semua" ? smartTekNames : [activeTek];
 // Untuk teknisi/helper: filter hanya hari ini
 const todayOrdersTek = isTekRole ? filteredOrders.filter(o => o.date === TODAY) : filteredOrders;
+
+// ── Report card sent helpers ──
+const getLaporan = (jobId) => laporanReports.find(r => r.job_id === jobId);
+const isReportSent = (jobId) => !!getLaporan(jobId)?.report_card_sent_at;
+
+const kirimReportCard = async (order) => {
+  const lap = getLaporan(order.id);
+  if (!lap) return showNotif("⚠️ Laporan belum ada untuk job ini");
+  if (!["VERIFIED", "APPROVED"].includes(lap.status)) return showNotif("⚠️ Laporan belum diverifikasi, tidak bisa kirim");
+  const inv = (invoicesData || []).find(i => i.job_id === order.id || i.id === lap.invoice_id);
+  showNotif("⏳ Mengupload & mengirim report card...");
+  try {
+    const pdfUrl = await uploadServiceReportPDFForWA(lap, inv || {});
+    if (!pdfUrl) return showNotif("❌ Gagal upload PDF report card");
+    const phone = order.phone || inv?.phone;
+    if (!phone) return showNotif("❌ Nomor HP customer tidak tersedia");
+    const msg = `Halo ${order.customer} 👋\n\nBerikut *Service Report Card* untuk pekerjaan AC Anda:\n📋 Job: ${order.id}\n🔧 ${order.service} — ${order.units} unit\n📅 ${order.date}\n\nTerima kasih telah mempercayakan servis AC Anda kepada *AClean* 🙏\n_aclean.id_`;
+    await sendWA(phone, msg, { url: pdfUrl, filename: `ServiceReport_${order.id}.pdf` });
+    const sentAt = new Date().toISOString();
+    const sentBy = currentUser?.name || "Owner";
+    await supabase.from("service_reports").update({ report_card_sent_at: sentAt, report_card_sent_by: sentBy }).eq("id", lap.id);
+    setLaporanReports(prev => prev.map(r => r.id === lap.id ? { ...r, report_card_sent_at: sentAt, report_card_sent_by: sentBy } : r));
+    showNotif("✅ Report card berhasil dikirim ke " + order.customer);
+    addAgentLog?.("REPORT_CARD_SENT", `Report card ${order.id} dikirim ke ${phone} oleh ${sentBy}`, "SUCCESS");
+  } catch (err) {
+    showNotif("❌ Gagal kirim report card: " + err.message);
+  }
+};
 
 return (
   <div style={{ display: "grid", gap: 14 }}>
@@ -142,6 +170,23 @@ return (
         })}
       </div>
     )}
+
+    {/* ── Rekap Report Card Minggu Ini ── */}
+    {!isTekRole && (() => {
+      const weekOrders = ordersData.filter(o => o.date >= weekDays[0].date && o.date <= weekDays[6].date && o.status !== "CANCELLED");
+      const completedOrders = weekOrders.filter(o => ["COMPLETED","PAID"].includes(o.status) || laporanReports.some(r => r.job_id === o.id && ["VERIFIED","APPROVED"].includes(r.status)));
+      const sudahKirim = completedOrders.filter(o => isReportSent(o.id)).length;
+      const belumKirim = completedOrders.filter(o => !isReportSent(o.id)).length;
+      if (completedOrders.length === 0) return null;
+      return (
+        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "10px 16px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>📤 Report Card Minggu Ini:</span>
+          <span style={{ fontSize: 12, color: cs.green, fontWeight: 700, background: cs.green + "15", padding: "3px 10px", borderRadius: 99, border: "1px solid " + cs.green + "33" }}>✅ {sudahKirim} Sudah Kirim</span>
+          <span style={{ fontSize: 12, color: cs.yellow, fontWeight: 700, background: cs.yellow + "15", padding: "3px 10px", borderRadius: 99, border: "1px solid " + cs.yellow + "33" }}>🟡 {belumKirim} Belum Kirim</span>
+          <span style={{ fontSize: 11, color: cs.muted }}>dari {completedOrders.length} job selesai</span>
+        </div>
+      );
+    })()}
 
     {/* Laporan status filter — Owner/Admin, week view only */}
     {!isTekRole && scheduleView === "week" && (
@@ -351,26 +396,34 @@ return (
                       <div key={d.date} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: 4, minHeight: 60 }}>
                         {jobs.map(j => {
                           const hasLaporan = laporanReports.some(r => r.job_id === j.id);
-                          const lapStatus = laporanReports.find(r => r.job_id === j.id)?.status;
-                          const lapVerified = lapStatus === "VERIFIED";
+                          const lap = laporanReports.find(r => r.job_id === j.id);
+                          const lapStatus = lap?.status;
+                          const lapVerified = lapStatus === "VERIFIED" || lapStatus === "APPROVED";
+                          const sent = isReportSent(j.id);
                           const col = techColors[tek] || cs.accent;
-                          const borderHL = hasLaporan ? (lapVerified ? cs.green : "#facc15") : col;
+                          const borderHL = sent ? cs.green : hasLaporan ? (lapVerified ? cs.green : "#facc15") : col;
+                          const canSend = lapVerified && !sent;
                           return (
                             <div key={j.id} style={{ background: col + "22", border: "1px solid " + borderHL + "66", borderLeft: "3px solid " + borderHL, borderRadius: 5, padding: "3px 5px 3px 4px", marginBottom: 2, position: "relative" }}>
-                              {hasLaporan && (
-                                <span style={{
-                                  position: "absolute", top: 1, right: 2, fontSize: 7, fontWeight: 800,
-                                  color: lapVerified ? cs.green : "#facc15",
-                                  background: (lapVerified ? cs.green : "#facc15") + "22",
-                                  borderRadius: 3, padding: "0 2px"
-                                }}>
-                                  {lapVerified ? "✓VRF" : "✓LAP"}
-                                </span>
-                              )}
+                              <span style={{
+                                position: "absolute", top: 1, right: 2, fontSize: 7, fontWeight: 800,
+                                color: sent ? cs.green : lapVerified ? cs.green : hasLaporan ? "#facc15" : cs.muted,
+                                background: (sent ? cs.green : lapVerified ? cs.green : hasLaporan ? "#facc15" : cs.muted) + "22",
+                                borderRadius: 3, padding: "0 2px"
+                              }}>
+                                {sent ? "📤" : lapVerified ? "✓VRF" : hasLaporan ? "✓LAP" : ""}
+                              </span>
                               <div style={{ fontSize: 9, fontWeight: 800, color: col }}>{j.time}</div>
                               <div style={{ fontSize: 9, color: cs.text }}>{(j.customer || "").slice(0, 13)}{(j.customer || "").length > 13 ? "…" : ""}</div>
                               <div style={{ fontSize: 8, color: cs.muted }}>{j.service}</div>
                               {j.helper && <div style={{ fontSize: 8, color: "#a78bfa", fontWeight: 700, marginTop: 1 }}>🤝 {(j.helper).split(" ")[0]}</div>}
+                              {canSend && (
+                                <button onClick={(e) => { e.stopPropagation(); kirimReportCard(j); }}
+                                  title="Kirim report card ke customer"
+                                  style={{ marginTop: 2, width: "100%", background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, borderRadius: 3, fontSize: 7, fontWeight: 700, cursor: "pointer", padding: "1px 0" }}>
+                                  📤 Kirim
+                                </button>
+                              )}
                             </div>
                           );
                         })}
@@ -459,6 +512,26 @@ return (
                           {!isTekRole && (
                             <button onClick={() => { const cu = customersData.find(c => c.phone === o.phone); if (cu) { setSelectedCustomer(cu); setCustomerTab("history"); setActiveMenu("customers"); } }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 11 }}>📋 History</button>
                           )}
+                          {!isTekRole && (() => {
+                            const oLap = getLaporan(o.id);
+                            const oSent = isReportSent(o.id);
+                            const oVerified = ["VERIFIED","APPROVED"].includes(oLap?.status);
+                            if (oSent) return (
+                              <span style={{ fontSize: 10, color: cs.green, background: cs.green + "15", padding: "5px 8px", borderRadius: 7, border: "1px solid " + cs.green + "33", textAlign: "center" }}>
+                                📤 Terkirim<br/><span style={{ fontSize: 9, opacity: 0.8 }}>{new Date(oLap.report_card_sent_at).toLocaleDateString("id-ID",{day:"2-digit",month:"short"})}</span>
+                              </span>
+                            );
+                            if (oVerified) return (
+                              <button onClick={() => kirimReportCard(o)}
+                                style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                                📤 Kirim RC
+                              </button>
+                            );
+                            if (oLap) return (
+                              <span style={{ fontSize: 10, color: cs.yellow, background: cs.yellow + "15", padding: "5px 8px", borderRadius: 7, border: "1px solid " + cs.yellow + "33", textAlign: "center" }}>🟡 Belum VRF</span>
+                            );
+                            return null;
+                          })()}
                           {(!o.dispatch && !isTekRole) && (
                             <button onClick={() => dispatchStatus(o)} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
                               ✅ Set Dispatch
