@@ -515,9 +515,22 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     return false;
   }
 
-  // ── Inbox list ──
+  // ── Opsi B: update teknisi/helper inline tanpa buka form edit ──
+  async function handleQuickAssign(order, field, value) {
+    const update = { [field]: value || null, last_changed_by: auditUserName() };
+    const { error } = await supabase.from("orders").update(update).eq("id", order.id);
+    if (error) return showNotif("Gagal update " + field + ": " + error.message);
+    setOrdersData(prev => prev.map(o => o.id === order.id ? { ...o, ...update } : o));
+  }
+
+  // ── Inbox list — hanya today + ke depan, EXCLUDE cancelled lama ──
   const inboxOrders = useMemo(() => {
-    let list = ordersData.filter(o => o.source === "whatsapp" || o.source === "website" || o.source == null);
+    let list = ordersData.filter(o => {
+      if (!o.date) return false;
+      if (o.date < TODAY) return false;                          // buang masa lalu
+      if (o.status === "CANCELLED" && o.date < TODAY) return false;
+      return true;
+    });
     if (filterStatus !== "ALL") list = list.filter(o => o.status === filterStatus);
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
@@ -525,15 +538,16 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         (o.customer || "").toLowerCase().includes(q) ||
         (o.phone || "").includes(q) ||
         (o.address || "").toLowerCase().includes(q) ||
-        (o.teknisi || "").toLowerCase().includes(q)
+        (o.teknisi || "").toLowerCase().includes(q) ||
+        (o.helper || "").toLowerCase().includes(q)
       );
     }
     return list.sort((a, b) => {
-      const dateComp = (b.date || "").localeCompare(a.date || "");
+      const dateComp = (a.date || "").localeCompare(b.date || "");  // ascending: terdekat dulu
       if (dateComp !== 0) return dateComp;
       return (a.time || "").localeCompare(b.time || "");
     });
-  }, [ordersData, filterStatus, searchQ]);
+  }, [ordersData, filterStatus, searchQ, TODAY]);
 
   const inputStyle = {
     background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
@@ -768,16 +782,20 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         TODAY={TODAY}
       />
 
-      {/* ═══ DAFTAR ORDER INBOX ═══ */}
+      {/* ═══ DAFTAR ORDER INBOX (today + ke depan) ═══ */}
       <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
-          <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>
-            📋 Semua Order <span style={{ color: cs.muted, fontSize: 12, fontWeight: 400 }}>({inboxOrders.length})</span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>
+              📋 Planning Order
+              <span style={{ color: cs.muted, fontSize: 12, fontWeight: 400, marginLeft: 6 }}>({inboxOrders.length})</span>
+            </div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Hari ini &amp; ke depan · CONFIRMED → naik ke Order Masuk</div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
-              style={{ ...inputStyle, width: 200, padding: "6px 10px" }}
-              placeholder="Cari nama, alamat, teknisi..."
+              style={{ ...inputStyle, width: 190, padding: "6px 10px" }}
+              placeholder="Cari nama, teknisi, alamat..."
               value={searchQ} onChange={e => setSearchQ(e.target.value)} />
             <select style={{ ...inputStyle, width: "auto", padding: "6px 10px" }}
               value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
@@ -787,51 +805,108 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           </div>
         </div>
 
+        {/* Info Opsi B */}
+        <div style={{ background: cs.accent + "0a", border: "1px solid " + cs.accent + "33", borderRadius: 8, padding: "7px 12px", marginBottom: 14, fontSize: 11, color: cs.muted }}>
+          <span style={{ color: cs.accent, fontWeight: 700 }}>Alur Opsi B: </span>
+          PENDING = planning · <span style={{ color: statusColor.CONFIRMED }}>CONFIRMED</span> = fix, muncul di Order Masuk ·
+          <span style={{ color: statusColor.CANCELLED }}> CANCELLED</span> = batal, tidak di-dispatch
+        </div>
+
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid " + cs.border }}>
-                {["Tanggal", "Jam", "Customer", "Layanan", "Teknisi", "Status", "Sumber", "Aksi"].map(h => (
+                {["Tgl & Jam", "Customer", "Layanan", "Teknisi", "Helper", "Status", "Aksi"].map(h => (
                   <th key={h} style={{ textAlign: "left", padding: "8px 10px", color: cs.muted, fontWeight: 700 }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {inboxOrders.slice(0, 100).map(o => {
+              {inboxOrders.slice(0, 150).map(o => {
                 const isEditing = editId === o.id;
                 const techColor = o.teknisi ? getTechColor(o.teknisi, teknisiData) : cs.muted;
+                const helperColor = o.helper ? getTechColor(o.helper, teknisiData) : cs.muted;
+                const isToday = o.date === TODAY;
+                const isCancelled = o.status === "CANCELLED";
+                const ddStyle = { background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, color: cs.text, padding: "4px 6px", fontSize: 11, cursor: "pointer", outline: "none", width: "100%", minWidth: 110 };
                 return (
-                  <tr key={o.id} style={{ borderBottom: "1px solid " + cs.border + "44", background: isEditing ? cs.yellow + "08" : "transparent" }}>
-                    <td style={{ padding: "8px 10px", color: cs.text, whiteSpace: "nowrap" }}>
-                      {o.date || "—"}
-                      {o.date === TODAY && <span style={{ color: cs.accent, fontSize: 10, marginLeft: 4 }}>Hari ini</span>}
+                  <tr key={o.id} style={{
+                    borderBottom: "1px solid " + cs.border + "44",
+                    background: isEditing ? cs.yellow + "08" : isCancelled ? cs.red + "06" : isToday ? cs.accent + "06" : "transparent",
+                    opacity: isCancelled ? 0.6 : 1,
+                  }}>
+                    {/* Tanggal + Jam */}
+                    <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                      <div style={{ color: isToday ? cs.accent : cs.text, fontWeight: isToday ? 700 : 400 }}>
+                        {o.date || "—"}
+                        {isToday && <span style={{ color: cs.accent, fontSize: 10, marginLeft: 4, fontWeight: 800 }}>● HARI INI</span>}
+                      </div>
+                      <div style={{ color: cs.muted, fontSize: 11 }}>
+                        {o.time?.slice(0,5) || "—"}
+                        {o.time_end && <span> – {o.time_end?.slice(0,5)}</span>}
+                      </div>
                     </td>
-                    <td style={{ padding: "8px 10px", color: cs.muted, whiteSpace: "nowrap" }}>
-                      {o.time?.slice(0,5) || "—"}
-                    </td>
+
+                    {/* Customer */}
                     <td style={{ padding: "8px 10px" }}>
                       <div style={{ color: cs.text, fontWeight: 600 }}>{o.customer}</div>
                       {o.phone && <div style={{ color: cs.muted, fontSize: 11 }}>{o.phone}</div>}
-                      {o.address && <div style={{ color: cs.muted, fontSize: 11, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.address}</div>}
-                      {o.notes && <div style={{ color: cs.ara, fontSize: 10, fontStyle: "italic", marginTop: 2 }}>{o.notes}</div>}
+                      {o.address && <div style={{ color: cs.muted, fontSize: 10, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.address}</div>}
+                      {o.notes && <div style={{ color: cs.ara, fontSize: 10, fontStyle: "italic" }}>{o.notes}</div>}
                     </td>
+
+                    {/* Layanan */}
                     <td style={{ padding: "8px 10px", color: cs.text, whiteSpace: "nowrap" }}>
-                      {o.service}{o.type ? ` — ${o.type}` : ""}{o.units > 1 ? ` ×${o.units}` : ""}
+                      <div>{o.service}{o.type ? ` — ${o.type}` : ""}</div>
+                      {o.units > 1 && <div style={{ color: cs.muted, fontSize: 10 }}>×{o.units} unit</div>}
+                      <SourceBadge source={o.source} />
                     </td>
-                    <td style={{ padding: "8px 10px", color: techColor, fontWeight: 600, whiteSpace: "nowrap" }}>
-                      {o.teknisi || <span style={{ color: cs.muted }}>—</span>}
+
+                    {/* Teknisi — inline dropdown */}
+                    <td style={{ padding: "8px 10px", minWidth: 130 }}>
+                      <select value={o.teknisi || ""} onChange={e => handleQuickAssign(o, "teknisi", e.target.value)}
+                        style={{ ...ddStyle, color: o.teknisi ? techColor : cs.muted, borderColor: o.teknisi ? techColor + "66" : cs.border }}>
+                        <option value="">— Pilih —</option>
+                        {activeTeknisi.map(t => (
+                          <option key={t.id || t.name} value={t.name}>{t.name}</option>
+                        ))}
+                      </select>
                     </td>
+
+                    {/* Helper — inline dropdown */}
+                    <td style={{ padding: "8px 10px", minWidth: 130 }}>
+                      <select value={o.helper || ""} onChange={e => handleQuickAssign(o, "helper", e.target.value)}
+                        style={{ ...ddStyle, color: o.helper ? helperColor : cs.muted, borderColor: o.helper ? helperColor + "66" : cs.border }}>
+                        <option value="">— Tidak ada —</option>
+                        {activeTeknisi.map(t => (
+                          <option key={t.id || t.name} value={t.name}>{t.name}</option>
+                        ))}
+                      </select>
+                    </td>
+
+                    {/* Status — dengan visual Opsi B */}
                     <td style={{ padding: "8px 10px" }}>
                       <select
                         value={o.status}
                         onChange={e => handleStatusChange(o, e.target.value)}
-                        style={{ background: (statusColor[o.status] || "#64748b") + "22", color: statusColor[o.status] || cs.muted, border: "1px solid " + (statusColor[o.status] || "#64748b") + "55", borderRadius: 6, padding: "3px 7px", fontSize: 11, fontWeight: 700, cursor: "pointer", outline: "none" }}>
+                        style={{
+                          background: (statusColor[o.status] || "#64748b") + "22",
+                          color: statusColor[o.status] || cs.muted,
+                          border: "2px solid " + (statusColor[o.status] || "#64748b") + "88",
+                          borderRadius: 6, padding: "4px 8px", fontSize: 11, fontWeight: 800,
+                          cursor: "pointer", outline: "none",
+                        }}>
                         {INBOX_STATUSES.map(s => <option key={s} value={s}>{statusLabel[s]}</option>)}
                       </select>
+                      {o.status === "CONFIRMED" && (
+                        <div style={{ color: cs.green, fontSize: 10, marginTop: 3, fontWeight: 600 }}>✓ Muncul di Order Masuk</div>
+                      )}
+                      {o.status === "CANCELLED" && (
+                        <div style={{ color: cs.red, fontSize: 10, marginTop: 3 }}>✕ Tidak di-dispatch</div>
+                      )}
                     </td>
-                    <td style={{ padding: "8px 10px" }}>
-                      <SourceBadge source={o.source} />
-                    </td>
+
+                    {/* Aksi */}
                     <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
                       <button onClick={() => handleEdit(o)}
                         style={{ background: cs.accent + "22", color: cs.accent, border: "1px solid " + cs.accent + "44", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", marginRight: 6, fontWeight: 600 }}>
@@ -847,8 +922,8 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
               })}
               {inboxOrders.length === 0 && (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: "center", color: cs.muted, padding: 32, fontSize: 13 }}>
-                    Belum ada order. Gunakan form di atas untuk input order WhatsApp.
+                  <td colSpan={7} style={{ textAlign: "center", color: cs.muted, padding: 32, fontSize: 13 }}>
+                    Tidak ada order hari ini atau ke depan.
                   </td>
                 </tr>
               )}
