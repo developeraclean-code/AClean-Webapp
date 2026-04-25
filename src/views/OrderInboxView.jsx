@@ -324,13 +324,70 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   const [searchQ, setSearchQ] = useState("");
   const [expandedId, setExpandedId] = useState(null);
 
+  // ── Opsi 2: availability state ──
+  const [availability, setAvailability] = useState([]); // [{date, teknisi, is_available, notes}]
+  const [availLoading, setAvailLoading] = useState(false);
+  const [availDate, setAvailDate] = useState(TODAY);     // tanggal yang sedang diedit di panel
+
+  // Load availability saat mount
+  useState(() => {
+    async function load() {
+      const { data } = await supabase.from("technician_availability")
+        .select("*").gte("date", TODAY).order("date").limit(200);
+      if (data) setAvailability(data);
+    }
+    load();
+  }, []);
+
   const weekDays = useMemo(() => getWeekDays(weekOffset), [weekOffset]);
   const weekLabel = `${weekDays[0].date.slice(5).replace("-", "/")} – ${weekDays[6].date.slice(5).replace("-", "/")}`;
 
-  // Teknisi aktif
+  // Teknisi aktif (semua, belum filter availability)
   const activeTeknisi = useMemo(() =>
     (teknisiData || []).filter(t => t.active !== false && (t.role === "Teknisi" || t.role === "Owner" || t.role === "Admin")),
     [teknisiData]
+  );
+
+  // Helper: cek apakah teknisi available di tanggal tertentu
+  // Default = available (kalau belum ada record = dianggap hadir)
+  function isAvailable(tekName, date) {
+    const rec = availability.find(a => a.teknisi === tekName && a.date === date);
+    if (!rec) return true;
+    return rec.is_available;
+  }
+
+  // Toggle hadir/tidak — upsert ke Supabase
+  async function toggleAvailability(tekName, date, currentVal) {
+    setAvailLoading(true);
+    const newVal = !currentVal;
+    const { data, error } = await supabase.from("technician_availability")
+      .upsert({ date, teknisi: tekName, is_available: newVal, updated_at: new Date().toISOString() },
+        { onConflict: "date,teknisi" })
+      .select().single();
+    setAvailLoading(false);
+    if (error) return showNotif("Gagal update kehadiran: " + error.message);
+    setAvailability(prev => {
+      const idx = prev.findIndex(a => a.teknisi === tekName && a.date === date);
+      return idx >= 0
+        ? prev.map((a, i) => i === idx ? { ...a, is_available: newVal } : a)
+        : [...prev, { teknisi: tekName, date, is_available: newVal }];
+    });
+    showNotif(`${tekName} — ${newVal ? "Hadir ✓" : "Tidak Hadir ✗"} (${date})`);
+  }
+
+  // Teknisi yang AVAILABLE di tanggal form (untuk dropdown assign)
+  const availableTeknisi = useMemo(() =>
+    activeTeknisi.filter(t => isAvailable(t.name, form.date || TODAY)),
+    [activeTeknisi, availability, form.date, TODAY]
+  );
+
+  // Teknisi available di tanggal availDate (untuk panel toggle)
+  const availTeknisiForDate = useMemo(() =>
+    activeTeknisi.map(t => ({
+      ...t,
+      available: isAvailable(t.name, availDate),
+    })),
+    [activeTeknisi, availability, availDate]
   );
 
   // Conflict check realtime
@@ -559,6 +616,96 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
+      {/* ═══ PANEL KEHADIRAN TEKNISI ═══ */}
+      <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>👷 Kehadiran Teknisi</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+              Toggle siapa yang hadir — dropdown assign otomatis filter hanya yang hadir
+            </div>
+          </div>
+          {/* Pilih tanggal panel */}
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            {Array.from({ length: 7 }, (_, i) => {
+              const d = new Date(TODAY);
+              d.setDate(d.getDate() + i);
+              const iso = d.toISOString().slice(0, 10);
+              const dayNames = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
+              const label = i === 0 ? "Hari ini" : dayNames[d.getDay()] + " " + d.getDate();
+              const hadir = activeTeknisi.filter(t => isAvailable(t.name, iso)).length;
+              const isSelected = availDate === iso;
+              return (
+                <button key={iso} onClick={() => setAvailDate(iso)}
+                  style={{
+                    background: isSelected ? cs.accent : cs.card,
+                    color: isSelected ? "#fff" : cs.muted,
+                    border: "1px solid " + (isSelected ? cs.accent : cs.border),
+                    borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontSize: 11,
+                    fontWeight: isSelected ? 700 : 400, position: "relative",
+                  }}>
+                  {label}
+                  <span style={{
+                    marginLeft: 5, fontSize: 10, fontWeight: 700,
+                    color: isSelected ? "#fff" : hadir === activeTeknisi.length ? cs.green : hadir === 0 ? cs.red : cs.yellow
+                  }}>{hadir}/{activeTeknisi.length}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Toggle per teknisi */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {availTeknisiForDate.map(t => {
+            const color = getTechColor(t.name, teknisiData);
+            return (
+              <button key={t.name} onClick={() => toggleAvailability(t.name, availDate, t.available)}
+                disabled={availLoading}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  background: t.available ? color + "18" : cs.card,
+                  border: "2px solid " + (t.available ? color : cs.border),
+                  borderRadius: 10, padding: "8px 14px", cursor: availLoading ? "not-allowed" : "pointer",
+                  opacity: availLoading ? 0.7 : 1, transition: "all 0.15s",
+                }}>
+                {/* Toggle indicator */}
+                <div style={{
+                  width: 32, height: 18, borderRadius: 9,
+                  background: t.available ? color : cs.border,
+                  position: "relative", transition: "background 0.2s",
+                }}>
+                  <div style={{
+                    position: "absolute", top: 2, left: t.available ? 16 : 2,
+                    width: 14, height: 14, borderRadius: "50%",
+                    background: "#fff", transition: "left 0.2s",
+                  }} />
+                </div>
+                <div>
+                  <div style={{ color: t.available ? color : cs.muted, fontWeight: 700, fontSize: 12 }}>{t.name}</div>
+                  <div style={{ fontSize: 10, color: t.available ? cs.green : cs.red, fontWeight: 600 }}>
+                    {t.available ? "Hadir" : "Tidak Hadir"}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+          {activeTeknisi.length === 0 && (
+            <div style={{ color: cs.muted, fontSize: 12, padding: 8 }}>Belum ada data teknisi</div>
+          )}
+        </div>
+
+        {/* Summary */}
+        <div style={{ marginTop: 10, fontSize: 11, color: cs.muted, display: "flex", gap: 16 }}>
+          <span>
+            <span style={{ color: cs.green, fontWeight: 700 }}>{availTeknisiForDate.filter(t => t.available).length} hadir</span>
+            {" · "}
+            <span style={{ color: cs.red, fontWeight: 700 }}>{availTeknisiForDate.filter(t => !t.available).length} tidak hadir</span>
+            {" · "}tanggal {availDate}
+          </span>
+        </div>
+      </div>
+
       {/* ═══ FORM QUICK ENTRY ═══ */}
       <div style={{ background: cs.surface, border: "1px solid " + (editId ? cs.yellow : cs.border), borderRadius: 14, padding: 20 }}>
         <div style={{ fontWeight: 800, fontSize: 15, color: editId ? cs.yellow : cs.text, marginBottom: 16 }}>
@@ -723,15 +870,33 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
             </div>
           </div>
 
-          {/* Teknisi */}
+          {/* Teknisi — hanya yang available di tanggal terpilih */}
           <div>
-            <label style={labelStyle}>Teknisi</label>
-            <select style={inputStyle} value={form.teknisi} onChange={e => setField("teknisi", e.target.value)}>
-              <option value="">— Belum ditentukan —</option>
-              {activeTeknisi.map(t => (
-                <option key={t.id || t.name} value={t.name}>{t.name}</option>
+            <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 6 }}>
+              Teknisi
+              {form.date && (
+                <span style={{ color: cs.green, fontSize: 10, fontWeight: 600 }}>
+                  {availableTeknisi.length} hadir {form.date === TODAY ? "hari ini" : form.date}
+                </span>
+              )}
+            </label>
+            <select
+              style={{ ...inputStyle, borderColor: form.teknisi && !isAvailable(form.teknisi, form.date) ? cs.red + "88" : cs.border }}
+              value={form.teknisi} onChange={e => setField("teknisi", e.target.value)}>
+              <option value="">— Pilih teknisi —</option>
+              {availableTeknisi.map(t => (
+                <option key={t.id || t.name} value={t.name}>✓ {t.name}</option>
+              ))}
+              {/* Teknisi tidak hadir — tetap bisa dipilih tapi diberi tanda */}
+              {activeTeknisi.filter(t => !isAvailable(t.name, form.date || TODAY)).map(t => (
+                <option key={t.id || t.name} value={t.name}>✗ {t.name} (tidak hadir)</option>
               ))}
             </select>
+            {form.teknisi && !isAvailable(form.teknisi, form.date || TODAY) && (
+              <div style={{ color: cs.red, fontSize: 10, marginTop: 3, fontWeight: 600 }}>
+                ⚠️ {form.teknisi} ditandai tidak hadir di tanggal ini
+              </div>
+            )}
           </div>
 
           {/* Alamat — full width */}
@@ -862,26 +1027,48 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                       <SourceBadge source={o.source} />
                     </td>
 
-                    {/* Teknisi — inline dropdown */}
-                    <td style={{ padding: "8px 10px", minWidth: 130 }}>
+                    {/* Teknisi — inline dropdown, filter availability per tanggal order */}
+                    <td style={{ padding: "8px 10px", minWidth: 140 }}>
                       <select value={o.teknisi || ""} onChange={e => handleQuickAssign(o, "teknisi", e.target.value)}
-                        style={{ ...ddStyle, color: o.teknisi ? techColor : cs.muted, borderColor: o.teknisi ? techColor + "66" : cs.border }}>
+                        style={{
+                          ...ddStyle,
+                          color: o.teknisi ? (isAvailable(o.teknisi, o.date) ? techColor : cs.red) : cs.muted,
+                          borderColor: o.teknisi ? (isAvailable(o.teknisi, o.date) ? techColor + "66" : cs.red + "88") : cs.border,
+                        }}>
                         <option value="">— Pilih —</option>
-                        {activeTeknisi.map(t => (
-                          <option key={t.id || t.name} value={t.name}>{t.name}</option>
+                        {/* Hadir dulu */}
+                        {activeTeknisi.filter(t => isAvailable(t.name, o.date)).map(t => (
+                          <option key={t.id || t.name} value={t.name}>✓ {t.name}</option>
+                        ))}
+                        {/* Tidak hadir — tetap bisa dipilih tapi ada tanda */}
+                        {activeTeknisi.filter(t => !isAvailable(t.name, o.date)).map(t => (
+                          <option key={t.id || t.name} value={t.name}>✗ {t.name} (tdk hadir)</option>
                         ))}
                       </select>
+                      {o.teknisi && !isAvailable(o.teknisi, o.date) && (
+                        <div style={{ color: cs.red, fontSize: 9, marginTop: 2, fontWeight: 600 }}>⚠️ tidak hadir</div>
+                      )}
                     </td>
 
-                    {/* Helper — inline dropdown */}
-                    <td style={{ padding: "8px 10px", minWidth: 130 }}>
+                    {/* Helper — inline dropdown, filter availability */}
+                    <td style={{ padding: "8px 10px", minWidth: 140 }}>
                       <select value={o.helper || ""} onChange={e => handleQuickAssign(o, "helper", e.target.value)}
-                        style={{ ...ddStyle, color: o.helper ? helperColor : cs.muted, borderColor: o.helper ? helperColor + "66" : cs.border }}>
+                        style={{
+                          ...ddStyle,
+                          color: o.helper ? (isAvailable(o.helper, o.date) ? helperColor : cs.red) : cs.muted,
+                          borderColor: o.helper ? (isAvailable(o.helper, o.date) ? helperColor + "66" : cs.red + "88") : cs.border,
+                        }}>
                         <option value="">— Tidak ada —</option>
-                        {activeTeknisi.map(t => (
-                          <option key={t.id || t.name} value={t.name}>{t.name}</option>
+                        {activeTeknisi.filter(t => isAvailable(t.name, o.date)).map(t => (
+                          <option key={t.id || t.name} value={t.name}>✓ {t.name}</option>
+                        ))}
+                        {activeTeknisi.filter(t => !isAvailable(t.name, o.date)).map(t => (
+                          <option key={t.id || t.name} value={t.name}>✗ {t.name} (tdk hadir)</option>
                         ))}
                       </select>
+                      {o.helper && !isAvailable(o.helper, o.date) && (
+                        <div style={{ color: cs.red, fontSize: 9, marginTop: 2, fontWeight: 600 }}>⚠️ tidak hadir</div>
+                      )}
                     </td>
 
                     {/* Status — dengan visual Opsi B */}

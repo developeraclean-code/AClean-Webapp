@@ -58,3 +58,8 @@ export const fetchAraBrain = (supabase) =>
 export const fetchPendingPaymentSuggestions = (supabase) =>
   supabase.from("payment_suggestions").select("*").eq("status","PENDING")
     .order("created_at",{ascending:false}).limit(20);
+
+// Kehadiran teknisi — ambil 14 hari ke depan dari today
+export const fetchTechAvailability = (supabase, fromDate) =>
+  supabase.from("technician_availability").select("*")
+    .gte("date", fromDate).order("date").limit(200);
