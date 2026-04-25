@@ -5,6 +5,29 @@ import { statusColor, statusLabel } from "../constants/status.js";
 import { normalizePhone } from "../lib/phone.js";
 import { getTechColor } from "../lib/techColor.js";
 
+// ── Durasi estimasi (jam) — sama dengan logic di App.jsx ──
+function hitungDurasi(service, units) {
+  const u = parseInt(units) || 1;
+  if (service === "Install") return Math.min(u * 2.5, 8);
+  if (service === "Repair") return Math.ceil(u * 1.5);
+  if (service === "Complain") return Math.max(0.5, u * 0.5);
+  // Cleaning
+  if (u === 1) return 1;
+  if (u === 2) return 2;
+  if (u === 3) return 3;
+  if (u === 4) return 3;
+  if (u <= 6) return 4;
+  if (u <= 8) return 5;
+  if (u <= 10) return 6;
+  return 8;
+}
+
+function toMinutes(timeStr) {
+  if (!timeStr) return null;
+  const [h, m] = timeStr.split(":").map(Number);
+  return h * 60 + m;
+}
+
 // ── Conflict detection: overlap ±1 jam ──
 function hasConflict(orders, teknisi, date, time, excludeId = null) {
   if (!teknisi || !date || !time) return null;
@@ -41,6 +64,222 @@ function SourceBadge({ source }) {
     <span style={{ background: s.color + "18", color: s.color, border: "1px solid " + s.color + "44", borderRadius: 6, padding: "2px 7px", fontSize: 10, fontWeight: 700 }}>
       {s.label}
     </span>
+  );
+}
+
+// ── Time Grid: tampilan per jam 09:00–17:00 per teknisi per hari yang dipilih ──
+const GRID_START = 9;   // jam 09:00
+const GRID_END   = 17;  // sampai 17:00 (8 slot)
+const HOURS = Array.from({ length: GRID_END - GRID_START }, (_, i) => GRID_START + i); // [9,10,...,16]
+
+function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi, weekOrders, teknisiData, expandedId, setExpandedId, TODAY }) {
+  const [selectedDate, setSelectedDate] = useState(weekDays.find(d => d.date === TODAY)?.date || weekDays[0]?.date);
+
+  // Kalau minggu berganti, reset ke hari pertama
+  const currentDate = weekDays.find(d => d.date === selectedDate) ? selectedDate : weekDays[0]?.date;
+
+  // Order di hari terpilih, bukan cancelled
+  const dayOrders = weekOrders.filter(o => o.date === currentDate);
+
+  // Untuk tiap teknisi + jam: apakah jam ini terisi?
+  // Return: null = kosong, { ...order, endMin } = terisi, 'cont' = lanjutan dari jam sebelumnya
+  function getSlot(tek, hour) {
+    const slotStart = hour * 60;
+    const slotEnd   = slotStart + 60;
+    const orders = dayOrders.filter(o => o.teknisi === tek && o.time);
+    for (const o of orders) {
+      const start = toMinutes(o.time);
+      if (start === null) continue;
+      const dur = hitungDurasi(o.service, o.units);
+      const end = start + Math.round(dur * 60);
+      if (start >= slotStart && start < slotEnd) return { ...o, startMin: start, endMin: end, isStart: true };
+      if (start < slotStart && end > slotStart) return { ...o, startMin: start, endMin: end, isStart: false };
+    }
+    return null;
+  }
+
+  // Berapa slot jam yang ditempati order ini mulai dari jam ini
+  function spanCount(o, hour) {
+    const start = toMinutes(o.time);
+    const dur = hitungDurasi(o.service, o.units);
+    const endMin = start + Math.round(dur * 60);
+    const slotStart = hour * 60;
+    // hitung berapa jam ke depan masih terisi
+    let count = 0;
+    for (let h = hour; h < GRID_END; h++) {
+      if (h * 60 >= endMin) break;
+      count++;
+    }
+    return Math.max(1, count);
+  }
+
+  return (
+    <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>📅 Time Grid Jadwal</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={() => setWeekOffset(w => w - 1)}
+            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 7, padding: "5px 11px", cursor: "pointer", fontSize: 13 }}>‹</button>
+          <span style={{ fontSize: 12, color: cs.muted, minWidth: 115, textAlign: "center" }}>{weekLabel}</span>
+          <button onClick={() => setWeekOffset(w => w + 1)}
+            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 7, padding: "5px 11px", cursor: "pointer", fontSize: 13 }}>›</button>
+          {weekOffset !== 0 && (
+            <button onClick={() => setWeekOffset(0)}
+              style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 7, padding: "5px 9px", cursor: "pointer", fontSize: 11 }}>Minggu ini</button>
+          )}
+        </div>
+      </div>
+
+      {/* Pilih hari */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {weekDays.map(d => {
+          const isToday = d.date === TODAY;
+          const isSelected = d.date === currentDate;
+          const orderCount = weekOrders.filter(o => o.date === d.date).length;
+          return (
+            <button key={d.date} onClick={() => setSelectedDate(d.date)}
+              style={{
+                background: isSelected ? cs.accent : isToday ? cs.accent + "18" : cs.card,
+                color: isSelected ? "#fff" : isToday ? cs.accent : cs.text,
+                border: "1px solid " + (isSelected ? cs.accent : isToday ? cs.accent + "66" : cs.border),
+                borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 12, fontWeight: isSelected ? 700 : 400,
+                position: "relative",
+              }}>
+              {d.label}
+              {orderCount > 0 && (
+                <span style={{ position: "absolute", top: -4, right: -4, background: isSelected ? cs.green : cs.yellow, color: "#000", borderRadius: 8, fontSize: 9, padding: "1px 4px", fontWeight: 800 }}>{orderCount}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 12, fontSize: 11, color: cs.muted }}>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#22c55e22", border: "1px solid #22c55e66", borderRadius: 2, marginRight: 4 }} />Kosong (tersedia)</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#38bdf822", border: "1px solid #38bdf866", borderRadius: 2, marginRight: 4 }} />Terisi</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#ef444422", border: "1px solid #ef444466", borderRadius: 2, marginRight: 4 }} />Konflik</span>
+      </div>
+
+      {/* Time grid table */}
+      {gridTeknisi.length === 0 ? (
+        <div style={{ textAlign: "center", color: cs.muted, padding: 32, fontSize: 13 }}>
+          Belum ada teknisi atau jadwal minggu ini
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 11, tableLayout: "fixed" }}>
+            <colgroup>
+              <col style={{ width: 90 }} />
+              {HOURS.map(h => <col key={h} style={{ width: 70 }} />)}
+            </colgroup>
+            <thead>
+              <tr>
+                <th style={{ padding: "5px 8px", color: cs.muted, fontWeight: 700, borderBottom: "1px solid " + cs.border, textAlign: "left", fontSize: 11 }}>
+                  Teknisi
+                </th>
+                {HOURS.map(h => (
+                  <th key={h} style={{
+                    padding: "5px 4px", textAlign: "center", borderBottom: "1px solid " + cs.border,
+                    color: h >= 12 && h < 14 ? cs.yellow : cs.muted,
+                    fontWeight: 600, fontSize: 10,
+                    background: h >= 12 && h < 14 ? cs.yellow + "08" : "transparent",
+                  }}>
+                    {String(h).padStart(2,"0")}:00
+                    {h >= 12 && h < 14 && <div style={{ fontSize: 8, color: cs.yellow }}>siang</div>}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {gridTeknisi.map(tek => {
+                const color = getTechColor(tek, teknisiData);
+                // pre-compute: jam mana saja yang sudah di-render (karena rowspan)
+                const rendered = new Set();
+                return (
+                  <tr key={tek} style={{ borderBottom: "1px solid " + cs.border + "33" }}>
+                    {/* Nama teknisi */}
+                    <td style={{ padding: "6px 8px", fontWeight: 700, color, fontSize: 11, whiteSpace: "nowrap", borderRight: "1px solid " + cs.border + "44" }}>
+                      {tek}
+                    </td>
+                    {HOURS.map(h => {
+                      if (rendered.has(h)) return null;
+                      const slot = getSlot(tek, h);
+
+                      if (!slot) {
+                        // Kosong — warna hijau muda
+                        return (
+                          <td key={h} style={{
+                            background: "#22c55e0a",
+                            border: "1px solid " + cs.border + "33",
+                            textAlign: "center", padding: "4px 2px",
+                          }}>
+                            <span style={{ color: cs.border + "88", fontSize: 9 }}>—</span>
+                          </td>
+                        );
+                      }
+
+                      if (!slot.isStart) {
+                        // Lanjutan order dari jam sebelumnya — sudah dirender via colSpan
+                        rendered.add(h);
+                        return null;
+                      }
+
+                      // Ini awal order — hitung berapa jam terisi (colSpan)
+                      const span = spanCount(slot, h);
+                      for (let s = h + 1; s < h + span; s++) rendered.add(s);
+
+                      // Cek konflik: ada order lain di slot yg sama
+                      const othersInSlot = dayOrders.filter(o =>
+                        o.teknisi === tek && o.id !== slot.id && o.time &&
+                        (() => {
+                          const os = toMinutes(o.time);
+                          const oe = os + Math.round(hitungDurasi(o.service, o.units) * 60);
+                          return os < slot.endMin && oe > slot.startMin;
+                        })()
+                      );
+                      const isConflict = othersInSlot.length > 0;
+
+                      return (
+                        <td key={h} colSpan={span}
+                          onClick={() => setExpandedId(expandedId === slot.id ? null : slot.id)}
+                          style={{
+                            background: isConflict ? cs.red + "22" : color + "20",
+                            border: "2px solid " + (isConflict ? cs.red + "88" : color + "66"),
+                            borderRadius: 5, padding: "4px 6px", cursor: "pointer",
+                            verticalAlign: "top", position: "relative",
+                          }}>
+                          <div style={{ color, fontWeight: 800, fontSize: 10 }}>
+                            {slot.time?.slice(0,5)}–{slot.time_end?.slice(0,5) || (() => {
+                              const em = slot.startMin + Math.round(hitungDurasi(slot.service, slot.units) * 60);
+                              return String(Math.floor(em/60)).padStart(2,"0") + ":" + String(em%60).padStart(2,"0");
+                            })()}
+                          </div>
+                          <div style={{ color: cs.text, fontSize: 10, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: span * 68 }}>
+                            {slot.customer}
+                          </div>
+                          <div style={{ color: cs.muted, fontSize: 9 }}>
+                            {slot.service}{slot.units > 1 ? ` ×${slot.units}` : ""}
+                          </div>
+                          {isConflict && <div style={{ color: cs.red, fontSize: 9, fontWeight: 800 }}>⚠️ konflik</div>}
+                          {expandedId === slot.id && (
+                            <div style={{ marginTop: 4, borderTop: "1px solid " + color + "33", paddingTop: 4 }}>
+                              <div style={{ color: cs.muted, fontSize: 9 }}>{slot.address || "—"}</div>
+                              <div style={{ marginTop: 2 }}><StatusBadge status={slot.status} /></div>
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -482,93 +721,14 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         </div>
       </div>
 
-      {/* ═══ GRID JADWAL MINGGUAN ═══ */}
-      <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>📅 Jadwal Mingguan</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button onClick={() => setWeekOffset(w => w - 1)}
-              style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 13 }}>‹</button>
-            <span style={{ fontSize: 12, color: cs.muted, minWidth: 120, textAlign: "center" }}>{weekLabel}</span>
-            <button onClick={() => setWeekOffset(w => w + 1)}
-              style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 13 }}>›</button>
-            {weekOffset !== 0 && (
-              <button onClick={() => setWeekOffset(0)}
-                style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 11 }}>Minggu ini</button>
-            )}
-          </div>
-        </div>
-
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", padding: "6px 10px", color: cs.muted, fontWeight: 700, borderBottom: "1px solid " + cs.border, minWidth: 100 }}>Teknisi</th>
-                {weekDays.map(d => {
-                  const isToday = d.date === TODAY;
-                  return (
-                    <th key={d.date} style={{ textAlign: "center", padding: "6px 8px", color: isToday ? cs.accent : cs.muted, fontWeight: isToday ? 800 : 600, borderBottom: "1px solid " + cs.border, minWidth: 90, background: isToday ? cs.accent + "0a" : "transparent" }}>
-                      {d.label}
-                      {isToday && <div style={{ fontSize: 9, color: cs.accent }}>HARI INI</div>}
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {gridTeknisi.map(tek => {
-                const color = getTechColor(tek, teknisiData);
-                return (
-                  <tr key={tek}>
-                    <td style={{ padding: "6px 10px", borderBottom: "1px solid " + cs.border + "55", fontWeight: 700, color }}>
-                      {tek}
-                    </td>
-                    {weekDays.map(d => {
-                      const slotOrders = getSlotOrders(tek, d.date);
-                      const hasConflictSlot = isSlotConflict(tek, d.date);
-                      const isToday = d.date === TODAY;
-                      const bg = hasConflictSlot ? cs.red + "18" : slotOrders.length > 0 ? color + "12" : isToday ? cs.accent + "08" : "transparent";
-                      const borderCol = hasConflictSlot ? cs.red + "88" : slotOrders.length > 0 ? color + "44" : cs.border + "33";
-                      return (
-                        <td key={d.date} style={{ padding: "4px 6px", borderBottom: "1px solid " + cs.border + "33", background: bg, border: hasConflictSlot ? "2px solid " + cs.red + "66" : "1px solid " + borderCol, verticalAlign: "top", minWidth: 90 }}>
-                          {slotOrders.length === 0 ? (
-                            <span style={{ color: cs.border, fontSize: 10 }}>—</span>
-                          ) : (
-                            slotOrders.map(o => (
-                              <div key={o.id} onClick={() => setExpandedId(expandedId === o.id ? null : o.id)}
-                                style={{ background: color + "22", border: "1px solid " + color + "44", borderRadius: 5, padding: "3px 6px", marginBottom: 3, cursor: "pointer" }}>
-                                <div style={{ color, fontWeight: 700, fontSize: 11 }}>{o.time?.slice(0,5)}</div>
-                                <div style={{ color: cs.text, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 80 }}>{o.customer}</div>
-                                <div style={{ color: cs.muted, fontSize: 10 }}>{o.service}</div>
-                                {expandedId === o.id && (
-                                  <div style={{ marginTop: 4, borderTop: "1px solid " + color + "33", paddingTop: 4 }}>
-                                    <div style={{ color: cs.muted, fontSize: 10 }}>{o.address || "—"}</div>
-                                    <StatusBadge status={o.status} />
-                                  </div>
-                                )}
-                              </div>
-                            ))
-                          )}
-                          {hasConflictSlot && (
-                            <div style={{ color: cs.red, fontSize: 10, fontWeight: 700, marginTop: 2 }}>⚠️ Konflik</div>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-              {gridTeknisi.length === 0 && (
-                <tr>
-                  <td colSpan={8} style={{ textAlign: "center", color: cs.muted, padding: 24, fontSize: 13 }}>
-                    Belum ada jadwal minggu ini
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* ═══ TIME GRID JADWAL MINGGUAN ═══ */}
+      <TimeGrid
+        weekDays={weekDays} weekLabel={weekLabel} weekOffset={weekOffset}
+        setWeekOffset={setWeekOffset} gridTeknisi={gridTeknisi}
+        weekOrders={weekOrders} teknisiData={teknisiData}
+        expandedId={expandedId} setExpandedId={setExpandedId}
+        TODAY={TODAY}
+      />
 
       {/* ═══ DAFTAR ORDER INBOX ═══ */}
       <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
