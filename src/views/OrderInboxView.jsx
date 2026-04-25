@@ -562,7 +562,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       {/* ═══ FORM QUICK ENTRY ═══ */}
       <div style={{ background: cs.surface, border: "1px solid " + (editId ? cs.yellow : cs.border), borderRadius: 14, padding: 20 }}>
         <div style={{ fontWeight: 800, fontSize: 15, color: editId ? cs.yellow : cs.text, marginBottom: 16 }}>
-          {editId ? "✏️ Edit Order — " + editId : "➕ Input Order WhatsApp"}
+          {editId ? "✏️ Edit Planning — " + editId : "➕ Tambah Planning Order"}
         </div>
 
         {/* Conflict warning */}

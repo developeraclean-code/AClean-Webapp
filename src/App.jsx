@@ -4554,7 +4554,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ── Menu items (all) ──
   const ALL_MENU = [
     { id: "dashboard", icon: "⬡", label: "Dashboard" },
-    { id: "wa-inbox", icon: "💬", label: "Order Inbox" },
+    { id: "wa-inbox", icon: "📌", label: "Planning Order" },
     { id: "orders", icon: "📋", label: "Order Masuk" },
     { id: "schedule", icon: "📅", label: "Jadwal" },
     { id: "invoice", icon: "🧾", label: "Invoice" },
