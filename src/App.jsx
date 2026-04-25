@@ -1946,9 +1946,9 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
   .photo-page-header { background: #1e3a5f; color: #fff; padding: 8px 12px; margin-bottom: 10px; border-radius: 4px; }
   .photo-page-title { font-size: 14px; font-weight: 800; letter-spacing: 0.5px; }
   .photo-page-sub { font-size: 9px; color: #93c5fd; margin-top: 2px; }
-  .photo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-  .photo-cell { border: 1px solid #e2e8f0; border-radius: 4px; overflow: hidden; position: relative; background: #f8fafc; }
-  .photo-cell img { width: 100%; height: 120px; object-fit: cover; display: block; }
+  .photo-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .photo-cell { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; position: relative; background: #f8fafc; }
+  .photo-cell img { width: 100%; height: 180px; object-fit: cover; display: block; }
   .photo-num { position: absolute; bottom: 3px; right: 5px; background: rgba(0,0,0,0.55); color: #fff; font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 4px; }
 </style>
 </head>
