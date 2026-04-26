@@ -2,7 +2,7 @@
 import { setCorsHeaders, checkRateLimit, validateInternalToken } from "./_auth.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config"];
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token"];
 
 // ── VALIDATION HELPERS ──
 function validateAndNormalizePhone(phone) {
@@ -1060,6 +1060,28 @@ export default async function handler(req, res) {
         defaultProvider,
         message: "Use 'defaultProvider' to determine initial LLM choice"
       });
+    }
+
+    // ── GET-API-TOKEN — exchange Supabase JWT for internal API token (session-only) ──
+    if (route === "get-api-token") {
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const authH = req.headers["authorization"] || "";
+      const jwt = authH.startsWith("Bearer ") ? authH.slice(7) : "";
+      if (!jwt) return res.status(401).json({ error: "Missing Bearer token" });
+      const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+      if (!supabaseUrl || !supabaseAnonKey) return res.status(500).json({ error: "Supabase config missing" });
+      try {
+        const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
+          headers: { "Authorization": `Bearer ${jwt}`, "apikey": supabaseAnonKey }
+        });
+        if (!r.ok) return res.status(401).json({ error: "Invalid session" });
+        const secret = process.env.INTERNAL_API_SECRET;
+        if (!secret) return res.status(500).json({ error: "Server misconfiguration" });
+        return res.status(200).json({ token: secret });
+      } catch (e) {
+        return res.status(500).json({ error: "Auth check failed" });
+      }
     }
 
     // ── CRON-REMINDER ──

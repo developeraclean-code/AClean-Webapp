@@ -833,18 +833,29 @@ export default function ACleanWebApp() {
     } catch { return def; }
   };
   const _lsSave = (key, val) => { try { localStorage.setItem("aclean_" + key, JSON.stringify(val)); } catch { } };
-  // SEC-02: internal token untuk API calls — pakai Supabase session JWT, bukan env var di frontend
+  // SEC-02: internal API token — di-exchange saat login, cached di memory (tidak di localStorage/bundle)
+  const _internalTokenRef = useRef(null);
   const _apiHeaders = async () => {
-    try {
-      const { data } = await supabase.auth.getSession();
-      const jwt = data?.session?.access_token;
-      return {
-        "Content-Type": "application/json",
-        ...(jwt ? { "Authorization": `Bearer ${jwt}` } : {})
-      };
-    } catch {
-      return { "Content-Type": "application/json" };
+    if (!_internalTokenRef.current) {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const jwt = data?.session?.access_token;
+        if (jwt) {
+          const r = await fetch("/api/get-api-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}` }
+          });
+          if (r.ok) {
+            const d = await r.json();
+            if (d.token) _internalTokenRef.current = d.token;
+          }
+        }
+      } catch { /* gagal silent — request tetap jalan tanpa token */ }
     }
+    return {
+      "Content-Type": "application/json",
+      ...(_internalTokenRef.current ? { "X-Internal-Token": _internalTokenRef.current } : {})
+    };
   };
   // SEC-07: brute force states — harus setelah _ls didefinisikan
   const [loginAttempts, setLoginAttempts] = useState(() => _ls("loginAttempts", 0));
@@ -2379,7 +2390,8 @@ ${photoPageHTML}
   };
 
   const doLogout = async () => {
-    invalidateCache(); // bersihkan semua cache saat logout
+    invalidateCache();
+    _internalTokenRef.current = null; // clear cached API token saat logout
     await supabase.auth.signOut();
     _lsSave("localSession", null);
     addAgentLog("LOGOUT", `${currentUser?.name || "User"} (${currentUser?.role || ""}) keluar`, "SUCCESS");
