@@ -187,7 +187,7 @@ return (
     {/* ── STATISTIK OMSET PER HARI/MINGGU/BULAN (Owner & Admin) ── */}
     {(() => {
       const now = new Date();
-      const todayStr = now.toISOString().slice(0, 10);
+      const todayStr = TODAY;
 
       const startOf = (mode) => {
         const d = new Date(now);
@@ -468,23 +468,30 @@ return (
     </div>
     {/* ── FINANCIAL ANALYTICS — Owner only ── */}
     {currentUser?.role === "Owner" && (() => {
-      const now = new Date();
+      const [bY, bM] = bulanIni.split("-").map(Number);
       const months = Array.from({ length: 6 }, (_, i) => {
-        const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+        let m = bM - (5 - i);
+        let y = bY;
+        while (m <= 0) { m += 12; y--; }
+        const prefix = y + "-" + String(m).padStart(2, "0");
+        const d = new Date(y, m - 1, 1);
         return {
-          prefix: d.toISOString().slice(0, 7),
+          prefix,
           label: d.toLocaleDateString("id-ID", { month: "short", year: "2-digit" }),
         };
       });
 
       const revenueByMonth = months.map(m => ({
         ...m,
-        revenue: invoicesData.filter(i => i.status === "PAID" && (i.paid_at || i.created_at || "").startsWith(m.prefix)).reduce((s, i) => s + (i.total || 0), 0),
-        expenseTotal: (expensesData || []).filter(e => (e.date || e.created_at || "").startsWith(m.prefix)).reduce((s, e) => s + (e.amount || 0), 0),
+        revenue: invoicesData.filter(i => i.status === "PAID" && String(i.paid_at || "").startsWith(m.prefix)).reduce((s, i) => s + (i.total || 0), 0),
+        expenseTotal: (expensesData || []).filter(e => (e.date || "").startsWith(m.prefix)).reduce((s, e) => s + (e.amount || 0), 0),
       }));
 
-      const thisMPrefix = now.toISOString().slice(0, 7);
-      const lastMPrefix = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 7);
+      const thisMPrefix = bulanIni;
+      const [ty, tm] = bulanIni.split("-").map(Number);
+      const lastMPrefix = tm === 1
+        ? (ty - 1) + "-12"
+        : ty + "-" + String(tm - 1).padStart(2, "0");
       const revThisM = revenueByMonth.find(m => m.prefix === thisMPrefix)?.revenue || 0;
       const revLastM = revenueByMonth.find(m => m.prefix === lastMPrefix)?.revenue || 0;
       const revGrowth = revLastM > 0 ? Math.round(((revThisM - revLastM) / revLastM) * 100) : null;
