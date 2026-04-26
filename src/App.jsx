@@ -8292,14 +8292,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       const uploadedUrls = [];
                       for (const foto of editLaporanFotos.filter(f => f.file)) {
                         try {
-                          const formData = new FormData();
-                          formData.append("file", foto.file);
-                          formData.append("orderId", selectedLaporan.job_id);
-                          const { "Content-Type": _ct, ...uploadAuthHeaders } = await _apiHeaders();
+                          const base64 = await new Promise((res, rej) => {
+                            const reader = new FileReader();
+                            reader.onload = e => res(e.target.result);
+                            reader.onerror = rej;
+                            reader.readAsDataURL(foto.file);
+                          });
                           const uploadRes = await fetch("/api/upload-foto", {
                             method: "POST",
-                            body: formData,
-                            headers: uploadAuthHeaders
+                            headers: await _apiHeaders(),
+                            body: JSON.stringify({ base64, filename: foto.file.name || `foto_${Date.now()}.jpg`, reportId: selectedLaporan.job_id, mimeType: foto.file.type || "image/jpeg" }),
                           });
                           if (uploadRes.ok) {
                             const uploadData = await uploadRes.json();
