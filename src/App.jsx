@@ -1189,7 +1189,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       return {
         unit_no: no,
         label: hist.label || `Unit ${no}`,
-        tipe: hist.tipe || "AC Split 0.5PK",
+        tipe: TIPE_AC_OPT.includes(hist.tipe) ? hist.tipe : "",
         merk: hist.merk || "",
         pk: hist.pk || "1PK",
         model: hist.model || "",
@@ -1205,7 +1205,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     return {
       unit_no: no,
       label: `Unit ${no}`,
-      tipe: "AC Split 0.5-1PK",
+      tipe: "",
       merk: "",
       pk: "1PK",
       model: "",
@@ -9702,7 +9702,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
                       <div style={{ display: "grid", gap: 10 }}>
                         {laporanUnits.map((u, idx) => (
-                          <div key={idx} style={{ background: cs.surface, borderRadius: 10, border: "1px solid " + (u.tipe && u.tipe.trim() && u.label && u.label.trim() && u.merk && u.merk.trim() ? cs.green + "33" : cs.border), overflow: "hidden" }}>
+                          <div key={idx} style={{ background: cs.surface, borderRadius: 10, border: "1px solid " + (TIPE_AC_OPT.includes(u.tipe) && u.label && u.label.trim() && u.merk && u.merk.trim() ? cs.green + "33" : cs.border), overflow: "hidden" }}>
                             {/* Card header with unit number */}
                             <div style={{ fontSize: 10, fontWeight: 700, color: cs.accent, padding: "8px 12px", background: cs.card + "33", borderBottom: "1px solid " + cs.border + "22" }}>
                               Unit {u.unit_no}
@@ -9729,7 +9729,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               <div style={{ display: "grid", gap: 4 }}>
                                 <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Tipe AC *</span>
                                 <select value={u.tipe} onChange={e => { const newTipe = e.target.value; const pkMatch = newTipe.match(/(\d[\d.,]*PK)/i); updateUnit(idx, { ...u, tipe: newTipe, pk: pkMatch ? pkMatch[1] : u.pk }); }}
-                                  style={{ background: cs.card, border: "1px solid " + (u.tipe && u.tipe.trim() ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: u.tipe && u.tipe.trim() ? cs.text : cs.muted, fontSize: 11, outline: "none", fontWeight: u.tipe && u.tipe.trim() ? 600 : 400, boxSizing: "border-box", width: "100%" }}>
+                                  style={{ background: cs.card, border: "1px solid " + (TIPE_AC_OPT.includes(u.tipe) ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: TIPE_AC_OPT.includes(u.tipe) ? cs.text : cs.muted, fontSize: 11, outline: "none", fontWeight: TIPE_AC_OPT.includes(u.tipe) ? 600 : 400, boxSizing: "border-box", width: "100%" }}>
+                                  <option value="">-- Pilih Tipe AC --</option>
                                   {TIPE_AC_OPT.map(t => <option key={t}>{t}</option>)}
                                 </select>
                               </div>
@@ -9776,21 +9777,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     {/* Validate Tipe AC, Nama Ruangan, & Merk untuk semua unit */}
                     {(() => {
                       const incompleteUnits = laporanUnits.filter(u =>
-                        !u.tipe || !u.tipe.trim() ||   // Tipe AC required
-                        !u.label || !u.label.trim() || // Nama Ruangan required
-                        !u.merk || !u.merk.trim()      // Merk required
+                        !TIPE_AC_OPT.includes(u.tipe) || // Tipe AC harus pilih dari daftar
+                        !u.label || !u.label.trim() ||   // Nama Ruangan required
+                        !u.merk || !u.merk.trim()        // Merk required
                       );
                       return incompleteUnits.length > 0 ? (
                         <div style={{ background: "#ef444410", border: "1px solid #ef444430", borderRadius: 9, padding: "10px 13px", fontSize: 11, color: "#ef4444", fontWeight: 600 }}>
-                          ❌ Lengkapi dulu: {incompleteUnits.map(u => `Unit ${u.unit_no}`).join(", ")} — Pastikan Tipe AC, Nama Ruangan & Merk terisi!
+                          ❌ Lengkapi dulu: {incompleteUnits.map(u => `Unit ${u.unit_no}`).join(", ")} — Pastikan Tipe AC dipilih dari daftar, Nama Ruangan & Merk terisi!
                         </div>
                       ) : null;
                     })()}
 
                     <button onClick={() => {
-                      const incomplete = laporanUnits.filter(u => !u.tipe || !u.tipe.trim() || !u.label || !u.label.trim() || !u.merk || !u.merk.trim());
+                      const incomplete = laporanUnits.filter(u => !TIPE_AC_OPT.includes(u.tipe) || !u.label || !u.label.trim() || !u.merk || !u.merk.trim());
                       if (incomplete.length > 0) {
-                        showNotif(`⚠️ Lengkapi: ${incomplete.map(u => `Unit ${u.unit_no}`).join(", ")} — Tipe AC, Nama Ruangan & Merk wajib diisi!`);
+                        showNotif(`⚠️ Lengkapi: ${incomplete.map(u => `Unit ${u.unit_no}`).join(", ")} — Tipe AC harus dipilih dari daftar, Nama Ruangan & Merk wajib diisi!`);
                         return;
                       }
                       setLaporanStep(laporanModal?.service === "Install" ? 3 : 2);
