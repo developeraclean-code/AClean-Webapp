@@ -3032,9 +3032,10 @@ ${photoPageHTML}
       console.warn("WA realtime channels skip:", e?.message);
     }
 
-    // Payment suggestions — HANYA Owner/Admin yang menerima notif bukti bayar
+    // Payment suggestions — HANYA Owner/Admin yang menerima notif bukti bayar, dan hanya jika wa_payment_detect ON
     const _isFinanceRole = ["Owner", "Admin"].includes(currentUser?.role);
-    const _payPoll = _isFinanceRole ? setInterval(() => {
+    const _payDetectOn = appSettings?.wa_payment_detect !== "false";
+    const _payPoll = (_isFinanceRole && _payDetectOn) ? setInterval(() => {
       supabase.from("payment_suggestions").select("*").eq("status", "PENDING")
         .order("created_at", { ascending: false }).limit(20)
         .then(({ data }) => {
