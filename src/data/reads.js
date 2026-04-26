@@ -1,6 +1,7 @@
 // Pure Supabase read functions — tidak mengubah state, hanya return { data, error }.
 // Caller (App.jsx) yang tangani error handling + state setter.
 // LIMIT di-tune supaya page load cepat; reference tables tanpa limit.
+// Kolom di-seleksi eksplisit (bukan SELECT *) untuk hemat egress.
 
 export const fetchOrders = (supabase) =>
   supabase.from("orders").select("*").order("date", { ascending: false }).limit(500);
@@ -9,10 +10,14 @@ export const fetchInvoices = (supabase) =>
   supabase.from("invoices").select("*").order("created_at", { ascending: false }).limit(300);
 
 export const fetchCustomers = (supabase) =>
-  supabase.from("customers").select("*").order("name").limit(1000);
+  supabase.from("customers")
+    .select("id,name,phone,address,area,email,is_vip,notes,joined,total_orders,last_service")
+    .order("name").limit(1000);
 
 export const fetchInventory = (supabase) =>
-  supabase.from("inventory").select("*").order("code").limit(500);
+  supabase.from("inventory")
+    .select("id,code,name,unit,price,stock,reorder,status,min_alert,material_type,freon_type")
+    .order("code").limit(500);
 
 export const fetchServiceReports = (supabase) =>
   supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }).limit(200);
@@ -21,13 +26,19 @@ export const fetchAgentLogs = (supabase) =>
   supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(100);
 
 export const fetchInventoryTransactions = (supabase) =>
-  supabase.from("inventory_transactions").select("*").order("created_at", { ascending: false }).limit(500);
+  supabase.from("inventory_transactions")
+    .select("id,inventory_code,inventory_name,qty,type,order_id,report_id,notes,created_at,customer_name,teknisi_name,job_date,unit_label")
+    .order("created_at", { ascending: false }).limit(500);
 
 export const fetchInventoryUnits = (supabase) =>
-  supabase.from("inventory_units").select("*").order("inventory_code").order("unit_label").limit(2000);
+  supabase.from("inventory_units")
+    .select("id,inventory_code,unit_label,stock,capacity,min_visible,is_active")
+    .order("inventory_code").order("unit_label").limit(2000);
 
 export const fetchExpenses = (supabase) =>
-  supabase.from("expenses").select("*").order("date", { ascending: false }).limit(500);
+  supabase.from("expenses")
+    .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at")
+    .order("date", { ascending: false }).limit(500);
 
 export const fetchPayments = (supabase) =>
   supabase.from("payments").select("invoice_id,amount,method,paid_at").order("paid_at", { ascending: false }).limit(20);
@@ -39,10 +50,14 @@ export const fetchAppSettings = (supabase) =>
   supabase.from("app_settings").select("*").limit(100);
 
 export const fetchUserProfiles = (supabase) =>
-  supabase.from("user_profiles").select("*").order("name").limit(100);
+  supabase.from("user_profiles")
+    .select("id,name,email,phone,role,status,active,color,avatar,skills,last_login")
+    .order("name").limit(100);
 
 export const fetchUserAccounts = (supabase) =>
-  supabase.from("user_profiles").select("*").order("name").limit(200);
+  supabase.from("user_profiles")
+    .select("id,name,email,phone,role,status,active,color,avatar,skills,last_login")
+    .order("name").limit(200);
 
 export const fetchWaConversations = (supabase, limit = 50) => {
   const q = supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false });
