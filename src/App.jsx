@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Suspense } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { normalizePhone, samePhone } from "./lib/phone.js";
-import { getLocalDate, getLocalDateObj, getLocalISOString } from "./lib/dateTime.js";
+import { getLocalDate, getLocalDateObj, getLocalISOString, isWorkingHours } from "./lib/dateTime.js";
 import { safeJsonParse } from "./lib/safeJson.js";
 import {
   validateEmail, validatePhone, validateTime, validateDate,
@@ -928,13 +928,15 @@ export default function ACleanWebApp() {
       await Notification.requestPermission();
     }
   };
-  // GAP-7: jalankan check stuck jobs setiap 15 menit
+  // GAP-7: jalankan check stuck jobs — 30 menit jam kerja, OFF luar jam kerja
   const stuckCheckTimer = useRef(null);
   const startStuckCheck = () => {
     if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
-    stuckCheckTimer.current = setInterval(() => {
-      checkStuckJobs();
-    }, 15 * 60 * 1000); // 15 menit
+    if (isWorkingHours()) {
+      stuckCheckTimer.current = setInterval(() => {
+        checkStuckJobs();
+      }, 30 * 60 * 1000); // 30 menit jam kerja
+    }
   };
   const pushNotif = (title, body, icon = "⬡") => {
     if ("Notification" in window && Notification.permission === "granted") {
@@ -2895,10 +2897,11 @@ ${photoPageHTML}
     }, 8000); // jalankan 8 detik setelah data selesai load
 
 
-    // ── GAP-08 FIX: Auto-refresh data setiap 30 menit ──
+    // ── GAP-08 FIX: Auto-refresh — 30 menit jam kerja, 60 menit luar jam kerja ──
+    const STATS_INTERVAL = isWorkingHours() ? 30 * 60 * 1000 : 60 * 60 * 1000;
     const _statsTimer = setInterval(() => {
       loadAll().catch(e => console.warn("Auto-refresh skip:", e?.message));
-    }, 30 * 60 * 1000);
+    }, STATS_INTERVAL);
 
     // ══ Supabase Realtime Channels ══
     // Hanya 4 channel kritis (Supabase free tier: max concurrent realtime)
@@ -2910,18 +2913,20 @@ ${photoPageHTML}
       _rtDebounce[key] = setTimeout(fn, delay);
     };
 
-    // CH1: Orders — kritis
-    const ch1 = supabase.channel("rt-orders")
+    const shouldSubscribeRT = isWorkingHours();
+
+    // CH1: Orders — kritis, hanya jam kerja
+    const ch1 = shouldSubscribeRT ? supabase.channel("rt-orders")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () =>
         rtDebounced("orders", () =>
           fetchOrders(supabase).then(({ data }) => { if (data) setOrdersData(data); })
         ))
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") console.warn("⚠️ RT orders error — akan polling manual");
-      });
+      }) : null;
 
-    // CH2: Invoices — kritis
-    const ch2 = supabase.channel("rt-invoices")
+    // CH2: Invoices — kritis, hanya jam kerja
+    const ch2 = shouldSubscribeRT ? supabase.channel("rt-invoices")
       .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, () =>
         rtDebounced("invoices", () =>
           fetchInvoices(supabase).then(({ data }) => {
@@ -2939,20 +2944,21 @@ ${photoPageHTML}
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") {
           console.warn("⚠️ RT invoices error — fallback polling aktif");
-          // Polling manual setiap 60 detik (Opsi-A: hemat koneksi)
           if (window._rtPoll_1617) clearInterval(window._rtPoll_1617);
-          window._rtPoll_1617 = setInterval(() => fetchInvoices(supabase)
-            .then(({ data }) => {
-              if (data) setInvoicesData(data.map(inv => ({
-                ...inv,
-                materials_detail: (() => { const md = inv.materials_detail; if (!md) return []; if (Array.isArray(md)) return md; try { return JSON.parse(md); } catch (_) { return []; } })()
-              })));
-            }), 60000);
+          if (isWorkingHours()) {
+            window._rtPoll_1617 = setInterval(() => fetchInvoices(supabase)
+              .then(({ data }) => {
+                if (data) setInvoicesData(data.map(inv => ({
+                  ...inv,
+                  materials_detail: (() => { const md = inv.materials_detail; if (!md) return []; if (Array.isArray(md)) return md; try { return JSON.parse(md); } catch (_) { return []; } })()
+                })));
+              }), 5 * 60 * 1000);
+          }
         }
-      });
+      }) : null;
 
-    // CH3: Laporan teknisi — kritis
-    const ch3 = supabase.channel("rt-laporan")
+    // CH3: Laporan teknisi — kritis, hanya jam kerja
+    const ch3 = shouldSubscribeRT ? supabase.channel("rt-laporan")
       .on("postgres_changes", { event: "*", schema: "public", table: "service_reports" }, () =>
         rtDebounced("laporan", () =>
           fetchServiceReports(supabase).then(({ data }) => {
@@ -2964,7 +2970,6 @@ ${photoPageHTML}
                   fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
                   editLog: safeArr(r.edit_log ?? r.editLog),
                 }));
-                // ✨ DEDUP by job_id — prevents double laporan bug
                 const dm = new Map();
                 mapped.forEach(r => {
                   const ex = dm.get(r.job_id);
@@ -2978,26 +2983,28 @@ ${photoPageHTML}
         if (status === "CHANNEL_ERROR") {
           console.warn("⚠️ RT laporan error — fallback polling aktif");
           if (window._rtPoll_1645) clearInterval(window._rtPoll_1645);
-          window._rtPoll_1645 = setInterval(() => fetchServiceReports(supabase)
-            .then(({ data }) => {
-              if (data) {
-                const mapped = data.map(r => ({
-                  ...r,
-                  units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return []; } })() : (r.units || []),
-                  materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return []; } })() : (r.materials_used || []),
-                  fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
-                  editLog: safeArr(r.edit_log ?? r.editLog),
-                }));
-                const dm = new Map();
-                mapped.forEach(r => {
-                  const ex = dm.get(r.job_id);
-                  if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
-                });
-                setLaporanReports(Array.from(dm.values()));
-              }
-            }), 60000);
+          if (isWorkingHours()) {
+            window._rtPoll_1645 = setInterval(() => fetchServiceReports(supabase)
+              .then(({ data }) => {
+                if (data) {
+                  const mapped = data.map(r => ({
+                    ...r,
+                    units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return []; } })() : (r.units || []),
+                    materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return []; } })() : (r.materials_used || []),
+                    fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
+                    editLog: safeArr(r.edit_log ?? r.editLog),
+                  }));
+                  const dm = new Map();
+                  mapped.forEach(r => {
+                    const ex = dm.get(r.job_id);
+                    if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
+                  });
+                  setLaporanReports(Array.from(dm.values()));
+                }
+              }), 5 * 60 * 1000);
+          }
         }
-      });
+      }) : null;
 
     // CH4–CH6 dihapus (Opsi-A): pricelist, inventory, customers tidak butuh realtime ketat.
     // Data di-refresh otomatis setiap 30 menit via _statsTimer, cukup untuk use case bisnis.
@@ -3032,26 +3039,25 @@ ${photoPageHTML}
       console.warn("WA realtime channels skip:", e?.message);
     }
 
-    // Payment suggestions — HANYA Owner/Admin yang menerima notif bukti bayar, dan hanya jika wa_payment_detect ON
+    // Payment suggestions — HANYA Owner/Admin, hanya jam kerja, 2 menit polling
     const _isFinanceRole = ["Owner", "Admin"].includes(currentUser?.role);
     const _payDetectOn = appSettings?.wa_payment_detect !== "false";
-    const _payPoll = (_isFinanceRole && _payDetectOn) ? setInterval(() => {
+    const _payPoll = (_isFinanceRole && _payDetectOn && isWorkingHours()) ? setInterval(() => {
       supabase.from("payment_suggestions").select("*").eq("status", "PENDING")
         .order("created_at", { ascending: false }).limit(20)
         .then(({ data }) => {
           if (!data) return;
           setPaymentSuggestions(data);
-          // Cek apakah ada entry baru (lebih baru dari 35 detik lalu)
           const newest = data[0];
           if (newest) {
             const age = Date.now() - new Date(newest.created_at).getTime();
-            if (age < 35000) {
+            if (age < 125000) {
               setPaymentSuggestBanner(newest);
               showNotif("💳 Bukti bayar masuk dari " + (newest.sender_name || newest.phone), true);
             }
           }
         });
-    }, 30000) : null;
+    }, 2 * 60 * 1000) : null;
 
     return () => {
       clearInterval(window._rtPoll_1617); delete window._rtPoll_1617;
@@ -5047,8 +5053,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // Load immediately
     loadMonitor();
 
-    // Auto-refresh every 30 seconds (only when monitoring is active)
-    const interval = setInterval(loadMonitor, 30000);
+    // Auto-refresh every 5 minutes (only when monitoring is active)
+    const interval = setInterval(loadMonitor, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [activeMenu, currentUser]);
 
