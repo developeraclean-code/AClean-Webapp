@@ -2916,31 +2916,47 @@ ${photoPageHTML}
     const shouldSubscribeRT = isWorkingHours();
 
     // CH1: Orders — kritis, hanya jam kerja
+    // OPTIMASI: Pakai payload.new instead of re-fetch seluruh table
     const ch1 = shouldSubscribeRT ? supabase.channel("rt-orders")
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () =>
-        rtDebounced("orders", () =>
-          fetchOrders(supabase).then(({ data }) => { if (data) setOrdersData(data); })
-        ))
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, (payload) =>
+        rtDebounced("orders", () => {
+          setOrdersData(prev => {
+            if (!prev) return [payload.new];
+            const eventType = payload.eventType;
+            if (eventType === "INSERT") {
+              return [payload.new, ...prev];
+            } else if (eventType === "UPDATE") {
+              return prev.map(o => o.id === payload.new.id ? payload.new : o);
+            } else if (eventType === "DELETE") {
+              return prev.filter(o => o.id !== payload.old.id);
+            }
+            return prev;
+          });
+        })
+      )
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") console.warn("⚠️ RT orders error — akan polling manual");
       }) : null;
 
     // CH2: Invoices — kritis, hanya jam kerja
+    // OPTIMASI: Pakai payload.new instead of re-fetch seluruh table
     const ch2 = shouldSubscribeRT ? supabase.channel("rt-invoices")
-      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, () =>
-        rtDebounced("invoices", () =>
-          fetchInvoices(supabase).then(({ data }) => {
-              if (data) setInvoicesData(data.map(inv => ({
-                ...inv,
-                materials_detail: (() => {
-                  const md = inv.materials_detail;
-                  if (!md) return [];
-                  if (Array.isArray(md)) return md;
-                  try { return JSON.parse(md); } catch (_) { return []; }
-                })()
-              })));
-            })
-        ))
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, (payload) =>
+        rtDebounced("invoices", () => {
+          setInvoicesData(prev => {
+            if (!prev) return [normalizeInvoice(payload.new)];
+            const eventType = payload.eventType;
+            if (eventType === "INSERT") {
+              return [normalizeInvoice(payload.new), ...prev];
+            } else if (eventType === "UPDATE") {
+              return prev.map(inv => inv.id === payload.new.id ? normalizeInvoice(payload.new) : inv);
+            } else if (eventType === "DELETE") {
+              return prev.filter(inv => inv.id !== payload.old.id);
+            }
+            return prev;
+          });
+        })
+      )
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") {
           console.warn("⚠️ RT invoices error — fallback polling aktif");
@@ -2948,37 +2964,45 @@ ${photoPageHTML}
           if (isWorkingHours()) {
             window._rtPoll_1617 = setInterval(() => fetchInvoices(supabase)
               .then(({ data }) => {
-                if (data) setInvoicesData(data.map(inv => ({
-                  ...inv,
-                  materials_detail: (() => { const md = inv.materials_detail; if (!md) return []; if (Array.isArray(md)) return md; try { return JSON.parse(md); } catch (_) { return []; } })()
-                })));
+                if (data) setInvoicesData(data.map(normalizeInvoice));
               }), 5 * 60 * 1000);
           }
         }
       }) : null;
 
     // CH3: Laporan teknisi — kritis, hanya jam kerja
+    // OPTIMASI: Pakai payload.new instead of re-fetch seluruh table
     const ch3 = shouldSubscribeRT ? supabase.channel("rt-laporan")
-      .on("postgres_changes", { event: "*", schema: "public", table: "service_reports" }, () =>
-        rtDebounced("laporan", () =>
-          fetchServiceReports(supabase).then(({ data }) => {
-              if (data && data.length > 0) {
-                const mapped = data.map(r => ({
-                  ...r,
-                  units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return r.units || []; } })() : (r.units || []),
-                  materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return r.materials_used || []; } })() : (r.materials_used || []),
-                  fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
-                  editLog: safeArr(r.edit_log ?? r.editLog),
-                }));
-                const dm = new Map();
-                mapped.forEach(r => {
-                  const ex = dm.get(r.job_id);
-                  if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
-                });
-                setLaporanReports(Array.from(dm.values()));
-              }
-            })
-        ))
+      .on("postgres_changes", { event: "*", schema: "public", table: "service_reports" }, (payload) =>
+        rtDebounced("laporan", () => {
+          setLaporanReports(prev => {
+            if (!prev) return [normalizeReport(payload.new)];
+            const eventType = payload.eventType;
+            const normalized = normalizeReport(payload.new);
+
+            if (eventType === "INSERT") {
+              const updated = [normalized, ...prev];
+              const dm = new Map();
+              updated.forEach(r => {
+                const ex = dm.get(r.job_id);
+                if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
+              });
+              return Array.from(dm.values());
+            } else if (eventType === "UPDATE") {
+              const updated = prev.map(r => r.id === normalized.id ? normalized : r);
+              const dm = new Map();
+              updated.forEach(r => {
+                const ex = dm.get(r.job_id);
+                if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
+              });
+              return Array.from(dm.values());
+            } else if (eventType === "DELETE") {
+              return prev.filter(r => r.id !== payload.old.id);
+            }
+            return prev;
+          });
+        })
+      )
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") {
           console.warn("⚠️ RT laporan error — fallback polling aktif");
@@ -2987,13 +3011,7 @@ ${photoPageHTML}
             window._rtPoll_1645 = setInterval(() => fetchServiceReports(supabase)
               .then(({ data }) => {
                 if (data) {
-                  const mapped = data.map(r => ({
-                    ...r,
-                    units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return []; } })() : (r.units || []),
-                    materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return []; } })() : (r.materials_used || []),
-                    fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
-                    editLog: safeArr(r.edit_log ?? r.editLog),
-                  }));
+                  const mapped = data.map(normalizeReport);
                   const dm = new Map();
                   mapped.forEach(r => {
                     const ex = dm.get(r.job_id);
@@ -3085,6 +3103,21 @@ ${photoPageHTML}
     }
     return [];
   };
+
+  // Helper: normalize invoice untuk payload event
+  const normalizeInvoice = (inv) => ({
+    ...inv,
+    materials_detail: parseMD(inv.materials_detail)
+  });
+
+  // Helper: normalize service report untuk payload event
+  const normalizeReport = (r) => ({
+    ...r,
+    units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return r.units || []; } })() : (r.units || []),
+    materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return r.materials_used || []; } })() : (r.materials_used || []),
+    fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
+    editLog: safeArr(r.edit_log ?? r.editLog),
+  });
 
   // cs / statusColor / statusLabel sudah di-import dari src/theme & src/constants (Fase 2)
 
