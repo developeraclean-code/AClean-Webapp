@@ -4,10 +4,14 @@
 // Kolom di-seleksi eksplisit (bukan SELECT *) untuk hemat egress.
 
 export const fetchOrders = (supabase) =>
-  supabase.from("orders").select("*").order("date", { ascending: false }).limit(500);
+  supabase.from("orders")
+    .select("id,customer,customer_id,phone,address,area,service,type,units,teknisi,helper,date,time,time_end,status,notes,dispatch,dispatch_at,invoice_id,created_at,teknisi_id,helper_id,teknisi2,helper2,teknisi3,helper3,source,team_slot,on_site_at,parent_job_id")
+    .order("date", { ascending: false }).limit(500);
 
 export const fetchInvoices = (supabase) =>
-  supabase.from("invoices").select("*").order("created_at", { ascending: false }).limit(300);
+  supabase.from("invoices")
+    .select("id,job_id,customer,phone,service,units,labor,material,dadakan,total,status,due,paid_at,sent,sent_at,created_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url")
+    .order("created_at", { ascending: false }).limit(300);
 
 export const fetchCustomers = (supabase) =>
   supabase.from("customers")
@@ -20,7 +24,9 @@ export const fetchInventory = (supabase) =>
     .order("code").limit(500);
 
 export const fetchServiceReports = (supabase) =>
-  supabase.from("service_reports").select("*").order("submitted_at", { ascending: false }).limit(200);
+  supabase.from("service_reports")
+    .select("id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,units_json,materials_json,submitted,unit_mismatch,created_at,is_substitute,is_install")
+    .order("submitted_at", { ascending: false }).limit(200);
 
 export const fetchAgentLogs = (supabase) =>
   supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(100);
