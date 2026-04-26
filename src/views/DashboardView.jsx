@@ -76,7 +76,7 @@ if (role === "Teknisi" || role === "Helper") {
 // ── OWNER / ADMIN DASHBOARD ────────────────────────────────
 const todayOrders = ordersData.filter(o => o.date === TODAY);
 const unpaidCount = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
-const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && String(i.sent || i.created_at || "").startsWith(bulanIni)).reduce((a, b) => a + b.total, 0);
+const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && String(i.paid_at || "").startsWith(bulanIni)).reduce((a, b) => a + b.total, 0);
 const lowStock = inventoryData.filter(i => i.status === "CRITICAL" || i.status === "OUT").length;
 const garansiKritisD = invoicesData.filter(inv => {
   if (!inv.garansi_expires) return false;
@@ -416,55 +416,6 @@ return (
       );
     })()}
 
-    {/* ══ GAP 7: Garansi akan berakhir (≤30 hari) ══ */}
-    {garansiExpireSoon.length > 0 && (
-      <div style={{ background: cs.card, border: "1px solid #22d3ee44", borderRadius: 14, padding: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: cs.text }}>🛡️ Monitor Garansi — {garansiExpireSoon.length} aktif</div>
-          <button onClick={() => { setActiveMenu("invoice"); setInvoiceFilter("Garansi"); }}
-            style={{ background: "#22d3ee22", border: "1px solid #22d3ee44", color: "#22d3ee", padding: "5px 12px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>Lihat Semua →</button>
-        </div>
-        <div style={{ display: "grid", gap: 8 }}>
-          {garansiExpireSoon.slice(0, 5).map(inv => {
-            const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
-            const col = daysLeft <= 3 ? "#ef4444" : daysLeft <= 7 ? cs.yellow : "#22d3ee";
-            return (
-              <div key={inv.id} style={{ background: cs.surface, border: "1px solid " + col + "33", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ fontSize: 18 }}>{daysLeft <= 3 ? "🚨" : daysLeft <= 7 ? "⚠️" : "🛡️"}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{inv.customer}</div>
-                  <div style={{ fontSize: 11, color: cs.muted }}>{inv.service} · {inv.id}</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontWeight: 800, fontSize: 13, color: col }}>{daysLeft}h lagi</div>
-                  <div style={{ fontSize: 10, color: cs.muted }}>{inv.garansi_expires}</div>
-                </div>
-                {daysLeft <= 7 && (
-                  <button onClick={() => {
-                    const custPhone = inv.phone || customersData.find(c => c.name === inv.customer)?.phone;
-                    if (!custPhone) { showNotif("⚠️ No HP customer tidak ditemukan"); return; }
-                    sendWA(custPhone,
-                      "Halo " + inv.customer + ". Garansi " + inv.service
-                      + " berakhir " + daysLeft + " hari lagi (" + inv.garansi_expires + ")."
-                      + " Hubungi kami jika ada kendala. — AClean"
-                    );
-                    addAgentLog("GARANSI_REMINDER", `WA garansi dikirim ke ${inv.customer} (${daysLeft}h lagi)`, "SUCCESS");
-                    showNotif("✅ WA reminder garansi terkirim ke " + inv.customer);
-                  }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "5px 10px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>
-                    📱 Ingatkan
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          {garansiExpireSoon.length > 5 && (
-            <div style={{ textAlign: "center", fontSize: 12, color: cs.muted, padding: 8 }}>
-              +{garansiExpireSoon.length - 5} garansi lainnya — <span style={{ color: cs.accent, cursor: "pointer" }} onClick={() => { setActiveMenu("invoice"); setInvoiceFilter("Garansi"); }}>lihat semua</span>
-            </div>
-          )}
-        </div>
-      </div>
-    )}
 
     {/* Today orders */}
     <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>

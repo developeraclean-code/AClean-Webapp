@@ -1279,8 +1279,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     showNotif("⏳ Mengirim rekap ke WhatsApp Owner...");
     try {
       const res = await fetch(
-        `https://apsbeppcmsxeldnejibz.supabase.co/functions/v1/rekap-harian?date=${tgl}`,
-        { method: "GET", headers: { "Content-Type": "application/json" } }
+        `/api/cron-reminder?task=daily&date=${tgl}`,
+        { method: "POST", headers: _apiHeaders() }
       );
       const data = await res.json();
       if (data.ok) {
@@ -4973,7 +4973,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       teknisiData={teknisiData} inventoryData={inventoryData} isMobile={isMobile} currentUser={currentUser}
       statsPeriod={statsPeriod} setStatsPeriod={setStatsPeriod} statsMingguOff={statsMingguOff} setStatsMingguOff={setStatsMingguOff}
       statsDateFrom={statsDateFrom} setStatsDateFrom={setStatsDateFrom} statsDateTo={statsDateTo} setStatsDateTo={setStatsDateTo}
-      bulanIni={bulanIni} fmt={fmt} invoiceReminderWA={invoiceReminderWA} getTechColor={getTechColor} TODAY={TODAY} />
+      bulanIni={bulanIni} fmt={fmt} invoiceReminderWA={invoiceReminderWA} getTechColor={getTechColor} TODAY={TODAY}
+      expensesData={expensesData} />
   );
 
   // ============================================================

@@ -332,25 +332,45 @@ async function taskWaCleanup() {
 // MAIN HANDLER
 // ══════════════════════════════════════════════════
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", process.env.ALLOWED_ORIGIN || "https://a-clean-webapp.vercel.app");
+  const { setCorsHeaders } = await import("./_auth.js");
+  setCorsHeaders(req, res);
+  if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "GET" && req.method !== "POST") return res.status(405).end();
 
+  // Auth: terima CRON_SECRET (Bearer) atau INTERNAL_API_SECRET (X-Internal-Token)
   const auth   = req.headers.authorization || "";
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return res.status(500).json({error:"CRON_SECRET not configured"});
+  const cronSecret     = process.env.CRON_SECRET;
+  const internalSecret = process.env.INTERNAL_API_SECRET;
 
-  // Timing-safe comparison untuk CRON_SECRET
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  let cronMatch = false;
+  let authorized = false;
   try {
     const { timingSafeEqual } = require("crypto");
-    const tBuf = Buffer.from(token,  "utf-8");
-    const sBuf = Buffer.from(secret, "utf-8");
-    cronMatch = tBuf.length === sBuf.length && timingSafeEqual(tBuf, sBuf);
+    // Check CRON_SECRET (Vercel cron / curl)
+    if (cronSecret) {
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      if (token.length > 0) {
+        const tBuf = Buffer.from(token, "utf-8");
+        const sBuf = Buffer.from(cronSecret, "utf-8");
+        if (tBuf.length === sBuf.length) authorized = timingSafeEqual(tBuf, sBuf);
+      }
+    }
+    // Check INTERNAL_API_SECRET (manual trigger dari dashboard)
+    if (!authorized && internalSecret) {
+      const iToken = req.headers["x-internal-token"] || req.headers["x-api-key"] || "";
+      if (iToken.length > 0) {
+        const tBuf = Buffer.from(iToken, "utf-8");
+        const sBuf = Buffer.from(internalSecret, "utf-8");
+        if (tBuf.length === sBuf.length) authorized = timingSafeEqual(tBuf, sBuf);
+      }
+    }
   } catch {
-    cronMatch = token === secret;
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    authorized = (cronSecret && token === cronSecret) ||
+                 (internalSecret && (req.headers["x-internal-token"] || req.headers["x-api-key"]) === internalSecret);
   }
-  if (!cronMatch) return res.status(401).json({error:"Unauthorized"});
+
+  if (!cronSecret && !internalSecret) return res.status(500).json({error:"Auth not configured"});
+  if (!authorized) return res.status(401).json({error:"Unauthorized"});
 
   const task = req.query.task || "reminder";
 

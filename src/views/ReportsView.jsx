@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-function ReportsView({ ordersData, invoicesData, laporanReports, customersData, teknisiData, inventoryData, isMobile, currentUser, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, fmt, invoiceReminderWA, getTechColor, TODAY }) {
+function ReportsView({ ordersData, invoicesData, laporanReports, customersData, teknisiData, inventoryData, isMobile, currentUser, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, fmt, invoiceReminderWA, getTechColor, TODAY, expensesData }) {
 const techColors = Object.fromEntries([...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(n => [n, getTechColor(n, teknisiData)]))
 // ── Filter helper berdasarkan periode yang dipilih ──
 const tahunIni = TODAY.slice(0, 4);
@@ -62,6 +62,7 @@ const totalRevenue = paidInv.reduce((a, b) => a + (b.total || 0), 0);
 const totalLabor = paidInv.reduce((a, b) => a + (b.labor || 0), 0);
 const totalMaterial = paidInv.reduce((a, b) => a + (b.material || 0), 0);
 const totalDadakan = paidInv.reduce((a, b) => a + (b.dadakan || 0), 0);
+const totalExpenses = (expensesData || []).filter(e => inRange(String(e.date || e.created_at || ""))).reduce((a, b) => a + (b.amount || 0), 0);
 const totalAR = unpaidInv.reduce((a, b) => a + (b.total || 0), 0)
   + overdueInv.reduce((a, b) => a + (b.total || 0), 0);
 const totalPending = pendingInv.reduce((a, b) => a + (b.total || 0), 0);
@@ -182,7 +183,7 @@ return (
               { label: "Total Pendapatan", val: fmt(totalRevenue), sub: "Gross Revenue", color: cs.green, icon: "📈" },
               { label: "Pendapatan Jasa", val: fmt(totalLabor), sub: fmtPct(totalLabor, totalRevenue) + " dari revenue", color: cs.accent, icon: "🔧" },
               { label: "Pendapatan Material", val: fmt(totalMaterial), sub: fmtPct(totalMaterial, totalRevenue) + " dari revenue", color: cs.yellow, icon: "📦" },
-              { label: "Biaya Mendadak/Bonus", val: fmt(totalDadakan), sub: fmtPct(totalDadakan, totalRevenue) + " dari revenue", color: cs.ara, icon: "⚡" },
+              { label: "Total Pengeluaran", val: fmt(totalExpenses), sub: fmtPct(totalExpenses, totalRevenue) + " dari revenue", color: cs.ara, icon: "💸" },
             ].map(k => (
               <div key={k.label} style={{ background: cs.surface, borderRadius: 10, padding: "14px 16px", border: "1px solid " + k.color + "22" }}>
                 <div style={{ fontSize: 20, marginBottom: 6 }}>{k.icon}</div>
