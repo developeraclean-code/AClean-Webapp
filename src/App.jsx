@@ -2907,56 +2907,46 @@ ${photoPageHTML}
     // Hanya 4 channel kritis (Supabase free tier: max concurrent realtime)
     // WA tables (wa_conversations, wa_messages) di-skip jika tidak ada
 
-    const _rtDebounce = {};
-    const rtDebounced = (key, fn, delay = 800) => {
-      clearTimeout(_rtDebounce[key]);
-      _rtDebounce[key] = setTimeout(fn, delay);
-    };
-
     const shouldSubscribeRT = isWorkingHours();
 
-    // CH1: Orders — kritis, hanya jam kerja
-    // OPTIMASI: Pakai payload.new instead of re-fetch seluruh table
-    const ch1 = shouldSubscribeRT ? supabase.channel("rt-orders")
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, (payload) =>
-        rtDebounced("orders", () => {
-          setOrdersData(prev => {
-            if (!prev) return [payload.new];
-            const eventType = payload.eventType;
-            if (eventType === "INSERT") {
-              return [payload.new, ...prev];
-            } else if (eventType === "UPDATE") {
-              return prev.map(o => o.id === payload.new.id ? payload.new : o);
-            } else if (eventType === "DELETE") {
-              return prev.filter(o => o.id !== payload.old.id);
-            }
-            return prev;
-          });
-        })
-      )
+    const _tabId = (window._tabId = window._tabId || Math.random().toString(36).slice(2, 7));
+    const ch1 = shouldSubscribeRT ? supabase.channel("rt-orders-" + _tabId)
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, (payload) => {
+        const eventType = payload.eventType;
+        setOrdersData(prev => {
+          if (!prev) return prev;
+          if (eventType === "INSERT") {
+            // Cek dedup: jangan double-insert kalau sudah ada (misal user yang create)
+            if (prev.some(o => o.id === payload.new.id)) return prev;
+            return [payload.new, ...prev];
+          } else if (eventType === "UPDATE") {
+            return prev.map(o => o.id === payload.new.id ? payload.new : o);
+          } else if (eventType === "DELETE") {
+            return prev.filter(o => o.id !== payload.old.id);
+          }
+          return prev;
+        });
+      })
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") console.warn("⚠️ RT orders error — akan polling manual");
       }) : null;
 
-    // CH2: Invoices — kritis, hanya jam kerja
-    // OPTIMASI: Pakai payload.new instead of re-fetch seluruh table
-    const ch2 = shouldSubscribeRT ? supabase.channel("rt-invoices")
-      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, (payload) =>
-        rtDebounced("invoices", () => {
-          setInvoicesData(prev => {
-            if (!prev) return [normalizeInvoice(payload.new)];
-            const eventType = payload.eventType;
-            if (eventType === "INSERT") {
-              return [normalizeInvoice(payload.new), ...prev];
-            } else if (eventType === "UPDATE") {
-              return prev.map(inv => inv.id === payload.new.id ? normalizeInvoice(payload.new) : inv);
-            } else if (eventType === "DELETE") {
-              return prev.filter(inv => inv.id !== payload.old.id);
-            }
-            return prev;
-          });
-        })
-      )
+    const ch2 = shouldSubscribeRT ? supabase.channel("rt-invoices-" + _tabId)
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, (payload) => {
+        const eventType = payload.eventType;
+        setInvoicesData(prev => {
+          if (!prev) return eventType === "DELETE" ? prev : [normalizeInvoice(payload.new)];
+          if (eventType === "INSERT") {
+            if (prev.some(inv => inv.id === payload.new.id)) return prev;
+            return [normalizeInvoice(payload.new), ...prev];
+          } else if (eventType === "UPDATE") {
+            return prev.map(inv => inv.id === payload.new.id ? normalizeInvoice(payload.new) : inv);
+          } else if (eventType === "DELETE") {
+            return prev.filter(inv => inv.id !== payload.old.id);
+          }
+          return prev;
+        });
+      })
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") {
           console.warn("⚠️ RT invoices error — fallback polling aktif");
@@ -2970,39 +2960,36 @@ ${photoPageHTML}
         }
       }) : null;
 
-    // CH3: Laporan teknisi — kritis, hanya jam kerja
-    // OPTIMASI: Pakai payload.new instead of re-fetch seluruh table
-    const ch3 = shouldSubscribeRT ? supabase.channel("rt-laporan")
-      .on("postgres_changes", { event: "*", schema: "public", table: "service_reports" }, (payload) =>
-        rtDebounced("laporan", () => {
-          setLaporanReports(prev => {
-            if (!prev) return [normalizeReport(payload.new)];
-            const eventType = payload.eventType;
-            const normalized = normalizeReport(payload.new);
+    const ch3 = shouldSubscribeRT ? supabase.channel("rt-laporan-" + _tabId)
+      .on("postgres_changes", { event: "*", schema: "public", table: "service_reports" }, (payload) => {
+        const eventType = payload.eventType;
+        setLaporanReports(prev => {
+          if (!prev) return eventType === "DELETE" ? prev : [normalizeReport(payload.new)];
+          const normalized = eventType !== "DELETE" ? normalizeReport(payload.new) : null;
 
-            if (eventType === "INSERT") {
-              const updated = [normalized, ...prev];
-              const dm = new Map();
-              updated.forEach(r => {
-                const ex = dm.get(r.job_id);
-                if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
-              });
-              return Array.from(dm.values());
-            } else if (eventType === "UPDATE") {
-              const updated = prev.map(r => r.id === normalized.id ? normalized : r);
-              const dm = new Map();
-              updated.forEach(r => {
-                const ex = dm.get(r.job_id);
-                if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
-              });
-              return Array.from(dm.values());
-            } else if (eventType === "DELETE") {
-              return prev.filter(r => r.id !== payload.old.id);
-            }
-            return prev;
-          });
-        })
-      )
+          if (eventType === "INSERT") {
+            if (prev.some(r => r.id === payload.new.id)) return prev;
+            const updated = [normalized, ...prev];
+            const dm = new Map();
+            updated.forEach(r => {
+              const ex = dm.get(r.job_id);
+              if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
+            });
+            return Array.from(dm.values());
+          } else if (eventType === "UPDATE") {
+            const updated = prev.map(r => r.id === normalized.id ? normalized : r);
+            const dm = new Map();
+            updated.forEach(r => {
+              const ex = dm.get(r.job_id);
+              if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
+            });
+            return Array.from(dm.values());
+          } else if (eventType === "DELETE") {
+            return prev.filter(r => r.id !== payload.old.id);
+          }
+          return prev;
+        });
+      })
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") {
           console.warn("⚠️ RT laporan error — fallback polling aktif");
@@ -3030,7 +3017,7 @@ ${photoPageHTML}
     // CH7 & CH8: WA tables — pertahankan, dikelola terpisah nanti
     let ch7 = null, ch8 = null;
     try {
-      ch7 = supabase.channel("rt-wa-conv")
+      ch7 = supabase.channel("rt-wa-conv-" + _tabId)
         .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, () =>
           fetchWaConversations(supabase, 50)
             .then(({ data, error }) => { if (data && !error) setWaConversations(data); }))
@@ -3038,7 +3025,7 @@ ${photoPageHTML}
           if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
         });
 
-      ch8 = supabase.channel("rt-wa-msg")
+      ch8 = supabase.channel("rt-wa-msg-" + _tabId)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "wa_messages" }, (payload) => {
           setWaMessages(prev => {
             if (prev.length === 0) return prev;
