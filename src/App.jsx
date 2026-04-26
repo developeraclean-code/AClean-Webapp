@@ -816,6 +816,7 @@ export default function ACleanWebApp() {
     wa_chatbot_enabled: "false",
     wa_payment_detect: "true",
     wa_cleanup_enabled: "true",
+    wa_monitor_enabled: "false",
     foto_compression_quality: "0.70", // 30%-100%, default 70%
   });
 
@@ -2723,6 +2724,7 @@ ${photoPageHTML}
               wa_chatbot_enabled: sMap.wa_chatbot_enabled ?? prev.wa_chatbot_enabled ?? "false",
               wa_payment_detect: sMap.wa_payment_detect ?? prev.wa_payment_detect ?? "true",
               wa_cleanup_enabled: sMap.wa_cleanup_enabled ?? prev.wa_cleanup_enabled ?? "true",
+              wa_monitor_enabled: sMap.wa_monitor_enabled ?? prev.wa_monitor_enabled ?? "false",
               ara_training_rules: sMap.ara_training_rules ?? prev.ara_training_rules,
             }));
             if (sMap.cron_jobs) {
@@ -3014,34 +3016,37 @@ ${photoPageHTML}
     // CH4–CH6 dihapus (Opsi-A): pricelist, inventory, customers tidak butuh realtime ketat.
     // Data di-refresh otomatis setiap 30 menit via _statsTimer, cukup untuk use case bisnis.
 
-    // CH7 & CH8: WA tables — pertahankan, dikelola terpisah nanti
+    // CH7 & CH8: WA tables — hanya aktif bila wa_monitor_enabled = "true"
+    const _waMonitorOn = appSettings?.wa_monitor_enabled === "true";
     let ch7 = null, ch8 = null;
-    try {
-      ch7 = supabase.channel("rt-wa-conv-" + _tabId)
-        .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, () =>
-          fetchWaConversations(supabase, 50)
-            .then(({ data, error }) => { if (data && !error) setWaConversations(data); }))
-        .subscribe((status) => {
-          if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
-        });
-
-      ch8 = supabase.channel("rt-wa-msg-" + _tabId)
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "wa_messages" }, (payload) => {
-          setWaMessages(prev => {
-            if (prev.length === 0) return prev;
-            const phone = payload.new?.phone;
-            if (!phone) return prev;
-            if (prev[0]?.phone === phone) return [...prev, payload.new];
-            return prev;
+    if (_waMonitorOn) {
+      try {
+        ch7 = supabase.channel("rt-wa-conv-" + _tabId)
+          .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, () =>
+            fetchWaConversations(supabase, 50)
+              .then(({ data, error }) => { if (data && !error) setWaConversations(data); }))
+          .subscribe((status) => {
+            if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
           });
-          fetchWaConversations(supabase, 50)
-            .then(({ data, error }) => { if (data && !error) setWaConversations(data); });
-        })
-        .subscribe((status) => {
-          if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_messages — tabel mungkin belum ada");
-        });
-    } catch (e) {
-      console.warn("WA realtime channels skip:", e?.message);
+
+        ch8 = supabase.channel("rt-wa-msg-" + _tabId)
+          .on("postgres_changes", { event: "INSERT", schema: "public", table: "wa_messages" }, (payload) => {
+            setWaMessages(prev => {
+              if (prev.length === 0) return prev;
+              const phone = payload.new?.phone;
+              if (!phone) return prev;
+              if (prev[0]?.phone === phone) return [...prev, payload.new];
+              return prev;
+            });
+            fetchWaConversations(supabase, 50)
+              .then(({ data, error }) => { if (data && !error) setWaConversations(data); });
+          })
+          .subscribe((status) => {
+            if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_messages — tabel mungkin belum ada");
+          });
+      } catch (e) {
+        console.warn("WA realtime channels skip:", e?.message);
+      }
     }
 
     // Payment suggestions — HANYA Owner/Admin, hanya jam kerja, 2 menit polling
@@ -5253,7 +5258,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           ))}
         </nav>
         <div style={{ padding: "12px 14px", borderTop: "1px solid " + cs.border, display: "grid", gap: 6 }}>
-          {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+          {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && appSettings?.wa_monitor_enabled === "true" && (
             <button onClick={() => setWaPanel(true)} style={{ width: "100%", background: "#25D36618", border: "1px solid #25D36644", color: "#25D366", padding: "8px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12, position: "relative" }}>
               📱 WhatsApp
               {waConversations.filter(c => c.unread > 0).length > 0 && (
@@ -5330,7 +5335,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <span style={{ fontSize: 9, fontWeight: 600, textAlign: "center" }}>{item.label}</span>
                     </button>
                   ))}
-                  {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                  {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && appSettings?.wa_monitor_enabled === "true" && (
                     <button onClick={() => { setWaPanel(true); setMobileDrawerOpen(false); }}
                       style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: "12px 4px", background: "#25D36618", border: "1px solid #25D36644", borderRadius: 12, cursor: "pointer", color: "#25D366", position: "relative" }}>
                       <span style={{ fontSize: 22 }}>💬</span>
