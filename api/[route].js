@@ -34,8 +34,8 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
 
   if (!PUBLIC_ROUTES.includes(route)) {
-    const authOk = validateInternalToken(req, res);
-    if (!authOk) return; // validateInternalToken sudah kirim response 401/500
+    const authOk = await validateInternalToken(req, res);
+    if (!authOk) return;
   }
 
   try {
@@ -717,9 +717,7 @@ export default async function handler(req, res) {
       const type = (req.query&&req.query.type) || (req.body&&req.body.type) || "";
 
       if (type === "wa" || type === "fonnte") {
-        // Use token from request body (user testing) or env var
-        const rb = req.body || {};
-        const FT = rb.token || process.env.FONNTE_TOKEN;
+        const FT = process.env.FONNTE_TOKEN;
         if (!FT) return res.status(200).json({ ok: false, success: false, error: "FONNTE_TOKEN belum diset" });
         try {
           const r = await fetch("https://api.fonnte.com/validate", { method:"POST", headers:{ Authorization:FT, "Content-Type":"application/json" }, body:JSON.stringify({}) });
@@ -1093,7 +1091,7 @@ export default async function handler(req, res) {
     if (route === "sync-fotos") {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-      const SU = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
       const SK = process.env.SUPABASE_SERVICE_KEY;
       if (!SU || !SK) return res.status(500).json({ error: "Supabase tidak configured" });
 
@@ -1204,7 +1202,7 @@ export default async function handler(req, res) {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       // M-04: Rate limiting — max 20 req/menit per IP untuk endpoint sensitif ini
       if (!await checkRateLimit(req, res, 20, 60000)) return;
-      const SU = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
       const SK = process.env.SUPABASE_SERVICE_KEY;
       if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
 

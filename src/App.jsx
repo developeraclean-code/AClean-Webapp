@@ -833,14 +833,18 @@ export default function ACleanWebApp() {
     } catch { return def; }
   };
   const _lsSave = (key, val) => { try { localStorage.setItem("aclean_" + key, JSON.stringify(val)); } catch { } };
-  // SEC-02: internal token untuk API calls (dibaca dari Vite env, TIDAK disimpan di localStorage)
-  const _apiHeaders = () => {
-    const secret = import.meta.env.VITE_INTERNAL_API_SECRET;
-    console.log("[_apiHeaders] VITE_INTERNAL_API_SECRET set:", !!secret, "| length:", secret?.length ?? 0);
-    return {
-      "Content-Type": "application/json",
-      ...(secret ? { "X-Internal-Token": secret } : {})
-    };
+  // SEC-02: internal token untuk API calls — pakai Supabase session JWT, bukan env var di frontend
+  const _apiHeaders = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const jwt = data?.session?.access_token;
+      return {
+        "Content-Type": "application/json",
+        ...(jwt ? { "Authorization": `Bearer ${jwt}` } : {})
+      };
+    } catch {
+      return { "Content-Type": "application/json" };
+    }
   };
   // SEC-07: brute force states — harus setelah _ls didefinisikan
   const [loginAttempts, setLoginAttempts] = useState(() => _ls("loginAttempts", 0));
@@ -1280,7 +1284,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     try {
       const res = await fetch(
         `/api/cron-reminder?task=daily&date=${tgl}`,
-        { method: "POST", headers: _apiHeaders() }
+        { method: "POST", headers: await _apiHeaders() }
       );
       const data = await res.json();
       if (data.ok) {
@@ -1750,7 +1754,7 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
         reader.readAsDataURL(blob);
       });
       const res = await fetch("/api/upload-foto", {
-        method: "POST", headers: _apiHeaders(),
+        method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
           base64, filename: `Invoice_${inv.id}.html`,
           folder: "invoices", mimeType: "text/html"
@@ -1799,7 +1803,7 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
       const base64 = await htmlToImageBase64(html);
       if (!base64) return null;
       const res = await fetch("/api/upload-foto", {
-        method: "POST", headers: _apiHeaders(),
+        method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
           base64, filename: `Invoice_${inv.id}.jpg`,
           folder: "invoices", mimeType: "image/jpeg"
@@ -2153,7 +2157,7 @@ ${photoPageHTML}
         reader.readAsDataURL(blob);
       });
       const res = await fetch("/api/upload-foto", {
-        method: "POST", headers: _apiHeaders(),
+        method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
           base64, filename: `ServiceReport_${laporan.job_id}.html`,
           folder: "service-reports", mimeType: "text/html"
@@ -2197,7 +2201,7 @@ ${photoPageHTML}
         reader.readAsDataURL(blob);
       });
       const res = await fetch("/api/upload-foto", {
-        method: "POST", headers: _apiHeaders(),
+        method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
           base64, filename: `ServiceReport_${laporan.job_id}.pdf`,
           folder: "service-reports", mimeType: "application/pdf"
@@ -2579,7 +2583,7 @@ ${photoPageHTML}
   useEffect(() => {
     const loadLlmConfig = async () => {
       try {
-        const headers = _apiHeaders();
+        const headers = await _apiHeaders();
         const resp = await fetch("/api/get-llm-config", { headers });
         if (resp.ok) {
           const config = await resp.json();
@@ -3136,7 +3140,7 @@ ${photoPageHTML}
       if (opts.url) { body.url = opts.url; if (opts.filename) body.filename = opts.filename; }
       console.log("[sendWA] Sending to", phone, opts.url ? `| attachment: ${opts.url}` : "| no attachment");
       const r = await fetch("/api/send-wa", {
-        method: "POST", headers: _apiHeaders(),
+        method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify(body)
       });
       const d = await r.json().catch(() => ({}));
@@ -3877,7 +3881,7 @@ ${photoPageHTML}
 
       const r = await fetch("/api/ara-chat", {
         method: "POST",
-        headers: _apiHeaders(),
+        headers: await _apiHeaders(),
         body: JSON.stringify(testPayload)
       });
 
@@ -4000,7 +4004,7 @@ ${photoPageHTML}
 
       // ── Coba backend proxy dulu (API key aman di server) ──
       const backendRes = await fetch("/api/ara-chat", {
-        method: "POST", headers: _apiHeaders(),
+        method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
           messages: newMessages.map(m => ({ role: m.role, content: m.content })),
           bizContext, brainMd, provider: llmProvider, model: llmModel, ollamaUrl,
@@ -5066,7 +5070,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const loadMonitor = async () => {
       try {
         setMonitorLoading(true);
-        const resp = await fetch("/api/monitor", { headers: _apiHeaders() });
+        const resp = await fetch("/api/monitor", { headers: await _apiHeaders() });
         const data = await resp.json();
         setMonitorData(data);
       } catch (err) {
@@ -7454,7 +7458,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           }
           const res = await fetch("/api/manage-user", {
             method: "POST",
-            headers: _apiHeaders(),
+            headers: await _apiHeaders(),
             body: JSON.stringify({ ...body, callerRole: resolvedRole })
           });
           return res.json();
@@ -8279,12 +8283,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           const formData = new FormData();
                           formData.append("file", foto.file);
                           formData.append("orderId", selectedLaporan.job_id);
+                          const { "Content-Type": _ct, ...uploadAuthHeaders } = await _apiHeaders();
                           const uploadRes = await fetch("/api/upload-foto", {
                             method: "POST",
                             body: formData,
-                            headers: import.meta.env.VITE_INTERNAL_API_SECRET
-                              ? { "X-Internal-Token": import.meta.env.VITE_INTERNAL_API_SECRET }
-                              : {}
+                            headers: uploadAuthHeaders
                           });
                           if (uploadRes.ok) {
                             const uploadData = await uploadRes.json();
@@ -8635,7 +8638,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             try {
               const r = await fetch("/api/upload-foto", {
                 method: "POST",
-                headers: _apiHeaders(),
+                headers: await _apiHeaders(),
                 body: JSON.stringify({
                   base64: ph.data_url,
                   filename: `${ph.hash}.jpg`,
@@ -9437,7 +9440,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             if (ownerAccounts.length === 0) {
               try {
                 const r = await fetch("/api/send-wa", {
-                  method: "POST", headers: _apiHeaders(),
+                  method: "POST", headers: await _apiHeaders(),
                   body: JSON.stringify({ phone: "6281299898937", message: ownerMsg, currentUserRole: currentUser?.role || "Unknown" })
                 });
                 if (!r.ok) {
@@ -10605,7 +10608,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                     const reportId = laporanModal?.id || "tmp";
                                     try {
                                       const r = await fetch("/api/upload-foto", {
-                                        method: "POST", headers: _apiHeaders(),
+                                        method: "POST", headers: await _apiHeaders(),
                                         body: JSON.stringify({
                                           base64: f.data_url,
                                           filename: f.hash ? `${f.hash}.jpg` : `retry_${f.id}.jpg`,

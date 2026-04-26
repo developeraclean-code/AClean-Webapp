@@ -5,7 +5,7 @@
 import { createClient }                                 from "@supabase/supabase-js";
 import { validateInternalToken, checkRateLimit, setCorsHeaders, fetchWithTimeout } from "./_auth.js";
 
-const sb = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+const sb = createClient(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
 const buildSystem = (biz, brain) => {
   // ── Format hargaLayanan jadi teks yang mudah dibaca ARA ──
@@ -145,7 +145,7 @@ export default async function handler(req, res) {
   if (!await checkRateLimit(req, res, 30, 60000)) return;
 
   // ── SEC-02: Validasi internal token ──
-  if (!validateInternalToken(req, res)) return;
+  if (!await validateInternalToken(req, res)) return;
 
   const { messages, bizContext={}, provider: rawProvider, model, brainMd="" } = req.body||{};
   // ── Smart provider fallback: pakai provider dari frontend, tapi fallback ke env yang tersedia ──

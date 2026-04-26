@@ -39,44 +39,53 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   }
 }
 
-export function validateInternalToken(req, res) {
+export async function validateInternalToken(req, res) {
   const secret = process.env.INTERNAL_API_SECRET;
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-  // Kalau env belum diset, block di production
-  if (!secret) {
+  // Path 1: Supabase Bearer JWT (dari logged-in user — frontend baru)
+  const authHeader = req.headers["authorization"] || "";
+  if (authHeader.startsWith("Bearer ") && supabaseUrl && supabaseAnonKey) {
+    const jwt = authHeader.slice(7);
+    try {
+      const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        headers: { "Authorization": `Bearer ${jwt}`, "apikey": supabaseAnonKey }
+      });
+      if (r.ok) return true; // valid Supabase session
+    } catch { /* fall through to next check */ }
+  }
+
+  // Path 2: X-Internal-Token (legacy / cron / server-to-server)
+  if (secret) {
+    const token = req.headers["x-internal-token"] || req.headers["x-api-key"];
+    if (token) {
+      let match = false;
+      try {
+        const { timingSafeEqual } = require("crypto");
+        const tokenBuf  = Buffer.from(token,  "utf-8");
+        const secretBuf = Buffer.from(secret, "utf-8");
+        match = tokenBuf.length === secretBuf.length && timingSafeEqual(tokenBuf, secretBuf);
+      } catch {
+        match = token === secret;
+      }
+      if (match) return true;
+    }
+  }
+
+  // Kalau env belum diset sama sekali, izinkan di dev
+  if (!secret && !supabaseUrl) {
     if (process.env.NODE_ENV === "production") {
-      console.error("[SEC-02] CRITICAL: INTERNAL_API_SECRET belum diset di Vercel env");
-      res.status(500).json({ error: "Server misconfiguration: INTERNAL_API_SECRET not set" });
+      console.error("[SEC-02] CRITICAL: No auth method configured");
+      res.status(500).json({ error: "Server misconfiguration" });
       return false;
     }
-    // Dev mode: allow in development
-    console.warn("[SEC-02] INTERNAL_API_SECRET belum diset — dev mode only");
+    console.warn("[SEC-02] No auth configured — dev mode only");
     return true;
   }
 
-  const token = req.headers["x-internal-token"] || req.headers["x-api-key"];
-  if (!token) {
-    res.status(401).json({ error: "Unauthorized", message: "Missing X-Internal-Token header" });
-    return false;
-  }
-
-  // Timing-safe comparison — mencegah timing side-channel attack
-  let match = false;
-  try {
-    const { timingSafeEqual } = require("crypto");
-    const tokenBuf  = Buffer.from(token,  "utf-8");
-    const secretBuf = Buffer.from(secret, "utf-8");
-    match = tokenBuf.length === secretBuf.length && timingSafeEqual(tokenBuf, secretBuf);
-  } catch {
-    // Fallback jika crypto tidak tersedia (seharusnya tidak terjadi di Node.js)
-    match = token === secret;
-  }
-
-  if (!match) {
-    res.status(401).json({ error: "Unauthorized", message: "Invalid X-Internal-Token" });
-    return false;
-  }
-  return true;
+  res.status(401).json({ error: "Unauthorized" });
+  return false;
 }
 
 // ── Rate Limiter: Try KV first, fallback to in-memory ──
