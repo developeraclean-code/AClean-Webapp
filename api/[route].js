@@ -233,6 +233,7 @@ export default async function handler(req, res) {
       const mediaUrl = fonnteMediaUrl || (isMediaMessage ? message : null);
 
       // ── PAYMENT DETECTION (TEXT) ──
+      // Hanya trigger jika ADA keyword bayar DAN ada nominal angka sekaligus (bukan salah satu)
       if (payDetectOn && SU && SK) {
         const BAYAR_KW_DETECT = ["bayar","transfer","lunas","pembayaran","invoice","tagihan","dp","uang"];
         const mlCheck = message.toLowerCase();
@@ -240,7 +241,7 @@ export default async function handler(req, res) {
         const amountMatch = message.match(/(?:rp\.?\s*)?([\d.,]{4,})/i);
         const hasAmount = amountMatch && parseInt(amountMatch[1].replace(/[.,]/g,"")) >= 10000;
 
-        if (looksLikePayment || hasAmount) {
+        if (looksLikePayment && hasAmount) {
           const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
           if (AK) {
             try {
@@ -318,13 +319,32 @@ export default async function handler(req, res) {
       }
 
       // ── IMAGE CLASSIFIER + SELECTIVE R2 UPLOAD (Opsi C) ──
+      // Optimasi: cek Content-Length dulu via HEAD request — skip gambar < 10 KB (sticker/icon)
+      // Download gambar hanya dilakukan setelah lolos size check
       if (isMediaMessage && mediaUrl && SU && SK) {
         const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
         if (AK) {
           try {
+            // HEAD request dulu untuk cek ukuran — tidak download isi gambar
+            let skipDueToSize = false;
+            try {
+              const headRes = await fetch(mediaUrl, { method: "HEAD", signal: AbortSignal.timeout(5000) });
+              if (headRes.ok) {
+                const contentLength = parseInt(headRes.headers.get("content-length") || "0");
+                if (contentLength > 0 && contentLength < 10240) skipDueToSize = true; // < 10 KB = sticker/icon
+              }
+            } catch (_) {}
+
+            if (skipDueToSize) {
+              console.log("[WA_IMG] Skip: ukuran < 10 KB (sticker/icon), tidak diproses");
+            } else {
             const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(10000) });
             if (imgFetch.ok) {
               const imgBuf = await imgFetch.arrayBuffer();
+              // Double-check ukuran setelah download — buang jika < 10 KB
+              if (imgBuf.byteLength < 10240) {
+                console.log("[WA_IMG] Skip setelah download: ukuran < 10 KB");
+              } else {
               const base64Img = Buffer.from(imgBuf).toString("base64");
               const mimeType = (imgFetch.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
 
@@ -471,7 +491,9 @@ export default async function handler(req, res) {
                   }
                 }
               }
+              } // end: double-check size setelah download
             }
+            } // end: skipDueToSize else
           } catch(imgErr) {
             console.warn("[receive-wa] Image classifier failed:", imgErr.message);
           }
