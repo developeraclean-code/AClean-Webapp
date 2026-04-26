@@ -53,13 +53,15 @@ function fmt(n) { return "Rp" + (Number(n)||0).toLocaleString("id-ID"); }
 function daysSince(d) { return d ? Math.floor((Date.now()-new Date(d).getTime())/86400000) : 0; }
 
 async function log(action, detail, status="SUCCESS") {
-  await sb.from("agent_logs").insert({
-    action, detail, status, actor:"CRON",
-    time: new Date().toISOString()
-  }).catch(err => {
+  try {
+    const { error } = await sb.from("agent_logs").insert({
+      action, detail, status, actor:"CRON",
+      time: new Date().toISOString()
+    });
+    if (error) console.error("[CRON_LOG_ERROR]", {action, error: error.message});
+  } catch(err) {
     console.error("[CRON_LOG_ERROR]", {action, error: err.message});
-    // Silently continue - logging failure should not block cron
-  });
+  }
 }
 
 // ══════════════════════════════════════════════════
@@ -150,9 +152,9 @@ async function taskDaily() {
   const pending = (invoices||[]).filter(i=>["UNPAID","OVERDUE"].includes(i.status)).reduce((s,i)=>s+(i.total||0),0);
   const tgl = new Date().toLocaleDateString("id-ID",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
   const msg = `📊 *LAPORAN HARIAN ACLEAN*\n${tgl}\n\n🔧 Order: ✅${done} selesai · 🔄${proses} proses · 📝${(laporan||[]).length} laporan\n\n💰 Lunas: ${fmt(masuk)}\n⏳ Pending: ${fmt(pending)}\n\n_ARA AClean_`;
-  await sendWA(OWNER_PHONE, msg);
+  const waSent = await sendWA(OWNER_PHONE, msg);
   await log("DAILY_REPORT",`${done} selesai, ${fmt(masuk)} masuk`);
-  return { orders:orders?.length, revenue:masuk };
+  return { orders:orders?.length, revenue:masuk, waSent };
 }
 
 // ══════════════════════════════════════════════════
@@ -257,9 +259,8 @@ async function taskCleanup() {
     }
 
     // Clear URL references from DB
-    await sb.from("service_reports").update({fotos:[]}).eq("id",rep.id).catch(err => {
-      console.error("[CLEANUP_FOTOS_UPDATE_ERROR]", {reportId: rep.id, fotosCount: fotos.length, error: err.message});
-    });
+    const { error: updErr } = await sb.from("service_reports").update({fotos:[]}).eq("id",rep.id);
+    if (updErr) console.error("[CLEANUP_FOTOS_UPDATE_ERROR]", {reportId: rep.id, fotosCount: fotos.length, error: updErr.message});
     deleted += fotos.length;
   }
   await log("CLEANUP_FOTOS",`${deleted} foto ref dihapus, ${r2deleted} file R2 deleted dari ${old?.length||0} laporan`);
@@ -384,7 +385,7 @@ export default async function handler(req, res) {
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });
   } catch(err) {
-    await log("CRON_ERROR", `task=${task}: ${err.message}`, "ERROR").catch(()=>{});
+    await log("CRON_ERROR", `task=${task}: ${err.message}`, "ERROR");
     return res.status(500).json({ ok:false, error:err.message });
   }
 }
