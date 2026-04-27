@@ -623,6 +623,14 @@ export default function ACleanWebApp() {
   const [selectedConv, setSelectedConv] = useState(null);
   const [waInput, setWaInput] = useState("");
 
+  // ── Team presets cache (untuk modal order) ──
+  const [teamDailyCache, setTeamDailyCache] = useState({}); // date → [{slot,teknisi,helper}]
+  const loadTeamDaily = async (date) => {
+    if (!date || teamDailyCache[date]) return;
+    const { data } = await supabase.from("team_daily_helper").select("slot,teknisi,helper").eq("date", date);
+    if (data) setTeamDailyCache(p => ({ ...p, [date]: data }));
+  };
+
   // ── Modals ──
   const [modalOrder, setModalOrder] = useState(false);
   const [modalStok, setModalStok] = useState(false);
@@ -5542,6 +5550,31 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   })()}
                 </select>
               </div>
+              {/* ── Quick Select Tim Preset ── */}
+              {newOrderForm.date && (() => {
+                const teams = teamDailyCache[newOrderForm.date];
+                if (!teams) { loadTeamDaily(newOrderForm.date); return null; }
+                if (teams.length === 0) return null;
+                return (
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>Pilih Tim</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {teams.map(t => {
+                        const isSelected = newOrderForm.teknisi === t.teknisi;
+                        return (
+                          <button key={t.slot}
+                            onClick={() => setNewOrderForm(f => ({ ...f, teknisi: t.teknisi, helper: t.helper || "" }))}
+                            style={{ padding: "6px 12px", borderRadius: 9, border: "1px solid " + (isSelected ? cs.accent : cs.border), background: isSelected ? cs.accent + "22" : cs.card, color: isSelected ? cs.accent : cs.text, cursor: "pointer", fontSize: 12, fontWeight: isSelected ? 700 : 500 }}>
+                            <span style={{ fontWeight: 700, color: cs.accent, marginRight: 4 }}>{t.slot}</span>
+                            {t.teknisi}{t.helper ? <span style={{ color: cs.muted }}> + {t.helper}</span> : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>Klik tim untuk auto-fill teknisi & helper. Bisa diubah manual di bawah.</div>
+                  </div>
+                );
+              })()}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Teknisi</div>
@@ -5588,7 +5621,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 </div>
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Tanggal</div>
-                  <input id="field_date_9" type="date" value={newOrderForm.date} onChange={e => setNewOrderForm(f => ({ ...f, date: e.target.value }))}
+                  <input id="field_date_9" type="date" value={newOrderForm.date} onChange={e => { setNewOrderForm(f => ({ ...f, date: e.target.value })); loadTeamDaily(e.target.value); }}
                     style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
                 </div>
               </div>

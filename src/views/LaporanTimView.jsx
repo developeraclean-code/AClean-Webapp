@@ -22,7 +22,14 @@ const techColors = Object.fromEntries(
 const todayLap = getLocalDate();
 const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
 const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+const CUTOFF_DATE = "2026-04-25"; // sembunyikan laporan sebelum tanggal ini by default
 let filtered = [...laporanReports];
+
+// ── DEFAULT HIDE laporan sebelum 25 April 2026 (kecuali filter manual aktif) ──
+const isDefaultView = laporanDateFilter === "Semua" && !laporanDateFrom && !laporanDateTo;
+if (isDefaultView) {
+  filtered = filtered.filter(r => (r.date || r.submitted_at || "").slice(0, 10) >= CUTOFF_DATE);
+}
 
 // ── AUTO-HIDE VERIFIED untuk Teknisi & Helper (hide laporan yang sudah selesai) ──
 const userRole = currentUser?.role?.toLowerCase() || "";
@@ -230,8 +237,9 @@ return (
       <div>
         <div style={{ fontWeight: 800, fontSize: 18, color: cs.text }}>Laporan Tim Teknisi <span style={{ fontSize: 13, color: cs.muted, fontWeight: 400 }}>({filtered.length})</span></div>
         <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>
-          {isTeknisiOrHelper ? "📋 Menampilkan laporan baru & revisi saja. Laporan terverifikasi disembunyikan. " : ""}
-          {!isTeknisiOrHelper ? "Verifikasi laporan, cek riwayat edit, tandai sesuai atau minta revisi" : ""}
+            {isTeknisiOrHelper ? "📋 Menampilkan laporan baru & revisi saja. Laporan terverifikasi disembunyikan. " : ""}
+          {!isTeknisiOrHelper && isDefaultView ? "Menampilkan laporan mulai 25 Apr 2026. " : ""}
+          {!isTeknisiOrHelper && !isDefaultView ? "Verifikasi laporan, cek riwayat edit, tandai sesuai atau minta revisi" : ""}
         </div>
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -242,6 +250,19 @@ return (
         ))}
       </div>
     </div>
+    {/* Banner: mode historis */}
+    {isDefaultView && !isTeknisiOrHelper && (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: cs.accent + "12", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "8px 14px" }}>
+        <span style={{ fontSize: 12, color: cs.accent, fontWeight: 600 }}>
+          Laporan sebelum 25 Apr 2026 disembunyikan untuk tampilan lebih bersih.
+        </span>
+        <button
+          onClick={() => { setLaporanDateFilter("Range"); setLaporanDateFrom("2026-01-01"); setLaporanDateTo(""); setLaporanPage(1); }}
+          style={{ fontSize: 11, padding: "4px 12px", borderRadius: 99, border: "1px solid " + cs.accent, background: "transparent", color: cs.accent, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap", marginLeft: 12 }}>
+          Lihat Historis
+        </button>
+      </div>
+    )}
     {/* Filters: date + service + status + tim */}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
       {/* Date filter — tambah Hari Ini */}

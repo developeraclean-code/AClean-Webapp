@@ -184,6 +184,67 @@ function UserManagementPanel({ userAccounts, setUserAccounts, setTeknisiData, cu
   );
 }
 
+// ── Team Presets Panel ───────────────────────────────────────────────────────
+function TeamPresetsPanel({ supabase, showNotif, currentUser }) {
+  const SLOTS = ["Team 01","Team 02","Team 03","Team 04","Team 05","Team 06","Team 07"];
+  const DEFAULT_TEKNISI = { "Team 01":"Usaeri","Team 02":"Mulyadi","Team 03":"Aji","Team 04":"Putra","Team 05":"Agung","Team 06":"Rey","Team 07":"Fikri" };
+  const [presets, setPresets] = useState(null); // null = loading
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    const { data } = await supabase.from("team_presets").select("slot,teknisi").order("sort_order");
+    if (data) {
+      const map = {};
+      SLOTS.forEach(s => { map[s] = DEFAULT_TEKNISI[s]; });
+      data.forEach(r => { map[r.slot] = r.teknisi; });
+      setPresets(map);
+    }
+  };
+
+  if (presets === null) { load(); return <div style={{ padding: 20, color: cs.muted, fontSize: 12 }}>Memuat preset tim...</div>; }
+
+  const handleChange = (slot, val) => setPresets(p => ({ ...p, [slot]: val }));
+
+  const handleSave = async () => {
+    setSaving(true);
+    const rows = SLOTS.map((slot, i) => ({ slot, teknisi: (presets[slot] || "").trim(), sort_order: i + 1 })).filter(r => r.teknisi);
+    const { error } = await supabase.from("team_presets").upsert(rows, { onConflict: "slot" });
+    setSaving(false);
+    if (error) { showNotif("❌ Gagal simpan: " + error.message); return; }
+    showNotif("✅ Preset tim berhasil disimpan");
+  };
+
+  const isOwnerOrAdmin = ["owner","admin"].includes((currentUser?.role || "").toLowerCase());
+
+  return (
+    <Card>
+      <CardHeader icon="👷" title="Preset Tim Teknisi" subtitle="Nama teknisi tetap per slot tim. Helper dipilih harian di Planning." />
+      <div style={{ display: "grid", gap: 8 }}>
+        {SLOTS.map(slot => (
+          <div key={slot} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: cs.accent, width: 60, flexShrink: 0 }}>{slot}</span>
+            <input
+              value={presets[slot] || ""}
+              onChange={e => handleChange(slot, e.target.value)}
+              disabled={!isOwnerOrAdmin}
+              placeholder={DEFAULT_TEKNISI[slot]}
+              style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 12px", fontSize: 13, color: cs.text, outline: "none" }}
+            />
+          </div>
+        ))}
+      </div>
+      {isOwnerOrAdmin && (
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{ marginTop: 14, background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: "9px 20px", borderRadius: 9, cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 12, opacity: saving ? 0.7 : 1 }}>
+          {saving ? "Menyimpan..." : "Simpan Preset Tim"}
+        </button>
+      )}
+    </Card>
+  );
+}
+
 // ── Main SettingsView ────────────────────────────────────────────────────────
 function SettingsView({
   currentUser, isMobile, appSettings, setAppSettings,
@@ -896,6 +957,10 @@ function SettingsView({
           setEditPwdTarget={setEditPwdTarget} setEditPwdForm={setEditPwdForm} setModalEditPwd={setModalEditPwd}
           showNotif={showNotif} showConfirm={showConfirm} addAgentLog={addAgentLog} _apiHeaders={_apiHeaders}
         />
+
+        {/* ══ PRESET TIM ══════════════════════════════════════════════════════ */}
+        <SectionLabel icon="👷" label="Preset Tim Teknisi" />
+        <TeamPresetsPanel supabase={supabase} showNotif={showNotif} currentUser={currentUser} />
 
       </>)}
     </div>

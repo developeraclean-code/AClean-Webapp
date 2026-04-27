@@ -30,10 +30,17 @@ let myReps = [...submittedReps, ...pendingAsDraft]
 const userRole = currentUser?.role?.toLowerCase() || "";
 const isTeknisiOrHelper = userRole === "teknisi" || userRole === "helper";
 if (isTeknisiOrHelper) {
-  const beforeCount = myReps.length;
-  // Filter out VERIFIED — case insensitive
   myReps = myReps.filter(r => (r.status || "").toUpperCase() !== "VERIFIED");
 }
+
+// ── HIDE laporan sebelum 25 April 2026 (default, untuk tampilan bersih) ──
+const CUTOFF_DATE = "2026-04-25";
+myReps = myReps.filter(r => {
+  const d = (r.date || r.submitted?.slice(0, 10) || "").slice(0, 10);
+  // Selalu tampilkan PENDING (job belum dilaporkan) tanpa batasan tanggal
+  if (r.status === "PENDING") return true;
+  return d >= CUTOFF_DATE;
+});
 
 const filtReps = myReps.filter(r =>
   !searchLaporan ||
