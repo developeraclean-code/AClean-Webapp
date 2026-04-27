@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback } from "react";
+import { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 
@@ -22,63 +22,8 @@ const techColors = Object.fromEntries([...new Set(ordersData.map(o => o.teknisi)
 
 // For Teknisi role: force filter to own name; for Owner/Admin: use filterTeknisi state
 const isTekRole = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
-const isOwnerAdmin = ["owner","admin"].includes((currentUser?.role || "").toLowerCase());
 const myTekName = currentUser?.name || "";
 const activeTek = isTekRole ? myTekName : filterTeknisi;
-
-// ── Panel Tim Harian ──────────────────────────────────────────────────────
-const TEAM_SLOTS = ["Team 01","Team 02","Team 03","Team 04","Team 05","Team 06","Team 07"];
-const [teamPresets, setTeamPresets] = useState({}); // slot → teknisi
-const [dailyHelper, setDailyHelper] = useState({}); // slot → {teknisi_override, helper, id}
-const [dailyHelperDate, setDailyHelperDate] = useState(TODAY);
-const [dailyHelperSaving, setDailyHelperSaving] = useState(false);
-const [teamPanelOpen, setTeamPanelOpen] = useState(false);
-
-const loadTeamPresets = useCallback(async () => {
-  const { data } = await supabase.from("team_presets").select("slot,teknisi").order("sort_order");
-  if (data) {
-    const map = {};
-    data.forEach(r => { map[r.slot] = r.teknisi; });
-    setTeamPresets(map);
-  }
-}, [supabase]);
-
-const loadDailyHelper = useCallback(async (date) => {
-  const { data } = await supabase.from("team_daily_helper").select("*").eq("date", date);
-  if (data) {
-    const map = {};
-    data.forEach(r => { map[r.slot] = { teknisi: r.teknisi, helper: r.helper || "", id: r.id }; });
-    setDailyHelper(map);
-  }
-}, [supabase]);
-
-useEffect(() => { if (isOwnerAdmin) { loadTeamPresets(); loadDailyHelper(dailyHelperDate); } }, [isOwnerAdmin]);
-
-const handleDailyHelperChange = (slot, field, val) => {
-  setDailyHelper(prev => ({ ...prev, [slot]: { ...(prev[slot] || {}), [field]: val } }));
-};
-
-const saveDailyHelper = async () => {
-  setDailyHelperSaving(true);
-  for (const slot of TEAM_SLOTS) {
-    const entry = dailyHelper[slot] || {};
-    const teknisi = entry.teknisi || teamPresets[slot] || "";
-    const helper = entry.helper || "";
-    if (!teknisi) continue;
-    await supabase.from("team_daily_helper").upsert(
-      { date: dailyHelperDate, slot, teknisi, helper, updated_at: new Date().toISOString() },
-      { onConflict: "date,slot" }
-    );
-  }
-  setDailyHelperSaving(false);
-  showNotif("✅ Setup tim " + dailyHelperDate + " tersimpan");
-  loadDailyHelper(dailyHelperDate);
-};
-
-// Ambil helper list dari teknisiData (role Helper)
-const helperList = [...new Set(
-  (teknisiData || []).filter(t => t.active !== false && t.role === "Helper").map(t => t.name)
-)].sort();
 
 const allTekNames = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
 // Helper: lihat jadwal via field o.helper, bukan o.teknisi
@@ -203,79 +148,6 @@ return (
         )}
       </div>
     </div>
-
-    {/* ── Panel Setup Tim Harian ── Owner/Admin only */}
-    {isOwnerAdmin && (
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, overflow: "hidden" }}>
-        {/* Toggle header */}
-        <button
-          onClick={() => setTeamPanelOpen(o => !o)}
-          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
-          <span style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>👷 Setup Tim Harian</span>
-          <span style={{ fontSize: 11, color: cs.muted }}>{teamPanelOpen ? "▲ Tutup" : "▼ Buka"}</span>
-        </button>
-        {teamPanelOpen && (
-          <div style={{ padding: "0 16px 16px" }}>
-            {/* Pilih tanggal */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-              <span style={{ fontSize: 12, color: cs.muted, fontWeight: 600 }}>Tanggal:</span>
-              <input type="date" value={dailyHelperDate}
-                onChange={e => { setDailyHelperDate(e.target.value); loadDailyHelper(e.target.value); }}
-                style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "5px 10px", fontSize: 12, color: cs.text, outline: "none" }}
-              />
-              <span style={{ fontSize: 11, color: cs.muted }}>Pilih helper & override teknisi jika tidak masuk</span>
-            </div>
-            {/* Grid 7 tim */}
-            <div style={{ display: "grid", gap: 6 }}>
-              {TEAM_SLOTS.map(slot => {
-                const presetTek = teamPresets[slot] || slot;
-                const entry = dailyHelper[slot] || {};
-                const tekOverride = entry.teknisi || presetTek;
-                const helperVal = entry.helper || "";
-                return (
-                  <div key={slot} style={{ display: "grid", gridTemplateColumns: "70px 1fr 1fr", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: cs.accent }}>{slot}</span>
-                    {/* Override teknisi */}
-                    <div style={{ position: "relative" }}>
-                      <input
-                        value={tekOverride}
-                        onChange={e => handleDailyHelperChange(slot, "teknisi", e.target.value)}
-                        placeholder={presetTek}
-                        list={"tek-list-" + slot}
-                        style={{ width: "100%", background: tekOverride !== presetTek ? cs.yellow + "22" : cs.surface, border: "1px solid " + (tekOverride !== presetTek ? cs.yellow : cs.border), borderRadius: 8, padding: "6px 10px", fontSize: 12, color: cs.text, outline: "none", boxSizing: "border-box" }}
-                      />
-                      <datalist id={"tek-list-" + slot}>
-                        {[...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(n => <option key={n} value={n} />)}
-                      </datalist>
-                      {tekOverride !== presetTek && <span style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", fontSize: 9, color: cs.yellow, fontWeight: 700 }}>GANTI</span>}
-                    </div>
-                    {/* Helper */}
-                    <div style={{ position: "relative" }}>
-                      <input
-                        value={helperVal}
-                        onChange={e => handleDailyHelperChange(slot, "helper", e.target.value)}
-                        placeholder="Pilih helper..."
-                        list={"helper-list-" + slot}
-                        style={{ width: "100%", background: cs.surface, border: "1px solid " + (helperVal ? cs.green + "88" : cs.border), borderRadius: 8, padding: "6px 10px", fontSize: 12, color: cs.text, outline: "none", boxSizing: "border-box" }}
-                      />
-                      <datalist id={"helper-list-" + slot}>
-                        {helperList.map(n => <option key={n} value={n} />)}
-                      </datalist>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <button
-              onClick={saveDailyHelper}
-              disabled={dailyHelperSaving}
-              style={{ marginTop: 14, background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: "9px 20px", borderRadius: 9, cursor: dailyHelperSaving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 12, opacity: dailyHelperSaving ? 0.7 : 1 }}>
-              {dailyHelperSaving ? "Menyimpan..." : "Simpan Setup Tim"}
-            </button>
-          </div>
-        )}
-      </div>
-    )}
 
     {/* Teknisi filter pills — Owner/Admin only */}
     {!isTekRole && (

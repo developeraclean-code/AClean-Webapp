@@ -623,11 +623,11 @@ export default function ACleanWebApp() {
   const [selectedConv, setSelectedConv] = useState(null);
   const [waInput, setWaInput] = useState("");
 
-  // ── Team presets cache (untuk modal order) ──
-  const [teamDailyCache, setTeamDailyCache] = useState({}); // date → [{slot,teknisi,helper}]
+  // ── Team daily slots cache (untuk modal order — baca dari Planning Order) ──
+  const [teamDailyCache, setTeamDailyCache] = useState({}); // date → [{slot,member1,member1_role,member2,...}]
   const loadTeamDaily = async (date) => {
     if (!date || teamDailyCache[date]) return;
-    const { data } = await supabase.from("team_daily_helper").select("slot,teknisi,helper").eq("date", date);
+    const { data } = await supabase.from("daily_team_slots").select("slot,member1,member1_role,member2,member2_role,confirmed").eq("date", date);
     if (data) setTeamDailyCache(p => ({ ...p, [date]: data }));
   };
 
@@ -5550,28 +5550,36 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   })()}
                 </select>
               </div>
-              {/* ── Quick Select Tim Preset ── */}
+              {/* ── Quick Select Tim (dari Planning Order) ── */}
               {newOrderForm.date && (() => {
                 const teams = teamDailyCache[newOrderForm.date];
                 if (!teams) { loadTeamDaily(newOrderForm.date); return null; }
-                if (teams.length === 0) return null;
+                const filledTeams = teams.filter(t => t.member1);
+                if (filledTeams.length === 0) return (
+                  <div style={{ fontSize: 11, color: cs.muted, padding: "8px 12px", background: cs.card, borderRadius: 8, border: "1px dashed " + cs.border }}>
+                    Belum ada setup tim untuk tanggal ini. Isi dulu di Planning Order.
+                  </div>
+                );
                 return (
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>Pilih Tim</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {teams.map(t => {
-                        const isSelected = newOrderForm.teknisi === t.teknisi;
+                      {filledTeams.map(t => {
+                        const tek = t.member1 || "";
+                        const hlp = t.member1_role === "helper" ? "" : (t.member2 || "");
+                        const isSelected = newOrderForm.teknisi === tek;
                         return (
                           <button key={t.slot}
-                            onClick={() => setNewOrderForm(f => ({ ...f, teknisi: t.teknisi, helper: t.helper || "" }))}
-                            style={{ padding: "6px 12px", borderRadius: 9, border: "1px solid " + (isSelected ? cs.accent : cs.border), background: isSelected ? cs.accent + "22" : cs.card, color: isSelected ? cs.accent : cs.text, cursor: "pointer", fontSize: 12, fontWeight: isSelected ? 700 : 500 }}>
-                            <span style={{ fontWeight: 700, color: cs.accent, marginRight: 4 }}>{t.slot}</span>
-                            {t.teknisi}{t.helper ? <span style={{ color: cs.muted }}> + {t.helper}</span> : ""}
+                            onClick={() => setNewOrderForm(f => ({ ...f, teknisi: tek, helper: hlp, team_slot: t.slot }))}
+                            style={{ padding: "6px 12px", borderRadius: 9, border: "1px solid " + (isSelected ? cs.accent : t.confirmed ? cs.green + "66" : cs.border), background: isSelected ? cs.accent + "22" : cs.card, color: isSelected ? cs.accent : cs.text, cursor: "pointer", fontSize: 12, fontWeight: isSelected ? 700 : 500 }}>
+                            <span style={{ fontWeight: 700, color: isSelected ? cs.accent : cs.muted, marginRight: 4 }}>{t.slot}</span>
+                            {tek}{hlp ? <span style={{ color: cs.muted }}> + {hlp}</span> : ""}
+                            {t.confirmed && <span style={{ fontSize: 9, color: cs.green, marginLeft: 4 }}>✓</span>}
                           </button>
                         );
                       })}
                     </div>
-                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>Klik tim untuk auto-fill teknisi & helper. Bisa diubah manual di bawah.</div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>Klik tim untuk auto-fill. Tim ✓ sudah dikonfirmasi di Planning Order.</div>
                   </div>
                 );
               })()}

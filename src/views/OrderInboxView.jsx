@@ -309,7 +309,7 @@ const DAY_NAMES  = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
 // ─────────────────────────────────────────────
 // Panel Isi Tim Harian (Team 01–10)
 // ─────────────────────────────────────────────
-function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, toggleAvailability, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData }) {
+function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, toggleAvailability, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData, teamPresets }) {
 
   // Berapa row yang ditampilkan per slot (2 default, bisa expand ke 4)
   const [expandedSlots, setExpandedSlots] = useState({});
@@ -431,6 +431,10 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
                 const roleVal = slot[rolef] || defaultRoles[idx];
                 const isTekn = roleVal === "teknisi";
                 const memberColor = val ? getTechColor(val, teknisiData) : cs.muted;
+                // Cek apakah ini teknisi preset yang belum di-save (masih kosong di DB)
+                const presetVal = idx === 0 ? (teamPresets?.[slotName] || "") : "";
+                const isFromPreset = idx === 0 && presetVal && val === presetVal && !dailySlots.find(s => s.date === slotDate && s.slot === slotName);
+                const isOverridePreset = idx === 0 && presetVal && val && val !== presetVal;
                 return (
                   <div key={mf} style={{ display: "flex", gap: 6, marginBottom: 5, alignItems: "center" }}>
                     {/* Avatar T / H — klik untuk toggle role */}
@@ -451,18 +455,22 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
                       {isTekn ? "T" : "H"}
                     </div>
                     {/* Nama anggota */}
-                    <select
-                      value={val}
-                      onChange={e => saveSlot(slotDate, slotName, { ...slot, [mf]: e.target.value || null, confirmed: false })}
-                      style={{ flex: 1, background: cs.surface, border: "1px solid " + (val ? memberColor + "66" : cs.border), color: val ? memberColor : cs.muted, borderRadius: 5, padding: "3px 7px", fontSize: 11, cursor: "pointer", outline: "none", fontWeight: val ? 700 : 400 }}>
-                      <option value="">— kosong —</option>
-                      {hadirList.map(t => (
-                        <option key={t.name} value={t.name}>{t.name}</option>
-                      ))}
-                      {activeTeknisi.filter(t => !isAvail(t.name, slotDate)).map(t => (
-                        <option key={t.name} value={t.name}>✗ {t.name}</option>
-                      ))}
-                    </select>
+                    <div style={{ flex: 1, position: "relative" }}>
+                      <select
+                        value={val}
+                        onChange={e => saveSlot(slotDate, slotName, { ...slot, [mf]: e.target.value || null, confirmed: false })}
+                        style={{ width: "100%", background: isOverridePreset ? cs.yellow + "18" : cs.surface, border: "1px solid " + (isOverridePreset ? cs.yellow + "88" : val ? memberColor + "66" : cs.border), color: val ? memberColor : cs.muted, borderRadius: 5, padding: "3px 7px", fontSize: 11, cursor: "pointer", outline: "none", fontWeight: val ? 700 : 400 }}>
+                        <option value="">— kosong —</option>
+                        {hadirList.map(t => (
+                          <option key={t.name} value={t.name}>{t.name}</option>
+                        ))}
+                        {activeTeknisi.filter(t => !isAvail(t.name, slotDate)).map(t => (
+                          <option key={t.name} value={t.name}>✗ {t.name}</option>
+                        ))}
+                      </select>
+                      {isFromPreset && <span style={{ position: "absolute", right: 22, top: "50%", transform: "translateY(-50%)", fontSize: 8, color: cs.accent, fontWeight: 800, pointerEvents: "none" }}>PRESET</span>}
+                      {isOverridePreset && <span style={{ position: "absolute", right: 22, top: "50%", transform: "translateY(-50%)", fontSize: 8, color: cs.yellow, fontWeight: 800, pointerEvents: "none" }}>GANTI</span>}
+                    </div>
                   </div>
                 );
               })}
@@ -545,15 +553,24 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   // availability (hadir/tidak) tetap ada untuk toggle per individu
   const [availability, setAvailability] = useState([]);
 
+  // ── Team presets (teknisi default per slot) ──
+  const [teamPresets, setTeamPresets] = useState({}); // slot → teknisi
+
   // Load data saat mount
   useEffect(() => {
     async function load() {
-      const [slotRes, availRes] = await Promise.all([
+      const [slotRes, availRes, presetRes] = await Promise.all([
         supabase.from("daily_team_slots").select("*").gte("date", TODAY).order("date").order("slot").limit(300),
         supabase.from("technician_availability").select("*").gte("date", TODAY).order("date").limit(200),
+        supabase.from("team_presets").select("slot,teknisi").order("sort_order"),
       ]);
       if (slotRes.data) setDailySlots(slotRes.data);
       if (availRes.data) setAvailability(availRes.data);
+      if (presetRes.data) {
+        const map = {};
+        presetRes.data.forEach(r => { map[r.slot] = r.teknisi; });
+        setTeamPresets(map);
+      }
     }
     load();
   }, []);
@@ -574,9 +591,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     return rec ? rec.is_available : true;
   }
 
-  // Ambil slot untuk tanggal+nama tim tertentu (atau buat empty)
+  // Ambil slot untuk tanggal+nama tim tertentu (atau buat empty, auto-fill teknisi dari preset)
   function getSlotData(date, slotName) {
-    return dailySlots.find(s => s.date === date && s.slot === slotName) || { ...EMPTY_SLOT, date, slot: slotName };
+    const existing = dailySlots.find(s => s.date === date && s.slot === slotName);
+    if (existing) return existing;
+    const presetTeknisi = teamPresets[slotName] || "";
+    return { ...EMPTY_SLOT, date, slot: slotName, member1: presetTeknisi, member1_role: "teknisi" };
   }
 
   // Semua anggota dalam sebuah slot (nama saja, filter empty)
@@ -899,7 +919,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         getSlotData={getSlotData} slotMembers={slotMembers} slotMemberRoles={slotMemberRoles}
         saveSlot={saveSlot} confirmSlot={confirmSlot}
         slotLoading={slotLoading} dailySlots={dailySlots}
-        ordersData={ordersData}
+        ordersData={ordersData} teamPresets={teamPresets}
       />
 
       {/* ═══ FORM QUICK ENTRY ═══ */}
