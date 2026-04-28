@@ -3634,6 +3634,10 @@ ${photoPageHTML}
       const newStatus = computeStockStatus(newStock, item.reorder);
       // Update local state
       setInventoryData(prev => prev.map(i => i.code === item.code ? { ...i, stock: newStock, status: newStatus } : i));
+      // Freon: qty_actual = null (belum ditimbang, admin perlu confirm aktual)
+      // Non-freon: qty_actual = qty (langsung confirmed)
+      const isFreon = item.material_type === "freon" ||
+        ["r22","r32","r410","freon"].some(k => (item.name||"").toLowerCase().includes(k));
       // Insert transaksi ke DB (trigger Supabase akan update stock otomatis)
       try {
         await supabase.from("inventory_transactions").insert({
@@ -3651,6 +3655,7 @@ ${photoPageHTML}
           created_by_name: currentUser?.name || "",
           unit_id: mat._unitId || null,
           unit_label: mat._unitLabel || null,
+          qty_actual: isFreon ? null : -qty,
         });
       } catch (e) { console.warn("inv tx skip:", e?.message); }
       if (newStatus === "CRITICAL" || newStatus === "OUT") {
@@ -5042,10 +5047,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // RENDER MATERIAL TRACKING (Stok & Pemakaian Material)
   // ============================================================
   const renderMatTrack = () => (
-    <MatTrackView inventoryData={inventoryData} invUnitsData={invUnitsData} setInvUnitsData={setInvUnitsData} invTxData={invTxData}
+    <MatTrackView inventoryData={inventoryData} invUnitsData={invUnitsData} setInvUnitsData={setInvUnitsData} invTxData={invTxData} setInvTxData={setInvTxData}
       matTrackFilter={matTrackFilter} setMatTrackFilter={setMatTrackFilter} matTrackSearch={matTrackSearch} setMatTrackSearch={setMatTrackSearch}
       matTrackDateFrom={matTrackDateFrom} setMatTrackDateFrom={setMatTrackDateFrom} matTrackDateTo={matTrackDateTo} setMatTrackDateTo={setMatTrackDateTo}
-      setModalStok={setModalStok} supabase={supabase} fetchInventoryUnits={fetchInventoryUnits} showNotif={showNotif} currentUser={currentUser} />
+      setModalStok={setModalStok} supabase={supabase} fetchInventoryUnits={fetchInventoryUnits} showNotif={showNotif} currentUser={currentUser} setInventoryData={setInventoryData} computeStockStatus={computeStockStatus} />
   );
 
 
