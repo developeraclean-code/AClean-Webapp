@@ -52,8 +52,8 @@ const s = StyleSheet.create({
   photoTitle:  { fontSize: 11, fontFamily: "Helvetica-Bold", color: "#fff" },
   photoSub:    { fontSize: 7, color: "#93c5fd", marginTop: 1 },
   photoGrid:   { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  photoCell:   { width: "23%", border: "1px solid #e2e8f0", borderRadius: 3, overflow: "hidden", position: "relative" },
-  photoImg:    { width: "100%", height: 85, objectFit: "cover" },
+  photoCell:   { width: "31%", border: "1px solid #e2e8f0", borderRadius: 3, overflow: "hidden", position: "relative" },
+  photoImg:    { width: "100%", height: 110, objectFit: "cover" },
   photoNum:    { fontSize: 6, color: "#94a3b8", textAlign: "right", marginTop: 2, paddingRight: 3 },
 });
 
@@ -154,7 +154,7 @@ function PhotoPage({ photos, pageNum, jobId, customer }) {
                   <Text style={{ color: "#94a3b8", fontSize: 7 }}>Tidak tersedia</Text>
                 </View>
             }
-            <Text style={s.photoNum}>{(pageNum - 2) * 8 + i + 1}</Text>
+            <Text style={s.photoNum}>{(pageNum - 2) * 6 + i + 1}</Text>
           </View>
         ))}
       </View>
@@ -172,7 +172,7 @@ export default function ServiceReportPDF({ laporan, inv, logoUrl, photoDataUrls 
   const teknisiLine = [laporan.teknisi, laporan.helper, laporan.teknisi2].filter(Boolean).join(" · ") || "—";
 
   const photoChunks = [];
-  for (let i = 0; i < fotos.length; i += 8) photoChunks.push(fotos.slice(i, i + 8));
+  for (let i = 0; i < fotos.length; i += 6) photoChunks.push(fotos.slice(i, i + 6));
 
   return (
     <Document>

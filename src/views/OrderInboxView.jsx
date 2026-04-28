@@ -309,7 +309,7 @@ const DAY_NAMES  = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
 // ─────────────────────────────────────────────
 // Panel Isi Tim Harian (Team 01–10)
 // ─────────────────────────────────────────────
-function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, toggleAvailability, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData, teamPresets }) {
+function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, toggleAvailability, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData, teamPresets, onDispatch, dispatching }) {
 
   // Berapa row yang ditampilkan per slot (2 default, bisa expand ke 4)
   const [expandedSlots, setExpandedSlots] = useState({});
@@ -388,6 +388,21 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
           })}
         </div>
       </div>
+
+      {/* Bulk WA Dispatch button */}
+      {onDispatch && (() => {
+        const confirmedCount = dailySlots.filter(s => s.date === slotDate && s.confirmed).length;
+        if (confirmedCount === 0) return null;
+        return (
+          <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+            <button onClick={() => onDispatch(slotDate)} disabled={dispatching}
+              style={{ background: cs.green, color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 12, fontWeight: 700, cursor: dispatching ? "not-allowed" : "pointer", opacity: dispatching ? 0.7 : 1 }}>
+              {dispatching ? "⏳ Mengirim..." : `📲 Kirim WA ke Customer (${confirmedCount} tim confirmed)`}
+            </button>
+            <span style={{ fontSize: 11, color: cs.muted }}>Kirim konfirmasi jadwal ke semua customer pada tim yang sudah di-confirm</span>
+          </div>
+        );
+      })()}
 
       {/* Grid slot Team 01–10 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
@@ -502,6 +517,133 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
   );
 }
 
+// ══════════════════════════════════════════════════
+// Safety Net Panel — Deteksi tim confirmed dengan anggota ijin/absen
+// ══════════════════════════════════════════════════
+function SafetyNetPanel({ slotDate, dailySlots, availability, ordersData, teknisiData, supabase, showNotif, onReassigned }) {
+  const [reassignMap, setReassignMap] = useState({});   // orderId → newTeknisi
+  const [notifSent, setNotifSent] = useState({});       // orderId → bool
+  const [saving, setSaving] = useState(false);
+
+  // Cari slot yang confirmed tapi ada anggota yang absen
+  const alerts = useMemo(() => {
+    const confirmedSlots = dailySlots.filter(s => s.date === slotDate && s.confirmed);
+    const result = [];
+    for (const slot of confirmedSlots) {
+      const members = [slot.member1, slot.member2, slot.member3, slot.member4].filter(Boolean);
+      const absentMembers = members.filter(name => {
+        const rec = availability.find(a => a.teknisi === name && a.date === slotDate);
+        return rec && rec.is_available === false;
+      });
+      if (absentMembers.length === 0) continue;
+      const affectedOrders = ordersData.filter(o =>
+        o.date === slotDate && o.team_slot === slot.slot && o.status !== "CANCELLED"
+      );
+      result.push({ slot: slot.slot, absentMembers, affectedOrders });
+    }
+    return result;
+  }, [dailySlots, slotDate, availability, ordersData]);
+
+  if (alerts.length === 0) return null;
+
+  async function handleReassign(order) {
+    const newTeknisi = reassignMap[order.id];
+    if (!newTeknisi) return showNotif("Pilih teknisi pengganti dulu", "error");
+    setSaving(true);
+    const { error } = await supabase.from("orders")
+      .update({ teknisi: newTeknisi, last_changed_by: "Safety Net" })
+      .eq("id", order.id);
+    setSaving(false);
+    if (error) return showNotif("Gagal reassign: " + error.message, "error");
+    showNotif(`Order ${order.id} di-reassign ke ${newTeknisi}`);
+    if (onReassigned) onReassigned(order.id, newTeknisi);
+  }
+
+  async function handleNotifCustomer(order) {
+    try {
+      const token = import.meta.env.VITE_INTERNAL_API_SECRET || "";
+      const msg = `Halo *${order.customer}* 👋\n\nKami perlu informasikan bahwa jadwal service AC Anda hari ini mengalami perubahan jadwal karena teknisi kami berhalangan hadir.\n\nTim kami akan segera menghubungi Anda untuk penjadwalan ulang. Mohon maaf atas ketidaknyamanannya 🙏\n\n— AClean Service`;
+      const r = await fetch("/api/send-wa", {
+        method: "POST",
+        headers: { "x-internal-token": token, "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: order.phone, message: msg }),
+      });
+      if (r.ok) {
+        setNotifSent(p => ({ ...p, [order.id]: true }));
+        showNotif(`WA terkirim ke ${order.customer}`);
+      } else showNotif("Gagal kirim WA", "error");
+    } catch (e) {
+      showNotif("Error: " + e.message, "error");
+    }
+  }
+
+  const availableTeknisi = [...new Set(
+    dailySlots.filter(s => s.date === slotDate)
+      .flatMap(s => [s.member1, s.member2, s.member3, s.member4].filter(Boolean))
+  )].filter(name => {
+    const rec = availability.find(a => a.teknisi === name && a.date === slotDate);
+    return !rec || rec.is_available !== false;
+  });
+
+  return (
+    <div style={{ background: cs.red + "0a", border: "2px solid " + cs.red + "44", borderRadius: 14, padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <span style={{ fontSize: 18 }}>🚨</span>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 14, color: cs.red }}>Safety Net — Anggota Tim Ijin/Absen</div>
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 1 }}>
+            Tim di bawah sudah di-Confirm namun ada anggota yang ditandai tidak hadir. Tindakan diperlukan.
+          </div>
+        </div>
+      </div>
+
+      {alerts.map(alert => (
+        <div key={alert.slot} style={{ background: cs.card, borderRadius: 10, padding: 14, marginBottom: 10, border: "1px solid " + cs.red + "33" }}>
+          <div style={{ fontWeight: 700, color: cs.text, marginBottom: 6 }}>
+            {alert.slot}
+            <span style={{ marginLeft: 8, fontSize: 11, color: cs.red, fontWeight: 400 }}>
+              Absen: {alert.absentMembers.join(", ")}
+            </span>
+          </div>
+
+          {alert.affectedOrders.length === 0 ? (
+            <div style={{ fontSize: 12, color: cs.muted }}>Tidak ada order aktif untuk tim ini hari ini.</div>
+          ) : alert.affectedOrders.map(ord => (
+            <div key={ord.id} style={{ background: cs.surface, borderRadius: 8, padding: "10px 12px", marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+                <div>
+                  <span style={{ fontFamily: "monospace", fontSize: 11, color: cs.accent, fontWeight: 700 }}>{ord.id}</span>
+                  <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: cs.text }}>{ord.customer}</span>
+                  <span style={{ marginLeft: 8, fontSize: 11, color: cs.muted }}>{ord.service} — {ord.time?.slice(0,5)}</span>
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  {/* WA Notif ke customer */}
+                  {ord.phone && (
+                    <button onClick={() => handleNotifCustomer(ord)} disabled={notifSent[ord.id]}
+                      style={{ background: notifSent[ord.id] ? cs.green + "22" : cs.yellow + "22", border: "1px solid " + (notifSent[ord.id] ? cs.green + "44" : cs.yellow + "44"), color: notifSent[ord.id] ? cs.green : cs.yellow, borderRadius: 7, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
+                      {notifSent[ord.id] ? "✓ WA Terkirim" : "📲 WA Customer"}
+                    </button>
+                  )}
+                  {/* Reassign teknisi */}
+                  <select value={reassignMap[ord.id] || ""} onChange={e => setReassignMap(p => ({ ...p, [ord.id]: e.target.value }))}
+                    style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 6, padding: "4px 8px", fontSize: 11, outline: "none" }}>
+                    <option value="">— Pilih Teknisi Pengganti —</option>
+                    {availableTeknisi.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <button onClick={() => handleReassign(ord)} disabled={saving || !reassignMap[ord.id]}
+                    style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 7, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                    Ganti →
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function getWeekDays(offset = 0) {
   const base = new Date();
   const dow = base.getDay();
@@ -555,6 +697,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // ── Team presets (teknisi default per slot) ──
   const [teamPresets, setTeamPresets] = useState({}); // slot → teknisi
+  const [dispatching, setDispatching] = useState(false);
 
   // Load data saat mount
   useEffect(() => {
@@ -666,6 +809,25 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     showNotif(`${slotName} dikonfirmasi → ${members.map(m => m.name).join(", ")} ter-assign ke ${date}`);
   }
 
+  // Kirim WA dispatch ke semua customer pada tim yang confirmed
+  async function handleDispatch(date) {
+    setDispatching(true);
+    try {
+      const token = import.meta.env.VITE_INTERNAL_API_SECRET || "";
+      const r = await fetch(`/api/cron-reminder?task=dispatch&date=${date}`, {
+        method: "POST",
+        headers: { "x-internal-token": token, "Content-Type": "application/json" },
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Server error");
+      showNotif(`✅ ${d.sent ?? 0} WA dikirim ke customer`);
+    } catch (e) {
+      showNotif("Gagal dispatch: " + e.message, "error");
+    } finally {
+      setDispatching(false);
+    }
+  }
+
   // Toggle hadir/tidak individu
   async function toggleAvailability(name, date, current) {
     const newVal = !current;
@@ -769,6 +931,14 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       if (editId) {
         const { error } = await supabase.from("orders").update(payload).eq("id", editId);
         if (error) throw error;
+        // Update customer record if phone/address changed
+        if (form.customer_id) {
+          await supabase.from("customers").update({
+            name: payload.customer,
+            phone: payload.phone || null,
+            address: payload.address || null,
+          }).eq("id", form.customer_id);
+        }
         setOrdersData(prev => prev.map(o => o.id === editId ? { ...o, ...payload } : o));
         showNotif("Order diperbarui");
         setEditId(null);
@@ -776,6 +946,17 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         const id = "WA-" + Date.now();
         const { error } = await supabase.from("orders").insert({ ...payload, id });
         if (error) throw error;
+        // Auto-save customer if not already linked
+        if (!form.customer_id && payload.customer) {
+          const { data: saved } = await supabase.from("customers").upsert(
+            { name: payload.customer, phone: payload.phone || null, address: payload.address || null },
+            { onConflict: "phone", ignoreDuplicates: false }
+          ).select("id").single();
+          if (saved?.id) {
+            await supabase.from("orders").update({ customer_id: saved.id }).eq("id", id);
+            setOrdersData(prev => prev.map(o => o.id === id ? { ...o, customer_id: saved.id } : o));
+          }
+        }
         setOrdersData(prev => [{ ...payload, id, created_at: new Date().toISOString() }, ...prev]);
         showNotif("Order masuk disimpan");
       }
@@ -920,6 +1101,21 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         saveSlot={saveSlot} confirmSlot={confirmSlot}
         slotLoading={slotLoading} dailySlots={dailySlots}
         ordersData={ordersData} teamPresets={teamPresets}
+        onDispatch={handleDispatch} dispatching={dispatching}
+      />
+
+      {/* ═══ SAFETY NET PANEL ═══ */}
+      <SafetyNetPanel
+        slotDate={slotDate}
+        dailySlots={dailySlots}
+        availability={availability}
+        ordersData={ordersData}
+        teknisiData={teknisiData}
+        supabase={supabase}
+        showNotif={showNotif}
+        onReassigned={(orderId, newTeknisi) => setOrdersData(prev =>
+          prev.map(o => o.id === orderId ? { ...o, teknisi: newTeknisi } : o)
+        )}
       />
 
       {/* ═══ FORM QUICK ENTRY ═══ */}

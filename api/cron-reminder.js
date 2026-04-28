@@ -141,20 +141,65 @@ async function taskDaily() {
   }
   // Indonesia timezone (UTC+7)
   const today = new Date(Date.now() + 7*60*60*1000).toISOString().slice(0,10);
-  const [{ data:orders }, { data:invoices }, { data:laporan }] = await Promise.all([
-    sb.from("orders").select("*").eq("date",today),
-    sb.from("invoices").select("*").gte("created_at",today+"T00:00:00"),
-    sb.from("service_reports").select("*").eq("date",today),
+  const [{ data:orders }, { data:invoices }, { data:laporan }, { data:expenses }] = await Promise.all([
+    sb.from("orders").select("id,service,status").eq("date",today),
+    sb.from("invoices").select("id,total,status").gte("created_at",today+"T00:00:00"),
+    sb.from("service_reports").select("id,status").eq("date",today),
+    sb.from("expenses").select("amount").gte("date",today).lte("date",today),
   ]);
-  const done    = (orders||[]).filter(o=>o.status==="COMPLETED").length;
-  const proses  = (orders||[]).filter(o=>["ON_SITE","WORKING"].includes(o.status)).length;
-  const masuk   = (invoices||[]).filter(i=>i.status==="PAID").reduce((s,i)=>s+(i.total||0),0);
-  const pending = (invoices||[]).filter(i=>["UNPAID","OVERDUE"].includes(i.status)).reduce((s,i)=>s+(i.total||0),0);
-  const tgl = new Date().toLocaleDateString("id-ID",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
-  const msg = `📊 *LAPORAN HARIAN ACLEAN*\n${tgl}\n\n🔧 Order: ✅${done} selesai · 🔄${proses} proses · 📝${(laporan||[]).length} laporan\n\n💰 Lunas: ${fmt(masuk)}\n⏳ Pending: ${fmt(pending)}\n\n_ARA AClean_`;
+
+  const ordArr = orders||[];
+  const invArr = invoices||[];
+  const lapArr = laporan||[];
+
+  // Service breakdown
+  const svcCount = {};
+  ordArr.forEach(o => { const s = o.service||"Lainnya"; svcCount[s]=(svcCount[s]||0)+1; });
+  const svcOrder = ["Cleaning","Install","Repair","Complain"];
+  const svcLines = svcOrder.filter(s=>svcCount[s]).map(s=>`  • ${s}: ${svcCount[s]}`);
+  Object.keys(svcCount).filter(s=>!svcOrder.includes(s)).forEach(s=>svcLines.push(`  • ${s}: ${svcCount[s]}`));
+
+  const totalOrders = ordArr.length;
+  const done   = ordArr.filter(o=>o.status==="COMPLETED").length;
+  const proses = ordArr.filter(o=>["ON_SITE","WORKING"].includes(o.status)).length;
+
+  // Invoice summary
+  const invPaid    = invArr.filter(i=>i.status==="PAID");
+  const invUnpaid  = invArr.filter(i=>["UNPAID","OVERDUE"].includes(i.status));
+  const masuk  = invPaid.reduce((s,i)=>s+(i.total||0),0);
+  const pending = invUnpaid.reduce((s,i)=>s+(i.total||0),0);
+
+  // Expenses
+  const totalExp = (expenses||[]).reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const nett = masuk - totalExp;
+
+  // Report counts
+  const lapVerified  = lapArr.filter(r=>r.status==="VERIFIED").length;
+  const lapSubmitted = lapArr.filter(r=>r.status==="SUBMITTED").length;
+
+  const tgl = new Date(Date.now()+7*60*60*1000).toLocaleDateString("id-ID",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+
+  let msg = `📊 *LAPORAN HARIAN ACLEAN*\n${tgl}\n\n`;
+  msg += `🔧 *ORDER HARI INI: ${totalOrders}*\n`;
+  msg += svcLines.join("\n");
+  msg += `\n  ✅ Selesai: ${done} · 🔄 Proses: ${proses}\n\n`;
+  msg += `📝 *LAPORAN TEKNISI: ${lapArr.length}*\n`;
+  msg += `  • Terverifikasi: ${lapVerified}\n`;
+  msg += `  • Submitted: ${lapSubmitted}\n\n`;
+  msg += `💳 *INVOICE: ${invArr.length}*\n`;
+  msg += `  • Lunas: ${invPaid.length} (${fmt(masuk)})\n`;
+  msg += `  • Belum bayar: ${invUnpaid.length} (${fmt(pending)})\n\n`;
+  if (totalExp > 0) {
+    msg += `💸 *PENGELUARAN: ${fmt(totalExp)}*\n`;
+    msg += `📈 Nett Hari Ini: *${fmt(nett)}*\n\n`;
+  } else {
+    msg += `📈 Pemasukan Hari Ini: *${fmt(masuk)}*\n\n`;
+  }
+  msg += `_ARA AClean_`;
+
   const waSent = await sendWA(OWNER_PHONE, msg);
-  await log("DAILY_REPORT",`${done} selesai, ${fmt(masuk)} masuk`);
-  return { orders:orders?.length, revenue:masuk, waSent };
+  await log("DAILY_REPORT",`${totalOrders} order, ${lapArr.length} laporan, ${fmt(masuk)} masuk`);
+  return { orders:totalOrders, revenue:masuk, laporanCount:lapArr.length, waSent };
 }
 
 // ══════════════════════════════════════════════════
@@ -274,7 +319,66 @@ async function taskCleanup() {
 }
 
 // ══════════════════════════════════════════════════
-// TASK 5: Cleanup WA chat lama (>14 hari)
+// TASK 5: Bulk WA Dispatch — kirim reminder ke customer job hari ini
+// ══════════════════════════════════════════════════
+async function taskDispatch(dateOverride) {
+  // Cek toggle
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["dispatch_enabled","cron_jobs","company_name"]);
+  const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "dispatch_enabled")) {
+    await log("DISPATCH", "Dilewati — Dispatch dinonaktifkan via Settings", "INFO");
+    return { skipped: true };
+  }
+
+  const today = dateOverride || new Date(Date.now() + 7*60*60*1000).toISOString().slice(0,10);
+  const companyName = togMap.company_name || "AClean Service";
+
+  // Ambil semua slot confirmed hari ini
+  const { data: slots } = await sb.from("daily_team_slots")
+    .select("slot,member1,member2,member3,member4,confirmed")
+    .eq("date", today)
+    .eq("confirmed", true);
+
+  if (!slots?.length) {
+    await log("DISPATCH", "Tidak ada slot confirmed hari ini", "INFO");
+    return { sent: 0, skipped_no_slots: true };
+  }
+
+  // Ambil semua order hari ini dengan phone
+  const { data: orders } = await sb.from("orders")
+    .select("id,customer,phone,service,time,teknisi,team_slot")
+    .eq("date", today)
+    .not("phone", "is", null);
+
+  const confirmedSlots = new Set((slots||[]).map(s => s.slot));
+  const toDispatch = (orders||[]).filter(o => {
+    if (!o.phone) return false;
+    // Include jika team_slot ada dan confirmed, atau teknisinya ada di salah satu slot confirmed
+    if (o.team_slot && confirmedSlots.has(o.team_slot)) return true;
+    const slot = slots.find(s => s.member1 === o.teknisi || s.member2 === o.teknisi);
+    return !!slot;
+  });
+
+  let sent = 0;
+  const sentPhones = new Set();
+  for (const ord of toDispatch) {
+    // Deduplicate per phone per hari
+    if (sentPhones.has(ord.phone)) continue;
+    sentPhones.add(ord.phone);
+
+    const timeStr = ord.time ? ord.time.slice(0,5) : "pagi";
+    const teknisiName = ord.teknisi || "tim kami";
+    const msg = `Halo *${ord.customer}* 👋\n\nKami konfirmasi jadwal service AC Anda hari ini:\n🔧 *${ord.service}* — pukul *${timeStr} WIB*\n👷 Teknisi: *${teknisiName}*\n\nMohon pastikan ada orang di lokasi. Terima kasih telah mempercayakan perawatan AC Anda kepada *${companyName}*! 🙏`;
+    const ok = await sendWA(ord.phone, msg);
+    if (ok) sent++;
+  }
+
+  await log("DISPATCH", `${sent} WA dikirim untuk ${toDispatch.length} order confirmed (${today})`);
+  return { sent, total_orders: toDispatch.length, slots_confirmed: slots.length };
+}
+
+// ══════════════════════════════════════════════════
+// TASK 6: Cleanup WA chat lama (>14 hari)
 // ══════════════════════════════════════════════════
 async function taskWaCleanup() {
   // Cek toggle — bisa dimatikan via Settings
@@ -378,6 +482,7 @@ export default async function handler(req, res) {
   try {
     let result;
     if (task === "daily")        result = await taskDaily();
+    else if (task === "dispatch")   result = await taskDispatch(req.query.date);
     else if (task === "stock")   result = await taskStock();
     else if (task === "cleanup") result = await taskCleanup();
     else if (task === "wa-cleanup") result = await taskWaCleanup();
