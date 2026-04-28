@@ -649,6 +649,7 @@ export default function ACleanWebApp() {
   const [laporanModal, setLaporanModal] = useState(null);
   const [laporanStep, setLaporanStep] = useState(1);
   const [laporanSubmitted, setLaporanSubmitted] = useState(false);
+  const submitLaporanLock = useRef(false); // persistent lock — tidak hilang saat re-render
   const [laporanUnits, setLaporanUnits] = useState([]);
   const [laporanMaterials, setLaporanMaterials] = useState([]);
   const [laporanJasaItems, setLaporanJasaItems] = useState([]);  // Jasa section A
@@ -2330,6 +2331,7 @@ ${photoPageHTML}
     setLaporanModal(order);
     setLaporanStep(1);
     setLaporanSubmitted(false);
+    submitLaporanLock.current = false; // reset lock setiap kali modal dibuka
   };
   const doLogin = async (email, pass) => {
     setLoginError("");
@@ -3624,10 +3626,14 @@ ${photoPageHTML}
         );
       if (!item) continue;
       const qty = parseFloat(mat.jumlah) || 0;
-      // GAP 3: Cek stok cukup sebelum deduct
+      // Cek stok cukup sebelum deduct — skip dengan notif + log jika kurang
       if (item.stock < qty) {
-        showNotif(`⚠️ Stok ${item.name} tidak cukup (tersedia: ${item.stock} ${item.unit}, butuh: ${qty}). Laporan tetap tersimpan.`);
-        addAgentLog("STOCK_INSUFFICIENT", `${item.name}: butuh ${qty}, tersedia ${item.stock}`, "WARNING");
+        const skipMsg = `⚠️ Stok ${item.name} kurang: butuh ${qty} ${item.unit}, tersisa ${item.stock} ${item.unit}. Deduct di-skip — laporan tersimpan.`;
+        showNotif(skipMsg);
+        addAgentLog("STOCK_INSUFFICIENT", `Job ${orderId||reportId||"?"} — ${item.name}: butuh ${qty}, tersedia ${item.stock} ${item.unit}. Deduct di-skip.`, "WARNING");
+        // Notif ke Owner agar bisa koreksi manual
+        const ownerAccs = userAccounts?.filter(u => u.role === "Owner") || [];
+        ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, `⚠️ *Stok Kurang*\nJob ${orderId||"?"} — ${item.name}: butuh ${qty} ${item.unit}, tersisa ${item.stock} ${item.unit}.\nDeduct di-skip, perlu koreksi manual.`); });
         continue;
       }
       const newStock = item.stock - qty;
@@ -8742,8 +8748,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         };
 
         const submitLaporan = async () => {
-          if (submitLaporan._running) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
-          submitLaporan._running = true;
+          if (submitLaporanLock.current) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
+          submitLaporanLock.current = true;
           try {
           // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
           const isInstall = laporanModal?.service === "Install";
@@ -9051,24 +9057,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               };
             }).filter(Boolean);
 
-          // Deduct inventory_units.stock untuk setiap unit fisik yang dipakai
+          // Deduct inventory_units.stock — batch semua update sekaligus (bukan fire-and-forget)
+          const unitUpdateTasks = [];
           for (const ud of unitDeducts) {
             const unit = invUnitsData.find(u => u.id === ud._unitId);
             if (!unit) continue;
             const newStock = Math.max(0, unit.stock - ud.jumlah);
-            // Update local state inventory_units
-            setInvUnitsData(prev => prev.map(u => u.id === ud._unitId
-              ? { ...u, stock: newStock }
-              : u
-            ));
-            // Update DB inventory_units
-            supabase.from("inventory_units").update({
-              stock: newStock,
-              updated_at: new Date().toISOString()
-            }).eq("id", ud._unitId).then(({ error }) => {
-              if (error) console.warn("inv_units update err:", error.message);
-            });
+            setInvUnitsData(prev => prev.map(u => u.id === ud._unitId ? { ...u, stock: newStock } : u));
+            unitUpdateTasks.push(
+              supabase.from("inventory_units")
+                .update({ stock: newStock, updated_at: new Date().toISOString() })
+                .eq("id", ud._unitId)
+                .then(({ error }) => { if (error) console.warn("inv_units update err:", ud._unitId, error.message); })
+            );
           }
+          if (unitUpdateTasks.length > 0) await Promise.all(unitUpdateTasks);
 
           // Material tanpa unit fisik → deduct via inventory biasa (by nama)
           const matWithoutUnit = materialsToDeduct.filter(mat => !mat.freon_tabung_code);
@@ -9436,16 +9439,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 "WARNING");
             }
 
-            setInvoicesData(prev => [...prev, newInvoice]);
-
             // Simpan invoice ke Supabase — exclude fields yang tidak ada di DB schema
             const { garansi_status: _gs, ...invBase } = newInvoice;
             const invPayload = {
               ...invBase,
               materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
-              repair_gratis: invBase.repair_gratis || undefined,  // Only include if true
+              repair_gratis: invBase.repair_gratis || undefined,
             };
-            // ── 1 invoice per job: query DB langsung (bukan local state) untuk cegah race ──
+            // ── 1 invoice per job: query DB langsung untuk cegah race condition ──
             const { data: existingDB, error: fetchExistingErr } = await supabase
               .from("invoices").select("id").eq("job_id", laporanModal.id);
             if (fetchExistingErr) {
@@ -9454,6 +9455,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               return;
             }
             if (existingDB && existingDB.length > 0) {
+              // Hapus semua dulu — update local state HANYA setelah semua delete sukses
               for (const old of existingDB) {
                 const { error: delErr } = await deleteInvoice(supabase, old.id, auditUserName(), "TEKNISI_REWRITE_LAPORAN");
                 if (delErr) {
@@ -9462,12 +9464,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   return;
                 }
               }
+              // Semua delete sukses baru update local state
               setInvoicesData(prev => prev.filter(i => i.job_id !== laporanModal.id));
               addAgentLog("INVOICE_REWRITE", `${existingDB.length} invoice lama dihapus untuk ${laporanModal.id} (rewrite)`, "INFO");
             }
             const { error: invErr } = await insertInvoice(supabase, invPayload);
             if (invErr) {
               console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
+              let retryOk = false;
               for (const st of ["PENDING_APPROVAL", "UNPAID"]) {
                 const { error: e2 } = await insertInvoice(supabase, {
                   id: newInvoice.id, job_id: newInvoice.job_id,
@@ -9476,8 +9480,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   material: newInvoice.material, total: newInvoice.total,
                   status: st,
                 });
+                if (!e2) { retryOk = true; break; }
+              }
+              if (!retryOk) {
+                showNotif("❌ Gagal simpan invoice — laporan tersimpan, cek menu Invoice manual.");
+                addAgentLog("INVOICE_INSERT_FAILED", `Invoice ${newInvoice.id} gagal disimpan setelah retry`, "ERROR");
               }
             }
+            // Update local state SETELAH DB insert sukses (atau retry sukses)
+            setInvoicesData(prev => [...prev, newInvoice]);
 
             addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
 
@@ -9521,7 +9532,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             console.error("submitLaporan fatal:", err);
             showNotif("❌ Submit error: " + (err?.message || String(err)));
           } finally {
-            submitLaporan._running = false;
+            submitLaporanLock.current = false;
           }
         };
 

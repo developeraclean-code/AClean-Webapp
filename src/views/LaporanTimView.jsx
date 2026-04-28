@@ -95,6 +95,11 @@ const curPgL = Math.min(laporanPage, totPgL);
 const pageLap = filtered.slice((curPgL - 1) * LAP_PAGE_SIZE, curPgL * LAP_PAGE_SIZE);
 
 const verifyLaporan = async (r) => {
+  if (currentUser?.role !== "Owner" && currentUser?.role !== "Admin") {
+    showNotif("❌ Hanya Owner/Admin yang bisa verifikasi laporan");
+    return;
+  }
+  // Optimistic update setelah guard lolos
   setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "VERIFIED" } : x));
   const { error: vErr } = await updateServiceReport(supabase, r.id, { status: "VERIFIED" }, auditUserName());
   if (vErr) {
