@@ -722,7 +722,7 @@ export default function ACleanWebApp() {
   const [schedListFilter, setSchedListFilter] = useState("minggu_ini"); // "hari_ini" | "minggu_ini" | "semua"
   const [invUnitsData, setInvUnitsData] = useState([]); // unit fisik per item (tabung/roll)
   const [showAddStock, setShowAddStock] = useState(false);
-  const [newOrderForm, setNewOrderForm] = useState({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", date: "", time: "09:00", notes: "" });
+  const [newOrderForm, setNewOrderForm] = useState({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", team_slot: "", date: "", time: "09:00", notes: "" });
   const [newStokForm, setNewStokForm] = useState({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" });
   const [newTeknisiForm, setNewTeknisiForm] = useState({ name: "", role: "Teknisi", phone: "", skills: [], email: "", password: "", buatAkun: false });
   const [modalAddCustomer, setModalAddCustomer] = useState(false);
@@ -3717,6 +3717,7 @@ ${photoPageHTML}
       teknisi2: form.teknisi2 || null, helper2: form.helper2 || null,
       teknisi3: form.teknisi3 || null, helper3: form.helper3 || null,
       date: form.date, time: form.time, time_end: timeEnd, status: "CONFIRMED",
+      team_slot: form.team_slot || null,
       invoice_id: null, dispatch: false, notes: form.notes || ""
     };
 
