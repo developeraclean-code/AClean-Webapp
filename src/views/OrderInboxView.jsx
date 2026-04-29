@@ -1009,10 +1009,15 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     const orders = getSlotOrders(tek, date);
     for (let i = 0; i < orders.length; i++) {
       for (let j = i + 1; j < orders.length; j++) {
-        if (!orders[i].time || !orders[j].time) continue;
-        const [h1, m1] = orders[i].time.split(":").map(Number);
-        const [h2, m2] = orders[j].time.split(":").map(Number);
-        if (Math.abs((h1 * 60 + m1) - (h2 * 60 + m2)) < 60) return true;
+        const a = orders[i], b = orders[j];
+        if (!a.time || !b.time) continue;
+        const [h1, m1] = a.time.split(":").map(Number);
+        const aStart = h1 * 60 + m1;
+        const aEnd = aStart + Math.round(hitungDurasi(a.service || "Cleaning", a.units || 1) * 60);
+        const [h2, m2] = b.time.split(":").map(Number);
+        const bStart = h2 * 60 + m2;
+        const bEnd = bStart + Math.round(hitungDurasi(b.service || "Cleaning", b.units || 1) * 60);
+        if (aStart < bEnd && aEnd > bStart) return true;
       }
     }
     return false;
@@ -1020,7 +1025,25 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // ── Opsi B: update teknisi/helper inline tanpa buka form edit ──
   async function handleQuickAssign(order, field, value) {
-    const update = { [field]: value || null, last_changed_by: auditUserName() };
+    let update = { [field]: value || null, last_changed_by: auditUserName() };
+
+    // Jika ganti team_slot → propagate teknisi & helper dari anggota slot baru ke order
+    if (field === "team_slot" && value) {
+      const slot = getSlotData(order.date, value);
+      if (slot) {
+        const members = slotMemberRoles(slot);
+        const utama = members.find(m => m.role === "Teknisi") || members[0];
+        const helpers = members.filter(m => m !== utama);
+        update = {
+          ...update,
+          teknisi: utama?.name || null,
+          helper: helpers[0]?.name || null,
+          helper2: helpers[1]?.name || null,
+          helper3: helpers[2]?.name || null,
+        };
+      }
+    }
+
     const { error } = await supabase.from("orders").update(update).eq("id", order.id);
     if (error) return showNotif("Gagal update " + field + ": " + error.message);
     setOrdersData(prev => prev.map(o => o.id === order.id ? { ...o, ...update } : o));
