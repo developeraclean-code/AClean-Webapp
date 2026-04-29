@@ -46,6 +46,8 @@ async function saveActualQty(tx) {
         qty: diff,
         qty_actual: diff,
         type: "adjustment",
+        unit_id: tx.unit_id || null,
+        unit_label: tx.unit_label || null,
         notes: `Koreksi timbang aktual dari ${Math.abs(tx.qty)} → ${actual} kg (job ${tx.order_id || tx.report_id || "?"})`,
         customer_name: tx.customer_name || null,
         teknisi_name: tx.teknisi_name || null,
@@ -54,11 +56,23 @@ async function saveActualQty(tx) {
       });
       if (e2) throw e2;
 
-      // 3. Update local inventoryData stock
+      // 3a. Update stok tabung spesifik di inventory_units (jika ada unit_id)
+      if (tx.unit_id) {
+        const { data: unitRow } = await supabase.from("inventory_units").select("stock").eq("id", tx.unit_id).single();
+        if (unitRow) {
+          const newUnitStock = parseFloat(((unitRow.stock || 0) + diff).toFixed(1));
+          await supabase.from("inventory_units").update({ stock: newUnitStock, updated_at: new Date().toISOString() }).eq("id", tx.unit_id);
+          if (setInvUnitsData) {
+            setInvUnitsData(prev => prev.map(u => u.id === tx.unit_id ? { ...u, stock: newUnitStock } : u));
+          }
+        }
+      }
+
+      // 3b. Update stok global inventoryData
       if (setInventoryData) {
         setInventoryData(prev => prev.map(item => {
           if (item.code !== tx.inventory_code) return item;
-          const newStock = item.stock + diff;
+          const newStock = parseFloat((item.stock + diff).toFixed(1));
           return { ...item, stock: newStock, status: computeStockStatus(newStock, item.reorder) };
         }));
       }
