@@ -33,7 +33,7 @@ export const fetchAgentLogs = (supabase) =>
 
 export const fetchInventoryTransactions = (supabase) =>
   supabase.from("inventory_transactions")
-    .select("id,inventory_code,inventory_name,qty,type,order_id,report_id,notes,created_at,customer_name,teknisi_name,job_date,unit_label")
+    .select("id,inventory_code,inventory_name,qty,qty_actual,type,order_id,report_id,notes,created_at,customer_name,teknisi_name,job_date,unit_label,unit_id")
     .order("created_at", { ascending: false }).limit(500);
 
 export const fetchInventoryUnits = (supabase) =>

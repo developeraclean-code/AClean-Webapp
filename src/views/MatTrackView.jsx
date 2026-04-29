@@ -442,6 +442,7 @@ return (
                 <div>
                   <div style={{ fontWeight: 600, color: cs.text }}>{tx.inventory_name || "—"}</div>
                   <div style={{ fontSize: 10, color: cs.muted }}>{tx.inventory_code}</div>
+                  {tx.unit_label && <div style={{ fontSize: 10, color: cs.accent, marginTop: 1 }}>📦 {tx.unit_label}</div>}
                   {isAdj && <div style={{ fontSize: 9, color: cs.green, fontWeight: 700, marginTop: 1 }}>KOREKSI TIMBANG</div>}
                 </div>
                 <div>
