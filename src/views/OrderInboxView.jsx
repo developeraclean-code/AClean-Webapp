@@ -28,19 +28,24 @@ function toMinutes(timeStr) {
   return h * 60 + m;
 }
 
-// ── Conflict detection: overlap ±1 jam ──
-function hasConflict(orders, teknisi, date, time, excludeId = null) {
+// ── Conflict detection: pakai durasi aktual, bukan ±1 jam flat ──
+function hasConflict(orders, teknisi, date, time, excludeId = null, service = "Cleaning", units = 1) {
   if (!teknisi || !date || !time) return null;
   const [h, m] = time.split(":").map(Number);
-  const targetMin = h * 60 + m;
+  const startMin = h * 60 + m;
+  const durMin = Math.round(hitungDurasi(service, units) * 60);
+  const endMin = startMin + durMin;
   const conflicts = orders.filter(o => {
     if (o.id === excludeId) return false;
-    if (o.teknisi !== teknisi) return false;
+    if (o.teknisi !== teknisi && o.teknisi2 !== teknisi) return false;
     if (o.date !== date) return false;
     if (!o.time) return false;
+    if (!["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS","ON_SITE"].includes(o.status)) return false;
     const [oh, om] = o.time.split(":").map(Number);
-    const oMin = oh * 60 + om;
-    return Math.abs(oMin - targetMin) < 60;
+    const oStartMin = oh * 60 + om;
+    const oDurMin = Math.round(hitungDurasi(o.service || "Cleaning", o.units || 1) * 60);
+    const oEndMin = oStartMin + oDurMin;
+    return startMin < oEndMin && endMin > oStartMin;
   });
   return conflicts.length > 0 ? conflicts : null;
 }
@@ -843,10 +848,10 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     });
   }
 
-  // Conflict check realtime
+  // Conflict check realtime — pakai durasi aktual order ini
   const conflict = useMemo(() =>
-    hasConflict(ordersData, form.teknisi, form.date, form.time, editId),
-    [ordersData, form.teknisi, form.date, form.time, editId]
+    hasConflict(ordersData, form.teknisi, form.date, form.time, editId, form.service, form.units),
+    [ordersData, form.teknisi, form.date, form.time, editId, form.service, form.units]
   );
 
   // Autocomplete: cari by nama ATAU nomor WA
