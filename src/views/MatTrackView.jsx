@@ -35,7 +35,7 @@ async function saveActualQty(tx) {
       .eq("id", tx.id);
     if (e1) throw e1;
 
-    const diff = actual - Math.abs(tx.qty); // positif = lebih hemat (adjust balik), negatif = lebih banyak
+    const diff = parseFloat((actual - Math.abs(tx.qty)).toFixed(1));
     if (Math.abs(diff) >= 0.001) {
       // 2. Insert adjustment transaction untuk koreksi selisih
       const { error: e2 } = await supabase.from("inventory_transactions").insert({
@@ -43,7 +43,7 @@ async function saveActualQty(tx) {
         inventory_name: tx.inventory_name,
         order_id: tx.order_id || null,
         report_id: tx.report_id || null,
-        qty: diff,           // positif = stok kembali, negatif = stok tambah kurang
+        qty: diff,
         qty_actual: diff,
         type: "adjustment",
         notes: `Koreksi timbang aktual dari ${Math.abs(tx.qty)} → ${actual} kg (job ${tx.order_id || tx.report_id || "?"})`,
@@ -86,7 +86,7 @@ async function saveActualQty(tx) {
       }
     }
 
-    showNotif(`✅ Timbang disimpan: ${actual} kg (selisih ${diff >= 0 ? "+" : ""}${diff.toFixed(2)} kg)`);
+    showNotif(`✅ Timbang disimpan: ${actual} kg (selisih ${diff >= 0 ? "+" : ""}${diff.toFixed(1)} kg)`);
     setTimbangId(null);
     setTimbangVal("");
   } catch (err) {
@@ -349,7 +349,7 @@ return (
 
     {/* ── Banner freon belum ditimbang ── */}
     {isOwnerAdmin && (() => {
-      const unweighed = invTxData.filter(tx => tx.qty < 0 && isFreonTx(tx) && tx.qty_actual === null);
+      const unweighed = invTxData.filter(tx => tx.qty < 0 && isFreonTx(tx) && tx.qty_actual == null);
       if (unweighed.length === 0) return null;
       return (
         <div style={{ background: cs.yellow + "12", border: "2px solid " + cs.yellow + "44", borderRadius: 12, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
@@ -417,7 +417,7 @@ return (
         </div>
         {txFiltered.slice(0, 100).map((tx, i) => {
           const isFreon = isFreonTx(tx);
-          const unweighed = isFreon && tx.qty < 0 && tx.qty_actual === null;
+          const unweighed = isFreon && tx.qty < 0 && tx.qty_actual == null;
           const isTimbangOpen = timbangId === tx.id;
           const isAdj = tx.type === "adjustment";
           return (
@@ -436,11 +436,11 @@ return (
                 <div style={{ color: cs.accent, fontSize: 11 }}>{tx.teknisi_name || "—"}</div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontWeight: 700, color: tx.qty < 0 ? cs.red : cs.green }}>
-                    {tx.qty < 0 ? "-" : "+"}{Math.abs(tx.qty)} kg
+                    {tx.qty < 0 ? "-" : "+"}{parseFloat(Math.abs(tx.qty).toFixed(1))} kg
                   </div>
-                  {isFreon && tx.qty_actual !== null && tx.qty_actual !== undefined && (
+                  {isFreon && tx.qty_actual != null && (
                     <div style={{ fontSize: 10, color: cs.green, fontWeight: 600 }}>
-                      ✓ {Math.abs(tx.qty_actual)} kg aktual
+                      ✓ {parseFloat(Math.abs(tx.qty_actual).toFixed(1))} kg aktual
                     </div>
                   )}
                   {unweighed && isOwnerAdmin && (
@@ -473,8 +473,8 @@ return (
                   {parseFloat(timbangVal) !== Math.abs(tx.qty) && timbangVal && (
                     <span style={{ fontSize: 11, color: parseFloat(timbangVal) < Math.abs(tx.qty) ? cs.green : cs.red }}>
                       {parseFloat(timbangVal) < Math.abs(tx.qty)
-                        ? `↑ Stok +${(Math.abs(tx.qty) - parseFloat(timbangVal)).toFixed(2)} kg (lebih hemat)`
-                        : `↓ Stok -${(parseFloat(timbangVal) - Math.abs(tx.qty)).toFixed(2)} kg (lebih boros)`}
+                        ? `↑ Stok +${(Math.abs(tx.qty) - parseFloat(timbangVal)).toFixed(1)} kg (lebih hemat)`
+                        : `↓ Stok -${(parseFloat(timbangVal) - Math.abs(tx.qty)).toFixed(1)} kg (lebih boros)`}
                     </span>
                   )}
                 </div>
@@ -508,7 +508,7 @@ return (
               <div style={{ fontSize: 10, color: cs.muted }}>{tx.inventory_code}</div>
             </div>
             <div style={{ color: cs.muted, fontSize: 11 }}>{tx.notes || tx.type || "—"}</div>
-            <div style={{ textAlign: "right", fontWeight: 700, color: cs.green }}>+{tx.qty}</div>
+            <div style={{ textAlign: "right", fontWeight: 700, color: cs.green }}>+{parseFloat(Math.abs(tx.qty).toFixed(1))}</div>
             <div style={{ textAlign: "right", color: cs.muted, fontSize: 11 }}>{(tx.created_at || "").slice(0, 10)}</div>
           </div>
         ))}

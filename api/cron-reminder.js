@@ -108,15 +108,23 @@ async function taskReminder() {
     if (msg) { await sendWA(inv.phone, msg); await log("REMINDER_SENT",`${inv.id} — ${daysOverdue}d`); }
   }
 
-  // Auto-approve PENDING_APPROVAL > 6 jam (limit to prevent timeout)
+  // Auto-approve PENDING_APPROVAL > 6 jam
+  // Cleaning/Install: UNPAID (ada tagihan)
+  // Repair/Complain gratis (total=0): langsung PAID (tidak perlu tagih)
   const { data: pend } = await sb.from("invoices").select("*").eq("status","PENDING_APPROVAL").limit(300);
   for (const inv of pend||[]) {
     const hrs = (Date.now()-new Date(inv.created_at).getTime())/3600000;
-    if (hrs>=6 && /(Cleaning|Install)/.test(inv.service||"")) {
+    if (hrs < 6) continue;
+    const isZero = (inv.total || 0) === 0;
+    if (isZero) {
+      // Invoice Rp 0 (repair gratis/garansi) — auto-PAID tanpa tagih
+      await sb.from("invoices").update({status:"PAID",paid_at:new Date().toISOString(),approved_by:"CRON_AUTO",approved_at:new Date().toISOString()}).eq("id",inv.id);
+      res.autoapproved++;
+      await sendWA(OWNER_PHONE,`ℹ️ Invoice *${inv.id}* (${inv.customer}) Rp 0 — auto-PAID (gratis/garansi).`);
+    } else if (/(Cleaning|Install|Repair|Complain)/.test(inv.service||"")) {
       const due = new Date(Date.now()+7*86400000).toISOString().slice(0,10);
       await sb.from("invoices").update({status:"UNPAID",sent:true,due,approved_by:"CRON_AUTO",approved_at:new Date().toISOString()}).eq("id",inv.id);
       res.autoapproved++;
-      // Hanya notif owner — pengiriman invoice ke customer = manual via frontend
       await sendWA(OWNER_PHONE,`ℹ️ Invoice *${inv.id}* (${inv.customer}) auto-approved setelah ${Math.round(hrs)}j. Total: ${fmt(inv.total)} — kirim manual dari app.`);
     }
   }
