@@ -673,6 +673,7 @@ export default function ACleanWebApp() {
   const [laporanFotos, setLaporanFotos] = useState([]);
   const [editPhotoMode, setEditPhotoMode] = useState(false);  // true = re-upload photos, false = keep existing
   const [editLaporanFotos, setEditLaporanFotos] = useState([]);     // new photos for re-upload
+  const [editStockMats, setEditStockMats] = useState([]);     // stock-linked materials (tabung/roll) for edit modal
   const [laporanRekomendasi, setLaporanRekomendasi] = useState("");
   const [laporanCatatan, setLaporanCatatan] = useState("");
   const [laporanInstallItems, setLaporanInstallItems] = useState({}); // key→qty untuk Report Install
@@ -5027,7 +5028,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setSelectedLaporan={setSelectedLaporan} setEditLaporanMode={setEditLaporanMode} setModalLaporanDetail={setModalLaporanDetail}
       setEditLaporanForm={setEditLaporanForm} setLaporanBarangItems={setLaporanBarangItems} setEditRepairType={setEditRepairType}
       setEditGratisAlasan={setEditGratisAlasan} setActiveEditUnitIdx={setActiveEditUnitIdx} setEditPhotoMode={setEditPhotoMode}
-      setEditLaporanFotos={setEditLaporanFotos} setLaporanInstallItems={setLaporanInstallItems} setActiveMenu={setActiveMenu}
+      setEditLaporanFotos={setEditLaporanFotos} setEditStockMats={setEditStockMats} setLaporanInstallItems={setLaporanInstallItems} setActiveMenu={setActiveMenu}
       safeArr={safeArr} fotoSrc={fotoSrc} showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog}
       auditUserName={auditUserName} getLocalDate={getLocalDate} fmt={fmt}
       updateServiceReport={updateServiceReport} deleteServiceReport={deleteServiceReport} insertInvoice={insertInvoice} deleteInvoice={deleteInvoice}
@@ -5046,7 +5047,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       searchLaporan={searchLaporan} setSearchLaporan={setSearchLaporan} setSelectedLaporan={setSelectedLaporan} setEditLaporanMode={setEditLaporanMode}
       setModalLaporanDetail={setModalLaporanDetail} setEditLaporanForm={setEditLaporanForm} setLaporanBarangItems={setLaporanBarangItems}
       setEditRepairType={setEditRepairType} setEditGratisAlasan={setEditGratisAlasan} setActiveEditUnitIdx={setActiveEditUnitIdx}
-      setEditPhotoMode={setEditPhotoMode} setEditLaporanFotos={setEditLaporanFotos} setLaporanInstallItems={setLaporanInstallItems}
+      setEditPhotoMode={setEditPhotoMode} setEditLaporanFotos={setEditLaporanFotos} setEditStockMats={setEditStockMats} setLaporanInstallItems={setLaporanInstallItems}
       openLaporanModal={openLaporanModal} safeArr={safeArr} TODAY={TODAY} INSTALL_ITEMS={INSTALL_ITEMS}
       downloadServiceReportPDF={downloadServiceReportPDF} />
   );
@@ -8275,6 +8276,101 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   );
                 })()}
 
+                {/* ══ STOK MATERIAL TERPAKAI (semua service, terhubung ke inventory unit) ══ */}
+                {(() => {
+                  const addStockMat = () => setEditStockMats(p => [...p, { id: Date.now(), nama: "", jumlah: 1, satuan: "pcs", freon_tabung_code: "", freon_unit_label: "", freon_inv_code: "" }]);
+                  const updateMat = (id, patch) => setEditStockMats(p => p.map(m => m.id === id ? { ...m, ...patch } : m));
+                  const removeMat = (id) => setEditStockMats(p => p.filter(m => m.id !== id));
+                  const matLookupStock = [
+                    ...inventoryData.map(r => ({ nama: r.name, satuan: r.unit || "pcs" })),
+                    ...priceListData.filter(r => r.service === "Material").map(r => ({ nama: r.type, satuan: r.unit || "pcs" }))
+                  ].filter((v, i, a) => a.findIndex(x => x.nama === v.nama) === i);
+                  return (
+                    <div style={{ background: cs.card, border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "14px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: cs.accent, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 6 }}>
+                        📦 Stok Material Terpakai ({editStockMats.length})
+                      </div>
+                      <div style={{ fontSize: 11, color: cs.muted, background: cs.surface, borderRadius: 7, padding: "7px 10px", marginBottom: 10, lineHeight: 1.5 }}>
+                        ℹ️ Pilih tabung freon, roll pipa, atau kabel yang dipakai. Stok internal akan otomatis berkurang saat disimpan.
+                      </div>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {editStockMats.map(mat => {
+                          const n = (mat.nama || "").toLowerCase();
+                          const isFreon = n.includes("freon") || n.includes("kuras vacum") || n.includes("r-22") || n.includes("r-32") || n.includes("r-410") || n.includes("r22") || n.includes("r32") || n.includes("r410");
+                          const isPipa = n.includes("pipa") || n.includes("hoda");
+                          const isKabel = n.includes("kabel");
+                          const hasUnit = isFreon || isPipa || isKabel;
+                          const matchedInvItem = inventoryData.find(item => {
+                            const nm = (item.name || "").toLowerCase();
+                            return nm.includes(n) || n.includes(nm.replace(/\s+/g, "").substring(0, 6));
+                          }) || inventoryData.find(item => {
+                            const nm = (item.name || "").toLowerCase();
+                            if (isFreon) return item.freon_type && n.includes(item.freon_type.toLowerCase().replace("r", "r-"));
+                            if (isPipa) return nm.includes("pipa") && nm.includes(n.replace("pipa", "").replace("hoda", "").trim().split(" ")[0]);
+                            if (isKabel) return nm.includes("kabel");
+                            return false;
+                          });
+                          const availableUnits = invUnitsData.filter(u => {
+                            if (!matchedInvItem) return false;
+                            if (u.inventory_code !== matchedInvItem.code) return false;
+                            if (!u.is_active) return false;
+                            return true;
+                          });
+                          const icon = isFreon ? "❄️" : isPipa ? "🔧" : "⚡";
+                          const unitWord = isFreon ? "tabung" : isPipa ? "roll pipa" : "roll kabel";
+                          const borderCol = isFreon ? cs.accent : isPipa ? "#f59e0b" : "#22c55e";
+                          return (
+                            <div key={mat.id} style={{ background: cs.surface, border: "1px solid " + (mat.nama ? cs.accent + "33" : cs.border), borderRadius: 9, padding: "10px 12px" }}>
+                              {/* Row 1: Nama + Qty + Hapus */}
+                              <div style={{ display: "grid", gridTemplateColumns: "2fr 80px auto", gap: 6, alignItems: "center", marginBottom: hasUnit ? 8 : 0 }}>
+                                <select value={mat.nama} onChange={e => { const item = matLookupStock.find(x => x.nama === e.target.value); updateMat(mat.id, { nama: e.target.value, satuan: item?.satuan || "pcs", freon_tabung_code: "", freon_unit_label: "", freon_inv_code: "" }); }}
+                                  style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 9px", color: mat.nama ? cs.text : cs.muted, fontSize: 12, outline: "none" }}>
+                                  <option value="">— Pilih material —</option>
+                                  {matLookupStock.map(ml => <option key={ml.nama} value={ml.nama}>{ml.nama}</option>)}
+                                </select>
+                                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                  <input type="number" min="0" step="0.5" value={mat.jumlah} onChange={e => updateMat(mat.id, { jumlah: parseFloat(e.target.value) || 0 })}
+                                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 6px", color: cs.text, fontSize: 12, outline: "none", textAlign: "center" }} />
+                                  <span style={{ fontSize: 10, color: cs.muted, whiteSpace: "nowrap" }}>{mat.satuan}</span>
+                                </div>
+                                <button onClick={() => removeMat(mat.id)} style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 700 }}>🗑️</button>
+                              </div>
+                              {/* Row 2: Unit fisik selector */}
+                              {hasUnit && (
+                                <div style={{ padding: "8px 10px", background: borderCol + "08", border: "1px solid " + borderCol + "33", borderRadius: 7 }}>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: borderCol, marginBottom: 5 }}>
+                                    {icon} Dari {unitWord} mana?
+                                    {matchedInvItem && <span style={{ fontWeight: 400, color: cs.muted, marginLeft: 6 }}>({matchedInvItem.name})</span>}
+                                  </div>
+                                  {availableUnits.length === 0 ? (
+                                    <div style={{ fontSize: 11, color: cs.red }}>⚠️ Tidak ada {unitWord} tersedia di stok.</div>
+                                  ) : (
+                                    <select value={mat.freon_tabung_code || ""} onChange={e => { const uid = e.target.value; const unit = invUnitsData.find(u => u.id === uid); updateMat(mat.id, { freon_tabung_code: uid, freon_unit_label: unit?.unit_label || "", freon_inv_code: unit?.inventory_code || "" }); }}
+                                      style={{ width: "100%", background: cs.card, border: "1px solid " + borderCol + "55", borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12, outline: "none" }}>
+                                      <option value="">— Pilih {unitWord} —</option>
+                                      {availableUnits.map(unit => (
+                                        <option key={unit.id} value={unit.id}>{unit.unit_label} — Sisa: {unit.stock} {matchedInvItem?.unit || ""}</option>
+                                      ))}
+                                    </select>
+                                  )}
+                                  {mat.freon_unit_label && (
+                                    <div style={{ fontSize: 10, color: cs.green, marginTop: 4 }}>✅ {mat.freon_unit_label} → stok berkurang {mat.jumlah} {mat.satuan} saat disimpan</div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {editStockMats.length < 20 && (
+                        <button onClick={addStockMat} style={{ marginTop: 8, width: "100%", background: cs.accent + "10", border: "1px dashed " + cs.accent + "44", color: cs.accent, borderRadius: 8, padding: "10px", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                          + Tambah Material Stok
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* REKOMENDASI & CATATAN */}
                 {[["Rekomendasi", "rekomendasi"], ["Catatan Tambahan", "catatan_global"]].map(([lbl, key]) => (
                   <div key={key}>
@@ -8489,11 +8585,56 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       }
                     }
 
+                    // ── Deduct stok material (tabung/roll) yang dipilih di edit modal ──
+                    const stockMatsToDeduct = editStockMats.filter(m => m.nama && parseFloat(m.jumlah) > 0);
+                    for (const mat of stockMatsToDeduct) {
+                      const qty = parseFloat(mat.jumlah) || 0;
+                      // Jika ada unit fisik (tabung/roll) yang dipilih, deduct via inventory_units
+                      if (mat.freon_tabung_code && mat.freon_inv_code) {
+                        const unit = invUnitsData.find(u => u.id === mat.freon_tabung_code);
+                        if (unit) {
+                          const newUnitStock = Math.max(0, (unit.stock || 0) - qty);
+                          // Update inventory_units stock
+                          await supabase.from("inventory_units").update({ stock: newUnitStock }).eq("id", mat.freon_tabung_code);
+                          // Update local invUnitsData
+                          setInvUnitsData && setInvUnitsData(prev => prev.map(u => u.id === mat.freon_tabung_code ? { ...u, stock: newUnitStock } : u));
+                        }
+                      }
+                      // Juga deduct inventory utama
+                      const invItem = inventoryData.find(i => i.name.toLowerCase().includes((mat.nama || "").toLowerCase()) || (mat.nama || "").toLowerCase().includes(i.name.toLowerCase()));
+                      if (invItem) {
+                        const newStock = Math.max(0, invItem.stock - qty);
+                        const newStatus = computeStockStatus(newStock, invItem.reorder);
+                        setInventoryData(prev => prev.map(i => i.code === invItem.code ? { ...i, stock: newStock, status: newStatus } : i));
+                        const isFreonMat = invItem.material_type === "freon" || ["r22","r32","r410","freon"].some(k => (invItem.name||"").toLowerCase().includes(k));
+                        try {
+                          await supabase.from("inventory_transactions").insert({
+                            inventory_code: invItem.code,
+                            inventory_name: invItem.name,
+                            order_id: selectedLaporan.job_id || null,
+                            report_id: selectedLaporan.id || null,
+                            qty: -qty,
+                            type: "usage",
+                            notes: `Edit laporan oleh ${currentUser?.name || "admin"}`,
+                            customer_name: selectedLaporan.customer || null,
+                            teknisi_name: selectedLaporan.teknisi || null,
+                            job_date: selectedLaporan.date || null,
+                            created_by: currentUser?.id || null,
+                            created_by_name: currentUser?.name || "",
+                            unit_id: mat.freon_tabung_code || null,
+                            unit_label: mat.freon_unit_label || null,
+                            qty_actual: isFreonMat ? null : -qty,
+                          });
+                        } catch (e) { console.warn("inv tx skip:", e?.message); }
+                      }
+                    }
+
                     const photoMsg = editPhotoMode && editLaporanFotos.length > 0 ? "+foto" : "";
                     const svcMsg = serviceChanged ? ` [${selectedLaporan.service}]` : "";
-                    addAgentLog("LAPORAN_EDITED", `Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name}${serviceChanged ? ` (service: ${selectedLaporan.service})` : ""} ${photoMsg ? '(+foto)' : ''}`, "SUCCESS");
-                    showNotif(`✅ Laporan ${selectedLaporan.job_id} diupdate${svcMsg} (unit+material+catatan${photoMsg ? '+foto' : ''})`);
-                    setModalLaporanDetail(false); setEditLaporanMode(false); setEditPhotoMode(false); setEditLaporanFotos([]);
+                    const stockMsg = stockMatsToDeduct.length > 0 ? `+${stockMatsToDeduct.length} stok` : "";
+                    addAgentLog("LAPORAN_EDITED", `Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name}${serviceChanged ? ` (service: ${selectedLaporan.service})` : ""}${stockMsg ? ` (${stockMsg})` : ""} ${photoMsg ? '(+foto)' : ''}`, "SUCCESS");
+                    showNotif(`✅ Laporan ${selectedLaporan.job_id} diupdate${svcMsg} (unit+material+catatan${photoMsg ? '+foto' : ''}${stockMsg ? '+'+stockMsg : ''})`);
+                    setModalLaporanDetail(false); setEditLaporanMode(false); setEditPhotoMode(false); setEditLaporanFotos([]); setEditStockMats([]);
                   }} style={{ background: "linear-gradient(135deg," + cs.green + ",#059669)", border: "none", color: "#fff", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>
                     ✓ Simpan Semua Perubahan
                   </button>

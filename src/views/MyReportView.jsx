@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-function MyReportView({ laporanReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setLaporanInstallItems, openLaporanModal, safeArr, TODAY, INSTALL_ITEMS, downloadServiceReportPDF }) {
+function MyReportView({ laporanReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, openLaporanModal, safeArr, TODAY, INSTALL_ITEMS, downloadServiceReportPDF }) {
 const myName = currentUser?.name || "";
 // Get all submitted reports
 const submittedReps = laporanReports.filter(r => r.teknisi === myName || r.helper === myName);
@@ -194,6 +194,7 @@ return (
                     setActiveEditUnitIdx(0);
                     setEditPhotoMode(false); // Reset photo mode
                     setEditLaporanFotos([]); // Clear any previous photo uploads
+                    setEditStockMats([]); // Clear stock-linked material picker
                     // ── Install: rebuild laporanInstallItems from existing materials ──
                     if (r.service === "Install") {
                       const installMap = {};
