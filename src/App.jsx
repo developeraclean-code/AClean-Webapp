@@ -5033,7 +5033,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       updateOrder={updateOrder} updateOrderStatus={updateOrderStatus} markInvoicePaid={markInvoicePaid}
       lookupHargaGlobal={lookupHargaGlobal} hargaPerUnitFromTipe={hargaPerUnitFromTipe} getBracketKey={getBracketKey} hitungLabor={hitungLabor}
       sendWA={sendWA} supabase={supabase} LAP_PAGE_SIZE={LAP_PAGE_SIZE} INSTALL_ITEMS={INSTALL_ITEMS}
-      downloadServiceReportPDF={downloadServiceReportPDF} />
+      downloadServiceReportPDF={downloadServiceReportPDF}
+      setInvTxData={setInvTxData} setInventoryData={setInventoryData} />
   );
 
   // ============================================================

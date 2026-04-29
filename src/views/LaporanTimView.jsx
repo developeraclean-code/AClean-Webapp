@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF }) {
+function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData }) {
 const sMap = { SUBMITTED: [cs.accent, "Submitted"], VERIFIED: [cs.green, "Terverifikasi"], REVISION: [cs.yellow, "Perlu Revisi"], REJECTED: [cs.red, "Ditolak"] };
 const badge = (s) => {
   // Case insensitive status lookup
@@ -99,13 +99,17 @@ const verifyLaporan = async (r) => {
     showNotif("❌ Hanya Owner/Admin yang bisa verifikasi laporan");
     return;
   }
-  // Optimistic update setelah guard lolos
-  setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "VERIFIED" } : x));
   const { error: vErr } = await updateServiceReport(supabase, r.id, { status: "VERIFIED" }, auditUserName());
   if (vErr) {
     console.warn("❌ verify laporan failed:", vErr.message);
-    await supabase.from("service_reports").update({ status: "VERIFIED" }).eq("id", r.id).catch(e => console.warn("retry also failed:", e.message));
+    const { error: retryErr } = await supabase.from("service_reports").update({ status: "VERIFIED" }).eq("id", r.id);
+    if (retryErr) {
+      console.warn("retry also failed:", retryErr.message);
+      showNotif("❌ Gagal verifikasi laporan: " + retryErr.message.slice(0, 60));
+      return;
+    }
   }
+  setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "VERIFIED" } : x));
   addAgentLog("LAPORAN_VERIFIED", `Laporan ${r.job_id} (${r.customer}) diverifikasi`, "SUCCESS");
 
   const existInv = invoicesData.find(i => i.job_id === r.job_id);
@@ -189,6 +193,8 @@ const verifyLaporan = async (r) => {
     }
 
     const totalInv = finalTotal2;
+    // Jika total Rp 0 (apapun alasannya: garansi, gratis, atau manual), langsung PAID
+    if (totalInv === 0) finalStatus2 = "PAID";
     const newInv = {
       id: invId, job_id: r.job_id, laporan_id: r.id,
       customer: r.customer, phone: r.phone || ord?.phone || "",
@@ -228,7 +234,10 @@ const verifyLaporan = async (r) => {
       await updateOrder(supabase, r.job_id, { invoice_id: invId }, auditUserName());
       setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, invoice_id: invId } : o));
       addAgentLog("AUTO_INVOICE", `Invoice ${invId} auto-dibuat dari laporan ${r.job_id}`, "SUCCESS");
-      showNotif(`✅ Invoice ${invId} dibuat (${fmt(totalInv)}) — tunggu approval Owner/Admin`);
+      const invMsg = totalInv === 0
+        ? `✅ Invoice ${invId} GRATIS — langsung LUNAS`
+        : `✅ Invoice ${invId} dibuat (${fmt(totalInv)}) — tunggu approval Owner/Admin`;
+      showNotif(invMsg);
       const owners = userAccounts.filter(u => u.role === "Owner" || u.role === "Admin");
       owners.forEach(o => { if (o?.phone) sendWA(o.phone, `⚡ *Invoice Auto-Generated*\n\nJob: *${r.job_id}*\nCustomer: ${r.customer}\nService: ${r.service}\nTotal: *${fmt(totalInv)}*\n\nMohon cek dan approve invoice di menu Invoice. — AClean`); });
     }
@@ -766,6 +775,39 @@ return (
                 if (relInv.length > 0) {
                   await Promise.all(relInv.map(inv => deleteInvoice(supabase, inv.id, auditUserName(), "LAPORAN_DIHAPUS")));
                   setInvoicesData(p => p.filter(i => i.job_id !== r.job_id));
+                }
+                // Kembalikan stok material dari transaksi laporan ini
+                const { data: txRows } = await supabase
+                  .from("inventory_transactions")
+                  .select("*")
+                  .eq("report_id", r.id)
+                  .eq("type", "usage");
+                if (txRows && txRows.length > 0) {
+                  await Promise.all(txRows.map(tx => supabase.from("inventory_transactions").insert({
+                    inventory_code: tx.inventory_code,
+                    inventory_name: tx.inventory_name,
+                    order_id: tx.order_id || null,
+                    report_id: tx.report_id || null,
+                    qty: Math.abs(tx.qty),
+                    qty_actual: Math.abs(tx.qty_actual ?? tx.qty),
+                    type: "adjustment",
+                    notes: `Void/hapus laporan ${r.job_id} — stok dikembalikan`,
+                    customer_name: tx.customer_name || null,
+                    teknisi_name: tx.teknisi_name || null,
+                    job_date: tx.job_date || null,
+                    created_by_name: currentUser?.name || "Admin",
+                  })));
+                  if (setInvTxData) {
+                    setInvTxData(prev => prev.filter(t => t.report_id !== r.id));
+                  }
+                  if (setInventoryData) {
+                    setInventoryData(prev => prev.map(item => {
+                      const returned = txRows.filter(t => t.inventory_code === item.code)
+                        .reduce((s, t) => s + Math.abs(t.qty), 0);
+                      if (!returned) return item;
+                      return { ...item, stock: item.stock + returned };
+                    }));
+                  }
                 }
                 // Reset order status ke COMPLETED (bukan INVOICED)
                 await updateOrderStatus(supabase, r.job_id, "COMPLETED", auditUserName(), { invoice_id: null });
