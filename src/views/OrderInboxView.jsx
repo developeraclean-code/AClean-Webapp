@@ -314,7 +314,7 @@ const DAY_NAMES  = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
 // ─────────────────────────────────────────────
 // Panel Isi Tim Harian (Team 01–10)
 // ─────────────────────────────────────────────
-function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, toggleAvailability, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData, teamPresets, onDispatch, dispatching }) {
+function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, toggleAvailability, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData, teamPresets }) {
 
   // Berapa row yang ditampilkan per slot (2 default, bisa expand ke 4)
   const [expandedSlots, setExpandedSlots] = useState({});
@@ -394,20 +394,6 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
         </div>
       </div>
 
-      {/* Bulk WA Dispatch button */}
-      {onDispatch && (() => {
-        const confirmedCount = dailySlots.filter(s => s.date === slotDate && s.confirmed).length;
-        if (confirmedCount === 0) return null;
-        return (
-          <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
-            <button onClick={() => onDispatch(slotDate)} disabled={dispatching}
-              style={{ background: cs.green, color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 12, fontWeight: 700, cursor: dispatching ? "not-allowed" : "pointer", opacity: dispatching ? 0.7 : 1 }}>
-              {dispatching ? "⏳ Mengirim..." : `📲 Kirim WA ke Customer (${confirmedCount} tim confirmed)`}
-            </button>
-            <span style={{ fontSize: 11, color: cs.muted }}>Kirim konfirmasi jadwal ke semua customer pada tim yang sudah di-confirm</span>
-          </div>
-        );
-      })()}
 
       {/* Grid slot Team 01–10 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
@@ -702,7 +688,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // ── Team presets (teknisi default per slot) ──
   const [teamPresets, setTeamPresets] = useState({}); // slot → teknisi
-  const [dispatching, setDispatching] = useState(false);
 
   // Load data saat mount
   useEffect(() => {
@@ -814,24 +799,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     showNotif(`${slotName} dikonfirmasi → ${members.map(m => m.name).join(", ")} ter-assign ke ${date}`);
   }
 
-  // Kirim WA dispatch ke semua customer pada tim yang confirmed
-  async function handleDispatch(date) {
-    setDispatching(true);
-    try {
-      const token = import.meta.env.VITE_INTERNAL_API_SECRET || "";
-      const r = await fetch(`/api/cron-reminder?task=dispatch&date=${date}`, {
-        method: "POST",
-        headers: { "x-internal-token": token, "Content-Type": "application/json" },
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || "Server error");
-      showNotif(`✅ ${d.sent ?? 0} WA dikirim ke customer`);
-    } catch (e) {
-      showNotif("Gagal dispatch: " + e.message, "error");
-    } finally {
-      setDispatching(false);
-    }
-  }
 
   // Toggle hadir/tidak individu
   async function toggleAvailability(name, date, current) {
@@ -1106,7 +1073,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         saveSlot={saveSlot} confirmSlot={confirmSlot}
         slotLoading={slotLoading} dailySlots={dailySlots}
         ordersData={ordersData} teamPresets={teamPresets}
-        onDispatch={handleDispatch} dispatching={dispatching}
       />
 
       {/* ═══ SAFETY NET PANEL ═══ */}
