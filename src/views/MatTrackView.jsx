@@ -434,6 +434,7 @@ return (
           const unweighed = isFreon && tx.qty < 0 && tx.qty_actual == null;
           const isTimbangOpen = timbangId === tx.id;
           const isAdj = tx.type === "adjustment";
+          const txUnit = inventoryData.find(item => item.code === tx.inventory_code)?.unit || (isFreon ? "kg" : "pcs");
           return (
             <div key={tx.id || i} style={{ borderBottom: "1px solid " + cs.border + "55" }}>
               <div
@@ -450,11 +451,11 @@ return (
                 <div style={{ color: cs.accent, fontSize: 11 }}>{tx.teknisi_name || "—"}</div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontWeight: 700, color: tx.qty < 0 ? cs.red : cs.green }}>
-                    {tx.qty < 0 ? "-" : "+"}{parseFloat(Math.abs(tx.qty).toFixed(1))} kg
+                    {tx.qty < 0 ? "-" : "+"}{parseFloat(Math.abs(tx.qty).toFixed(1))} {txUnit}
                   </div>
                   {isFreon && tx.qty_actual != null && (
                     <div style={{ fontSize: 10, color: cs.green, fontWeight: 600 }}>
-                      ✓ {parseFloat(Math.abs(tx.qty_actual).toFixed(1))} kg aktual
+                      ✓ {parseFloat(Math.abs(tx.qty_actual).toFixed(1))} {txUnit} aktual
                     </div>
                   )}
                   {unweighed && isOwnerAdmin && (
