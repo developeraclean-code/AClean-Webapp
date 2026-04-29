@@ -26,10 +26,6 @@
       "path": "/api/cron-reminder?task=wa-cleanup",
       "schedule": "0 2 * * *"
     },
-    {
-      "path": "/api/cron-reminder?task=dispatch",
-      "schedule": "0 2 * * *"
-    }
   ],
   "functions": {
     "api/[route].js": {

@@ -327,63 +327,6 @@ async function taskCleanup() {
 }
 
 // ══════════════════════════════════════════════════
-// TASK 5: Bulk WA Dispatch — kirim reminder ke customer job hari ini
-// ══════════════════════════════════════════════════
-async function taskDispatch(dateOverride) {
-  // Cek toggle
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["dispatch_enabled","cron_jobs","company_name"]);
-  const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
-  if (!isCronJobEnabled(togMap, "dispatch_enabled")) {
-    await log("DISPATCH", "Dilewati — Dispatch dinonaktifkan via Settings", "INFO");
-    return { skipped: true };
-  }
-
-  const today = dateOverride || new Date(Date.now() + 7*60*60*1000).toISOString().slice(0,10);
-  const companyName = togMap.company_name || "AClean Service";
-
-  // Ambil semua slot confirmed hari ini
-  const { data: slots } = await sb.from("daily_team_slots")
-    .select("slot,member1,member2,member3,member4,confirmed")
-    .eq("date", today)
-    .eq("confirmed", true);
-
-  if (!slots?.length) {
-    await log("DISPATCH", "Tidak ada slot confirmed hari ini", "INFO");
-    return { sent: 0, skipped_no_slots: true };
-  }
-
-  // Ambil semua order hari ini dengan phone
-  const { data: orders } = await sb.from("orders")
-    .select("id,customer,phone,service,time,teknisi,team_slot")
-    .eq("date", today)
-    .not("phone", "is", null);
-
-  const confirmedSlots = new Set((slots||[]).map(s => s.slot));
-  const toDispatch = (orders||[]).filter(o => {
-    if (!o.phone) return false;
-    // Include jika team_slot ada dan confirmed, atau teknisinya ada di salah satu slot confirmed
-    if (o.team_slot && confirmedSlots.has(o.team_slot)) return true;
-    const slot = slots.find(s => s.member1 === o.teknisi || s.member2 === o.teknisi);
-    return !!slot;
-  });
-
-  let sent = 0;
-  const sentPhones = new Set();
-  for (const ord of toDispatch) {
-    // Deduplicate per phone per hari
-    if (sentPhones.has(ord.phone)) continue;
-    sentPhones.add(ord.phone);
-
-    const timeStr = ord.time ? ord.time.slice(0,5) : "pagi";
-    const teknisiName = ord.teknisi || "tim kami";
-    const msg = `Halo *${ord.customer}* 👋\n\nKami konfirmasi jadwal service AC Anda hari ini:\n🔧 *${ord.service}* — pukul *${timeStr} WIB*\n👷 Teknisi: *${teknisiName}*\n\nMohon pastikan ada orang di lokasi. Terima kasih telah mempercayakan perawatan AC Anda kepada *${companyName}*! 🙏`;
-    const ok = await sendWA(ord.phone, msg);
-    if (ok) sent++;
-  }
-
-  await log("DISPATCH", `${sent} WA dikirim untuk ${toDispatch.length} order confirmed (${today})`);
-  return { sent, total_orders: toDispatch.length, slots_confirmed: slots.length };
-}
 
 // ══════════════════════════════════════════════════
 // TASK 6: Cleanup WA chat lama (>14 hari)
@@ -490,7 +433,6 @@ export default async function handler(req, res) {
   try {
     let result;
     if (task === "daily")        result = await taskDaily();
-    else if (task === "dispatch")   result = await taskDispatch(req.query.date);
     else if (task === "stock")   result = await taskStock();
     else if (task === "cleanup") result = await taskCleanup();
     else if (task === "wa-cleanup") result = await taskWaCleanup();
