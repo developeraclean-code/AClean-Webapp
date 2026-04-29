@@ -847,7 +847,7 @@ export default function ACleanWebApp() {
   const _apiHeaders = async () => {
     if (!_internalTokenRef.current) {
       try {
-        const { data } = await supabase.auth.getSession();
+        const { data } = await supabase.auth.refreshSession();
         const jwt = data?.session?.access_token;
         if (jwt) {
           const r = await fetch("/api/get-api-token", {
