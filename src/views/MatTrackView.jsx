@@ -238,7 +238,7 @@ return (
                   <span style={{ fontSize: 11, color: cs.muted, marginLeft: 8 }}>[{item.code}]</span>
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>{totalStok} {item.unit} total</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>{parseFloat(totalStok.toFixed(1))} {item.unit} total</span>
                   <button onClick={() => { setAddUnitFor(isAddingHere ? null : item.code); setAddUnitForm({ label: "", capacity: "", minVisible: "" }); }}
                     style={{ fontSize: 11, padding: "3px 10px", borderRadius: 7, background: isAddingHere ? cs.red + "22" : cs.accent + "22", border: "1px solid " + (isAddingHere ? cs.red : cs.accent) + "44", color: isAddingHere ? cs.red : cs.accent, cursor: "pointer", fontWeight: 600 }}>
                     {isAddingHere ? "✕ Batal" : "+ Tambah Unit"}
@@ -305,7 +305,7 @@ return (
                         {/* Progress bar */}
                         <div style={{ flex: 1 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: cs.muted, marginBottom: 3 }}>
-                            <span>{unit.stock} {item.unit} sisa</span>
+                            <span>{parseFloat((unit.stock || 0).toFixed(1))} {item.unit} sisa</span>
                             <span>{unit.capacity || "?"} {item.unit} kapasitas</span>
                           </div>
                           <div style={{ height: 6, background: cs.border, borderRadius: 99, overflow: "hidden" }}>
@@ -334,7 +334,7 @@ return (
                             style={{ width: 80, background: cs.card, border: "1px solid " + cs.yellow + "66", borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 13, outline: "none" }} />
                           <button onClick={() => { const ns = parseFloat(editUnitVal); if (!isNaN(ns) && ns >= 0) updateUnitStock(unit.id, ns); else showNotif("❌ Nilai tidak valid"); }}
                             style={{ background: cs.yellow, border: "none", color: "#0a0f1e", padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>✓ Simpan</button>
-                          <div style={{ fontSize: 11, color: cs.muted }}>Saat ini: {unit.stock} {item.unit}</div>
+                          <div style={{ fontSize: 11, color: cs.muted }}>Saat ini: {parseFloat((unit.stock || 0).toFixed(1))} {item.unit}</div>
                         </div>
                       )}
                     </div>
