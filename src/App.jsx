@@ -4686,7 +4686,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       customersData={customersData} teknisiData={teknisiData}
       currentUser={currentUser} supabase={supabase}
       showNotif={showNotif} showConfirm={showConfirm}
-      auditUserName={auditUserName} TODAY={TODAY} />
+      auditUserName={auditUserName} TODAY={TODAY}
+      sendWA={sendWA} />
   );
 
   const renderOrders = () => (

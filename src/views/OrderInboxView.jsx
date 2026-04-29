@@ -314,7 +314,7 @@ const DAY_NAMES  = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
 // ─────────────────────────────────────────────
 // Panel Isi Tim Harian (Team 01–10)
 // ─────────────────────────────────────────────
-function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, toggleAvailability, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData, teamPresets }) {
+function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, toggleAvailability, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData, teamPresets, onBulkDispatch, bulkDispatching }) {
 
   // Berapa row yang ditampilkan per slot (2 default, bisa expand ke 4)
   const [expandedSlots, setExpandedSlots] = useState({});
@@ -394,6 +394,21 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
         </div>
       </div>
 
+
+      {/* Bulk WA ke semua Teknisi & Helper hari ini */}
+      {onBulkDispatch && (() => {
+        const confirmedCount = dailySlots.filter(s => s.date === slotDate && s.confirmed).length;
+        if (confirmedCount === 0) return null;
+        return (
+          <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={() => onBulkDispatch(slotDate)} disabled={bulkDispatching}
+              style={{ background: "linear-gradient(135deg,#16a34a,#15803d)", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12, fontWeight: 700, cursor: bulkDispatching ? "not-allowed" : "pointer", opacity: bulkDispatching ? 0.7 : 1 }}>
+              {bulkDispatching ? "⏳ Mengirim..." : `📲 Kirim WA ke Teknisi & Helper (${confirmedCount} tim confirmed)`}
+            </button>
+            <span style={{ fontSize: 11, color: cs.muted }}>Kirim ringkasan job hari ini ke semua anggota tim yang confirmed — tidak ke customer</span>
+          </div>
+        );
+      })()}
 
       {/* Grid slot Team 01–10 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
@@ -668,7 +683,7 @@ const EMPTY_FORM = {
   customer_id: null,
 };
 
-export default function OrderInboxView({ ordersData, setOrdersData, customersData, teknisiData, currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY }) {
+export default function OrderInboxView({ ordersData, setOrdersData, customersData, teknisiData, currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY, sendWA }) {
   const [form, setForm] = useState({ ...EMPTY_FORM, date: TODAY });
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -813,6 +828,64 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         ? prev.map((a, i) => i === idx ? { ...a, is_available: newVal } : a)
         : [...prev, { teknisi: name, date, is_available: newVal }];
     });
+  }
+
+  // ── Bulk WA ke semua teknisi & helper hari ini ──
+  const [bulkDispatching, setBulkDispatching] = useState(false);
+
+  async function handleBulkDispatch(date) {
+    if (!sendWA) { showNotif("⚠️ sendWA tidak tersedia"); return; }
+    setBulkDispatching(true);
+    try {
+      // Ambil semua order hari itu yang confirmed/pending (bukan cancelled)
+      const dayOrders = ordersData.filter(o =>
+        o.date === date && !["CANCELLED", "COMPLETED", "INVOICED"].includes(o.status)
+      );
+      if (dayOrders.length === 0) { showNotif("Tidak ada order aktif di tanggal ini"); return; }
+
+      // Kumpulkan pesan per anggota (teknisi & helper), group by nama
+      const msgPerMember = {}; // name → { phone, lines[] }
+
+      for (const o of dayOrders) {
+        const members = [
+          { name: o.teknisi, role: "Teknisi" },
+          { name: o.helper,  role: "Helper" },
+          { name: o.helper2, role: "Helper" },
+          { name: o.helper3, role: "Helper" },
+        ].filter(m => m.name);
+
+        const jobLine = `• ${o.time?.slice(0,5) || "—"} ${o.customer} (${o.service}${o.units > 1 ? " ×" + o.units : ""}) — ${o.address || "alamat belum diisi"}`;
+
+        for (const m of members) {
+          const tek = teknisiData.find(t => t.name === m.name);
+          if (!tek?.phone) continue;
+          if (!msgPerMember[m.name]) {
+            msgPerMember[m.name] = { phone: tek.phone, lines: [], role: m.role };
+          }
+          msgPerMember[m.name].lines.push(jobLine);
+        }
+      }
+
+      const names = Object.keys(msgPerMember);
+      if (names.length === 0) { showNotif("⚠️ Tidak ada nomor HP teknisi/helper yang terdaftar"); return; }
+
+      let sent = 0;
+      for (const name of names) {
+        const { phone, lines, role } = msgPerMember[name];
+        const msg =
+          `📋 *Jadwal ${date} — AClean*\n\n` +
+          `Halo *${name}* (${role}), berikut job kamu hari ini:\n\n` +
+          lines.join("\n") +
+          `\n\nMohon siapkan alat & konfirmasi kehadiran. Terima kasih! 💪`;
+        const ok = await sendWA(phone, msg);
+        if (ok) sent++;
+      }
+      showNotif(`✅ WA terkirim ke ${sent} dari ${names.length} teknisi/helper`);
+    } catch (e) {
+      showNotif("❌ Gagal bulk dispatch: " + e.message);
+    } finally {
+      setBulkDispatching(false);
+    }
   }
 
   // Conflict check realtime — pakai durasi aktual order ini
@@ -1096,6 +1169,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         saveSlot={saveSlot} confirmSlot={confirmSlot}
         slotLoading={slotLoading} dailySlots={dailySlots}
         ordersData={ordersData} teamPresets={teamPresets}
+        onBulkDispatch={handleBulkDispatch} bulkDispatching={bulkDispatching}
       />
 
       {/* ═══ SAFETY NET PANEL ═══ */}
