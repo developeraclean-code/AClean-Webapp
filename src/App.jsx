@@ -8281,9 +8281,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   const addStockMat = () => setEditStockMats(p => [...p, { id: Date.now(), nama: "", jumlah: 1, satuan: "pcs", freon_tabung_code: "", freon_unit_label: "", freon_inv_code: "" }]);
                   const updateMat = (id, patch) => setEditStockMats(p => p.map(m => m.id === id ? { ...m, ...patch } : m));
                   const removeMat = (id) => setEditStockMats(p => p.filter(m => m.id !== id));
+                  // Include inventory_code so unit picker can do exact match
                   const matLookupStock = [
-                    ...inventoryData.map(r => ({ nama: r.name, satuan: r.unit || "pcs" })),
-                    ...priceListData.filter(r => r.service === "Material").map(r => ({ nama: r.type, satuan: r.unit || "pcs" }))
+                    ...inventoryData.map(r => ({ nama: r.name, satuan: r.unit || "pcs", inv_code: r.code })),
+                    ...priceListData.filter(r => r.service === "Material").map(r => ({ nama: r.type, satuan: r.unit || "pcs", inv_code: null }))
                   ].filter((v, i, a) => a.findIndex(x => x.nama === v.nama) === i);
                   return (
                     <div style={{ background: cs.card, border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "14px" }}>
@@ -8300,16 +8301,17 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           const isPipa = n.includes("pipa") || n.includes("hoda");
                           const isKabel = n.includes("kabel");
                           const hasUnit = isFreon || isPipa || isKabel;
-                          const matchedInvItem = inventoryData.find(item => {
-                            const nm = (item.name || "").toLowerCase();
-                            return nm.includes(n) || n.includes(nm.replace(/\s+/g, "").substring(0, 6));
-                          }) || inventoryData.find(item => {
-                            const nm = (item.name || "").toLowerCase();
-                            if (isFreon) return item.freon_type && n.includes(item.freon_type.toLowerCase().replace("r", "r-"));
-                            if (isPipa) return nm.includes("pipa") && nm.includes(n.replace("pipa", "").replace("hoda", "").trim().split(" ")[0]);
-                            if (isKabel) return nm.includes("kabel");
-                            return false;
-                          });
+                          const matchedInvItem = (mat.inv_code ? inventoryData.find(i => i.code === mat.inv_code) : null)
+                            || inventoryData.find(item => {
+                              const nm = (item.name || "").toLowerCase();
+                              return nm === n || nm.includes(n) || n.includes(nm);
+                            }) || inventoryData.find(item => {
+                              const nm = (item.name || "").toLowerCase();
+                              if (isFreon) return item.freon_type && n.includes(item.freon_type.toLowerCase().replace("r", "r-"));
+                              if (isPipa) return nm.includes("pipa") && nm.includes(n.replace("pipa", "").replace("hoda", "").trim().split(" ")[0]);
+                              if (isKabel) return nm.includes("kabel");
+                              return false;
+                            });
                           const availableUnits = invUnitsData.filter(u => {
                             if (!matchedInvItem) return false;
                             if (u.inventory_code !== matchedInvItem.code) return false;
@@ -8323,7 +8325,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             <div key={mat.id} style={{ background: cs.surface, border: "1px solid " + (mat.nama ? cs.accent + "33" : cs.border), borderRadius: 9, padding: "10px 12px" }}>
                               {/* Row 1: Nama + Qty + Hapus */}
                               <div style={{ display: "grid", gridTemplateColumns: "2fr 80px auto", gap: 6, alignItems: "center", marginBottom: hasUnit ? 8 : 0 }}>
-                                <select value={mat.nama} onChange={e => { const item = matLookupStock.find(x => x.nama === e.target.value); updateMat(mat.id, { nama: e.target.value, satuan: item?.satuan || "pcs", freon_tabung_code: "", freon_unit_label: "", freon_inv_code: "" }); }}
+                                <select value={mat.nama} onChange={e => { const item = matLookupStock.find(x => x.nama === e.target.value); updateMat(mat.id, { nama: e.target.value, satuan: item?.satuan || "pcs", inv_code: item?.inv_code || null, freon_tabung_code: "", freon_unit_label: "", freon_inv_code: "" }); }}
                                   style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 9px", color: mat.nama ? cs.text : cs.muted, fontSize: 12, outline: "none" }}>
                                   <option value="">— Pilih material —</option>
                                   {matLookupStock.map(ml => <option key={ml.nama} value={ml.nama}>{ml.nama}</option>)}
@@ -8601,7 +8603,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         }
                       }
                       // Juga deduct inventory utama
-                      const invItem = inventoryData.find(i => i.name.toLowerCase().includes((mat.nama || "").toLowerCase()) || (mat.nama || "").toLowerCase().includes(i.name.toLowerCase()));
+                      const invItem = (mat.inv_code ? inventoryData.find(i => i.code === mat.inv_code) : null)
+                        || inventoryData.find(i => i.name.toLowerCase().includes((mat.nama || "").toLowerCase()) || (mat.nama || "").toLowerCase().includes(i.name.toLowerCase()));
                       if (invItem) {
                         const newStock = Math.max(0, invItem.stock - qty);
                         const newStatus = computeStockStatus(newStock, invItem.reorder);
