@@ -239,9 +239,6 @@ Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal).
 - Penggantian Filter    : Rp100.000
 - Lubrikasi Kompresor   : Rp250.000
 
-### Biaya Tambahan (Fixed)
-- Dadakan (booking H-0): +Rp50.000 → field "dadakan" di invoice
-
 ## TIPE LAYANAN VALID
 - Cleaning    = cuci AC, service rutin, bersihkan filter
 - Install     = pasang AC baru, bongkar pasang, pindah unit
@@ -335,7 +332,7 @@ Jika "teknisi X tidak masuk hari ini":
 [ACTION]{"type":"CANCEL_ORDER","id":"ORD-xxx","reason":"Alasan"}[/ACTION]
 [ACTION]{"type":"DISPATCH_WA","order_id":"ORD-xxx"}[/ACTION]
 [ACTION]{"type":"CREATE_INVOICE","order_id":"ORD-xxx"}[/ACTION]
-[ACTION]{"type":"UPDATE_INVOICE","id":"INV-xxx","field":"dadakan","value":50000}[/ACTION]
+[ACTION]{"type":"UPDATE_INVOICE","id":"INV-xxx","field":"discount","value":50000}[/ACTION]
 [ACTION]{"type":"MARK_PAID","id":"INV-xxx"}[/ACTION]
 [ACTION]{"type":"APPROVE_INVOICE","id":"INV-xxx"}[/ACTION]
 [ACTION]{"type":"SEND_REMINDER","invoice_id":"INV-xxx"}[/ACTION]
@@ -1666,7 +1663,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     <tbody>
       ${(inv.labor > 0 && matDetails.length === 0) ? '<tr><td>' + escHtml((inv.service || "Jasa Servis AC") + (inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? " (Garansi Jasa Gratis)" : "")) + '</td><td style="text-align:center">' + (inv.units || 1) + '</td><td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td><td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor || 0).toLocaleString("id-ID") + '</td></tr>' : ""}
 ${matRowsHtml}
-      ${(inv.dadakan > 0) ? '<tr><td>Pekerjaan Tambahan</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right;font-family:monospace;font-weight:600">${(inv.dadakan||0).toLocaleString("id-ID")}</td></tr>' : ""}
+      ${(inv.discount || 0) > 0 ? '<tr style="background:#fff1f2"><td style="color:#be123c;font-style:italic">Discount</td><td style="text-align:center;color:#be123c">—</td><td style="text-align:right;color:#be123c">—</td><td style="text-align:right;font-family:monospace;font-weight:600;color:#be123c">-' + (inv.discount||0).toLocaleString("id-ID") + '</td></tr>' : ""}
+      ${inv.trade_in && (inv.trade_in_amount || 0) > 0 ? '<tr style="background:#fff1f2"><td style="color:#be123c;font-style:italic">Trade-In AC Lama</td><td style="text-align:center;color:#be123c">—</td><td style="text-align:right;color:#be123c">—</td><td style="text-align:right;font-family:monospace;font-weight:600;color:#be123c">-' + (inv.trade_in_amount||0).toLocaleString("id-ID") + '</td></tr>' : ""}
       <tr class="total-row">
         <td colspan="3">TOTAL TAGIHAN</td>
         <td style="text-align:right;font-family:monospace">Rp ${(inv.total || 0).toLocaleString("id-ID")}</td>
@@ -3951,7 +3949,7 @@ ${photoPageHTML}
     const bizContext = {
       today: TODAY,
       orders: ordersData.map(o => ({ id: o.id, customer: o.customer, service: o.service, type: o.type, units: o.units, status: o.status, date: o.date, time: o.time, teknisi: o.teknisi, helper: o.helper, dispatch: o.dispatch, invoice_id: o.invoice_id })),
-      invoices: invoicesData.map(i => ({ id: i.id, customer: i.customer, phone: i.phone, total: i.total, status: i.status, due: i.due, labor: i.labor, material: i.material, dadakan: i.dadakan, materials_detail: (i.materials_detail || []).map(m => ({ nama: m.nama, jumlah: m.jumlah, satuan: m.satuan, harga_satuan: m.harga_satuan, subtotal: m.subtotal })) })),
+      invoices: invoicesData.map(i => ({ id: i.id, customer: i.customer, phone: i.phone, total: i.total, status: i.status, due: i.due, labor: i.labor, material: i.material, discount: i.discount, trade_in: i.trade_in, trade_in_amount: i.trade_in_amount, materials_detail: (i.materials_detail || []).map(m => ({ nama: m.nama, jumlah: m.jumlah, satuan: m.satuan, harga_satuan: m.harga_satuan, subtotal: m.subtotal })) })),
       inventory: inventoryData.map(i => ({ code: i.code, name: i.name, stock: i.stock, unit: i.unit, status: i.status, price: i.price, reorder: i.reorder })),
       customers: customersData.map(c => ({ id: c.id, name: c.name, phone: c.phone, area: c.area, total_orders: c.total_orders, is_vip: c.is_vip })),
       laporan: laporanReports.map(r => ({
@@ -4066,7 +4064,7 @@ ${photoPageHTML}
         // SECURITY NOTE: Direct API calls with keys are NOT supported anymore
         // Production: always use backend /api/ara-chat endpoint (keys are safe on server)
         // Development: use /api/ara-chat or local Ollama
-        const sysP = (typeof brainMd === "string" ? brainMd : BRAIN_MD_DEFAULT) + `\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000} (field: labor/material/dadakan/notes. Detail material ada di invoices[].materials_detail)\\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"material","value":200000} (ubah total material)\\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}
+        const sysP = (typeof brainMd === "string" ? brainMd : BRAIN_MD_DEFAULT) + `\n\n## DATA BISNIS LIVE\n${JSON.stringify(bizContext)}\n\n## TOOL — ACTIONS TERSEDIA\nGunakan [ACTION]{...}[/ACTION] untuk eksekusi operasi. Format JSON:\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"labor","value":100000} (field: labor/material/discount/notes. Detail material ada di invoices[].materials_detail)\\n- {"type":"UPDATE_INVOICE","id":"INV-xxx","field":"material","value":200000} (ubah total material)\\n- {"type":"MARK_PAID","id":"INV-xxx"}\n- {"type":"APPROVE_INVOICE","id":"INV-xxx"}\n- {"type":"SEND_REMINDER","invoice_id":"INV-xxx"}\n- {"type":"UPDATE_ORDER_STATUS","id":"JOB-xxx","status":"COMPLETED"}\n- {"type":"DISPATCH_WA","order_id":"JOB-xxx"}\n- {"type":"SEND_WA","phone":"628xxx","message":"..."}\n- {"type":"UPDATE_STOCK","code":"MAT001","delta":5} (delta=tambah/kurang)\n- {"type":"CANCEL_ORDER","id":"JOB-xxx","reason":"..."}
 - {"type":"CREATE_INVOICE","order_id":"ORD-xxx"}\n- {"type":"RESCHEDULE_ORDER","id":"JOB-xxx","date":"2026-03-10","time":"09:00","teknisi":"Mulyadi"}\nGunakan data teknisiWorkload.slotKosongHariIni dan jadwalHariIni untuk cek jadwal kosong. Area utama: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan. Jakarta Barat: perlu konfirmasi admin.\n- {"type":"MARK_INVOICE_OVERDUE"} (tandai semua yang lewat due date)\nHanya gunakan 1 ACTION per response. Konfirmasi ke user setelah eksekusi.`;
 
         if (llmProvider === "ollama") {
@@ -4135,7 +4133,7 @@ ${photoPageHTML}
             addAgentLog("ARA_BLOCKED", `ARA blocked ${act.type} — caller role: ${araCallerRole}`, "WARNING");
           } else
           if (act.type === "UPDATE_INVOICE") {
-            setInvoicesData(prev => prev.map(i => { if (i.id !== act.id) return i; const u = { ...i, [act.field]: act.value }; u.total = (u.labor || 0) + (u.material || 0) + (u.dadakan || 0); return u; }));
+            setInvoicesData(prev => prev.map(i => { if (i.id !== act.id) return i; const u = { ...i, [act.field]: act.value }; u.total = (u.labor || 0) + (u.material || 0) - (u.discount || 0) - (u.trade_in ? (u.trade_in_amount || 0) : 0); return u; }));
             await setAuditUser();
             await updateInvoice(supabase, act.id, { [act.field]: act.value }, auditUserName());
             addAgentLog("ARA_ACTION", `ARA update ${act.id}: ${act.field}=${fmt(act.value)}`, "SUCCESS");
@@ -4353,10 +4351,7 @@ ${photoPageHTML}
               const freonCost = 0; // freon masuk via material manual
               // Freon: hitung dari total_freon × harga freon (R32=200rb, R22=150rb default R32)
 
-              // Dadakan jika booking H-0
-              const isToday = ord.date === today;
-              const dadakanFee = isToday ? 50000 : 0;
-              const totalInv = laborTotal + materialCost + dadakanFee;
+              const totalInv = laborTotal + materialCost;
 
               // Build materials_detail for ARA invoice from laporan
               const _araMatDetail = (() => {
@@ -4382,8 +4377,9 @@ ${photoPageHTML}
                 labor: laborTotal,
                 material: materialCost,
                 materials_detail: _araMatDetail,
-                dadakan: dadakanFee,
                 discount: 0,
+                trade_in: false,
+                trade_in_amount: 0,
                 total: totalInv,
                 status: "PENDING",
                 garansi_days: 30,
@@ -6785,7 +6781,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
         const jasaTotal = editJasaItems.reduce((s, m) => s + (m.subtotal || 0), 0);
         const matTotal = editInvoiceItems.reduce((s, m) => s + (m.subtotal || 0), 0);
-        const newTotal = jasaTotal + matTotal;
+        const editDiscount = parseInt(editInvoiceForm.discount || 0) || 0;
+        const editTradeIn = !!editInvoiceForm.trade_in;
+        const editTradeInAmt = editTradeIn ? 250000 : 0;
+        const newTotal = jasaTotal + matTotal - editDiscount - editTradeInAmt;
         return (
           <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 450, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
             <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", padding: 20 }}>
@@ -6938,10 +6937,48 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                 </div>
 
+                {/* ── Potongan: Discount & Trade-In ── */}
+                <div style={{ background: cs.card, border: "1px solid #be123c33", borderRadius: 10, padding: "12px 14px", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#f43f5e" }}>🏷️ Potongan Harga</div>
+
+                  {/* Discount manual */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: cs.text }}>
+                      <input type="checkbox"
+                        checked={!!(editInvoiceForm.discount > 0)}
+                        onChange={e => setEditInvoiceForm(f => ({ ...f, discount: e.target.checked ? (f._discountVal || 0) : 0, _discountVal: e.target.checked ? (f._discountVal || 0) : f.discount }))}
+                        style={{ width: 16, height: 16, accentColor: "#f43f5e" }} />
+                      Discount
+                    </label>
+                    <input type="number" min="0" step="10000"
+                      value={editInvoiceForm.discount || ""}
+                      onChange={e => setEditInvoiceForm(f => ({ ...f, discount: parseInt(e.target.value) || 0, _discountVal: parseInt(e.target.value) || 0 }))}
+                      placeholder="Rp 0"
+                      style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: "#f43f5e", fontSize: 13, fontFamily: "monospace", fontWeight: 700 }} />
+                  </div>
+
+                  {/* Trade-In AC Lama */}
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: cs.text, background: editInvoiceForm.trade_in ? "#be123c12" : cs.surface, border: "1px solid " + (editInvoiceForm.trade_in ? "#be123c44" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
+                    <input type="checkbox"
+                      checked={!!editInvoiceForm.trade_in}
+                      onChange={e => setEditInvoiceForm(f => ({ ...f, trade_in: e.target.checked }))}
+                      style={{ width: 16, height: 16, accentColor: "#f43f5e" }} />
+                    <div>
+                      <div style={{ fontWeight: 700 }}>Trade-In AC Lama</div>
+                      <div style={{ fontSize: 11, color: "#f43f5e", fontFamily: "monospace", fontWeight: 700 }}>-Rp 250.000</div>
+                    </div>
+                  </label>
+                </div>
+
                 {/* ── Total preview ── */}
                 <div style={{ background: cs.accent + "12", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: 14 }}>
                   <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Total Invoice Baru</div>
                   <div style={{ fontWeight: 800, fontSize: 22, color: cs.accent, fontFamily: "monospace" }}>{fmt(newTotal)}</div>
+                  {(editDiscount > 0 || editTradeIn) && (
+                    <div style={{ fontSize: 11, color: "#f43f5e", marginTop: 4 }}>
+                      Potongan: {editDiscount > 0 ? `Discount ${fmt(editDiscount)}` : ""}{editDiscount > 0 && editTradeIn ? " + " : ""}{editTradeIn ? "Trade-In Rp 250.000" : ""}
+                    </div>
+                  )}
                   {newTotal !== editInvoiceData.total && (
                     <div style={{ fontSize: 11, color: cs.yellow, marginTop: 4 }}>
                       Perubahan: {fmt(newTotal - editInvoiceData.total)} dari sebelumnya {fmt(editInvoiceData.total)}
@@ -6969,23 +7006,26 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const jasaTotal3 = editJasaItems.reduce((s, m) => s + (m.subtotal || 0), 0);
                     const matTotal3 = editInvoiceItems.reduce((s, m) => s + (m.subtotal || 0), 0);
                     const labor = jasaTotal3;
-                    const newTotalFinal = jasaTotal3 + matTotal3;
-                    if (newTotalFinal <= 0) { showNotif("⚠️ Total tidak boleh 0"); return; }
+                    const discountFinal = parseInt(editInvoiceForm.discount || 0) || 0;
+                    const tradeInFinal = !!editInvoiceForm.trade_in;
+                    const tradeInAmtFinal = tradeInFinal ? 250000 : 0;
+                    const newTotalFinal = Math.max(0, jasaTotal3 + matTotal3 - discountFinal - tradeInAmtFinal);
+                    if (newTotalFinal <= 0 && !tradeInFinal && discountFinal === 0) { showNotif("⚠️ Total tidak boleh 0"); return; }
                     const newMD = [
                       ...editJasaItems.filter(m => m.nama && (m.jumlah || 0) > 0),
                       ...editInvoiceItems.filter(m => m.nama && (m.jumlah || 0) > 0)
                     ];
                     setInvoicesData(prev => prev.map(i => i.id === editInvoiceData.id
-                      ? { ...i, labor, material: matTotal3, dadakan: 0, total: newTotalFinal, materials_detail: newMD } : i));
+                      ? { ...i, labor, material: matTotal3, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, materials_detail: newMD } : i));
                     let saved = false;
                     {
                       const { error: e1 } = await updateInvoice(supabase, editInvoiceData.id, {
-                        labor, material: matTotal3, dadakan: 0, total: newTotalFinal,
+                        labor, material: matTotal3, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal,
                         materials_detail: JSON.stringify(newMD)
                       }, auditUserName()); if (!e1) saved = true; else console.warn("editInv e1:", e1.message);
                     }
                     if (!saved) {
-                      const { error: e2 } = await updateInvoice(supabase, editInvoiceData.id, { labor, material: matTotal3, total: newTotalFinal }, auditUserName());
+                      const { error: e2 } = await updateInvoice(supabase, editInvoiceData.id, { labor, material: matTotal3, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal }, auditUserName());
                       if (!e2) saved = true;
                     }
                     if (!saved) await updateInvoice(supabase, editInvoiceData.id, { total: newTotalFinal }, auditUserName());
@@ -7130,12 +7170,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       );
                       return null;
                     })()}
-                    {liveInv.dadakan > 0 && (
-                      <tr style={{ background: "#fffbeb" }}>
-                        <td style={{ padding: "8px 10px", color: "#92400e" }}>Pekerjaan Tambahan</td>
-                        <td style={{ padding: "8px 10px", textAlign: "center" }}>—</td>
-                        <td style={{ padding: "8px 10px" }}>—</td>
-                        <td style={{ padding: "8px 10px", color: "#92400e", fontFamily: "monospace", fontWeight: 600 }}>{liveInv.dadakan.toLocaleString("id-ID")}</td>
+                    {(liveInv.discount || 0) > 0 && (
+                      <tr style={{ background: "#fff1f2" }}>
+                        <td style={{ padding: "8px 10px", color: "#be123c", fontStyle: "italic" }}>Discount</td>
+                        <td style={{ padding: "8px 10px", textAlign: "center", color: "#be123c" }}>—</td>
+                        <td style={{ padding: "8px 10px", color: "#be123c" }}>—</td>
+                        <td style={{ padding: "8px 10px", color: "#be123c", fontFamily: "monospace", fontWeight: 600 }}>-{liveInv.discount.toLocaleString("id-ID")}</td>
+                      </tr>
+                    )}
+                    {liveInv.trade_in && (liveInv.trade_in_amount || 0) > 0 && (
+                      <tr style={{ background: "#fff1f2" }}>
+                        <td style={{ padding: "8px 10px", color: "#be123c", fontStyle: "italic" }}>Trade-In AC Lama</td>
+                        <td style={{ padding: "8px 10px", textAlign: "center", color: "#be123c" }}>—</td>
+                        <td style={{ padding: "8px 10px", color: "#be123c" }}>—</td>
+                        <td style={{ padding: "8px 10px", color: "#be123c", fontFamily: "monospace", fontWeight: 600 }}>-{(liveInv.trade_in_amount || 0).toLocaleString("id-ID")}</td>
                       </tr>
                     )}
                     <tr style={{ background: "#1E3A5F" }}>
@@ -7172,7 +7220,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 )}
                 {liveInv.status === "PENDING_APPROVAL" &&
                   (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, dadakan: liveInv.dadakan, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => jasaSvcNames.some(s => (m.nama || "").includes(s))); const _mLv = _aLv.filter(m => !jasaSvcNames.some(s => (m.nama || "").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
+                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, discount: liveInv.discount || 0, trade_in: liveInv.trade_in || false, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => jasaSvcNames.some(s => (m.nama || "").includes(s))); const _mLv = _aLv.filter(m => !jasaSvcNames.some(s => (m.nama || "").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
                   )}
               </div>
             </div>
@@ -9562,7 +9610,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               materials_detail: mDetail,           // array untuk state/display
               garansi_status: garansiStatusLocal,  // hanya state, tidak ke DB
               repair_gratis: isRepairGratis ? laporanRepairType : undefined,  // NEW: store repair type (gratis-garansi/gratis-customer)
-              dadakan: 0,
+              discount: 0,
+              trade_in: false,
+              trade_in_amount: 0,
               total: finalTotalFromDetail || finalTotal,
               status: "PENDING_APPROVAL",
               garansi_days: gDays,

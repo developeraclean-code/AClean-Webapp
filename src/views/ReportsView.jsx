@@ -61,7 +61,7 @@ const pendingInv = allInv.filter(i => i.status === "PENDING_APPROVAL");
 const totalRevenue = paidInv.reduce((a, b) => a + (b.total || 0), 0);
 const totalLabor = paidInv.reduce((a, b) => a + (b.labor || 0), 0);
 const totalMaterial = paidInv.reduce((a, b) => a + (b.material || 0), 0);
-const totalDadakan = paidInv.reduce((a, b) => a + (b.dadakan || 0), 0);
+const totalDiscount = paidInv.reduce((a, b) => a + (b.discount || 0) + (b.trade_in ? (b.trade_in_amount || 0) : 0), 0);
 const totalExpenses = (expensesData || []).filter(e => inRange(String(e.date || e.created_at || ""))).reduce((a, b) => a + (b.amount || 0), 0);
 const totalAR = unpaidInv.reduce((a, b) => a + (b.total || 0), 0)
   + overdueInv.reduce((a, b) => a + (b.total || 0), 0);

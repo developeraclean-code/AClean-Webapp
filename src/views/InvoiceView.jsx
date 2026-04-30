@@ -192,11 +192,20 @@ return (
             <div style={{ fontWeight: 800, fontSize: 18, color: cs.text, fontFamily: "monospace" }}>{fmt(inv.total)}</div>
           </div>
           {/* GAP 3 — breakdown nilai */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginBottom: 10, fontSize: 11 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
             <div style={{ background: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? cs.green + "10" : cs.surface, borderRadius: 6, padding: "6px 10px", border: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? "1px solid " + cs.green + "33" : "none" }}><div style={{ color: cs.muted }}>Jasa</div><div style={{ color: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? cs.green : cs.text, fontWeight: 700 }}>{inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? "Rp 0 (Garansi)" : fmt(inv.labor)}</div></div>
             <div style={{ background: cs.surface, borderRadius: 6, padding: "6px 10px" }}><div style={{ color: cs.muted }}>Material</div><div style={{ color: cs.text, fontWeight: 700 }}>{fmt(inv.material)}</div></div>
-            <div style={{ background: inv.dadakan > 0 ? cs.yellow + "18" : cs.surface, borderRadius: 6, padding: "6px 10px", border: inv.dadakan > 0 ? "1px solid " + cs.yellow + "44" : "none" }}><div style={{ color: cs.muted }}>Tambahan</div><div style={{ color: inv.dadakan > 0 ? cs.yellow : cs.text, fontWeight: 700 }}>{fmt(inv.dadakan)}</div></div>
           </div>
+          {((inv.discount || 0) > 0 || inv.trade_in) && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
+              {(inv.discount || 0) > 0 && (
+                <div style={{ background: "#be123c18", borderRadius: 6, padding: "6px 10px", border: "1px solid #be123c33" }}><div style={{ color: cs.muted }}>Discount</div><div style={{ color: "#f43f5e", fontWeight: 700 }}>-{fmt(inv.discount)}</div></div>
+              )}
+              {inv.trade_in && (inv.trade_in_amount || 0) > 0 && (
+                <div style={{ background: "#be123c18", borderRadius: 6, padding: "6px 10px", border: "1px solid #be123c33" }}><div style={{ color: cs.muted }}>Trade-In AC</div><div style={{ color: "#f43f5e", fontWeight: 700 }}>-{fmt(inv.trade_in_amount)}</div></div>
+              )}
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "4px 20px", fontSize: 12, color: cs.muted, marginBottom: 12 }}>
             <span>👤 {inv.customer}</span><span>📱 {inv.phone}</span>
             <span>🔧 {inv.service} · {inv.units} unit</span>
@@ -210,7 +219,7 @@ return (
               (currentUser?.role === "Owner" ||
                 (currentUser?.role === "Admin" && inv.status === "PENDING_APPROVAL")) && (
                 <button onClick={() => {
-                  setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, dadakan: inv.dadakan || 0, notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
+                  setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
                   const _jasaItems = _allItems.filter(m => jasaSvcNames.some(s => (m.nama || "").includes(s)));
                   const _matItems = _allItems.filter(m => !jasaSvcNames.some(s => (m.nama || "").includes(s)));
                   setEditJasaItems(_jasaItems);
@@ -297,7 +306,7 @@ return (
                         confirmText: "Override Gratis & Lunas"
                       })) return;
                       const paidAt = new Date().toISOString();
-                      const upd = { total: 0, labor: 0, material: 0, dadakan: 0, garansi_status: "GARANSI_OVERRIDE_FREE", status: "PAID", paid_at: paidAt };
+                      const upd = { total: 0, labor: 0, material: 0, discount: 0, trade_in: false, trade_in_amount: 0, garansi_status: "GARANSI_OVERRIDE_FREE", status: "PAID", paid_at: paidAt };
                       setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
                       setOrdersData(prev => prev.map(o => o.id === inv.job_id ? { ...o, status: "PAID" } : o));
                       const { error } = await updateInvoice(supabase, inv.id, upd, auditUserName());

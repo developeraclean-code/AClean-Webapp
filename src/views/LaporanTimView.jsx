@@ -202,7 +202,7 @@ const verifyLaporan = async (r) => {
       teknisi: r.teknisi || "",
       labor: finalLabor2, material: finalMat2,
       materials_detail: vMDetail.length > 0 ? JSON.stringify(vMDetail) : null,
-      dadakan: 0, discount: 0,
+      discount: 0, trade_in: false, trade_in_amount: 0,
       total: totalInv,
       status: finalStatus2,
       garansi_days: 30, garansi_expires: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),

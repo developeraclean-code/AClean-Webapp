@@ -10,7 +10,7 @@ export const fetchOrders = (supabase) =>
 
 export const fetchInvoices = (supabase) =>
   supabase.from("invoices")
-    .select("id,job_id,customer,phone,service,units,labor,material,dadakan,total,status,due,paid_at,sent,sent_at,created_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url")
+    .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent,sent_at,created_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url")
     .order("created_at", { ascending: false }).limit(300);
 
 export const fetchCustomers = (supabase) =>

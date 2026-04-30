@@ -236,12 +236,20 @@ export default function InvoicePDF({ inv, logoUrl, appSettings = {} }) {
               <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{remainMat.toLocaleString("id-ID")}</Text>
             </View>
           )}
-          {(inv.dadakan || 0) > 0 && (
-            <View style={[s.tr, rowIdx % 2 === 1 ? s.trEven : {}]}>
-              <Text style={[s.td, { flex: 1 }]}>Pekerjaan Tambahan</Text>
-              <Text style={[s.td, { width: 60, textAlign: "right" }]}>—</Text>
-              <Text style={[s.td, { width: 80, textAlign: "right" }]}>—</Text>
-              <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(inv.dadakan || 0).toLocaleString("id-ID")}</Text>
+          {(inv.discount || 0) > 0 && (
+            <View style={[s.tr, { backgroundColor: "#fff1f2" }]}>
+              <Text style={[s.td, { flex: 1, color: "#be123c", fontStyle: "italic" }]}>Discount</Text>
+              <Text style={[s.td, { width: 60, textAlign: "right", color: "#be123c" }]}>—</Text>
+              <Text style={[s.td, { width: 80, textAlign: "right", color: "#be123c" }]}>—</Text>
+              <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(inv.discount || 0).toLocaleString("id-ID")}</Text>
+            </View>
+          )}
+          {inv.trade_in && (inv.trade_in_amount || 0) > 0 && (
+            <View style={[s.tr, { backgroundColor: "#fff1f2" }]}>
+              <Text style={[s.td, { flex: 1, color: "#be123c", fontStyle: "italic" }]}>Trade-In AC Lama</Text>
+              <Text style={[s.td, { width: 60, textAlign: "right", color: "#be123c" }]}>—</Text>
+              <Text style={[s.td, { width: 80, textAlign: "right", color: "#be123c" }]}>—</Text>
+              <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(inv.trade_in_amount || 0).toLocaleString("id-ID")}</Text>
             </View>
           )}
 

@@ -50,8 +50,8 @@ ${JSON.stringify(bizClean, null, 2)}
 
 ### INVOICE
 - Buat invoice: [ACTION]{"type":"CREATE_INVOICE","order_id":"ORD-xxx"}[/ACTION]
-- Edit field  : [ACTION]{"type":"UPDATE_INVOICE","id":"INV-xxx","field":"dadakan","value":50000}[/ACTION]
-  Field valid : labor | material | dadakan | discount | notes | due
+- Edit field  : [ACTION]{"type":"UPDATE_INVOICE","id":"INV-xxx","field":"discount","value":50000}[/ACTION]
+  Field valid : labor | material | discount | notes | due
 - Mark lunas  : [ACTION]{"type":"MARK_PAID","id":"INV-xxx"}[/ACTION]
 - Approve     : [ACTION]{"type":"APPROVE_INVOICE","id":"INV-xxx"}[/ACTION]
 - Reminder WA : [ACTION]{"type":"SEND_REMINDER","invoice_id":"INV-xxx"}[/ACTION]
