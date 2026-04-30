@@ -159,14 +159,14 @@ let txFiltered = [...invTxData];
 // Filter berdasarkan tab: hanya usage
 txFiltered = txFiltered.filter(tx => tx.qty < 0);
 if (matTrackFilter !== "Semua") {
-  if (matTrackFilter === "Freon") txFiltered = txFiltered.filter(tx =>
-    ["R22", "R32", "R410"].some(f => (tx.inventory_name || "").toUpperCase().includes(f.replace("-", "")))
-  );
+  if (matTrackFilter === "Freon") txFiltered = txFiltered.filter(tx => isFreonTx(tx));
   else if (matTrackFilter === "Pipa") txFiltered = txFiltered.filter(tx =>
-    (tx.inventory_name || "").toLowerCase().includes("pipa")
+    (tx.inventory_name || "").toLowerCase().includes("pipa") ||
+    inventoryData.find(i => i.code === tx.inventory_code)?.material_type === "pipa"
   );
   else if (matTrackFilter === "Kabel") txFiltered = txFiltered.filter(tx =>
-    (tx.inventory_name || "").toLowerCase().includes("kabel")
+    (tx.inventory_name || "").toLowerCase().includes("kabel") ||
+    inventoryData.find(i => i.code === tx.inventory_code)?.material_type === "kabel"
   );
   else txFiltered = txFiltered.filter(tx => tx.inventory_code === matTrackFilter);
 }
@@ -176,7 +176,8 @@ if (matTrackSearch.trim()) {
     (tx.inventory_name || "").toLowerCase().includes(q) ||
     (tx.customer_name || "").toLowerCase().includes(q) ||
     (tx.teknisi_name || "").toLowerCase().includes(q) ||
-    (tx.order_id || "").toLowerCase().includes(q)
+    (tx.order_id || "").toLowerCase().includes(q) ||
+    (tx.unit_label || "").toLowerCase().includes(q)
   );
 }
 if (matTrackDateFrom) txFiltered = txFiltered.filter(tx => (tx.job_date || tx.created_at?.slice(0, 10) || "") >= matTrackDateFrom);
@@ -328,6 +329,10 @@ return (
                         </div>
                         {/* Tombol aksi */}
                         <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                          <button onClick={() => { setMatTrackFilter(item.code); setMatTrackSearch(unit.unit_label); setTimeout(() => document.querySelector("[data-riwayat]")?.scrollIntoView({ behavior: "smooth" }), 100); }}
+                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: cs.accent + "18", border: "1px solid " + cs.accent + "33", color: cs.accent, cursor: "pointer" }}>
+                            🔍
+                          </button>
                           <button onClick={() => { setEditUnitId(isEditingThis ? null : unit.id); setEditUnitVal(String(unit.stock)); }}
                             style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: isEditingThis ? cs.red + "22" : cs.yellow + "22", border: "1px solid " + (isEditingThis ? cs.red : cs.yellow) + "44", color: isEditingThis ? cs.red : cs.yellow, cursor: "pointer" }}>
                             {isEditingThis ? "✕" : "✏️ Ubah"}
@@ -420,7 +425,7 @@ return (
         Belum ada data pemakaian{matTrackFilter !== "Semua" ? " untuk filter ini" : ""}
       </div>
     ) : (
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
+      <div data-riwayat="1" style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
         <div style={{ padding: "10px 16px", borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>📤 Riwayat Pemakaian</div>
           <div style={{ fontSize: 11, color: cs.muted }}>{txFiltered.length} transaksi</div>
