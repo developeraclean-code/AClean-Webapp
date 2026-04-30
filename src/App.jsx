@@ -1166,6 +1166,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     { key: "pasang_15_2pk", label: "Pemasangan AC Baru 1,5PK - 2PK", satuan: "Unit", default: 0 },
     { key: "bongkar_05_1pk", label: "Bongkar Unit AC 0.5-1PK", satuan: "Unit", default: 0 },
     { key: "bongkar_15_25pk", label: "Bongkar Unit AC 1.5-2.5PK", satuan: "Unit", default: 0 },
+    { key: "bongkar_pasang_indoor", label: "Bongkar Pasang Indoor AC", satuan: "Unit", default: 0 },
+    { key: "bongkar_pasang_outdoor", label: "Bongkar Pasang Outdoor AC", satuan: "Unit", default: 0 },
     { key: "vacum_05_25pk", label: "Jasa Vacum AC 0,5PK - 2,5PK", satuan: "Unit", default: 0 },
     { key: "pipa_1pk", label: "Pipa AC Hoda 1PK", satuan: "Meter", default: 0 },
     { key: "pipa_2pk", label: "Pipa AC Hoda 2PK", satuan: "Meter", default: 0 },
@@ -10156,7 +10158,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Isi 0 jika tidak dikerjakan.</div>
                         {/* ── Group 1: Jasa Pemasangan ── */}
                         <div style={{ fontSize: 10, fontWeight: 700, color: cs.muted, letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>Jasa Pemasangan</div>
-                        {INSTALL_ITEMS.filter(it => ["jasa_ganti_instalasi", "pasang_05_1pk", "pasang_15_2pk", "bongkar_05_1pk", "bongkar_15_25pk", "vacum_05_25pk"].includes(it.key)).map(item => (
+                        {INSTALL_ITEMS.filter(it => ["jasa_ganti_instalasi", "pasang_05_1pk", "pasang_15_2pk", "bongkar_05_1pk", "bongkar_15_25pk", "bongkar_pasang_indoor", "bongkar_pasang_outdoor", "vacum_05_25pk"].includes(it.key)).map(item => (
                           <div key={item.key} style={{
                             display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center",
                             background: parseFloat(laporanInstallItems[item.key] || 0) > 0 ? cs.accent + "08" : cs.card,
