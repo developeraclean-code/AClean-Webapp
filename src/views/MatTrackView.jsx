@@ -16,6 +16,7 @@ const [editUnitId, setEditUnitId]   = useState(null); // unit.id sedang diedit s
 const [editUnitVal, setEditUnitVal] = useState("");   // nilai stok baru
 
 // ── State untuk freon timbang adjustment ──
+const [historyUnitId, setHistoryUnitId] = useState(null); // unit.id yang popup riwayatnya terbuka
 const [timbangId, setTimbangId]     = useState(null);  // tx.id yang sedang di-adjust
 const [timbangVal, setTimbangVal]   = useState("");    // nilai qty_actual input admin
 const [timbangSaving, setTimbangSaving] = useState(false);
@@ -329,9 +330,9 @@ return (
                         </div>
                         {/* Tombol aksi */}
                         <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                          <button onClick={() => { setMatTrackFilter(item.code); setMatTrackSearch(unit.unit_label); setTimeout(() => document.querySelector("[data-riwayat]")?.scrollIntoView({ behavior: "smooth" }), 100); }}
-                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: cs.accent + "18", border: "1px solid " + cs.accent + "33", color: cs.accent, cursor: "pointer" }}>
-                            🔍
+                          <button onClick={() => setHistoryUnitId(historyUnitId === unit.id ? null : unit.id)}
+                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: historyUnitId === unit.id ? cs.accent + "33" : cs.accent + "18", border: "1px solid " + cs.accent + (historyUnitId === unit.id ? "88" : "33"), color: cs.accent, cursor: "pointer", fontWeight: historyUnitId === unit.id ? 700 : 400 }}>
+                            {historyUnitId === unit.id ? "✕ Tutup" : "📋 Riwayat"}
                           </button>
                           <button onClick={() => { setEditUnitId(isEditingThis ? null : unit.id); setEditUnitVal(String(unit.stock)); }}
                             style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: isEditingThis ? cs.red + "22" : cs.yellow + "22", border: "1px solid " + (isEditingThis ? cs.red : cs.yellow) + "44", color: isEditingThis ? cs.red : cs.yellow, cursor: "pointer" }}>
@@ -356,6 +357,50 @@ return (
                           <div style={{ fontSize: 11, color: cs.muted }}>Saat ini: {parseFloat((unit.stock || 0).toFixed(1))} {item.unit}</div>
                         </div>
                       )}
+                      {/* ── Inline riwayat pemakaian unit ini ── */}
+                      {historyUnitId === unit.id && (() => {
+                        const unitTxs = invTxData
+                          .filter(tx => tx.unit_id === unit.id || tx.unit_label === unit.unit_label)
+                          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+                        return (
+                          <div style={{ background: cs.surface, border: "1px solid " + cs.accent + "33", borderRadius: 8, padding: "10px 12px" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>
+                              📋 Riwayat — {unit.unit_label} ({unitTxs.length} transaksi)
+                            </div>
+                            {unitTxs.length === 0 ? (
+                              <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada pemakaian tercatat.</div>
+                            ) : (
+                              <div style={{ display: "grid", gap: 5 }}>
+                                {unitTxs.slice(0, 20).map((tx, ti) => {
+                                  const isAdj = tx.type === "adjustment";
+                                  const isUsage = tx.qty < 0 && !isAdj;
+                                  return (
+                                    <div key={tx.id || ti} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto", gap: 6, alignItems: "center", fontSize: 11, padding: "5px 8px", background: isAdj ? cs.green + "0a" : cs.card, borderRadius: 6, border: "1px solid " + cs.border + "55" }}>
+                                      <div>
+                                        <div style={{ color: cs.text, fontWeight: 500 }}>{tx.customer_name || "—"}</div>
+                                        <div style={{ color: cs.muted, fontSize: 10 }}>{tx.teknisi_name || ""} · {(tx.order_id || tx.report_id || "").slice(0, 14)}</div>
+                                      </div>
+                                      <div style={{ color: cs.muted, fontSize: 10 }}>{(tx.job_date || tx.created_at || "").slice(0, 10)}</div>
+                                      <div style={{ fontWeight: 700, color: isAdj ? cs.green : isUsage ? cs.red : cs.green, textAlign: "right" }}>
+                                        {tx.qty > 0 ? "+" : ""}{parseFloat(Math.abs(tx.qty).toFixed(1))} {item.unit}
+                                        {isAdj && <div style={{ fontSize: 9, color: cs.green }}>KOREKSI</div>}
+                                      </div>
+                                      {tx.qty_actual != null && (
+                                        <div style={{ fontSize: 10, color: cs.green }}>✓ {parseFloat(Math.abs(tx.qty_actual).toFixed(1))} aktual</div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                {unitTxs.length > 20 && (
+                                  <div style={{ fontSize: 10, color: cs.muted, textAlign: "center", padding: 4 }}>
+                                    +{unitTxs.length - 20} transaksi lainnya — lihat di tabel bawah
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
