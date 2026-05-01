@@ -788,7 +788,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     ].filter(Boolean);
   }
 
-  // Upsert slot ke DB
+  // Upsert slot ke DB + auto-propagate ke orders dgn team_slot ini
   async function saveSlot(date, slotName, fields) {
     setSlotLoading(true);
     const payload = { date, slot: slotName, ...fields, updated_at: new Date().toISOString() };
@@ -800,6 +800,31 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       const idx = prev.findIndex(s => s.date === date && s.slot === slotName);
       return idx >= 0 ? prev.map((s, i) => i === idx ? data : s) : [...prev, data];
     });
+
+    // Auto-propagate teknisi/helper ke semua orders dgn team_slot ini
+    // (jaring untuk order yang dibuat sebelum slot diisi atau saat backfill member)
+    const members = slotMemberRoles(data);
+    if (members.length > 0) {
+      const utama = members.find(m => (m.role || "").toLowerCase() === "teknisi") || members[0];
+      const helpers = members.filter(m => m !== utama);
+      const propagatePayload = {
+        teknisi: utama.name,
+        helper:  helpers[0]?.name || null,
+        helper2: helpers[1]?.name || null,
+        helper3: helpers[2]?.name || null,
+        last_changed_by: auditUserName(),
+      };
+      await supabase.from("orders")
+        .update(propagatePayload)
+        .eq("date", date).eq("team_slot", slotName)
+        .neq("status", "CANCELLED");
+      setOrdersData(prev => prev.map(o =>
+        o.date === date && o.team_slot === slotName && o.status !== "CANCELLED"
+          ? { ...o, ...propagatePayload }
+          : o
+      ));
+    }
+
     return data;
   }
 
@@ -980,6 +1005,27 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     if (!form.service) return showNotif("Layanan wajib diisi", "error");
 
     setSaving(true);
+
+    // Auto-populate teknisi & helper dari team_slot
+    // Prioritas: slot harian → teamPresets → null
+    let autoTeknisi = form.teknisi || null;
+    let autoHelper = null, autoHelper2 = null, autoHelper3 = null;
+    if (form.team_slot) {
+      const slot = getSlotData(form.date, form.team_slot);
+      const members = slotMemberRoles(slot);
+      if (members.length > 0) {
+        const utama = members.find(m => (m.role || "").toLowerCase() === "teknisi") || members[0];
+        const helpers = members.filter(m => m !== utama);
+        autoTeknisi = autoTeknisi || utama?.name || null;
+        autoHelper = helpers[0]?.name || null;
+        autoHelper2 = helpers[1]?.name || null;
+        autoHelper3 = helpers[2]?.name || null;
+      } else if (teamPresets[form.team_slot]) {
+        // Fallback ke preset bila slot harian belum diisi
+        autoTeknisi = autoTeknisi || teamPresets[form.team_slot];
+      }
+    }
+
     const payload = {
       customer: form.customer.trim(),
       phone: normalizePhone(form.phone),
@@ -988,7 +1034,10 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       address: form.address.trim() || null,
       date: form.date,
       time: form.time || "09:00",
-      teknisi: form.teknisi || null,
+      teknisi: autoTeknisi,
+      helper: autoHelper,
+      helper2: autoHelper2,
+      helper3: autoHelper3,
       notes: form.notes.trim() || null,
       status: form.status,
       units: Number(form.units) || 1,
@@ -1126,11 +1175,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     let update = { [field]: value || null, last_changed_by: auditUserName() };
 
     // Jika ganti team_slot → propagate teknisi & helper dari anggota slot baru ke order
+    // Prioritas: slot harian → teamPresets
     if (field === "team_slot" && value) {
       const slot = getSlotData(order.date, value);
-      if (slot) {
-        const members = slotMemberRoles(slot);
-        const utama = members.find(m => m.role === "Teknisi") || members[0];
+      const members = slot ? slotMemberRoles(slot) : [];
+      if (members.length > 0) {
+        const utama = members.find(m => (m.role || "").toLowerCase() === "teknisi") || members[0];
         const helpers = members.filter(m => m !== utama);
         update = {
           ...update,
@@ -1139,7 +1189,16 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           helper2: helpers[1]?.name || null,
           helper3: helpers[2]?.name || null,
         };
+      } else if (teamPresets[value]) {
+        // Fallback ke preset
+        update = { ...update, teknisi: teamPresets[value], helper: null, helper2: null, helper3: null };
+      } else {
+        showNotif("⚠️ Tim " + value + " belum punya anggota & belum ada preset", "warning");
       }
+    }
+    // Jika clear team_slot → reset teknisi & helper juga
+    if (field === "team_slot" && !value) {
+      update = { ...update, teknisi: null, helper: null, helper2: null, helper3: null };
     }
 
     const { error } = await supabase.from("orders").update(update).eq("id", order.id);
