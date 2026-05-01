@@ -5432,7 +5432,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <button onClick={() => setModalOrder(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
             </div>
             <div style={{ display: "grid", gap: 12 }}>
-              {[["Nama Customer", "customer", "text"], ["Nomor HP", "phone", "text"], ["Alamat Lengkap", "address", "text"], ["Area / Kota", "area", "text"], ["Catatan", "notes", "text"]].map(([label, key, type]) => (
+              {[["Nama Customer", "customer", "text"], ["Nomor HP", "phone", "text"], ["Alamat Lengkap", "address", "text"], ["Catatan", "notes", "text"]].map(([label, key, type]) => (
                 <div key={key}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>{label}</div>
                   <input type={type} value={newOrderForm[key] || ""} onChange={e => {
@@ -5512,56 +5512,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
                 </div>
               </div>
-              {/* Tipe AC */}
+              {/* Area — tersimpan ke data customer */}
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Tipe AC</div>
-                <select value={newOrderForm.type || ""} onChange={e => setNewOrderForm(f => ({ ...f, type: e.target.value }))}
-                  style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13 }}>
-                  <option value="">Pilih tipe...</option>
-                  {(() => {
-                    // DYNAMIC dari priceListData — auto update saat price_list DB berubah
-                    const svc = newOrderForm.service;
-                    // Filter tipe dari DB, exclude sub-jasa Install (Jasa Penarikan, Flaring, dll)
-                    const INSTALL_EXCLUDE = [
-                      "Jasa Penarikan Pipa AC", "Jasa Penarikan Pipa Ruko", "Jasa Vacum AC 0,5PK - 2,5PK",
-                      "Flaring Pipa", "Jasa Pengelasan Pipa AC", "Jasa Bobok Tembok", "Jasa Instalasi Listrik",
-                      "Jasa Pembuatan Saluran Pembuangan", "Jasa Vacum Unit AC >3PK", "Bongkar Pasang Indoor AC",
-                      "Bongkar Pasang Outdoor AC", "Bongkar Unit AC 0.5-1PK", "Bongkar Unit AC 1.5-2.5PK",
-                      "Flushing Pipa", "Jasa Instalasi Pipa AC"
-                    ];
-                    // Exclude dari Cleaning: jasa besar dan transport (dipilih otomatis dari laporan)
-                    const CLEANING_EXCLUDE = [
-                      "Jasa Service Besar 0,5PK - 1PK", "Jasa Service Besar 1,5PK - 2,5PK",
-                      "Biaya Transport Bila 1 Unit"
-                    ];
-                    // Exclude dari Repair: jasa install dan cleaning besar
-                    const REPAIR_EXCLUDE = [
-                      "Jasa Service Besar 0,5PK - 1PK", "Jasa Service Besar 1,5PK - 2,5PK",
-                      "Biaya Transport Bila 1 Unit", "Jasa Penarikan Pipa AC", "Jasa Penarikan Pipa Ruko",
-                      "Jasa Vacum AC 0,5PK - 2,5PK", "Jasa Instalasi Pipa AC"
-                    ];
-                    // Complain: hanya tipe pengecekan/garansi — exclude sub-jasa
-                    const COMPLAIN_EXCLUDE = [
-                      "Jasa Service Besar 0,5PK - 1PK", "Jasa Service Besar 1,5PK - 2,5PK",
-                      "Biaya Transport Bila 1 Unit", "Jasa Penarikan Pipa AC", "Jasa Penarikan Pipa Ruko",
-                      "Jasa Vacum AC 0,5PK - 2,5PK", "Jasa Instalasi Pipa AC", "Flushing Pipa",
-                      "Jasa Bobok Tembok", "Jasa Instalasi Listrik"
-                    ];
-                    const types = priceListData
-                      .filter(r => r.service === svc && r.is_active !== false)
-                      .filter(r => {
-                        if (svc === "Install") return !INSTALL_EXCLUDE.includes(r.type);
-                        if (svc === "Cleaning") return !CLEANING_EXCLUDE.includes(r.type);
-                        if (svc === "Repair") return !REPAIR_EXCLUDE.includes(r.type);
-                        if (svc === "Complain") return !COMPLAIN_EXCLUDE.includes(r.type);
-                        return true;
-                      })
-                      .map(r => r.type);
-                    return types.length > 0
-                      ? types.map(t => <option key={t} value={t}>{t}</option>)
-                      : <option disabled>Loading...</option>;
-                  })()}
-                </select>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Area / Lokasi <span style={{ fontWeight: 400, color: cs.muted }}>(tersimpan ke data customer)</span></div>
+                <input value={newOrderForm.area || ""} onChange={e => setNewOrderForm(f => ({ ...f, area: e.target.value }))}
+                  placeholder="Misal: Graha Raya, BSD, Alam Sutera..."
+                  style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
               </div>
               {/* ── Quick Select Tim (dari Planning Order) ── */}
               {newOrderForm.date && (() => {
