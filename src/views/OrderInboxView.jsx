@@ -72,10 +72,17 @@ function SourceBadge({ source }) {
   );
 }
 
-// ── Time Grid: tampilan per jam 09:00–17:00 per teknisi per hari yang dipilih ──
+// ── Time Grid: timeline view berdasarkan jam mulai aktual (pixel-accurate) ──
 const GRID_START = 9;   // jam 09:00
-const GRID_END   = 18;  // render kolom 09–17, termasuk header "17:00" sebagai batas kanan
-const HOURS = Array.from({ length: GRID_END - GRID_START }, (_, i) => GRID_START + i); // [9,10,...,17]
+const GRID_END   = 17;  // jam 17:00
+const GRID_HOURS = Array.from({ length: GRID_END - GRID_START + 1 }, (_, i) => GRID_START + i); // [9..17]
+const GRID_TOTAL_MIN = (GRID_END - GRID_START) * 60; // 480 menit total
+
+// Konversi menit ke % posisi dalam grid
+function minToPercent(minutes) {
+  const rel = Math.max(0, Math.min(minutes - GRID_START * 60, GRID_TOTAL_MIN));
+  return (rel / GRID_TOTAL_MIN) * 100;
+}
 
 // onDateChange: callback ke parent agar Planning Order ikut filter
 function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi, weekOrders, teknisiData, expandedId, setExpandedId, TODAY, onDateChange }) {
@@ -86,41 +93,8 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
     onDateChange && onDateChange(d);
   }
 
-  // Kalau minggu berganti, reset ke hari pertama
   const currentDate = weekDays.find(d => d.date === selectedDate) ? selectedDate : weekDays[0]?.date;
-
-  // Order di hari terpilih, bukan cancelled
   const dayOrders = weekOrders.filter(o => o.date === currentDate);
-
-  // Untuk tiap teknisi + jam: apakah jam ini terisi?
-  // Return: null = kosong, { ...order, endMin } = terisi, 'cont' = lanjutan dari jam sebelumnya
-  function getSlot(tek, hour) {
-    const slotStart = hour * 60;
-    const slotEnd   = slotStart + 60;
-    const orders = dayOrders.filter(o => o.teknisi === tek && o.time);
-    for (const o of orders) {
-      const start = toMinutes(o.time);
-      if (start === null) continue;
-      const dur = hitungDurasi(o.service, o.units);
-      const end = start + Math.round(dur * 60);
-      if (start >= slotStart && start < slotEnd) return { ...o, startMin: start, endMin: end, isStart: true };
-      if (start < slotStart && end > slotStart) return { ...o, startMin: start, endMin: end, isStart: false };
-    }
-    return null;
-  }
-
-  // Berapa slot jam yang ditempati order ini mulai dari jam ini (max sampai jam 17, bukan 18)
-  function spanCount(o, hour) {
-    const start = toMinutes(o.time);
-    const dur = hitungDurasi(o.service, o.units);
-    const endMin = start + Math.round(dur * 60);
-    let count = 0;
-    for (let h = hour; h < 17; h++) {  // cap di 17, jam 17 adalah kolom batas
-      if (h * 60 >= endMin) break;
-      count++;
-    }
-    return Math.max(1, count);
-  }
 
   return (
     <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
@@ -165,142 +139,147 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
       </div>
 
       {/* Legend */}
-      <div style={{ display: "flex", gap: 16, marginBottom: 12, fontSize: 11, color: cs.muted }}>
-        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#22c55e22", border: "1px solid #22c55e66", borderRadius: 2, marginRight: 4 }} />Kosong (tersedia)</span>
+      <div style={{ display: "flex", gap: 16, marginBottom: 10, fontSize: 11, color: cs.muted, flexWrap: "wrap" }}>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#22c55e22", border: "1px solid #22c55e66", borderRadius: 2, marginRight: 4 }} />Tersedia</span>
         <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#38bdf822", border: "1px solid #38bdf866", borderRadius: 2, marginRight: 4 }} />Terisi</span>
         <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#ef444422", border: "1px solid #ef444466", borderRadius: 2, marginRight: 4 }} />Konflik</span>
+        <span style={{ color: cs.muted, fontStyle: "italic" }}>Posisi bar = jam mulai aktual</span>
       </div>
 
-      {/* Time grid table */}
+      {/* Timeline grid */}
       {gridTeknisi.length === 0 ? (
         <div style={{ textAlign: "center", color: cs.muted, padding: 32, fontSize: 13 }}>
           Belum ada teknisi atau jadwal minggu ini
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", fontSize: 11, tableLayout: "fixed" }}>
-            <colgroup>
-              <col style={{ width: 90 }} />
-              {HOURS.map(h => <col key={h} style={{ width: h === 17 ? 32 : 70 }} />)}
-            </colgroup>
-            <thead>
-              <tr>
-                <th style={{ padding: "5px 8px", color: cs.muted, fontWeight: 700, borderBottom: "1px solid " + cs.border, textAlign: "left", fontSize: 11 }}>
-                  Teknisi
-                </th>
-                {HOURS.map(h => {
-                  const isEnd = h === 17;
-                  return (
-                    <th key={h} style={{
-                      padding: "5px 4px", textAlign: "center", borderBottom: "1px solid " + cs.border,
-                      color: isEnd ? cs.red + "aa" : h >= 12 && h < 14 ? cs.yellow : cs.muted,
-                      fontWeight: 600, fontSize: 10,
-                      background: isEnd ? cs.red + "06" : h >= 12 && h < 14 ? cs.yellow + "08" : "transparent",
-                      borderLeft: isEnd ? "2px solid " + cs.red + "44" : undefined,
-                    }}>
-                      {String(h).padStart(2,"0")}:00
-                      {isEnd && <div style={{ fontSize: 8, color: cs.red + "88" }}>selesai</div>}
-                      {!isEnd && h >= 12 && h < 14 && <div style={{ fontSize: 8, color: cs.yellow }}>siang</div>}
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {gridTeknisi.map(tek => {
-                const color = getTechColor(tek, teknisiData);
-                // pre-compute: jam mana saja yang sudah di-render (karena rowspan)
-                const rendered = new Set();
-                return (
-                  <tr key={tek} style={{ borderBottom: "1px solid " + cs.border + "33" }}>
-                    {/* Nama teknisi */}
-                    <td style={{ padding: "6px 8px", fontWeight: 700, color, fontSize: 11, whiteSpace: "nowrap", borderRight: "1px solid " + cs.border + "44" }}>
-                      {tek}
-                    </td>
-                    {HOURS.map(h => {
-                      // Jam 17 = kolom batas kanan, selalu kosong
-                      if (h === 17) return (
-                        <td key={h} style={{
-                          background: cs.red + "05",
-                          borderLeft: "2px solid " + cs.red + "33",
-                          borderBottom: "1px solid " + cs.border + "22",
-                          width: 28,
-                        }} />
-                      );
+          {/* Header jam */}
+          <div style={{ display: "flex", marginLeft: 90, marginBottom: 4, position: "relative", minWidth: 560 }}>
+            {GRID_HOURS.map(h => (
+              <div key={h} style={{
+                flex: h === GRID_END ? "0 0 0px" : 1,
+                fontSize: 10, color: h >= 12 && h < 14 ? cs.yellow : h === GRID_END ? cs.red + "aa" : cs.muted,
+                fontWeight: 600, textAlign: "left", paddingLeft: 2,
+                borderLeft: "1px solid " + (h === GRID_END ? cs.red + "55" : cs.border + "44"),
+                paddingBottom: 2,
+              }}>
+                {String(h).padStart(2,"0")}:00
+                {h >= 12 && h < 14 && <div style={{ fontSize: 8, color: cs.yellow }}>siang</div>}
+                {h === GRID_END && <div style={{ fontSize: 8, color: cs.red + "88" }}>selesai</div>}
+              </div>
+            ))}
+          </div>
 
-                      if (rendered.has(h)) return null;
-                      const slot = getSlot(tek, h);
+          {/* Baris per teknisi */}
+          {gridTeknisi.map(tek => {
+            const color = getTechColor(tek, teknisiData);
+            const tekOrders = dayOrders.filter(o =>
+              o.time && o.teknisi === tek &&
+              !["CANCELLED","COMPLETED","VERIFIED","REPORT_SUBMITTED"].includes(o.status)
+            );
 
-                      if (!slot) {
-                        // Kosong — warna hijau muda
-                        return (
-                          <td key={h} style={{
-                            background: "#22c55e0a",
-                            border: "1px solid " + cs.border + "33",
-                            textAlign: "center", padding: "4px 2px",
-                          }}>
-                            <span style={{ color: cs.border + "88", fontSize: 9 }}>—</span>
-                          </td>
-                        );
-                      }
+            return (
+              <div key={tek} style={{ display: "flex", alignItems: "stretch", marginBottom: 6, minWidth: 650 }}>
+                {/* Nama teknisi */}
+                <div style={{ width: 90, flexShrink: 0, fontWeight: 700, color, fontSize: 11, paddingRight: 8, display: "flex", alignItems: "center", whiteSpace: "nowrap" }}>
+                  {tek}
+                </div>
 
-                      if (!slot.isStart) {
-                        // Lanjutan order dari jam sebelumnya — sudah dirender via colSpan
-                        rendered.add(h);
-                        return null;
-                      }
+                {/* Timeline bar */}
+                <div style={{ flex: 1, position: "relative", height: 48, background: "#22c55e08", border: "1px solid " + cs.border + "44", borderRadius: 8, overflow: "visible" }}>
+                  {/* Grid garis jam */}
+                  {GRID_HOURS.map(h => (
+                    <div key={h} style={{
+                      position: "absolute", top: 0, bottom: 0,
+                      left: minToPercent(h * 60) + "%",
+                      borderLeft: "1px solid " + (h === GRID_END ? cs.red + "55" : cs.border + "33"),
+                      pointerEvents: "none",
+                    }} />
+                  ))}
+                  {/* Jam 12-14: background siang */}
+                  <div style={{
+                    position: "absolute", top: 0, bottom: 0,
+                    left: minToPercent(12 * 60) + "%",
+                    width: (minToPercent(14 * 60) - minToPercent(12 * 60)) + "%",
+                    background: cs.yellow + "08", pointerEvents: "none",
+                  }} />
 
-                      // Ini awal order — hitung berapa jam terisi (colSpan)
-                      const span = spanCount(slot, h);
-                      for (let s = h + 1; s < h + span; s++) rendered.add(s);
+                  {/* Order blocks */}
+                  {tekOrders.map(o => {
+                    const startMin = toMinutes(o.time);
+                    if (startMin === null) return null;
+                    const durMin = Math.round(hitungDurasi(o.service, o.units) * 60);
+                    const endMin = startMin + durMin;
 
-                      // Cek konflik: ada order lain di slot yg sama
-                      const othersInSlot = dayOrders.filter(o =>
-                        o.teknisi === tek && o.id !== slot.id && o.time &&
-                        (() => {
-                          const os = toMinutes(o.time);
-                          const oe = os + Math.round(hitungDurasi(o.service, o.units) * 60);
-                          return os < slot.endMin && oe > slot.startMin;
-                        })()
-                      );
-                      const isConflict = othersInSlot.length > 0;
+                    // Clamp ke grid
+                    const leftPct = minToPercent(startMin);
+                    const widthPct = minToPercent(endMin) - leftPct;
 
-                      return (
-                        <td key={h} colSpan={span}
-                          onClick={() => setExpandedId(expandedId === slot.id ? null : slot.id)}
-                          style={{
-                            background: isConflict ? cs.red + "22" : color + "20",
-                            border: "2px solid " + (isConflict ? cs.red + "88" : color + "66"),
-                            borderRadius: 5, padding: "4px 6px", cursor: "pointer",
-                            verticalAlign: "top", position: "relative",
-                          }}>
-                          <div style={{ color, fontWeight: 800, fontSize: 10 }}>
-                            {slot.time?.slice(0,5)}–{slot.time_end?.slice(0,5) || (() => {
-                              const em = slot.startMin + Math.round(hitungDurasi(slot.service, slot.units) * 60);
-                              return String(Math.floor(em/60)).padStart(2,"0") + ":" + String(em%60).padStart(2,"0");
-                            })()}
+                    // Konflik: overlap dengan order lain di teknisi yang sama
+                    const isConflict = tekOrders.some(o2 => {
+                      if (o2.id === o.id) return false;
+                      const s2 = toMinutes(o2.time);
+                      const e2 = s2 + Math.round(hitungDurasi(o2.service, o2.units) * 60);
+                      return startMin < e2 && endMin > s2;
+                    });
+
+                    // Jam selesai display
+                    const endH = Math.floor(endMin / 60);
+                    const endM = endMin % 60;
+                    const endStr = String(endH).padStart(2,"0") + ":" + String(endM).padStart(2,"0");
+
+                    return (
+                      <div key={o.id}
+                        onClick={() => setExpandedId(expandedId === o.id ? null : o.id)}
+                        title={`${o.customer} · ${o.time?.slice(0,5)}–${endStr} · ${o.service}${o.units > 1 ? " ×"+o.units : ""}`}
+                        style={{
+                          position: "absolute",
+                          left: leftPct + "%",
+                          width: Math.max(widthPct, 2) + "%",
+                          top: 3, bottom: 3,
+                          background: isConflict ? cs.red + "33" : color + "28",
+                          border: "2px solid " + (isConflict ? cs.red + "99" : color + "88"),
+                          borderRadius: 6,
+                          cursor: "pointer",
+                          overflow: "hidden",
+                          display: "flex", flexDirection: "column", justifyContent: "center",
+                          padding: "0 5px",
+                          zIndex: isConflict ? 2 : 1,
+                          boxSizing: "border-box",
+                        }}>
+                        <div style={{ color, fontWeight: 800, fontSize: 9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {o.time?.slice(0,5)}–{endStr}
+                          {isConflict && " ⚠️"}
+                        </div>
+                        <div style={{ color: cs.text, fontWeight: 700, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {o.customer}
+                        </div>
+                        <div style={{ color: cs.muted, fontSize: 9, whiteSpace: "nowrap" }}>
+                          {o.service}{o.units > 1 ? ` ×${o.units}` : ""}
+                        </div>
+
+                        {/* Expanded detail */}
+                        {expandedId === o.id && (
+                          <div style={{
+                            position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 4,
+                            background: cs.surface, border: "1px solid " + (isConflict ? cs.red + "88" : color + "66"),
+                            borderRadius: 8, padding: "8px 10px", minWidth: 180, boxShadow: "0 4px 20px #0008",
+                          }} onClick={e => e.stopPropagation()}>
+                            <div style={{ fontWeight: 800, fontSize: 12, color: cs.text, marginBottom: 4 }}>{o.customer}</div>
+                            <div style={{ fontSize: 11, color: cs.muted }}>{o.time?.slice(0,5)} – {endStr} ({Math.round(durMin/60*10)/10} jam)</div>
+                            <div style={{ fontSize: 11, color: cs.muted }}>{o.service}{o.units > 1 ? ` · ${o.units} unit` : ""}</div>
+                            {o.address && <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{o.address}</div>}
+                            <div style={{ marginTop: 4 }}><StatusBadge status={o.status} /></div>
+                            {isConflict && <div style={{ color: cs.red, fontSize: 10, fontWeight: 800, marginTop: 4 }}>⚠️ Waktu bentrok dengan order lain</div>}
                           </div>
-                          <div style={{ color: cs.text, fontSize: 10, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: span * 68 }}>
-                            {slot.customer}
-                          </div>
-                          <div style={{ color: cs.muted, fontSize: 9 }}>
-                            {slot.service}{slot.units > 1 ? ` ×${slot.units}` : ""}
-                          </div>
-                          {isConflict && <div style={{ color: cs.red, fontSize: 9, fontWeight: 800 }}>⚠️ konflik</div>}
-                          {expandedId === slot.id && (
-                            <div style={{ marginTop: 4, borderTop: "1px solid " + color + "33", paddingTop: 4 }}>
-                              <div style={{ color: cs.muted, fontSize: 9 }}>{slot.address || "—"}</div>
-                              <div style={{ marginTop: 2 }}><StatusBadge status={slot.status} /></div>
-                            </div>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
