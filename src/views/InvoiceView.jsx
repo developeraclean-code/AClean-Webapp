@@ -134,9 +134,9 @@ return (
         </div>
       )}
 
-      {/* ── Download Rekap ── */}
-      {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (() => {
-        const downloadRekap = async (label, dateFrom, dateTo) => {
+      {/* ── Download sesuai filter tanggal aktif ── */}
+      {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+        <button onClick={async () => {
           try {
             if (!window.XLSX) {
               await new Promise((res, rej) => {
@@ -150,10 +150,13 @@ return (
             let q = supabase.from("invoices")
               .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent_at,created_at,teknisi,paid_method")
               .order("created_at", { ascending: false });
-            if (dateFrom) q = q.gte("created_at", dateFrom + "T00:00:00");
-            if (dateTo) q = q.lte("created_at", dateTo + "T23:59:59");
+            if (invoiceDateFrom) q = q.gte("created_at", invoiceDateFrom + "T00:00:00");
+            if (invoiceDateTo) q = q.lte("created_at", invoiceDateTo + "T23:59:59");
             const { data: rows, error } = await q;
             if (error) { showNotif("❌ Gagal fetch: " + error.message); return; }
+            const label = invoiceDateFrom || invoiceDateTo
+              ? `${invoiceDateFrom || "awal"}_sd_${invoiceDateTo || "skrg"}`
+              : "Semua";
             const XLSX = window.XLSX;
             const data = (rows || []).map((inv, i) => ({
               "No": i + 1,
@@ -194,37 +197,17 @@ return (
             XLSX.utils.book_append_sheet(wb, ws1, "Invoice");
             XLSX.utils.book_append_sheet(wb, ws2, "Summary");
             XLSX.writeFile(wb, `Invoice_${label}_${getLocalDate()}.xlsx`);
-            showNotif(`✅ Export ${(rows || []).length} invoice (${label}) berhasil!`);
+            showNotif(`✅ Export ${(rows || []).length} invoice berhasil!`);
           } catch (err) { showNotif("❌ Export gagal: " + err.message); }
-        };
-
-        const now = new Date();
-        const yyyy = now.getFullYear();
-        const mm = String(now.getMonth() + 1).padStart(2, "0");
-        const todayStr = getLocalDate();
-        const bulanFrom = `${yyyy}-${mm}-01`;
-        const bulanTo = todayStr;
-        const tahunFrom = `${yyyy}-01-01`;
-        const tahunTo = todayStr;
-
-        return (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: cs.muted, whiteSpace: "nowrap" }}>⬇️ Download:</span>
-            <button onClick={() => downloadRekap(`Hari_${todayStr}`, todayStr, todayStr)}
-              style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, background: cs.accent + "20", border: "1px solid " + cs.accent + "44", color: cs.accent, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>
-              Hari Ini
-            </button>
-            <button onClick={() => downloadRekap(`Bulan_${yyyy}-${mm}`, bulanFrom, bulanTo)}
-              style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, background: cs.green + "20", border: "1px solid " + cs.green + "44", color: cs.green, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>
-              Bulan Ini
-            </button>
-            <button onClick={() => downloadRekap(`Tahun_${yyyy}`, tahunFrom, tahunTo)}
-              style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, background: cs.yellow + "20", border: "1px solid " + cs.yellow + "44", color: cs.yellow, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>
-              Tahun Ini
-            </button>
-          </div>
-        );
-      })()}
+        }}
+          style={{
+            marginLeft: "auto", fontSize: 11, padding: "4px 12px", borderRadius: 7, whiteSpace: "nowrap",
+            background: cs.green + "20", border: "1px solid " + cs.green + "44", color: cs.green,
+            cursor: "pointer", fontWeight: 700, display: "flex", alignItems: "center", gap: 5
+          }}>
+          ⬇️ Download {invoiceDateFrom || invoiceDateTo ? "Filter Ini" : "Semua"}
+        </button>
+      )}
     </div>
 
     {/* Search */}
