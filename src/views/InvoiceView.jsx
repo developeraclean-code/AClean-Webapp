@@ -97,7 +97,7 @@ return (
         </div>
       )}
     </div>
-    {/* ── Date range picker invoice ── */}
+    {/* ── Date range picker + Download rekap ── */}
     <div style={{
       display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
       background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, padding: "8px 12px"
@@ -119,7 +119,7 @@ return (
         }}
       />
       {(invoiceDateFrom || invoiceDateTo) && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 11, color: cs.accent, fontWeight: 600 }}>
             {filteredInv.length} invoice
           </span>
@@ -133,6 +133,98 @@ return (
           </button>
         </div>
       )}
+
+      {/* ── Download Rekap ── */}
+      {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (() => {
+        const downloadRekap = async (label, dateFrom, dateTo) => {
+          try {
+            if (!window.XLSX) {
+              await new Promise((res, rej) => {
+                const s = document.createElement("script");
+                s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+                s.onload = res; s.onerror = rej;
+                document.head.appendChild(s);
+              });
+            }
+            showNotif("⏳ Mengambil data dari server...");
+            let q = supabase.from("invoices")
+              .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent_at,created_at,teknisi,paid_method")
+              .order("created_at", { ascending: false });
+            if (dateFrom) q = q.gte("created_at", dateFrom + "T00:00:00");
+            if (dateTo) q = q.lte("created_at", dateTo + "T23:59:59");
+            const { data: rows, error } = await q;
+            if (error) { showNotif("❌ Gagal fetch: " + error.message); return; }
+            const XLSX = window.XLSX;
+            const data = (rows || []).map((inv, i) => ({
+              "No": i + 1,
+              "ID Invoice": inv.id || "-",
+              "Tgl Dibuat": inv.created_at ? new Date(inv.created_at).toLocaleDateString("id-ID") : "-",
+              "Customer": inv.customer || "-",
+              "No HP": inv.phone || "-",
+              "Layanan": inv.service || "-",
+              "Unit": inv.units || 1,
+              "Teknisi": inv.teknisi || "-",
+              "Status": inv.status || "-",
+              "Jasa (Rp)": inv.labor || 0,
+              "Material (Rp)": inv.material || 0,
+              "Discount (Rp)": inv.discount || 0,
+              "Trade-In (Rp)": inv.trade_in ? (inv.trade_in_amount || 0) : 0,
+              "Total (Rp)": inv.total || 0,
+              "Tgl Bayar": inv.paid_at ? new Date(inv.paid_at).toLocaleDateString("id-ID") : "-",
+              "Metode Bayar": inv.paid_method || "-",
+            }));
+            const totalPaid = (rows || []).filter(i => i.status === "PAID").reduce((s, i) => s + (i.total || 0), 0);
+            const totalUnpaid = (rows || []).filter(i => ["UNPAID", "OVERDUE"].includes(i.status)).reduce((s, i) => s + (i.total || 0), 0);
+            const totalDiskon = (rows || []).reduce((s, i) => s + (i.discount || 0) + (i.trade_in ? (i.trade_in_amount || 0) : 0), 0);
+            const summary = [
+              { "Keterangan": "Periode", "Nilai": label },
+              { "Keterangan": "Total Invoice", "Nilai": (rows || []).length },
+              { "Keterangan": "Invoice PAID", "Nilai": (rows || []).filter(i => i.status === "PAID").length },
+              { "Keterangan": "Invoice UNPAID", "Nilai": (rows || []).filter(i => i.status === "UNPAID").length },
+              { "Keterangan": "Invoice OVERDUE", "Nilai": (rows || []).filter(i => i.status === "OVERDUE").length },
+              { "Keterangan": "Omset Terbayar (Rp)", "Nilai": totalPaid },
+              { "Keterangan": "Belum Terbayar (Rp)", "Nilai": totalUnpaid },
+              { "Keterangan": "Total Potongan/Diskon (Rp)", "Nilai": totalDiskon },
+            ];
+            const wb = XLSX.utils.book_new();
+            const ws1 = XLSX.utils.json_to_sheet(data);
+            ws1["!cols"] = [{ wch: 4 }, { wch: 22 }, { wch: 13 }, { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 5 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 14 }];
+            const ws2 = XLSX.utils.json_to_sheet(summary);
+            ws2["!cols"] = [{ wch: 24 }, { wch: 18 }];
+            XLSX.utils.book_append_sheet(wb, ws1, "Invoice");
+            XLSX.utils.book_append_sheet(wb, ws2, "Summary");
+            XLSX.writeFile(wb, `Invoice_${label}_${getLocalDate()}.xlsx`);
+            showNotif(`✅ Export ${(rows || []).length} invoice (${label}) berhasil!`);
+          } catch (err) { showNotif("❌ Export gagal: " + err.message); }
+        };
+
+        const now = new Date();
+        const yyyy = now.getFullYear();
+        const mm = String(now.getMonth() + 1).padStart(2, "0");
+        const todayStr = getLocalDate();
+        const bulanFrom = `${yyyy}-${mm}-01`;
+        const bulanTo = todayStr;
+        const tahunFrom = `${yyyy}-01-01`;
+        const tahunTo = todayStr;
+
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: cs.muted, whiteSpace: "nowrap" }}>⬇️ Download:</span>
+            <button onClick={() => downloadRekap(`Hari_${todayStr}`, todayStr, todayStr)}
+              style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, background: cs.accent + "20", border: "1px solid " + cs.accent + "44", color: cs.accent, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>
+              Hari Ini
+            </button>
+            <button onClick={() => downloadRekap(`Bulan_${yyyy}-${mm}`, bulanFrom, bulanTo)}
+              style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, background: cs.green + "20", border: "1px solid " + cs.green + "44", color: cs.green, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>
+              Bulan Ini
+            </button>
+            <button onClick={() => downloadRekap(`Tahun_${yyyy}`, tahunFrom, tahunTo)}
+              style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, background: cs.yellow + "20", border: "1px solid " + cs.yellow + "44", color: cs.yellow, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>
+              Tahun Ini
+            </button>
+          </div>
+        );
+      })()}
     </div>
 
     {/* Search */}
