@@ -178,6 +178,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
               !["CANCELLED","COMPLETED","VERIFIED","REPORT_SUBMITTED"].includes(o.status)
             );
 
+
             return (
               <div key={tek} style={{ display: "flex", alignItems: "stretch", marginBottom: 6, minWidth: 650 }}>
                 {/* Nama teknisi */}
@@ -280,6 +281,49 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
               </div>
             );
           })}
+
+          {/* Baris "Belum Diassign" — order di hari ini yang belum punya teknisi atau jam */}
+          {(() => {
+            const unassigned = dayOrders.filter(o =>
+              (!o.teknisi || !o.time) &&
+              !["CANCELLED","COMPLETED","VERIFIED","REPORT_SUBMITTED"].includes(o.status)
+            );
+            if (unassigned.length === 0) return null;
+            return (
+              <div style={{ display: "flex", alignItems: "center", marginTop: 8, minWidth: 650 }}>
+                <div style={{ width: 90, flexShrink: 0, fontWeight: 700, color: cs.yellow, fontSize: 11, paddingRight: 8, whiteSpace: "nowrap" }}>
+                  ⚠️ Belum
+                </div>
+                <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: 5, background: cs.yellow + "08", border: "1px dashed " + cs.yellow + "55", borderRadius: 8, padding: "6px 8px", minHeight: 36 }}>
+                  {unassigned.map(o => (
+                    <div key={o.id}
+                      onClick={() => setExpandedId(expandedId === o.id ? null : o.id)}
+                      style={{ background: cs.yellow + "18", border: "1px solid " + cs.yellow + "55", borderRadius: 6, padding: "3px 8px", cursor: "pointer", position: "relative" }}>
+                      <div style={{ fontSize: 9, color: cs.yellow, fontWeight: 800 }}>
+                        {o.time ? o.time.slice(0,5) : "—:——"} · {o.teknisi || "Teknisi?"}
+                      </div>
+                      <div style={{ fontSize: 10, color: cs.text, fontWeight: 700 }}>{o.customer}</div>
+                      <div style={{ fontSize: 9, color: cs.muted }}>{o.service}{o.units > 1 ? ` ×${o.units}` : ""}</div>
+                      {expandedId === o.id && (
+                        <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 4, background: cs.surface, border: "1px solid " + cs.yellow + "66", borderRadius: 8, padding: "8px 10px", minWidth: 180, boxShadow: "0 4px 20px #0008" }}
+                          onClick={e => e.stopPropagation()}>
+                          <div style={{ fontWeight: 800, fontSize: 12, color: cs.text, marginBottom: 4 }}>{o.customer}</div>
+                          <div style={{ fontSize: 11, color: cs.yellow }}>
+                            {!o.teknisi && "⚠️ Belum ada teknisi"}
+                            {!o.time && (!o.teknisi ? " · " : "") + "⚠️ Belum ada jam"}
+                          </div>
+                          <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{o.service}{o.units > 1 ? ` · ${o.units} unit` : ""}</div>
+                          {o.address && <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{o.address}</div>}
+                          <div style={{ marginTop: 4 }}><StatusBadge status={o.status} /></div>
+                          <div style={{ fontSize: 10, color: cs.muted, marginTop: 4, fontStyle: "italic" }}>Edit di Planning Order di bawah untuk assign teknisi & jam</div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
