@@ -712,6 +712,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   const [editId, setEditId] = useState(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [filterStatus, setFilterStatus] = useState("ALL");
+  const [filterTeam, setFilterTeam] = useState("ALL");
   const [searchQ, setSearchQ] = useState("");
   const [expandedId, setExpandedId] = useState(null);
   // Tanggal aktif dari klik di Time Grid — Planning Order ikut filter ke hari ini
@@ -1155,6 +1156,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       return true;
     });
     if (filterStatus !== "ALL") list = list.filter(o => o.status === filterStatus);
+    if (filterTeam !== "ALL") list = list.filter(o => (o.team_slot || "") === filterTeam);
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
       list = list.filter(o =>
@@ -1170,7 +1172,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       if (dateComp !== 0) return dateComp;
       return (a.time || "").localeCompare(b.time || "");
     });
-  }, [ordersData, filterStatus, searchQ, TODAY, gridDate]);
+  }, [ordersData, filterStatus, filterTeam, searchQ, TODAY, gridDate]);
 
   const inputStyle = {
     background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
@@ -1486,6 +1488,69 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
             </select>
           </div>
         </div>
+
+        {/* Filter per Tim — chip buttons */}
+        {(() => {
+          // Kumpulkan semua team_slot yang ada di inboxOrders (sebelum filter tim)
+          const teamsInView = TEAM_SLOTS.filter(s =>
+            ordersData.some(o => {
+              if (!o.date) return false;
+              if (gridDate) return o.date === gridDate && o.team_slot === s;
+              return o.date >= TODAY && o.team_slot === s && o.status !== "CANCELLED";
+            })
+          );
+          if (teamsInView.length === 0) return null;
+          return (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: cs.muted, fontWeight: 600, marginRight: 2 }}>Filter Tim:</span>
+              <button
+                onClick={() => setFilterTeam("ALL")}
+                style={{
+                  background: filterTeam === "ALL" ? cs.accent : cs.card,
+                  color: filterTeam === "ALL" ? "#fff" : cs.muted,
+                  border: "1px solid " + (filterTeam === "ALL" ? cs.accent : cs.border),
+                  borderRadius: 20, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontWeight: filterTeam === "ALL" ? 700 : 400,
+                }}>
+                Semua Tim
+              </button>
+              {teamsInView.map(s => {
+                // Hitung order & konflik untuk tim ini
+                const teamOrders = inboxOrders.filter(o => o.team_slot === s);
+                const hasConflict = teamOrders.some(o => {
+                  if (!o.time || !o.teknisi) return false;
+                  const same = teamOrders.filter(o2 => o2.teknisi === o.teknisi && o2.id !== o.id && o2.time);
+                  return same.some(o2 => {
+                    const [h1,m1] = o.time.split(":").map(Number);
+                    const s1 = h1*60+m1, e1 = s1 + Math.round(hitungDurasi(o.service,o.units)*60);
+                    const [h2,m2] = o2.time.split(":").map(Number);
+                    const s2 = h2*60+m2, e2 = s2 + Math.round(hitungDurasi(o2.service,o2.units)*60);
+                    return s1 < e2 && e1 > s2;
+                  });
+                });
+                const isActive = filterTeam === s;
+                return (
+                  <button key={s}
+                    onClick={() => setFilterTeam(isActive ? "ALL" : s)}
+                    style={{
+                      background: isActive ? (hasConflict ? cs.red : cs.green) : cs.card,
+                      color: isActive ? "#fff" : hasConflict ? cs.red : cs.text,
+                      border: "1px solid " + (hasConflict ? cs.red + (isActive ? "" : "88") : isActive ? cs.green : cs.border),
+                      borderRadius: 20, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontWeight: isActive ? 700 : 400,
+                      display: "flex", alignItems: "center", gap: 5,
+                    }}>
+                    {hasConflict && <span style={{ fontSize: 10 }}>⚠️</span>}
+                    {s}
+                    <span style={{
+                      background: isActive ? "rgba(255,255,255,0.25)" : cs.border,
+                      color: isActive ? "#fff" : cs.muted,
+                      borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 800,
+                    }}>{teamOrders.length}</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* Info Opsi B */}
         <div style={{ background: cs.accent + "0a", border: "1px solid " + cs.accent + "33", borderRadius: 8, padding: "7px 12px", marginBottom: 14, fontSize: 11, color: cs.muted }}>
