@@ -23,26 +23,29 @@ function hitungDurasi(service, units) {
 }
 
 function toMinutes(timeStr) {
-  if (!timeStr) return null;
+  if (!timeStr || timeStr === "00:00" || timeStr === "00:00:00") return null;
   const [h, m] = timeStr.split(":").map(Number);
+  if (h === 0 && m === 0) return null; // jam belum diisi, anggap kosong
   return h * 60 + m;
+}
+
+function hasValidTime(timeStr) {
+  return toMinutes(timeStr) !== null;
 }
 
 // ── Conflict detection: pakai durasi aktual, bukan ±1 jam flat ──
 function hasConflict(orders, teknisi, date, time, excludeId = null, service = "Cleaning", units = 1) {
-  if (!teknisi || !date || !time) return null;
-  const [h, m] = time.split(":").map(Number);
-  const startMin = h * 60 + m;
+  if (!teknisi || !date || !hasValidTime(time)) return null;
+  const startMin = toMinutes(time);
   const durMin = Math.round(hitungDurasi(service, units) * 60);
   const endMin = startMin + durMin;
   const conflicts = orders.filter(o => {
     if (o.id === excludeId) return false;
     if (o.teknisi !== teknisi && o.teknisi2 !== teknisi) return false;
     if (o.date !== date) return false;
-    if (!o.time) return false;
+    if (!hasValidTime(o.time)) return false;
     if (!["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS","ON_SITE"].includes(o.status)) return false;
-    const [oh, om] = o.time.split(":").map(Number);
-    const oStartMin = oh * 60 + om;
+    const oStartMin = toMinutes(o.time);
     const oDurMin = Math.round(hitungDurasi(o.service || "Cleaning", o.units || 1) * 60);
     const oEndMin = oStartMin + oDurMin;
     return startMin < oEndMin && endMin > oStartMin;
@@ -174,7 +177,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
           {gridTeknisi.map(tek => {
             const color = getTechColor(tek, teknisiData);
             const tekOrders = dayOrders.filter(o =>
-              o.time && o.teknisi === tek &&
+              hasValidTime(o.time) && o.teknisi === tek &&
               !["CANCELLED","COMPLETED","VERIFIED","REPORT_SUBMITTED"].includes(o.status)
             );
 
@@ -285,7 +288,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
           {/* Baris "Belum Diassign" — order di hari ini yang belum punya teknisi atau jam */}
           {(() => {
             const unassigned = dayOrders.filter(o =>
-              (!o.teknisi || !o.time) &&
+              (!o.teknisi || !hasValidTime(o.time)) &&
               !["CANCELLED","COMPLETED","VERIFIED","REPORT_SUBMITTED"].includes(o.status)
             );
             if (unassigned.length === 0) return null;
@@ -1107,12 +1110,10 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     for (let i = 0; i < orders.length; i++) {
       for (let j = i + 1; j < orders.length; j++) {
         const a = orders[i], b = orders[j];
-        if (!a.time || !b.time) continue;
-        const [h1, m1] = a.time.split(":").map(Number);
-        const aStart = h1 * 60 + m1;
+        if (!hasValidTime(a.time) || !hasValidTime(b.time)) continue;
+        const aStart = toMinutes(a.time);
         const aEnd = aStart + Math.round(hitungDurasi(a.service || "Cleaning", a.units || 1) * 60);
-        const [h2, m2] = b.time.split(":").map(Number);
-        const bStart = h2 * 60 + m2;
+        const bStart = toMinutes(b.time);
         const bEnd = bStart + Math.round(hitungDurasi(b.service || "Cleaning", b.units || 1) * 60);
         if (aStart < bEnd && aEnd > bStart) return true;
       }
