@@ -890,9 +890,16 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     setBulkDispatching(true);
     try {
       // Ambil semua order hari itu yang confirmed/pending (bukan cancelled)
-      const dayOrders = ordersData.filter(o =>
-        o.date === date && !["CANCELLED", "COMPLETED", "INVOICED"].includes(o.status)
-      );
+      // Filter jam 09:00–17:00 & urutkan berdasarkan jam
+      const dayOrders = ordersData
+        .filter(o => {
+          if (o.date !== date) return false;
+          if (["CANCELLED", "COMPLETED", "INVOICED"].includes(o.status)) return false;
+          const min = toMinutes(o.time);
+          if (min === null) return true; // belum ada jam, tetap ikut
+          return min >= 9 * 60 && min <= 17 * 60;
+        })
+        .sort((a, b) => (a.time || "").localeCompare(b.time || ""));
       if (dayOrders.length === 0) { showNotif("Tidak ada order aktif di tanggal ini"); return; }
 
       // Kumpulkan pesan per anggota (teknisi & helper), group by nama
@@ -906,7 +913,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           { name: o.helper3, role: "Helper" },
         ].filter(m => m.name);
 
-        const jobLine = `• ${o.time?.slice(0,5) || "—"} ${o.customer} (${o.service}${o.units > 1 ? " ×" + o.units : ""}) — ${o.address || "alamat belum diisi"}`;
+        const jobLine = `• ${o.time?.slice(0,5) || "—:——"} ${o.customer} (${o.service}${o.units > 1 ? " ×" + o.units : ""}) — ${o.address || "alamat belum diisi"}`;
 
         for (const m of members) {
           const tek = teknisiData.find(t => t.name === m.name);
