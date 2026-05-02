@@ -168,7 +168,7 @@ const verifyLaporan = async (r) => {
     const isComplainSvc2 = r.service === "Complain";
     const prevGaransiActive2 = isComplainSvc2
       ? invoicesData.filter(inv =>
-        inv.customer === r.customer && inv.service !== "Complain" &&
+        (inv.customer || "").trim() === (r.customer || "").trim() && inv.service !== "Complain" &&
         inv.garansi_expires && inv.garansi_expires >= todayInv2 &&
         ["PAID", "UNPAID", "APPROVED", "PENDING_APPROVAL"].includes(inv.status)
       ).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
