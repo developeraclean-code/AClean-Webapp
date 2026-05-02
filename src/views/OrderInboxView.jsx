@@ -1521,20 +1521,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       {/* ═══ DAFTAR ORDER INBOX (today + ke depan) ═══ */}
       <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 10 }}>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>
-              📋 Planning Order
-              <span style={{ color: cs.muted, fontSize: 12, fontWeight: 400, marginLeft: 6 }}>({inboxOrders.length})</span>
-              {gridDate && (
-                <span style={{ marginLeft: 10, background: cs.accent + "22", color: cs.accent, border: "1px solid " + cs.accent + "44", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                  onClick={() => setGridDate(null)}>
-                  📅 {gridDate} &nbsp;✕ hapus filter
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
-              {gridDate ? `Filter: ${gridDate} · klik "✕ hapus filter" untuk lihat semua` : "Hari ini & ke depan · klik hari di Time Grid untuk filter · CONFIRMED → naik ke Order Masuk"}
-            </div>
+          <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>
+            📋 Planning Order
+            <span style={{ color: cs.muted, fontSize: 12, fontWeight: 400, marginLeft: 6 }}>({inboxOrders.length})</span>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
@@ -1548,6 +1537,55 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
             </select>
           </div>
         </div>
+
+        {/* Filter per Hari — chip buttons */}
+        {(() => {
+          // Buat chip untuk 7 hari ke depan yang ada order-nya
+          const DAY_LABELS = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
+          const dayChips = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date(TODAY); d.setDate(d.getDate() + i);
+            const iso = d.toISOString().slice(0, 10);
+            const count = ordersData.filter(o => o.date === iso && o.status !== "CANCELLED").length;
+            const label = i === 0 ? "Hari Ini" : i === 1 ? "Besok" : DAY_LABELS[d.getDay()] + " " + d.getDate();
+            return { iso, label, count };
+          }).filter(c => c.count > 0);
+          return (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: cs.muted, fontWeight: 600, marginRight: 2 }}>Filter Hari:</span>
+              <button
+                onClick={() => setGridDate(null)}
+                style={{
+                  background: !gridDate ? cs.accent : cs.card,
+                  color: !gridDate ? "#fff" : cs.muted,
+                  border: "1px solid " + (!gridDate ? cs.accent : cs.border),
+                  borderRadius: 20, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontWeight: !gridDate ? 700 : 400,
+                }}>
+                Semua
+              </button>
+              {dayChips.map(({ iso, label, count }) => {
+                const isActive = gridDate === iso;
+                return (
+                  <button key={iso}
+                    onClick={() => setGridDate(isActive ? null : iso)}
+                    style={{
+                      background: isActive ? cs.accent : cs.card,
+                      color: isActive ? "#fff" : iso === TODAY ? cs.accent : cs.text,
+                      border: "1px solid " + (isActive ? cs.accent : iso === TODAY ? cs.accent + "66" : cs.border),
+                      borderRadius: 20, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontWeight: isActive ? 700 : iso === TODAY ? 600 : 400,
+                      display: "flex", alignItems: "center", gap: 5,
+                    }}>
+                    {label}
+                    <span style={{
+                      background: isActive ? "rgba(255,255,255,0.25)" : cs.border,
+                      color: isActive ? "#fff" : cs.muted,
+                      borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 800,
+                    }}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* Filter per Tim — chip buttons */}
         {(() => {
