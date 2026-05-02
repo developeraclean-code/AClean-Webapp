@@ -8437,11 +8437,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const newStatus = selectedLaporan.status === "REVISION" ? "SUBMITTED" : selectedLaporan.status;
 
                     // Recombine jasa + barang + material items
-                    const combinedMats = [
-                      ...(editLaporanForm.editJasaItems || []).map(j => ({ ...j, keterangan: "jasa" })),
-                      ...(laporanBarangItems || []).filter(b => b.nama).map(b => ({ ...b, keterangan: "barang" })),
-                      ...(editLaporanForm.editMatItems || [])
-                    ];
+                    // Install service: pakai laporanInstallItems (form grid), bukan editMatItems
+                    const isEditInstall = newService === "Install";
+                    const combinedMats = isEditInstall
+                      ? INSTALL_ITEMS
+                          .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
+                          .map(item => {
+                            const hSat = lookupHargaGlobal(item.label, item.satuan);
+                            const qty = parseFloat(laporanInstallItems[item.key] || 0);
+                            return { id: item.key, nama: item.label, jumlah: qty, satuan: item.satuan, harga_satuan: hSat, subtotal: hSat * qty, keterangan: "" };
+                          })
+                      : [
+                          ...(editLaporanForm.editJasaItems || []).map(j => ({ ...j, keterangan: "jasa" })),
+                          ...(laporanBarangItems || []).filter(b => b.nama).map(b => ({ ...b, keterangan: "barang" })),
+                          ...(editLaporanForm.editMatItems || [])
+                        ];
 
                     const updatePayload = { status: newStatus, service: newService, catatan_global: editLaporanForm.catatan_global || "", rekomendasi: editLaporanForm.rekomendasi || "", units_json: JSON.stringify(editLaporanForm.editUnits || []), materials_json: JSON.stringify(combinedMats), edit_log: JSON.stringify(allLogs) };
 
