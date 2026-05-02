@@ -382,9 +382,10 @@ return (
                       })) return;
                       const paidAt = new Date().toISOString();
                       const upd = { total: 0, labor: 0, material: 0, discount: 0, trade_in: false, trade_in_amount: 0, garansi_status: "GARANSI_OVERRIDE_FREE", status: "PAID", paid_at: paidAt };
+                      const { garansi_status: _gs1, ...updDB } = upd; // garansi_status tidak ada di DB
                       setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
                       setOrdersData(prev => prev.map(o => o.id === inv.job_id ? { ...o, status: "PAID" } : o));
-                      const { error } = await updateInvoice(supabase, inv.id, upd, auditUserName());
+                      const { error } = await updateInvoice(supabase, inv.id, updDB, auditUserName());
                       if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
                       if (inv.job_id) await updateOrderStatus(supabase, inv.job_id, "PAID", auditUserName());
                       addAgentLog("COMPLAIN_OVERRIDE_FREE", `Invoice ${inv.id} override GRATIS & LUNAS oleh ${currentUser?.name}`, "SUCCESS");
@@ -399,8 +400,9 @@ return (
                         confirmText: "Override Berbayar"
                       })) return;
                       const upd = { garansi_status: "GARANSI_OVERRIDE_PAID" };
+                      const { garansi_status: _gs2, ...updDB2 } = upd; // garansi_status tidak ada di DB
                       setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
-                      const { error } = await updateInvoice(supabase, inv.id, upd, auditUserName());
+                      const { error } = await updateInvoice(supabase, inv.id, updDB2, auditUserName());
                       if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
                       addAgentLog("COMPLAIN_OVERRIDE_PAID", `Invoice ${inv.id} di-override BERBAYAR oleh ${currentUser?.name}`, "INFO");
                       showNotif("✅ Invoice di-override menjadi BERBAYAR — edit nilai jika perlu sebelum approve");
