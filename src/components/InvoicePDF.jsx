@@ -110,7 +110,8 @@ export default function InvoicePDF({ inv, logoUrl, appSettings = {} }) {
   const repairRows = matDetails.filter(m => detectKat(m) === "repair");
   const freonRows  = matDetails.filter(m => detectKat(m) === "freon");
   const matRows    = matDetails.filter(m => detectKat(m) === "mat");
-  const perUnit    = inv.units > 0 ? Math.round((inv.labor || 0) / inv.units) : (inv.labor || 0);
+  const unitCount  = Array.isArray(inv.units) ? inv.units.length : (Number(inv.units) || 1);
+  const perUnit    = unitCount > 0 ? Math.round((inv.labor || 0) / unitCount) : (inv.labor || 0);
 
   // Material remainder (invoice lama)
   const matDetailTotal = matDetails.reduce((s, m) => s + (m.subtotal || 0), 0);
@@ -187,7 +188,7 @@ export default function InvoicePDF({ inv, logoUrl, appSettings = {} }) {
           {inv.labor > 0 && matDetails.length === 0 && (
             <View style={[s.tr]}>
               <Text style={[s.td, { flex: 1 }]}>{inv.service || "Jasa Servis AC"}</Text>
-              <Text style={[s.td, { width: 60, textAlign: "right" }]}>{inv.units || 1}</Text>
+              <Text style={[s.td, { width: 60, textAlign: "right" }]}>{unitCount}</Text>
               <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier" }]}>{perUnit.toLocaleString("id-ID")}</Text>
               <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(inv.labor || 0).toLocaleString("id-ID")}</Text>
             </View>

@@ -198,7 +198,8 @@ const verifyLaporan = async (r) => {
     const newInv = {
       id: invId, job_id: r.job_id, laporan_id: r.id,
       customer: r.customer, phone: r.phone || ord?.phone || "",
-      service: r.service + (ord?.type ? " - " + ord.type : ""), units: r.units || ord?.units || 1,
+      service: r.service + (ord?.type ? " - " + ord.type : ""),
+      units: Array.isArray(r.units) ? r.units.length : (Number(r.units) || Number(ord?.units) || 1),
       teknisi: r.teknisi || "",
       labor: finalLabor2, material: finalMat2,
       materials_detail: vMDetail.length > 0 ? JSON.stringify(vMDetail) : null,

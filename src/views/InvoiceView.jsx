@@ -35,7 +35,7 @@ return (
             "No": i + 1, "ID Invoice": inv.id || "-",
             "Tgl Dibuat": inv.created_at ? new Date(inv.created_at).toLocaleDateString("id-ID") : "-",
             "Customer": inv.customer || "-", "No HP": inv.phone || "-",
-            "Layanan": inv.service || "-", "Unit": inv.units || 1,
+            "Layanan": inv.service || "-", "Unit": Array.isArray(inv.units) ? inv.units.length : (inv.units || 1),
             "Status": inv.status || "-", "Total (Rp)": inv.total || 0,
             "Teknisi": inv.teknisi || "-",
             "Tgl Bayar": inv.paid_at ? new Date(inv.paid_at).toLocaleDateString("id-ID") : "-",
@@ -283,7 +283,7 @@ return (
           )}
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "4px 20px", fontSize: 12, color: cs.muted, marginBottom: 12 }}>
             <span>👤 {inv.customer}</span><span>📱 {inv.phone}</span>
-            <span>🔧 {inv.service} · {inv.units} unit</span>
+            <span>🔧 {inv.service} · {Array.isArray(inv.units) ? inv.units.length : (inv.units || 1)} unit</span>
             {inv.due && <span>⏰ Jatuh tempo: {inv.due}</span>}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
