@@ -8570,25 +8570,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
                         const totalInv = finalTotal3;
 
-                        // Delete old invoice + insert new (preserve PAID status via garansi check)
-                        const { error: delInvErr } = await deleteInvoice(supabase, existInv.id, auditUserName(), "ADMIN_EDIT_GRATIS");
-                        if (!delInvErr) {
-                          const newInv = {
-                            ...existInv,
-                            service: newService,
-                            materials_detail: JSON.stringify(vMDetail),
-                            labor: finalLabor3, material: finalMat3, total: totalInv,
-                            status: newInvoiceStatus3,
-                            repair_gratis: newRepairGratis,
-                            updated_at: new Date().toISOString(),
-                          };
-                          delete newInv.id;
-                          const { error: insertErr } = await insertInvoice(supabase, { ...newInv, id: existInv.id });
-                          if (!insertErr) {
-                            setInvoicesData(prev => [...prev.filter(i => i.id !== existInv.id), { ...newInv, id: existInv.id }]);
-                            addAgentLog("INVOICE_REGEN", `Invoice ${existInv.id} diupdate dari edit laporan oleh ${currentUser?.name}`, "SUCCESS");
-                            showNotif(`✅ Laporan + Invoice ${existInv.id} diperbarui dari data admin`);
-                          }
+                        // Update invoice langsung (bukan delete+insert) untuk hindari constraint issue
+                        const invUpdFields = {
+                          service: newService,
+                          materials_detail: JSON.stringify(vMDetail),
+                          labor: finalLabor3, material: finalMat3, total: totalInv,
+                          status: newInvoiceStatus3,
+                          repair_gratis: newRepairGratis ?? null,
+                          updated_at: new Date().toISOString(),
+                        };
+                        const { error: invUpdErr } = await updateInvoice(supabase, existInv.id, invUpdFields, auditUserName());
+                        if (!invUpdErr) {
+                          setInvoicesData(prev => prev.map(i => i.id === existInv.id ? { ...i, ...invUpdFields } : i));
+                          addAgentLog("INVOICE_REGEN", `Invoice ${existInv.id} diupdate dari edit laporan oleh ${currentUser?.name}`, "SUCCESS");
+                          showNotif(`✅ Laporan + Invoice ${existInv.id} diperbarui dari data admin`);
+                        } else {
+                          console.warn("❌ updateInvoice gagal:", invUpdErr.message);
+                          showNotif(`❌ Gagal update invoice: ${invUpdErr.message.slice(0, 60)}`);
                         }
                       }
                     }

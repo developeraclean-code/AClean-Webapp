@@ -725,7 +725,7 @@ return (
                 setLaporanBarangItems(barangFromMats);
                 setEditLaporanForm({ editService: r.service, rekomendasi: r.rekomendasi || "", catatan_global: r.catatan_global || r.catatan || "", editUnits: JSON.parse(JSON.stringify(r.units || [])), editJasaItems: mats.filter(m => m.keterangan === "jasa"), editMatItems: mats.filter(m => m.keterangan !== "jasa" && m.keterangan !== "barang") });
                 // ✨ Load repair type from existing invoice
-                const existInvForEdit = invoicesData.find(i => i.job_id === r.id);
+                const existInvForEdit = invoicesData.find(i => i.job_id === r.job_id);
                 setEditRepairType(existInvForEdit?.repair_gratis || "berbayar");
                 setEditGratisAlasan("");
                 setActiveEditUnitIdx(0);
