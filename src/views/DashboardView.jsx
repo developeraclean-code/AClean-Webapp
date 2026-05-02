@@ -74,9 +74,15 @@ if (role === "Teknisi" || role === "Helper") {
 }
 
 // ── OWNER / ADMIN DASHBOARD ────────────────────────────────
+// Tanggal pengerjaan = order.date (bukan paid_at). Fallback ke created_at invoice.
+const orderDateMap = Object.fromEntries(ordersData.map(o => [o.id, o.date]));
+function jobDate(inv) {
+  return orderDateMap[inv.job_id] || (inv.created_at || "").slice(0, 10) || "";
+}
+
 const todayOrders = ordersData.filter(o => o.date === TODAY);
 const unpaidCount = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
-const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && String(i.paid_at || "").startsWith(bulanIni)).reduce((a, b) => a + b.total, 0);
+const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(bulanIni)).reduce((a, b) => a + b.total, 0);
 const lowStock = inventoryData.filter(i => i.status === "CRITICAL" || i.status === "OUT").length;
 const garansiKritisD = invoicesData.filter(inv => {
   if (!inv.garansi_expires) return false;
@@ -170,7 +176,7 @@ return (
       {[
         { label: "Order Hari Ini", value: todayOrders.length, sub: `${todayOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · ${todayOrders.filter(o => o.status === "COMPLETED").length} selesai`, color: cs.accent, icon: "📋", onClick: () => setActiveMenu("orders") },
         { label: "Invoice Unpaid", value: unpaidCount, sub: "Perlu follow-up", color: cs.yellow, icon: "🧾", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("UNPAID"); } },
-        ...(role === "Owner" ? [{ label: "Pendapatan Bln Ini", value: fmt(totalRevBulanIni), sub: "Invoice terbayar", color: cs.green, icon: "💰", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } }] : [{ label: "Invoice Selesai", value: invoicesData.filter(i => i.status === "PAID" && String(i.paid_at || "").startsWith(bulanIni)).length, sub: "Terbayar bln ini", color: cs.green, icon: "✅", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } }]),
+        ...(role === "Owner" ? [{ label: "Pendapatan Bln Ini", value: fmt(totalRevBulanIni), sub: "Invoice terbayar", color: cs.green, icon: "💰", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } }] : [{ label: "Invoice Selesai", value: invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(bulanIni)).length, sub: "Dikerjakan bln ini", color: cs.green, icon: "✅", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } }]),
         { label: "Stok Kritis", value: lowStock, sub: "Perlu restock", color: cs.red, icon: "📦", onClick: () => setActiveMenu("inventory") },
       ].map(kpi => (
         <div key={kpi.label} onClick={kpi.onClick} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 18, cursor: "pointer" }}>
@@ -197,14 +203,19 @@ return (
         return d;
       };
 
-      const paidInvoices = invoicesData.filter(i => i.status === "PAID" && i.paid_at);
+      // Pendapatan berdasarkan tanggal PENGERJAAN (order.date), bukan tanggal bayar
+      const paidInvoices = invoicesData.filter(i => i.status === "PAID" && jobDate(i));
 
       const buildData = (mode) => {
         const start = startOf(mode);
-        const filtered = paidInvoices.filter(i => new Date(i.paid_at) >= start);
+        const filtered = paidInvoices.filter(i => new Date(jobDate(i) + "T00:00:00") >= start);
         if (mode === "hari") {
+          // Mode hari: group by jam paid_at (karena job date tidak punya jam)
           const hours = Array.from({ length: 24 }, (_, h) => ({ label: `${String(h).padStart(2, "0")}:00`, total: 0, count: 0 }));
-          filtered.forEach(i => { const h = new Date(i.paid_at).getHours(); hours[h].total += (i.total || 0); hours[h].count++; });
+          paidInvoices.filter(i => jobDate(i) === todayStr).forEach(i => {
+            const h = i.paid_at ? new Date(i.paid_at).getHours() : new Date().getHours();
+            hours[h].total += (i.total || 0); hours[h].count++;
+          });
           return hours.filter((_, h) => h <= new Date().getHours());
         }
         if (mode === "minggu") {
@@ -212,13 +223,13 @@ return (
           return Array.from({ length: 7 }, (_, i) => {
             const d = new Date(startOf("minggu")); d.setDate(d.getDate() + i);
             const dStr = d.toISOString().slice(0, 10);
-            const dayInv = paidInvoices.filter(inv => inv.paid_at?.slice(0, 10) === dStr);
+            const dayInv = paidInvoices.filter(inv => jobDate(inv) === dStr);
             return { label: days[d.getDay()], date: dStr, total: dayInv.reduce((s, v) => s + (v.total || 0), 0), count: dayInv.length };
           });
         }
         if (mode === "bulan") {
           const weeks = [{ label: "Mgg 1", total: 0, count: 0 }, { label: "Mgg 2", total: 0, count: 0 }, { label: "Mgg 3", total: 0, count: 0 }, { label: "Mgg 4+", total: 0, count: 0 }];
-          filtered.forEach(i => { const wk = Math.min(Math.floor((new Date(i.paid_at).getDate() - 1) / 7), 3); weeks[wk].total += (i.total || 0); weeks[wk].count++; });
+          filtered.forEach(i => { const wk = Math.min(Math.floor((new Date(jobDate(i) + "T00:00:00").getDate() - 1) / 7), 3); weeks[wk].total += (i.total || 0); weeks[wk].count++; });
           return weeks;
         }
         return [];
@@ -231,7 +242,7 @@ return (
 
       // ── Omset per TEKNISI + HELPER (gabung) ──
       const start = startOf(omsetView);
-      const paidInPeriod = paidInvoices.filter(i => new Date(i.paid_at) >= start);
+      const paidInPeriod = paidInvoices.filter(i => new Date(jobDate(i) + "T00:00:00") >= start);
       const byPerson = {};
 
       paidInPeriod.forEach(inv => {
@@ -483,7 +494,7 @@ return (
 
       const revenueByMonth = months.map(m => ({
         ...m,
-        revenue: invoicesData.filter(i => i.status === "PAID" && String(i.paid_at || "").startsWith(m.prefix)).reduce((s, i) => s + (i.total || 0), 0),
+        revenue: invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(m.prefix)).reduce((s, i) => s + (i.total || 0), 0),
         expenseTotal: (expensesData || []).filter(e => (e.date || "").startsWith(m.prefix)).reduce((s, e) => s + (e.amount || 0), 0),
       }));
 
@@ -501,7 +512,7 @@ return (
       const unpaidTotal = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").reduce((s, i) => s + (i.total || 0), 0);
 
       const byService = {};
-      invoicesData.filter(i => i.status === "PAID" && (i.paid_at || i.created_at || "").startsWith(thisMPrefix)).forEach(i => {
+      invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(thisMPrefix)).forEach(i => {
         const s = i.service || "Lainnya";
         byService[s] = (byService[s] || 0) + (i.total || 0);
       });
