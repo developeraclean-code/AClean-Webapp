@@ -3580,7 +3580,7 @@ ${photoPageHTML}
     }
     // Simpan bukti bayar URL ke invoice jika ada (dari WA payment detection)
     if (paymentProofUrl) {
-      supabase.from("invoices").update({ payment_proof_url: paymentProofUrl }).eq("id", inv.id).catch(() => {});
+      supabase.from("invoices").update({ payment_proof_url: paymentProofUrl }).eq("id", inv.id).then(() => {});
     }
 
     // Notif WA ke customer — hanya jika admin/owner menyetujui (sendCustNotif=true)
@@ -11131,6 +11131,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 invoicesData.find(i => i.phone === sugg.phone && (i.status === "UNPAID" || i.status === "OVERDUE"));
               if (!inv) {
                 showNotif("⚠️ Invoice tidak ditemukan untuk nomor ini. Cari manual di halaman Invoice.");
+                setActiveMenu("invoice");
+                setSearchInvoice(sugg.phone || "");
               } else {
                 const bankNote = sugg.bank ? "transfer_" + sugg.bank.toLowerCase().replace(/\s/g,"_") : "transfer";
                 await markPaid(inv, bankNote, "Auto-detect WA: " + (sugg.raw_message||"").slice(0,100), true, sugg.image_url || null);
@@ -11138,6 +11140,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   status:"CONFIRMED", resolved_at: new Date(Date.now()+7*3600000).toISOString(), resolved_by: currentUser?.name||"Admin"
                 }).eq("id", sugg.id).then(() => {});
                 setPaymentSuggestions(prev => prev.filter(p => p.id !== sugg.id));
+                setActiveMenu("invoice");
+                setSearchInvoice(inv.id);
+                setInvoiceFilter("Semua");
               }
               setPaymentSuggestBanner(null);
             }} style={{ flex:1, background:"#22c55e", border:"none", color:"#fff",

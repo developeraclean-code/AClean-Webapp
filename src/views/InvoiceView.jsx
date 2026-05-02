@@ -459,14 +459,15 @@ return (
               (currentUser?.role === "Owner" || currentUser?.role === "Admin") &&
               inv.phone && laporanReports?.find(r => r.job_id === inv.job_id) && (
               <button onClick={async (e) => {
-                e.currentTarget.disabled = true;
-                e.currentTarget.textContent = "⏳ Mengirim...";
+                const btn = e.currentTarget;
+                btn.disabled = true;
+                btn.textContent = "⏳ Mengirim...";
                 try {
                   const laporan = laporanReports.find(r => r.job_id === inv.job_id);
                   const srUrl = await uploadServiceReportPDFForWA(laporan, inv);
                   if (srUrl) {
                     const srMsg = `📋 *Service Report Card* — ${inv.service || "Servis AC"} untuk ${inv.customer}\n\nDokumen ini berisi detail pengerjaan & dokumentasi foto teknisi.\n\nTerima kasih telah mempercayai AClean Service! 🙏`;
-                    sendWAFn(inv.phone, srMsg, { url: srUrl, filename: `ServiceReport-${inv.job_id}.pdf` });
+                    await sendWAFn(inv.phone, srMsg, { url: srUrl, filename: `ServiceReport-${inv.job_id}.pdf` });
                     showNotif(`📋 Service Report Card terkirim ke ${inv.customer}`);
                   } else {
                     showNotif("⚠️ Gagal upload report card");
@@ -474,8 +475,10 @@ return (
                 } catch (err) {
                   showNotif("⚠️ Error: " + err.message);
                 } finally {
-                  e.currentTarget.disabled = false;
-                  e.currentTarget.textContent = "📋 Kirim Report Card";
+                  if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = "📋 Kirim Report Card";
+                  }
                 }
               }}
               style={{ background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#38bdf8", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
