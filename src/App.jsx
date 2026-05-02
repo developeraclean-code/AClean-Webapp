@@ -8514,7 +8514,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         });
 
                         // Inject service fee jika tidak ada jasa row — per-unit dari Card 1/4 tipe
-                        if (!vMDetail.some(m => m.keterangan === "jasa")) {
+                        // Install: semua item sudah include jasa dalam INSTALL_ITEMS → skip inject
+                        if (!isEditInstall && !vMDetail.some(m => m.keterangan === "jasa")) {
                           const editUnits = editLaporanForm.editUnits || [];
                           const unitsWithTipe = editUnits.filter(u => u && u.tipe);
                           if (unitsWithTipe.length > 0) {
@@ -8539,8 +8540,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           }
                         }
 
-                        const laborV = vMDetail.filter(m => m.keterangan === "jasa").reduce((s, m) => s + m.subtotal, 0) || hitungLabor(selectedLaporan.service, ord?.type, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1);
-                        const matV = vMDetail.filter(m => m.keterangan !== "jasa").reduce((s, m) => s + m.subtotal, 0);
+                        // Install: labor = 0, semua item (termasuk jasa pasang) masuk ke material
+                        const laborV = isEditInstall ? 0 : (vMDetail.filter(m => m.keterangan === "jasa").reduce((s, m) => s + m.subtotal, 0) || hitungLabor(selectedLaporan.service, ord?.type, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1));
+                        const matV = isEditInstall
+                          ? vMDetail.reduce((s, m) => s + m.subtotal, 0)
+                          : vMDetail.filter(m => m.keterangan !== "jasa").reduce((s, m) => s + m.subtotal, 0);
 
                         // ✨ FIX #3: Add garansi logic ke edit handler
                         const todayInv3 = new Date().toISOString().slice(0, 10);
