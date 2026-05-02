@@ -399,7 +399,7 @@ return (
                         message: `Ubah invoice ${inv.id} menjadi BERBAYAR?\n\nJika total sekarang Rp 0, silakan edit nilai dulu via tombol Edit Nilai.`,
                         confirmText: "Override Berbayar"
                       })) return;
-                      const upd = { garansi_status: "GARANSI_OVERRIDE_PAID" };
+                      const upd = { garansi_status: "GARANSI_OVERRIDE_PAID", status: "PENDING_APPROVAL", repair_gratis: null };
                       const { garansi_status: _gs2, ...updDB2 } = upd; // garansi_status tidak ada di DB
                       setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
                       const { error } = await updateInvoice(supabase, inv.id, updDB2, auditUserName());
