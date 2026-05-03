@@ -9,26 +9,37 @@ export const sameCustomer = (c, phone, name) => {
 };
 
 // Cari customer paling tepat — prioritas (phone+name) > phone saja.
+// CATATAN: 1 nomor HP bisa punya banyak customer (beda lokasi, beda nama belakang).
+// Jangan gunakan phone-only match jika ada lebih dari 1 customer dengan HP sama.
 export const findCustomer = (customers, phone, name) => {
   if (!phone && !name) return null;
   if (phone && name) {
     const exact = customers.find(c => sameCustomer(c, phone, name));
     if (exact) return exact;
-    // Nama depan match (misal "Bapak Dedy" match "Bapak Dedy Jelita")
-    const firstName = name.trim().toLowerCase().split(" ").slice(0, 2).join(" ");
-    const partial = customers.find(c =>
-      samePhone(c.phone, phone) &&
-      c.name.trim().toLowerCase().startsWith(firstName)
-    );
-    if (partial) return partial;
+    // Partial: hanya jika HP tersebut hanya punya 1 customer (tidak multi-lokasi)
+    const byPhone = customers.filter(c => samePhone(c.phone, phone));
+    if (byPhone.length === 1) {
+      const firstName = name.trim().toLowerCase().split(" ").slice(0, 2).join(" ");
+      if (byPhone[0].name.trim().toLowerCase().startsWith(firstName)) return byPhone[0];
+    }
   }
   if (phone && !name) {
-    return customers.find(c => samePhone(c.phone, phone)) || null;
+    const byPhone = customers.filter(c => samePhone(c.phone, phone));
+    // Jika ada lebih dari 1 customer dengan HP sama, tidak bisa pilih otomatis — return null
+    if (byPhone.length === 1) return byPhone[0];
+    return null;
   }
   if (name && !phone) {
     return customers.find(c => c.name.trim().toLowerCase() === name.trim().toLowerCase()) || null;
   }
   return null;
+};
+
+// Ambil semua customer yang punya nomor HP yang sama (untuk customer multi-lokasi).
+// Gunakan ini di UI untuk menampilkan pilihan jika ada lebih dari 1 hasil.
+export const findCustomersByPhone = (customers, phone) => {
+  if (!phone) return [];
+  return customers.filter(c => samePhone(c.phone, phone));
 };
 
 // Build history per customer dari ordersData + laporanReports + invoicesData.
