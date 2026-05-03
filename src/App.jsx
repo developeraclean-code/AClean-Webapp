@@ -3861,29 +3861,41 @@ ${photoPageHTML}
             } else {
               const c2 = upsertedCust || { ...insertPayload, id: "CUST_" + Date.now() };
               setCustomersData(prev => [...prev, c2]);
+              if (c2.id && !c2.id.startsWith("CUST_")) {
+                await supabase.from("orders").update({ customer_id: c2.id }).eq("id", newId);
+                setOrdersData(prev => prev.map(o => o.id === newId ? { ...o, customer_id: c2.id } : o));
+              }
               addAgentLog("CUSTOMER_AUTO_ADDED", "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
               showNotif("✅ Order + Customer baru " + form.customer + " tersimpan!");
             }
           } else {
             const c1 = savedCust || { ...insertPayload, id: "CUST_" + Date.now() };
             setCustomersData(prev => [...prev, c1]);
+            if (c1.id && !c1.id.startsWith("CUST_")) {
+              await supabase.from("orders").update({ customer_id: c1.id }).eq("id", newId);
+              setOrdersData(prev => prev.map(o => o.id === newId ? { ...o, customer_id: c1.id } : o));
+            }
             addAgentLog("CUSTOMER_AUTO_ADDED", "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
             showNotif("✅ Order + Customer baru " + form.customer + " tersimpan ke database!");
           }
         }
       } else {
-        // ── Customer EXISTING: update total_orders & last_service ──
+        // ── Customer EXISTING: update total_orders & last_service + pastikan order ter-link ──
         const updatedOrders = (existing.total_orders || 0) + 1;
         setCustomersData(prev => prev.map(c =>
           sameCustomer(c, form.phone, form.customer)
             ? { ...c, total_orders: updatedOrders, last_service: orderDate }
             : c
         ));
+        // Pastikan order ter-link ke customer_id (kalau sebelumnya null karena race condition)
+        if (existing.id && !newOrder.customer_id) {
+          await supabase.from("orders").update({ customer_id: existing.id }).eq("id", newId);
+          setOrdersData(prev => prev.map(o => o.id === newId ? { ...o, customer_id: existing.id } : o));
+        }
         try {
           await supabase.from("customers")
             .update({ total_orders: updatedOrders, last_service: orderDate })
-            .eq("phone", normalizePhone(form.phone))
-            .eq("name", form.customer.trim());
+            .eq("id", existing.id);
         } catch (e) {
           addAgentLog("CUSTOMER_UPDATE_WARN", "Gagal update total_orders: " + (e?.message || ""), "WARNING");
         }
@@ -4541,8 +4553,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       notes: `Auto dari expense ARA: ${expPayload.subcategory} (${expPayload.date})`,
                       created_by: currentUser?.id || null,
                       created_by_name: currentUser?.name || "ARA",
-                    }).catch(() => {});
-                    await supabase.from("inventory").update({ stock: newStock, updated_at: new Date().toISOString() }).eq("code", matchedItem.code).catch(() => {});
+                    }).then(() => {});
+                    await supabase.from("inventory").update({ stock: newStock, updated_at: new Date().toISOString() }).eq("code", matchedItem.code).then(() => {});
                     addAgentLog("STOCK_AUTO_RESTOCK", `Auto restock ${matchedItem.name} +${matQty} ${matchedItem.unit} dari expense`, "SUCCESS");
                     ar += `\n📦 *Stok auto-update:* ${matchedItem.name} +${matQty} ${matchedItem.unit} → ${newStock} ${matchedItem.unit}`;
                   }
@@ -5908,7 +5920,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   if (!invErr && stokAwal > 0) {
                     await supabase.from("inventory").update({ stock: stokAwal }).eq("code", newCode);
                     // Catat sebagai opening stock transaction
-                    await supabase.from("inventory_transactions").insert({ inventory_code: newCode, inventory_name: newItem.name, qty: stokAwal, type: "restock", notes: "Stok awal (migrasi manual)", created_by: currentUser?.id || null, created_by_name: currentUser?.name || "" }).catch(() => {});
+                    await supabase.from("inventory_transactions").insert({ inventory_code: newCode, inventory_name: newItem.name, qty: stokAwal, type: "restock", notes: "Stok awal (migrasi manual)", created_by: currentUser?.id || null, created_by_name: currentUser?.name || "" }).then(() => {});
                   }
                   if (invErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: " + invErr.message);
                   else { addAgentLog("STOCK_ADDED", `Material baru: ${newItem.name} [${newCode}] stok: ${stokAwal} ${newItem.unit}`, "SUCCESS"); showNotif("✅ " + newItem.name + " ditambahkan [" + newCode + "]"); }
@@ -6087,7 +6099,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       notes: restockForm.keterangan || ("Restock manual oleh " + (currentUser?.name || "Owner")),
                       created_by: currentUser?.id || null,
                       created_by_name: currentUser?.name || "",
-                    }).catch(() => {});
+                    }).then(() => {});
                     // Update stock di DB
                     const { error: invErr } = await supabase.from("inventory").update({ stock: stokBaru, updated_at: new Date().toISOString() }).eq("code", restockItem.code);
                     if (invErr) showNotif("⚠️ Stok tersimpan lokal, sync DB gagal: " + invErr.message);
