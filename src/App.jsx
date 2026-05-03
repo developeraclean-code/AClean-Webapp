@@ -4253,34 +4253,34 @@ ${photoPageHTML}
             if (oErr) console.warn("Create order DB:", oErr.message);
             addAgentLog("ARA_CREATE_ORDER", "ARA buat order " + newId + " untuk " + newOrd.customer, "SUCCESS");
 
-            // ── Auto-upsert customer (new vs existing detection) ──
+            // ── Auto-upsert customer + link customer_id ke order ──
             if (newOrd.phone && newOrd.customer) {
               const existingCust = findCustomer(customersData, newOrd.phone, newOrd.customer);
               if (!existingCust) {
-                const newCust = {
-                  id: "CUST" + Date.now(),
-                  name: newOrd.customer, phone: newOrd.phone,
-                  address: newOrd.address || "", area: "",
-                  total_orders: 1, joined_date: newOrd.date, last_service: newOrd.date, is_vip: false
-                };
-                setCustomersData(prev => [...prev, newCust]);
                 try {
-                  await upsertCustomer(
-                    supabase,
-                    { name: newOrd.customer, phone: newOrd.phone, address: newOrd.address || "", joined_date: newOrd.date },
-                    "phone"
-                  );
+                  const { data: savedCust } = await supabase.from("customers")
+                    .upsert({ name: newOrd.customer.trim(), phone: newOrd.phone, address: newOrd.address || "", joined: newOrd.date, last_service: newOrd.date, is_vip: false, total_orders: 1 }, { onConflict: "phone" })
+                    .select().single();
+                  if (savedCust?.id) {
+                    await supabase.from("orders").update({ customer_id: savedCust.id }).eq("id", newId);
+                    setOrdersData(prev => prev.map(o => o.id === newId ? { ...o, customer_id: savedCust.id } : o));
+                    setCustomersData(prev => [...prev, savedCust]);
+                  }
                 } catch (e) { console.warn("Customer upsert:", e?.message); }
                 ar += "\n👤 *Customer baru ditambahkan: " + newOrd.customer + "*";
               } else {
-                // Update total_orders untuk customer existing
+                // Link customer_id + update total_orders
+                if (existingCust.id && !newOrd.customer_id) {
+                  await supabase.from("orders").update({ customer_id: existingCust.id }).eq("id", newId);
+                  setOrdersData(prev => prev.map(o => o.id === newId ? { ...o, customer_id: existingCust.id } : o));
+                }
                 setCustomersData(prev => prev.map(c =>
                   sameCustomer(c, newOrd.phone, newOrd.customer) ? { ...c, total_orders: (c.total_orders || 0) + 1, last_service: newOrd.date } : c
                 ));
                 try {
                   await supabase.from("customers").update({
                     total_orders: (existingCust.total_orders || 0) + 1, last_service: newOrd.date
-                  }).eq("phone", newOrd.phone);
+                  }).eq("id", existingCust.id);
                 } catch (e) { console.warn("Customer update skip:", e?.message); }
                 ar += "\n👤 *Customer existing: " + newOrd.customer + " (order ke-" + ((existingCust.total_orders || 0) + 1) + ")*";
               }
@@ -4605,6 +4605,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 }
                 setOrdersData(prev => [...prev, bOrd]);
                 const { error: bErr } = await insertOrder(supabase, bOrd);
+                if (!bErr && bOrd.phone && bOrd.customer) {
+                  const bCust = findCustomer(customersData, bOrd.phone, bOrd.customer);
+                  if (bCust?.id) {
+                    await supabase.from("orders").update({ customer_id: bCust.id }).eq("id", bId);
+                  }
+                }
                 results.push({ id: bId, customer: bOrd.customer, service: bOrd.service, date: bOrd.date, ok: !bErr });
                 // Small delay agar ID unik
                 await new Promise(r => setTimeout(r, 60));
@@ -11046,6 +11052,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             parent_job_id: laporanModal.id, dispatch: true,
                             notes: "Upgrade dari Complain " + laporanModal.id
                           };
+                          const rCust = findCustomer(customersData, rJob.phone, rJob.customer);
+                          if (rCust?.id) rJob.customer_id = rCust.id;
                           setOrdersData(prev => [...prev, rJob]);
                           const { error: rErr } = await insertOrder(supabase, rJob);
                           if (!rErr) {
