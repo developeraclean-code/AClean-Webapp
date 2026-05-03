@@ -9549,9 +9549,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 });
               }
 
-              // ── Repair tanpa items: inject "Biaya Pengecekan" ──
-              if (isRepairSvc && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa") && finalLabor > 0) {
-                mDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: finalLabor, subtotal: finalLabor, keterangan: "jasa" });
+              // ── Repair card 3/4 kosong: inject "Biaya Pengecekan" ──
+              // Kondisi: tidak ada repair item DAN tidak ada jasa apapun (card 3/4 benar-benar kosong)
+              if (isRepairSvc && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa")) {
+                const biayaCekItem = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
+                const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 100000;
+                mDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek, keterangan: "jasa" });
               }
 
               // ── Complain biaya cek: inject dari finalLabor (tanpa garansi) ──

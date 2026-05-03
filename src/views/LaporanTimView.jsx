@@ -143,7 +143,20 @@ const verifyLaporan = async (r) => {
       return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket };
     });
 
-    if (!vMDetail.some(m => m.keterangan === "jasa")) {
+    const isRepairSvcV = r.service === "Repair";
+    const isCleaningMaintV = r.service === "Cleaning" || r.service === "Maintenance";
+    const card34Empty = !vMDetail.some(m => m.keterangan === "jasa" || m.keterangan === "repair");
+
+    if (isRepairSvcV) {
+      // Repair: inject Biaya Pengecekan hanya jika card 3/4 kosong (tidak ada jasa maupun repair item)
+      if (card34Empty) {
+        const biayaCekItem = priceListData.find(p => p.service === "Repair" && p.type === "Biaya Pengecekan AC");
+        const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 100000;
+        vMDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek, keterangan: "jasa" });
+      }
+      // jika ada isi di card 3/4 → hitung apa adanya, tidak inject apapun
+    } else if (isCleaningMaintV && !vMDetail.some(m => m.keterangan === "jasa")) {
+      // Cleaning/Maintenance: inject per unit dari card 1/4 tipe PK
       const rUnits = Array.isArray(r.units) ? r.units : [];
       const unitsWithTipe = rUnits.filter(u => u && u.tipe);
       if (unitsWithTipe.length > 0) {
