@@ -24,7 +24,9 @@ teknisiData.forEach(t => {
   const stuck = ordersData.filter(o =>
     (o.teknisi === t.name || o.helper === t.name) &&
     ["DISPATCHED", "ON_SITE"].includes(o.status) &&
-    o.date < TODAY
+    o.date < TODAY &&
+    !laporanReports.some(r => r.job_id === o.id) &&
+    !invoicesData.some(i => i.job_id === o.id)
   ).length;
   const selesai = jobsMinggu.filter(o =>
     ["COMPLETED", "REPORT_SUBMITTED", "INVOICE_APPROVED", "INVOICE_CREATED", "PAID"].includes(o.status)
@@ -247,7 +249,10 @@ return (
     {/* GAP-7: Banner stuck jobs */}
     {(() => {
       const stuckList = ordersData.filter(o =>
-        ["DISPATCHED", "ON_SITE"].includes(o.status) && o.date < TODAY
+        ["DISPATCHED", "ON_SITE"].includes(o.status) &&
+        o.date < TODAY &&
+        !laporanReports.some(r => r.job_id === o.id) &&
+        !invoicesData.some(i => i.job_id === o.id)
       );
       if (stuckList.length === 0) return null;
       return (
