@@ -435,15 +435,15 @@ export default async function handler(req, res) {
                     }).catch(e => console.warn("[WA_IMG_PATCH]", e.message));
                   }
 
-                  // Step 4: Payment suggestion jika bukti_transfer
+                  // Step 4: Payment suggestion + auto-patch invoice jika bukti_transfer
                   if (payDetectOn && classified && classified.category === "bukti_transfer") {
-                    let matchedInvoiceId = null;
+                    let matchedInvoice = null;
                     let matchedOrderId = null;
                     try {
-                      // Cari invoice UNPAID/OVERDUE by phone
+                      // Cari invoice UNPAID/OVERDUE by phone (status filter ketat)
                       const [invRes2, ordRes] = await Promise.all([
-                        fetch(SU + "/rest/v1/invoices?select=id,total,status,order_id&phone=eq." + encodeURIComponent(sender) +
-                          "&order=created_at.desc&limit=1",
+                        fetch(SU + "/rest/v1/invoices?select=id,job_id,total,status&phone=eq." + encodeURIComponent(sender) +
+                          "&status=in.(UNPAID,OVERDUE)&order=created_at.desc&limit=1",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
                         fetch(SU + "/rest/v1/orders?select=id,status&phone=eq." + encodeURIComponent(sender) +
                           "&order=created_at.desc&limit=1",
@@ -452,8 +452,8 @@ export default async function handler(req, res) {
                       if (invRes2.ok) {
                         const invs2 = await invRes2.json();
                         if (invs2?.length > 0) {
-                          matchedInvoiceId = invs2[0].id;
-                          matchedOrderId = invs2[0].order_id || null;
+                          matchedInvoice = invs2[0];
+                          matchedOrderId = invs2[0].job_id || null;
                         }
                       }
                       if (!matchedOrderId && ordRes.ok) {
@@ -461,6 +461,20 @@ export default async function handler(req, res) {
                         if (ords?.length > 0) matchedOrderId = ords[0].id;
                       }
                     } catch(_) {}
+
+                    const matchedInvoiceId = matchedInvoice?.id || null;
+
+                    // ── Auto-patch payment_proof_url ke invoice (tanpa auto-PAID) ──
+                    // Owner tetap konfirmasi manual setelah cek bukti
+                    if (matchedInvoice && savedImageUrl) {
+                      fetch(SU + "/rest/v1/invoices?id=eq." + encodeURIComponent(matchedInvoiceId), {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                        body: JSON.stringify({ payment_proof_url: savedImageUrl, updated_at: new Date().toISOString() })
+                      }).catch(e => console.warn("[PAY_AUTO_PATCH]", e.message));
+                    }
+
+                    // Simpan ke payment_suggestions
                     fetch(SU + "/rest/v1/payment_suggestions", {
                       method: "POST",
                       headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
@@ -473,15 +487,15 @@ export default async function handler(req, res) {
                         image_url: savedImageUrl || mediaUrl, created_at: nowIso
                       })
                     }).catch(e => console.error("[PAY_SUGGEST_IMG_SAVE]", e.message));
-                    // Notif WA ke owner — agar tidak terlewat saat webapp tidak dibuka
+
+                    // Notif WA ke owner — selalu konfirmasi manual
                     if (FT && OP) {
                       const ownerNotifImg = "💰 *Bukti Bayar Masuk (Foto)*\n"
                         + "Dari: " + senderName + " (" + sender + ")\n"
-                        + (classified.amount ? "Nominal: Rp" + Number(classified.amount).toLocaleString("id-ID") + "\n" : "")
+                        + (classified.amount ? "Nominal: Rp" + Number(classified.amount).toLocaleString("id-ID") + "\n" : "Nominal: tidak terbaca\n")
                         + (classified.bank ? "Bank: " + classified.bank + "\n" : "")
-                        + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + "\n" : "")
-                        + (matchedOrderId ? "Order: " + matchedOrderId + "\n" : "")
-                        + "\n_Foto tersimpan. Cek & konfirmasi di menu Invoice → WA Monitor_";
+                        + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + " (UNPAID)\n" : "⚠️ Invoice UNPAID tidak ditemukan\n")
+                        + "\n📷 Foto bukti tersimpan otomatis.\n✅ Cek & klik *Paid* manual di menu Invoice.";
                       fetch("https://api.fonnte.com/send", {
                         method: "POST",
                         headers: { Authorization: FT, "Content-Type": "application/json" },
