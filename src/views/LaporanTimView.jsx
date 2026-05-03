@@ -115,6 +115,12 @@ const verifyLaporan = async (r) => {
 
   const existInv = invoicesData.find(i => i.job_id === r.job_id);
   if (existInv) {
+    // Pastikan order status COMPLETED meski invoice sudah ada sebelumnya
+    const ord0 = ordersData.find(o => o.id === r.job_id);
+    if (ord0 && ["DISPATCHED","ON_SITE"].includes(ord0.status)) {
+      await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
+      setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+    }
     showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
   } else {
     const ord = ordersData.find(o => o.id === r.job_id);
@@ -261,8 +267,8 @@ const verifyLaporan = async (r) => {
     const { error: iErr } = await insertInvoice(supabase, newInv);
     if (iErr) showNotif("⚠️ Invoice gagal simpan: " + iErr.message);
     else {
-      await updateOrder(supabase, r.job_id, { invoice_id: invId }, auditUserName());
-      setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, invoice_id: invId } : o));
+      await updateOrder(supabase, r.job_id, { invoice_id: invId, status: "COMPLETED" }, auditUserName());
+      setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, invoice_id: invId, status: "COMPLETED" } : o));
       addAgentLog("AUTO_INVOICE", `Invoice ${invId} auto-dibuat dari laporan ${r.job_id}`, "SUCCESS");
       const invMsg = totalInv === 0
         ? `✅ Invoice ${invId} GRATIS — langsung LUNAS`
