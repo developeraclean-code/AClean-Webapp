@@ -4742,6 +4742,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       filteredInv = garansiAktif;
     } else if (invoiceFilter === "Hari Ini") {
       filteredInv = filteredInv.filter(inv => (inv.created_at || "").slice(0, 10) === todayDateStr);
+    } else if (invoiceFilter === "Tanpa Bukti") {
+      filteredInv = filteredInv.filter(inv => inv.status === "PAID" && inv.total > 0 && !inv.payment_proof_url);
     } else if (invoiceFilter !== "Semua") {
       filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
     }

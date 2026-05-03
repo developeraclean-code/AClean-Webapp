@@ -228,13 +228,17 @@ return (
         ["PAID", cs.green],
         ["PENDING_APPROVAL", cs.accent],
         ["Garansi", "#22d3ee"],
+        ["Tanpa Bukti", "#f43f5e"],
       ].map(([s, col]) => {
         const todayStr = getLocalDate();
+        const tanpaBuktiCnt = invoicesData.filter(i => i.status === "PAID" && i.total > 0 && !i.payment_proof_url).length;
         const cnt = s === "Semua" ? invoicesData.length
           : s === "Hari Ini" ? invoicesData.filter(inv => (inv.created_at || "").slice(0, 10) === todayStr).length
             : s === "Garansi" ? garansiAktif.length
-              : invoicesData.filter(i => i.status === s).length;
+              : s === "Tanpa Bukti" ? tanpaBuktiCnt
+                : invoicesData.filter(i => i.status === s).length;
         const showBadge = s === "Garansi" && garansiKritis.length > 0;
+        const showTanpaBuktiBadge = s === "Tanpa Bukti" && tanpaBuktiCnt > 0;
         return (
           <button key={s} onClick={() => { setInvoiceFilter(s); setInvoicePage(1); }}
             style={{
@@ -242,8 +246,9 @@ return (
               background: invoiceFilter === s ? col + "22" : cs.card, color: invoiceFilter === s ? col : cs.muted,
               cursor: "pointer", fontSize: 12, fontWeight: invoiceFilter === s ? 700 : 500, position: "relative"
             }}>
-            {s === "Semua" ? "Semua" : s === "PENDING_APPROVAL" ? "Approval" : s === "Garansi" ? "🛡️ Garansi" : s} ({cnt})
+            {s === "Semua" ? "Semua" : s === "PENDING_APPROVAL" ? "Approval" : s === "Garansi" ? "🛡️ Garansi" : s === "Tanpa Bukti" ? "⚠️ Tanpa Bukti" : s} ({cnt})
             {showBadge && <span style={{ position: "absolute", top: -4, right: -4, background: "#ef4444", color: "#fff", borderRadius: 99, fontSize: 9, padding: "1px 5px", fontWeight: 800 }}>{garansiKritis.length}</span>}
+            {showTanpaBuktiBadge && <span style={{ position: "absolute", top: -4, right: -4, background: "#f43f5e", color: "#fff", borderRadius: 99, fontSize: 9, padding: "1px 5px", fontWeight: 800 }}>{tanpaBuktiCnt}</span>}
           </button>
         );
       })}
@@ -485,12 +490,20 @@ return (
                 📋 Kirim Report Card
               </button>
             )}
-            {/* Bukti bayar dari WA — tampil di semua role jika ada URL */}
-            {inv.payment_proof_url && (
-              <button
-                onClick={() => window.open(inv.payment_proof_url.startsWith("/api/") ? window.location.origin + inv.payment_proof_url : inv.payment_proof_url, "_blank")}
-                style={{ background: "#22c55e22", border: "1px solid #22c55e44", color: "#22c55e", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
-              >🧾 Bukti Bayar</button>
+            {/* Bukti bayar — ada URL: tombol lihat. PAID tanpa bukti: warning */}
+            {inv.status === "PAID" && inv.total > 0 && (
+              inv.payment_proof_url ? (
+                <button
+                  onClick={() => window.open(inv.payment_proof_url.startsWith("/api/") ? window.location.origin + inv.payment_proof_url : inv.payment_proof_url, "_blank")}
+                  style={{ background: "#22c55e22", border: "1px solid #22c55e44", color: "#22c55e", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+                >📷 Bukti Bayar ✓</button>
+              ) : (
+                (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#f43f5e18", border: "1px solid #f43f5e44", color: "#f43f5e", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
+                    ⚠️ Belum Ada Bukti Bayar
+                  </span>
+                )
+              )
             )}
             <button
               onClick={() => setAuditModal({ tableName: "invoices", rowId: inv.id })}
