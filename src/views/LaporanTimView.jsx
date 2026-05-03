@@ -75,7 +75,8 @@ else if (laporanDateFilter === "Range" && (laporanDateFrom || laporanDateTo)) {
   });
 }
 if (laporanSvcFilter !== "Semua") filtered = filtered.filter(r => (r.service || "") === laporanSvcFilter);
-if (laporanStatusFilter !== "Semua") filtered = filtered.filter(r => (r.status || "").toUpperCase() === laporanStatusFilter.toUpperCase());
+if (laporanStatusFilter === "BELUM_VERIFIED") filtered = filtered.filter(r => ["SUBMITTED","REVISION"].includes((r.status || "").toUpperCase()));
+else if (laporanStatusFilter !== "Semua") filtered = filtered.filter(r => (r.status || "").toUpperCase() === laporanStatusFilter.toUpperCase());
 if (laporanTeamFilter !== "Semua") filtered = filtered.filter(r => r.teknisi === laporanTeamFilter || r.helper === laporanTeamFilter);
 if (searchLaporan.trim()) {
   const q = searchLaporan.trim().toLowerCase();
@@ -335,16 +336,16 @@ return (
         </button>
       ))}
       <span style={{ width: 1, height: 16, background: cs.border }} />
-      {["Semua", "SUBMITTED", "VERIFIED", "REVISION", "REJECTED"].map(f => (
+      {[["Semua","Semua",cs.muted], ["BELUM_VERIFIED","⏳ Belum Verified",cs.yellow], ["SUBMITTED","Baru",cs.accent], ["VERIFIED","Verified",cs.green], ["REVISION","Revisi",cs.yellow], ["REJECTED","Ditolak",cs.red]].map(([f, lbl, col]) => (
         <button key={f} onClick={() => { setLaporanStatusFilter(f); setLaporanPage(1); }}
           style={{
             padding: "5px 12px", borderRadius: 99, fontSize: 12, cursor: "pointer",
-            border: "1px solid " + (laporanStatusFilter === f ? (sMap[f] || [cs.accent])[0] : cs.border),
-            background: laporanStatusFilter === f ? (sMap[f] || [cs.accent])[0] + "22" : cs.surface,
-            color: laporanStatusFilter === f ? (sMap[f] || [cs.accent])[0] : cs.muted,
+            border: "1px solid " + (laporanStatusFilter === f ? col : cs.border),
+            background: laporanStatusFilter === f ? col + "22" : cs.surface,
+            color: laporanStatusFilter === f ? col : cs.muted,
             fontWeight: laporanStatusFilter === f ? 700 : 400
           }}>
-          {f === "Semua" ? "Semua" : f === "SUBMITTED" ? "Baru" : f === "VERIFIED" ? "Verified" : f === "REVISION" ? "Revisi" : "Ditolak"}
+          {lbl}
         </button>
       ))}
       <span style={{ width: 1, height: 16, background: cs.border }} />
