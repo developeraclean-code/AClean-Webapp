@@ -133,7 +133,14 @@ const verifyLaporan = async (r) => {
       const qty = isF ? Math.max(1, Math.ceil(rawQ)) : rawQ;
       let hSat = parseFloat(m.harga_satuan) || 0;
       if (!hSat) hSat = lookupHargaGlobal(m.nama, m.satuan);
-      return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: m.keterangan || "" };
+      // Deteksi keterangan dari nama jika tidak ada — item cleaning/jasa tanpa tag tetap masuk jasa
+      let ket = m.keterangan || "";
+      if (!ket) {
+        if (isF) ket = "freon";
+        else if (["repair", "perbaikan", "kapasitor", "kompresor", "sparepart", "pcb"].some(k => nama2.includes(k))) ket = "repair";
+        else if (["cleaning", "maintenance", "cuci", "jasa", "service", "servis", "pemasangan", "bongkar", "instalasi", "vacum", "kuras"].some(k => nama2.includes(k))) ket = "jasa";
+      }
+      return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket };
     });
 
     if (!vMDetail.some(m => m.keterangan === "jasa")) {
@@ -161,8 +168,16 @@ const verifyLaporan = async (r) => {
       }
     }
 
+    // Inject transport fee untuk Cleaning 1 unit (sama seperti logic di App.jsx)
+    if (r.service === "Cleaning" && (Array.isArray(r.units) ? r.units.length : parseInt(r.units) || 1) === 1) {
+      const transportItem = priceListData.find(p => p.service === "Cleaning" && p.type === "Biaya Transport Bila 1 Unit" && p.is_active !== false);
+      if (transportItem && transportItem.price > 0) {
+        vMDetail.push({ nama: "Biaya Transport Bila 1 Unit", jumlah: 1, satuan: "unit", harga_satuan: transportItem.price, subtotal: transportItem.price, keterangan: "jasa" });
+      }
+    }
+
     const laborV = vMDetail.filter(m => m.keterangan === "jasa" || m.keterangan === "repair").reduce((s, m) => s + m.subtotal, 0) || hitungLabor(r.service, ord?.type, (Array.isArray(r.units) ? r.units.length : r.units) || ord?.units || 1);
-    const matV = vMDetail.filter(m => m.keterangan !== "jasa" && m.keterangan !== "repair").reduce((s, m) => s + m.subtotal, 0);
+    const matV = vMDetail.filter(m => m.keterangan !== "jasa" && m.keterangan !== "repair" && m.keterangan !== "freon").reduce((s, m) => s + m.subtotal, 0);
 
     const todayInv2 = new Date().toISOString().slice(0, 10);
     const isComplainSvc2 = r.service === "Complain";
