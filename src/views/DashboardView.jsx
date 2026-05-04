@@ -438,7 +438,12 @@ return (
         return dt.toISOString().slice(0, 10);
       };
 
-      const gridOrders = ordersData.filter(o => o.date === gridDate).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+      const gridOrders = ordersData.filter(o => o.date === gridDate).sort((a, b) => {
+        const tekA = (a.teknisi || "").toLowerCase();
+        const tekB = (b.teknisi || "").toLowerCase();
+        if (tekA !== tekB) return tekA.localeCompare(tekB);
+        return (a.time || "").localeCompare(b.time || "");
+      });
 
       // Build lookup: job_id → invoice
       const invByJob = {};
