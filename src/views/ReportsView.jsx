@@ -330,7 +330,8 @@ return (
     </div>
 
     {/* ── SECTION 5: Status Invoice & Laporan ── */}
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 }}>
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : (currentUser?.role === "Owner" ? "1fr 1fr" : "1fr"), gap: 14 }}>
+      {currentUser?.role === "Owner" && (
       <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 18 }}>
         <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 13 }}>🧾 Status Invoice (Semua)</div>
         {[["PAID", cs.green, "Lunas"], ["UNPAID", cs.yellow, "Belum Bayar"], ["OVERDUE", cs.red, "Terlambat"], ["PENDING_APPROVAL", cs.ara, "Menunggu Approve"]].map(([s, col, lbl]) => {
@@ -347,6 +348,7 @@ return (
           ) : null;
         })}
       </div>
+      )}
       <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 18 }}>
         <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 13 }}>📝 Status Laporan Teknisi</div>
         {[["SUBMITTED", cs.accent, "Baru"], ["VERIFIED", cs.green, "Terverifikasi"], ["REVISION", cs.yellow, "Perlu Revisi"], ["REJECTED", cs.red, "Ditolak"]].map(([s, col, lbl]) => {
