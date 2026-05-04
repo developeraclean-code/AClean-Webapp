@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { displayStock } from "../lib/inventory.js";
@@ -428,26 +428,229 @@ return (
     })()}
 
 
-    {/* Today orders */}
-    <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
-      <div style={{ fontWeight: 700, color: cs.text, fontSize: 15, marginBottom: 14 }}>📋 Order Hari Ini — {new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}</div>
-      <div style={{ display: "grid", gap: 10 }}>
-        {todayOrders.map(o => (
-          <div key={o.id} style={{ background: cs.surface, border: "1px solid " + (statusColor[o.status] || cs.border) + "44", borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 14 }}>
-            <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 99, background: (statusColor[o.status] || cs.muted) + "22", color: statusColor[o.status] || cs.muted, fontWeight: 700, border: "1px solid " + (statusColor[o.status] || cs.muted) + "44", whiteSpace: "nowrap" }}>{statusLabel[o.status] || o.status.replace("_", " ")}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{o.customer}</div>
-              <div style={{ fontSize: 11, color: cs.muted }}>{o.service} · {o.units} unit · 👷 {o.teknisi} · {o.time}</div>
+    {/* ── GRID ORDER HARIAN ── */}
+    {(() => {
+      const [gridDate, setGridDate] = useState(TODAY);
+
+      const addDays = (d, n) => {
+        const dt = new Date(d + "T00:00:00+07:00");
+        dt.setDate(dt.getDate() + n);
+        return dt.toISOString().slice(0, 10);
+      };
+
+      const gridOrders = ordersData.filter(o => o.date === gridDate).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+
+      // Build lookup: job_id → invoice
+      const invByJob = {};
+      invoicesData.forEach(i => { if (i.job_id) invByJob[i.job_id] = i; });
+
+      // Build lookup: job_id → laporan
+      const lapByJob = {};
+      laporanReports.forEach(r => { if (r.job_id) lapByJob[r.job_id] = r; });
+
+      const gridDateLabel = new Date(gridDate + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+      const isToday = gridDate === TODAY;
+
+      // Summary counts
+      const totalOrders   = gridOrders.length;
+      const laporanMasuk  = gridOrders.filter(o => lapByJob[o.id]).length;
+      const invBelum      = gridOrders.filter(o => !invByJob[o.id]).length;
+      const rcTerkirim    = gridOrders.filter(o => invByJob[o.id]?.sent).length;
+      const estimasiTotal = gridOrders.reduce((s, o) => s + (invByJob[o.id]?.total || 0), 0);
+
+      // Column template
+      const COLS = "200px 120px 110px 80px 120px 110px 100px 150px";
+
+      const colH = (label, extra = {}) => (
+        <div style={{ padding: "10px 12px", fontSize: 10, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: "0.5px", ...extra }}>{label}</div>
+      );
+
+      const badge = (txt, color, bg) => (
+        <span style={{ display: "inline-flex", alignItems: "center", fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 99, background: bg || color + "22", color, border: "1px solid " + color + "44", whiteSpace: "nowrap" }}>{txt}</span>
+      );
+
+      const invStatusBadge = (inv) => {
+        if (!inv) return badge("Belum Ada", cs.muted, cs.muted + "15");
+        const map = {
+          PAID: [cs.green, "✓ PAID"],
+          UNPAID: [cs.yellow, "UNPAID"],
+          OVERDUE: [cs.red, "OVERDUE"],
+          PENDING_APPROVAL: [cs.accent, "PENDING APV"],
+          APPROVED: ["#38bdf8", "APPROVED"],
+        };
+        const [color, label] = map[inv.status] || [cs.muted, inv.status];
+        if (inv.repair_gratis) return badge("Gratis", cs.red, cs.red + "11");
+        return badge(label, color);
+      };
+
+      return (
+        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
+
+          {/* Date navigation */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid " + cs.border, flexWrap: "wrap" }}>
+            <button onClick={() => setGridDate(d => addDays(d, -1))}
+              style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>◀</button>
+            <div style={{ flex: 1, textAlign: "center" }}>
+              <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>
+                📋 {gridDateLabel}
+                {isToday && <span style={{ marginLeft: 8, fontSize: 10, background: cs.accent + "22", color: cs.accent, border: "1px solid " + cs.accent + "44", borderRadius: 99, padding: "2px 8px", fontWeight: 700 }}>Hari Ini</span>}
+              </div>
+              <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+                {totalOrders} order · {gridOrders.filter(o => o.status === "COMPLETED").length} selesai · {gridOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · {gridOrders.filter(o => o.status === "PENDING").length} pending
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => { const cu = findCustomer(customersData, o.phone, o.customer); if (cu) { setSelectedCustomer(cu); setCustomerTab("history"); setActiveMenu("customers"); } }}
-                style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>History</button>
-              {!o.dispatch && <button onClick={() => dispatchWA(o)} style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>Dispatch WA</button>}
-            </div>
+            {!isToday && (
+              <button onClick={() => setGridDate(TODAY)}
+                style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Hari Ini</button>
+            )}
+            <button onClick={() => setGridDate(d => addDays(d, 1))}
+              style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>▶</button>
           </div>
-        ))}
-      </div>
-    </div>
+
+          {/* Summary bar */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", borderBottom: "1px solid " + cs.border }}>
+            {[
+              { val: totalOrders,         lbl: "Total Order",          color: cs.accent },
+              { val: laporanMasuk,        lbl: "Laporan Masuk",        color: cs.green },
+              { val: invBelum,            lbl: "Invoice Belum Dibuat", color: cs.yellow },
+              { val: rcTerkirim,          lbl: "Report Card Terkirim", color: "#c084fc" },
+              { val: fmt(estimasiTotal),  lbl: "Estimasi Pemasukan",   color: cs.green },
+            ].map(s => (
+              <div key={s.lbl} style={{ padding: "10px 14px", borderRight: "1px solid " + cs.border }}>
+                <div style={{ fontWeight: 800, fontSize: s.lbl === "Estimasi Pemasukan" ? 13 : 20, color: s.color }}>{s.val}</div>
+                <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{s.lbl}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Grid header */}
+          <div style={{ display: "grid", gridTemplateColumns: COLS, background: cs.surface, borderBottom: "1px solid " + cs.border }}>
+            {colH("Detail Job")}
+            {colH("Team")}
+            {colH("Status", { textAlign: "center" })}
+            {colH("Laporan", { textAlign: "center" })}
+            {colH("Invoice Value", { textAlign: "right", paddingRight: 14 })}
+            {colH("Invoice Status", { textAlign: "center" })}
+            {colH("Report Card", { textAlign: "center" })}
+            {colH("Aksi", { textAlign: "center" })}
+          </div>
+
+          {/* Grid rows */}
+          {gridOrders.length === 0 ? (
+            <div style={{ padding: "32px 0", textAlign: "center", color: cs.muted, fontSize: 13 }}>
+              Tidak ada order pada tanggal ini
+            </div>
+          ) : gridOrders.map(o => {
+            const inv   = invByJob[o.id] || null;
+            const lap   = lapByJob[o.id] || null;
+            const isGaransi = (o.service || "").toLowerCase().includes("complain") || (o.type || "").toLowerCase().includes("garansi");
+            const sc    = statusColor[o.status] || cs.muted;
+            const tekCol = techColors[o.teknisi] || cs.accent;
+
+            return (
+              <div key={o.id} className="grid-row-dash" style={{
+                display: "grid", gridTemplateColumns: COLS,
+                borderBottom: "1px solid " + cs.border + "88",
+                background: isGaransi ? cs.red + "08" : "transparent",
+                transition: "background 0.15s",
+              }}
+                onMouseEnter={e => e.currentTarget.style.background = isGaransi ? cs.red + "14" : cs.accent + "08"}
+                onMouseLeave={e => e.currentTarget.style.background = isGaransi ? cs.red + "08" : "transparent"}
+              >
+                {/* Detail Job */}
+                <div style={{ padding: "11px 12px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, color: isGaransi ? cs.red : cs.text, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{o.customer}</div>
+                  <div style={{ fontSize: 10, color: cs.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {o.service} · {o.units} unit · {o.time || "—"}
+                    {isGaransi && <span style={{ marginLeft: 5, background: cs.red + "22", color: cs.red, borderRadius: 4, padding: "1px 5px", fontSize: 9 }}>Garansi</span>}
+                  </div>
+                </div>
+
+                {/* Team */}
+                <div style={{ padding: "11px 12px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: tekCol, flexShrink: 0, display: "inline-block" }} />
+                    <span style={{ fontSize: 11, color: cs.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 85 }}>{o.teknisi || "—"}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: cs.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>
+                    {o.helper ? "🤝 " + o.helper : "— Tanpa Helper"}
+                  </div>
+                </div>
+
+                {/* Status */}
+                <div style={{ padding: "11px 12px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {badge(statusLabel[o.status] || o.status.replace(/_/g, " "), sc)}
+                </div>
+
+                {/* Laporan */}
+                <div style={{ padding: "11px 12px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {lap
+                    ? badge("✓ Ya", cs.green)
+                    : badge("✗ Belum", cs.red)}
+                </div>
+
+                {/* Invoice Value */}
+                <div style={{ padding: "11px 14px 11px 12px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: inv?.total > 0 ? cs.green : cs.muted }}>
+                    {inv?.total > 0 ? fmt(inv.total) : "—"}
+                  </span>
+                </div>
+
+                {/* Invoice Status */}
+                <div style={{ padding: "11px 12px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {invStatusBadge(inv)}
+                </div>
+
+                {/* Report Card */}
+                <div style={{ padding: "11px 12px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {inv?.sent
+                    ? badge("✓ Terkirim", "#25d366")
+                    : badge("✗ Belum", cs.muted)}
+                </div>
+
+                {/* Aksi */}
+                <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                  <button
+                    onClick={() => { if (inv) { setSelectedInvoice(inv); setModalPDF(true); } }}
+                    title={inv ? "Buka Invoice" : "Invoice belum ada"}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      fontSize: 10, fontWeight: 700, padding: "4px 8px", borderRadius: 6, cursor: inv ? "pointer" : "not-allowed",
+                      background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent,
+                      opacity: inv ? 1 : 0.35, whiteSpace: "nowrap",
+                    }}>🧾 Invoice</button>
+                  <button
+                    onClick={() => { if (lap) openLaporanModal(o); }}
+                    title={lap ? "Buka Report Card" : "Laporan belum masuk"}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      fontSize: 10, fontWeight: 700, padding: "4px 8px", borderRadius: 6, cursor: lap ? "pointer" : "not-allowed",
+                      background: "#25d36622", border: "1px solid #25d36644", color: "#25d366",
+                      opacity: lap ? 1 : 0.35, whiteSpace: "nowrap",
+                    }}>📄 RC</button>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Footer total */}
+          {gridOrders.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: COLS, background: cs.surface, borderTop: "2px solid " + cs.border }}>
+              <div style={{ padding: "10px 12px", gridColumn: "1 / 5", display: "flex", alignItems: "center", fontSize: 11, fontWeight: 700, color: cs.muted, gap: 12 }}>
+                TOTAL HARI INI
+                <span style={{ color: cs.accent }}>{totalOrders} Order</span>
+                <span style={{ color: cs.green }}>{laporanMasuk} Laporan</span>
+                <span style={{ color: "#25d366" }}>{rcTerkirim} RC Terkirim</span>
+              </div>
+              <div style={{ padding: "10px 14px 10px 12px", display: "flex", alignItems: "center", justifyContent: "flex-end", fontSize: 14, fontWeight: 800, color: cs.green }}>
+                {fmt(estimasiTotal)}
+              </div>
+              <div style={{ gridColumn: "6 / 9" }} />
+            </div>
+          )}
+        </div>
+      );
+    })()}
 
     {/* Invoice + Stok alerts */}
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 }}>
