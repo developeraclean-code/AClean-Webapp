@@ -5,6 +5,7 @@ import { displayStock } from "../lib/inventory.js";
 
 function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData }) {
 const role = currentUser?.role || "Admin";
+const [gridDate, setGridDate] = useState(TODAY);
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
 // ── TEKNISI & HELPER DASHBOARD ─────────────────────────────
@@ -430,7 +431,6 @@ return (
 
     {/* ── GRID ORDER HARIAN ── */}
     {(() => {
-      const [gridDate, setGridDate] = useState(TODAY);
       const isOwner = role === "Owner";
 
       const addDays = (d, n) => {
@@ -464,10 +464,8 @@ return (
       const rcTerkirim    = gridOrders.filter(o => invByJob[o.id]?.sent).length;
       const estimasiTotal = gridOrders.reduce((s, o) => s + (invByJob[o.id]?.total || 0), 0);
 
-      // Owner: 8 cols with Invoice Value | Admin: 7 cols without Invoice Value
-      const COLS = isOwner
-        ? "200px 120px 110px 80px 120px 110px 100px 150px"
-        : "200px 120px 110px 80px 110px 100px 150px";
+      // Same columns for Owner & Admin — Invoice Value visible for both
+      const COLS = "200px 120px 110px 80px 120px 110px 100px 150px";
 
       const colH = (label, extra = {}) => (
         <div style={{ padding: "10px 12px", fontSize: 10, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: "0.5px", ...extra }}>{label}</div>
@@ -491,13 +489,12 @@ return (
         return badge(label, color);
       };
 
-      // Summary bar items — Owner gets Estimasi Pemasukan, Admin does not
       const summaryItems = [
-        { val: totalOrders,        lbl: "Total Order",          color: cs.accent },
-        { val: laporanMasuk,       lbl: "Laporan Masuk",        color: cs.green },
-        { val: invBelum,           lbl: "Invoice Belum Dibuat", color: cs.yellow },
-        { val: rcTerkirim,         lbl: "Report Card Terkirim", color: "#c084fc" },
-        ...(isOwner ? [{ val: fmt(estimasiTotal), lbl: "Estimasi Pemasukan", color: cs.green }] : []),
+        { val: totalOrders,         lbl: "Total Order",          color: cs.accent },
+        { val: laporanMasuk,        lbl: "Laporan Masuk",        color: cs.green },
+        { val: invBelum,            lbl: "Invoice Belum Dibuat", color: cs.yellow },
+        { val: rcTerkirim,          lbl: "Report Card Terkirim", color: "#c084fc" },
+        { val: fmt(estimasiTotal),  lbl: "Estimasi Pemasukan",   color: cs.green },
       ];
 
       return (
@@ -540,7 +537,7 @@ return (
             {colH("Team")}
             {colH("Status", { textAlign: "center" })}
             {colH("Laporan", { textAlign: "center" })}
-            {isOwner && colH("Invoice Value", { textAlign: "right", paddingRight: 14 })}
+            {colH("Invoice Value", { textAlign: "right", paddingRight: 14 })}
             {colH("Invoice Status", { textAlign: "center" })}
             {colH("Report Card", { textAlign: "center" })}
             {colH("Aksi", { textAlign: "center" })}
@@ -600,14 +597,12 @@ return (
                     : badge("✗ Belum", cs.red)}
                 </div>
 
-                {/* Invoice Value — Owner only */}
-                {isOwner && (
-                  <div style={{ padding: "11px 14px 11px 12px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: inv?.total > 0 ? cs.green : cs.muted }}>
-                      {inv?.total > 0 ? fmt(inv.total) : "—"}
-                    </span>
-                  </div>
-                )}
+                {/* Invoice Value */}
+                <div style={{ padding: "11px 14px 11px 12px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: inv?.total > 0 ? cs.green : cs.muted }}>
+                    {inv?.total > 0 ? fmt(inv.total) : "—"}
+                  </span>
+                </div>
 
                 {/* Invoice Status */}
                 <div style={{ padding: "11px 12px", display: "flex", alignItems: "center", justifyContent: "center" }}>
