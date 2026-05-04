@@ -431,6 +431,7 @@ return (
     {/* ── GRID ORDER HARIAN ── */}
     {(() => {
       const [gridDate, setGridDate] = useState(TODAY);
+      const isOwner = role === "Owner";
 
       const addDays = (d, n) => {
         const dt = new Date(d + "T00:00:00+07:00");
@@ -463,8 +464,10 @@ return (
       const rcTerkirim    = gridOrders.filter(o => invByJob[o.id]?.sent).length;
       const estimasiTotal = gridOrders.reduce((s, o) => s + (invByJob[o.id]?.total || 0), 0);
 
-      // Column template
-      const COLS = "200px 120px 110px 80px 120px 110px 100px 150px";
+      // Owner: 8 cols with Invoice Value | Admin: 7 cols without Invoice Value
+      const COLS = isOwner
+        ? "200px 120px 110px 80px 120px 110px 100px 150px"
+        : "200px 120px 110px 80px 110px 100px 150px";
 
       const colH = (label, extra = {}) => (
         <div style={{ padding: "10px 12px", fontSize: 10, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: "0.5px", ...extra }}>{label}</div>
@@ -487,6 +490,15 @@ return (
         if (inv.repair_gratis) return badge("Gratis", cs.red, cs.red + "11");
         return badge(label, color);
       };
+
+      // Summary bar items — Owner gets Estimasi Pemasukan, Admin does not
+      const summaryItems = [
+        { val: totalOrders,        lbl: "Total Order",          color: cs.accent },
+        { val: laporanMasuk,       lbl: "Laporan Masuk",        color: cs.green },
+        { val: invBelum,           lbl: "Invoice Belum Dibuat", color: cs.yellow },
+        { val: rcTerkirim,         lbl: "Report Card Terkirim", color: "#c084fc" },
+        ...(isOwner ? [{ val: fmt(estimasiTotal), lbl: "Estimasi Pemasukan", color: cs.green }] : []),
+      ];
 
       return (
         <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
@@ -513,14 +525,8 @@ return (
           </div>
 
           {/* Summary bar */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", borderBottom: "1px solid " + cs.border }}>
-            {[
-              { val: totalOrders,         lbl: "Total Order",          color: cs.accent },
-              { val: laporanMasuk,        lbl: "Laporan Masuk",        color: cs.green },
-              { val: invBelum,            lbl: "Invoice Belum Dibuat", color: cs.yellow },
-              { val: rcTerkirim,          lbl: "Report Card Terkirim", color: "#c084fc" },
-              { val: fmt(estimasiTotal),  lbl: "Estimasi Pemasukan",   color: cs.green },
-            ].map(s => (
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${summaryItems.length},1fr)`, borderBottom: "1px solid " + cs.border }}>
+            {summaryItems.map(s => (
               <div key={s.lbl} style={{ padding: "10px 14px", borderRight: "1px solid " + cs.border }}>
                 <div style={{ fontWeight: 800, fontSize: s.lbl === "Estimasi Pemasukan" ? 13 : 20, color: s.color }}>{s.val}</div>
                 <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{s.lbl}</div>
@@ -534,7 +540,7 @@ return (
             {colH("Team")}
             {colH("Status", { textAlign: "center" })}
             {colH("Laporan", { textAlign: "center" })}
-            {colH("Invoice Value", { textAlign: "right", paddingRight: 14 })}
+            {isOwner && colH("Invoice Value", { textAlign: "right", paddingRight: 14 })}
             {colH("Invoice Status", { textAlign: "center" })}
             {colH("Report Card", { textAlign: "center" })}
             {colH("Aksi", { textAlign: "center" })}
@@ -594,12 +600,14 @@ return (
                     : badge("✗ Belum", cs.red)}
                 </div>
 
-                {/* Invoice Value */}
-                <div style={{ padding: "11px 14px 11px 12px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: inv?.total > 0 ? cs.green : cs.muted }}>
-                    {inv?.total > 0 ? fmt(inv.total) : "—"}
-                  </span>
-                </div>
+                {/* Invoice Value — Owner only */}
+                {isOwner && (
+                  <div style={{ padding: "11px 14px 11px 12px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: inv?.total > 0 ? cs.green : cs.muted }}>
+                      {inv?.total > 0 ? fmt(inv.total) : "—"}
+                    </span>
+                  </div>
+                )}
 
                 {/* Invoice Status */}
                 <div style={{ padding: "11px 12px", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -638,8 +646,8 @@ return (
             );
           })}
 
-          {/* Footer total */}
-          {gridOrders.length > 0 && (
+          {/* Footer total — Owner only */}
+          {isOwner && gridOrders.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: COLS, background: cs.surface, borderTop: "2px solid " + cs.border }}>
               <div style={{ padding: "10px 12px", gridColumn: "1 / 5", display: "flex", alignItems: "center", fontSize: 11, fontWeight: 700, color: cs.muted, gap: 12 }}>
                 TOTAL HARI INI
@@ -651,6 +659,17 @@ return (
                 {fmt(estimasiTotal)}
               </div>
               <div style={{ gridColumn: "6 / 9" }} />
+            </div>
+          )}
+
+          {/* Footer Admin — counts only, no total value */}
+          {!isOwner && gridOrders.length > 0 && (
+            <div style={{ padding: "10px 16px", background: cs.surface, borderTop: "2px solid " + cs.border, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 700, color: cs.muted, gap: 14 }}>
+              TOTAL HARI INI
+              <span style={{ color: cs.accent }}>{totalOrders} Order</span>
+              <span style={{ color: cs.green }}>{laporanMasuk} Laporan</span>
+              <span style={{ color: "#25d366" }}>{rcTerkirim} RC Terkirim</span>
+              <span style={{ color: cs.yellow }}>{invBelum} Belum Invoice</span>
             </div>
           )}
         </div>
