@@ -456,6 +456,21 @@ export default async function handler(req, res) {
                           matchedOrderId = invs2[0].job_id || null;
                         }
                       }
+                      // Fallback: cari invoice PAID tanpa bukti bayar dari HP yang sama
+                      if (!matchedInvoice) {
+                        const invPaidRes = await fetch(
+                          SU + "/rest/v1/invoices?select=id,job_id,total,status&phone=eq." + encodeURIComponent(sender) +
+                          "&status=eq.PAID&payment_proof_url=is.null&order=created_at.desc&limit=1",
+                          { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+                        );
+                        if (invPaidRes.ok) {
+                          const invsPaid = await invPaidRes.json();
+                          if (invsPaid?.length > 0) {
+                            matchedInvoice = invsPaid[0];
+                            matchedOrderId = invsPaid[0].job_id || null;
+                          }
+                        }
+                      }
                       if (!matchedOrderId && ordRes.ok) {
                         const ords = await ordRes.json();
                         if (ords?.length > 0) matchedOrderId = ords[0].id;
@@ -494,7 +509,7 @@ export default async function handler(req, res) {
                         + "Dari: " + senderName + " (" + sender + ")\n"
                         + (classified.amount ? "Nominal: Rp" + Number(classified.amount).toLocaleString("id-ID") + "\n" : "Nominal: tidak terbaca\n")
                         + (classified.bank ? "Bank: " + classified.bank + "\n" : "")
-                        + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + " (UNPAID)\n" : "⚠️ Invoice UNPAID tidak ditemukan\n")
+                        + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + " (" + (matchedInvoice?.status || "UNPAID") + ")\n" : "⚠️ Invoice tidak ditemukan\n")
                         + "\n📷 Foto bukti tersimpan otomatis.\n✅ Cek & klik *Paid* manual di menu Invoice.";
                       fetch("https://api.fonnte.com/send", {
                         method: "POST",

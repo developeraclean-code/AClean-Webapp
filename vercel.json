@@ -29,6 +29,10 @@
     {
       "path": "/api/cron-reminder?task=bukti-bayar",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron-reminder?task=backup",
+      "schedule": "0 2 1 * *"
     }
   ],
   "functions": {

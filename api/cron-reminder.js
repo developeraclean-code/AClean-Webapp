@@ -55,7 +55,7 @@ function daysSince(d) { return d ? Math.floor((Date.now()-new Date(d).getTime())
 async function log(action, detail, status="SUCCESS") {
   try {
     const { error } = await sb.from("agent_logs").insert({
-      action, detail, status, actor:"CRON",
+      action, detail, status,
       time: new Date().toISOString()
     });
     if (error) console.error("[CRON_LOG_ERROR]", {action, error: error.message});
@@ -508,6 +508,76 @@ async function taskScanBuktiBayar() {
 }
 
 // ══════════════════════════════════════════════════
+// TASK 7: Backup Data Bulanan ke R2
+// Jalan tiap tanggal 1 jam 09:00 WIB (02:00 UTC)
+// Export invoices, orders, customers, service_reports ke R2
+// ══════════════════════════════════════════════════
+async function taskBackupData() {
+  const r2Key    = process.env.R2_ACCESS_KEY;
+  const r2Secret = process.env.R2_SECRET_KEY;
+  const r2Account= process.env.R2_ACCOUNT_ID;
+  const r2Bucket = process.env.R2_BUCKET_NAME || "aclean-files";
+
+  if (!r2Key || !r2Secret || !r2Account) {
+    await log("BACKUP_DATA", "R2 credentials tidak lengkap — skip", "ERROR");
+    return { skipped: true };
+  }
+
+  const crypto = require("crypto");
+  function hmac(key, data) { return crypto.createHmac("sha256", key).update(data).digest(); }
+  function sigV4Put(key, body, contentType) {
+    const host = r2Account + ".r2.cloudflarestorage.com";
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, "").slice(0, 15) + "Z";
+    const dateStr = amzDate.slice(0, 8);
+    const payloadHash = crypto.createHash("sha256").update(body).digest("hex");
+    const canonicalUri = "/" + r2Bucket + "/" + key;
+    const canonicalHeaders = "content-type:" + contentType + "\nhost:" + host + "\nx-amz-content-sha256:" + payloadHash + "\nx-amz-date:" + amzDate + "\n";
+    const signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
+    const canonicalRequest = "PUT\n" + canonicalUri + "\n\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHash;
+    const credScope = dateStr + "/auto/s3/aws4_request";
+    const strToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credScope + "\n" + crypto.createHash("sha256").update(canonicalRequest).digest("hex");
+    const signingKey = hmac(hmac(hmac(hmac("AWS4" + r2Secret, dateStr), "auto"), "s3"), "aws4_request");
+    const signature = crypto.createHmac("sha256", signingKey).update(strToSign).digest("hex");
+    const authorization = "AWS4-HMAC-SHA256 Credential=" + r2Key + "/" + credScope + ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
+    return { url: "https://" + host + canonicalUri, headers: { Authorization: authorization, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash, "content-type": contentType, host } };
+  }
+
+  const now = new Date(Date.now() + 7 * 3600000); // WIB
+  const yearMonth = now.toISOString().slice(0, 7); // "2026-05"
+  const tables = ["invoices", "orders", "customers", "service_reports"];
+  const results = {};
+
+  for (const table of tables) {
+    try {
+      const { data, error } = await sb.from(table).select("*").order("created_at", { ascending: false }).limit(5000);
+      if (error) { results[table] = "ERROR: " + error.message; continue; }
+      const body = JSON.stringify({ exported_at: new Date().toISOString(), table, count: data.length, data });
+      const r2Key2 = "backup/" + yearMonth + "/" + table + ".json";
+      const { url, headers } = sigV4Put(r2Key2, body, "application/json");
+      const putRes = await fetch(url, { method: "PUT", headers, body });
+      results[table] = putRes.ok ? data.length + " rows" : "PUT_FAIL:" + putRes.status;
+    } catch(e) {
+      results[table] = "EXCEPTION: " + e.message;
+    }
+  }
+
+  // Catat ke backup_log
+  const successTables = tables.filter(t => results[t] && !results[t].startsWith("ERROR") && !results[t].startsWith("PUT_FAIL") && !results[t].startsWith("EXCEPTION"));
+  await sb.from("backup_log").insert({
+    type: "auto-r2-monthly",
+    tables: successTables.join(","),
+    row_counts: JSON.stringify(results),
+    exported_by: "CRON",
+    notes: "Backup bulanan ke R2: backup/" + yearMonth + "/"
+  }).catch(e => console.error("[BACKUP_LOG]", e.message));
+
+  const summary = "Backup " + yearMonth + ": " + Object.entries(results).map(([t, r]) => t + "=" + r).join(", ");
+  await log("BACKUP_DATA", summary, successTables.length === tables.length ? "SUCCESS" : "WARNING");
+  return { yearMonth, results };
+}
+
+// ══════════════════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════════════════
 export default async function handler(req, res) {
@@ -560,6 +630,7 @@ export default async function handler(req, res) {
     else if (task === "cleanup")    result = await taskCleanup();
     else if (task === "wa-cleanup") result = await taskWaCleanup();
     else if (task === "bukti-bayar") result = await taskScanBuktiBayar();
+    else if (task === "backup")     result = await taskBackupData();
     else                            result = await taskReminder();
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });

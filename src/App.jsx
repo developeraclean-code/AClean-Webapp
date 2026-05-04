@@ -7768,6 +7768,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <button onClick={() => setModalAddCustomer(false)} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
                 <button onClick={async () => {
                   if (!newCustomerForm.name || !newCustomerForm.phone) { showNotif("Nama dan nomor HP wajib diisi"); return; }
+                  const _normPhone = normalizePhone(newCustomerForm.phone);
+                  if (!_normPhone || !/^\d{9,15}$/.test(_normPhone)) { showNotif("⚠️ Nomor HP tidak valid — harus angka 9-15 digit (contoh: 08123456789)"); return; }
                   // GAP 6: cek duplikat phone sebelum submit
                   const existPhone = customersData.find(cu => samePhone(cu.phone, newCustomerForm.phone) && cu.id !== (selectedCustomer?.id || ""));
                   if (existPhone) { showNotif(`⚠️ Nomor HP sudah terdaftar atas nama "${existPhone.name}". Tidak bisa duplikat.`); return; }
