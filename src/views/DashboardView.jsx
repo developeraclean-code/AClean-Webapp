@@ -659,31 +659,156 @@ return (
 
     {/* Invoice + Stok alerts */}
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 }}>
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
-        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 14 }}>🧾 Invoice Perlu Tindakan</div>
-        {invoicesData.filter(i => i.status !== "PAID").map(inv => (
-          <div key={inv.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: (statusColor[inv.status] || cs.muted) + "22", color: statusColor[inv.status] || cs.muted, fontWeight: 700, border: "1px solid " + (statusColor[inv.status] || cs.muted) + "33", whiteSpace: "nowrap" }}>{inv.status.replace("_", " ")}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{inv.customer}</div>
-              <div style={{ fontSize: 11, color: cs.muted }}>{fmt(inv.total)}</div>
+
+      {/* ── Invoice Perlu Tindakan ── */}
+      {(() => {
+        const actionInvoices = invoicesData.filter(i => i.status !== "PAID");
+        const overdueCount = actionInvoices.filter(i => i.status === "OVERDUE").length;
+        const pendingCount = actionInvoices.filter(i => i.status === "PENDING_APPROVAL").length;
+        const unpaidCount2 = actionInvoices.filter(i => i.status === "UNPAID").length;
+        const totalUnpaidVal = actionInvoices.reduce((s, i) => s + (i.total || 0), 0);
+
+        return (
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
+            {/* Header */}
+            <div style={{ padding: "14px 16px", borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>🧾 Invoice Perlu Tindakan</div>
+                <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{actionInvoices.length} invoice · Total {fmt(totalUnpaidVal)}</div>
+              </div>
+              <button onClick={() => setActiveMenu("invoice")}
+                style={{ fontSize: 11, fontWeight: 700, color: cs.accent, background: cs.accent + "18", border: "1px solid " + cs.accent + "33", borderRadius: 7, padding: "5px 10px", cursor: "pointer" }}>
+                Lihat Semua
+              </button>
             </div>
-            <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 8px", borderRadius: 6, cursor: "pointer", fontSize: 10 }}>Preview</button>
-          </div>
-        ))}
-      </div>
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
-        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 14 }}>📦 Stok Perlu Restock</div>
-        {inventoryData.filter(i => i.status !== "OK").map(item => (
-          <div key={item.code} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: (item.status === "OUT" ? cs.red : cs.yellow) + "22", color: item.status === "OUT" ? cs.red : cs.yellow, fontWeight: 700, border: "1px solid " + (item.status === "OUT" ? cs.red : cs.yellow) + "33" }}>{item.status}</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>{item.name}</div>
-              <div style={{ fontSize: 11, color: cs.muted }}>Stok: {displayStock(item)} {item.unit}</div>
+
+            {/* Summary chips */}
+            <div style={{ display: "flex", gap: 8, padding: "10px 16px", borderBottom: "1px solid " + cs.border, flexWrap: "wrap" }}>
+              {[
+                { label: "OVERDUE", val: overdueCount, color: cs.red, filter: "OVERDUE" },
+                { label: "PENDING APV", val: pendingCount, color: cs.accent, filter: "PENDING_APPROVAL" },
+                { label: "UNPAID", val: unpaidCount2, color: cs.yellow, filter: "UNPAID" },
+              ].map(chip => (
+                <button key={chip.label} onClick={() => { setActiveMenu("invoice"); setInvoiceFilter(chip.filter); }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700,
+                    padding: "4px 10px", borderRadius: 99, cursor: "pointer",
+                    background: chip.color + "18", border: "1px solid " + chip.color + "44", color: chip.color }}>
+                  <span style={{ fontWeight: 900, fontSize: 12 }}>{chip.val}</span> {chip.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Invoice rows */}
+            <div style={{ maxHeight: 320, overflowY: "auto" }}>
+              {actionInvoices.length === 0 ? (
+                <div style={{ padding: "24px 0", textAlign: "center", color: cs.muted, fontSize: 13 }}>✓ Semua invoice sudah terbayar</div>
+              ) : actionInvoices.map(inv => {
+                const sc = statusColor[inv.status] || cs.muted;
+                const isOverdue = inv.status === "OVERDUE";
+                return (
+                  <div key={inv.id}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: "1px solid " + cs.border + "60",
+                      background: isOverdue ? cs.red + "06" : "transparent", transition: "background .15s", cursor: "pointer" }}
+                    onMouseEnter={e => e.currentTarget.style.background = isOverdue ? cs.red + "12" : cs.accent + "08"}
+                    onMouseLeave={e => e.currentTarget.style.background = isOverdue ? cs.red + "06" : "transparent"}
+                    onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }}
+                  >
+                    <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: sc + "22", color: sc, fontWeight: 700, border: "1px solid " + sc + "33", whiteSpace: "nowrap", flexShrink: 0 }}>
+                      {inv.status.replace(/_/g, " ")}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: isOverdue ? cs.red : cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{inv.customer}</div>
+                      <div style={{ fontSize: 10, color: cs.muted }}>{fmt(inv.total)}{inv.garansi_expires ? " · 🔒 Garansi" : ""}</div>
+                    </div>
+                    <button onClick={e => { e.stopPropagation(); setSelectedInvoice(inv); setModalPDF(true); }}
+                      style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 8px", borderRadius: 6, cursor: "pointer", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                      Preview
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        ))}
-      </div>
+        );
+      })()}
+
+      {/* ── Stok Perlu Restock ── */}
+      {(() => {
+        const problemItems = inventoryData.filter(i => i.status !== "OK");
+        const outItems = problemItems.filter(i => i.status === "OUT");
+        const critItems = problemItems.filter(i => i.status === "CRITICAL");
+        const warnItems = problemItems.filter(i => i.status === "WARNING");
+
+        const stockColor = { OUT: cs.red, CRITICAL: "#f97316", WARNING: cs.yellow };
+
+        return (
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
+            {/* Header */}
+            <div style={{ padding: "14px 16px", borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>📦 Stok Perlu Restock</div>
+                <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{problemItems.length} item bermasalah</div>
+              </div>
+              <button onClick={() => setActiveMenu("inventory")}
+                style={{ fontSize: 11, fontWeight: 700, color: cs.accent, background: cs.accent + "18", border: "1px solid " + cs.accent + "33", borderRadius: 7, padding: "5px 10px", cursor: "pointer" }}>
+                Inventori
+              </button>
+            </div>
+
+            {/* Summary chips */}
+            <div style={{ display: "flex", gap: 8, padding: "10px 16px", borderBottom: "1px solid " + cs.border, flexWrap: "wrap" }}>
+              {[
+                { label: "OUT", val: outItems.length, color: cs.red },
+                { label: "CRITICAL", val: critItems.length, color: "#f97316" },
+                { label: "WARNING", val: warnItems.length, color: cs.yellow },
+              ].map(chip => (
+                <span key={chip.label} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700,
+                  padding: "4px 10px", borderRadius: 99,
+                  background: chip.color + "18", border: "1px solid " + chip.color + "44", color: chip.color }}>
+                  <span style={{ fontWeight: 900, fontSize: 12 }}>{chip.val}</span> {chip.label}
+                </span>
+              ))}
+            </div>
+
+            {/* Stock rows */}
+            <div style={{ maxHeight: 320, overflowY: "auto" }}>
+              {problemItems.length === 0 ? (
+                <div style={{ padding: "24px 0", textAlign: "center", color: cs.muted, fontSize: 13 }}>✓ Semua stok aman</div>
+              ) : problemItems.map(item => {
+                const sc = stockColor[item.status] || cs.muted;
+                const isOut = item.status === "OUT";
+                return (
+                  <div key={item.code}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: "1px solid " + cs.border + "60",
+                      background: isOut ? cs.red + "06" : "transparent", transition: "background .15s", cursor: "pointer" }}
+                    onMouseEnter={e => e.currentTarget.style.background = isOut ? cs.red + "12" : cs.accent + "08"}
+                    onMouseLeave={e => e.currentTarget.style.background = isOut ? cs.red + "06" : "transparent"}
+                    onClick={() => setActiveMenu("inventory")}
+                  >
+                    <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: sc + "22", color: sc, fontWeight: 700, border: "1px solid " + sc + "33", whiteSpace: "nowrap", flexShrink: 0 }}>
+                      {item.status}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: isOut ? cs.red : cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
+                      <div style={{ fontSize: 10, color: cs.muted }}>Stok: {displayStock(item)} {item.unit}</div>
+                    </div>
+                    {/* Mini stock bar */}
+                    <div style={{ width: 40, flexShrink: 0 }}>
+                      <div style={{ height: 4, background: cs.border, borderRadius: 99, overflow: "hidden" }}>
+                        <div style={{
+                          height: "100%", borderRadius: 99, background: sc,
+                          width: item.status === "OUT" ? "0%" : item.status === "CRITICAL" ? "20%" : "50%",
+                          transition: "width .3s"
+                        }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
     </div>
     {/* ── FINANCIAL ANALYTICS — Owner only ── */}
     {currentUser?.role === "Owner" && (() => {
