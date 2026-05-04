@@ -385,6 +385,129 @@ async function taskWaCleanup() {
 }
 
 // ══════════════════════════════════════════════════
+// TASK 6: Scan Bukti Bayar — cocokkan R2 ke invoice PAID tanpa bukti
+// Jalan setiap hari jam 09:00 WIB (02:00 UTC)
+// Hanya proses invoice PAID setelah 2026-05-01 (fokus aktif)
+// ══════════════════════════════════════════════════
+async function taskScanBuktiBayar() {
+  const r2Key    = process.env.R2_ACCESS_KEY;
+  const r2Secret = process.env.R2_SECRET_KEY;
+  const r2Account= process.env.R2_ACCOUNT_ID;
+  const r2Bucket = process.env.R2_BUCKET_NAME || "aclean-files";
+
+  if (!r2Key || !r2Secret || !r2Account) {
+    await log("SCAN_BUKTI", "R2 credentials tidak lengkap — skip", "ERROR");
+    return { skipped: true, reason: "R2 credentials missing" };
+  }
+
+  // SigV4 helper
+  const { createHmac, createHash } = await import("crypto");
+  const hmacFn = (key, data) => createHmac("sha256", key).update(data).digest();
+  const hashHex = (data) => createHash("sha256").update(data).digest("hex");
+
+  async function listR2Prefix(prefix) {
+    const host = r2Account + ".r2.cloudflarestorage.com";
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, "").slice(0,15) + "Z";
+    const dateStr = amzDate.slice(0,8);
+    const payloadHash = hashHex("");
+    const qs = "list-type=2&max-keys=1000&prefix=" + encodeURIComponent(prefix).replace(/%2F/g, "/");
+    const canonHeaders = "host:" + host + "\nx-amz-content-sha256:" + payloadHash + "\nx-amz-date:" + amzDate + "\n";
+    const signedH = "host;x-amz-content-sha256;x-amz-date";
+    const canonReq = "GET\n/" + r2Bucket + "\n" + qs + "\n" + canonHeaders + "\n" + signedH + "\n" + payloadHash;
+    const credScope = dateStr + "/auto/s3/aws4_request";
+    const strToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credScope + "\n" + hashHex(canonReq);
+    const sigKey = hmacFn(hmacFn(hmacFn(hmacFn("AWS4" + r2Secret, dateStr), "auto"), "s3"), "aws4_request");
+    const sig = createHmac("sha256", sigKey).update(strToSign).digest("hex");
+    const auth = "AWS4-HMAC-SHA256 Credential=" + r2Key + "/" + credScope + ", SignedHeaders=" + signedH + ", Signature=" + sig;
+    const url = "https://" + host + "/" + r2Bucket + "?" + qs;
+    const xml = await fetch(url, { headers: { Authorization: auth, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash, host } }).then(r => r.text());
+    const keys  = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map(m => m[1]);
+    const dates = [...xml.matchAll(/<LastModified>([^<]+)<\/LastModified>/g)].map(m => m[1]);
+    return keys.map((k, i) => {
+      const fname = k.split("/").pop();
+      const m = fname.match(/^(\d+)_(\d+)\./);
+      if (!m) return null;
+      return { key: k, ts: parseInt(m[1]), phone: m[2], date: new Date(dates[i]) };
+    }).filter(Boolean);
+  }
+
+  // Ambil invoice PAID tanpa bukti, fokus setelah 2026-05-01
+  const { data: invs, error: invErr } = await sb
+    .from("invoices")
+    .select("id, customer, phone, total, paid_at, created_at")
+    .eq("status", "PAID")
+    .gt("total", 0)
+    .or("payment_proof_url.is.null,payment_proof_url.eq.,payment_proof_url.eq.verified-manual-no-proof")
+    .gte("created_at", "2026-05-01T00:00:00+00:00")
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (invErr) {
+    await log("SCAN_BUKTI", "Gagal fetch invoices: " + invErr.message, "ERROR");
+    return { error: invErr.message };
+  }
+  if (!invs || invs.length === 0) {
+    await log("SCAN_BUKTI", "Tidak ada invoice PAID tanpa bukti (≥1 Mei 2026)", "INFO");
+    return { checked: 0, updated: 0 };
+  }
+
+  // List semua file R2 bukti_transfer
+  const r2Files = await listR2Prefix("wa-images/bukti_transfer/");
+
+  // Build phone → files map (sorted oldest→newest)
+  const phoneMap = {};
+  for (const f of r2Files) {
+    if (!phoneMap[f.phone]) phoneMap[f.phone] = [];
+    phoneMap[f.phone].push(f);
+  }
+  for (const p of Object.keys(phoneMap)) phoneMap[p].sort((a,b) => a.ts - b.ts);
+
+  let updated = 0;
+  const updateLog = [];
+
+  for (const inv of invs) {
+    const rawPhone = (inv.phone || "").replace(/^[,\s]+/, "").trim();
+    if (!rawPhone || rawPhone.length < 8 || !/^\d+$/.test(rawPhone)) continue;
+
+    const files = phoneMap[rawPhone];
+    if (!files || files.length === 0) continue;
+
+    // Cari file terdekat setelah invoice created_at dalam 14 hari
+    const invTs = new Date(inv.created_at).getTime();
+    const window14 = 14 * 24 * 60 * 60 * 1000;
+    const afterInv = files.filter(f => f.ts >= invTs && f.ts <= invTs + window14);
+    const best = afterInv.length > 0 ? afterInv[0] : files[files.length - 1];
+
+    const proofUrl = "/api/foto?key=" + encodeURIComponent(best.key);
+    const { error: upErr } = await sb
+      .from("invoices")
+      .update({ payment_proof_url: proofUrl, updated_at: new Date().toISOString() })
+      .eq("id", inv.id);
+
+    if (!upErr) {
+      updated++;
+      updateLog.push(inv.id + " ← " + best.key.split("/").pop());
+    }
+  }
+
+  const summary = `Dicek: ${invs.length} invoice | Diupdate: ${updated} bukti bayar dari R2`;
+  await log("SCAN_BUKTI", summary + (updateLog.length ? "\n" + updateLog.join("\n") : ""), updated > 0 ? "SUCCESS" : "INFO");
+
+  // Notif owner jika ada yang terupdate
+  if (updated > 0) {
+    await sendWA(OWNER_PHONE,
+      "🧾 *Auto-Scan Bukti Bayar*\n" +
+      "Ditemukan " + updated + " bukti transfer baru di R2 dan sudah dilink ke invoice:\n\n" +
+      updateLog.slice(0, 10).map(l => "• " + l).join("\n") +
+      (updateLog.length > 10 ? "\n...dan " + (updateLog.length - 10) + " lainnya" : "")
+    );
+  }
+
+  return { checked: invs.length, r2Files: r2Files.length, updated, details: updateLog };
+}
+
+// ══════════════════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════════════════
 export default async function handler(req, res) {
@@ -432,11 +555,12 @@ export default async function handler(req, res) {
 
   try {
     let result;
-    if (task === "daily")        result = await taskDaily();
-    else if (task === "stock")   result = await taskStock();
-    else if (task === "cleanup") result = await taskCleanup();
+    if (task === "daily")           result = await taskDaily();
+    else if (task === "stock")      result = await taskStock();
+    else if (task === "cleanup")    result = await taskCleanup();
     else if (task === "wa-cleanup") result = await taskWaCleanup();
-    else                         result = await taskReminder();
+    else if (task === "bukti-bayar") result = await taskScanBuktiBayar();
+    else                            result = await taskReminder();
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });
   } catch(err) {
