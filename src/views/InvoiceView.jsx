@@ -1,10 +1,11 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
+const [scanningBukti, setScanningBukti] = useState(false);
 const totPgI = Math.ceil(filteredInv.length / INV_PAGE_SIZE) || 1;
 const curPgI = Math.min(invoicePage, totPgI);
 const pageInv = filteredInv.slice((curPgI - 1) * INV_PAGE_SIZE, curPgI * INV_PAGE_SIZE);
@@ -253,6 +254,48 @@ return (
         );
       })}
     </div>
+    {invoiceFilter === "Tanpa Bukti" && (
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button
+          disabled={scanningBukti}
+          onClick={async () => {
+            setScanningBukti(true);
+            try {
+              const headers = apiHeaders ? await apiHeaders() : {};
+              const res = await fetch("/api/cron-reminder?task=bukti-bayar", {
+                method: "GET",
+                headers,
+              });
+              const json = await res.json().catch(() => ({}));
+              const updated = json.updated ?? 0;
+              if (updated > 0) {
+                // Refresh invoices dari Supabase supaya bukti baru langsung muncul
+                const { data } = await supabase
+                  .from("invoices")
+                  .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent,sent_at,created_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url,repair_gratis")
+                  .order("created_at", { ascending: false })
+                  .limit(300);
+                if (data) setInvoicesData(data);
+                showNotif(`Scan selesai — ${updated} bukti bayar ditemukan & dilink`);
+              } else {
+                showNotif("Scan selesai — tidak ada bukti baru ditemukan di R2");
+              }
+            } catch (e) {
+              showNotif("Scan gagal: " + e.message);
+            } finally {
+              setScanningBukti(false);
+            }
+          }}
+          style={{
+            padding: "7px 16px", borderRadius: 8, border: "1px solid #f43f5e66",
+            background: scanningBukti ? cs.surface : "#f43f5e18", color: scanningBukti ? cs.muted : "#f43f5e",
+            cursor: scanningBukti ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600,
+          }}>
+          {scanningBukti ? "Sedang scan R2..." : "Scan Bukti Sekarang"}
+        </button>
+        <span style={{ fontSize: 11, color: cs.muted }}>Cari bukti transfer di R2 dan link ke invoice PAID tanpa bukti</span>
+      </div>
+    )}
     <div style={{ display: "grid", gap: 12 }}>
       {pageInv.map(inv => (
         <div key={inv.id} style={{ background: cs.card, border: "1px solid " + (statusColor[inv.status] || cs.border) + "44", borderRadius: 14, padding: 18 }}>

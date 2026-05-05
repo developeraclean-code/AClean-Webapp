@@ -4748,7 +4748,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       markInvoicePaid={markInvoicePaid} updateOrderStatus={updateOrderStatus} deleteInvoice={deleteInvoice} updateInvoice={updateInvoice}
       getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
       supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE}
-      laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA} />
+      laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
+      apiHeaders={_apiHeaders} />
   );
 
   // ============================================================
