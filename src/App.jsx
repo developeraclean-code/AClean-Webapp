@@ -1202,7 +1202,9 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     "AC Cassette 5PK",
     "AC Cassette 6PK",
     "AC Split Duct 2PK",
+    "AC Split Duct 2.5PK",
     "AC Split Duct 3PK",
+    "AC Split Duct 3.5PK",
     "AC Split Duct 4PK",
     "AC Split Duct 5PK"
   ];
@@ -1757,18 +1759,20 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
   const htmlToPdfBlob = async (html, filename) => {
     const h2p = await loadHtml2Pdf();
     const el = document.createElement("div");
-    el.innerHTML = html;
+    // Strip emoji agar html2canvas tidak menghasilkan halaman blank
+    const cleanHtml = html.replace(/[\u{1F300}-\u{1FFFF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, "");
+    el.innerHTML = cleanHtml;
     // Harus visible di viewport agar html2canvas bisa capture
-    el.style.cssText = "position:absolute;top:0;left:0;width:794px;z-index:9999;background:white;";
+    el.style.cssText = "position:absolute;top:-9999px;left:0;width:794px;z-index:9999;background:white;visibility:visible;";
     document.body.appendChild(el);
     // Tunggu gambar & font load
-    await new Promise(r => setTimeout(r, 1200));
+    await new Promise(r => setTimeout(r, 1500));
     try {
       const pdfBlob = await h2p().set({
         margin: [5, 5, 5, 5],
         filename,
-        image: { type: "jpeg", quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true, logging: false, allowTaint: true, scrollX: 0, scrollY: 0 },
+        image: { type: "jpeg", quality: 0.92 },
+        html2canvas: { scale: 2, useCORS: true, logging: false, allowTaint: true, scrollX: 0, scrollY: 0, windowWidth: 794 },
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
       }).from(el).outputPdf("blob");
       return pdfBlob;
@@ -9439,10 +9443,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               mDetail.push(mkRow(r.nama, r.jumlah || 1, r.satuan || "pcs", r.harga_satuan || 0, "repair"));
             });
 
-            // C. Material rows (dari [+] Tambah Material / Preset) — keterangan: "" atau freon label
-            laporanMaterials.filter(m => m.nama && parseFloat(m.jumlah || 0) > 0).forEach(m => {
-              mDetail.push(mkRow(m.nama, m.jumlah, m.satuan || "pcs", m.harga_satuan || 0, m.keterangan || ""));
-            });
+            // C. Material rows — laporanMaterials adalah stok tracking saja (TIDAK masuk invoice).
+            // Freon/vacum yang ditagih diinput via laporanJasaItems (Jasa section), bukan di sini.
 
             // D. Install rows — build dari laporanInstallItems dengan keterangan yang benar
             if (isInstallSvc) {
