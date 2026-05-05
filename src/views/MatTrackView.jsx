@@ -432,7 +432,7 @@ return (
                                   const isAdj = tx.type === "adjustment";
                                   const isUsage = tx.qty < 0 && !isAdj;
                                   return (
-                                    <div key={tx.id || ti} style={{ display: "grid", gridTemplateColumns: "1fr 90px auto auto", gap: 8, alignItems: "center", fontSize: 11, padding: "6px 8px", background: isAdj ? cs.green + "0a" : i % 2 === 0 ? cs.card : "transparent", borderRadius: 6 }}>
+                                    <div key={tx.id || ti} style={{ display: "grid", gridTemplateColumns: "1fr 90px auto auto", gap: 8, alignItems: "center", fontSize: 11, padding: "6px 8px", background: isAdj ? cs.green + "0a" : ti % 2 === 0 ? cs.card : "transparent", borderRadius: 6 }}>
                                       <div>
                                         <div style={{ color: cs.text, fontWeight: 500 }}>{tx.customer_name || "—"}</div>
                                         <div style={{ color: cs.muted, fontSize: 10 }}>{tx.teknisi_name || ""} · {(tx.order_id || tx.report_id || "").slice(0, 14)}</div>
