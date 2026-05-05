@@ -245,34 +245,78 @@ return (
       </button>
     </div>
 
-    {/* Kartu stok item prioritas */}
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 10 }}>
-      {TRACK_ITEMS.map(item => {
-        const tot = invTxData.filter(tx => tx.qty < 0 && tx.inventory_code === item.code)
-          .reduce((s, tx) => s + Math.abs(tx.qty), 0);
-        const col = item.status === "OUT" ? "#ef4444" : item.status === "CRITICAL" ? cs.yellow : item.status === "WARNING" ? "#f97316" : cs.green;
+    {/* Kartu stok item prioritas — redesign */}
+    {(() => {
+      const freons  = TRACK_ITEMS.filter(i => i.material_type === "freon");
+      const pipKab  = TRACK_ITEMS.filter(i => i.material_type === "pipa" || i.material_type === "kabel");
+      const renderCard = (item) => {
+        const usedAll  = invTxData.filter(tx => tx.qty < 0 && tx.inventory_code === item.code).reduce((s,tx) => s + Math.abs(tx.qty), 0);
+        const restock  = invTxData.filter(tx => tx.qty > 0 && tx.inventory_code === item.code).reduce((s,tx) => s + tx.qty, 0);
+        const col      = item.status === "OUT" ? "#ef4444" : item.status === "CRITICAL" ? "#f59e0b" : item.status === "WARNING" ? "#f97316" : cs.green;
+        const statusLabel = item.status === "OUT" ? "Habis" : item.status === "CRITICAL" ? "Kritis" : item.status === "WARNING" ? "Menipis" : "Aman";
+        const isSelected  = matTrackFilter === item.code;
+        // persen stok vs kapasitas dari unit fisik
+        const unitTot = invUnitsData.filter(u => u.inventory_code === item.code).reduce((s,u) => s + (u.capacity || 0), 0);
+        const pct     = unitTot > 0 ? Math.min(100, Math.round(item.stock / unitTot * 100)) : (item.reorder > 0 ? Math.min(100, Math.round(item.stock / item.reorder * 100)) : 50);
         return (
-          <div key={item.id} onClick={() => setMatTrackFilter(item.code)}
-            style={{ background: cs.card, border: "1px solid " + (matTrackFilter === item.code ? cs.accent : col) + "44", borderRadius: 10, padding: "10px 12px", cursor: "pointer", borderLeft: "3px solid " + col }}>
-            <div style={{ fontSize: 10, color: cs.muted, marginBottom: 2 }}>{item.code}</div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 6 }}>{item.name}</div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+          <div key={item.id} onClick={() => setMatTrackFilter(isSelected ? null : item.code)}
+            style={{
+              background: isSelected ? col + "15" : cs.card,
+              border: "1.5px solid " + (isSelected ? col : cs.border),
+              borderRadius: 14, padding: "14px 16px", cursor: "pointer",
+              boxShadow: isSelected ? "0 0 0 2px " + col + "40" : "none",
+              transition: "all .15s",
+            }}>
+            {/* baris atas: nama + badge status */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
               <div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: col }}>{displayStock(item)}</div>
-                <div style={{ fontSize: 10, color: cs.muted }}>{item.unit} tersisa</div>
+                <div style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace", marginBottom: 2 }}>{item.code}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, lineHeight: 1.3 }}>{item.name}</div>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: cs.muted }}>{tot.toFixed(1)}</div>
-                <div style={{ fontSize: 9, color: cs.muted }}>{item.unit} terpakai</div>
-              </div>
+              <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: col + "22", color: col, whiteSpace: "nowrap", marginLeft: 6 }}>
+                {statusLabel}
+              </span>
             </div>
-            <div style={{ marginTop: 6, height: 4, background: cs.border, borderRadius: 99, overflow: "hidden" }}>
-              <div style={{ height: "100%", background: col, borderRadius: 99, width: item.min_alert > 0 ? Math.min(100, Math.round(item.stock / item.min_alert * 50)) + "%" : "30%" }} />
+            {/* angka stok besar */}
+            <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 4 }}>
+              <span style={{ fontSize: 26, fontWeight: 900, color: col, lineHeight: 1 }}>{displayStock(item)}</span>
+              <span style={{ fontSize: 12, color: cs.muted }}>{item.unit}</span>
             </div>
+            {/* progress bar stok vs kapasitas */}
+            <div style={{ height: 6, background: cs.border, borderRadius: 99, overflow: "hidden", marginBottom: 10 }}>
+              <div style={{ height: "100%", width: pct + "%", background: col, borderRadius: 99, transition: "width .4s" }} />
+            </div>
+            {/* statistik bawah */}
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: cs.muted }}>
+              <span>Terpakai: <b style={{ color: cs.text }}>{usedAll.toFixed(1)} {item.unit}</b></span>
+              {restock > 0 && <span>Masuk: <b style={{ color: cs.green }}>+{restock.toFixed(1)}</b></span>}
+              {item.reorder > 0 && <span style={{ color: item.stock <= item.reorder ? "#f59e0b" : cs.muted }}>Min: {item.reorder}</span>}
+            </div>
+            {isSelected && <div style={{ marginTop: 8, fontSize: 10, color: col, fontWeight: 600 }}>Menampilkan transaksi ↓ · Klik lagi untuk reset</div>}
           </div>
         );
-      })}
-    </div>
+      };
+      return (
+        <div style={{ display: "grid", gap: 12 }}>
+          {freons.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 8, letterSpacing: 1, textTransform: "uppercase" }}>Freon</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(190px,1fr))", gap: 10 }}>
+                {freons.map(renderCard)}
+              </div>
+            </div>
+          )}
+          {pipKab.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 8, letterSpacing: 1, textTransform: "uppercase" }}>Pipa & Kabel</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(190px,1fr))", gap: 10 }}>
+                {pipKab.map(renderCard)}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    })()}
 
     {/* ── Unit Fisik per Item (Tabung / Roll) — Owner/Admin only ── */}
     {isOwnerAdmin && (
