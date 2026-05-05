@@ -14,6 +14,9 @@ const [addUnitFor, setAddUnitFor]   = useState(null); // inventory_code sedang t
 const [addUnitForm, setAddUnitForm] = useState({ label: "", capacity: "", minVisible: "" });
 const [editUnitId, setEditUnitId]   = useState(null); // unit.id sedang diedit stok
 const [editUnitVal, setEditUnitVal] = useState("");   // nilai stok baru
+const [showArchived, setShowArchived] = useState(false); // tampilkan unit archived
+const [archiveReason, setArchiveReason] = useState(""); // alasan archive (optional)
+const [confirmArchiveId, setConfirmArchiveId] = useState(null); // unit.id yang menunggu konfirmasi archive
 
 // ── State untuk freon timbang adjustment ──
 const [historyUnitId, setHistoryUnitId] = useState(null); // unit.id yang popup riwayatnya terbuka
@@ -155,6 +158,44 @@ const toggleUnit = async (unitId, isActive) => {
   setInvUnitsData(prev => prev.map(u => u.id === unitId ? { ...u, is_active: isActive } : u));
 };
 
+const archiveUnit = async (unitId, reason) => {
+  const { error } = await supabase.from("inventory_units").update({
+    archived: true,
+    archived_at: new Date().toISOString(),
+    archived_reason: reason || null,
+    is_active: false,
+  }).eq("id", unitId);
+  if (!error) {
+    setInvUnitsData(prev => prev.map(u => u.id === unitId
+      ? { ...u, archived: true, archived_at: new Date().toISOString(), archived_reason: reason || null, is_active: false }
+      : u
+    ));
+    showNotif("🗄️ Unit diarsipkan — data tetap tersimpan");
+  } else {
+    showNotif("❌ Gagal arsipkan: " + error.message);
+  }
+  setConfirmArchiveId(null);
+  setArchiveReason("");
+};
+
+const unarchiveUnit = async (unitId) => {
+  const { error } = await supabase.from("inventory_units").update({
+    archived: false,
+    archived_at: null,
+    archived_reason: null,
+    is_active: false,
+  }).eq("id", unitId);
+  if (!error) {
+    setInvUnitsData(prev => prev.map(u => u.id === unitId
+      ? { ...u, archived: false, archived_at: null, archived_reason: null }
+      : u
+    ));
+    showNotif("✅ Unit dikembalikan dari arsip");
+  } else {
+    showNotif("❌ Gagal: " + error.message);
+  }
+};
+
 // Filter transaksi: usage (keluar) dan restock (masuk)
 let txFiltered = [...invTxData];
 // Filter berdasarkan tab: hanya usage
@@ -294,12 +335,13 @@ return (
                 </div>
               )}
 
+              {/* ── Unit aktif (non-archived) ── */}
               <div style={{ display: "grid", gap: 6 }}>
-                {units.length === 0 ? (
+                {units.filter(u => !u.archived).length === 0 ? (
                   <div style={{ fontSize: 11, color: cs.muted, textAlign: "center", padding: "8px 0" }}>
                     Belum ada unit fisik. Klik "+ Tambah Unit" untuk menambah.
                   </div>
-                ) : units.map(unit => {
+                ) : units.filter(u => !u.archived).map(unit => {
                   const pct = unit.capacity > 0 ? Math.min(100, Math.round(unit.stock / unit.capacity * 100)) : 0;
                   const col = !unit.is_active ? cs.muted
                     : unit.stock < (unit.min_visible || 3) ? cs.red
@@ -307,6 +349,7 @@ return (
                         : cs.green;
                   const hiddenFromTek = unit.stock < (unit.min_visible || 3);
                   const isEditingThis = editUnitId === unit.id;
+                  const isConfirmingArchive = confirmArchiveId === unit.id;
                   return (
                     <div key={unit.id} style={{ display: "grid", gap: 6, opacity: unit.is_active ? 1 : 0.5, background: cs.card, borderRadius: 8, padding: "10px 12px", border: "1px solid " + col + "33" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -342,8 +385,37 @@ return (
                             style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: unit.is_active ? cs.red + "22" : cs.green + "22", border: "1px solid " + (unit.is_active ? cs.red : cs.green) + "44", color: unit.is_active ? cs.red : cs.green, cursor: "pointer" }}>
                             {unit.is_active ? "⏸️" : "▶️"}
                           </button>
+                          <button onClick={() => { setConfirmArchiveId(isConfirmingArchive ? null : unit.id); setArchiveReason(""); }}
+                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: isConfirmingArchive ? cs.red + "33" : "#64748b22", border: "1px solid " + (isConfirmingArchive ? cs.red : "#64748b") + "44", color: isConfirmingArchive ? cs.red : "#94a3b8", cursor: "pointer" }}
+                            title="Arsipkan tabung — tabung dibuang fisik, data tetap tersimpan">
+                            🗄️
+                          </button>
                         </div>
                       </div>
+                      {/* ── Konfirmasi archive ── */}
+                      {isConfirmingArchive && (
+                        <div style={{ background: cs.red + "0a", border: "1px solid " + cs.red + "33", borderRadius: 8, padding: "10px 12px" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: cs.red, marginBottom: 6 }}>🗄️ Arsipkan {unit.unit_label}?</div>
+                          <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8 }}>Tabung dibuang secara fisik — data pemakaian tetap tersimpan. Tidak bisa dipakai teknisi lagi.</div>
+                          <input
+                            type="text"
+                            placeholder="Alasan (opsional, cth: tabung bocor, habis expired)"
+                            value={archiveReason}
+                            onChange={e => setArchiveReason(e.target.value)}
+                            style={{ width: "100%", boxSizing: "border-box", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 11, outline: "none", marginBottom: 8 }}
+                          />
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={() => archiveUnit(unit.id, archiveReason)}
+                              style={{ background: cs.red, border: "none", color: "#fff", padding: "6px 14px", borderRadius: 7, cursor: "pointer", fontWeight: 700, fontSize: 11 }}>
+                              ✓ Ya, Arsipkan
+                            </button>
+                            <button onClick={() => { setConfirmArchiveId(null); setArchiveReason(""); }}
+                              style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "6px 12px", borderRadius: 7, cursor: "pointer", fontSize: 11 }}>
+                              Batal
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       {/* ── Inline edit stok unit ── */}
                       {isEditingThis && (
                         <div style={{ background: cs.yellow + "08", border: "1px solid " + cs.yellow + "33", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -405,6 +477,37 @@ return (
                   );
                 })}
               </div>
+
+              {/* ── Unit Archived ── */}
+              {units.filter(u => u.archived).length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <button onClick={() => setShowArchived(v => !v)}
+                    style={{ fontSize: 11, color: cs.muted, background: "none", border: "none", cursor: "pointer", padding: "2px 0", display: "flex", alignItems: "center", gap: 5 }}>
+                    🗄️ {showArchived ? "Sembunyikan" : "Tampilkan"} Arsip ({units.filter(u => u.archived).length} unit diarsipkan)
+                  </button>
+                  {showArchived && (
+                    <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                      {units.filter(u => u.archived).map(unit => (
+                        <div key={unit.id} style={{ display: "flex", alignItems: "center", gap: 10, background: cs.card, borderRadius: 8, padding: "8px 12px", border: "1px solid #64748b33", opacity: 0.65 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: cs.muted }}>🗄️ {unit.unit_label}</div>
+                            <div style={{ fontSize: 10, color: cs.muted }}>
+                              Diarsipkan {unit.archived_at ? new Date(unit.archived_at).toLocaleDateString("id-ID") : ""}
+                              {unit.archived_reason ? " · " + unit.archived_reason : ""}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 11, color: cs.muted }}>{parseFloat((unit.stock || 0).toFixed(1))} {item.unit} saat diarsipkan</div>
+                          <button onClick={() => unarchiveUnit(unit.id)}
+                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: cs.green + "18", border: "1px solid " + cs.green + "44", color: cs.green, cursor: "pointer" }}
+                            title="Kembalikan dari arsip">
+                            ↩️ Pulihkan
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

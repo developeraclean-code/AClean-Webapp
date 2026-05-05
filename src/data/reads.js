@@ -38,7 +38,7 @@ export const fetchInventoryTransactions = (supabase) =>
 
 export const fetchInventoryUnits = (supabase) =>
   supabase.from("inventory_units")
-    .select("id,inventory_code,unit_label,stock,capacity,min_visible,is_active")
+    .select("id,inventory_code,unit_label,stock,capacity,min_visible,is_active,archived,archived_at,archived_reason")
     .order("inventory_code").order("unit_label").limit(2000);
 
 export const fetchExpenses = (supabase) =>
