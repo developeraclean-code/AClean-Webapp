@@ -237,7 +237,7 @@ return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
       <div>
         <div style={{ fontWeight: 800, fontSize: 18, color: cs.text }}>🧮 Stok & Tracking Material</div>
-        <div style={{ fontSize: 12, color: cs.muted }}>Pemakaian material per job · Auto-deduct dari laporan teknisi</div>
+        <div style={{ fontSize: 12, color: cs.muted }}>Stok per tabung/roll · Auto-deduct dari laporan teknisi</div>
       </div>
       <button onClick={() => setModalStok(true)}
         style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
@@ -245,253 +245,194 @@ return (
       </button>
     </div>
 
-    {/* Kartu stok item prioritas — redesign */}
-    {(() => {
-      const freons  = TRACK_ITEMS.filter(i => i.material_type === "freon");
-      const pipKab  = TRACK_ITEMS.filter(i => i.material_type === "pipa" || i.material_type === "kabel");
-      const renderCard = (item) => {
-        const usedAll  = invTxData.filter(tx => tx.qty < 0 && tx.inventory_code === item.code).reduce((s,tx) => s + Math.abs(tx.qty), 0);
-        const restock  = invTxData.filter(tx => tx.qty > 0 && tx.inventory_code === item.code).reduce((s,tx) => s + tx.qty, 0);
-        const col      = item.status === "OUT" ? "#ef4444" : item.status === "CRITICAL" ? "#f59e0b" : item.status === "WARNING" ? "#f97316" : cs.green;
-        const statusLabel = item.status === "OUT" ? "Habis" : item.status === "CRITICAL" ? "Kritis" : item.status === "WARNING" ? "Menipis" : "Aman";
-        const isSelected  = matTrackFilter === item.code;
-        // persen stok vs kapasitas dari unit fisik
-        const unitTot = invUnitsData.filter(u => u.inventory_code === item.code).reduce((s,u) => s + (u.capacity || 0), 0);
-        const pct     = unitTot > 0 ? Math.min(100, Math.round(item.stock / unitTot * 100)) : (item.reorder > 0 ? Math.min(100, Math.round(item.stock / item.reorder * 100)) : 50);
-        return (
-          <div key={item.id} onClick={() => setMatTrackFilter(isSelected ? null : item.code)}
-            style={{
-              background: isSelected ? col + "15" : cs.card,
-              border: "1.5px solid " + (isSelected ? col : cs.border),
-              borderRadius: 14, padding: "14px 16px", cursor: "pointer",
-              boxShadow: isSelected ? "0 0 0 2px " + col + "40" : "none",
-              transition: "all .15s",
-            }}>
-            {/* baris atas: nama + badge status */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-              <div>
-                <div style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace", marginBottom: 2 }}>{item.code}</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, lineHeight: 1.3 }}>{item.name}</div>
-              </div>
-              <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: col + "22", color: col, whiteSpace: "nowrap", marginLeft: 6 }}>
-                {statusLabel}
-              </span>
-            </div>
-            {/* angka stok besar */}
-            <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 4 }}>
-              <span style={{ fontSize: 26, fontWeight: 900, color: col, lineHeight: 1 }}>{displayStock(item)}</span>
-              <span style={{ fontSize: 12, color: cs.muted }}>{item.unit}</span>
-            </div>
-            {/* progress bar stok vs kapasitas */}
-            <div style={{ height: 6, background: cs.border, borderRadius: 99, overflow: "hidden", marginBottom: 10 }}>
-              <div style={{ height: "100%", width: pct + "%", background: col, borderRadius: 99, transition: "width .4s" }} />
-            </div>
-            {/* statistik bawah */}
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: cs.muted }}>
-              <span>Terpakai: <b style={{ color: cs.text }}>{usedAll.toFixed(1)} {item.unit}</b></span>
-              {restock > 0 && <span>Masuk: <b style={{ color: cs.green }}>+{restock.toFixed(1)}</b></span>}
-              {item.reorder > 0 && <span style={{ color: item.stock <= item.reorder ? "#f59e0b" : cs.muted }}>Min: {item.reorder}</span>}
-            </div>
-            {isSelected && <div style={{ marginTop: 8, fontSize: 10, color: col, fontWeight: 600 }}>Menampilkan transaksi ↓ · Klik lagi untuk reset</div>}
-          </div>
-        );
-      };
+    {/* ── Daftar Material — satu card per item ── */}
+    {TRACK_ITEMS.map(item => {
+      const units = invUnitsData.filter(u => u.inventory_code === item.code);
+      const activeUnits = units.filter(u => !u.archived);
+      const archivedUnits = units.filter(u => u.archived);
+      const totalStok = activeUnits.reduce((s, u) => s + (u.stock || 0), 0);
+      const totalKap  = activeUnits.reduce((s, u) => s + (u.capacity || 0), 0);
+      const usedAll   = invTxData.filter(tx => tx.qty < 0 && tx.inventory_code === item.code).reduce((s,tx) => s + Math.abs(tx.qty), 0);
+      const isAddingHere = addUnitFor === item.code;
+      const itemCol = item.status === "OUT" ? "#ef4444" : item.status === "CRITICAL" ? "#f59e0b" : item.status === "WARNING" ? "#f97316" : cs.green;
+      const statusLabel = item.status === "OUT" ? "Habis" : item.status === "CRITICAL" ? "Kritis" : item.status === "WARNING" ? "Menipis" : "Aman";
+      const pctTotal = totalKap > 0 ? Math.min(100, Math.round(totalStok / totalKap * 100)) : 0;
+
       return (
-        <div style={{ display: "grid", gap: 12 }}>
-          {freons.length > 0 && (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 8, letterSpacing: 1, textTransform: "uppercase" }}>Freon</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(190px,1fr))", gap: 10 }}>
-                {freons.map(renderCard)}
-              </div>
-            </div>
-          )}
-          {pipKab.length > 0 && (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 8, letterSpacing: 1, textTransform: "uppercase" }}>Pipa & Kabel</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(190px,1fr))", gap: 10 }}>
-                {pipKab.map(renderCard)}
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    })()}
+        <div key={item.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 16, overflow: "hidden" }}>
 
-    {/* ── Unit Fisik per Item (Tabung / Roll) — Owner/Admin only ── */}
-    {isOwnerAdmin && (
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>📦 Unit Fisik (Tabung & Roll)</div>
-            <div style={{ fontSize: 11, color: cs.muted }}>Stok per unit · Teknisi lihat unit sisa ≥ batas minimum</div>
+          {/* ── Header item ── */}
+          <div style={{ padding: "14px 18px", borderBottom: "1px solid " + cs.border, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            {/* Nama + kode */}
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>{item.name}</span>
+                <span style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace", background: cs.surface, padding: "1px 6px", borderRadius: 4 }}>{item.code}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: itemCol + "22", color: itemCol }}>{statusLabel}</span>
+              </div>
+              <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>
+                {activeUnits.length} unit aktif · Terpakai total: <b style={{ color: cs.text }}>{usedAll.toFixed(1)} {item.unit}</b>
+              </div>
+            </div>
+            {/* Stok total + bar */}
+            <div style={{ minWidth: 180 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 4 }}>
+                <span style={{ fontWeight: 700, fontSize: 16, color: itemCol }}>{totalStok.toFixed(1)} <span style={{ fontSize: 12, fontWeight: 400, color: cs.muted }}>{item.unit}</span></span>
+                <span style={{ color: cs.muted, fontSize: 11 }}>/ {totalKap.toFixed(0)} {item.unit} kap.</span>
+              </div>
+              <div style={{ height: 8, background: cs.surface, borderRadius: 99, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: pctTotal + "%", background: itemCol, borderRadius: 99, transition: "width .4s" }} />
+              </div>
+            </div>
+            {/* Tombol + tambah */}
+            {isOwnerAdmin && (
+              <button onClick={() => { setAddUnitFor(isAddingHere ? null : item.code); setAddUnitForm({ label: "", capacity: "", minVisible: "" }); }}
+                style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, background: isAddingHere ? cs.red + "22" : cs.accent + "22", border: "1px solid " + (isAddingHere ? cs.red : cs.accent) + "55", color: isAddingHere ? cs.red : cs.accent, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>
+                {isAddingHere ? "✕ Batal" : "+ Tambah Unit"}
+              </button>
+            )}
           </div>
-        </div>
-        {TRACK_ITEMS.map(item => {
-          const units = invUnitsData.filter(u => u.inventory_code === item.code);
-          const totalStok = units.reduce((s, u) => s + (u.stock || 0), 0);
-          const isAddingHere = addUnitFor === item.code;
-          return (
-            <div key={item.code} style={{ marginBottom: 12, background: cs.surface, borderRadius: 10, padding: "10px 14px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+
+          {/* ── Inline form tambah unit baru ── */}
+          {isAddingHere && (
+            <div style={{ padding: "14px 18px", borderBottom: "1px solid " + cs.accent + "33", background: cs.accent + "06" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent, marginBottom: 10 }}>➕ Tambah Unit Fisik Baru</div>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 8, alignItems: "flex-end" }}>
                 <div>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{item.name}</span>
-                  <span style={{ fontSize: 11, color: cs.muted, marginLeft: 8 }}>[{item.code}]</span>
+                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Label Unit</div>
+                  <input type="text" placeholder="cth: Tabung R32-A" value={addUnitForm.label}
+                    onChange={e => setAddUnitForm(f => ({ ...f, label: e.target.value }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
                 </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>{parseFloat(totalStok.toFixed(1))} {item.unit} total</span>
-                  <button onClick={() => { setAddUnitFor(isAddingHere ? null : item.code); setAddUnitForm({ label: "", capacity: "", minVisible: "" }); }}
-                    style={{ fontSize: 11, padding: "3px 10px", borderRadius: 7, background: isAddingHere ? cs.red + "22" : cs.accent + "22", border: "1px solid " + (isAddingHere ? cs.red : cs.accent) + "44", color: isAddingHere ? cs.red : cs.accent, cursor: "pointer", fontWeight: 600 }}>
-                    {isAddingHere ? "✕ Batal" : "+ Tambah Unit"}
-                  </button>
+                <div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Kapasitas ({item.unit})</div>
+                  <input type="number" min="0" step="0.1" placeholder="13.6" value={addUnitForm.capacity}
+                    onChange={e => setAddUnitForm(f => ({ ...f, capacity: e.target.value }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
                 </div>
+                <div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Min Tampil</div>
+                  <input type="number" min="0" step="0.1" placeholder="3" value={addUnitForm.minVisible}
+                    onChange={e => setAddUnitForm(f => ({ ...f, minVisible: e.target.value }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <button onClick={() => addUnit(item.code)}
+                  style={{ background: cs.accent, border: "none", color: "#0a0f1e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }}>
+                  ✓ Simpan
+                </button>
               </div>
+              <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>Min Tampil: stok minimum agar unit masih terlihat oleh teknisi saat input laporan</div>
+            </div>
+          )}
 
-              {/* ── Inline form tambah unit baru ── */}
-              {isAddingHere && (
-                <div style={{ background: cs.accent + "08", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "12px 14px", marginBottom: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent, marginBottom: 10 }}>➕ Tambah Unit Fisik Baru</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 }}>
-                    <div>
-                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Label Unit</div>
-                      <input type="text" placeholder="cth: Botol R32-A" value={addUnitForm.label}
-                        onChange={e => setAddUnitForm(f => ({ ...f, label: e.target.value }))}
-                        style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Kapasitas ({item.unit})</div>
-                      <input type="number" min="0" step="0.1" placeholder="cth: 10" value={addUnitForm.capacity}
-                        onChange={e => setAddUnitForm(f => ({ ...f, capacity: e.target.value }))}
-                        style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Min Tampil</div>
-                      <input type="number" min="0" step="0.1" placeholder="3" value={addUnitForm.minVisible}
-                        onChange={e => setAddUnitForm(f => ({ ...f, minVisible: e.target.value }))}
-                        style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>Min Tampil: batas stok minimum agar unit terlihat oleh teknisi</div>
-                  <button onClick={() => addUnit(item.code)}
-                    style={{ marginTop: 10, background: cs.accent, border: "none", color: "#0a0f1e", padding: "8px 18px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
-                    ✓ Simpan Unit
-                  </button>
-                </div>
-              )}
-
-              {/* ── Unit aktif (non-archived) ── */}
-              <div style={{ display: "grid", gap: 6 }}>
-                {units.filter(u => !u.archived).length === 0 ? (
-                  <div style={{ fontSize: 11, color: cs.muted, textAlign: "center", padding: "8px 0" }}>
-                    Belum ada unit fisik. Klik "+ Tambah Unit" untuk menambah.
-                  </div>
-                ) : units.filter(u => !u.archived).map(unit => {
-                  const pct = unit.capacity > 0 ? Math.min(100, Math.round(unit.stock / unit.capacity * 100)) : 0;
-                  const col = !unit.is_active ? cs.muted
-                    : unit.stock < (unit.min_visible || 3) ? cs.red
-                      : unit.stock < (unit.capacity || 99) / 3 ? cs.yellow
-                        : cs.green;
-                  const hiddenFromTek = unit.stock < (unit.min_visible || 3);
-                  const isEditingThis = editUnitId === unit.id;
-                  const isConfirmingArchive = confirmArchiveId === unit.id;
-                  return (
-                    <div key={unit.id} style={{ display: "grid", gap: 6, opacity: unit.is_active ? 1 : 0.5, background: cs.card, borderRadius: 8, padding: "10px 12px", border: "1px solid " + col + "33" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        {/* Label + status */}
-                        <div style={{ minWidth: 120 }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: cs.text }}>{unit.unit_label}</div>
-                          <div style={{ fontSize: 10, color: cs.muted }}>
-                            {hiddenFromTek && unit.is_active ? "👁️ Tersembunyi dari teknisi" : ""}
-                            {!unit.is_active ? "⏸️ Nonaktif" : ""}
-                          </div>
-                        </div>
-                        {/* Progress bar */}
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: cs.muted, marginBottom: 3 }}>
-                            <span>{parseFloat((unit.stock || 0).toFixed(1))} {item.unit} sisa</span>
-                            <span>{unit.capacity || "?"} {item.unit} kapasitas</span>
-                          </div>
-                          <div style={{ height: 6, background: cs.border, borderRadius: 99, overflow: "hidden" }}>
-                            <div style={{ height: "100%", width: pct + "%", background: col, borderRadius: 99, transition: "width .3s" }} />
-                          </div>
-                        </div>
-                        {/* Tombol aksi */}
-                        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                          <button onClick={() => setHistoryUnitId(historyUnitId === unit.id ? null : unit.id)}
-                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: historyUnitId === unit.id ? cs.accent + "33" : cs.accent + "18", border: "1px solid " + cs.accent + (historyUnitId === unit.id ? "88" : "33"), color: cs.accent, cursor: "pointer", fontWeight: historyUnitId === unit.id ? 700 : 400 }}>
-                            {historyUnitId === unit.id ? "✕ Tutup" : "📋 Riwayat"}
-                          </button>
-                          <button onClick={() => { setEditUnitId(isEditingThis ? null : unit.id); setEditUnitVal(String(unit.stock)); }}
-                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: isEditingThis ? cs.red + "22" : cs.yellow + "22", border: "1px solid " + (isEditingThis ? cs.red : cs.yellow) + "44", color: isEditingThis ? cs.red : cs.yellow, cursor: "pointer" }}>
-                            {isEditingThis ? "✕" : "✏️ Ubah"}
-                          </button>
-                          <button onClick={() => toggleUnit(unit.id, !unit.is_active)}
-                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: unit.is_active ? cs.red + "22" : cs.green + "22", border: "1px solid " + (unit.is_active ? cs.red : cs.green) + "44", color: unit.is_active ? cs.red : cs.green, cursor: "pointer" }}>
-                            {unit.is_active ? "⏸️" : "▶️"}
-                          </button>
-                          <button onClick={() => { setConfirmArchiveId(isConfirmingArchive ? null : unit.id); setArchiveReason(""); }}
-                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: isConfirmingArchive ? cs.red + "33" : "#64748b22", border: "1px solid " + (isConfirmingArchive ? cs.red : "#64748b") + "44", color: isConfirmingArchive ? cs.red : "#94a3b8", cursor: "pointer" }}
-                            title="Arsipkan tabung — tabung dibuang fisik, data tetap tersimpan">
-                            🗄️
-                          </button>
-                        </div>
+          {/* ── Grid unit aktif ── */}
+          <div style={{ padding: "12px 18px", display: "grid", gap: 8 }}>
+            {activeUnits.length === 0 ? (
+              <div style={{ fontSize: 12, color: cs.muted, textAlign: "center", padding: "16px 0" }}>
+                Belum ada unit fisik. {isOwnerAdmin ? "Klik \"+ Tambah Unit\" untuk menambah." : ""}
+              </div>
+            ) : activeUnits.map(unit => {
+              const pct = unit.capacity > 0 ? Math.min(100, Math.round(unit.stock / unit.capacity * 100)) : 0;
+              const col = !unit.is_active ? cs.muted
+                : unit.stock <= 0 ? "#ef4444"
+                  : unit.stock < (unit.min_visible || 3) ? "#f97316"
+                    : unit.stock < (unit.capacity || 99) / 3 ? "#f59e0b"
+                      : cs.green;
+              const hiddenFromTek = unit.stock < (unit.min_visible || 3);
+              const isEditingThis = editUnitId === unit.id;
+              const isConfirmingArchive = confirmArchiveId === unit.id;
+              return (
+                <div key={unit.id} style={{ background: cs.surface, borderRadius: 10, border: "1px solid " + (isEditingThis ? cs.yellow : col) + "33", opacity: unit.is_active ? 1 : 0.55 }}>
+                  {/* Baris utama unit */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px" }}>
+                    {/* Nama + tag */}
+                    <div style={{ minWidth: 130 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>{unit.unit_label}</div>
+                      <div style={{ fontSize: 10, color: hiddenFromTek && unit.is_active ? "#f97316" : cs.muted, marginTop: 1 }}>
+                        {!unit.is_active ? "⏸ Nonaktif" : hiddenFromTek ? "Tersembunyi teknisi" : "Aktif"}
                       </div>
-                      {/* ── Konfirmasi archive ── */}
-                      {isConfirmingArchive && (
-                        <div style={{ background: cs.red + "0a", border: "1px solid " + cs.red + "33", borderRadius: 8, padding: "10px 12px" }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: cs.red, marginBottom: 6 }}>🗄️ Arsipkan {unit.unit_label}?</div>
-                          <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8 }}>Tabung dibuang secara fisik — data pemakaian tetap tersimpan. Tidak bisa dipakai teknisi lagi.</div>
-                          <input
-                            type="text"
-                            placeholder="Alasan (opsional, cth: tabung bocor, habis expired)"
-                            value={archiveReason}
-                            onChange={e => setArchiveReason(e.target.value)}
-                            style={{ width: "100%", boxSizing: "border-box", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 11, outline: "none", marginBottom: 8 }}
-                          />
-                          <div style={{ display: "flex", gap: 8 }}>
+                    </div>
+                    {/* Progress bar */}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: cs.muted, marginBottom: 5 }}>
+                        <span style={{ fontWeight: 700, color: col, fontSize: 13 }}>{parseFloat((unit.stock || 0).toFixed(1))} {item.unit}</span>
+                        <span>{unit.capacity || "?"} {item.unit} kapasitas · {pct}%</span>
+                      </div>
+                      <div style={{ height: 8, background: cs.card, borderRadius: 99, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: pct + "%", background: col, borderRadius: 99, transition: "width .3s" }} />
+                      </div>
+                    </div>
+                    {/* Tombol aksi */}
+                    {isOwnerAdmin && (
+                      <div style={{ display: "flex", gap: 5, alignItems: "center", flexShrink: 0 }}>
+                        <button onClick={() => setHistoryUnitId(historyUnitId === unit.id ? null : unit.id)}
+                          style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: historyUnitId === unit.id ? cs.accent + "33" : cs.accent + "15", border: "1px solid " + cs.accent + "44", color: cs.accent, cursor: "pointer", fontWeight: historyUnitId === unit.id ? 700 : 400 }}>
+                          {historyUnitId === unit.id ? "✕" : "Riwayat"}
+                        </button>
+                        <button onClick={() => { setEditUnitId(isEditingThis ? null : unit.id); setEditUnitVal(String(unit.stock)); }}
+                          style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: isEditingThis ? cs.red + "22" : cs.yellow + "18", border: "1px solid " + (isEditingThis ? cs.red : cs.yellow) + "44", color: isEditingThis ? cs.red : cs.yellow, cursor: "pointer" }}>
+                          {isEditingThis ? "✕" : "Ubah"}
+                        </button>
+                        <button onClick={() => toggleUnit(unit.id, !unit.is_active)}
+                          style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: unit.is_active ? cs.red + "18" : cs.green + "18", border: "1px solid " + (unit.is_active ? cs.red : cs.green) + "44", color: unit.is_active ? cs.red : cs.green, cursor: "pointer" }}>
+                          {unit.is_active ? "Nonaktif" : "Aktifkan"}
+                        </button>
+                        <button onClick={() => { setConfirmArchiveId(isConfirmingArchive ? null : unit.id); setArchiveReason(""); }}
+                          style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: isConfirmingArchive ? cs.red + "33" : "#64748b18", border: "1px solid " + (isConfirmingArchive ? cs.red : "#64748b") + "44", color: isConfirmingArchive ? cs.red : "#94a3b8", cursor: "pointer" }}
+                          title="Arsipkan — unit dibuang fisik, data tetap tersimpan">
+                          Arsip
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {/* ── Konfirmasi archive ── */}
+                  {isConfirmingArchive && (
+                        <div style={{ padding: "10px 14px", background: cs.red + "08", borderTop: "1px solid " + cs.red + "22" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: cs.red, marginBottom: 6 }}>Arsipkan {unit.unit_label}?</div>
+                          <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8 }}>Unit dibuang fisik — data pemakaian tetap tersimpan.</div>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <input type="text" placeholder="Alasan (opsional)" value={archiveReason}
+                              onChange={e => setArchiveReason(e.target.value)}
+                              style={{ flex: 1, minWidth: 160, background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 11, outline: "none" }} />
                             <button onClick={() => archiveUnit(unit.id, archiveReason)}
                               style={{ background: cs.red, border: "none", color: "#fff", padding: "6px 14px", borderRadius: 7, cursor: "pointer", fontWeight: 700, fontSize: 11 }}>
-                              ✓ Ya, Arsipkan
+                              Ya, Arsipkan
                             </button>
                             <button onClick={() => { setConfirmArchiveId(null); setArchiveReason(""); }}
-                              style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "6px 12px", borderRadius: 7, cursor: "pointer", fontSize: 11 }}>
+                              style={{ background: "none", border: "1px solid " + cs.border, color: cs.muted, padding: "6px 12px", borderRadius: 7, cursor: "pointer", fontSize: 11 }}>
                               Batal
                             </button>
                           </div>
                         </div>
                       )}
-                      {/* ── Inline edit stok unit ── */}
+                      {/* ── Inline edit stok ── */}
                       {isEditingThis && (
-                        <div style={{ background: cs.yellow + "08", border: "1px solid " + cs.yellow + "33", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                          <div style={{ fontSize: 12, color: cs.muted }}>Stok baru ({item.unit}):</div>
-                          <input type="number" min="0" step="0.1" value={editUnitVal}
-                            onChange={e => setEditUnitVal(e.target.value)}
-                            autoFocus
+                        <div style={{ padding: "10px 14px", background: cs.yellow + "08", borderTop: "1px solid " + cs.yellow + "22", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 12, color: cs.muted }}>Stok baru ({item.unit}):</span>
+                          <input type="number" min="0" step="0.1" value={editUnitVal} onChange={e => setEditUnitVal(e.target.value)} autoFocus
                             style={{ width: 80, background: cs.card, border: "1px solid " + cs.yellow + "66", borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 13, outline: "none" }} />
                           <button onClick={() => { const ns = parseFloat(editUnitVal); if (!isNaN(ns) && ns >= 0) updateUnitStock(unit.id, ns); else showNotif("❌ Nilai tidak valid"); }}
                             style={{ background: cs.yellow, border: "none", color: "#0a0f1e", padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>✓ Simpan</button>
-                          <div style={{ fontSize: 11, color: cs.muted }}>Saat ini: {parseFloat((unit.stock || 0).toFixed(1))} {item.unit}</div>
+                          <span style={{ fontSize: 11, color: cs.muted }}>Saat ini: {parseFloat((unit.stock || 0).toFixed(1))} {item.unit}</span>
                         </div>
                       )}
-                      {/* ── Inline riwayat pemakaian unit ini ── */}
+                      {/* ── Riwayat pemakaian unit ── */}
                       {historyUnitId === unit.id && (() => {
                         const unitTxs = invTxData
                           .filter(tx => tx.unit_id === unit.id || tx.unit_label === unit.unit_label)
                           .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
                         return (
-                          <div style={{ background: cs.surface, border: "1px solid " + cs.accent + "33", borderRadius: 8, padding: "10px 12px" }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>
-                              📋 Riwayat — {unit.unit_label} ({unitTxs.length} transaksi)
-                            </div>
+                          <div style={{ borderTop: "1px solid " + cs.accent + "22", padding: "12px 14px", background: cs.surface }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>Riwayat — {unit.unit_label} ({unitTxs.length} transaksi)</div>
                             {unitTxs.length === 0 ? (
                               <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada pemakaian tercatat.</div>
                             ) : (
-                              <div style={{ display: "grid", gap: 5 }}>
+                              <div style={{ display: "grid", gap: 4 }}>
                                 {unitTxs.slice(0, 20).map((tx, ti) => {
                                   const isAdj = tx.type === "adjustment";
                                   const isUsage = tx.qty < 0 && !isAdj;
                                   return (
-                                    <div key={tx.id || ti} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto", gap: 6, alignItems: "center", fontSize: 11, padding: "5px 8px", background: isAdj ? cs.green + "0a" : cs.card, borderRadius: 6, border: "1px solid " + cs.border + "55" }}>
+                                    <div key={tx.id || ti} style={{ display: "grid", gridTemplateColumns: "1fr 90px auto auto", gap: 8, alignItems: "center", fontSize: 11, padding: "6px 8px", background: isAdj ? cs.green + "0a" : i % 2 === 0 ? cs.card : "transparent", borderRadius: 6 }}>
                                       <div>
                                         <div style={{ color: cs.text, fontWeight: 500 }}>{tx.customer_name || "—"}</div>
                                         <div style={{ color: cs.muted, fontSize: 10 }}>{tx.teknisi_name || ""} · {(tx.order_id || tx.report_id || "").slice(0, 14)}</div>
@@ -501,17 +442,11 @@ return (
                                         {tx.qty > 0 ? "+" : ""}{parseFloat(Math.abs(tx.qty).toFixed(1))} {item.unit}
                                         {isAdj && <div style={{ fontSize: 9, color: cs.green }}>KOREKSI</div>}
                                       </div>
-                                      {tx.qty_actual != null && (
-                                        <div style={{ fontSize: 10, color: cs.green }}>✓ {parseFloat(Math.abs(tx.qty_actual).toFixed(1))} aktual</div>
-                                      )}
+                                      <div style={{ fontSize: 10, color: cs.green }}>{tx.qty_actual != null ? "✓ " + parseFloat(Math.abs(tx.qty_actual).toFixed(1)) + " aktual" : ""}</div>
                                     </div>
                                   );
                                 })}
-                                {unitTxs.length > 20 && (
-                                  <div style={{ fontSize: 10, color: cs.muted, textAlign: "center", padding: 4 }}>
-                                    +{unitTxs.length - 20} transaksi lainnya — lihat di tabel bawah
-                                  </div>
-                                )}
+                                {unitTxs.length > 20 && <div style={{ fontSize: 10, color: cs.muted, textAlign: "center", padding: 4 }}>+{unitTxs.length - 20} lainnya</div>}
                               </div>
                             )}
                           </div>
@@ -520,96 +455,65 @@ return (
                     </div>
                   );
                 })}
-              </div>
+          </div>
 
-              {/* ── Unit Archived ── */}
-              {units.filter(u => u.archived).length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  <button onClick={() => setShowArchived(v => !v)}
-                    style={{ fontSize: 11, color: cs.muted, background: "none", border: "none", cursor: "pointer", padding: "2px 0", display: "flex", alignItems: "center", gap: 5 }}>
-                    🗄️ {showArchived ? "Sembunyikan" : "Tampilkan"} Arsip ({units.filter(u => u.archived).length} unit diarsipkan)
-                  </button>
-                  {showArchived && (
-                    <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
-                      {units.filter(u => u.archived).map(unit => {
-                        const unitTxs = invTxData
-                          .filter(tx => tx.unit_id === unit.id || tx.unit_label === unit.unit_label)
-                          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-                        const isShowingHistory = historyUnitId === unit.id;
-                        return (
-                          <div key={unit.id} style={{ background: cs.card, borderRadius: 8, border: "1px solid #64748b33", opacity: 0.75 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px" }}>
-                              <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 12, fontWeight: 600, color: cs.muted }}>🗄️ {unit.unit_label}</div>
-                                <div style={{ fontSize: 10, color: cs.muted }}>
-                                  Diarsipkan {unit.archived_at ? new Date(unit.archived_at).toLocaleDateString("id-ID") : ""}
-                                  {unit.archived_reason ? " · " + unit.archived_reason : ""}
-                                </div>
-                              </div>
-                              <div style={{ fontSize: 11, color: cs.muted }}>{parseFloat((unit.stock || 0).toFixed(1))} {item.unit} sisa</div>
-                              <div style={{ display: "flex", gap: 5 }}>
-                                <button onClick={() => setHistoryUnitId(isShowingHistory ? null : unit.id)}
-                                  style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: isShowingHistory ? cs.accent + "33" : cs.accent + "18", border: "1px solid " + cs.accent + (isShowingHistory ? "88" : "33"), color: cs.accent, cursor: "pointer", fontWeight: isShowingHistory ? 700 : 400 }}>
-                                  {isShowingHistory ? "✕ Tutup" : "📋 Riwayat" + (unitTxs.length > 0 ? " (" + unitTxs.length + ")" : "")}
-                                </button>
-                                <button onClick={() => unarchiveUnit(unit.id)}
-                                  style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: cs.green + "18", border: "1px solid " + cs.green + "44", color: cs.green, cursor: "pointer" }}
-                                  title="Kembalikan dari arsip">
-                                  ↩️ Pulihkan
-                                </button>
-                              </div>
-                            </div>
-                            {/* Riwayat pemakaian unit archived */}
-                            {isShowingHistory && (
-                              <div style={{ borderTop: "1px solid #64748b22", padding: "10px 12px", background: cs.surface, borderRadius: "0 0 8px 8px" }}>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>
-                                  📋 Riwayat — {unit.unit_label} ({unitTxs.length} transaksi)
-                                </div>
-                                {unitTxs.length === 0 ? (
-                                  <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada pemakaian tercatat.</div>
-                                ) : (
-                                  <div style={{ display: "grid", gap: 5 }}>
-                                    {unitTxs.slice(0, 20).map((tx, ti) => {
-                                      const isAdj = tx.type === "adjustment";
-                                      const isUsage = tx.qty < 0 && !isAdj;
-                                      return (
-                                        <div key={tx.id || ti} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto", gap: 6, alignItems: "center", fontSize: 11, padding: "5px 8px", background: isAdj ? cs.green + "0a" : cs.card, borderRadius: 6, border: "1px solid " + cs.border + "55" }}>
-                                          <div>
-                                            <div style={{ fontWeight: 600, color: cs.text }}>{tx.customer_name || "—"}</div>
-                                            <div style={{ color: cs.muted, fontSize: 10 }}>{tx.teknisi_name || ""}</div>
-                                          </div>
-                                          <div style={{ color: cs.muted, fontSize: 10 }}>{(tx.job_date || tx.created_at || "").slice(0, 10)}</div>
-                                          <div style={{ fontWeight: 700, color: isAdj ? cs.green : isUsage ? cs.red : cs.green, textAlign: "right" }}>
-                                            {tx.qty > 0 ? "+" : ""}{parseFloat(Math.abs(tx.qty).toFixed(1))} {item.unit}
-                                            {isAdj && <div style={{ fontSize: 9, color: cs.green }}>KOREKSI</div>}
-                                          </div>
-                                          {tx.qty_actual != null && (
-                                            <div style={{ fontSize: 10, color: cs.green }}>✓ {parseFloat(Math.abs(tx.qty_actual).toFixed(1))} aktual</div>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                    {unitTxs.length > 20 && (
-                                      <div style={{ fontSize: 10, color: cs.muted, textAlign: "center", padding: 4 }}>
-                                        +{unitTxs.length - 20} transaksi lainnya — lihat di tabel bawah
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
+          {/* ── Unit Archived ── */}
+          {archivedUnits.length > 0 && isOwnerAdmin && (
+            <div style={{ borderTop: "1px solid " + cs.border, padding: "8px 18px" }}>
+              <button onClick={() => setShowArchived(v => !v)}
+                style={{ fontSize: 11, color: cs.muted, background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+                {showArchived ? "▲" : "▼"} {archivedUnits.length} unit diarsipkan
+              </button>
+              {showArchived && (
+                <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                  {archivedUnits.map(unit => {
+                    const unitTxs = invTxData.filter(tx => tx.unit_id === unit.id || tx.unit_label === unit.unit_label).sort((a,b) => (b.created_at||"").localeCompare(a.created_at||""));
+                    const isShowingHistory = historyUnitId === unit.id;
+                    return (
+                      <div key={unit.id} style={{ background: cs.surface, borderRadius: 8, border: "1px solid #64748b22", opacity: 0.7 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px" }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: cs.muted }}>🗄 {unit.unit_label}</div>
+                            <div style={{ fontSize: 10, color: cs.muted }}>Diarsipkan {unit.archived_at ? new Date(unit.archived_at).toLocaleDateString("id-ID") : ""}{unit.archived_reason ? " · " + unit.archived_reason : ""}</div>
+                          </div>
+                          <span style={{ fontSize: 11, color: cs.muted }}>{parseFloat((unit.stock||0).toFixed(1))} {item.unit}</span>
+                          <button onClick={() => setHistoryUnitId(isShowingHistory ? null : unit.id)}
+                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: cs.accent + "15", border: "1px solid " + cs.accent + "33", color: cs.accent, cursor: "pointer" }}>
+                            {isShowingHistory ? "✕" : "Riwayat" + (unitTxs.length > 0 ? " (" + unitTxs.length + ")" : "")}
+                          </button>
+                          <button onClick={() => unarchiveUnit(unit.id)}
+                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: cs.green + "15", border: "1px solid " + cs.green + "33", color: cs.green, cursor: "pointer" }}>
+                            Pulihkan
+                          </button>
+                        </div>
+                        {isShowingHistory && (
+                          <div style={{ borderTop: "1px solid #64748b22", padding: "10px 14px", background: cs.card, borderRadius: "0 0 8px 8px" }}>
+                            {unitTxs.length === 0 ? <div style={{ fontSize: 11, color: cs.muted }}>Belum ada pemakaian.</div> : (
+                              <div style={{ display: "grid", gap: 4 }}>
+                                {unitTxs.slice(0,15).map((tx,ti) => {
+                                  const isAdj = tx.type === "adjustment";
+                                  return (
+                                    <div key={tx.id||ti} style={{ display: "grid", gridTemplateColumns: "1fr 90px auto", gap: 8, fontSize: 11, padding: "4px 0" }}>
+                                      <div style={{ color: cs.text }}>{tx.customer_name || "—"} <span style={{ color: cs.muted, fontSize: 10 }}>· {tx.teknisi_name || ""}</span></div>
+                                      <div style={{ color: cs.muted, fontSize: 10 }}>{(tx.job_date||tx.created_at||"").slice(0,10)}</div>
+                                      <div style={{ fontWeight: 700, color: isAdj ? cs.green : tx.qty < 0 ? cs.red : cs.green, textAlign: "right" }}>{tx.qty > 0 ? "+" : ""}{parseFloat(Math.abs(tx.qty).toFixed(1))} {item.unit}</div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
-          );
-        })}
-      </div>
-    )}
+          )}
+        </div>
+      );
+    })}
 
     {/* ── Banner freon belum ditimbang ── */}
     {isOwnerAdmin && (() => {
