@@ -385,140 +385,109 @@ async function taskWaCleanup() {
 }
 
 // ══════════════════════════════════════════════════
-// TASK 6: Scan Bukti Bayar — cocokkan R2 ke invoice PAID tanpa bukti
-// Jalan setiap hari jam 09:00 WIB (02:00 UTC)
-// Hanya proses invoice PAID setelah 2026-05-01 (fokus aktif)
+// TASK 6: Scan Bukti Bayar — cocokkan payment_suggestions ke invoice PAID tanpa bukti
+// Sumber data: tabel payment_suggestions (lebih reliable dari R2 listing)
+// Jalan setiap jam 02:00-11:00 UTC (Mon-Sat) via vercel.json crons
 // ══════════════════════════════════════════════════
 async function taskScanBuktiBayar() {
-  const r2Key    = process.env.R2_ACCESS_KEY;
-  const r2Secret = process.env.R2_SECRET_KEY;
-  const r2Account= process.env.R2_ACCOUNT_ID;
-  const r2Bucket = process.env.R2_BUCKET_NAME || "aclean-files";
-
-  if (!r2Key || !r2Secret || !r2Account) {
-    await log("SCAN_BUKTI", "R2 credentials tidak lengkap — skip", "ERROR");
-    return { skipped: true, reason: "R2 credentials missing" };
-  }
-
-  // SigV4 helper
-  const { createHmac, createHash } = await import("crypto");
-  const hmacFn = (key, data) => createHmac("sha256", key).update(data).digest();
-  const hashHex = (data) => createHash("sha256").update(data).digest("hex");
-
-  async function listR2Prefix(prefix) {
-    const host = r2Account + ".r2.cloudflarestorage.com";
-    const now = new Date();
-    const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, "").slice(0,15) + "Z";
-    const dateStr = amzDate.slice(0,8);
-    const payloadHash = hashHex("");
-    const qs = "list-type=2&max-keys=1000&prefix=" + encodeURIComponent(prefix).replace(/%2F/g, "/");
-    const canonHeaders = "host:" + host + "\nx-amz-content-sha256:" + payloadHash + "\nx-amz-date:" + amzDate + "\n";
-    const signedH = "host;x-amz-content-sha256;x-amz-date";
-    const canonReq = "GET\n/" + r2Bucket + "\n" + qs + "\n" + canonHeaders + "\n" + signedH + "\n" + payloadHash;
-    const credScope = dateStr + "/auto/s3/aws4_request";
-    const strToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credScope + "\n" + hashHex(canonReq);
-    const sigKey = hmacFn(hmacFn(hmacFn(hmacFn("AWS4" + r2Secret, dateStr), "auto"), "s3"), "aws4_request");
-    const sig = createHmac("sha256", sigKey).update(strToSign).digest("hex");
-    const auth = "AWS4-HMAC-SHA256 Credential=" + r2Key + "/" + credScope + ", SignedHeaders=" + signedH + ", Signature=" + sig;
-    const url = "https://" + host + "/" + r2Bucket + "?" + qs;
-    const xml = await fetch(url, { headers: { Authorization: auth, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash, host } }).then(r => r.text());
-    const keys  = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map(m => m[1]);
-    const dates = [...xml.matchAll(/<LastModified>([^<]+)<\/LastModified>/g)].map(m => m[1]);
-    return keys.map((k, i) => {
-      const fname = k.split("/").pop();
-      const m = fname.match(/^(\d+)_(\d+)\./);
-      if (!m) return null;
-      return { key: k, ts: parseInt(m[1]), phone: m[2], date: new Date(dates[i]) };
-    }).filter(Boolean);
-  }
-
   // Ambil invoice PAID tanpa bukti:
   // - Minimum: 2026-05-01 (fungsi baru, data sebelumnya tidak reliable)
   // - Maximum lookback: 90 hari dari sekarang (untuk future-proofing)
   const cutoff90 = new Date(Date.now() - 90 * 86400000).toISOString();
   const cutoffDate = cutoff90 > "2026-05-01T00:00:00+00:00" ? cutoff90 : "2026-05-01T00:00:00+00:00";
-  const { data: invs, error: invErr } = await sb
-    .from("invoices")
-    .select("id, customer, phone, total, paid_at, created_at")
-    .eq("status", "PAID")
-    .gt("total", 0)
-    .or("payment_proof_url.is.null,payment_proof_url.eq.,payment_proof_url.eq.verified-manual-no-proof")
-    .gte("created_at", cutoffDate)
-    .order("created_at", { ascending: false })
-    .limit(200);
 
-  if (invErr) {
-    await log("SCAN_BUKTI", "Gagal fetch invoices: " + invErr.message, "ERROR");
-    return { error: invErr.message };
+  const [invRes, suggRes] = await Promise.all([
+    sb.from("invoices")
+      .select("id, customer, phone, total, paid_at, created_at")
+      .eq("status", "PAID")
+      .gt("total", 0)
+      .or("payment_proof_url.is.null,payment_proof_url.eq.,payment_proof_url.eq.verified-manual-no-proof")
+      .gte("created_at", cutoffDate)
+      .order("created_at", { ascending: false })
+      .limit(200),
+    // Ambil semua payment_suggestions (PENDING dan RESOLVED) dalam 90 hari — jangan filter PENDING saja
+    // supaya bukti yang sudah pernah diproses pun bisa dipakai sebagai fallback
+    sb.from("payment_suggestions")
+      .select("phone, image_url, created_at, amount, status")
+      .gte("created_at", cutoffDate)
+      .order("created_at", { ascending: true })
+      .limit(500),
+  ]);
+
+  if (invRes.error) {
+    await log("SCAN_BUKTI", "Gagal fetch invoices: " + invRes.error.message, "ERROR");
+    return { error: invRes.error.message };
   }
-  if (!invs || invs.length === 0) {
+  if (!invRes.data || invRes.data.length === 0) {
     await log("SCAN_BUKTI", "Tidak ada invoice PAID tanpa bukti (≥1 Mei 2026 atau 90 hari terakhir)", "INFO");
     return { checked: 0, updated: 0 };
   }
-
-  // List semua file R2 bukti_transfer
-  const r2Files = await listR2Prefix("wa-images/bukti_transfer/");
-
-  // Build phone → files map (sorted oldest→newest)
-  const phoneMap = {};
-  for (const f of r2Files) {
-    if (!phoneMap[f.phone]) phoneMap[f.phone] = [];
-    phoneMap[f.phone].push(f);
+  if (suggRes.error) {
+    await log("SCAN_BUKTI", "Gagal fetch payment_suggestions: " + suggRes.error.message, "ERROR");
+    return { error: suggRes.error.message };
   }
-  for (const p of Object.keys(phoneMap)) phoneMap[p].sort((a,b) => a.ts - b.ts);
+
+  const invs = invRes.data;
+  const suggestions = suggRes.data || [];
+
+  // Build phone → suggestions map (sorted oldest→newest, sudah di-sort dari query)
+  const phoneMap = {};
+  for (const s of suggestions) {
+    const phone = (s.phone || "").replace(/[^0-9]/g, "");
+    if (!phone || phone.length < 8 || !s.image_url) continue;
+    if (!phoneMap[phone]) phoneMap[phone] = [];
+    phoneMap[phone].push({ ...s, phone, ts: new Date(s.created_at).getTime() });
+  }
 
   let updated = 0;
   const updateLog = [];
 
   for (const inv of invs) {
-    // Strip semua karakter non-digit: unicode tersembunyi, tanda hubung, spasi, dll
-    const rawPhone = (inv.phone || "").replace(/[^0-9]/g, "").trim();
+    const rawPhone = (inv.phone || "").replace(/[^0-9]/g, "");
     if (!rawPhone || rawPhone.length < 8) continue;
 
-    const files = phoneMap[rawPhone];
-    if (!files || files.length === 0) continue;
+    const entries = phoneMap[rawPhone];
+    if (!entries || entries.length === 0) continue;
 
-    // Cari file bukti dalam window ±30 hari dari invoice created_at:
+    // Cari bukti dalam window ±30 hari dari invoice created_at:
     // - 3 hari SEBELUM: customer bayar dulu, invoice dibuat belakangan
     // - 30 hari SESUDAH: customer terlambat kirim bukti
     const invTs = new Date(inv.created_at).getTime();
     const before3d = 3 * 24 * 60 * 60 * 1000;
     const after30d  = 30 * 24 * 60 * 60 * 1000;
-    const inWindow = files.filter(f => f.ts >= invTs - before3d && f.ts <= invTs + after30d);
-    // Prioritas: file terdekat setelah invoice; fallback: terdekat sebelum invoice (3 hari)
-    const afterInv  = inWindow.filter(f => f.ts >= invTs);
-    const beforeInv = inWindow.filter(f => f.ts < invTs);
+    const inWindow = entries.filter(e => e.ts >= invTs - before3d && e.ts <= invTs + after30d);
+    const afterInv  = inWindow.filter(e => e.ts >= invTs);
+    const beforeInv = inWindow.filter(e => e.ts < invTs);
     const best = afterInv.length > 0 ? afterInv[0]
                : beforeInv.length > 0 ? beforeInv[beforeInv.length - 1]
                : null;
     if (!best) continue;
 
-    const proofUrl = "/api/foto?key=" + encodeURIComponent(best.key);
     const { error: upErr } = await sb
       .from("invoices")
-      .update({ payment_proof_url: proofUrl, updated_at: new Date().toISOString() })
+      .update({ payment_proof_url: best.image_url, updated_at: new Date().toISOString() })
       .eq("id", inv.id);
 
     if (!upErr) {
       updated++;
-      updateLog.push(inv.id + " ← " + best.key.split("/").pop());
+      updateLog.push(inv.id + " ← " + inv.customer + " (" + (best.amount ? "Rp " + Number(best.amount).toLocaleString("id") : "?") + ")");
     }
   }
 
-  const summary = `Dicek: ${invs.length} invoice | Diupdate: ${updated} bukti bayar dari R2`;
+  const summary = `Dicek: ${invs.length} invoice, ${suggestions.length} bukti WA | Diupdate: ${updated}`;
   await log("SCAN_BUKTI", summary + (updateLog.length ? "\n" + updateLog.join("\n") : ""), updated > 0 ? "SUCCESS" : "INFO");
 
   // Notif owner jika ada yang terupdate
   if (updated > 0) {
     await sendWA(OWNER_PHONE,
       "🧾 *Auto-Scan Bukti Bayar*\n" +
-      "Ditemukan " + updated + " bukti transfer baru di R2 dan sudah dilink ke invoice:\n\n" +
+      "Ditemukan " + updated + " bukti transfer dan sudah dilink ke invoice:\n\n" +
       updateLog.slice(0, 10).map(l => "• " + l).join("\n") +
       (updateLog.length > 10 ? "\n...dan " + (updateLog.length - 10) + " lainnya" : "")
     );
   }
 
-  return { checked: invs.length, r2Files: r2Files.length, updated, details: updateLog };
+  return { checked: invs.length, suggestions: suggestions.length, updated, details: updateLog };
 }
 
 // ══════════════════════════════════════════════════
