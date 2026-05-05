@@ -7759,7 +7759,24 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     };
                     const { error: cErr } = await updateCustomer(supabase, selectedCustomer.id, dbUpdate);
                     if (cErr) showNotif("⚠️ Gagal simpan ke DB: " + cErr.message);
-                    else { addAgentLog("CUSTOMER_UPDATED", "Customer " + newCustomerForm.name + " diupdate oleh " + auditUserName(), "SUCCESS"); showNotif("✅ Data " + newCustomerForm.name + " berhasil diupdate"); }
+                    else {
+                      const newName = newCustomerForm.name.trim();
+                      const oldName = selectedCustomer.name;
+                      // Cascade nama ke orders, invoices, service_reports jika nama berubah
+                      if (newName !== oldName) {
+                        await supabase.from("orders").update({ customer: newName }).eq("customer_id", selectedCustomer.id);
+                        const linkedJobIds = ordersData
+                          .filter(o => o.customer_id === selectedCustomer.id)
+                          .map(o => o.id);
+                        if (linkedJobIds.length > 0) {
+                          await supabase.from("invoices").update({ customer: newName }).in("job_id", linkedJobIds);
+                          await supabase.from("service_reports").update({ customer: newName }).in("job_id", linkedJobIds);
+                        }
+                        setOrdersData(prev => prev.map(o => o.customer_id === selectedCustomer.id ? { ...o, customer: newName } : o));
+                      }
+                      addAgentLog("CUSTOMER_UPDATED", "Customer " + newName + " diupdate oleh " + auditUserName(), "SUCCESS");
+                      showNotif("✅ Data " + newName + " berhasil diupdate");
+                    }
                   } else {
                     // INSERT new customer — tanpa kirim `id`, biarkan DB generate
                     const today = getLocalDate();
