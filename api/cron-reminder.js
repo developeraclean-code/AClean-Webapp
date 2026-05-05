@@ -291,39 +291,39 @@ async function deleteR2Object(key) {
 // TASK 4: Cleanup foto lama (>360 hari) dari R2
 // ══════════════════════════════════════════════════
 async function taskCleanup() {
-  // Ambil laporan > 360 hari lalu
-  const cutoff = new Date(Date.now()-360*86400000).toISOString();
-  const { data: old } = await sb.from("service_reports").select("id,fotos").lt("created_at",cutoff).limit(100);
-  let deleted = 0, r2deleted = 0;
-  for (const rep of old||[]) {
-    const fotos = rep.fotos||[];
-    if (!fotos.length) continue;
+  const result = { agent_logs: 0, audit_log: 0, dispatch_logs: 0, payment_suggestions: 0 };
 
-    // Delete actual R2 objects
-    for (const url of fotos) {
-      try {
-        // Extract key from URL: either after bucket/ or after .r2.dev
-        const match = url.match(/(?:r2\.cloudflarestorage\.com\/[^/]+\/|\.r2\.dev\/)(.+)/);
-        if (match) {
-          const ok = await deleteR2Object(match[1]);
-          if (ok) r2deleted++;
-        }
-      } catch(e) { console.error("[CLEANUP_R2_EXTRACT_ERROR]", {url, error: e.message}); }
-    }
-
-    // Clear URL references from DB
-    const { error: updErr } = await sb.from("service_reports").update({fotos:[]}).eq("id",rep.id);
-    if (updErr) console.error("[CLEANUP_FOTOS_UPDATE_ERROR]", {reportId: rep.id, fotosCount: fotos.length, error: updErr.message});
-    deleted += fotos.length;
-  }
-  await log("CLEANUP_FOTOS",`${deleted} foto ref dihapus, ${r2deleted} file R2 deleted dari ${old?.length||0} laporan`);
-
-  // Cleanup agent_logs > 90 hari (dipindah dari frontend ke sini setelah RLS fix)
+  // 1. Cleanup agent_logs > 90 hari
   const cutoff90 = new Date(Date.now() - 90 * 86400000).toISOString();
-  const { error: logDelErr } = await sb.from("agent_logs").delete().lt("created_at", cutoff90);
+  const { error: logDelErr, count: logCount } = await sb.from("agent_logs")
+    .delete({ count: "exact" }).lt("created_at", cutoff90);
   if (logDelErr) console.error("[CLEANUP_AGENT_LOGS]", logDelErr.message);
+  else result.agent_logs = logCount || 0;
 
-  return { deleted, r2deleted, reports: old?.length||0 };
+  // 2. Cleanup audit_log > 30 hari (tumbuh paling cepat ~15MB/bulan)
+  const cutoff30 = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { error: auditDelErr, count: auditCount } = await sb.from("audit_log")
+    .delete({ count: "exact" }).lt("changed_at", cutoff30);
+  if (auditDelErr) console.error("[CLEANUP_AUDIT_LOG]", auditDelErr.message);
+  else result.audit_log = auditCount || 0;
+
+  // 3. Cleanup dispatch_logs > 90 hari
+  const { error: dispDelErr, count: dispCount } = await sb.from("dispatch_logs")
+    .delete({ count: "exact" }).lt("sent_at", cutoff90);
+  if (dispDelErr) console.error("[CLEANUP_DISPATCH_LOGS]", dispDelErr.message);
+  else result.dispatch_logs = dispCount || 0;
+
+  // 4. Cleanup payment_suggestions RESOLVED/REJECTED > 30 hari
+  const { error: suggDelErr, count: suggCount } = await sb.from("payment_suggestions")
+    .delete({ count: "exact" })
+    .in("status", ["RESOLVED", "REJECTED"])
+    .lt("created_at", cutoff30);
+  if (suggDelErr) console.error("[CLEANUP_PAYMENT_SUGGESTIONS]", suggDelErr.message);
+  else result.payment_suggestions = suggCount || 0;
+
+  const summary = `agent_logs: ${result.agent_logs} | audit_log: ${result.audit_log} | dispatch_logs: ${result.dispatch_logs} | payment_suggestions: ${result.payment_suggestions}`;
+  await log("CLEANUP", summary, "SUCCESS");
+  return result;
 }
 
 // ══════════════════════════════════════════════════
@@ -467,8 +467,9 @@ async function taskScanBuktiBayar() {
   const updateLog = [];
 
   for (const inv of invs) {
-    const rawPhone = (inv.phone || "").replace(/^[,\s]+/, "").trim();
-    if (!rawPhone || rawPhone.length < 8 || !/^\d+$/.test(rawPhone)) continue;
+    // Strip semua karakter non-digit: unicode tersembunyi, tanda hubung, spasi, dll
+    const rawPhone = (inv.phone || "").replace(/[^0-9]/g, "").trim();
+    if (!rawPhone || rawPhone.length < 8) continue;
 
     const files = phoneMap[rawPhone];
     if (!files || files.length === 0) continue;
