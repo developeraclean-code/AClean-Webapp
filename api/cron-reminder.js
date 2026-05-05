@@ -432,14 +432,18 @@ async function taskScanBuktiBayar() {
     }).filter(Boolean);
   }
 
-  // Ambil invoice PAID tanpa bukti, fokus setelah 2026-05-01
+  // Ambil invoice PAID tanpa bukti:
+  // - Minimum: 2026-05-01 (fungsi baru, data sebelumnya tidak reliable)
+  // - Maximum lookback: 90 hari dari sekarang (untuk future-proofing)
+  const cutoff90 = new Date(Date.now() - 90 * 86400000).toISOString();
+  const cutoffDate = cutoff90 > "2026-05-01T00:00:00+00:00" ? cutoff90 : "2026-05-01T00:00:00+00:00";
   const { data: invs, error: invErr } = await sb
     .from("invoices")
     .select("id, customer, phone, total, paid_at, created_at")
     .eq("status", "PAID")
     .gt("total", 0)
     .or("payment_proof_url.is.null,payment_proof_url.eq.,payment_proof_url.eq.verified-manual-no-proof")
-    .gte("created_at", "2026-05-01T00:00:00+00:00")
+    .gte("created_at", cutoffDate)
     .order("created_at", { ascending: false })
     .limit(200);
 
@@ -448,7 +452,7 @@ async function taskScanBuktiBayar() {
     return { error: invErr.message };
   }
   if (!invs || invs.length === 0) {
-    await log("SCAN_BUKTI", "Tidak ada invoice PAID tanpa bukti (≥1 Mei 2026)", "INFO");
+    await log("SCAN_BUKTI", "Tidak ada invoice PAID tanpa bukti (≥1 Mei 2026 atau 90 hari terakhir)", "INFO");
     return { checked: 0, updated: 0 };
   }
 
@@ -474,11 +478,20 @@ async function taskScanBuktiBayar() {
     const files = phoneMap[rawPhone];
     if (!files || files.length === 0) continue;
 
-    // Cari file terdekat setelah invoice created_at dalam 14 hari
+    // Cari file bukti dalam window ±30 hari dari invoice created_at:
+    // - 3 hari SEBELUM: customer bayar dulu, invoice dibuat belakangan
+    // - 30 hari SESUDAH: customer terlambat kirim bukti
     const invTs = new Date(inv.created_at).getTime();
-    const window14 = 14 * 24 * 60 * 60 * 1000;
-    const afterInv = files.filter(f => f.ts >= invTs && f.ts <= invTs + window14);
-    const best = afterInv.length > 0 ? afterInv[0] : files[files.length - 1];
+    const before3d = 3 * 24 * 60 * 60 * 1000;
+    const after30d  = 30 * 24 * 60 * 60 * 1000;
+    const inWindow = files.filter(f => f.ts >= invTs - before3d && f.ts <= invTs + after30d);
+    // Prioritas: file terdekat setelah invoice; fallback: terdekat sebelum invoice (3 hari)
+    const afterInv  = inWindow.filter(f => f.ts >= invTs);
+    const beforeInv = inWindow.filter(f => f.ts < invTs);
+    const best = afterInv.length > 0 ? afterInv[0]
+               : beforeInv.length > 0 ? beforeInv[beforeInv.length - 1]
+               : null;
+    if (!best) continue;
 
     const proofUrl = "/api/foto?key=" + encodeURIComponent(best.key);
     const { error: upErr } = await sb
