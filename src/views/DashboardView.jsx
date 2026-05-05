@@ -433,11 +433,24 @@ return (
     {(() => {
       const isOwner = role === "Owner";
 
-      const addDays = (d, n) => {
-        const dt = new Date(d + "T00:00:00+07:00");
-        dt.setDate(dt.getDate() + n);
-        return dt.toISOString().slice(0, 10);
+      // Semua tanggal unik yang punya order, sorted ascending
+      const orderDates = [...new Set(ordersData.map(o => o.date).filter(Boolean))].sort();
+
+      // Navigasi ke tanggal terdekat sebelum/sesudah yang punya order
+      const navDate = (current, dir) => {
+        if (dir === -1) {
+          // Mundur: ambil tanggal terbesar yang < current
+          const prev = orderDates.filter(d => d < current);
+          return prev.length > 0 ? prev[prev.length - 1] : current;
+        } else {
+          // Maju: ambil tanggal terkecil yang > current
+          const next = orderDates.filter(d => d > current);
+          return next.length > 0 ? next[0] : current;
+        }
       };
+
+      const hasPrev = orderDates.some(d => d < gridDate);
+      const hasNext = orderDates.some(d => d > gridDate);
 
       const gridOrders = ordersData.filter(o => o.date === gridDate).sort((a, b) => {
         const tekA = (a.teknisi || "").toLowerCase();
@@ -502,8 +515,8 @@ return (
 
           {/* Date navigation */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid " + cs.border, flexWrap: "wrap" }}>
-            <button onClick={() => setGridDate(d => addDays(d, -1))}
-              style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>◀</button>
+            <button onClick={() => hasPrev && setGridDate(d => navDate(d, -1))}
+              style={{ background: cs.surface, border: "1px solid " + cs.border, color: hasPrev ? cs.text : cs.border, padding: "6px 12px", borderRadius: 8, cursor: hasPrev ? "pointer" : "default", fontSize: 12, fontWeight: 600, opacity: hasPrev ? 1 : 0.3 }}>◀</button>
             <div style={{ flex: 1, textAlign: "center" }}>
               <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>
                 📋 {gridDateLabel}
@@ -513,12 +526,12 @@ return (
                 {totalOrders} order · {gridOrders.filter(o => o.status === "COMPLETED").length} selesai · {gridOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · {gridOrders.filter(o => o.status === "PENDING").length} pending
               </div>
             </div>
-            {!isToday && (
+            {!isToday && orderDates.includes(TODAY) && (
               <button onClick={() => setGridDate(TODAY)}
                 style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Hari Ini</button>
             )}
-            <button onClick={() => setGridDate(d => addDays(d, 1))}
-              style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>▶</button>
+            <button onClick={() => hasNext && setGridDate(d => navDate(d, 1))}
+              style={{ background: cs.surface, border: "1px solid " + cs.border, color: hasNext ? cs.text : cs.border, padding: "6px 12px", borderRadius: 8, cursor: hasNext ? "pointer" : "default", fontSize: 12, fontWeight: 600, opacity: hasNext ? 1 : 0.3 }}>▶</button>
           </div>
 
           {/* Summary bar */}
