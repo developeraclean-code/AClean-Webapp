@@ -1706,25 +1706,40 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
   };
 
   const downloadInvoicePDF = async (inv) => {
-    const logoUrl = await fetchInvoiceLogoUrl();
-    const html = buildInvoiceHTML(inv, logoUrl);
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    // SEC-09: Audit log setiap kali invoice dicetak/download
-    addAgentLog("INVOICE_PRINT",
-      `Invoice ${inv.id} (${inv.customer}) dicetak oleh ${currentUser?.name || "Unknown"} — Rp${fmt(inv.total)}`,
-      "SUCCESS"
-    );
-    const win = window.open(url, "_blank", "width=860,height=1000,scrollbars=yes");
-    if (!win) {
-      // Fallback jika popup diblokir browser
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Invoice_${inv.id}_${inv.customer.replace(/\s+/g, "_")}.html`;
-      a.click();
-      showNotif("PDF disimpan sebagai file HTML — buka lalu Ctrl+P untuk cetak");
-    } else {
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    // Buka window dulu (sync dari click) agar tidak diblokir popup blocker
+    const win = window.open("", "_blank", "width=860,height=1000,scrollbars=yes");
+    showNotif("⏳ Membuat PDF invoice...");
+    try {
+      const logoUrl = await fetchInvoiceLogoUrl();
+      const filename = `Invoice_${inv.id}_${inv.customer.replace(/\s+/g, "_")}.pdf`;
+      const pdfBlob = await htmlToPdfBlob(buildInvoiceHTML(inv, logoUrl), filename);
+      addAgentLog("INVOICE_PRINT",
+        `Invoice ${inv.id} (${inv.customer}) dicetak oleh ${currentUser?.name || "Unknown"} — Rp${fmt(inv.total)}`,
+        "SUCCESS"
+      );
+      if (pdfBlob) {
+        // Tutup placeholder window, lalu download PDF langsung
+        if (win && !win.closed) win.close();
+        const url = URL.createObjectURL(pdfBlob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        showNotif("✅ PDF invoice berhasil diunduh");
+      } else {
+        // Fallback: tampilkan HTML di window yang sudah terbuka
+        const html = buildInvoiceHTML(inv, logoUrl);
+        if (win && !win.closed) {
+          win.document.write(html);
+          win.document.close();
+        } else {
+          showNotif("⚠️ Gagal buat PDF — coba lagi atau aktifkan popup di browser");
+        }
+      }
+    } catch (err) {
+      if (win && !win.closed) win.close();
+      showNotif("⚠️ Gagal membuat PDF: " + err.message);
     }
   };
 
@@ -1762,72 +1777,24 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
     }
   };
 
-  // Upload invoice sebagai HTML ke R2 — returns /api/foto URL (served inline, no print dialog)
-  const uploadInvoiceForWA = async (inv) => {
-    try {
-      const logoUrl = await fetchInvoiceLogoUrl();
-      const html = buildInvoiceHTML(inv, logoUrl, true); // forWA=true: hapus script print
-      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(",")[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-      const res = await fetch("/api/upload-foto", {
-        method: "POST", headers: await _apiHeaders(),
-        body: JSON.stringify({
-          base64, filename: `Invoice_${inv.id}.html`,
-          folder: "invoices", mimeType: "text/html"
-        })
-      });
-      const d = await res.json().catch(() => ({}));
-      if (res.ok && d.success && d.key) {
-        return `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
-      }
-      return null;
-    } catch (err) {
-      console.warn("[uploadInvoiceForWA] gagal:", err.message);
-      return null;
-    }
-  };
-
-  // Upload invoice sebagai PDF ke R2 menggunakan @react-pdf/renderer
-  // Helper: render HTML string → JPG base64 via html2canvas (offscreen div)
-  const htmlToImageBase64 = (htmlString, width = 794) => new Promise((resolve) => {
-    const wrapper = document.createElement("div");
-    Object.assign(wrapper.style, {
-      position: "fixed", left: "-9999px", top: "0",
-      width: width + "px", background: "#fff", zIndex: "-1"
-    });
-    wrapper.innerHTML = htmlString;
-    document.body.appendChild(wrapper);
-    import("html2canvas").then(({ default: html2canvas }) => {
-      html2canvas(wrapper, {
-        scale: 2, useCORS: true, allowTaint: false,
-        backgroundColor: "#ffffff", logging: false,
-        width, windowWidth: width
-      }).then(canvas => {
-        document.body.removeChild(wrapper);
-        resolve(canvas.toDataURL("image/jpeg", 0.92).split(",")[1]);
-      }).catch(() => {
-        document.body.removeChild(wrapper);
-        resolve(null);
-      });
-    }).catch(() => { document.body.removeChild(wrapper); resolve(null); });
-  });
 
   const uploadInvoicePDFForWA = async (inv) => {
     try {
       const logoUrl = await fetchInvoiceLogoUrl();
-      const html = buildInvoiceHTML(inv, logoUrl, true);
-      const base64 = await htmlToImageBase64(html);
-      if (!base64) return null;
+      const filename = `Invoice_${inv.id}.pdf`;
+      const pdfBlob = await htmlToPdfBlob(buildInvoiceHTML(inv, logoUrl, true), filename);
+      if (!pdfBlob) return null;
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(pdfBlob);
+      });
       const res = await fetch("/api/upload-foto", {
         method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
-          base64, filename: `Invoice_${inv.id}.jpg`,
-          folder: "invoices", mimeType: "image/jpeg"
+          base64, filename,
+          folder: "invoices", mimeType: "application/pdf"
         })
       });
       const d = await res.json().catch(() => ({}));
