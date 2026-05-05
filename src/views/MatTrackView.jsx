@@ -487,23 +487,76 @@ return (
                   </button>
                   {showArchived && (
                     <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
-                      {units.filter(u => u.archived).map(unit => (
-                        <div key={unit.id} style={{ display: "flex", alignItems: "center", gap: 10, background: cs.card, borderRadius: 8, padding: "8px 12px", border: "1px solid #64748b33", opacity: 0.65 }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: cs.muted }}>🗄️ {unit.unit_label}</div>
-                            <div style={{ fontSize: 10, color: cs.muted }}>
-                              Diarsipkan {unit.archived_at ? new Date(unit.archived_at).toLocaleDateString("id-ID") : ""}
-                              {unit.archived_reason ? " · " + unit.archived_reason : ""}
+                      {units.filter(u => u.archived).map(unit => {
+                        const unitTxs = invTxData
+                          .filter(tx => tx.unit_id === unit.id || tx.unit_label === unit.unit_label)
+                          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+                        const isShowingHistory = historyUnitId === unit.id;
+                        return (
+                          <div key={unit.id} style={{ background: cs.card, borderRadius: 8, border: "1px solid #64748b33", opacity: 0.75 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px" }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: cs.muted }}>🗄️ {unit.unit_label}</div>
+                                <div style={{ fontSize: 10, color: cs.muted }}>
+                                  Diarsipkan {unit.archived_at ? new Date(unit.archived_at).toLocaleDateString("id-ID") : ""}
+                                  {unit.archived_reason ? " · " + unit.archived_reason : ""}
+                                </div>
+                              </div>
+                              <div style={{ fontSize: 11, color: cs.muted }}>{parseFloat((unit.stock || 0).toFixed(1))} {item.unit} sisa</div>
+                              <div style={{ display: "flex", gap: 5 }}>
+                                <button onClick={() => setHistoryUnitId(isShowingHistory ? null : unit.id)}
+                                  style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: isShowingHistory ? cs.accent + "33" : cs.accent + "18", border: "1px solid " + cs.accent + (isShowingHistory ? "88" : "33"), color: cs.accent, cursor: "pointer", fontWeight: isShowingHistory ? 700 : 400 }}>
+                                  {isShowingHistory ? "✕ Tutup" : "📋 Riwayat" + (unitTxs.length > 0 ? " (" + unitTxs.length + ")" : "")}
+                                </button>
+                                <button onClick={() => unarchiveUnit(unit.id)}
+                                  style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: cs.green + "18", border: "1px solid " + cs.green + "44", color: cs.green, cursor: "pointer" }}
+                                  title="Kembalikan dari arsip">
+                                  ↩️ Pulihkan
+                                </button>
+                              </div>
                             </div>
+                            {/* Riwayat pemakaian unit archived */}
+                            {isShowingHistory && (
+                              <div style={{ borderTop: "1px solid #64748b22", padding: "10px 12px", background: cs.surface, borderRadius: "0 0 8px 8px" }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>
+                                  📋 Riwayat — {unit.unit_label} ({unitTxs.length} transaksi)
+                                </div>
+                                {unitTxs.length === 0 ? (
+                                  <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada pemakaian tercatat.</div>
+                                ) : (
+                                  <div style={{ display: "grid", gap: 5 }}>
+                                    {unitTxs.slice(0, 20).map((tx, ti) => {
+                                      const isAdj = tx.type === "adjustment";
+                                      const isUsage = tx.qty < 0 && !isAdj;
+                                      return (
+                                        <div key={tx.id || ti} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto", gap: 6, alignItems: "center", fontSize: 11, padding: "5px 8px", background: isAdj ? cs.green + "0a" : cs.card, borderRadius: 6, border: "1px solid " + cs.border + "55" }}>
+                                          <div>
+                                            <div style={{ fontWeight: 600, color: cs.text }}>{tx.customer_name || "—"}</div>
+                                            <div style={{ color: cs.muted, fontSize: 10 }}>{tx.teknisi_name || ""}</div>
+                                          </div>
+                                          <div style={{ color: cs.muted, fontSize: 10 }}>{(tx.job_date || tx.created_at || "").slice(0, 10)}</div>
+                                          <div style={{ fontWeight: 700, color: isAdj ? cs.green : isUsage ? cs.red : cs.green, textAlign: "right" }}>
+                                            {tx.qty > 0 ? "+" : ""}{parseFloat(Math.abs(tx.qty).toFixed(1))} {item.unit}
+                                            {isAdj && <div style={{ fontSize: 9, color: cs.green }}>KOREKSI</div>}
+                                          </div>
+                                          {tx.qty_actual != null && (
+                                            <div style={{ fontSize: 10, color: cs.green }}>✓ {parseFloat(Math.abs(tx.qty_actual).toFixed(1))} aktual</div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                    {unitTxs.length > 20 && (
+                                      <div style={{ fontSize: 10, color: cs.muted, textAlign: "center", padding: 4 }}>
+                                        +{unitTxs.length - 20} transaksi lainnya — lihat di tabel bawah
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                          <div style={{ fontSize: 11, color: cs.muted }}>{parseFloat((unit.stock || 0).toFixed(1))} {item.unit} saat diarsipkan</div>
-                          <button onClick={() => unarchiveUnit(unit.id)}
-                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: cs.green + "18", border: "1px solid " + cs.green + "44", color: cs.green, cursor: "pointer" }}
-                            title="Kembalikan dari arsip">
-                            ↩️ Pulihkan
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
