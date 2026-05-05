@@ -578,6 +578,83 @@ async function taskBackupData() {
 }
 
 // ══════════════════════════════════════════════════
+// TASK 8: Weekly Report — Minggu 09:00 WIB (02:00 UTC)
+// Ringkasan 7 hari terakhir: order, revenue, laporan, top teknisi
+// ══════════════════════════════════════════════════
+async function taskWeeklyReport() {
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["weekly_report_enabled","cron_jobs"]);
+  const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "weekly_report_enabled")) {
+    await log("WEEKLY_REPORT", "Dilewati — Laporan Mingguan dinonaktifkan via Settings", "INFO");
+    return { skipped: true };
+  }
+
+  const nowWib = new Date(Date.now() + 7*60*60*1000);
+  const todayStr = nowWib.toISOString().slice(0,10);
+  const weekAgo = new Date(nowWib.getTime() - 7*24*60*60*1000).toISOString().slice(0,10);
+
+  const [{ data: orders }, { data: invoices }, { data: expenses }] = await Promise.all([
+    sb.from("orders").select("id,service,status,teknisi,date").gte("date", weekAgo).lte("date", todayStr),
+    sb.from("invoices").select("id,total,status,teknisi").gte("created_at", weekAgo+"T00:00:00").lte("created_at", todayStr+"T23:59:59"),
+    sb.from("expenses").select("amount,category").gte("date", weekAgo).lte("date", todayStr),
+  ]);
+
+  const ordArr = orders||[];
+  const invArr = invoices||[];
+  const expArr = expenses||[];
+
+  const totalOrders = ordArr.length;
+  const completed   = ordArr.filter(o=>o.status==="COMPLETED").length;
+
+  // Service breakdown
+  const svcCount = {};
+  ordArr.forEach(o => { const s = o.service||"Lainnya"; svcCount[s]=(svcCount[s]||0)+1; });
+  const svcOrder = ["Cleaning","Install","Repair","Complain"];
+  const svcLines = svcOrder.filter(s=>svcCount[s]).map(s=>`  • ${s}: ${svcCount[s]}`);
+  Object.keys(svcCount).filter(s=>!svcOrder.includes(s)).forEach(s=>svcLines.push(`  • ${s}: ${svcCount[s]}`));
+
+  // Revenue
+  const paid    = invArr.filter(i=>i.status==="PAID");
+  const unpaid  = invArr.filter(i=>["UNPAID","OVERDUE"].includes(i.status));
+  const revenue = paid.reduce((s,i)=>s+(i.total||0),0);
+  const pending = unpaid.reduce((s,i)=>s+(i.total||0),0);
+
+  // Expenses
+  const totalExp = expArr.reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const nett = revenue - totalExp;
+
+  // Top teknisi by order count
+  const tekCount = {};
+  ordArr.filter(o=>o.teknisi).forEach(o => { tekCount[o.teknisi]=(tekCount[o.teknisi]||0)+1; });
+  const topTek = Object.entries(tekCount).sort((a,b)=>b[1]-a[1]).slice(0,3);
+
+  const tglRange = `${new Date(weekAgo+"T00:00:00+07:00").toLocaleDateString("id-ID",{day:"numeric",month:"short"})} – ${nowWib.toLocaleDateString("id-ID",{day:"numeric",month:"short",year:"numeric"})}`;
+
+  let msg = `📅 *LAPORAN MINGGUAN ACLEAN*\n${tglRange}\n\n`;
+  msg += `🔧 *ORDER: ${totalOrders}* (selesai: ${completed})\n`;
+  msg += svcLines.join("\n") + "\n\n";
+  msg += `💳 *INVOICE: ${invArr.length}*\n`;
+  msg += `  • Lunas: ${paid.length} (${fmt(revenue)})\n`;
+  msg += `  • Belum bayar: ${unpaid.length} (${fmt(pending)})\n\n`;
+  if (totalExp > 0) {
+    msg += `💸 *PENGELUARAN: ${fmt(totalExp)}*\n`;
+    msg += `📈 Nett Minggu Ini: *${fmt(nett)}*\n\n`;
+  } else {
+    msg += `📈 Pemasukan Minggu Ini: *${fmt(revenue)}*\n\n`;
+  }
+  if (topTek.length > 0) {
+    msg += `🏆 *TOP TEKNISI:*\n`;
+    topTek.forEach(([name, count], i) => { msg += `  ${i+1}. ${name}: ${count} order\n`; });
+    msg += "\n";
+  }
+  msg += `_ARA AClean_`;
+
+  const waSent = await sendWA(OWNER_PHONE, msg);
+  await log("WEEKLY_REPORT", `${totalOrders} order | rev ${fmt(revenue)} | exp ${fmt(totalExp)}`, "SUCCESS");
+  return { orders: totalOrders, revenue, expenses: totalExp, nett, waSent };
+}
+
+// ══════════════════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════════════════
 export default async function handler(req, res) {
@@ -631,6 +708,7 @@ export default async function handler(req, res) {
     else if (task === "wa-cleanup") result = await taskWaCleanup();
     else if (task === "bukti-bayar") result = await taskScanBuktiBayar();
     else if (task === "backup")     result = await taskBackupData();
+    else if (task === "weekly")     result = await taskWeeklyReport();
     else                            result = await taskReminder();
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });
