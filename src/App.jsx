@@ -9201,6 +9201,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           }
 
           // ── 11. Deduct stok material (non-Install) ──
+          // SKIP jika ini rewrite/edit laporan — stok sudah dipotong saat submit pertama.
+          // Deduct hanya boleh terjadi sekali per job (saat submit baru, bukan edit).
+          const isRewriteLaporan = !!laporanModal._rewriteId;
+          if (isRewriteLaporan) {
+            addAgentLog("LAPORAN_EDIT_SKIP_DEDUCT",
+              `Skip deduct stok untuk edit laporan ${laporanModal.id} — stok sudah dipotong saat submit pertama`,
+              "INFO");
+          }
           // Install: deduct dari effectiveMaterials (sudah punya _useCode untuk pipa/kabel)
           // Non-install: deduct dari laporanMaterials + laporanBarangItems (billable items dari price_list)
           const barangAsDeducts = laporanBarangItems.filter(b => b.nama && parseFloat(b.jumlah || 0) > 0)
@@ -9231,51 +9239,54 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               };
             }).filter(Boolean);
 
-          // Deduct inventory_units.stock — batch semua update sekaligus (bukan fire-and-forget)
-          const unitUpdateTasks = [];
-          for (const ud of unitDeducts) {
-            const unit = invUnitsData.find(u => u.id === ud._unitId);
-            if (!unit) continue;
-            const newStock = Math.max(0, unit.stock - ud.jumlah);
-            setInvUnitsData(prev => prev.map(u => u.id === ud._unitId ? { ...u, stock: newStock } : u));
-            unitUpdateTasks.push(
-              supabase.from("inventory_units")
-                .update({ stock: newStock, updated_at: new Date().toISOString() })
-                .eq("id", ud._unitId)
-                .then(({ error }) => { if (error) console.warn("inv_units update err:", ud._unitId, error.message); })
-            );
-          }
-          if (unitUpdateTasks.length > 0) await Promise.all(unitUpdateTasks);
-
           // Material tanpa unit fisik → deduct via inventory biasa (by nama)
           const matWithoutUnit = materialsToDeduct.filter(mat => !mat.freon_tabung_code);
           const allToDeduct = [...matWithoutUnit, ...unitDeducts];
 
-          if (allToDeduct.length > 0) {
-            deductInventory(
-              allToDeduct,
-              laporanModal?.id || null,        // orderId
-              null,                            // reportId
-              laporanModal?.customer || null,  // customerName
-              laporanModal?.teknisi || null,  // teknisiName
-              laporanModal?.date || null   // jobDate
-            );
-            // Cek stok kritis setelah deduct (dari inventoryData state yg sudah diupdate deductInventory)
-            setTimeout(() => {
-              const kritisItems = inventoryData.filter(i =>
-                allToDeduct.some(m => m._useCode ? m._useCode === i.code
-                  : i.name.toLowerCase().includes((m.nama || "").toLowerCase())) &&
-                (i.status === "CRITICAL" || i.status === "OUT")
+          // Deduct HANYA saat submit baru — rewrite/edit laporan skip agar stok tidak dobel potong
+          if (!isRewriteLaporan) {
+            // Deduct inventory_units.stock (tabung/roll)
+            const unitUpdateTasks = [];
+            for (const ud of unitDeducts) {
+              const unit = invUnitsData.find(u => u.id === ud._unitId);
+              if (!unit) continue;
+              const newStock = Math.max(0, unit.stock - ud.jumlah);
+              setInvUnitsData(prev => prev.map(u => u.id === ud._unitId ? { ...u, stock: newStock } : u));
+              unitUpdateTasks.push(
+                supabase.from("inventory_units")
+                  .update({ stock: newStock, updated_at: new Date().toISOString() })
+                  .eq("id", ud._unitId)
+                  .then(({ error }) => { if (error) console.warn("inv_units update err:", ud._unitId, error.message); })
               );
-              if (kritisItems.length > 0) {
-                const warnings = kritisItems.map(i => `${i.name} sisa ${i.stock} ${i.unit}`);
-                showNotif("⚠️ Stok kritis: " + warnings.join(", "));
-                const ownerAccs = userAccounts.filter(u => u.role === "Owner");
-                const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n`
-                  + warnings.map(w => "• " + w).join("\n");
-                ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
-              }
-            }, 800);
+            }
+            if (unitUpdateTasks.length > 0) await Promise.all(unitUpdateTasks);
+
+            if (allToDeduct.length > 0) {
+              deductInventory(
+                allToDeduct,
+                laporanModal?.id || null,        // orderId
+                null,                            // reportId
+                laporanModal?.customer || null,  // customerName
+                laporanModal?.teknisi || null,   // teknisiName
+                laporanModal?.date || null       // jobDate
+              );
+              // Cek stok kritis setelah deduct
+              setTimeout(() => {
+                const kritisItems = inventoryData.filter(i =>
+                  allToDeduct.some(m => m._useCode ? m._useCode === i.code
+                    : i.name.toLowerCase().includes((m.nama || "").toLowerCase())) &&
+                  (i.status === "CRITICAL" || i.status === "OUT")
+                );
+                if (kritisItems.length > 0) {
+                  const warnings = kritisItems.map(i => `${i.name} sisa ${i.stock} ${i.unit}`);
+                  showNotif("⚠️ Stok kritis: " + warnings.join(", "));
+                  const ownerAccs = userAccounts.filter(u => u.role === "Owner");
+                  const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n`
+                    + warnings.map(w => "• " + w).join("\n");
+                  ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
+                }
+              }, 800);
+            }
           }
 
           // ── 12. Auto-generate invoice ──
