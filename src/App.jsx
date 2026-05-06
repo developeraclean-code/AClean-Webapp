@@ -1438,361 +1438,57 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     showNotif(`✅ Rekap ${tglLabel} berhasil didownload!`);
   };
 
-  // Build invoice HTML string — reused by PDF download AND WA attachment upload
-  // logoUrl: base64 data URL atau null (fallback ke teks merek)
-  // forWA: true = hapus script print otomatis (untuk link WA, bukan download)
-  const buildInvoiceHTML = (inv, logoUrl = null, forWA = false) => {
-    const fmt2 = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
-    const perUnit = inv.units > 0 ? Math.round((inv.labor || 0) / inv.units) : (inv.labor || 0);
-
-    // Build material rows HTML (di luar template literal agar tidak ada backtick conflict)
-    // Build material rows HTML (di luar template literal agar tidak ada backtick conflict)
-    // Parse materials_detail — bisa array (sudah parsed) atau string JSON dari DB
-    const matDetails = (() => {
-      const md = inv.materials_detail;
-      if (!md) return [];
-      if (Array.isArray(md)) return md;
-      try { return JSON.parse(md); } catch (_) { return []; }
-    })();
-    let matRowsHtml = "";
-    if (matDetails.length > 0) {
-      // Per-item: setiap material = 1 baris di tabel
-      // Group items by category — support both new (keterangan field) and old invoices (detect by nama)
-      // Helper: detect kategori dari nama item jika keterangan kosong
-      const detectKat = (m) => {
-        if (m.keterangan === "jasa") return "jasa";
-        if (m.keterangan === "repair") return "repair";
-        if (m.keterangan === "freon") return "freon";
-        const n = (m.nama || "").toLowerCase();
-        // Freon / kuras vacum — by nama (diperluas)
-        if (["freon", "kuras vacum", "kuras+vacum", "r32", "r410", "r22"].some(k => n.includes(k))) return "freon";
-        // Repair/perbaikan — by nama (cek lebih dulu dari jasa)
-        const repairNames = ["repair", "perbaikan", "kapasitor", "kompresor", "sparepart", "pcb",
-          "modul", "overload", "sensor", "ganti", "penggantian", "spare part"];
-        if (repairNames.some(k => n.includes(k))) return "repair";
-        // Jasa — by nama pattern
-        const jasaNames = ["cleaning", "jasa vacum", "jasa pemasangan", "jasa perbaikan", "jasa servis",
-          "jasa", "service", "servis", "pemasangan ac", "bongkar ac", "biaya pengecekan",
-          "service besar", "complain", "pasang", "instalasi"];
-        if (jasaNames.some(k => n.includes(k))) return "jasa";
-        // Install material — pipa, kabel, breket, insulasi, duct tape
-        const matNames = ["pipa", "kabel", "insulasi", "breket", "duct tape", "ducttape", "selang"];
-        if (matNames.some(k => n.includes(k))) return "mat";
-        // Default: jika ada harga dan di invoice jasa — anggap jasa
-        return "jasa";
-      };
-      const jasaRows = matDetails.filter(m => detectKat(m) === "jasa");
-      const repairRows = matDetails.filter(m => detectKat(m) === "repair");
-      const freonRows = matDetails.filter(m => detectKat(m) === "freon");
-      const matRows = matDetails.filter(m => detectKat(m) === "mat");
-
-      const addSectionHeader = (label, color) => {
-        matRowsHtml += '<tr style="background:' + color + '10">' +
-          '<td colspan="4" style="padding:5px 12px;font-size:10px;font-weight:800;color:' + color + ';' +
-          'text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid ' + color + '33">' +
-          label + '</td></tr>';
-      };
-      const addRow = (m) => {
-        const hSatFix = m.harga_satuan > 0 ? m.harga_satuan
-          : (m.subtotal > 0 && m.jumlah > 0 ? Math.round(m.subtotal / m.jumlah) : 0);
-        const hSatStr = hSatFix > 0 ? hSatFix.toLocaleString("id-ID") : "—";
-        const subStr = m.subtotal > 0 ? m.subtotal.toLocaleString("id-ID")
-          : (hSatFix > 0 && m.jumlah > 0 ? (hSatFix * m.jumlah).toLocaleString("id-ID") : "—");
-        matRowsHtml +=
-          "<tr>" +
-          "<td>" + escHtml(m.nama) + "</td>" +
-          '<td style="text-align:right;width:72px;white-space:nowrap">' + escHtml(String(m.jumlah)) + " " + escHtml(m.satuan || "") + "</td>" +
-          '<td style="text-align:right;font-family:monospace">' + hSatStr + "</td>" +
-          '<td style="text-align:right;font-family:monospace;font-weight:600">' + subStr + "</td>" +
-          "</tr>";
-      };
-
-      if (jasaRows.length > 0) {
-        addSectionHeader("⚡ Jasa / Layanan", "#3b82f6");
-        jasaRows.forEach(addRow);
-      }
-      if (repairRows.length > 0) {
-        addSectionHeader("🔩 Repair / Perbaikan", "#f59e0b");
-        repairRows.forEach(addRow);
-      }
-      if (matRows.length > 0) {
-        addSectionHeader("🔧 Material / Sparepart", "#10b981");
-        matRows.forEach(addRow);
-      }
-      if (freonRows.length > 0) {
-        addSectionHeader("❄️ Freon / Kuras Vacum", "#06b6d4");
-        freonRows.forEach(addRow);
-      }
-      // Fallback: ada item tapi tidak terklasifikasi
-      const otherRows = matDetails.filter(m =>
-        !jasaRows.includes(m) && !repairRows.includes(m) && !matRows.includes(m) && !freonRows.includes(m)
-      );
-      if (otherRows.length > 0) { otherRows.forEach(addRow); }
-
-      // CRITICAL: jika inv.material > 0 tapi tidak ada di matDetails (invoice lama)
-      // Tampilkan sebagai baris material/freon tambahan
-      const matDetailTotal = matDetails.reduce((s, m) => s + (m.subtotal || 0), 0);
-      const invMaterial = inv.material || 0;
-      const matNotInDetail = invMaterial > 0 && matDetailTotal < invMaterial - 1000;
-      if (matNotInDetail) {
-        const remainMat = invMaterial - matDetails.filter(m => detectKat(m) !== "jasa" && detectKat(m) !== "repair").reduce((s, m) => s + (m.subtotal || 0), 0);
-        if (remainMat > 0) {
-          addSectionHeader("❄️ Material / Freon", "#06b6d4");
-          matRowsHtml +=
-            "<tr><td style=\"color:#475569;font-style:italic\">Material &amp; Freon</td>" +
-            "<td style=\"text-align:right\">—</td><td style=\"text-align:right\">—</td>" +
-            "<td style=\"text-align:right;font-family:monospace;font-weight:600\">" +
-            remainMat.toLocaleString("id-ID") + "</td></tr>";
-        }
-      }
-    } else if ((inv.material || 0) > 0) {
-      // Fallback invoice lama: materials_detail kosong tapi ada inv.material
-      // Reconstruct dari inv.material → tampilkan sebagai material/freon row
-      matRowsHtml =
-        '<tr style="background:#06b6d410"><td colspan="4" style="padding:5px 12px;font-size:10px;font-weight:800;color:#06b6d4;text-transform:uppercase;letter-spacing:1px">❄️ Material / Freon</td></tr>' +
-        '<tr style="background:#f8fafc">' +
-        '<td style="color:#475569;font-style:italic">Material &amp; Freon (total)</td>' +
-        '<td style="text-align:right;color:#94a3b8">—</td>' +
-        '<td style="text-align:right;color:#94a3b8">—</td>' +
-        '<td style="text-align:right;font-family:monospace;font-weight:600">' +
-        (inv.material || 0).toLocaleString("id-ID") + "</td></tr>";
-    }
-    const html = `<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8">
-<title>Invoice ${inv.id} — ${appSettings.company_name}</title>
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: Arial, sans-serif; font-size: 12px; color: #1e293b; background: #fff; }
-  .page { width: 794px; min-height: 1123px; margin: 0 auto; padding: 40px; }
-  .header { background: #fff; border-radius: 8px; overflow: hidden; margin-bottom: 20px; box-shadow: 0 2px 12px rgba(30,91,168,0.12); border: 2px solid #1E5BA8; }
-  .header-top { padding: 24px 28px; display: flex; justify-content: space-between; align-items: center; }
-  .brand { font-size: 26px; font-weight: 900; color: #1E5BA8; letter-spacing: -0.5px; }
-  .brand span { color: #1E5BA8; }
-  .brand-sub { font-size: 12px; color: #6b7280; margin-top: 4px; font-weight: 500; }
-  .inv-badge { background: #1E5BA8; color: #fff; padding: 8px 16px; border-radius: 6px; font-family: monospace; font-weight: 900; font-size: 16px; box-shadow: 0 2px 4px rgba(30,91,168,0.15); }
-  .inv-label { font-size: 10px; color: #1E5BA8; font-weight: 700; text-align: right; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .header-sub { background: #f0f4f8; padding: 12px 28px; font-size: 11px; color: #1e293b; display: flex; gap: 28px; border-top: 1px solid #e2e8f0; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-  .box { border-radius: 8px; padding: 14px 16px; }
-  .box-blue { background: #e3f2fd; border: 1px solid #90caf9; border-radius: 8px; }
-  .box-white { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; }
-  .box-title { font-size: 11px; font-weight: 900; color: #1E5BA8; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.6px; }
-  .row { display: flex; gap: 8px; margin-bottom: 4px; }
-  .row-label { color: #64748b; min-width: 90px; }
-  .row-val { color: #1e293b; font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12px; }
-  thead tr { background: #1E5BA8; }
-  thead th { padding: 12px 12px; text-align: left; color: #fff; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
-  tbody tr:nth-child(even) { background: #f8fafc; }
-  tbody td { padding: 10px 12px; color: #1e293b; border-bottom: 1px solid #f1f5f9; }
-  .total-row { background: #1E5BA8 !important; }
-  .total-row td { color: #fff !important; font-weight: 800; font-size: 14px; border: none; padding: 12px; }
-  .footer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-  .bank-box { background: #e3f2fd; border: 1px solid #90caf9; border-radius: 8px; padding: 14px 16px; }
-  .bank-num { font-weight: 800; font-size: 16px; color: #1e293b; margin: 4px 0; }
-  .status-box { border-radius: 8px; padding: 14px 16px; }
-  .footer-note { text-align: center; padding-top: 16px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 11px; }
-  .status-paid { background: #F0FDF4; border: 1px solid #86efac; }
-  .status-unpaid { background: #FFFBEB; border: 1px solid #fde68a; }
-  .status-overdue { background: #FEF2F2; border: 1px solid #fca5a5; }
-  .garansi-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 10px 16px; margin-bottom: 16px; font-size: 11px; color: #166534; }
-  @media print {
-    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .page { padding: 20px; }
-  }
-  @page {
-    size: A4;
-    margin: 10mm 12mm;
-  }
-</style>
-</head>
-<body>
-<div class="page">
-  <!-- Header -->
-  <div class="header">
-    <div class="header-top">
-      <div style="display:flex;align-items:center;gap:14px">
-        ${logoUrl
-          ? `<div style="background:#fff;border-radius:8px;padding:4px 8px;display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:56px"><img src="${logoUrl}" alt="AClean" style="height:48px;max-width:140px;width:auto;object-fit:contain;display:block" /></div>`
-          : ``}
-        <div>
-          <div class="brand">AClean Service</div>
-          <div class="brand-sub">Jasa Servis &amp; Perawatan AC Profesional</div>
-        </div>
-      </div>
-      <div>
-        <div class="inv-label">INVOICE</div>
-        <div class="inv-badge">${inv.id}</div>
-      </div>
-    </div>
-    <div class="header-sub">
-      <span>📍 ${escHtml(appSettings.company_addr)}</span>
-      <span>📞 ${escHtml(appSettings.wa_number)}</span>
-      <span>🏦 ${escHtml(appSettings.bank_name)} ${escHtml(appSettings.bank_number)} a.n. ${escHtml(appSettings.bank_holder)}</span>
-    </div>
-  </div>
-
-  <!-- Detail Grid -->
-  <div class="grid2">
-    <div class="box box-blue">
-      <div class="box-title">Detail Invoice</div>
-      <div class="row"><span class="row-label">Tgl Invoice</span><span class="row-val">${inv.created_at ? new Date(inv.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }) : new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</span></div>
-      <div class="row"><span class="row-label">Issued</span><span class="row-val" style="font-weight:800;color:#1e40af">${new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</span></div>
-      <div class="row"><span class="row-label">No. Invoice</span><span class="row-val">${inv.id}</span></div>
-      <div class="row"><span class="row-label">No. Order</span><span class="row-val">${inv.job_id || "—"}</span></div>
-      <div class="row"><span class="row-label">Jatuh Tempo</span><span class="row-val">${inv.due || "—"}</span></div>
-    </div>
-    <div class="box box-white">
-      <div class="box-title">Tagihan Kepada</div>
-      <div style="font-weight:700;font-size:14px;color:#1e293b;margin-bottom:6px">${escHtml(inv.customer)}</div>
-      <div style="color:#64748b">📱 ${escHtml(inv.phone || "—")}</div>
-      <div style="color:#64748b;margin-top:4px">🔧 ${escHtml(inv.service || "—")}</div>
-    </div>
-  </div>
-
-  <!-- Table -->
-  <table>
-    <thead>
-      <tr>
-        <th style="width:auto">Deskripsi</th>
-        <th style="text-align:right;width:72px;white-space:nowrap">Jml Unit</th>
-        <th style="text-align:right;width:100px;white-space:nowrap">Harga/Unit</th>
-        <th style="text-align:right;width:100px;white-space:nowrap">Subtotal</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${(inv.labor > 0 && matDetails.length === 0) ? '<tr><td>' + escHtml((inv.service || "Jasa Servis AC") + (inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? " (Garansi Jasa Gratis)" : "")) + '</td><td style="text-align:center">' + (inv.units || 1) + '</td><td style="text-align:right;font-family:monospace">' + perUnit.toLocaleString("id-ID") + '</td><td style="text-align:right;font-family:monospace;font-weight:600">' + (inv.labor || 0).toLocaleString("id-ID") + '</td></tr>' : ""}
-${matRowsHtml}
-      ${(inv.discount || 0) > 0 ? '<tr style="background:#fff1f2"><td style="color:#be123c;font-style:italic">Discount</td><td style="text-align:center;color:#be123c">—</td><td style="text-align:right;color:#be123c">—</td><td style="text-align:right;font-family:monospace;font-weight:600;color:#be123c">-' + (inv.discount||0).toLocaleString("id-ID") + '</td></tr>' : ""}
-      ${inv.trade_in && (inv.trade_in_amount || 0) > 0 ? '<tr style="background:#fff1f2"><td style="color:#be123c;font-style:italic">Trade-In AC Lama</td><td style="text-align:center;color:#be123c">—</td><td style="text-align:right;color:#be123c">—</td><td style="text-align:right;font-family:monospace;font-weight:600;color:#be123c">-' + (inv.trade_in_amount||0).toLocaleString("id-ID") + '</td></tr>' : ""}
-      <tr class="total-row">
-        <td colspan="3">TOTAL TAGIHAN</td>
-        <td style="text-align:right;font-family:monospace">Rp ${(inv.total || 0).toLocaleString("id-ID")}</td>
-      </tr>
-    </tbody>
-  </table>
-
-  ${inv.garansi_expires ? '<div class="garansi-box">🛡️ <strong>Garansi Servis ' + (inv.garansi_days || 30) + ' Hari</strong> — berlaku sampai ' + inv.garansi_expires + '. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</div>' : ""}
-
-  <!-- Footer -->
-  <div class="footer-grid">
-    <div class="bank-box">
-      <div class="box-title">Informasi Pembayaran</div>
-      <div style="color:#475569;font-size:11px">Transfer Bank BCA</div>
-    <div class="bank-num">${escHtml(appSettings.bank_number)}</div>
-    <div style="color:#475569;font-size:11px">a.n. ${escHtml(appSettings.bank_holder)}</div>
-      <div style="margin-top:8px;font-size:11px;color:#64748b">Kirim bukti transfer via WhatsApp ke nomor di atas</div>
-    </div>
-    <div class="status-box ${inv.status === "PAID" ? "status-paid" : inv.status === "OVERDUE" ? "status-overdue" : "status-unpaid"}">
-      <div class="box-title">Status Pembayaran</div>
-      <div style="font-weight:700;font-size:15px;color:#1e293b;margin-bottom:4px">
-        ${inv.status === "PAID" ? "✅ LUNAS" : inv.status === "OVERDUE" ? "⚠️ JATUH TEMPO" : "⏳ MENUNGGU PEMBAYARAN"}
-      </div>
-      <div style="font-size:11px;color:#64748b">Jatuh tempo: ${inv.due || "—"}</div>
-      ${inv.paid_at ? '<div style="font-size:11px;color:#16a34a;margin-top:4px">Dibayar: ' + new Date(inv.paid_at).toLocaleDateString("id-ID") + '</div>' : ""}
-    </div>
-  </div>
-
-  <div class="footer-note">
-    <p>Pertanyaan? Hubungi kami via WhatsApp: ${escHtml(appSettings.wa_number)}</p>
-    <p style="font-style:italic;margin-top:4px;color:#94a3b8">Terima kasih telah mempercayakan perawatan AC Anda kepada ${escHtml(appSettings.company_name)} 🙏</p>
-  </div>
-</div>
-${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
-</body>
-</html>`;
-
-    return html;
-  };
 
   const downloadInvoicePDF = async (inv) => {
-    // Buka window dulu (sync dari click) agar tidak diblokir popup blocker
-    const win = window.open("", "_blank", "width=860,height=1000,scrollbars=yes");
     showNotif("⏳ Membuat PDF invoice...");
     try {
-      const logoUrl = await fetchInvoiceLogoUrl();
-      const filename = `Invoice_${inv.id}_${inv.customer.replace(/\s+/g, "_")}.pdf`;
-      const pdfBlob = await htmlToPdfBlob(buildInvoiceHTML(inv, logoUrl), filename);
+      const safeName = (inv.customer || "Customer").replace(/[^\w\s-]/g, "").replace(/\s+/g, "_");
+      const filename = `Invoice_${inv.id}_${safeName}.pdf`;
+      const pdfBlob = await generateInvoicePDFBlob(inv);
       addAgentLog("INVOICE_PRINT",
         `Invoice ${inv.id} (${inv.customer}) dicetak oleh ${currentUser?.name || "Unknown"} — Rp${fmt(inv.total)}`,
         "SUCCESS"
       );
-      if (pdfBlob) {
-        // Tutup placeholder window, lalu download PDF langsung
-        if (win && !win.closed) win.close();
-        const url = URL.createObjectURL(pdfBlob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
-        showNotif("✅ PDF invoice berhasil diunduh");
-      } else {
-        // Fallback: tampilkan HTML di window yang sudah terbuka
-        const html = buildInvoiceHTML(inv, logoUrl);
-        if (win && !win.closed) {
-          win.document.write(html);
-          win.document.close();
-        } else {
-          showNotif("⚠️ Gagal buat PDF — coba lagi atau aktifkan popup di browser");
-        }
+      if (!pdfBlob) {
+        showNotif("⚠️ Gagal buat PDF — coba lagi");
+        return;
       }
+      const url = URL.createObjectURL(pdfBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      showNotif("✅ PDF invoice berhasil diunduh");
     } catch (err) {
-      if (win && !win.closed) win.close();
-      showNotif("⚠️ Gagal membuat PDF: " + err.message);
+      console.warn("[downloadInvoicePDF] gagal:", err);
+      showNotif("⚠️ Gagal membuat PDF: " + (err?.message || "unknown"));
     }
   };
 
-  // Load html2pdf.js dari CDN sekali saja (lazy load)
-  const loadHtml2Pdf = () => new Promise((resolve, reject) => {
-    if (window.html2pdf) { resolve(window.html2pdf); return; }
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-    s.onload = () => resolve(window.html2pdf);
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
 
-  // Convert HTML string → PDF blob via html2pdf.js
-  const htmlToPdfBlob = async (html, filename) => {
-    const h2p = await loadHtml2Pdf();
-    const el = document.createElement("div");
-    // Strip emoji agar html2canvas tidak menghasilkan halaman blank
-    const cleanHtml = html.replace(/[\u{1F300}-\u{1FFFF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, "");
-    el.innerHTML = cleanHtml;
-    // Harus visible di viewport agar html2canvas bisa capture
-    el.style.cssText = "position:absolute;top:-9999px;left:0;width:794px;z-index:9999;background:white;visibility:visible;";
-    document.body.appendChild(el);
-    // Tunggu gambar & font load
-    await new Promise(r => setTimeout(r, 1500));
-    try {
-      const pdfBlob = await h2p().set({
-        margin: [5, 5, 5, 5],
-        filename,
-        image: { type: "jpeg", quality: 0.92 },
-        html2canvas: { scale: 2, useCORS: true, logging: false, allowTaint: true, scrollX: 0, scrollY: 0, windowWidth: 794 },
-        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      }).from(el).outputPdf("blob");
-      return pdfBlob;
-    } finally {
-      document.body.removeChild(el);
-    }
+  // Generate Invoice PDF blob via @react-pdf/renderer (reliable, no rasterization)
+  const generateInvoicePDFBlob = async (inv) => {
+    const { pdf } = await import("@react-pdf/renderer");
+    const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
+    const logoUrl = await fetchInvoiceLogoUrl();
+    return await pdf(
+      <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} />
+    ).toBlob();
   };
-
 
   const uploadInvoicePDFForWA = async (inv) => {
     try {
-      const logoUrl = await fetchInvoiceLogoUrl();
+      const blob = await generateInvoicePDFBlob(inv);
+      if (!blob) return null;
       const filename = `Invoice_${inv.id}.pdf`;
-      const pdfBlob = await htmlToPdfBlob(buildInvoiceHTML(inv, logoUrl, true), filename);
-      if (!pdfBlob) return null;
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result.split(",")[1]);
         reader.onerror = reject;
-        reader.readAsDataURL(pdfBlob);
+        reader.readAsDataURL(blob);
       });
       const res = await fetch("/api/upload-foto", {
         method: "POST", headers: await _apiHeaders(),
@@ -1805,6 +1501,7 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
       if (res.ok && d.success && d.key) {
         return `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
       }
+      console.warn("[uploadInvoicePDFForWA] upload response:", d);
       return null;
     } catch (err) {
       console.warn("[uploadInvoicePDFForWA] gagal:", err.message);
