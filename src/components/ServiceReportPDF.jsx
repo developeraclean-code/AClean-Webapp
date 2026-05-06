@@ -47,14 +47,14 @@ const s = StyleSheet.create({
   footer:      { paddingTop: 5, borderTop: "1px solid #e2e8f0", flexDirection: "row", justifyContent: "space-between" },
   footerL:     { fontSize: 7, color: "#94a3b8" },
   footerR:     { fontSize: 6.5, color: "#cbd5e1", fontStyle: "italic" },
-  // Photo page
+  // Photo page — 2 kolom x 3 baris = 6 foto/halaman, portrait, mengisi penuh
   photoHeader: { backgroundColor: "#1e3a5f", padding: "6 10", marginBottom: 8, borderRadius: 3 },
   photoTitle:  { fontSize: 11, fontFamily: "Helvetica-Bold", color: "#fff" },
   photoSub:    { fontSize: 7, color: "#93c5fd", marginTop: 1 },
   photoGrid:   { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  photoCell:   { width: "31%", border: "1px solid #e2e8f0", borderRadius: 3, overflow: "hidden", position: "relative" },
-  photoImg:    { width: "100%", height: 110, objectFit: "cover" },
-  photoNum:    { fontSize: 6, color: "#94a3b8", textAlign: "right", marginTop: 2, paddingRight: 3 },
+  photoCell:   { width: "48.5%", border: "1px solid #e2e8f0", borderRadius: 3, overflow: "hidden" },
+  photoImg:    { width: "100%", height: 185, objectFit: "cover" },
+  photoNum:    { fontSize: 6, color: "#94a3b8", textAlign: "right", marginTop: 2, paddingRight: 3, paddingBottom: 2 },
 });
 
 function InfoRow({ label, value, accent }) {
@@ -138,7 +138,7 @@ function MatTable({ items, title }) {
   );
 }
 
-function PhotoPage({ photos, pageNum, jobId, customer }) {
+function PhotoPage({ photos, pageNum, startIdx, jobId, customer }) {
   return (
     <Page size="A4" style={s.page}>
       <View style={s.photoHeader}>
@@ -154,7 +154,7 @@ function PhotoPage({ photos, pageNum, jobId, customer }) {
                   <Text style={{ color: "#94a3b8", fontSize: 7 }}>Tidak tersedia</Text>
                 </View>
             }
-            <Text style={s.photoNum}>{(pageNum - 2) * 6 + i + 1}</Text>
+            <Text style={s.photoNum}>Foto {startIdx + i + 1}</Text>
           </View>
         ))}
       </View>
@@ -275,6 +275,7 @@ export default function ServiceReportPDF({ laporan, inv, logoUrl, photoDataUrls 
           key={pi}
           photos={chunk.map(url => photoDataUrls[url] || null)}
           pageNum={pi + 2}
+          startIdx={pi * 6}
           jobId={laporan.job_id}
           customer={laporan.customer}
         />
