@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Finance View — Mockup AClean</title>
+<style>
+  :root{
+    --bg:#0a0f1e;
+    --surface:#0d1526;
+    --card:#111827;
+    --border:#1e2d4a;
+    --text:#e2e8f0;
+    --muted:#64748b;
+    --accent:#38bdf8;
+    --green:#22c55e;
+    --yellow:#f59e0b;
+    --red:#ef4444;
+    --ara:#a78bfa;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    font-size:14px;
+    min-height:100vh;
+    display:flex;
+  }
+  /* SIDEBAR */
+  .sidebar{
+    width:230px;
+    background:var(--surface);
+    border-right:1px solid var(--border);
+    padding:16px 12px;
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+    flex-shrink:0;
+  }
+  .brand{
+    font-size:18px;
+    font-weight:700;
+    color:var(--accent);
+    margin-bottom:4px;
+  }
+  .brand-version{
+    font-size:11px;
+    background:var(--card);
+    border:1px solid var(--border);
+    padding:2px 8px;
+    border-radius:10px;
+    color:var(--muted);
+    float:right;
+    font-weight:500;
+  }
+  .user-card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:10px 12px;
+    margin-bottom:14px;
+  }
+  .user-name{font-weight:600;font-size:13px;}
+  .user-role{font-size:11px;color:var(--muted);margin-top:2px;}
+  .nav-item{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:9px 12px;
+    border-radius:8px;
+    cursor:pointer;
+    color:var(--text);
+    font-size:13px;
+    transition:background 0.15s;
+  }
+  .nav-item:hover{background:rgba(56,189,248,0.08);}
+  .nav-item.active{
+    background:rgba(56,189,248,0.15);
+    color:var(--accent);
+    font-weight:600;
+    border:1px solid rgba(56,189,248,0.3);
+  }
+  .nav-icon{font-size:15px;width:18px;text-align:center;}
+  .logout-btn{
+    margin-top:auto;
+    background:rgba(239,68,68,0.1);
+    border:1px solid rgba(239,68,68,0.3);
+    color:var(--red);
+    padding:10px;
+    border-radius:8px;
+    cursor:pointer;
+    font-weight:600;
+    font-size:13px;
+  }
+
+  /* MAIN */
+  .main{
+    flex:1;
+    padding:20px 24px;
+    overflow-y:auto;
+    max-height:100vh;
+  }
+
+  /* TABS */
+  .tabs{
+    display:flex;
+    gap:6px;
+    margin-bottom:18px;
+    border-bottom:1px solid var(--border);
+  }
+  .tab{
+    padding:10px 18px;
+    cursor:pointer;
+    color:var(--muted);
+    font-weight:600;
+    font-size:13px;
+    border-bottom:2px solid transparent;
+    margin-bottom:-1px;
+    transition:all 0.15s;
+  }
+  .tab:hover{color:var(--text);}
+  .tab.active{
+    color:var(--accent);
+    border-bottom-color:var(--accent);
+  }
+
+  /* DATE BAR */
+  .date-bar{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:14px 18px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:16px;
+  }
+  .date-nav{display:flex;align-items:center;gap:14px;}
+  .date-btn{
+    width:32px;height:32px;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:8px;
+    color:var(--text);
+    cursor:pointer;
+    font-size:14px;
+  }
+  .date-text{
+    font-size:15px;
+    font-weight:700;
+    text-align:center;
+  }
+  .date-sub{font-size:11px;color:var(--muted);margin-top:2px;font-weight:400;}
+  .today-btn{
+    background:rgba(56,189,248,0.12);
+    border:1px solid rgba(56,189,248,0.4);
+    color:var(--accent);
+    padding:7px 16px;
+    border-radius:8px;
+    font-weight:600;
+    cursor:pointer;
+    font-size:12px;
+  }
+
+  /* STAT CARDS */
+  .stat-grid{
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:12px;
+    margin-bottom:16px;
+  }
+  .stat-card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:14px 16px;
+  }
+  .stat-value{font-size:26px;font-weight:700;line-height:1.1;}
+  .stat-label{font-size:11px;color:var(--muted);margin-top:6px;text-transform:uppercase;letter-spacing:0.3px;}
+  .stat-card.cyan .stat-value{color:var(--accent);}
+  .stat-card.green .stat-value{color:var(--green);}
+  .stat-card.yellow .stat-value{color:var(--yellow);}
+  .stat-card.red .stat-value{color:var(--red);}
+  .stat-card.purple .stat-value{color:var(--ara);}
+
+  /* TABLE */
+  .table-card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:12px;
+    overflow:hidden;
+  }
+  .table-head{
+    display:grid;
+    grid-template-columns: 1.6fr 1.1fr 1fr 1fr 1fr 1fr 0.7fr;
+    gap:8px;
+    padding:12px 18px;
+    border-bottom:1px solid var(--border);
+    font-size:10px;
+    color:var(--muted);
+    text-transform:uppercase;
+    letter-spacing:0.5px;
+    font-weight:600;
+  }
+  .table-row{
+    display:grid;
+    grid-template-columns: 1.6fr 1.1fr 1fr 1fr 1fr 1fr 0.7fr;
+    gap:8px;
+    padding:14px 18px;
+    border-bottom:1px solid rgba(30,45,74,0.5);
+    align-items:center;
+  }
+  .table-row:last-child{border-bottom:none;}
+  .table-row:hover{background:rgba(56,189,248,0.03);}
+
+  .job-title{font-weight:700;font-size:13px;}
+  .job-sub{font-size:11px;color:var(--muted);margin-top:3px;}
+  .complain-title{color:var(--red);}
+
+  .team-line{display:flex;align-items:center;gap:6px;font-size:12px;}
+  .team-dot{width:8px;height:8px;border-radius:50%;}
+  .helper-line{font-size:11px;color:var(--muted);margin-top:3px;}
+
+  .badge{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    padding:5px 10px;
+    border-radius:14px;
+    font-size:11px;
+    font-weight:600;
+    white-space:nowrap;
+  }
+  .badge.confirmed{background:rgba(34,197,94,0.12);color:var(--green);border:1px solid rgba(34,197,94,0.3);}
+  .badge.dikirim{background:rgba(56,189,248,0.12);color:var(--accent);border:1px solid rgba(56,189,248,0.3);}
+  .badge.lunas{background:rgba(34,197,94,0.12);color:var(--green);border:1px solid rgba(34,197,94,0.3);}
+  .badge.report{background:rgba(168,139,250,0.12);color:var(--ara);border:1px solid rgba(168,139,250,0.3);}
+  .badge.paid{background:rgba(34,197,94,0.12);color:var(--green);border:1px solid rgba(34,197,94,0.3);}
+  .badge.unpaid{background:rgba(245,158,11,0.12);color:var(--yellow);border:1px solid rgba(245,158,11,0.3);}
+  .badge.pending{background:rgba(168,139,250,0.12);color:var(--ara);border:1px solid rgba(168,139,250,0.3);}
+  .badge.warranty{background:rgba(34,197,94,0.1);color:var(--green);border:1px solid rgba(34,197,94,0.25);font-size:9px;padding:2px 6px;}
+
+  .invoice-value{font-weight:700;color:var(--green);font-size:13px;}
+
+  .btn-bukti{
+    background:rgba(56,189,248,0.1);
+    border:1px solid rgba(56,189,248,0.4);
+    color:var(--accent);
+    padding:6px 10px;
+    border-radius:7px;
+    font-size:11px;
+    cursor:pointer;
+    font-weight:600;
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    white-space:nowrap;
+  }
+  .btn-bukti:hover{background:rgba(56,189,248,0.2);}
+  .btn-bukti.disabled{opacity:0.4;cursor:not-allowed;}
+
+  /* CHECKLIST MUTASI */
+  .checklist-cell{display:flex;justify-content:center;align-items:center;}
+  .check-box{
+    width:28px;height:28px;
+    border-radius:7px;
+    border:2px solid var(--border);
+    background:var(--surface);
+    cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    transition:all 0.15s;
+  }
+  .check-box:hover{border-color:var(--accent);}
+  .check-box.checked{
+    background:var(--green);
+    border-color:var(--green);
+    color:white;
+    font-weight:bold;
+    font-size:16px;
+  }
+
+  /* BIAYA TAB */
+  .biaya-toolbar{
+    display:flex;
+    gap:10px;
+    margin-bottom:14px;
+    align-items:center;
+  }
+  .input{
+    background:var(--card);
+    border:1px solid var(--border);
+    color:var(--text);
+    padding:9px 12px;
+    border-radius:8px;
+    font-size:13px;
+  }
+  .btn-primary{
+    background:var(--accent);
+    color:#0a0f1e;
+    border:none;
+    padding:9px 16px;
+    border-radius:8px;
+    cursor:pointer;
+    font-weight:700;
+    font-size:13px;
+  }
+  .btn-primary:hover{opacity:0.9;}
+
+  .biaya-table-head{
+    display:grid;
+    grid-template-columns: 1fr 1.5fr 2fr 1fr 1fr 0.8fr;
+    gap:10px;
+    padding:12px 18px;
+    border-bottom:1px solid var(--border);
+    font-size:10px;
+    color:var(--muted);
+    text-transform:uppercase;
+    letter-spacing:0.5px;
+    font-weight:600;
+  }
+  .biaya-row{
+    display:grid;
+    grid-template-columns: 1fr 1.5fr 2fr 1fr 1fr 0.8fr;
+    gap:10px;
+    padding:13px 18px;
+    border-bottom:1px solid rgba(30,45,74,0.5);
+    align-items:center;
+    font-size:13px;
+  }
+  .biaya-row:last-child{border-bottom:none;}
+  .nominal{font-weight:700;color:var(--red);}
+  .icon-btn{
+    background:transparent;
+    border:1px solid var(--border);
+    color:var(--muted);
+    width:28px;height:28px;
+    border-radius:6px;
+    cursor:pointer;
+    font-size:13px;
+  }
+  .icon-btn:hover{border-color:var(--accent);color:var(--accent);}
+
+  /* STATISTIK TAB */
+  .stat2-grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:12px;
+    margin-bottom:16px;
+  }
+  .chart-card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:18px;
+    margin-bottom:16px;
+  }
+  .chart-title{
+    font-size:14px;
+    font-weight:700;
+    margin-bottom:12px;
+  }
+  .chart-area{
+    height:240px;
+    background:linear-gradient(180deg,rgba(56,189,248,0.08) 0%,transparent 100%);
+    border-radius:8px;
+    position:relative;
+    display:flex;
+    align-items:flex-end;
+    gap:8px;
+    padding:18px;
+  }
+  .bar{
+    flex:1;
+    background:linear-gradient(180deg,var(--accent) 0%,rgba(56,189,248,0.4) 100%);
+    border-radius:6px 6px 0 0;
+    position:relative;
+    min-height:20px;
+  }
+  .bar-label{
+    position:absolute;
+    bottom:-22px;
+    left:0;right:0;
+    text-align:center;
+    font-size:10px;
+    color:var(--muted);
+  }
+  .bar.green{background:linear-gradient(180deg,var(--green) 0%,rgba(34,197,94,0.4) 100%);}
+  .bar.red{background:linear-gradient(180deg,var(--red) 0%,rgba(239,68,68,0.4) 100%);}
+
+  .pie-row{display:flex;gap:18px;align-items:center;}
+  .pie{
+    width:180px;height:180px;
+    border-radius:50%;
+    background:conic-gradient(
+      var(--green) 0% 55%,
+      var(--accent) 55% 78%,
+      var(--yellow) 78% 92%,
+      var(--red) 92% 100%
+    );
+    flex-shrink:0;
+    position:relative;
+  }
+  .pie::after{
+    content:"";
+    position:absolute;
+    inset:35px;
+    background:var(--card);
+    border-radius:50%;
+  }
+  .pie-legend{display:flex;flex-direction:column;gap:10px;flex:1;}
+  .legend-item{display:flex;align-items:center;gap:10px;font-size:13px;}
+  .legend-dot{width:12px;height:12px;border-radius:3px;}
+
+  /* PLANNING TAB */
+  .plan-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;}
+  .plan-card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:18px;
+  }
+  .plan-title{font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+  .plan-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:11px 0;
+    border-bottom:1px solid rgba(30,45,74,0.5);
+    font-size:13px;
+  }
+  .plan-row:last-child{border-bottom:none;}
+  .plan-label{color:var(--muted);}
+  .plan-value{font-weight:700;}
+  .plan-value.green{color:var(--green);}
+  .plan-value.red{color:var(--red);}
+  .plan-value.yellow{color:var(--yellow);}
+
+  .progress-bar{
+    height:8px;
+    background:var(--surface);
+    border-radius:4px;
+    overflow:hidden;
+    margin-top:6px;
+  }
+  .progress-fill{
+    height:100%;
+    background:linear-gradient(90deg,var(--green),#16a34a);
+    border-radius:4px;
+  }
+
+  .target-card{
+    background:linear-gradient(135deg,rgba(56,189,248,0.08),rgba(168,139,250,0.05));
+    border:1px solid rgba(56,189,248,0.2);
+    border-radius:12px;
+    padding:18px;
+    margin-bottom:14px;
+  }
+  .target-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+  .target-amount{font-size:24px;font-weight:700;color:var(--accent);}
+  .target-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;}
+
+  .tab-content{display:none;}
+  .tab-content.active{display:block;}
+
+  /* CASHFLOW LIST */
+  .cashflow-item{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    padding:11px 0;
+    border-bottom:1px solid rgba(30,45,74,0.5);
+  }
+  .cashflow-item:last-child{border-bottom:none;}
+  .cashflow-icon{
+    width:36px;height:36px;
+    border-radius:8px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:15px;
+    flex-shrink:0;
+  }
+  .cashflow-icon.in{background:rgba(34,197,94,0.12);color:var(--green);}
+  .cashflow-icon.out{background:rgba(239,68,68,0.12);color:var(--red);}
+  .cashflow-info{flex:1;}
+  .cashflow-title{font-weight:600;font-size:13px;}
+  .cashflow-sub{font-size:11px;color:var(--muted);margin-top:2px;}
+  .cashflow-amount{font-weight:700;font-size:13px;}
+  .cashflow-amount.in{color:var(--green);}
+  .cashflow-amount.out{color:var(--red);}
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div style="margin-bottom:14px;">
+    <span class="brand">○ AClean</span>
+    <span class="brand-version">v18</span>
+  </div>
+  <div class="user-card">
+    <div class="user-name">Finance</div>
+    <div class="user-role">💰 Finance Officer</div>
+  </div>
+  <div class="nav-item active"><span class="nav-icon">💰</span> Finance</div>
+  <div class="nav-item"><span class="nav-icon">🧾</span> Invoice</div>
+  <div class="nav-item"><span class="nav-icon">📊</span> Statistik</div>
+  <div class="nav-item"><span class="nav-icon">⚙️</span> Pengaturan</div>
+  <button class="logout-btn">Keluar →</button>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+
+  <!-- TAB BAR -->
+  <div class="tabs">
+    <div class="tab active" data-tab="dashboard">📊 Dashboard</div>
+    <div class="tab" data-tab="biaya">💸 Biaya Operasional</div>
+    <div class="tab" data-tab="statistik">📈 Statistik</div>
+    <div class="tab" data-tab="planning">🎯 Financial Planning</div>
+  </div>
+
+  <!-- ============ DASHBOARD TAB ============ -->
+  <div id="dashboard" class="tab-content active">
+
+    <!-- DATE BAR -->
+    <div class="date-bar">
+      <button class="date-btn">◀</button>
+      <div class="date-text">
+        📅 Selasa, 5 Mei 2026
+        <div class="date-sub">19 order · 11 lunas · 8 belum lunas</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="today-btn">Hari Ini</button>
+        <button class="date-btn">▶</button>
+      </div>
+    </div>
+
+    <!-- STATS -->
+    <div class="stat-grid">
+      <div class="stat-card cyan">
+        <div class="stat-value">19</div>
+        <div class="stat-label">Total Order</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-value">Rp 6.935.000</div>
+        <div class="stat-label">Total Pemasukan</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-value">8</div>
+        <div class="stat-label">Belum Lunas</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-value">3</div>
+        <div class="stat-label">Pending APV</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-value">5</div>
+        <div class="stat-label">Belum Tercatat Mutasi</div>
+      </div>
+    </div>
+
+    <!-- TABLE -->
+    <div class="table-card">
+      <div class="table-head">
+        <div>DETAIL JOB</div>
+        <div>TEAM</div>
+        <div>STATUS</div>
+        <div>INVOICE VALUE</div>
+        <div>INVOICE STATUS</div>
+        <div>BUKTI BAYAR</div>
+        <div style="text-align:center;">CEK MUTASI</div>
+      </div>
+
+      <div class="table-row">
+        <div>
+          <div class="job-title">IBU LINA LAVENDER</div>
+          <div class="job-sub">Cleaning · 1 unit · 09:00:00</div>
+        </div>
+        <div>
+          <div class="team-line"><span class="team-dot" style="background:var(--accent);"></span> Agung</div>
+          <div class="helper-line">🪙 Samsul</div>
+        </div>
+        <div><span class="badge confirmed">Dikonfirmasi</span></div>
+        <div><span class="invoice-value">Rp 285.000</span></div>
+        <div><span class="badge paid">✓ PAID</span></div>
+        <div><button class="btn-bukti">📎 Lihat</button></div>
+        <div class="checklist-cell"><div class="check-box checked">✓</div></div>
+      </div>
+
+      <div class="table-row">
+        <div>
+          <div class="job-title">BAPAK PANDU SILKWOOD</div>
+          <div class="job-sub">Cleaning · 2 unit · 13:00:00</div>
+        </div>
+        <div>
+          <div class="team-line"><span class="team-dot" style="background:var(--accent);"></span> Agung</div>
+          <div class="helper-line">🪙 Samsul</div>
+        </div>
+        <div><span class="badge dikirim">Invoice Dikirim</span></div>
+        <div><span class="invoice-value">Rp 190.000</span></div>
+        <div><span class="badge unpaid">UNPAID</span></div>
+        <div><button class="btn-bukti disabled">📎 Belum</button></div>
+        <div class="checklist-cell"><div class="check-box"></div></div>
+      </div>
+
+      <div class="table-row">
+        <div>
+          <div class="job-title">BAPAK DAVINE KELAPA M…</div>
+          <div class="job-sub">Cleaning · 3 unit · 15:00:00</div>
+        </div>
+        <div>
+          <div class="team-line"><span class="team-dot" style="background:var(--accent);"></span> Agung</div>
+          <div class="helper-line">🪙 Samsul</div>
+        </div>
+        <div><span class="badge confirmed">Dikonfirmasi</span></div>
+        <div><span class="invoice-value">Rp 285.000</span></div>
+        <div><span class="badge pending">PENDING APV</span></div>
+        <div><button class="btn-bukti">📎 Lihat</button></div>
+        <div class="checklist-cell"><div class="check-box"></div></div>
+      </div>
+
+      <div class="table-row">
+        <div>
+          <div class="job-title">IBU SANDRA JELITA</div>
+          <div class="job-sub">Repair · 1 unit · 09:00:00</div>
+        </div>
+        <div>
+          <div class="team-line"><span class="team-dot" style="background:var(--yellow);"></span> Aji</div>
+          <div class="helper-line">🪙 Rizal</div>
+        </div>
+        <div><span class="badge report">Laporan Masuk</span></div>
+        <div><span class="invoice-value">Rp 500.000</span></div>
+        <div><span class="badge pending">PENDING APV</span></div>
+        <div><button class="btn-bukti">📎 Lihat</button></div>
+        <div class="checklist-cell"><div class="check-box"></div></div>
+      </div>
+
+      <div class="table-row">
+        <div>
+          <div class="job-title">IBU THALIA DAKOTA</div>
+          <div class="job-sub">Repair · 1 unit · 09:00:00</div>
+        </div>
+        <div>
+          <div class="team-line"><span class="team-dot" style="background:var(--ara);"></span> Ferdi</div>
+          <div class="helper-line">🪙 Yusuf</div>
+        </div>
+        <div><span class="badge dikirim">Invoice Dikirim</span></div>
+        <div><span class="invoice-value">Rp 650.000</span></div>
+        <div><span class="badge paid">✓ PAID</span></div>
+        <div><button class="btn-bukti">📎 Lihat</button></div>
+        <div class="checklist-cell"><div class="check-box checked">✓</div></div>
+      </div>
+
+      <div class="table-row">
+        <div>
+          <div class="job-title">IBU ROSALIA DARU</div>
+          <div class="job-sub">Cleaning · 2 unit · 11:00:00</div>
+        </div>
+        <div>
+          <div class="team-line"><span class="team-dot" style="background:var(--ara);"></span> Ferdi</div>
+          <div class="helper-line">🪙 Yusuf</div>
+        </div>
+        <div><span class="badge dikirim">Invoice Dikirim</span></div>
+        <div><span class="invoice-value">Rp 190.000</span></div>
+        <div><span class="badge unpaid">UNPAID</span></div>
+        <div><button class="btn-bukti disabled">📎 Belum</button></div>
+        <div class="checklist-cell"><div class="check-box"></div></div>
+      </div>
+
+      <div class="table-row">
+        <div>
+          <div class="job-title">BAPAK ABINK</div>
+          <div class="job-sub">Cleaning · 6 unit · 09:00:00</div>
+        </div>
+        <div>
+          <div class="team-line"><span class="team-dot" style="background:var(--accent);"></span> Mulyadi</div>
+          <div class="helper-line" style="color:var(--muted);">— Tanpa Helper</div>
+        </div>
+        <div><span class="badge dikirim">Invoice Dikirim</span></div>
+        <div><span class="invoice-value">Rp 600.000</span></div>
+        <div><span class="badge paid">✓ PAID</span></div>
+        <div><button class="btn-bukti">📎 Lihat</button></div>
+        <div class="checklist-cell"><div class="check-box checked">✓</div></div>
+      </div>
+
+      <div class="table-row">
+        <div>
+          <div class="job-title complain-title">PT PMN PROMINANCE</div>
+          <div class="job-sub">Complain · 1 unit · 16:00:00 <span class="badge warranty">Garansi</span></div>
+        </div>
+        <div>
+          <div class="team-line"><span class="team-dot" style="background:var(--accent);"></span> Mulyadi</div>
+          <div class="helper-line" style="color:var(--muted);">— Tanpa Helper</div>
+        </div>
+        <div><span class="badge lunas">Lunas</span></div>
+        <div><span style="color:var(--muted);">—</span></div>
+        <div><span class="badge paid">✓ PAID</span></div>
+        <div><span style="color:var(--muted);font-size:11px;">—</span></div>
+        <div class="checklist-cell"><div class="check-box checked">✓</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ BIAYA TAB ============ -->
+  <div id="biaya" class="tab-content">
+    <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+      <div class="stat-card red">
+        <div class="stat-value">Rp 12.450.000</div>
+        <div class="stat-label">Total Biaya Bulan Ini</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-value">47</div>
+        <div class="stat-label">Transaksi</div>
+      </div>
+      <div class="stat-card cyan">
+        <div class="stat-value">Rp 264.000</div>
+        <div class="stat-label">Rata-rata / Transaksi</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-value">Rp 8.200.000</div>
+        <div class="stat-label">Kategori Terbesar (Gaji)</div>
+      </div>
+    </div>
+
+    <div class="biaya-toolbar">
+      <input type="text" class="input" placeholder="🔍 Cari biaya..." style="flex:1;" />
+      <select class="input">
+        <option>Semua Kategori</option>
+        <option>Gaji</option>
+        <option>Operasional</option>
+        <option>Material</option>
+        <option>Transport</option>
+      </select>
+      <input type="date" class="input" />
+      <button class="btn-primary">+ Tambah Biaya</button>
+    </div>
+
+    <div class="table-card">
+      <div class="biaya-table-head">
+        <div>TANGGAL</div>
+        <div>KATEGORI</div>
+        <div>KETERANGAN</div>
+        <div>NOMINAL</div>
+        <div>DICATAT OLEH</div>
+        <div style="text-align:center;">AKSI</div>
+      </div>
+
+      <div class="biaya-row">
+        <div>5 Mei 2026</div>
+        <div><span class="badge" style="background:rgba(245,158,11,0.12);color:var(--yellow);border:1px solid rgba(245,158,11,0.3);">⛽ Transport</span></div>
+        <div>Bensin mobil tim Agung — service Lavender</div>
+        <div class="nominal">Rp 150.000</div>
+        <div style="color:var(--muted);font-size:12px;">Finance</div>
+        <div style="display:flex;gap:5px;justify-content:center;">
+          <button class="icon-btn">✏️</button>
+          <button class="icon-btn">🗑️</button>
+        </div>
+      </div>
+
+      <div class="biaya-row">
+        <div>5 Mei 2026</div>
+        <div><span class="badge" style="background:rgba(168,139,250,0.12);color:var(--ara);border:1px solid rgba(168,139,250,0.3);">📦 Material</span></div>
+        <div>Beli freon R32 5 tabung — restock</div>
+        <div class="nominal">Rp 2.250.000</div>
+        <div style="color:var(--muted);font-size:12px;">Finance</div>
+        <div style="display:flex;gap:5px;justify-content:center;">
+          <button class="icon-btn">✏️</button>
+          <button class="icon-btn">🗑️</button>
+        </div>
+      </div>
+
+      <div class="biaya-row">
+        <div>4 Mei 2026</div>
+        <div><span class="badge" style="background:rgba(34,197,94,0.12);color:var(--green);border:1px solid rgba(34,197,94,0.3);">💼 Gaji</span></div>
+        <div>Gaji harian teknisi & helper (4 orang)</div>
+        <div class="nominal">Rp 800.000</div>
+        <div style="color:var(--muted);font-size:12px;">Finance</div>
+        <div style="display:flex;gap:5px;justify-content:center;">
+          <button class="icon-btn">✏️</button>
+          <button class="icon-btn">🗑️</button>
+        </div>
+      </div>
+
+      <div class="biaya-row">
+        <div>4 Mei 2026</div>
+        <div><span class="badge" style="background:rgba(56,189,248,0.12);color:var(--accent);border:1px solid rgba(56,189,248,0.3);">🏢 Operasional</span></div>
+        <div>Listrik kantor + WiFi bulan Mei</div>
+        <div class="nominal">Rp 850.000</div>
+        <div style="color:var(--muted);font-size:12px;">Finance</div>
+        <div style="display:flex;gap:5px;justify-content:center;">
+          <button class="icon-btn">✏️</button>
+          <button class="icon-btn">🗑️</button>
+        </div>
+      </div>
+
+      <div class="biaya-row">
+        <div>3 Mei 2026</div>
+        <div><span class="badge" style="background:rgba(245,158,11,0.12);color:var(--yellow);border:1px solid rgba(245,158,11,0.3);">⛽ Transport</span></div>
+        <div>Servis motor tim Ferdi</div>
+        <div class="nominal">Rp 320.000</div>
+        <div style="color:var(--muted);font-size:12px;">Finance</div>
+        <div style="display:flex;gap:5px;justify-content:center;">
+          <button class="icon-btn">✏️</button>
+          <button class="icon-btn">🗑️</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ STATISTIK TAB ============ -->
+  <div id="statistik" class="tab-content">
+    <div class="stat2-grid">
+      <div class="stat-card green">
+        <div class="stat-value">Rp 87.5jt</div>
+        <div class="stat-label">Pemasukan Mei</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-value">Rp 32.1jt</div>
+        <div class="stat-label">Pengeluaran Mei</div>
+      </div>
+      <div class="stat-card cyan">
+        <div class="stat-value">Rp 55.4jt</div>
+        <div class="stat-label">Net Profit Mei</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-value">63.3%</div>
+        <div class="stat-label">Profit Margin</div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title">📈 Tren Pemasukan vs Pengeluaran (6 Bulan Terakhir)</div>
+      <div class="chart-area" style="padding-bottom:38px;">
+        <div style="flex:1;display:flex;gap:3px;align-items:flex-end;">
+          <div class="bar green" style="height:55%;"></div>
+          <div class="bar red" style="height:25%;"><div class="bar-label" style="left:-30%;right:-30%;">Des</div></div>
+        </div>
+        <div style="flex:1;display:flex;gap:3px;align-items:flex-end;">
+          <div class="bar green" style="height:62%;"></div>
+          <div class="bar red" style="height:28%;"><div class="bar-label" style="left:-30%;right:-30%;">Jan</div></div>
+        </div>
+        <div style="flex:1;display:flex;gap:3px;align-items:flex-end;">
+          <div class="bar green" style="height:70%;"></div>
+          <div class="bar red" style="height:32%;"><div class="bar-label" style="left:-30%;right:-30%;">Feb</div></div>
+        </div>
+        <div style="flex:1;display:flex;gap:3px;align-items:flex-end;">
+          <div class="bar green" style="height:75%;"></div>
+          <div class="bar red" style="height:30%;"><div class="bar-label" style="left:-30%;right:-30%;">Mar</div></div>
+        </div>
+        <div style="flex:1;display:flex;gap:3px;align-items:flex-end;">
+          <div class="bar green" style="height:82%;"></div>
+          <div class="bar red" style="height:35%;"><div class="bar-label" style="left:-30%;right:-30%;">Apr</div></div>
+        </div>
+        <div style="flex:1;display:flex;gap:3px;align-items:flex-end;">
+          <div class="bar green" style="height:90%;"></div>
+          <div class="bar red" style="height:38%;"><div class="bar-label" style="left:-30%;right:-30%;">Mei</div></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:18px;margin-top:14px;justify-content:center;">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--green);"></div> Pemasukan</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--red);"></div> Pengeluaran</div>
+      </div>
+    </div>
+
+    <div class="plan-grid">
+      <div class="chart-card" style="margin-bottom:0;">
+        <div class="chart-title">🥧 Komposisi Pengeluaran (Mei 2026)</div>
+        <div class="pie-row">
+          <div class="pie"></div>
+          <div class="pie-legend">
+            <div class="legend-item">
+              <div class="legend-dot" style="background:var(--green);"></div>
+              <div style="flex:1;">Gaji Tim</div>
+              <div style="font-weight:700;">55%</div>
+            </div>
+            <div class="legend-item">
+              <div class="legend-dot" style="background:var(--accent);"></div>
+              <div style="flex:1;">Material</div>
+              <div style="font-weight:700;">23%</div>
+            </div>
+            <div class="legend-item">
+              <div class="legend-dot" style="background:var(--yellow);"></div>
+              <div style="flex:1;">Transport</div>
+              <div style="font-weight:700;">14%</div>
+            </div>
+            <div class="legend-item">
+              <div class="legend-dot" style="background:var(--red);"></div>
+              <div style="flex:1;">Operasional</div>
+              <div style="font-weight:700;">8%</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-card" style="margin-bottom:0;">
+        <div class="chart-title">💰 Top Customer (Pemasukan)</div>
+        <div class="cashflow-item">
+          <div class="cashflow-icon in">🏢</div>
+          <div class="cashflow-info">
+            <div class="cashflow-title">PT PMN PROMINANCE</div>
+            <div class="cashflow-sub">8 transaksi · Rutin</div>
+          </div>
+          <div class="cashflow-amount in">Rp 12.5jt</div>
+        </div>
+        <div class="cashflow-item">
+          <div class="cashflow-icon in">👤</div>
+          <div class="cashflow-info">
+            <div class="cashflow-title">Ibu Thalia Dakota</div>
+            <div class="cashflow-sub">5 transaksi · Repeat</div>
+          </div>
+          <div class="cashflow-amount in">Rp 4.8jt</div>
+        </div>
+        <div class="cashflow-item">
+          <div class="cashflow-icon in">👤</div>
+          <div class="cashflow-info">
+            <div class="cashflow-title">Bapak Daniel Pardede</div>
+            <div class="cashflow-sub">3 transaksi</div>
+          </div>
+          <div class="cashflow-amount in">Rp 3.2jt</div>
+        </div>
+        <div class="cashflow-item">
+          <div class="cashflow-icon in">👤</div>
+          <div class="cashflow-info">
+            <div class="cashflow-title">Bapak Abink</div>
+            <div class="cashflow-sub">2 transaksi · Baru</div>
+          </div>
+          <div class="cashflow-amount in">Rp 2.1jt</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-card" style="margin-top:14px;">
+      <div class="chart-title">📋 Aktivitas Cashflow Hari Ini</div>
+      <div class="cashflow-item">
+        <div class="cashflow-icon in">+</div>
+        <div class="cashflow-info">
+          <div class="cashflow-title">Pemasukan dari Ibu Lina Lavender</div>
+          <div class="cashflow-sub">Cleaning 1 unit · Transfer BCA · 09:45</div>
+        </div>
+        <div class="cashflow-amount in">+ Rp 285.000</div>
+      </div>
+      <div class="cashflow-item">
+        <div class="cashflow-icon out">−</div>
+        <div class="cashflow-info">
+          <div class="cashflow-title">Bensin tim Agung</div>
+          <div class="cashflow-sub">Transport · Cash · 10:12</div>
+        </div>
+        <div class="cashflow-amount out">− Rp 150.000</div>
+      </div>
+      <div class="cashflow-item">
+        <div class="cashflow-icon in">+</div>
+        <div class="cashflow-info">
+          <div class="cashflow-title">Pemasukan dari Ibu Thalia Dakota</div>
+          <div class="cashflow-sub">Repair 1 unit · Transfer BCA · 11:20</div>
+        </div>
+        <div class="cashflow-amount in">+ Rp 650.000</div>
+      </div>
+      <div class="cashflow-item">
+        <div class="cashflow-icon out">−</div>
+        <div class="cashflow-info">
+          <div class="cashflow-title">Beli freon R32 (restock)</div>
+          <div class="cashflow-sub">Material · Transfer · 13:05</div>
+        </div>
+        <div class="cashflow-amount out">− Rp 2.250.000</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ FINANCIAL PLANNING TAB ============ -->
+  <div id="planning" class="tab-content">
+
+    <div class="target-card">
+      <div class="target-row">
+        <div>
+          <div class="target-label">Target Pemasukan Bulan Mei 2026</div>
+          <div class="target-amount">Rp 100.000.000</div>
+        </div>
+        <div style="text-align:right;">
+          <div class="target-label">Tercapai</div>
+          <div class="target-amount" style="color:var(--green);">Rp 87.500.000</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">87.5% · sisa 7 hari</div>
+        </div>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:87.5%;"></div></div>
+    </div>
+
+    <div class="plan-grid">
+      <div class="plan-card">
+        <div class="plan-title">📊 Proyeksi Akhir Bulan</div>
+        <div class="plan-row">
+          <div class="plan-label">Estimasi Pemasukan</div>
+          <div class="plan-value green">Rp 102.300.000</div>
+        </div>
+        <div class="plan-row">
+          <div class="plan-label">Estimasi Pengeluaran</div>
+          <div class="plan-value red">Rp 38.500.000</div>
+        </div>
+        <div class="plan-row">
+          <div class="plan-label">Estimasi Net Profit</div>
+          <div class="plan-value green">Rp 63.800.000</div>
+        </div>
+        <div class="plan-row">
+          <div class="plan-label">Status Target</div>
+          <div class="plan-value green">✓ Tercapai (102.3%)</div>
+        </div>
+      </div>
+
+      <div class="plan-card">
+        <div class="plan-title">💼 Cashflow Forecast 7 Hari</div>
+        <div class="plan-row">
+          <div class="plan-label">Piutang akan masuk</div>
+          <div class="plan-value green">Rp 14.800.000</div>
+        </div>
+        <div class="plan-row">
+          <div class="plan-label">Tagihan jatuh tempo</div>
+          <div class="plan-value yellow">Rp 6.200.000</div>
+        </div>
+        <div class="plan-row">
+          <div class="plan-label">Gaji minggu depan</div>
+          <div class="plan-value red">Rp 8.500.000</div>
+        </div>
+        <div class="plan-row">
+          <div class="plan-label">Saldo proyeksi akhir</div>
+          <div class="plan-value green">Rp 24.600.000</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="plan-grid">
+      <div class="plan-card">
+        <div class="plan-title">🎯 Budget per Kategori (Mei)</div>
+
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
+            <span>💼 Gaji Tim</span>
+            <span style="color:var(--muted);">Rp 18.5jt / Rp 20jt</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:92.5%;background:linear-gradient(90deg,var(--green),#16a34a);"></div></div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
+            <span>📦 Material</span>
+            <span style="color:var(--muted);">Rp 7.4jt / Rp 8jt</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:92.5%;background:linear-gradient(90deg,var(--yellow),#d97706);"></div></div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
+            <span>⛽ Transport</span>
+            <span style="color:var(--muted);">Rp 4.5jt / Rp 5jt</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:90%;background:linear-gradient(90deg,var(--green),#16a34a);"></div></div>
+        </div>
+
+        <div style="margin-bottom:0;">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
+            <span>🏢 Operasional</span>
+            <span style="color:var(--muted);">Rp 3.2jt / Rp 3jt</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:100%;background:linear-gradient(90deg,var(--red),#b91c1c);"></div></div>
+          <div style="font-size:11px;color:var(--red);margin-top:4px;">⚠️ Over budget Rp 200.000</div>
+        </div>
+      </div>
+
+      <div class="plan-card">
+        <div class="plan-title">💡 Rekomendasi Finance</div>
+
+        <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.25);border-radius:10px;padding:12px;margin-bottom:10px;">
+          <div style="font-weight:700;color:var(--green);font-size:13px;margin-bottom:4px;">✓ Performa Bagus</div>
+          <div style="font-size:12px;color:var(--muted);">Profit margin Mei naik 8% dari April. Pertahankan komposisi gaji dan material saat ini.</div>
+        </div>
+
+        <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:10px;padding:12px;margin-bottom:10px;">
+          <div style="font-weight:700;color:var(--yellow);font-size:13px;margin-bottom:4px;">⚠️ 5 Invoice Belum Tercatat Mutasi</div>
+          <div style="font-size:12px;color:var(--muted);">Total Rp 1.825.000 sudah ditandai PAID tapi belum dicek di rekening. Cek mutasi BCA hari ini.</div>
+        </div>
+
+        <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:10px;padding:12px;margin-bottom:10px;">
+          <div style="font-weight:700;color:var(--red);font-size:13px;margin-bottom:4px;">🔴 Operasional Over Budget</div>
+          <div style="font-size:12px;color:var(--muted);">Pengeluaran operasional melebihi target Rp 200.000. Review kebutuhan listrik & internet bulan depan.</div>
+        </div>
+
+        <div style="background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.25);border-radius:10px;padding:12px;">
+          <div style="font-weight:700;color:var(--accent);font-size:13px;margin-bottom:4px;">💰 Set Aside Saving</div>
+          <div style="font-size:12px;color:var(--muted);">Sisihkan 20% dari net profit (~Rp 12.7jt) untuk dana darurat & investasi alat.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="plan-card" style="margin-top:14px;">
+      <div class="plan-title">📅 Komitmen Pembayaran Mendatang</div>
+      <div class="cashflow-item">
+        <div class="cashflow-icon out">📅</div>
+        <div class="cashflow-info">
+          <div class="cashflow-title">Gaji Mingguan Tim (Sabtu)</div>
+          <div class="cashflow-sub">9 Mei 2026 · 4 teknisi + 4 helper</div>
+        </div>
+        <div class="cashflow-amount out">Rp 8.500.000</div>
+      </div>
+      <div class="cashflow-item">
+        <div class="cashflow-icon out">📅</div>
+        <div class="cashflow-info">
+          <div class="cashflow-title">Sewa Kantor</div>
+          <div class="cashflow-sub">15 Mei 2026 · Bulanan</div>
+        </div>
+        <div class="cashflow-amount out">Rp 3.500.000</div>
+      </div>
+      <div class="cashflow-item">
+        <div class="cashflow-icon out">📅</div>
+        <div class="cashflow-info">
+          <div class="cashflow-title">Restock Freon R32 (10 tabung)</div>
+          <div class="cashflow-sub">12 Mei 2026 · Direncanakan</div>
+        </div>
+        <div class="cashflow-amount out">Rp 4.500.000</div>
+      </div>
+      <div class="cashflow-item">
+        <div class="cashflow-icon out">📅</div>
+        <div class="cashflow-info">
+          <div class="cashflow-title">Pajak PPh 21</div>
+          <div class="cashflow-sub">20 Mei 2026 · Bulanan</div>
+        </div>
+        <div class="cashflow-amount out">Rp 1.850.000</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        var id = this.getAttribute('data-tab');
+        document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+        document.querySelectorAll('.tab-content').forEach(function(t){ t.classList.remove('active'); });
+        this.classList.add('active');
+        document.getElementById(id).classList.add('active');
+      });
+    });
+
+    // Toggle checklist mutasi
+    document.querySelectorAll('.check-box').forEach(function(box) {
+      box.addEventListener('click', function() {
+        this.classList.toggle('checked');
+        this.innerHTML = this.classList.contains('checked') ? '✓' : '';
+      });
+    });
+  });
+</script>
+</body>
+</html>

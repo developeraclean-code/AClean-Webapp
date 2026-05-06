@@ -55,6 +55,7 @@ const MatTrackView = lazy(() => import("./views/MatTrackView.jsx"));
 const ExpensesView = lazy(() => import("./views/ExpensesView.jsx"));
 const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
 const OrderInboxView = lazy(() => import("./views/OrderInboxView.jsx"));
+const FinanceView = lazy(() => import("./views/FinanceView.jsx"));
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -2037,7 +2038,7 @@ ${photoPageHTML}
         setCurrentUser(userObj);
         setIsLoggedIn(true);
         setActiveRole(profile.role.toLowerCase());
-        setActiveMenu("dashboard");
+        setActiveMenu(profile.role === "Finance" ? "finance" : "dashboard");
         _lsSave("localSession", userObj);
         // SEC-07: Reset counter setelah login berhasil
         setLoginAttempts(0); setLockoutUntil(0);
@@ -2102,6 +2103,9 @@ ${photoPageHTML}
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
     if (role === "Teknisi" || role === "Helper")
       return menu === "dashboard" || menu === "schedule" || menu === "myreport";
+    // Finance: dashboard finance, biaya, invoice, statistik
+    if (role === "Finance")
+      return ["finance", "invoice", "biaya", "reports"].includes(menu);
     // wa-inbox: Owner + Admin only (handled above — teknisi/helper excluded by default)
     return false;
   };
@@ -2470,7 +2474,7 @@ ${photoPageHTML}
         try {
           const uaRes = await fetchUserAccounts(supabase);
           if (!uaRes.error && uaRes.data && uaRes.data.length > 0) {
-            const roleColors = { owner: "#f59e0b", admin: "#38bdf8", teknisi: "#22c55e", helper: "#a78bfa" };
+            const roleColors = { owner: "#f59e0b", admin: "#38bdf8", finance: "#10b981", teknisi: "#22c55e", helper: "#a78bfa" };
             const normalized = uaRes.data.map(u => ({
               ...u,
               role: (u.role || "").charAt(0).toUpperCase() + (u.role || "").slice(1).toLowerCase(),
@@ -4309,6 +4313,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ── Menu items (all) ──
   const ALL_MENU = [
     { id: "dashboard", icon: "⬡", label: "Dashboard" },
+    { id: "finance", icon: "💰", label: "Finance" },
     { id: "wa-inbox", icon: "📌", label: "Planning Order" },
     { id: "orders", icon: "📋", label: "Order Masuk" },
     { id: "schedule", icon: "📅", label: "Jadwal" },
@@ -4820,6 +4825,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const renderContent = () => {
     switch (activeMenu) {
       case "dashboard": return renderDashboard();
+      case "finance": return <FinanceView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} expensesData={expensesData} />;
       case "wa-inbox": return renderOrderInbox();
       case "orders": return renderOrders();
       case "schedule": return renderSchedule();
@@ -4966,7 +4972,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentUser.name}</div>
                 <div style={{ fontSize: 10, color: currentUser.color, fontWeight: 600 }}>
-                  {currentUser.role === "Owner" ? "👑 Owner" : currentUser.role === "Admin" ? "🛠️ Admin" : currentUser.role === "Helper" ? "🤝 Helper" : "👷 Teknisi"}
+                  {currentUser.role === "Owner" ? "👑 Owner" : currentUser.role === "Admin" ? "🛠️ Admin" : currentUser.role === "Finance" ? "💰 Finance" : currentUser.role === "Helper" ? "🤝 Helper" : "👷 Teknisi"}
                 </div>
               </div>
             </div>
@@ -7201,6 +7207,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const roleConfig = {
           "Owner": { color: "#f59e0b", icon: "👑", desc: "Akses semua menu & pengaturan", autoPass: null },
           "Admin": { color: "#38bdf8", icon: "🛠️", desc: "Semua menu kecuali Pengaturan", autoPass: null },
+          "Finance": { color: "#10b981", icon: "💰", desc: "Akses Finance, Invoice, Biaya & Statistik", autoPass: null },
           "Teknisi": { color: "#22c55e", icon: "👷", desc: "Hanya Jadwal & Laporan", autoPass: "teknisi123" },
           "Helper": { color: "#a78bfa", icon: "🤝", desc: "Hanya Jadwal & Laporan", autoPass: "helper123" },
         };
@@ -7232,7 +7239,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           if (!isEditMode && !isAutoPass && !newUserForm.password) { showNotif("Password wajib diisi"); return; }
 
           const avatar = newUserForm.name.charAt(0).toUpperCase();
-          const colorMap = { "Owner": "#f59e0b", "Admin": "#38bdf8", "Teknisi": "#22c55e", "Helper": "#a78bfa" };
+          const colorMap = { "Owner": "#f59e0b", "Admin": "#38bdf8", "Finance": "#10b981", "Teknisi": "#22c55e", "Helper": "#a78bfa" };
           const color = colorMap[newUserForm.role] || "#38bdf8";
 
           if (isEditMode) {
@@ -7373,6 +7380,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div style={{ background: cfg.color + "10", border: "1px solid " + cfg.color + "22", borderRadius: 8, padding: "10px 14px", fontSize: 11, color: cs.muted }}>
                   {newUserForm.role === "Owner" && "👑 Akses penuh: semua menu, pengaturan, manajemen akun, dan data keuangan."}
                   {newUserForm.role === "Admin" && "🛠️ Akses operasional: order, invoice, customer, inventory, laporan. Tidak bisa buka Pengaturan."}
+                  {newUserForm.role === "Finance" && "💰 Akses keuangan: Finance dashboard, Invoice, Biaya Operasional, dan Statistik. Tidak bisa akses data operasional lapangan."}
                   {newUserForm.role === "Teknisi" && "👷 Akses terbatas: Dashboard, Jadwal, dan Laporan Sendiri saja. Nominal transaksi disembunyikan."}
                   {newUserForm.role === "Helper" && "🤝 Akses terbatas: Dashboard, Jadwal, dan Laporan Sendiri saja. Sama seperti Teknisi."}
                 </div>
