@@ -232,7 +232,7 @@ return (
         ["Tanpa Bukti", "#f43f5e"],
       ].map(([s, col]) => {
         const todayStr = getLocalDate();
-        const tanpaBuktiCnt = invoicesData.filter(i => i.status === "PAID" && i.total > 0 && !i.payment_proof_url).length;
+        const tanpaBuktiCnt = invoicesData.filter(i => i.status === "PAID" && i.total > 0 && !i.payment_proof_url && i.payment_proof_url !== "verified-no-proof").length;
         const cnt = s === "Semua" ? invoicesData.length
           : s === "Hari Ini" ? invoicesData.filter(inv => (inv.created_at || "").slice(0, 10) === todayStr).length
             : s === "Garansi" ? garansiAktif.length
@@ -533,9 +533,13 @@ return (
                 📋 Kirim Report Card
               </button>
             )}
-            {/* Bukti bayar — ada URL: tombol lihat. PAID tanpa bukti: warning */}
+            {/* Bukti bayar — ada URL: tombol lihat. "verified-no-proof": dikonfirmasi manual. PAID tanpa bukti: warning */}
             {inv.status === "PAID" && inv.total > 0 && (
-              inv.payment_proof_url ? (
+              inv.payment_proof_url === "verified-no-proof" ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#0ea5e918", border: "1px solid #0ea5e944", color: "#0ea5e9", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
+                  ✅ Dikonfirmasi Manual
+                </span>
+              ) : inv.payment_proof_url ? (
                 <button
                   onClick={() => window.open(inv.payment_proof_url.startsWith("/api/") ? window.location.origin + inv.payment_proof_url : inv.payment_proof_url, "_blank")}
                   style={{ background: "#22c55e22", border: "1px solid #22c55e44", color: "#22c55e", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}

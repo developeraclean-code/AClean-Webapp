@@ -2110,9 +2110,9 @@ ${photoPageHTML}
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
     if (role === "Teknisi" || role === "Helper")
       return menu === "dashboard" || menu === "schedule" || menu === "myreport";
-    // Finance: dashboard finance, biaya, invoice, statistik
+    // Finance: akses finance hub, invoice, biaya, statistik, customer (read-only konteks)
     if (role === "Finance")
-      return ["finance", "invoice", "biaya", "reports"].includes(menu);
+      return ["finance", "invoice", "biaya", "reports", "customers"].includes(menu);
     // wa-inbox: Owner + Admin only (handled above — teknisi/helper excluded by default)
     return false;
   };
@@ -4423,7 +4423,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     } else if (invoiceFilter === "Hari Ini") {
       filteredInv = filteredInv.filter(inv => (inv.created_at || "").slice(0, 10) === todayDateStr);
     } else if (invoiceFilter === "Tanpa Bukti") {
-      filteredInv = filteredInv.filter(inv => inv.status === "PAID" && inv.total > 0 && !inv.payment_proof_url);
+      filteredInv = filteredInv.filter(inv => inv.status === "PAID" && inv.total > 0 && !inv.payment_proof_url && inv.payment_proof_url !== "verified-no-proof");
     } else if (invoiceFilter !== "Semua") {
       filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
     }
@@ -4832,7 +4832,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const renderContent = () => {
     switch (activeMenu) {
       case "dashboard": return renderDashboard();
-      case "finance": return <FinanceView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} expensesData={expensesData} />;
+      case "finance": return <FinanceView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} expensesData={expensesData} supabase={supabase} />;
       case "wa-inbox": return renderOrderInbox();
       case "orders": return renderOrders();
       case "schedule": return renderSchedule();
@@ -9283,7 +9283,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
               // ── Repair card 3/4 kosong: inject "Biaya Pengecekan" ──
               // Kondisi: tidak ada repair item DAN tidak ada jasa apapun (card 3/4 benar-benar kosong)
-              if (isRepairSvc && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa")) {
+              // ✨ FIX: skip jika isRepairGratis=true — repair gratis tidak boleh kena biaya cek
+              if (isRepairSvc && !isRepairGratis && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa")) {
                 const biayaCekItem = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
                 const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 100000;
                 mDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek, keterangan: "jasa" });
