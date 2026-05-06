@@ -540,7 +540,12 @@ export default function ACleanWebApp() {
   const [teknisiData, setTeknisiData] = useState(TEKNISI_DATA);
 
   // ── Core navigation ──
-  const [activeMenu, setActiveMenu] = useState("dashboard");
+  const [activeMenu, setActiveMenu] = useState(() => {
+    try {
+      const saved = localStorage.getItem("aclean_lastMenu");
+      return saved || "dashboard";
+    } catch { return "dashboard"; }
+  });
   const [activeRole, setActiveRole] = useState("owner");
 
   // ── Customer ──
@@ -2038,7 +2043,9 @@ ${photoPageHTML}
         setCurrentUser(userObj);
         setIsLoggedIn(true);
         setActiveRole(profile.role.toLowerCase());
-        setActiveMenu(profile.role === "Finance" ? "finance" : "dashboard");
+        const defaultMenu = profile.role === "Finance" ? "finance" : "dashboard";
+        setActiveMenu(defaultMenu);
+        try { localStorage.setItem("aclean_lastMenu", defaultMenu); } catch (_) {}
         _lsSave("localSession", userObj);
         // SEC-07: Reset counter setelah login berhasil
         setLoginAttempts(0); setLockoutUntil(0);
@@ -2097,7 +2104,7 @@ ${photoPageHTML}
     // Admin: semua operasional + pricelist (kecuali settings & myreport)
     // Rule: Admin = input & edit only (NO delete)
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport", "deletedaudit", "monitoring", "agentlog"];
+      const adminBlocked = ["settings", "myreport", "deletedaudit", "monitoring", "agentlog", "finance"];
       return !adminBlocked.includes(menu);
     }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri

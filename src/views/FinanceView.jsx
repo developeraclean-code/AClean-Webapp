@@ -1,5 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
 import { cs } from "../theme/cs.js";
+
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
 
 // Field DB yang benar:
 // invoices: id, job_id, customer, service, total, status ("PAID"/"UNPAID"/"OVERDUE"/dll),
@@ -55,9 +61,58 @@ const orderStatusBadge = (status) => {
 };
 
 // ─── Dashboard Tab ───────────────────────────────────────────────
-const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPrevDay, onNextDay, onToday, setPaymentProofModal }) => {
+const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPrevDay, onNextDay, onToday, setPaymentProofModal, currentUser }) => {
+  // mutasiChecked: { [job_id]: { checked: bool, id: uuid, checked_by, checked_at } }
   const [mutasiChecked, setMutasiChecked] = useState({});
-  const toggleMutasi = (id) => setMutasiChecked(prev => ({ ...prev, [id]: !prev[id] }));
+  const [mutasiLoading, setMutasiLoading] = useState(false);
+  const [savingId, setSavingId] = useState(null);
+
+  // Load semua checklist dari DB (tidak filter tanggal — semua permanent)
+  const loadMutasi = useCallback(async () => {
+    setMutasiLoading(true);
+    const { data } = await supabase
+      .from("mutasi_checklist")
+      .select("id, job_id, invoice_id, checked, checked_by, checked_at, notes");
+    if (data) {
+      const map = {};
+      data.forEach(r => { map[r.job_id] = r; });
+      setMutasiChecked(map);
+    }
+    setMutasiLoading(false);
+  }, []);
+
+  useEffect(() => { loadMutasi(); }, [loadMutasi]);
+
+  const toggleMutasi = async (jobId, invoiceId) => {
+    const current = mutasiChecked[jobId];
+    const newChecked = current ? !current.checked : true;
+    setSavingId(jobId);
+
+    if (current?.id) {
+      // Update existing
+      await supabase.from("mutasi_checklist").update({
+        checked: newChecked,
+        checked_by: currentUser?.name || "Finance",
+        checked_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq("id", current.id);
+    } else {
+      // Insert baru
+      await supabase.from("mutasi_checklist").insert({
+        job_id: jobId,
+        invoice_id: invoiceId || null,
+        checked: newChecked,
+        checked_by: currentUser?.name || "Finance",
+      });
+    }
+    // Optimistic update + reload
+    setMutasiChecked(prev => ({
+      ...prev,
+      [jobId]: { ...prev[jobId], checked: newChecked, checked_by: currentUser?.name },
+    }));
+    setSavingId(null);
+    loadMutasi();
+  };
 
   // Match order → invoice via job_id (order.id === invoice.job_id)
   const rows = useMemo(() => {
@@ -71,7 +126,8 @@ const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPr
   const totalPemasukan = paidInvs.reduce((s, i) => s + (i.total || 0), 0);
   const belumLunas = (invoicesData || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
   const pendingAPV = (invoicesData || []).filter(i => (i.status || "").toUpperCase().includes("PENDING")).length;
-  const belumMutasi = rows.filter(r => r.inv?.status === "PAID" && !mutasiChecked[r.order?.id]).length;
+  // Belum mutasi: PAID tapi belum dicek atau checked=false
+  const belumMutasi = rows.filter(r => r.inv?.status === "PAID" && !mutasiChecked[r.order?.id]?.checked).length;
 
   return (
     <div>
@@ -96,7 +152,7 @@ const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPr
         <StatCard value={fmtRp(totalPemasukan)} label="Total Pemasukan" color={cs.green} />
         <StatCard value={belumLunas} label="Belum Lunas" color={cs.yellow} />
         <StatCard value={pendingAPV} label="Pending APV" color={cs.ara} />
-        <StatCard value={belumMutasi} label="Belum Cek Mutasi" color={cs.red} />
+        <StatCard value={mutasiLoading ? "⟳" : belumMutasi} label="Belum Cek Mutasi" color={cs.red} />
       </div>
 
       {/* Tabel */}
@@ -104,7 +160,7 @@ const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPr
         <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1.1fr 1fr 1fr 1fr 1fr 0.65fr", gap: 8, padding: "10px 16px", borderBottom: "1px solid " + cs.border, fontSize: 10, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600 }}>
           <div>Detail Job</div><div>Team</div><div>Status</div>
           <div>Invoice Value</div><div>Invoice Status</div><div>Bukti Bayar</div>
-          <div style={{ textAlign: "center" }}>Cek Mutasi</div>
+          <div style={{ textAlign: "center" }}>Cek Mutasi {mutasiLoading ? "⟳" : "✓"}</div>
         </div>
 
         {rows.length === 0 && (
@@ -160,24 +216,32 @@ const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPr
                   <span style={{ fontSize: 11, color: cs.border }}>—</span>
                 )}
               </div>
-              {/* Cek Mutasi — hanya aktif jika PAID */}
-              <div style={{ display: "flex", justifyContent: "center" }}>
-                {isPaid ? (
+              {/* Cek Mutasi — semua row bisa dicek, permanent di DB */}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                {savingId === order.id ? (
+                  <div style={{ width: 28, height: 28, borderRadius: 7, border: "2px solid " + cs.accent, background: cs.surface, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: cs.accent }}>⟳</div>
+                ) : (
                   <button
-                    onClick={() => toggleMutasi(order.id)}
+                    onClick={() => toggleMutasi(order.id, inv?.id)}
+                    title={mutasiChecked[order.id]?.checked
+                      ? "Dicek oleh " + (mutasiChecked[order.id]?.checked_by || "?") + " · klik untuk batal"
+                      : "Klik untuk tandai sudah cek mutasi"}
                     style={{
                       width: 28, height: 28, borderRadius: 7,
-                      border: "2px solid " + (mutasiChecked[order.id] ? cs.green : cs.border),
-                      background: mutasiChecked[order.id] ? cs.green : cs.surface,
-                      color: mutasiChecked[order.id] ? "#fff" : "transparent",
-                      cursor: "pointer", fontWeight: 700, fontSize: 16,
+                      border: "2px solid " + (mutasiChecked[order.id]?.checked ? cs.green : cs.border),
+                      background: mutasiChecked[order.id]?.checked ? cs.green : cs.surface,
+                      color: mutasiChecked[order.id]?.checked ? "#fff" : cs.muted,
+                      cursor: "pointer", fontWeight: 700, fontSize: 15,
                       display: "flex", alignItems: "center", justifyContent: "center",
                       transition: "all 0.15s",
                     }}>
-                    {mutasiChecked[order.id] ? "✓" : ""}
+                    {mutasiChecked[order.id]?.checked ? "✓" : "○"}
                   </button>
-                ) : (
-                  <div style={{ width: 28, height: 28, borderRadius: 7, border: "2px solid " + cs.border + "40", background: "transparent", opacity: 0.3 }} />
+                )}
+                {mutasiChecked[order.id]?.checked && mutasiChecked[order.id]?.checked_by && (
+                  <div style={{ fontSize: 9, color: cs.green, textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {mutasiChecked[order.id].checked_by}
+                  </div>
                 )}
               </div>
             </div>
@@ -530,6 +594,7 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
           onNextDay={() => setDateOffset(d => d + 1)}
           onToday={() => setDateOffset(0)}
           setPaymentProofModal={setPaymentProofModal}
+          currentUser={currentUser}
         />
       )}
       {activeTab === "biaya" && <BiayaTab expensesData={expensesData} />}
