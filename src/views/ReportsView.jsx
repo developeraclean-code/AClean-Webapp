@@ -170,8 +170,8 @@ return (
       </div>
     </div>
 
-    {/* ── SECTION 1 + 1b: P&L Summary — Owner only ── */}
-    {currentUser?.role === "Owner" && (
+    {/* ── SECTION 1 + 1b: P&L Summary — Owner & Finance ── */}
+    {(currentUser?.role === "Owner" || currentUser?.role === "Finance") && (
       <>
         <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
           <div style={{ fontWeight: 800, color: cs.text, fontSize: 14, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -255,7 +255,7 @@ return (
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: isMobile ? 10 : 12 }}>
       {[
         { label: "Completion Rate", val: completionRate + "%", sub: ordersDone + "/" + ordersAll + " order", color: cs.green, icon: "✅" },
-        ...(currentUser?.role === "Owner" ? [{ label: "Avg. Order Value", val: fmt(avgOrderVal), sub: "per transaksi PAID", color: cs.accent, icon: "📋" }] : []),
+        ...((currentUser?.role === "Owner" || currentUser?.role === "Finance") ? [{ label: "Avg. Order Value", val: fmt(avgOrderVal), sub: "per transaksi PAID", color: cs.accent, icon: "📋" }] : []),
         { label: "Order " + periodLabel, val: ordersAll, sub: custBaru + " customer baru", color: cs.yellow, icon: "🗂️" },
       ].map(k => (
         <div key={k.label} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 16, textAlign: "center" }}>
@@ -330,8 +330,8 @@ return (
     </div>
 
     {/* ── SECTION 5: Status Invoice & Laporan ── */}
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : (currentUser?.role === "Owner" ? "1fr 1fr" : "1fr"), gap: 14 }}>
-      {currentUser?.role === "Owner" && (
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : ((currentUser?.role === "Owner" || currentUser?.role === "Finance") ? "1fr 1fr" : "1fr"), gap: 14 }}>
+      {(currentUser?.role === "Owner" || currentUser?.role === "Finance") && (
       <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 18 }}>
         <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 13 }}>🧾 Status Invoice (Semua)</div>
         {[["PAID", cs.green, "Lunas"], ["UNPAID", cs.yellow, "Belum Bayar"], ["OVERDUE", cs.red, "Terlambat"], ["PENDING_APPROVAL", cs.ara, "Menunggu Approve"]].map(([s, col, lbl]) => {
