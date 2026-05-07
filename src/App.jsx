@@ -3350,6 +3350,76 @@ ${photoPageHTML}
     }
   };
 
+  // ── Reverse inventory transactions untuk laporan yang diedit ──
+  // Hanya berlaku untuk material tracked: Pipa AC (SKU022-SKU024) dan Freon (R22/R32/R410)
+  // Pattern: Opsi 1 — buat adjustment positif untuk setiap transaksi lama, lalu deduct ulang yang baru
+  const TRACKED_INV_CODES = new Set(["SKU022", "SKU023", "SKU024"]); // Pipa 1PK, 2PK, 2.5PK
+  const isTrackedByCode = (code) => TRACKED_INV_CODES.has(code);
+  const isTrackedByName = (name) => {
+    const n = (name || "").toLowerCase();
+    return n.includes("pipa ac hoda") || n.includes("freon") || n.includes("r-22") || n.includes("r-32") || n.includes("r-410") || n.includes("r22") || n.includes("r32") || n.includes("r410");
+  };
+
+  const reverseInventoryForReport = async (reportId, orderId, reason) => {
+    // Ambil semua transaksi usage dari laporan ini
+    const { data: oldTxs, error } = await supabase
+      .from("inventory_transactions")
+      .select("*")
+      .eq("report_id", reportId)
+      .eq("type", "usage");
+    if (error || !oldTxs || oldTxs.length === 0) return;
+
+    // Filter hanya tracked items (pipa + freon)
+    const trackedTxs = oldTxs.filter(tx =>
+      isTrackedByCode(tx.inventory_code) || isTrackedByName(tx.inventory_name)
+    );
+    if (trackedTxs.length === 0) return;
+
+    for (const tx of trackedTxs) {
+      const reverseQty = Math.abs(tx.qty); // positif = kembalikan ke stok
+
+      // 1. Kembalikan stok inventory_units jika ada unit fisik
+      if (tx.unit_id) {
+        const unit = invUnitsData.find(u => u.id === tx.unit_id);
+        if (unit) {
+          const restoredStock = (unit.stock || 0) + reverseQty;
+          await supabase.from("inventory_units").update({ stock: restoredStock, updated_at: new Date().toISOString() }).eq("id", tx.unit_id);
+          setInvUnitsData(prev => prev.map(u => u.id === tx.unit_id ? { ...u, stock: restoredStock } : u));
+        }
+      }
+
+      // 2. Kembalikan stok inventory utama
+      const invItem = inventoryData.find(i => i.code === tx.inventory_code);
+      if (invItem) {
+        const restoredStock = (invItem.stock || 0) + reverseQty;
+        const newStatus = computeStockStatus(restoredStock, invItem.reorder);
+        setInventoryData(prev => prev.map(i => i.code === invItem.code ? { ...i, stock: restoredStock, status: newStatus } : i));
+      }
+
+      // 3. Buat adjustment transaction (audit trail)
+      try {
+        await supabase.from("inventory_transactions").insert({
+          inventory_code: tx.inventory_code,
+          inventory_name: tx.inventory_name,
+          order_id: orderId || tx.order_id || null,
+          report_id: reportId || null,
+          qty: reverseQty,
+          qty_actual: reverseQty,
+          type: "adjustment",
+          notes: `Reversal edit laporan oleh ${currentUser?.name || "admin"}: ${reason || ""}`,
+          customer_name: tx.customer_name || null,
+          teknisi_name: tx.teknisi_name || null,
+          job_date: tx.job_date || null,
+          created_by: currentUser?.id || null,
+          created_by_name: currentUser?.name || "",
+          unit_id: tx.unit_id || null,
+          unit_label: tx.unit_label || null,
+        });
+      } catch (e) { console.warn("reversal tx skip:", e?.message); }
+    }
+    addAgentLog("INV_REVERSAL", `Reversed ${trackedTxs.length} transaksi stok untuk laporan ${reportId} (${reason})`, "INFO");
+  };
+
   // ── GAP 9: Create order (real state mutation) ──
   const createOrder = async (form) => {
     // Input validation
@@ -8328,6 +8398,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       }
                     }
 
+                    // ── Reverse stok lama dulu (pipa & freon) sebelum deduct baru ──
+                    // Ini mencegah double counting ketika admin input ulang material di edit laporan
+                    if (editStockMats.filter(m => m.nama && parseFloat(m.jumlah) > 0).length > 0 && selectedLaporan.id) {
+                      await reverseInventoryForReport(selectedLaporan.id, selectedLaporan.job_id, "re-input material edit laporan");
+                    }
+
                     // ── Deduct stok material (tabung/roll) yang dipilih di edit modal ──
                     const stockMatsToDeduct = editStockMats.filter(m => m.nama && parseFloat(m.jumlah) > 0);
                     for (const mat of stockMatsToDeduct) {
@@ -8914,12 +8990,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           }
 
           // ── 11. Deduct stok material (non-Install) ──
-          // SKIP jika ini rewrite/edit laporan — stok sudah dipotong saat submit pertama.
-          // Deduct hanya boleh terjadi sekali per job (saat submit baru, bukan edit).
+          // Jika rewrite/edit laporan: reverse dulu transaksi tracked lama (pipa & freon),
+          // baru deduct ulang dari material baru. Ini mencegah double counting.
           const isRewriteLaporan = !!laporanModal._rewriteId;
           if (isRewriteLaporan) {
-            addAgentLog("LAPORAN_EDIT_SKIP_DEDUCT",
-              `Skip deduct stok untuk edit laporan ${laporanModal.id} — stok sudah dipotong saat submit pertama`,
+            const prevReportId = laporanModal._rewriteId;
+            await reverseInventoryForReport(prevReportId, laporanModal.id, "teknisi edit+submit ulang laporan");
+            addAgentLog("LAPORAN_EDIT_REVERSAL",
+              `Reversed stok tracked (pipa/freon) untuk laporan ${prevReportId} sebelum deduct ulang`,
               "INFO");
           }
           // Install: deduct dari effectiveMaterials (sudah punya _useCode untuk pipa/kabel)
@@ -8956,9 +9034,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           const matWithoutUnit = materialsToDeduct.filter(mat => !mat.freon_tabung_code);
           const allToDeduct = [...matWithoutUnit, ...unitDeducts];
 
-          // Deduct HANYA saat submit baru — rewrite/edit laporan skip agar stok tidak dobel potong
-          if (!isRewriteLaporan) {
-            // Deduct inventory_units.stock (tabung/roll)
+          // Deduct inventory_units.stock (tabung/roll)
+          // Jika rewrite: stok lama sudah di-reverse di atas, jadi deduct baru tetap jalan
+          {
             const unitUpdateTasks = [];
             for (const ud of unitDeducts) {
               const unit = invUnitsData.find(u => u.id === ud._unitId);
