@@ -3350,80 +3350,117 @@ ${photoPageHTML}
     }
   };
 
-  // ── Reverse inventory transactions untuk laporan yang diedit ──
-  // Hanya berlaku untuk material tracked: Pipa AC (SKU022-SKU024) dan Freon (R22/R32/R410)
-  // Pattern: Opsi 1 — buat adjustment positif untuk setiap transaksi lama, lalu deduct ulang yang baru
-  const TRACKED_INV_CODES = new Set(["SKU022", "SKU023", "SKU024"]); // Pipa 1PK, 2PK, 2.5PK
+  // ── Stok adjustment berbasis delta untuk laporan yang diedit ──
+  // Pola: hitung total usage lama (dari DB) vs qty baru (dari materials laporan terbaru)
+  // Apply hanya selisihnya — sehingga siapapun yang edit terakhir, nilai akhir selalu benar.
+  // Berlaku untuk: Pipa AC Hoda 1PK/2PK/2.5PK (SKU022-024) dan Freon R22/R32/R410.
+  const TRACKED_INV_CODES = new Set(["SKU022", "SKU023", "SKU024"]);
   const isTrackedByCode = (code) => TRACKED_INV_CODES.has(code);
   const isTrackedByName = (name) => {
     const n = (name || "").toLowerCase();
     return n.includes("pipa ac hoda") || n.includes("freon") || n.includes("r-22") || n.includes("r-32") || n.includes("r-410") || n.includes("r22") || n.includes("r32") || n.includes("r410");
   };
 
-  // adminOnly=true → hanya reverse transaksi yang berasal dari "Edit laporan oleh admin"
-  // adminOnly=false (teknisi rewrite) → reverse semua usage tracked dari laporan ini
-  const reverseInventoryForReport = async (reportId, orderId, reason, adminOnly = false) => {
-    // Ambil semua transaksi usage dari laporan ini
-    const { data: oldTxs, error } = await supabase
+  // newMaterials: array material dari laporan yang baru disave [{nama, jumlah, inv_code?, freon_tabung_code?, ...}]
+  // reportId: ID laporan (service_reports.id) — digunakan untuk lookup usage lama
+  // orderId, customerName, teknisiName, jobDate: metadata untuk transaksi baru
+  const applyInventoryDelta = async (reportId, orderId, newMaterials, customerName, teknisiName, jobDate) => {
+    // 1. Ambil semua usage tracked lama dari laporan ini (semua jenis: submit teknisi, edit admin)
+    const { data: oldTxs } = await supabase
       .from("inventory_transactions")
       .select("*")
       .eq("report_id", reportId)
       .eq("type", "usage");
-    if (error || !oldTxs || oldTxs.length === 0) return;
 
-    // Filter hanya tracked items (pipa + freon)
-    let trackedTxs = oldTxs.filter(tx =>
+    const oldTracked = (oldTxs || []).filter(tx =>
       isTrackedByCode(tx.inventory_code) || isTrackedByName(tx.inventory_name)
     );
-    // adminOnly: hanya reverse transaksi yang dicreate oleh admin via edit modal (bukan submit teknisi)
-    if (adminOnly) {
-      trackedTxs = trackedTxs.filter(tx => (tx.notes || "").includes("Edit laporan"));
+
+    // 2. Hitung total usage lama per inventory_code (dan per unit_id untuk roll/tabung)
+    // Key: inventory_code + "|" + (unit_id || "")
+    const oldQtyMap = {};
+    const oldTxByKey = {};
+    for (const tx of oldTracked) {
+      const key = (tx.inventory_code || tx.inventory_name) + "|" + (tx.unit_id || "");
+      oldQtyMap[key] = (oldQtyMap[key] || 0) + Math.abs(tx.qty);
+      if (!oldTxByKey[key]) oldTxByKey[key] = tx; // simpan sample tx untuk metadata
     }
-    if (trackedTxs.length === 0) return;
 
-    for (const tx of trackedTxs) {
-      const reverseQty = Math.abs(tx.qty); // positif = kembalikan ke stok
+    // 3. Hitung total usage baru per inventory_code dari materials laporan
+    const newTracked = (newMaterials || []).filter(m =>
+      parseFloat(m.jumlah) > 0 && (
+        isTrackedByCode(m.inv_code || m._useCode) || isTrackedByName(m.nama)
+      )
+    );
+    const newQtyMap = {};
+    const newMatByKey = {};
+    for (const m of newTracked) {
+      const invCode = m.inv_code || m._useCode || "";
+      const unitId = m.freon_tabung_code || m._unitId || "";
+      const key = (invCode || m.nama) + "|" + unitId;
+      newQtyMap[key] = (newQtyMap[key] || 0) + (parseFloat(m.jumlah) || 0);
+      if (!newMatByKey[key]) newMatByKey[key] = m;
+    }
 
-      // 1. Kembalikan stok inventory_units jika ada unit fisik
-      if (tx.unit_id) {
-        const unit = invUnitsData.find(u => u.id === tx.unit_id);
+    // 4. Gabungkan semua keys dari lama dan baru
+    const allKeys = new Set([...Object.keys(oldQtyMap), ...Object.keys(newQtyMap)]);
+
+    for (const key of allKeys) {
+      const oldQty = oldQtyMap[key] || 0;
+      const newQty = newQtyMap[key] || 0;
+      const delta = newQty - oldQty; // positif = perlu deduct lebih, negatif = perlu kembalikan stok
+      if (Math.abs(delta) < 0.001) continue; // tidak ada perubahan, skip
+
+      const sampleOldTx = oldTxByKey[key];
+      const sampleMat = newMatByKey[key];
+      const invCode = (sampleOldTx?.inventory_code || sampleMat?.inv_code || sampleMat?._useCode || "").split("|")[0];
+      const invName = sampleOldTx?.inventory_name || sampleMat?.nama || "";
+      const unitId = sampleOldTx?.unit_id || sampleMat?.freon_tabung_code || sampleMat?._unitId || null;
+      const unitLabel = sampleOldTx?.unit_label || sampleMat?.freon_unit_label || sampleMat?._unitLabel || null;
+
+      // 5a. Update inventory_units.stock jika ada unit fisik
+      if (unitId) {
+        const unit = invUnitsData.find(u => u.id === unitId);
         if (unit) {
-          const restoredStock = (unit.stock || 0) + reverseQty;
-          await supabase.from("inventory_units").update({ stock: restoredStock, updated_at: new Date().toISOString() }).eq("id", tx.unit_id);
-          setInvUnitsData(prev => prev.map(u => u.id === tx.unit_id ? { ...u, stock: restoredStock } : u));
+          const newUnitStock = Math.max(0, (unit.stock || 0) - delta);
+          await supabase.from("inventory_units").update({ stock: newUnitStock, updated_at: new Date().toISOString() }).eq("id", unitId);
+          setInvUnitsData(prev => prev.map(u => u.id === unitId ? { ...u, stock: newUnitStock } : u));
         }
       }
 
-      // 2. Kembalikan stok inventory utama
-      const invItem = inventoryData.find(i => i.code === tx.inventory_code);
+      // 5b. Update inventory utama
+      const invItem = invCode
+        ? inventoryData.find(i => i.code === invCode)
+        : inventoryData.find(i => i.name.toLowerCase().includes(invName.toLowerCase()));
       if (invItem) {
-        const restoredStock = (invItem.stock || 0) + reverseQty;
-        const newStatus = computeStockStatus(restoredStock, invItem.reorder);
-        setInventoryData(prev => prev.map(i => i.code === invItem.code ? { ...i, stock: restoredStock, status: newStatus } : i));
+        const newStock = Math.max(0, (invItem.stock || 0) - delta);
+        const newStatus = computeStockStatus(newStock, invItem.reorder);
+        setInventoryData(prev => prev.map(i => i.code === invItem.code ? { ...i, stock: newStock, status: newStatus } : i));
       }
 
-      // 3. Buat adjustment transaction (audit trail)
+      // 5c. Catat adjustment ke inventory_transactions (audit trail penuh)
+      const isFreon = (invItem?.material_type === "freon") || isTrackedByName(invName);
       try {
         await supabase.from("inventory_transactions").insert({
-          inventory_code: tx.inventory_code,
-          inventory_name: tx.inventory_name,
-          order_id: orderId || tx.order_id || null,
+          inventory_code: invCode || null,
+          inventory_name: invName || null,
+          order_id: orderId || null,
           report_id: reportId || null,
-          qty: reverseQty,
-          qty_actual: reverseQty,
-          type: "adjustment",
-          notes: `Reversal edit laporan oleh ${currentUser?.name || "admin"}: ${reason || ""}`,
-          customer_name: tx.customer_name || null,
-          teknisi_name: tx.teknisi_name || null,
-          job_date: tx.job_date || null,
+          qty: -delta,
+          qty_actual: isFreon ? null : -delta,
+          type: "usage",
+          notes: `Edit laporan oleh ${currentUser?.name || "admin"} (delta ${delta > 0 ? "+" : ""}${delta.toFixed(1)})`,
+          customer_name: customerName || null,
+          teknisi_name: teknisiName || null,
+          job_date: jobDate || null,
           created_by: currentUser?.id || null,
           created_by_name: currentUser?.name || "",
-          unit_id: tx.unit_id || null,
-          unit_label: tx.unit_label || null,
+          unit_id: unitId || null,
+          unit_label: unitLabel || null,
         });
-      } catch (e) { console.warn("reversal tx skip:", e?.message); }
+      } catch (e) { console.warn("delta tx skip:", e?.message); }
     }
-    addAgentLog("INV_REVERSAL", `Reversed ${trackedTxs.length} transaksi stok untuk laporan ${reportId} (${reason})`, "INFO");
+    addAgentLog("INV_DELTA", `Stok delta applied untuk laporan ${reportId} — ${allKeys.size} item diperiksa oleh ${currentUser?.name}`, "INFO");
   };
 
   // ── GAP 9: Create order (real state mutation) ──
@@ -8404,56 +8441,26 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       }
                     }
 
-                    // ── Reverse stok lama dulu (pipa & freon) sebelum deduct baru ──
-                    // adminOnly=true: hanya reverse transaksi yang dibuat admin via edit modal sebelumnya
-                    // TIDAK reverse transaksi yang disubmit teknisi (agar stok teknisi tidak ikut terhapus)
-                    if (editStockMats.filter(m => m.nama && parseFloat(m.jumlah) > 0).length > 0 && selectedLaporan.id) {
-                      await reverseInventoryForReport(selectedLaporan.id, selectedLaporan.job_id, "re-input material edit laporan", true);
-                    }
-
-                    // ── Deduct stok material (tabung/roll) yang dipilih di edit modal ──
+                    // ── Delta-based stok adjustment untuk tracked material (pipa/freon) ──
+                    // applyInventoryDelta: bandingkan usage lama di DB vs qty baru dari editStockMats
+                    // Siapapun yang edit terakhir (teknisi/admin), nilai akhir stok selalu benar
                     const stockMatsToDeduct = editStockMats.filter(m => m.nama && parseFloat(m.jumlah) > 0);
-                    for (const mat of stockMatsToDeduct) {
-                      const qty = parseFloat(mat.jumlah) || 0;
-                      // Jika ada unit fisik (tabung/roll) yang dipilih, deduct via inventory_units
-                      if (mat.freon_tabung_code && mat.freon_inv_code) {
-                        const unit = invUnitsData.find(u => u.id === mat.freon_tabung_code);
-                        if (unit) {
-                          const newUnitStock = Math.max(0, (unit.stock || 0) - qty);
-                          // Update inventory_units stock
-                          await supabase.from("inventory_units").update({ stock: newUnitStock }).eq("id", mat.freon_tabung_code);
-                          // Update local invUnitsData
-                          setInvUnitsData && setInvUnitsData(prev => prev.map(u => u.id === mat.freon_tabung_code ? { ...u, stock: newUnitStock } : u));
-                        }
-                      }
-                      // Juga deduct inventory utama
-                      const invItem = (mat.inv_code ? inventoryData.find(i => i.code === mat.inv_code) : null)
-                        || inventoryData.find(i => i.name.toLowerCase().includes((mat.nama || "").toLowerCase()) || (mat.nama || "").toLowerCase().includes(i.name.toLowerCase()));
-                      if (invItem) {
-                        const newStock = Math.max(0, invItem.stock - qty);
-                        const newStatus = computeStockStatus(newStock, invItem.reorder);
-                        setInventoryData(prev => prev.map(i => i.code === invItem.code ? { ...i, stock: newStock, status: newStatus } : i));
-                        const isFreonMat = invItem.material_type === "freon" || ["r22","r32","r410","freon"].some(k => (invItem.name||"").toLowerCase().includes(k));
-                        try {
-                          await supabase.from("inventory_transactions").insert({
-                            inventory_code: invItem.code,
-                            inventory_name: invItem.name,
-                            order_id: selectedLaporan.job_id || null,
-                            report_id: selectedLaporan.id || null,
-                            qty: -qty,
-                            type: "usage",
-                            notes: `Edit laporan oleh ${currentUser?.name || "admin"}`,
-                            customer_name: selectedLaporan.customer || null,
-                            teknisi_name: selectedLaporan.teknisi || null,
-                            job_date: selectedLaporan.date || null,
-                            created_by: currentUser?.id || null,
-                            created_by_name: currentUser?.name || "",
-                            unit_id: mat.freon_tabung_code || null,
-                            unit_label: mat.freon_unit_label || null,
-                            qty_actual: isFreonMat ? null : -qty,
-                          });
-                        } catch (e) { console.warn("inv tx skip:", e?.message); }
-                      }
+                    if (stockMatsToDeduct.length > 0 && selectedLaporan.id) {
+                      const matsForDelta = stockMatsToDeduct.map(m => ({
+                        nama: m.nama,
+                        jumlah: parseFloat(m.jumlah) || 0,
+                        inv_code: m.inv_code || null,
+                        freon_tabung_code: m.freon_tabung_code || null,
+                        freon_unit_label: m.freon_unit_label || null,
+                      }));
+                      await applyInventoryDelta(
+                        selectedLaporan.id,
+                        selectedLaporan.job_id,
+                        matsForDelta,
+                        selectedLaporan.customer || null,
+                        selectedLaporan.teknisi || null,
+                        selectedLaporan.date || null
+                      );
                     }
 
                     const photoMsg = editPhotoMode && editLaporanFotos.length > 0 ? "+foto" : "";
@@ -8997,18 +9004,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           }
 
           // ── 11. Deduct stok material (non-Install) ──
-          // Jika rewrite/edit laporan: reverse dulu transaksi tracked lama (pipa & freon),
-          // baru deduct ulang dari material baru. Ini mencegah double counting.
+          // ── 11a. Tracked material (pipa/freon): gunakan delta-based adjustment ──
+          // Delta = qty baru - qty lama (dari DB). Siapapun edit terakhir, nilai akhir selalu benar.
           const isRewriteLaporan = !!laporanModal._rewriteId;
-          if (isRewriteLaporan) {
-            const prevReportId = laporanModal._rewriteId;
-            await reverseInventoryForReport(prevReportId, laporanModal.id, "teknisi edit+submit ulang laporan");
-            addAgentLog("LAPORAN_EDIT_REVERSAL",
-              `Reversed stok tracked (pipa/freon) untuk laporan ${prevReportId} sebelum deduct ulang`,
-              "INFO");
+          const prevReportId = laporanModal._rewriteId || null;
+          const materialsForDelta = isInstall ? effectiveMaterials : laporanMaterials;
+          if (isRewriteLaporan && prevReportId) {
+            // Edit/rewrite: apply delta antara material lama di DB vs material baru sekarang
+            await applyInventoryDelta(
+              prevReportId,
+              laporanModal.id,
+              materialsForDelta,
+              laporanModal?.customer || null,
+              laporanModal?.teknisi || null,
+              laporanModal?.date || null
+            );
           }
-          // Install: deduct dari effectiveMaterials (sudah punya _useCode untuk pipa/kabel)
-          // Non-install: deduct dari laporanMaterials + laporanBarangItems (billable items dari price_list)
+
+          // ── 11b. Semua material (termasuk tracked): deduct normal saat submit pertama ──
+          // Install: deduct dari effectiveMaterials; Non-install: dari laporanMaterials + barang
           const barangAsDeducts = laporanBarangItems.filter(b => b.nama && parseFloat(b.jumlah || 0) > 0)
             .map(b => ({
               nama: b.nama,
@@ -9019,31 +9033,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           const materialsToDeduct = isInstall ? effectiveMaterials : [...laporanMaterials, ...barangAsDeducts];
 
           // Deduct unit fisik: freon (tabung spesifik), pipa (roll), kabel (roll)
-          // freon_tabung_code = UUID dari inventory_units yang dipilih teknisi
-          // freon_inv_code    = inventory.code milik unit itu (untuk update stok di DB)
           const unitDeducts = laporanMaterials
             .filter(mat => mat.freon_tabung_code && parseFloat(mat.jumlah) > 0)
             .map(mat => {
               const unit = invUnitsData.find(u => u.id === mat.freon_tabung_code);
               if (!unit) return null;
               return {
-                nama: unit.unit_label,    // label unit fisik, e.g. "Roll 1PK-A"
+                nama: unit.unit_label,
                 jumlah: parseFloat(mat.jumlah),
                 satuan: mat.satuan || "",
                 keterangan: "unit_fisik",
-                _useCode: unit.inventory_code,  // untuk deduct inventory parent
-                _unitId: unit.id,              // untuk update inventory_units.stock
+                _useCode: unit.inventory_code,
+                _unitId: unit.id,
                 _unitLabel: unit.unit_label,
               };
             }).filter(Boolean);
 
-          // Material tanpa unit fisik → deduct via inventory biasa (by nama)
-          const matWithoutUnit = materialsToDeduct.filter(mat => !mat.freon_tabung_code);
-          const allToDeduct = [...matWithoutUnit, ...unitDeducts];
-
-          // Deduct inventory_units.stock (tabung/roll)
-          // Jika rewrite: stok lama sudah di-reverse di atas, jadi deduct baru tetap jalan
-          {
+          // Submit pertama: deduct inventory_units.stock dan inventory utama
+          // Rewrite: tracked sudah di-handle via applyInventoryDelta, hanya non-tracked yang perlu deduct
+          if (!isRewriteLaporan) {
             const unitUpdateTasks = [];
             for (const ud of unitDeducts) {
               const unit = invUnitsData.find(u => u.id === ud._unitId);
@@ -9058,33 +9066,38 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               );
             }
             if (unitUpdateTasks.length > 0) await Promise.all(unitUpdateTasks);
+          }
 
-            if (allToDeduct.length > 0) {
-              deductInventory(
-                allToDeduct,
-                laporanModal?.id || null,        // orderId
-                null,                            // reportId
-                laporanModal?.customer || null,  // customerName
-                laporanModal?.teknisi || null,   // teknisiName
-                laporanModal?.date || null       // jobDate
+          const matWithoutUnit = materialsToDeduct.filter(mat => !mat.freon_tabung_code);
+          // Rewrite: skip tracked dari deductInventory (sudah via delta), hanya non-tracked
+          const allToDeduct = isRewriteLaporan
+            ? matWithoutUnit.filter(m => !isTrackedByCode(m.inv_code || m._useCode) && !isTrackedByName(m.nama))
+            : [...matWithoutUnit, ...unitDeducts];
+
+          if (allToDeduct.length > 0) {
+            deductInventory(
+              allToDeduct,
+              laporanModal?.id || null,
+              null,
+              laporanModal?.customer || null,
+              laporanModal?.teknisi || null,
+              laporanModal?.date || null
+            );
+            setTimeout(() => {
+              const kritisItems = inventoryData.filter(i =>
+                allToDeduct.some(m => m._useCode ? m._useCode === i.code
+                  : i.name.toLowerCase().includes((m.nama || "").toLowerCase())) &&
+                (i.status === "CRITICAL" || i.status === "OUT")
               );
-              // Cek stok kritis setelah deduct
-              setTimeout(() => {
-                const kritisItems = inventoryData.filter(i =>
-                  allToDeduct.some(m => m._useCode ? m._useCode === i.code
-                    : i.name.toLowerCase().includes((m.nama || "").toLowerCase())) &&
-                  (i.status === "CRITICAL" || i.status === "OUT")
-                );
-                if (kritisItems.length > 0) {
-                  const warnings = kritisItems.map(i => `${i.name} sisa ${i.stock} ${i.unit}`);
-                  showNotif("⚠️ Stok kritis: " + warnings.join(", "));
-                  const ownerAccs = userAccounts.filter(u => u.role === "Owner");
-                  const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n`
-                    + warnings.map(w => "• " + w).join("\n");
-                  ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
-                }
-              }, 800);
-            }
+              if (kritisItems.length > 0) {
+                const warnings = kritisItems.map(i => `${i.name} sisa ${i.stock} ${i.unit}`);
+                showNotif("⚠️ Stok kritis: " + warnings.join(", "));
+                const ownerAccs = userAccounts.filter(u => u.role === "Owner");
+                const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n`
+                  + warnings.map(w => "• " + w).join("\n");
+                ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
+              }
+            }, 800);
           }
 
           // ── 12. Auto-generate invoice ──
