@@ -3360,7 +3360,9 @@ ${photoPageHTML}
     return n.includes("pipa ac hoda") || n.includes("freon") || n.includes("r-22") || n.includes("r-32") || n.includes("r-410") || n.includes("r22") || n.includes("r32") || n.includes("r410");
   };
 
-  const reverseInventoryForReport = async (reportId, orderId, reason) => {
+  // adminOnly=true → hanya reverse transaksi yang berasal dari "Edit laporan oleh admin"
+  // adminOnly=false (teknisi rewrite) → reverse semua usage tracked dari laporan ini
+  const reverseInventoryForReport = async (reportId, orderId, reason, adminOnly = false) => {
     // Ambil semua transaksi usage dari laporan ini
     const { data: oldTxs, error } = await supabase
       .from("inventory_transactions")
@@ -3370,9 +3372,13 @@ ${photoPageHTML}
     if (error || !oldTxs || oldTxs.length === 0) return;
 
     // Filter hanya tracked items (pipa + freon)
-    const trackedTxs = oldTxs.filter(tx =>
+    let trackedTxs = oldTxs.filter(tx =>
       isTrackedByCode(tx.inventory_code) || isTrackedByName(tx.inventory_name)
     );
+    // adminOnly: hanya reverse transaksi yang dicreate oleh admin via edit modal (bukan submit teknisi)
+    if (adminOnly) {
+      trackedTxs = trackedTxs.filter(tx => (tx.notes || "").includes("Edit laporan"));
+    }
     if (trackedTxs.length === 0) return;
 
     for (const tx of trackedTxs) {
@@ -8399,9 +8405,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     }
 
                     // ── Reverse stok lama dulu (pipa & freon) sebelum deduct baru ──
-                    // Ini mencegah double counting ketika admin input ulang material di edit laporan
+                    // adminOnly=true: hanya reverse transaksi yang dibuat admin via edit modal sebelumnya
+                    // TIDAK reverse transaksi yang disubmit teknisi (agar stok teknisi tidak ikut terhapus)
                     if (editStockMats.filter(m => m.nama && parseFloat(m.jumlah) > 0).length > 0 && selectedLaporan.id) {
-                      await reverseInventoryForReport(selectedLaporan.id, selectedLaporan.job_id, "re-input material edit laporan");
+                      await reverseInventoryForReport(selectedLaporan.id, selectedLaporan.job_id, "re-input material edit laporan", true);
                     }
 
                     // ── Deduct stok material (tabung/roll) yang dipilih di edit modal ──
