@@ -2952,7 +2952,7 @@ ${photoPageHTML}
   const invoiceReminderWA = async (inv) => {
     if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
     const invoiceUrl = await uploadInvoicePDFForWA(inv);
-    const msg = `Halo ${inv.customer}, mengingatkan tagihan *AClean Service* senilai *${fmt(inv.total)}* belum dibayar.\n\nTransfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nKonfirmasi di WA ini ya kak. Terima kasih! 🙏`;
+    const msg = `Halo ${inv.customer}, Terlampir Invoice Resmi Pekerjaan Kemaren senilai *${fmt(inv.total)}*.\n\nPembayaran Bisa Melalui Transfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nApabila sudah di Transfer Bole dikirimkan Bukti Pembayaran kesini untuk di Konfirmasi Pembayarannya ya Bapak / Ibu. Terima kasih! 🙏`;
     sendWA(inv.phone, msg, invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {});
   };
 
