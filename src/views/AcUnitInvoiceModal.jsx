@@ -252,40 +252,34 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
         paidAmount = dpVal;
       }
 
-      // Insert customer baru jika perlu
-      let customerId = custMode === "existing" ? selectedCust?.id : null;
+      // Insert customer baru jika perlu (tidak ada FK ke invoices, tapi data customer tetap disimpan)
       if (custMode === "baru" && newCust.name) {
-        const { data: newCustRow, error: custErr } = await supabase
+        const { error: custErr } = await supabase
           .from("customers")
-          .insert({ name: newCust.name, phone: newCust.phone, area: newCust.area, alamat: newCust.alamat })
-          .select("id")
-          .single();
-        if (custErr) throw custErr;
-        customerId = newCustRow.id;
+          .insert({ name: newCust.name, phone: newCust.phone, area: newCust.area, address: newCust.alamat });
+        if (custErr) console.warn("Gagal simpan customer baru:", custErr.message);
       }
 
-      // Build invoice row
+      // Build invoice row — hanya kolom yang ada di tabel invoices
       const invoicePayload = {
-        invoice_type:   "ac_unit_sale",
+        invoice_type:    "ac_unit_sale",
         status,
-        date:           today,
-        paid_at:        paidAt,
-        paid_amount:    paidAmount,
+        paid_at:         paidAt,
+        paid_amount:     paidAmount,
         remaining_amount: grandTotal - paidAmount,
-        name:           custDisplay.name,
-        phone:          custDisplay.phone || null,
-        customer_id:    customerId || null,
-        service:        "Install AC",
-        total:          grandTotal,
-        unit_ac_amount: totalUnitAC,
-        paket_pasang:   useTanpaPaket ? null : (selectedPaket || null),
-        labor:          totalPaket,
-        material:       totalAddon,
-        discount:       diskonNominal,
-        trade_in:       tradeIn,
+        customer:        custDisplay.name,
+        phone:           custDisplay.phone || null,
+        service:         "Install AC",
+        total:           grandTotal,
+        unit_ac_amount:  totalUnitAC,
+        paket_pasang:    useTanpaPaket ? null : (selectedPaket || null),
+        labor:           totalPaket,
+        material:        totalAddon,
+        discount:        diskonNominal,
+        trade_in:        tradeIn,
         trade_in_amount: tradeInNominal,
-        notes:          notes || null,
-        payment_method: dpMode !== "nanti" ? payMethod : null,
+        notes:           notes || null,
+        paid_method:     dpMode !== "nanti" ? payMethod : null,
       };
 
       const { data: inv, error: invErr } = await supabase
@@ -297,33 +291,31 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
 
       const invoiceId = inv.id;
 
-      // Build invoice_items rows
+      // Build invoice_items rows — kolom: invoice_id, item_type, description, qty, unit_price, subtotal
       const items = [];
 
       // Unit AC rows (passthrough)
       acUnits.forEach(u => {
         if (!u.brand || u.subtotal <= 0) return;
         items.push({
-          invoice_id: invoiceId,
-          item_type:  "unit_ac",
-          nama:       `${u.brand} ${u.tipe} ${u.kapasitas}${u.model ? " " + u.model : ""}`,
-          qty:        u.qty,
-          satuan:     "Unit",
-          harga:      u.harga_satuan,
-          subtotal:   u.subtotal,
+          invoice_id:  invoiceId,
+          item_type:   "unit_ac",
+          description: `${u.brand} ${u.tipe} ${u.kapasitas}${u.model ? " " + u.model : ""}`,
+          qty:         u.qty,
+          unit_price:  u.harga_satuan,
+          subtotal:    u.subtotal,
         });
       });
 
       // Paket row
       if (!useTanpaPaket && selectedPaket) {
         items.push({
-          invoice_id: invoiceId,
-          item_type:  "paket",
-          nama:       selectedPaket.label,
-          qty:        1,
-          satuan:     "Paket",
-          harga:      selectedPaket.harga,
-          subtotal:   selectedPaket.harga,
+          invoice_id:  invoiceId,
+          item_type:   "paket",
+          description: selectedPaket.label,
+          qty:         1,
+          unit_price:  selectedPaket.harga,
+          subtotal:    selectedPaket.harga,
         });
       }
 
@@ -331,13 +323,12 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
       manualJasa.forEach(j => {
         if (!j.nama || j.subtotal <= 0) return;
         items.push({
-          invoice_id: invoiceId,
-          item_type:  "jasa",
-          nama:       j.nama,
-          qty:        1,
-          satuan:     "Ls",
-          harga:      j.subtotal,
-          subtotal:   j.subtotal,
+          invoice_id:  invoiceId,
+          item_type:   "jasa",
+          description: j.nama,
+          qty:         1,
+          unit_price:  j.subtotal,
+          subtotal:    j.subtotal,
         });
       });
 
@@ -345,13 +336,12 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
       manualMat.forEach(m => {
         if (!m.nama || m.subtotal <= 0) return;
         items.push({
-          invoice_id: invoiceId,
-          item_type:  "material",
-          nama:       m.nama,
-          qty:        1,
-          satuan:     "Ls",
-          harga:      m.subtotal,
-          subtotal:   m.subtotal,
+          invoice_id:  invoiceId,
+          item_type:   "material",
+          description: m.nama,
+          qty:         1,
+          unit_price:  m.subtotal,
+          subtotal:    m.subtotal,
         });
       });
 
@@ -359,13 +349,12 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
       addonItems.forEach(a => {
         if (a.qty <= 0) return;
         items.push({
-          invoice_id: invoiceId,
-          item_type:  "addon",
-          nama:       a.nama,
-          qty:        a.qty,
-          satuan:     a.satuan,
-          harga:      a.harga,
-          subtotal:   a.qty * a.harga,
+          invoice_id:  invoiceId,
+          item_type:   "addon",
+          description: `${a.nama} (${a.satuan})`,
+          qty:         a.qty,
+          unit_price:  a.harga,
+          subtotal:    a.qty * a.harga,
         });
       });
 
@@ -374,18 +363,18 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
         if (itemsErr) throw itemsErr;
       }
 
-      // Jika DP, catat payment row
+      // Jika DP, catat payment row — kolom: invoice_id, amount, method, is_partial, paid_at, customer_name, customer_phone, invoice_ids, total_amount
       if (dpMode === "dp" && dpVal > 0) {
         await supabase.from("payments").insert({
-          invoice_id:      invoiceId,
-          invoice_ids:     [invoiceId],
-          customer_name:   custDisplay.name,
-          customer_phone:  custDisplay.phone || null,
-          amount:          dpVal,
-          total_amount:    dpVal,
-          method:          payMethod,
-          is_partial:      true,
-          date:            today,
+          invoice_id:     invoiceId,
+          invoice_ids:    [invoiceId],
+          customer_name:  custDisplay.name,
+          customer_phone: custDisplay.phone || null,
+          amount:         dpVal,
+          total_amount:   dpVal,
+          method:         payMethod,
+          is_partial:     true,
+          paid_at:        today,
         });
       }
 
