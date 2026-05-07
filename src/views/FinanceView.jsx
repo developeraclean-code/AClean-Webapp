@@ -1,7 +1,25 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
+import { getLocalDate } from "../lib/dateTime.js";
 
-// supabase prop dipass dari App.jsx (tidak bikin client baru)
+// WIB offset helper — konsisten dengan getLocalDate dari dateTime.js
+const OFFSET_MS = 7 * 60 * 60 * 1000;
+const getWIBDateStr = (offsetDays = 0) => {
+  const d = new Date(Date.now() + OFFSET_MS + offsetDays * 86400000);
+  return d.toISOString().slice(0, 10);
+};
+const getWIBDateLabel = (offsetDays = 0) => {
+  const d = new Date(Date.now() + OFFSET_MS + offsetDays * 86400000);
+  return new Date(d.toISOString().slice(0, 10) + "T00:00:00+07:00")
+    .toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+};
+
+// localStorage helper untuk persist target
+const LS_KEY = "finance_target_bulan";
+const loadTarget = () => {
+  try { const v = localStorage.getItem(LS_KEY); return v ? Number(v) : 100000000; } catch { return 100000000; }
+};
+const saveTarget = (v) => { try { localStorage.setItem(LS_KEY, String(v)); } catch { } };
 
 const TABS = [
   { id: "dashboard", label: "Dashboard", icon: "📊" },
@@ -49,18 +67,28 @@ const orderStatusBadge = (status) => {
 };
 
 // ─── Dashboard Tab ───────────────────────────────────────────────
-const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPrevDay, onNextDay, onToday, setPaymentProofModal, currentUser, supabase }) => {
+const DashboardTab = ({
+  ordersData, invoicesData, allInvoices, todayStr,
+  currentDate, onPrevDay, onNextDay, onToday,
+  setPaymentProofModal, currentUser, supabase,
+}) => {
   const [mutasiChecked, setMutasiChecked] = useState({});
   const [mutasiLoading, setMutasiLoading] = useState(false);
   const [savingId, setSavingId] = useState(null);
+  const [mutasiError, setMutasiError] = useState(null);
 
+  // Hanya load mutasi 90 hari terakhir — cegah fetch tak terbatas
   const loadMutasi = useCallback(async () => {
     if (!supabase) return;
     setMutasiLoading(true);
+    setMutasiError(null);
     try {
-      const { data } = await supabase
+      const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
+      const { data, error } = await supabase
         .from("mutasi_checklist")
-        .select("id, job_id, invoice_id, checked, checked_by, checked_at, notes");
+        .select("id, job_id, invoice_id, checked, checked_by, checked_at, notes")
+        .gte("created_at", cutoff);
+      if (error) throw error;
       if (data) {
         const map = {};
         data.forEach(r => { map[r.job_id] = r; });
@@ -68,6 +96,7 @@ const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPr
       }
     } catch (e) {
       console.warn("mutasi_checklist load failed:", e?.message);
+      setMutasiError("Gagal memuat data mutasi");
     }
     setMutasiLoading(false);
   }, [supabase]);
@@ -75,61 +104,73 @@ const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPr
   useEffect(() => { loadMutasi(); }, [loadMutasi]);
 
   const toggleMutasi = async (jobId, invoiceId) => {
-    if (savingId) return; // prevent race condition
+    if (savingId) return;
     const current = mutasiChecked[jobId];
     const newChecked = current ? !current.checked : true;
     setSavingId(jobId);
+    setMutasiError(null);
 
     try {
       if (current?.id) {
-        await supabase.from("mutasi_checklist").update({
+        const { error } = await supabase.from("mutasi_checklist").update({
           checked: newChecked,
           checked_by: currentUser?.name || "Finance",
           checked_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }).eq("id", current.id);
+        if (error) throw error;
       } else {
-        await supabase.from("mutasi_checklist").insert({
+        const { error } = await supabase.from("mutasi_checklist").insert({
           job_id: jobId,
           invoice_id: invoiceId || null,
           checked: newChecked,
           checked_by: currentUser?.name || "Finance",
           checked_at: new Date().toISOString(),
         });
+        if (error) throw error;
       }
       setMutasiChecked(prev => ({
         ...prev,
-        [jobId]: { ...(prev[jobId] || {}), checked: newChecked, checked_by: currentUser?.name || "Finance" },
+        [jobId]: { ...(prev[jobId] || { job_id: jobId }), checked: newChecked, checked_by: currentUser?.name || "Finance" },
       }));
     } catch (e) {
       console.warn("toggleMutasi error:", e?.message);
+      setMutasiError("Gagal simpan cek mutasi — coba lagi");
     }
     setSavingId(null);
   };
 
-  const rows = useMemo(() => {
-    return (ordersData || []).map(order => {
+  const rows = useMemo(() =>
+    (ordersData || []).map(order => {
       const inv = (invoicesData || []).find(i => i.job_id === order.id);
       return { order, inv };
-    });
-  }, [ordersData, invoicesData]);
+    }),
+    [ordersData, invoicesData]);
 
-  const paidInvs = (allInvoices || []).filter(i => i.status === "PAID");
-  const totalPemasukan = paidInvs.reduce((s, i) => s + (i.total || 0), 0);
-  const belumLunas = (allInvoices || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
-  const pendingAPV = (allInvoices || []).filter(i => (i.status || "").toUpperCase().includes("PENDING")).length;
+  // Stat konteks: hari ini (rows) vs all-time (allInvoices)
+  const todayPaid = rows.filter(r => r.inv?.status === "PAID");
+  const todayPemasukan = todayPaid.reduce((s, r) => s + (r.inv?.total || 0), 0);
+  const todayBelumLunas = rows.filter(r => r.inv && (r.inv.status === "UNPAID" || r.inv.status === "OVERDUE")).length;
+  const todayPendingAPV = rows.filter(r => r.inv && (r.inv.status || "").toUpperCase().includes("PENDING")).length;
   const belumMutasi = rows.filter(r => r.inv?.status === "PAID" && !mutasiChecked[r.order?.id]?.checked).length;
+
+  // All-time untuk referensi
+  const allTimePaid = (allInvoices || []).filter(i => i.status === "PAID").reduce((s, i) => s + (i.total || 0), 0);
+  const allUnpaid = (allInvoices || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
 
   return (
     <div>
       {/* Date Navigator */}
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
         <button onClick={onPrevDay} style={{ width: 32, height: 32, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, color: cs.text, cursor: "pointer", fontSize: 14 }}>◀</button>
-        <div style={{ textAlign: "center" }}>
+        <div style={{ textAlign: "center", flex: 1 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>📅 {currentDate}</div>
           <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
-            {rows.length} order hari ini · {belumMutasi} belum cek mutasi
+            {rows.length} order · {todayPaid.length} lunas · {todayBelumLunas} belum lunas
           </div>
+          {mutasiError && (
+            <div style={{ fontSize: 11, color: cs.red, marginTop: 4 }}>⚠️ {mutasiError}</div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={onToday} style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "66", color: cs.accent, padding: "7px 14px", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 12 }}>Hari Ini</button>
@@ -137,103 +178,130 @@ const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPr
         </div>
       </div>
 
-      {/* Stat Cards — responsive grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 14 }}>
+      {/* Stat Cards — konteks hari ini, responsive */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 14 }}>
         <StatCard value={rows.length} label="Order Hari Ini" color={cs.accent} />
-        <StatCard value={fmtRp(totalPemasukan)} label="Total Pemasukan" color={cs.green} sub={"All time PAID"} />
-        <StatCard value={belumLunas} label="Belum Lunas" color={cs.yellow} />
-        <StatCard value={pendingAPV} label="Pending APV" color={cs.ara} />
-        <StatCard value={mutasiLoading ? "⟳" : belumMutasi} label="Belum Cek Mutasi" color={cs.red} sub={"Hari ini"} />
+        <StatCard value={fmtRp(todayPemasukan)} label="Pemasukan Hari Ini" color={cs.green} sub={todayPaid.length + " invoice PAID"} />
+        <StatCard value={todayBelumLunas} label="Belum Lunas" color={todayBelumLunas > 0 ? cs.yellow : cs.muted} sub={"Hari ini"} />
+        <StatCard value={todayPendingAPV} label="Pending APV" color={todayPendingAPV > 0 ? cs.ara : cs.muted} sub={"Hari ini"} />
+        <StatCard value={mutasiLoading ? "⟳" : belumMutasi} label="Belum Cek Mutasi" color={belumMutasi > 0 ? cs.red : cs.muted} sub={"Hari ini · PAID"} />
+        <StatCard value={allUnpaid} label="Piutang Total" color={allUnpaid > 0 ? cs.yellow : cs.muted} sub={fmtRp(allTimePaid) + " all-time"} />
       </div>
 
-      {/* Tabel */}
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, overflow: "auto" }}>
-        <div style={{ minWidth: 700 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1.1fr 1fr 1fr 1fr 1fr 0.65fr", gap: 8, padding: "10px 16px", borderBottom: "1px solid " + cs.border, fontSize: 10, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600 }}>
-            <div>Detail Job</div><div>Team</div><div>Status</div>
+      {/* Tabel — scroll horizontal di mobile */}
+      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, overflowX: "auto" }}>
+        <div style={{ minWidth: 720 }}>
+          {/* Header */}
+          <div style={{
+            display: "grid", gridTemplateColumns: "1.7fr 1.1fr 0.9fr 1fr 1fr 1fr 0.6fr",
+            gap: 8, padding: "10px 16px", borderBottom: "1px solid " + cs.border,
+            fontSize: 10, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600,
+          }}>
+            <div>Detail Job</div><div>Team</div><div>Status Order</div>
             <div>Invoice Value</div><div>Invoice Status</div><div>Bukti Bayar</div>
-            <div style={{ textAlign: "center" }}>Cek Mutasi {mutasiLoading ? "⟳" : ""}</div>
+            <div style={{ textAlign: "center" }}>Mutasi {mutasiLoading ? "⟳" : "✓"}</div>
           </div>
 
-          {rows.length === 0 && (
-            <div style={{ padding: "40px 16px", textAlign: "center", color: cs.muted, fontSize: 13 }}>
+          {rows.length === 0 ? (
+            <div style={{ padding: "48px 16px", textAlign: "center", color: cs.muted, fontSize: 13 }}>
               Tidak ada order pada tanggal ini
             </div>
-          )}
-
-          {rows.map(({ order, inv }) => {
+          ) : rows.map(({ order, inv }) => {
             const isPaid = inv?.status === "PAID";
+            const isGratis = isPaid && (inv?.total === 0 || inv?.repair_gratis);
             const hasProof = !!inv?.payment_proof_url && inv.payment_proof_url !== "verified-no-proof";
             const isVerifiedManual = inv?.payment_proof_url === "verified-no-proof";
             const isComplain = (order.service || "").toLowerCase().includes("complain");
+            const isMutasiChecked = !!mutasiChecked[order.id]?.checked;
+            const isSaving = savingId === order.id;
+
             return (
-              <div key={order.id} style={{ display: "grid", gridTemplateColumns: "1.7fr 1.1fr 1fr 1fr 1fr 1fr 0.65fr", gap: 8, padding: "13px 16px", borderBottom: "1px solid " + cs.border + "80", alignItems: "center" }}>
-                {/* Job */}
+              <div key={order.id} style={{
+                display: "grid", gridTemplateColumns: "1.7fr 1.1fr 0.9fr 1fr 1fr 1fr 0.6fr",
+                gap: 8, padding: "12px 16px", borderBottom: "1px solid " + cs.border + "80", alignItems: "center",
+              }}>
+                {/* Detail Job */}
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 13, color: isComplain ? cs.red : cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {order.customer}
                   </div>
                   <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
-                    {order.service} · {order.units || 1} unit · {(order.time || "").slice(0, 5)}
+                    {order.service} · {order.units || 1} unit{order.time ? " · " + (order.time || "").slice(0, 5) : ""}
                   </div>
                 </div>
+
                 {/* Team */}
                 <div>
-                  <div style={{ fontSize: 12 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: cs.accent, display: "inline-block", marginRight: 6 }} />
-                    {order.teknisi || "—"}
+                  <div style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: cs.accent, flexShrink: 0, display: "inline-block" }} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{order.teknisi || "—"}</span>
                   </div>
-                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>
-                    {order.helper ? "🪙 " + order.helper : "—"}
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {order.helper ? "🪙 " + order.helper : "— tanpa helper"}
                   </div>
                 </div>
+
                 {/* Order Status */}
                 <div>{orderStatusBadge(order.status)}</div>
-                {/* Invoice Value */}
-                <div style={{ fontWeight: 700, color: inv?.total ? cs.green : cs.muted, fontSize: 13 }}>
-                  {inv?.total != null ? fmtRp(inv.total) : "—"}
+
+                {/* Invoice Value — fix: total=0 (gratis) tampil hijau, bukan abu */}
+                <div style={{
+                  fontWeight: 700, fontSize: 13,
+                  color: !inv ? cs.muted : isGratis ? cs.green : inv.total > 0 ? cs.green : cs.muted,
+                }}>
+                  {!inv ? "—" : isGratis ? "🎁 Gratis" : fmtRp(inv.total)}
                 </div>
+
                 {/* Invoice Status */}
                 <div>{invStatusBadge(inv?.status)}</div>
+
                 {/* Bukti Bayar */}
                 <div>
                   {isPaid && hasProof ? (
                     <button
                       onClick={() => setPaymentProofModal({ url: inv.payment_proof_url, customer: order.customer })}
-                      style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "66", color: cs.accent, padding: "5px 10px", borderRadius: 7, fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
-                      📎 Lihat
+                      style={{ background: cs.green + "18", border: "1px solid " + cs.green + "44", color: cs.green, padding: "5px 10px", borderRadius: 7, fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                      📷 Lihat
                     </button>
                   ) : isPaid && isVerifiedManual ? (
                     <span style={{ fontSize: 11, color: "#0ea5e9", fontWeight: 600 }}>✅ Manual</span>
+                  ) : isPaid && isGratis ? (
+                    <span style={{ fontSize: 11, color: cs.green, fontWeight: 600 }}>🎁 Gratis</span>
                   ) : isPaid ? (
-                    <span style={{ fontSize: 11, color: cs.muted }}>📎 Belum upload</span>
+                    <span style={{ fontSize: 11, color: cs.yellow }}>📎 Belum upload</span>
                   ) : (
                     <span style={{ fontSize: 11, color: cs.border }}>—</span>
                   )}
                 </div>
+
                 {/* Cek Mutasi */}
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                  {savingId === order.id ? (
-                    <div style={{ width: 28, height: 28, borderRadius: 7, border: "2px solid " + cs.accent, background: cs.surface, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: cs.accent }}>⟳</div>
+                  {isSaving ? (
+                    <div style={{
+                      width: 28, height: 28, borderRadius: 7,
+                      border: "2px solid " + cs.accent, background: cs.surface,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 11, color: cs.accent,
+                    }}>⟳</div>
                   ) : (
                     <button
                       onClick={() => toggleMutasi(order.id, inv?.id)}
-                      title={mutasiChecked[order.id]?.checked
+                      title={isMutasiChecked
                         ? "Dicek oleh " + (mutasiChecked[order.id]?.checked_by || "?") + " · klik untuk batal"
                         : "Klik untuk tandai sudah cek mutasi"}
                       style={{
                         width: 28, height: 28, borderRadius: 7,
-                        border: "2px solid " + (mutasiChecked[order.id]?.checked ? cs.green : cs.border),
-                        background: mutasiChecked[order.id]?.checked ? cs.green : cs.surface,
-                        color: mutasiChecked[order.id]?.checked ? "#fff" : cs.muted,
+                        border: "2px solid " + (isMutasiChecked ? cs.green : cs.border),
+                        background: isMutasiChecked ? cs.green : cs.surface,
+                        color: isMutasiChecked ? "#fff" : cs.muted,
                         cursor: "pointer", fontWeight: 700, fontSize: 15,
                         display: "flex", alignItems: "center", justifyContent: "center",
                         transition: "all 0.15s",
                       }}>
-                      {mutasiChecked[order.id]?.checked ? "✓" : "○"}
+                      {isMutasiChecked ? "✓" : "○"}
                     </button>
                   )}
-                  {mutasiChecked[order.id]?.checked && mutasiChecked[order.id]?.checked_by && (
+                  {isMutasiChecked && mutasiChecked[order.id]?.checked_by && (
                     <div style={{ fontSize: 9, color: cs.green, textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {mutasiChecked[order.id].checked_by}
                     </div>
@@ -244,46 +312,80 @@ const DashboardTab = ({ ordersData, invoicesData, allInvoices, currentDate, onPr
           })}
         </div>
       </div>
+
+      {/* Total footer */}
+      {rows.length > 0 && (
+        <div style={{ marginTop: 10, padding: "10px 16px", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+          <span style={{ color: cs.muted }}>{rows.length} order · {todayPaid.length} PAID · {belumMutasi} belum mutasi</span>
+          <span style={{ fontWeight: 700, color: cs.green }}>{fmtRp(todayPemasukan)}</span>
+        </div>
+      )}
     </div>
   );
 };
 
 // ─── Financial Planning Tab ──────────────────────────────────────
 const PlanningTab = ({ allInvoices, allExpenses }) => {
-  const [targetBulan, setTargetBulan] = useState(100000000);
+  const [targetBulan, setTargetBulan] = useState(loadTarget);
 
-  // Ambil bulan berjalan
-  const now = new Date();
-  const bulanIni = now.toISOString().slice(0, 7); // "2026-05"
+  // bulanIni dalam WIB — reaktif via useMemo bukan top-level const
+  const bulanIni = useMemo(() => getLocalDate().slice(0, 7), []);
+  const bulanLabel = useMemo(() => {
+    const d = new Date(bulanIni + "-01T00:00:00+07:00");
+    return d.toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+  }, [bulanIni]);
+
+  // Persist target ke localStorage saat berubah
+  const handleTargetChange = (val) => {
+    const n = Number(val);
+    setTargetBulan(n);
+    saveTarget(n);
+  };
 
   const paidThisMonth = useMemo(() =>
-    (allInvoices || []).filter(i => i.status === "PAID" && (i.paid_at || i.created_at || "").slice(0, 7) === bulanIni),
-    [allInvoices, bulanIni]);
+    (allInvoices || []).filter(i =>
+      i.status === "PAID" && (i.paid_at || i.created_at || "").slice(0, 7) === bulanIni
+    ), [allInvoices, bulanIni]);
 
-  const totalIn = paidThisMonth.reduce((s, i) => s + (i.total || 0), 0);
-  const totalOut = useMemo(() =>
-    (allExpenses || []).filter(e => (e.date || e.created_at || "").slice(0, 7) === bulanIni).reduce((s, e) => s + (e.amount || 0), 0),
+  const totalIn = useMemo(() =>
+    paidThisMonth.reduce((s, i) => s + (i.total || 0), 0),
+    [paidThisMonth]);
+
+  const expensesBulanIni = useMemo(() =>
+    (allExpenses || []).filter(e => (e.date || e.created_at || "").slice(0, 7) === bulanIni),
     [allExpenses, bulanIni]);
 
-  const totalInAll = (allInvoices || []).filter(i => i.status === "PAID").reduce((s, i) => s + (i.total || 0), 0);
-  const totalOutAll = (allExpenses || []).reduce((s, e) => s + (e.amount || 0), 0);
-  const netProfitAll = totalInAll - totalOutAll;
+  const totalOut = useMemo(() =>
+    expensesBulanIni.reduce((s, e) => s + (e.amount || 0), 0),
+    [expensesBulanIni]);
+
+  const totalInAll = useMemo(() =>
+    (allInvoices || []).filter(i => i.status === "PAID").reduce((s, i) => s + (i.total || 0), 0),
+    [allInvoices]);
+
+  const totalOutAll = useMemo(() =>
+    (allExpenses || []).reduce((s, e) => s + (e.amount || 0), 0),
+    [allExpenses]);
 
   const netProfit = totalIn - totalOut;
+  const netProfitAll = totalInAll - totalOutAll;
   const pct = targetBulan > 0 ? Math.min(100, (totalIn / targetBulan) * 100) : 0;
-  const unpaidCount = (allInvoices || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
-  const overdueCount = (allInvoices || []).filter(i => i.status === "OVERDUE").length;
+  const unpaidCount = useMemo(() =>
+    (allInvoices || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length,
+    [allInvoices]);
+  const overdueCount = useMemo(() =>
+    (allInvoices || []).filter(i => i.status === "OVERDUE").length,
+    [allInvoices]);
 
-  // Breakdown pengeluaran bulan ini by subcategory
-  const expensesBulanIni = (allExpenses || []).filter(e => (e.date || e.created_at || "").slice(0, 7) === bulanIni);
-  const expByCategory = expensesBulanIni.reduce((acc, e) => {
-    const kat = e.subcategory || e.category || "Lain-lain";
-    acc[kat] = (acc[kat] || 0) + (e.amount || 0);
-    return acc;
-  }, {});
-  const topExpenses = Object.entries(expByCategory).sort((a, b) => b[1] - a[1]).slice(0, 5);
-
-  const bulanLabel = now.toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+  // Breakdown pengeluaran bulan ini by subcategory (data real dari DB)
+  const topExpenses = useMemo(() => {
+    const acc = {};
+    expensesBulanIni.forEach(e => {
+      const kat = e.subcategory || e.category || "Lain-lain";
+      acc[kat] = (acc[kat] || 0) + (e.amount || 0);
+    });
+    return Object.entries(acc).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }, [expensesBulanIni]);
 
   return (
     <div>
@@ -291,29 +393,33 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
       <div style={{ background: "linear-gradient(135deg," + cs.accent + "12," + cs.ara + "08)", border: "1px solid " + cs.accent + "33", borderRadius: 12, padding: 18, marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
           <div>
-            <div style={{ fontSize: 11, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Target Pemasukan — {bulanLabel} (klik untuk edit)</div>
+            <div style={{ fontSize: 11, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+              Target Pemasukan — {bulanLabel} <span style={{ color: cs.accent }}>(klik untuk edit)</span>
+            </div>
             <input
               type="number"
               value={targetBulan}
-              onChange={e => setTargetBulan(Number(e.target.value))}
-              style={{ background: "transparent", border: "none", color: cs.accent, fontSize: 20, fontWeight: 700, width: 220, outline: "none" }} />
+              onChange={e => handleTargetChange(e.target.value)}
+              style={{ background: "transparent", border: "none", color: cs.accent, fontSize: 20, fontWeight: 700, width: 240, outline: "none" }} />
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Target tersimpan otomatis</div>
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 11, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Tercapai Bulan Ini</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: cs.green }}>{fmtRp(totalIn)}</div>
-            <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{pct.toFixed(1)}% dari target</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: cs.green }}>{fmtRp(totalIn)}</div>
+            <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{pct.toFixed(1)}% dari target · {paidThisMonth.length} invoice</div>
           </div>
         </div>
         <div style={{ height: 8, background: cs.surface, borderRadius: 4, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: pct + "%", background: "linear-gradient(90deg," + cs.green + ",#16a34a)", borderRadius: 4, transition: "width 0.5s" }} />
+          <div style={{ height: "100%", width: pct + "%", background: pct >= 100 ? "linear-gradient(90deg," + cs.green + ",#16a34a)" : "linear-gradient(90deg," + cs.accent + "," + cs.ara + ")", borderRadius: 4, transition: "width 0.5s" }} />
         </div>
         <div style={{ fontSize: 11, color: cs.muted, marginTop: 6 }}>
           Sisa target: {fmtRp(Math.max(0, targetBulan - totalIn))}
+          {pct >= 100 && <span style={{ color: cs.green, fontWeight: 700, marginLeft: 8 }}>🎉 Target tercapai!</span>}
         </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 14 }}>
-        {/* Ringkasan Bulan Ini */}
+        {/* Ringkasan Keuangan */}
         <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 18 }}>
           <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>📊 Ringkasan — {bulanLabel}</div>
           {[
@@ -322,31 +428,39 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
             { label: "Net Profit Bulan Ini", value: fmtRp(netProfit), color: netProfit >= 0 ? cs.green : cs.red },
             { label: "Profit Margin", value: totalIn > 0 ? ((netProfit / totalIn) * 100).toFixed(1) + "%" : "—", color: cs.accent },
           ].map(r => (
-            <div key={r.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid " + cs.border + "80" }}>
+            <div key={r.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid " + cs.border + "80" }}>
               <span style={{ fontSize: 12, color: cs.muted }}>{r.label}</span>
               <span style={{ fontWeight: 700, color: r.color, fontSize: 13 }}>{r.value}</span>
             </div>
           ))}
-          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid " + cs.border, fontSize: 12, color: cs.muted }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>Net Profit All-Time</span>
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid " + cs.border }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+              <span style={{ color: cs.muted }}>Net Profit All-Time</span>
               <span style={{ fontWeight: 700, color: netProfitAll >= 0 ? cs.green : cs.red }}>{fmtRp(netProfitAll)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginTop: 6 }}>
+              <span style={{ color: cs.muted }}>Total Pengeluaran All-Time</span>
+              <span style={{ fontWeight: 700, color: cs.red }}>{fmtRp(totalOutAll)}</span>
             </div>
           </div>
         </div>
 
-        {/* Top Pengeluaran */}
+        {/* Top Pengeluaran Bulan Ini */}
         <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 18 }}>
           <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>💸 Top Pengeluaran — {bulanLabel}</div>
           {topExpenses.length === 0 ? (
-            <div style={{ color: cs.muted, fontSize: 13, textAlign: "center", padding: "24px 0" }}>Belum ada pengeluaran bulan ini</div>
+            <div style={{ color: cs.muted, fontSize: 13, textAlign: "center", padding: "28px 0" }}>
+              Belum ada pengeluaran bulan ini
+            </div>
           ) : topExpenses.map(([kat, total]) => {
             const pctOut = totalOut > 0 ? (total / totalOut * 100) : 0;
             return (
               <div key={kat} style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                  <span style={{ color: cs.text }}>{kat}</span>
-                  <span style={{ color: cs.red, fontWeight: 700 }}>{fmtRp(total)} <span style={{ color: cs.muted, fontWeight: 400 }}>({pctOut.toFixed(0)}%)</span></span>
+                  <span style={{ color: cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "55%" }}>{kat}</span>
+                  <span style={{ color: cs.red, fontWeight: 700 }}>
+                    {fmtRp(total)} <span style={{ color: cs.muted, fontWeight: 400 }}>({pctOut.toFixed(0)}%)</span>
+                  </span>
                 </div>
                 <div style={{ height: 6, background: cs.surface, borderRadius: 4, overflow: "hidden" }}>
                   <div style={{ height: "100%", width: Math.min(100, pctOut) + "%", background: "linear-gradient(90deg," + cs.red + ",#b91c1c)", borderRadius: 4 }} />
@@ -354,10 +468,16 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
               </div>
             );
           })}
+          {expensesBulanIni.length > 0 && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid " + cs.border + "80", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: cs.muted }}>{expensesBulanIni.length} transaksi</span>
+              <span style={{ fontWeight: 700, color: cs.red }}>{fmtRp(totalOut)} total</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Rekomendasi */}
+      {/* Rekomendasi Finance */}
       <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 18 }}>
         <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>💡 Rekomendasi Finance</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
@@ -365,21 +485,29 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
             <div style={{ fontWeight: 700, color: pct >= 100 ? cs.green : cs.accent, fontSize: 13, marginBottom: 4 }}>
               {pct >= 100 ? "🎉 Target Tercapai!" : "📈 Progress Target"}
             </div>
-            <div style={{ fontSize: 12, color: cs.muted }}>{pct.toFixed(1)}% dari target {bulanLabel}. {pct >= 100 ? "Luar biasa!" : "Terus tingkatkan performa."}</div>
+            <div style={{ fontSize: 12, color: cs.muted }}>
+              {pct.toFixed(1)}% dari target {bulanLabel}. {pct >= 100 ? "Luar biasa!" : "Terus tingkatkan performa."}
+            </div>
           </div>
           <div style={{ background: cs.accent + "0d", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: 12 }}>
             <div style={{ fontWeight: 700, color: cs.accent, fontSize: 13, marginBottom: 4 }}>💰 Sisihkan Saving</div>
-            <div style={{ fontSize: 12, color: cs.muted }}>20% dari net profit = {fmtRp(Math.max(0, Math.round(netProfit * 0.2)))} untuk dana darurat.</div>
+            <div style={{ fontSize: 12, color: cs.muted }}>
+              20% dari net profit = {fmtRp(Math.max(0, Math.round(netProfit * 0.2)))} untuk dana darurat.
+            </div>
           </div>
           <div style={{ background: overdueCount > 0 ? cs.red + "0d" : cs.yellow + "0d", border: "1px solid " + (overdueCount > 0 ? cs.red : cs.yellow) + "33", borderRadius: 10, padding: 12 }}>
             <div style={{ fontWeight: 700, color: overdueCount > 0 ? cs.red : cs.yellow, fontSize: 13, marginBottom: 4 }}>
               {overdueCount > 0 ? "🚨 Ada Invoice Overdue!" : "⚠️ Piutang Beredar"}
             </div>
-            <div style={{ fontSize: 12, color: cs.muted }}>{unpaidCount} UNPAID · {overdueCount} OVERDUE. Lakukan follow-up segera.</div>
+            <div style={{ fontSize: 12, color: cs.muted }}>
+              {unpaidCount} UNPAID · {overdueCount} OVERDUE. Lakukan follow-up segera.
+            </div>
           </div>
           <div style={{ background: cs.ara + "0d", border: "1px solid " + cs.ara + "33", borderRadius: 10, padding: 12 }}>
             <div style={{ fontWeight: 700, color: cs.ara, fontSize: 13, marginBottom: 4 }}>📋 Cek Mutasi Rutin</div>
-            <div style={{ fontSize: 12, color: cs.muted }}>Verifikasi semua invoice PAID di rekening setiap hari kerja.</div>
+            <div style={{ fontSize: 12, color: cs.muted }}>
+              Verifikasi semua invoice PAID di rekening setiap hari kerja.
+            </div>
           </div>
         </div>
       </div>
@@ -391,8 +519,12 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
 const ProofModal = ({ modal, onClose }) => {
   if (!modal) return null;
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 16, padding: 24, maxWidth: 500, width: "90%", maxHeight: "85vh", overflow: "auto" }} onClick={e => e.stopPropagation()}>
+    <div
+      style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={onClose}>
+      <div
+        style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 16, padding: 24, maxWidth: 500, width: "90%", maxHeight: "85vh", overflow: "auto" }}
+        onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <div style={{ fontWeight: 700, fontSize: 15 }}>📎 Bukti Pembayaran</div>
           <button onClick={onClose} style={{ background: "transparent", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
@@ -401,8 +533,10 @@ const ProofModal = ({ modal, onClose }) => {
         {modal.url && modal.url !== "verified-no-proof" ? (
           <img src={modal.url} alt="Bukti bayar" style={{ width: "100%", borderRadius: 8, objectFit: "contain", maxHeight: 500 }} />
         ) : (
-          <div style={{ textAlign: "center", color: cs.muted, padding: "40px 0" }}>
-            {modal.url === "verified-no-proof" ? "✅ Dikonfirmasi secara manual oleh admin" : "Belum ada bukti yang diupload"}
+          <div style={{ textAlign: "center", color: cs.muted, padding: "40px 0", fontSize: 13 }}>
+            {modal.url === "verified-no-proof"
+              ? "✅ Dikonfirmasi secara manual oleh admin"
+              : "Belum ada bukti yang diupload"}
           </div>
         )}
       </div>
@@ -416,23 +550,12 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
   const [paymentProofModal, setPaymentProofModal] = useState(null);
   const [dateOffset, setDateOffset] = useState(0);
 
-  const currentDate = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + dateOffset);
-    return d.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-  }, [dateOffset]);
-
-  const todayStr = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + dateOffset);
-    return d.toISOString().slice(0, 10);
-  }, [dateOffset]);
+  // Gunakan WIB helper — bukan toISOString() mentah yang UTC
+  const todayStr = useMemo(() => getWIBDateStr(dateOffset), [dateOffset]);
+  const currentDate = useMemo(() => getWIBDateLabel(dateOffset), [dateOffset]);
 
   const filteredOrders = useMemo(() =>
-    (ordersData || []).filter(o => {
-      const dateVal = o.date || "";
-      return dateVal.slice(0, 10) === todayStr;
-    }),
+    (ordersData || []).filter(o => (o.date || "").slice(0, 10) === todayStr),
     [ordersData, todayStr]);
 
   const filteredInvoices = useMemo(() => {
@@ -442,6 +565,23 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
 
   return (
     <div style={{ color: cs.text, fontFamily: "system-ui,-apple-system,sans-serif" }}>
+      {/* Header greeting */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: cs.text }}>
+            💰 Finance Dashboard
+          </div>
+          <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>
+            Selamat datang, <span style={{ color: cs.accent, fontWeight: 600 }}>{currentUser?.name || "Finance"}</span>
+            {" · "}{getLocalDate()}
+          </div>
+        </div>
+        <div style={{ fontSize: 11, color: cs.muted, textAlign: "right" }}>
+          {(invoicesData || []).filter(i => i.status === "PAID").length} invoice PAID
+          {" · "}{(invoicesData || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length} belum lunas
+        </div>
+      </div>
+
       {/* Tab Bar */}
       <div style={{ display: "flex", gap: 2, marginBottom: 18, borderBottom: "1px solid " + cs.border, overflowX: "auto" }}>
         {TABS.map(t => (
@@ -465,6 +605,7 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
           ordersData={filteredOrders}
           invoicesData={filteredInvoices}
           allInvoices={invoicesData}
+          todayStr={todayStr}
           currentDate={currentDate}
           onPrevDay={() => setDateOffset(d => d - 1)}
           onNextDay={() => setDateOffset(d => d + 1)}
