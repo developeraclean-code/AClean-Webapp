@@ -17,6 +17,7 @@ const [editUnitVal, setEditUnitVal] = useState("");   // nilai stok baru
 const [showArchived, setShowArchived] = useState(false); // tampilkan unit archived
 const [archiveReason, setArchiveReason] = useState(""); // alasan archive (optional)
 const [confirmArchiveId, setConfirmArchiveId] = useState(null); // unit.id yang menunggu konfirmasi archive
+const [archiveTabFilter, setArchiveTabFilter] = useState("aktif"); // "aktif" | "diarsipkan" | "semua"
 
 // ── State untuk freon timbang adjustment ──
 const [historyUnitId, setHistoryUnitId] = useState(null); // unit.id yang popup riwayatnya terbuka
@@ -245,11 +246,48 @@ return (
       </button>
     </div>
 
+    {/* ── Sub-tab Filter: Aktif / Diarsipkan / Semua ── */}
+    {isOwnerAdmin && (
+      <div style={{ display: "flex", gap: 8, borderBottom: "1px solid " + cs.border, paddingBottom: 12 }}>
+        {[
+          { id: "aktif", label: "✅ Aktif", icon: "📦" },
+          { id: "diarsipkan", label: "🗄️ Diarsipkan", icon: "" },
+          { id: "semua", label: "📋 Semua", icon: "" },
+        ].map(tab => (
+          <button key={tab.id}
+            onClick={() => setArchiveTabFilter(tab.id)}
+            style={{
+              padding: "8px 14px",
+              border: "none",
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              background: archiveTabFilter === tab.id ? cs.accent : "transparent",
+              color: archiveTabFilter === tab.id ? "#fff" : cs.muted,
+              transition: "all 0.2s",
+            }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+    )}
+
     {/* ── Daftar Material — satu card per item ── */}
     {TRACK_ITEMS.map(item => {
       const units = invUnitsData.filter(u => u.inventory_code === item.code);
       const activeUnits = units.filter(u => !u.archived);
       const archivedUnits = units.filter(u => u.archived);
+
+      // Apply filter berdasarkan tab
+      let displayUnits = [];
+      if (archiveTabFilter === "aktif") displayUnits = activeUnits;
+      else if (archiveTabFilter === "diarsipkan") displayUnits = archivedUnits;
+      else displayUnits = units; // "semua"
+
+      // Skip card jika tidak ada unit yang match filter
+      if (displayUnits.length === 0) return null;
+
       const totalStok = activeUnits.reduce((s, u) => s + (u.stock || 0), 0);
       const totalKap  = activeUnits.reduce((s, u) => s + (u.capacity || 0), 0);
       const usedAll   = invTxData.filter(tx => tx.qty < 0 && tx.inventory_code === item.code).reduce((s,tx) => s + Math.abs(tx.qty), 0);
@@ -271,7 +309,13 @@ return (
                 <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: itemCol + "22", color: itemCol }}>{statusLabel}</span>
               </div>
               <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>
-                {activeUnits.length} unit aktif · Terpakai total: <b style={{ color: cs.text }}>{usedAll.toFixed(1)} {item.unit}</b>
+                {archiveTabFilter === "diarsipkan" ? (
+                  <>{archivedUnits.length} unit diarsipkan</>
+                ) : archiveTabFilter === "semua" ? (
+                  <>{units.length} unit (aktif + arsip) · Terpakai total: <b style={{ color: cs.text }}>{usedAll.toFixed(1)} {item.unit}</b></>
+                ) : (
+                  <>{activeUnits.length} unit aktif · Terpakai total: <b style={{ color: cs.text }}>{usedAll.toFixed(1)} {item.unit}</b></>
+                )}
               </div>
             </div>
             {/* Stok total + bar */}
@@ -284,8 +328,8 @@ return (
                 <div style={{ height: "100%", width: pctTotal + "%", background: itemCol, borderRadius: 99, transition: "width .4s" }} />
               </div>
             </div>
-            {/* Tombol + tambah */}
-            {isOwnerAdmin && (
+            {/* Tombol + tambah (hanya di tab aktif/semua) */}
+            {isOwnerAdmin && (archiveTabFilter === "aktif" || archiveTabFilter === "semua") && (
               <button onClick={() => { setAddUnitFor(isAddingHere ? null : item.code); setAddUnitForm({ label: "", capacity: "", minVisible: "" }); }}
                 style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, background: isAddingHere ? cs.red + "22" : cs.accent + "22", border: "1px solid " + (isAddingHere ? cs.red : cs.accent) + "55", color: isAddingHere ? cs.red : cs.accent, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>
                 {isAddingHere ? "✕ Batal" : "+ Tambah Unit"}
@@ -325,13 +369,13 @@ return (
             </div>
           )}
 
-          {/* ── Grid unit aktif ── */}
+          {/* ── Grid unit sesuai filter ── */}
           <div style={{ padding: "12px 18px", display: "grid", gap: 8 }}>
-            {activeUnits.length === 0 ? (
+            {displayUnits.length === 0 ? (
               <div style={{ fontSize: 12, color: cs.muted, textAlign: "center", padding: "16px 0" }}>
-                Belum ada unit fisik. {isOwnerAdmin ? "Klik \"+ Tambah Unit\" untuk menambah." : ""}
+                {archiveTabFilter === "diarsipkan" ? "Belum ada unit yang diarsipkan." : "Belum ada unit fisik. " + (isOwnerAdmin ? "Klik \"+ Tambah Unit\" untuk menambah." : "")}
               </div>
-            ) : activeUnits.map(unit => {
+            ) : displayUnits.map(unit => {
               const pct = unit.capacity > 0 ? Math.min(100, Math.round(unit.stock / unit.capacity * 100)) : 0;
               const col = !unit.is_active ? cs.muted
                 : unit.stock <= 0 ? "#ef4444"
@@ -457,8 +501,8 @@ return (
                 })}
           </div>
 
-          {/* ── Unit Archived ── */}
-          {archivedUnits.length > 0 && isOwnerAdmin && (
+          {/* ── Unit Archived (hanya tampil di tab "aktif" & "semua", tapi collapsed) ── */}
+          {archivedUnits.length > 0 && isOwnerAdmin && (archiveTabFilter === "aktif" || archiveTabFilter === "semua") && (
             <div style={{ borderTop: "1px solid " + cs.border, padding: "8px 18px" }}>
               <button onClick={() => setShowArchived(v => !v)}
                 style={{ fontSize: 11, color: cs.muted, background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
