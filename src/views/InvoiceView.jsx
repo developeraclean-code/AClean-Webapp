@@ -1,11 +1,13 @@
 import { memo, useState, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
+import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
+const [showAcUnitModal, setShowAcUnitModal] = useState(false);
 
 // Deteksi customer dengan multi-invoice unpaid untuk Group Payment
 const multiInvoiceCustomers = useMemo(() => {
@@ -24,6 +26,10 @@ return (
   <div style={{ display: "grid", gap: 14 }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
       <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>🧾 Invoice <span style={{ fontSize: 13, color: cs.muted, fontWeight: 400 }}>({filteredInv.length})</span></div>
+      <button onClick={() => setShowAcUnitModal(true)} style={{
+        background: "#f59e0b22", border: "1px solid #f59e0b55", color: "#f59e0b",
+        padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12
+      }}>🛒 Jual Unit AC</button>
       <button onClick={() => { const unpaid = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE"); unpaid.forEach(inv => invoiceReminderWA(inv)); showNotif(`📨 Reminder dikirim ke ${unpaid.length} customer`); }}
         style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
         🔔 Kirim Reminder ({unpaidCnt})
@@ -652,6 +658,17 @@ return (
           style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid " + cs.border, background: curPgI === totPgI ? cs.surface : cs.card, color: curPgI === totPgI ? cs.muted : cs.text, cursor: curPgI === totPgI ? "not-allowed" : "pointer", fontSize: 12 }}>Next →</button>
         <span style={{ fontSize: 11, color: cs.muted }}>{filteredInv.length} invoice</span>
       </div>
+    )}
+
+    {showAcUnitModal && (
+      <AcUnitInvoiceModal
+        onClose={() => setShowAcUnitModal(false)}
+        supabase={supabase}
+        customersData={customersData || []}
+        showNotif={showNotif}
+        setInvoicesData={setInvoicesData}
+        getLocalDate={getLocalDate}
+      />
     )}
   </div>
 );

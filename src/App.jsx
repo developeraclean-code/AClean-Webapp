@@ -4833,7 +4833,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
       supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE}
       laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
-      apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx} />
+      apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx} customersData={customersData} />
   );
 
   // ============================================================

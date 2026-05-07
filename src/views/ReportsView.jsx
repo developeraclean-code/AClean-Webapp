@@ -58,7 +58,10 @@ const paidInv = allInv.filter(i => i.status === "PAID" && filterInvByPeriod(i));
 const unpaidInv = allInv.filter(i => i.status === "UNPAID");
 const overdueInv = allInv.filter(i => i.status === "OVERDUE");
 const pendingInv = allInv.filter(i => i.status === "PENDING_APPROVAL");
-const totalRevenue = paidInv.reduce((a, b) => a + (b.total || 0), 0);
+const totalRevenue = paidInv.reduce((a, b) => {
+  const passthrough = b.invoice_type === "ac_unit_sale" ? (b.unit_ac_amount || 0) : 0;
+  return a + (b.total || 0) - passthrough;
+}, 0);
 const totalLabor = paidInv.reduce((a, b) => a + (b.labor || 0), 0);
 const totalMaterial = paidInv.reduce((a, b) => a + (b.material || 0), 0);
 const totalDiscount = paidInv.reduce((a, b) => a + (b.discount || 0) + (b.trade_in ? (b.trade_in_amount || 0) : 0), 0);
