@@ -289,19 +289,18 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
         .insert(invoicePayload);
       if (invErr) throw invErr;
 
-      // Build invoice_items rows — kolom: invoice_id, item_type, description, qty, unit_price, subtotal
+      // Build invoice_items rows — subtotal adalah generated column (qty*unit_price), jangan di-insert
       const items = [];
 
       // Unit AC rows (passthrough)
       acUnits.forEach(u => {
-        if (!u.brand || u.subtotal <= 0) return;
+        if (!u.brand || u.harga_satuan <= 0) return;
         items.push({
           invoice_id:  invoiceId,
           item_type:   "unit_ac",
           description: `${u.brand} ${u.tipe} ${u.kapasitas}${u.model ? " " + u.model : ""}`,
           qty:         u.qty,
           unit_price:  u.harga_satuan,
-          subtotal:    u.subtotal,
         });
       });
 
@@ -313,7 +312,6 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
           description: selectedPaket.label,
           qty:         1,
           unit_price:  selectedPaket.harga,
-          subtotal:    selectedPaket.harga,
         });
       }
 
@@ -326,7 +324,6 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
           description: j.nama,
           qty:         1,
           unit_price:  j.subtotal,
-          subtotal:    j.subtotal,
         });
       });
 
@@ -339,7 +336,6 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
           description: m.nama,
           qty:         1,
           unit_price:  m.subtotal,
-          subtotal:    m.subtotal,
         });
       });
 
@@ -352,7 +348,6 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
           description: `${a.nama} (${a.satuan})`,
           qty:         a.qty,
           unit_price:  a.harga,
-          subtotal:    a.qty * a.harga,
         });
       });
 

@@ -83,7 +83,10 @@ function jobDate(inv) {
 
 const todayOrders = ordersData.filter(o => o.date === TODAY);
 const unpaidCount = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
-const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(bulanIni)).reduce((a, b) => a + b.total, 0);
+const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(bulanIni)).reduce((a, b) => {
+  const passthrough = b.invoice_type === "ac_unit_sale" ? (b.unit_ac_amount || 0) : 0;
+  return a + (b.total || 0) - passthrough;
+}, 0);
 const lowStock = inventoryData.filter(i => i.status === "CRITICAL" || i.status === "OUT").length;
 const garansiKritisD = invoicesData.filter(inv => {
   if (!inv.garansi_expires) return false;
