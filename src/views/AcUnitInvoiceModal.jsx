@@ -238,6 +238,7 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
     setSaving(true);
     try {
       const today = getLocalDate?.() || new Date().toISOString().slice(0, 10);
+      const invoiceId = "INV-" + today.replace(/-/g, "") + "-" + Math.random().toString(36).toUpperCase().slice(2, 7);
 
       // Tentukan status pembayaran
       let status = "UNPAID";
@@ -262,6 +263,7 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
 
       // Build invoice row — hanya kolom yang ada di tabel invoices
       const invoicePayload = {
+        id:              invoiceId,
         invoice_type:    "ac_unit_sale",
         status,
         paid_at:         paidAt,
@@ -282,14 +284,10 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
         paid_method:     dpMode !== "nanti" ? payMethod : null,
       };
 
-      const { data: inv, error: invErr } = await supabase
+      const { error: invErr } = await supabase
         .from("invoices")
-        .insert(invoicePayload)
-        .select("id")
-        .single();
+        .insert(invoicePayload);
       if (invErr) throw invErr;
-
-      const invoiceId = inv.id;
 
       // Build invoice_items rows — kolom: invoice_id, item_type, description, qty, unit_price, subtotal
       const items = [];
