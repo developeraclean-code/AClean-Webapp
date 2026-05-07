@@ -1362,7 +1362,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     "AC Split Duct 3PK",
     "AC Split Duct 3.5PK",
     "AC Split Duct 4PK",
-    "AC Split Duct 5PK"
+    "AC Split Duct 5PK",
+    "AC Split Duct 6PK"
   ];
   const SATUAN_OPT = ["pcs", "kg", "liter", "meter", "set", "titik", "roll"];
 
