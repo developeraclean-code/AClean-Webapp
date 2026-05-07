@@ -18,13 +18,16 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS unit_ac_amount bigint DEFAULT 0;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paket_pasang jsonb DEFAULT NULL;
 
 -- ─────────────────────────────────────────────────────────────
--- 2. invoice_items.item_type — sudah ada kolomnya, dokumentasikan nilai yang valid:
---    'unit_ac'  → passthrough unit AC (tidak masuk omset AClean)
---    'paket'    → paket pemasangan (masuk omset AClean)
---    'addon'    → material add-on post-install (masuk omset AClean)
---    'jasa'     → jasa manual jika tanpa paket (masuk omset AClean)
---    'material' → material manual jika tanpa paket (masuk omset AClean)
--- Kolom sudah ada sejak sebelumnya, tidak perlu ALTER.
+-- 2. invoice_items.item_type — expand constraint untuk nilai AC unit invoice
+--    Nilai lama: 'labor', 'material', 'additional'
+--    Nilai baru: + 'unit_ac', 'paket', 'jasa', 'addon'
+-- ─────────────────────────────────────────────────────────────
+ALTER TABLE invoice_items DROP CONSTRAINT IF EXISTS invoice_items_item_type_check;
+ALTER TABLE invoice_items ADD CONSTRAINT invoice_items_item_type_check
+  CHECK (item_type = ANY (ARRAY[
+    'labor'::text, 'material'::text, 'additional'::text,
+    'unit_ac'::text, 'paket'::text, 'jasa'::text, 'addon'::text
+  ]));
 
 -- ─────────────────────────────────────────────────────────────
 -- 3. app_settings — seed data paket pemasangan default
