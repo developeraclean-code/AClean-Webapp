@@ -1,11 +1,22 @@
-import { memo, useState } from "react";
+import { memo, useState, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
+
+// Deteksi customer dengan multi-invoice unpaid untuk Group Payment
+const multiInvoiceCustomers = useMemo(() => {
+  const phoneMap = {};
+  invoicesData.forEach(inv => {
+    if (!inv.phone || !["UNPAID","OVERDUE","PARTIAL_PAID"].includes(inv.status)) return;
+    if (!phoneMap[inv.phone]) phoneMap[inv.phone] = [];
+    phoneMap[inv.phone].push(inv);
+  });
+  return Object.entries(phoneMap).filter(([, arr]) => arr.length > 1);
+}, [invoicesData]);
 const totPgI = Math.ceil(filteredInv.length / INV_PAGE_SIZE) || 1;
 const curPgI = Math.min(invoicePage, totPgI);
 const pageInv = filteredInv.slice((curPgI - 1) * INV_PAGE_SIZE, curPgI * INV_PAGE_SIZE);
@@ -38,23 +49,28 @@ return (
             "Customer": inv.customer || "-", "No HP": inv.phone || "-",
             "Layanan": inv.service || "-", "Unit": Array.isArray(inv.units) ? inv.units.length : (inv.units || 1),
             "Status": inv.status || "-", "Total (Rp)": inv.total || 0,
+            "Dibayar (Rp)": inv.status === "PAID" ? (inv.total || 0) : (inv.paid_amount || 0),
+            "Sisa (Rp)": inv.status === "PARTIAL_PAID" ? (inv.remaining_amount ?? ((inv.total||0)-(inv.paid_amount||0))) : (["UNPAID","OVERDUE"].includes(inv.status) ? (inv.total||0) : 0),
             "Teknisi": inv.teknisi || "-",
             "Tgl Bayar": inv.paid_at ? new Date(inv.paid_at).toLocaleDateString("id-ID") : "-",
             "Metode Bayar": inv.paid_method || "-",
           }));
           const totalPaid = rows.filter(i => i.status === "PAID").reduce((s, i) => s + (i.total || 0), 0);
+          const totalPartial = rows.filter(i => i.status === "PARTIAL_PAID").reduce((s, i) => s + (i.paid_amount || 0), 0);
           const totalUnpaid = rows.filter(i => ["UNPAID", "OVERDUE"].includes(i.status)).reduce((s, i) => s + (i.total || 0), 0);
           const summary = [
             { "Keterangan": "Total Invoice", "Nilai": rows.length },
             { "Keterangan": "Invoice PAID", "Nilai": rows.filter(i => i.status === "PAID").length },
+            { "Keterangan": "Invoice PARTIAL", "Nilai": rows.filter(i => i.status === "PARTIAL_PAID").length },
             { "Keterangan": "Invoice UNPAID", "Nilai": rows.filter(i => i.status === "UNPAID").length },
             { "Keterangan": "Invoice OVERDUE", "Nilai": rows.filter(i => i.status === "OVERDUE").length },
             { "Keterangan": "Omset Terbayar (Rp)", "Nilai": totalPaid },
+            { "Keterangan": "Partial Terbayar (Rp)", "Nilai": totalPartial },
             { "Keterangan": "Belum Terbayar (Rp)", "Nilai": totalUnpaid },
           ];
           const wb = XLSX.utils.book_new();
           const ws1 = XLSX.utils.json_to_sheet(data);
-          ws1["!cols"] = [{ wch: 4 }, { wch: 22 }, { wch: 13 }, { wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 5 }, { wch: 15 }, { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+          ws1["!cols"] = [{ wch: 4 }, { wch: 22 }, { wch: 13 }, { wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 5 }, { wch: 15 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
           const ws2 = XLSX.utils.json_to_sheet(summary);
           ws2["!cols"] = [{ wch: 22 }, { wch: 16 }];
           XLSX.utils.book_append_sheet(wb, ws1, "Invoice");
@@ -174,25 +190,30 @@ return (
               "Discount (Rp)": inv.discount || 0,
               "Trade-In (Rp)": inv.trade_in ? (inv.trade_in_amount || 0) : 0,
               "Total (Rp)": inv.total || 0,
+              "Dibayar (Rp)": inv.status === "PAID" ? (inv.total || 0) : (inv.paid_amount || 0),
+              "Sisa (Rp)": inv.status === "PARTIAL_PAID" ? (inv.remaining_amount ?? ((inv.total||0)-(inv.paid_amount||0))) : (["UNPAID","OVERDUE"].includes(inv.status) ? (inv.total||0) : 0),
               "Tgl Bayar": inv.paid_at ? new Date(inv.paid_at).toLocaleDateString("id-ID") : "-",
               "Metode Bayar": inv.paid_method || "-",
             }));
             const totalPaid = (rows || []).filter(i => i.status === "PAID").reduce((s, i) => s + (i.total || 0), 0);
+            const totalPartial = (rows || []).filter(i => i.status === "PARTIAL_PAID").reduce((s, i) => s + (i.paid_amount || 0), 0);
             const totalUnpaid = (rows || []).filter(i => ["UNPAID", "OVERDUE"].includes(i.status)).reduce((s, i) => s + (i.total || 0), 0);
             const totalDiskon = (rows || []).reduce((s, i) => s + (i.discount || 0) + (i.trade_in ? (i.trade_in_amount || 0) : 0), 0);
             const summary = [
               { "Keterangan": "Periode", "Nilai": label },
               { "Keterangan": "Total Invoice", "Nilai": (rows || []).length },
               { "Keterangan": "Invoice PAID", "Nilai": (rows || []).filter(i => i.status === "PAID").length },
+              { "Keterangan": "Invoice PARTIAL", "Nilai": (rows || []).filter(i => i.status === "PARTIAL_PAID").length },
               { "Keterangan": "Invoice UNPAID", "Nilai": (rows || []).filter(i => i.status === "UNPAID").length },
               { "Keterangan": "Invoice OVERDUE", "Nilai": (rows || []).filter(i => i.status === "OVERDUE").length },
               { "Keterangan": "Omset Terbayar (Rp)", "Nilai": totalPaid },
+              { "Keterangan": "Partial Terbayar (Rp)", "Nilai": totalPartial },
               { "Keterangan": "Belum Terbayar (Rp)", "Nilai": totalUnpaid },
               { "Keterangan": "Total Potongan/Diskon (Rp)", "Nilai": totalDiskon },
             ];
             const wb = XLSX.utils.book_new();
             const ws1 = XLSX.utils.json_to_sheet(data);
-            ws1["!cols"] = [{ wch: 4 }, { wch: 22 }, { wch: 13 }, { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 5 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 14 }];
+            ws1["!cols"] = [{ wch: 4 }, { wch: 22 }, { wch: 13 }, { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 5 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 14 }];
             const ws2 = XLSX.utils.json_to_sheet(summary);
             ws2["!cols"] = [{ wch: 24 }, { wch: 18 }];
             XLSX.utils.book_append_sheet(wb, ws1, "Invoice");
@@ -226,6 +247,7 @@ return (
         ["Hari Ini", "#f97316"],
         ["UNPAID", cs.yellow],
         ["OVERDUE", cs.red],
+        ["PARTIAL_PAID", "#06b6d4"],
         ["PAID", cs.green],
         ["PENDING_APPROVAL", cs.accent],
         ["Garansi", "#22d3ee"],
@@ -247,13 +269,42 @@ return (
               background: invoiceFilter === s ? col + "22" : cs.card, color: invoiceFilter === s ? col : cs.muted,
               cursor: "pointer", fontSize: 12, fontWeight: invoiceFilter === s ? 700 : 500, position: "relative"
             }}>
-            {s === "Semua" ? "Semua" : s === "PENDING_APPROVAL" ? "Approval" : s === "Garansi" ? "🛡️ Garansi" : s === "Tanpa Bukti" ? "⚠️ Tanpa Bukti" : s} ({cnt})
+            {s === "Semua" ? "Semua" : s === "PENDING_APPROVAL" ? "Approval" : s === "PARTIAL_PAID" ? "💳 Partial" : s === "Garansi" ? "🛡️ Garansi" : s === "Tanpa Bukti" ? "⚠️ Tanpa Bukti" : s} ({cnt})
             {showBadge && <span style={{ position: "absolute", top: -4, right: -4, background: "#ef4444", color: "#fff", borderRadius: 99, fontSize: 9, padding: "1px 5px", fontWeight: 800 }}>{garansiKritis.length}</span>}
             {showTanpaBuktiBadge && <span style={{ position: "absolute", top: -4, right: -4, background: "#f43f5e", color: "#fff", borderRadius: 99, fontSize: 9, padding: "1px 5px", fontWeight: 800 }}>{tanpaBuktiCnt}</span>}
           </button>
         );
       })}
     </div>
+    {/* Group Payment banner — muncul jika ada customer multi-invoice */}
+    {multiInvoiceCustomers.length > 0 && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && setGroupPaymentCtx && (
+      <div style={{ background: "#06b6d418", border: "1px solid #06b6d444", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#06b6d4" }}>💳 Multi-Invoice</span>
+        <span style={{ fontSize: 12, color: cs.muted, flex: 1 }}>
+          {multiInvoiceCustomers.length} customer punya {multiInvoiceCustomers.reduce((s,[,arr]) => s + arr.length, 0)} invoice unpaid
+        </span>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {multiInvoiceCustomers.slice(0, 3).map(([phone, invs]) => (
+            <button key={phone}
+              onClick={() => setGroupPaymentCtx({
+                phone,
+                invoices: invs,
+                suggestedAmount: invs.reduce((s, i) => s + (i.total || 0), 0),
+                proofUrl: null,
+                method: "transfer",
+                suggId: null,
+              })}
+              style={{ background: "#06b6d422", border: "1px solid #06b6d466", color: "#06b6d4", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+              {invs[0]?.customer || phone} ({invs.length} inv · {fmt(invs.reduce((s,i) => s+(i.total||0), 0))})
+            </button>
+          ))}
+          {multiInvoiceCustomers.length > 3 && (
+            <span style={{ fontSize: 11, color: cs.muted, alignSelf: "center" }}>+{multiInvoiceCustomers.length - 3} lainnya</span>
+          )}
+        </div>
+      </div>
+    )}
+
     {invoiceFilter === "Tanpa Bukti" && (
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <button
@@ -483,7 +534,38 @@ return (
             {inv.status === "OVERDUE" && (
               <>
                 <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>📤 Kirim ke Customer</button>
+                <button onClick={async () => {
+                  if (await showConfirm({
+                    icon: "💰", title: "Tandai Lunas?",
+                    message: `Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`,
+                    confirmText: "Ya, Lunas"
+                  })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
+                }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tandai Lunas</button>
                 <button onClick={() => invoiceReminderWA(inv)} style={{ background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>⚠️ Reminder OVERDUE</button>
+              </>
+            )}
+            {inv.status === "PARTIAL_PAID" && (
+              <>
+                <div style={{ width: "100%", background: "#06b6d415", border: "1px dashed #06b6d444", borderRadius: 8, padding: "8px 12px", fontSize: 11 }}>
+                  <span style={{ color: "#06b6d4", fontWeight: 700 }}>💳 Partial: {fmt(inv.paid_amount || 0)} terbayar</span>
+                  <span style={{ color: cs.muted }}> · sisa {fmt(inv.remaining_amount ?? ((inv.total || 0) - (inv.paid_amount || 0)))}</span>
+                </div>
+                <button onClick={async () => {
+                  if (await showConfirm({
+                    icon: "💰", title: "Lunasi Sisa?",
+                    message: `Lunasi sisa ${fmt(inv.remaining_amount ?? ((inv.total||0)-(inv.paid_amount||0)))} untuk invoice ${inv.id}?`,
+                    confirmText: "Ya, Lunas"
+                  })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
+                }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Lunasi Sisa</button>
+                {setGroupPaymentCtx && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                  <button onClick={() => {
+                    const sameCust = invoicesData.filter(i => i.phone === inv.phone && ["UNPAID","OVERDUE","PARTIAL_PAID"].includes(i.status));
+                    setGroupPaymentCtx({ phone: inv.phone, invoices: sameCust.length > 0 ? sameCust : [inv], suggestedAmount: 0, proofUrl: null, method: "transfer", suggId: null });
+                  }} style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                    💳 Group Payment
+                  </button>
+                )}
+                <button onClick={() => invoiceReminderWA(inv)} style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>🔔 Reminder</button>
               </>
             )}
             {/* Hapus Invoice — Owner only, hanya status PENDING_APPROVAL */}

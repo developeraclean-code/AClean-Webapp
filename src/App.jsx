@@ -519,6 +519,155 @@ function invalidateCache(...keys) {
   keys.forEach(k => delete _fetchCache.store[k]);
 }
 
+// ── Group Payment Modal ──
+function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
+  const { invoices, suggestedAmount, proofUrl: initProof, method: initMethod } = ctx;
+  const [selected, setSelected] = useState(invoices.map(i => i.id));
+  const [received, setReceived] = useState(suggestedAmount || invoices.reduce((s, i) => s + (i.status === "PARTIAL_PAID" ? (i.remaining_amount ?? ((i.total||0)-(i.paid_amount||0))) : (i.total||0)), 0));
+  const [proofUrl, setProofUrl] = useState(initProof || "");
+  const [method, setMethod] = useState(initMethod || "transfer");
+  const [loading, setLoading] = useState(false);
+
+  const selectedInvoices = invoices.filter(i => selected.includes(i.id));
+  // Untuk PARTIAL_PAID: tagihan efektif = remaining, bukan total
+  const effectiveTagihan = (inv) => inv.status === "PARTIAL_PAID"
+    ? (inv.remaining_amount ?? ((inv.total || 0) - (inv.paid_amount || 0)))
+    : (inv.total || 0);
+  const totalTagihan = selectedInvoices.reduce((s, i) => s + effectiveTagihan(i), 0);
+  const isPartial = received < totalTagihan;
+  const isOver = received > totalTagihan;
+
+  // Preview alokasi greedy (sama dengan handleGroupPayment)
+  const sorted = [...selectedInvoices].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  let sisa = received;
+  const preview = sorted.map(inv => {
+    const tagihan = effectiveTagihan(inv);
+    if (sisa <= 0) return { inv, cover: 0, full: false };
+    if (sisa >= tagihan) { const c = tagihan; sisa -= tagihan; return { inv, cover: c, full: true }; }
+    const c = sisa; sisa = 0; return { inv, cover: c, full: false };
+  });
+
+  const toggle = (id) => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: cs.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", border: "1px solid " + cs.border }}>
+        <div style={{ fontWeight: 800, fontSize: 16, color: cs.text, marginBottom: 4 }}>💳 Group Payment</div>
+        <div style={{ fontSize: 12, color: cs.muted, marginBottom: 16 }}>
+          Customer punya {invoices.length} invoice unpaid — pilih yang akan dibayar sekarang.
+        </div>
+
+        {/* Pilih invoice */}
+        <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+          {invoices.map(inv => (
+            <label key={inv.id} style={{ display: "flex", alignItems: "center", gap: 10, background: cs.surface, borderRadius: 10, padding: "10px 12px", cursor: "pointer", border: "1px solid " + (selected.includes(inv.id) ? cs.accent + "66" : cs.border) }}>
+              <input type="checkbox" checked={selected.includes(inv.id)} onChange={() => toggle(inv.id)}
+                style={{ width: 16, height: 16, accentColor: cs.accent, cursor: "pointer" }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent, fontFamily: "monospace" }}>{inv.id}</div>
+                <div style={{ fontSize: 11, color: cs.muted }}>{inv.service} · {inv.status === "PARTIAL_PAID" ? "💳 Partial" : inv.status}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                {inv.status === "PARTIAL_PAID" ? (
+                  <>
+                    <div style={{ fontWeight: 800, fontSize: 13, color: "#06b6d4" }}>Sisa {fmt(effectiveTagihan(inv))}</div>
+                    <div style={{ fontSize: 10, color: cs.muted }}>dari {fmt(inv.total)}</div>
+                  </>
+                ) : (
+                  <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>{fmt(inv.total)}</div>
+                )}
+              </div>
+            </label>
+          ))}
+        </div>
+
+        {/* Total tagihan */}
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 12, padding: "8px 12px", background: cs.surface, borderRadius: 8 }}>
+          <span style={{ color: cs.muted }}>Total Tagihan</span>
+          <span style={{ fontWeight: 800, color: cs.text }}>{fmt(totalTagihan)}</span>
+        </div>
+
+        {/* Input jumlah diterima */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Jumlah Diterima dari Customer</div>
+          <input type="number" value={received} onChange={e => setReceived(Number(e.target.value))}
+            style={{ width: "100%", background: cs.surface, border: "1px solid " + (isPartial ? "#f59e0b66" : isOver ? "#ef444466" : cs.border), borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 14, fontWeight: 700, boxSizing: "border-box" }} />
+          {isPartial && (
+            <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 4 }}>
+              Partial — sisa {fmt(totalTagihan - received)} belum terbayar (akan di-record PARTIAL_PAID)
+            </div>
+          )}
+          {isOver && (
+            <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>
+              Lebih bayar {fmt(received - totalTagihan)} — pastikan angka benar sebelum konfirmasi
+            </div>
+          )}
+        </div>
+
+        {/* Metode */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Metode Pembayaran</div>
+          <select value={method} onChange={e => setMethod(e.target.value)}
+            style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }}>
+            <option value="transfer">Transfer Bank</option>
+            <option value="transfer_bca">Transfer BCA</option>
+            <option value="transfer_bni">Transfer BNI</option>
+            <option value="transfer_bri">Transfer BRI</option>
+            <option value="transfer_mandiri">Transfer Mandiri</option>
+            <option value="transfer_gopay">GoPay</option>
+            <option value="transfer_ovo">OVO</option>
+            <option value="transfer_dana">DANA</option>
+            <option value="cash">Tunai</option>
+          </select>
+        </div>
+
+        {/* URL bukti bayar */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>URL Bukti Bayar (foto dari WA / R2)</div>
+          <input value={proofUrl} onChange={e => setProofUrl(e.target.value)}
+            placeholder="https://... atau /api/foto/... — akan dipakai untuk semua invoice"
+            style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 12, boxSizing: "border-box" }} />
+          {proofUrl && (
+            <div style={{ fontSize: 11, color: cs.green, marginTop: 3 }}>1 foto ini akan jadi bukti untuk semua {selected.length} invoice yang dipilih</div>
+          )}
+        </div>
+
+        {/* Preview alokasi */}
+        {preview.length > 0 && (
+          <div style={{ marginBottom: 16, background: cs.surface, borderRadius: 10, padding: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 8 }}>Preview Alokasi</div>
+            {preview.map(({ inv, cover, full }) => (
+              <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                <span style={{ color: cs.text, fontFamily: "monospace" }}>{inv.id}</span>
+                <span style={{ color: full ? cs.green : cover > 0 ? "#f59e0b" : cs.muted, fontWeight: 700 }}>
+                  {full ? `✅ ${fmt(cover)} LUNAS` : cover > 0 ? `⚡ ${fmt(cover)} (partial)` : `— belum terbayar`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+            Batal
+          </button>
+          <button
+            disabled={loading || selected.length === 0 || received <= 0}
+            onClick={async () => {
+              setLoading(true);
+              try { await onConfirm(selected, received, proofUrl || null, method); }
+              finally { setLoading(false); }
+            }}
+            style={{ flex: 2, background: loading ? cs.muted : "#22c55e", border: "none", color: "#fff", padding: "11px", borderRadius: 10, cursor: loading || selected.length === 0 ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14 }}>
+            {loading ? "Memproses..." : `✅ Konfirmasi ${fmt(received)}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ACleanWebApp() {
   // ── Auth & Role ──
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -931,6 +1080,7 @@ export default function ACleanWebApp() {
   const [waMessages, setWaMessages] = useState([]);  // chat history conv aktif
   const [paymentSuggestions, setPaymentSuggestions] = useState([]);
   const [paymentSuggestBanner, setPaymentSuggestBanner] = useState(null);
+  const [groupPaymentCtx, setGroupPaymentCtx] = useState(null); // { phone, invoices, suggestedAmount, proofUrl }
 
   // ── Statistik periode filter ──
   const [statsPeriod, setStatsPeriod] = useState("bulan"); // "hari"|"minggu"|"bulan"|"tahun"|"custom"
@@ -3293,6 +3443,117 @@ ${photoPageHTML}
     showNotif(`💰 Invoice ${inv.id} LUNAS — ${fmt(inv.total)}`);
   };
 
+  // ── Group Payment: 1 transfer cover beberapa invoice 1 customer ──
+  const handleGroupPayment = async (customerPhone, invoiceIds, totalReceived, proofUrl, method) => {
+    const targetInvoices = invoicesData.filter(i => invoiceIds.includes(i.id));
+    if (!targetInvoices.length) { showNotif("❌ Tidak ada invoice yang dipilih"); return; }
+    // Untuk PARTIAL_PAID, tagihan efektif adalah remaining_amount (bukan total)
+    const effectiveTagihan = (inv) => inv.status === "PARTIAL_PAID"
+      ? (inv.remaining_amount ?? ((inv.total || 0) - (inv.paid_amount || 0)))
+      : (inv.total || 0);
+    const totalTagihan = targetInvoices.reduce((s, i) => s + effectiveTagihan(i), 0);
+
+    // Greedy alokasi: invoice terlama dulu, pakai effective tagihan
+    const sorted = [...targetInvoices].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    let sisa = totalReceived;
+    const allocation = {};
+    const fullyPaid = [];
+    const partialPaid = [];
+    for (const inv of sorted) {
+      if (sisa <= 0) break;
+      const tagihan = effectiveTagihan(inv);
+      if (sisa >= tagihan) {
+        allocation[inv.id] = tagihan;
+        fullyPaid.push(inv);
+        sisa -= tagihan;
+      } else {
+        allocation[inv.id] = sisa;
+        partialPaid.push({ ...inv, _paid_amount: (inv.paid_amount || 0) + sisa });
+        sisa = 0;
+      }
+    }
+
+    const paidAt = getLocalISOString();
+    await setAuditUser();
+
+    // Optimistic UI
+    setInvoicesData(prev => prev.map(i => {
+      if (fullyPaid.find(f => f.id === i.id)) return { ...i, status: "PAID", paid_at: paidAt, payment_proof_url: proofUrl || i.payment_proof_url };
+      const p = partialPaid.find(f => f.id === i.id);
+      if (p) return { ...i, status: "PARTIAL_PAID", paid_amount: p._paid_amount, remaining_amount: (i.total || 0) - p._paid_amount, payment_proof_url: proofUrl || i.payment_proof_url };
+      return i;
+    }));
+
+    // Simpan 1 record payment untuk 1 transfer
+    let paymentId = null;
+    try {
+      const { data: paymentRow } = await supabase.from("payments").insert({
+        customer_phone: customerPhone,
+        customer_name: sorted[0]?.customer,
+        total_amount: totalReceived,
+        amount: totalReceived,
+        method,
+        is_partial: totalReceived < totalTagihan,
+        invoice_ids: invoiceIds,
+        allocation_detail: allocation,
+        payment_proof_url: proofUrl || null,
+        paid_at: paidAt,
+        verified: true,
+        verified_by: currentUser?.id || null,
+        verified_at: paidAt,
+        notes: `Group payment: ${invoiceIds.join(", ")}`,
+      }).select("id").single();
+      paymentId = paymentRow?.id || null;
+    } catch (e) { console.warn("group payment insert:", e?.message); }
+
+    // Junction table: 1 payment → banyak invoice
+    if (paymentId) {
+      const junctionRows = Object.entries(allocation).map(([invId, amt]) => ({
+        payment_id: paymentId,
+        invoice_id: invId,
+        amount: amt,
+      }));
+      await supabase.from("invoice_payments").insert(junctionRows).then(() => {});
+    }
+
+    // Update DB per invoice
+    for (const inv of fullyPaid) {
+      await markInvoicePaid(supabase, inv.id, paidAt, auditUserName());
+      supabase.from("invoices").update({
+        payment_proof_url: proofUrl || null,
+        paid_method: method,
+        paid_amount: inv.total,
+        remaining_amount: 0,
+      }).eq("id", inv.id).then(() => {});
+      // Update order status
+      const ord = ordersData.find(o => o.id === inv.job_id || o.invoice_id === inv.id);
+      if (ord) {
+        supabase.from("orders").update({ status: "PAID" }).eq("id", ord.id).then(() => {});
+        setOrdersData(prev => prev.map(o => o.id === ord.id ? { ...o, status: "PAID" } : o));
+      }
+      // Update customer last_service
+      if (inv.phone) supabase.from("customers").update({ last_service: paidAt.slice(0, 10) }).eq("phone", inv.phone).then(() => {});
+    }
+
+    for (const inv of partialPaid) {
+      supabase.from("invoices").update({
+        status: "PARTIAL_PAID",
+        paid_amount: inv._paid_amount,
+        remaining_amount: (inv.total || 0) - inv._paid_amount,
+        payment_proof_url: proofUrl || null,
+        paid_method: method,
+      }).eq("id", inv.id).then(() => {});
+    }
+
+    const msg = fullyPaid.length && partialPaid.length
+      ? `💰 ${fullyPaid.length} invoice LUNAS + ${partialPaid.length} partial — ${fmt(totalReceived)}`
+      : fullyPaid.length
+        ? `💰 ${fullyPaid.length} invoice LUNAS — ${fmt(totalReceived)}`
+        : `💳 Pembayaran partial ${fmt(totalReceived)} dari ${fmt(totalTagihan)} dicatat`;
+    addAgentLog("GROUP_PAYMENT", `Group payment ${customerPhone}: ${invoiceIds.join(",")} — ${fmt(totalReceived)} via ${method}`, "SUCCESS");
+    showNotif(msg);
+  };
+
   // ── GAP 6: Inventory deduct ──
   // GAP 1.2 + GAP 3: Inventory via transaction table — audit trail + cegah negatif
   const deductInventory = async (materials, orderId, reportId, customerName, teknisiName, jobDate) => {
@@ -4552,7 +4813,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       );
     }
     filteredInv.sort((a, b) => (b.created_at || b.sent || "").localeCompare(a.created_at || a.sent || ""));
-    const unpaidCnt = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
+    const unpaidCnt = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE" || i.status === "PARTIAL_PAID").length;
 
     return { filteredInv, garansiAktif, garansiKritis, unpaidCnt };
   }, [invoicesData, invoiceFilter, invoiceDateFrom, invoiceDateTo, searchInvoice]);
@@ -4571,7 +4832,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
       supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE}
       laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
-      apiHeaders={_apiHeaders} />
+      apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx} />
   );
 
   // ============================================================
@@ -10905,22 +11166,49 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           <div style={{ display:"flex", gap: 8, marginTop: 12 }}>
             <button onClick={async () => {
               const sugg = paymentSuggestBanner;
-              const inv = invoicesData.find(i => i.id === sugg.invoice_id) ||
-                invoicesData.find(i => i.phone === sugg.phone && (i.status === "UNPAID" || i.status === "OVERDUE"));
-              if (!inv) {
-                showNotif("⚠️ Invoice tidak ditemukan untuk nomor ini. Cari manual di halaman Invoice.");
-                setActiveMenu("invoice");
-                setSearchInvoice(sugg.phone || "");
-              } else {
-                const bankNote = sugg.bank ? "transfer_" + sugg.bank.toLowerCase().replace(/\s/g,"_") : "transfer";
-                await markPaid(inv, bankNote, "Auto-detect WA: " + (sugg.raw_message||"").slice(0,100), true, sugg.image_url || null);
+              const bankNote = sugg.bank ? "transfer_" + sugg.bank.toLowerCase().replace(/\s/g,"_") : "transfer";
+              // Cari semua invoice UNPAID/OVERDUE/PARTIAL_PAID dari nomor ini
+              const unpaidByPhone = invoicesData.filter(i =>
+                (i.phone === sugg.phone || (sugg.phone && i.phone && samePhone(i.phone, sugg.phone))) &&
+                ["UNPAID","OVERDUE","PARTIAL_PAID"].includes(i.status)
+              );
+              if (!unpaidByPhone.length) {
+                // Coba match by invoice_id langsung
+                const byId = sugg.invoice_id ? invoicesData.find(i => i.id === sugg.invoice_id) : null;
+                if (!byId) {
+                  showNotif("⚠️ Invoice tidak ditemukan untuk nomor ini. Cari manual di halaman Invoice.");
+                  setActiveMenu("invoice");
+                  setSearchInvoice(sugg.phone || "");
+                } else {
+                  await markPaid(byId, bankNote, "Auto-detect WA: " + (sugg.raw_message||"").slice(0,100), true, sugg.image_url || null);
+                  supabase.from("payment_suggestions").update({
+                    status:"CONFIRMED", resolved_at: new Date(Date.now()+7*3600000).toISOString(), resolved_by: currentUser?.name||"Admin"
+                  }).eq("id", sugg.id).then(() => {});
+                  setPaymentSuggestions(prev => prev.filter(p => p.id !== sugg.id));
+                  setActiveMenu("invoice");
+                  setSearchInvoice(byId.id);
+                  setInvoiceFilter("Semua");
+                }
+              } else if (unpaidByPhone.length === 1) {
+                // Normal flow — 1 invoice saja
+                await markPaid(unpaidByPhone[0], bankNote, "Auto-detect WA: " + (sugg.raw_message||"").slice(0,100), true, sugg.image_url || null);
                 supabase.from("payment_suggestions").update({
                   status:"CONFIRMED", resolved_at: new Date(Date.now()+7*3600000).toISOString(), resolved_by: currentUser?.name||"Admin"
                 }).eq("id", sugg.id).then(() => {});
                 setPaymentSuggestions(prev => prev.filter(p => p.id !== sugg.id));
                 setActiveMenu("invoice");
-                setSearchInvoice(inv.id);
+                setSearchInvoice(unpaidByPhone[0].id);
                 setInvoiceFilter("Semua");
+              } else {
+                // Multi-invoice → buka Group Payment modal
+                setGroupPaymentCtx({
+                  phone: sugg.phone,
+                  invoices: unpaidByPhone,
+                  suggestedAmount: sugg.amount ? Number(sugg.amount) : unpaidByPhone.reduce((s,i) => s + (i.total||0), 0),
+                  proofUrl: sugg.image_url || null,
+                  method: bankNote,
+                  suggId: sugg.id,
+                });
               }
               setPaymentSuggestBanner(null);
             }} style={{ flex:1, background:"#22c55e", border:"none", color:"#fff",
@@ -10949,6 +11237,29 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         onClose={() => setAuditModal(null)}
         cs={cs}
       />
+
+      {/* ── Group Payment Modal ── */}
+      {groupPaymentCtx && (
+        <GroupPaymentModal
+          ctx={groupPaymentCtx}
+          onConfirm={async (invoiceIds, totalReceived, proofUrl, method) => {
+            await handleGroupPayment(groupPaymentCtx.phone, invoiceIds, totalReceived, proofUrl, method);
+            if (groupPaymentCtx.suggId) {
+              supabase.from("payment_suggestions").update({
+                status: "CONFIRMED",
+                resolved_at: new Date(Date.now() + 7 * 3600000).toISOString(),
+                resolved_by: currentUser?.name || "Admin",
+              }).eq("id", groupPaymentCtx.suggId).then(() => {});
+              setPaymentSuggestions(prev => prev.filter(p => p.id !== groupPaymentCtx.suggId));
+            }
+            setGroupPaymentCtx(null);
+            setActiveMenu("invoice");
+          }}
+          onClose={() => setGroupPaymentCtx(null)}
+          fmt={fmt}
+          cs={cs}
+        />
+      )}
 
       <style>{`
         @keyframes pulse { 0%,100%{opacity:.3;transform:scale(.8)} 50%{opacity:1;transform:scale(1.1)} }
