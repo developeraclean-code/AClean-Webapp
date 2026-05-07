@@ -372,10 +372,27 @@ return (
             <div style={{ fontWeight: 800, fontSize: 18, color: cs.text, fontFamily: "monospace" }}>{fmt(inv.total)}</div>
           </div>
           {/* GAP 3 — breakdown nilai */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
-            <div style={{ background: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? cs.green + "10" : cs.surface, borderRadius: 6, padding: "6px 10px", border: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? "1px solid " + cs.green + "33" : "none" }}><div style={{ color: cs.muted }}>Jasa</div><div style={{ color: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? cs.green : cs.text, fontWeight: 700 }}>{inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? "Rp 0 (Garansi)" : fmt(inv.labor)}</div></div>
-            <div style={{ background: cs.surface, borderRadius: 6, padding: "6px 10px" }}><div style={{ color: cs.muted }}>Material</div><div style={{ color: cs.text, fontWeight: 700 }}>{fmt(inv.material)}</div></div>
-          </div>
+          {inv.invoice_type === "ac_unit_sale" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
+              <div style={{ background: "#f59e0b12", border: "1px solid #f59e0b33", borderRadius: 6, padding: "6px 10px" }}>
+                <div style={{ color: "#f59e0b" }}>Unit AC</div>
+                <div style={{ color: cs.text, fontWeight: 700 }}>{fmt(inv.unit_ac_amount)}</div>
+              </div>
+              <div style={{ background: cs.accent + "12", border: "1px solid " + cs.accent + "33", borderRadius: 6, padding: "6px 10px" }}>
+                <div style={{ color: cs.accent }}>Paket Instalasi</div>
+                <div style={{ color: cs.text, fontWeight: 700 }}>{fmt(inv.labor)}</div>
+              </div>
+              <div style={{ background: cs.surface, borderRadius: 6, padding: "6px 10px" }}>
+                <div style={{ color: cs.muted }}>Omset AClean</div>
+                <div style={{ color: cs.green, fontWeight: 700 }}>{fmt((inv.labor || 0) + (inv.material || 0))}</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
+              <div style={{ background: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? cs.green + "10" : cs.surface, borderRadius: 6, padding: "6px 10px", border: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? "1px solid " + cs.green + "33" : "none" }}><div style={{ color: cs.muted }}>Jasa</div><div style={{ color: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? cs.green : cs.text, fontWeight: 700 }}>{inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? "Rp 0 (Garansi)" : fmt(inv.labor)}</div></div>
+              <div style={{ background: cs.surface, borderRadius: 6, padding: "6px 10px" }}><div style={{ color: cs.muted }}>Material</div><div style={{ color: cs.text, fontWeight: 700 }}>{fmt(inv.material)}</div></div>
+            </div>
+          )}
           {((inv.discount || 0) > 0 || inv.trade_in) && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
               {(inv.discount || 0) > 0 && (

@@ -728,6 +728,7 @@ export default function ACleanWebApp() {
   const CUST_PAGE_SIZE = 20;
   const SCHED_PAGE_SIZE = 15;
   const [modalPDF, setModalPDF] = useState(false);
+  const [previewInvItems, setPreviewInvItems] = useState([]);
   const [modalApproveInv, setModalApproveInv] = useState(false); // popup pilihan approve
   const [pendingApproveInv, setPendingApproveInv] = useState(null); // invoice yang menunggu approve
   const [auditModal, setAuditModal] = useState(null); // { tableName, rowId } | null — Stabilisasi #2B
@@ -1631,8 +1632,13 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     const { pdf } = await import("@react-pdf/renderer");
     const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
     const logoUrl = await fetchInvoiceLogoUrl();
+    let invoiceItems = [];
+    if (inv.invoice_type === "ac_unit_sale") {
+      const { data } = await supabase.from("invoice_items").select("*").eq("invoice_id", inv.id);
+      invoiceItems = data || [];
+    }
     return await pdf(
-      <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} />
+      <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} invoiceItems={invoiceItems} />
     ).toBlob();
   };
 
@@ -7081,10 +7087,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* MODAL — INVOICE PREVIEW */}
       {/* ══════════════════════════════════════════════════════ */}
       {modalPDF && selectedInvoice && (() => {
-        // Always use latest data from invoicesData state
         const liveInv = invoicesData.find(i => i.id === selectedInvoice.id) || selectedInvoice;
+        // Load invoice_items jika ac_unit_sale dan belum di-load
+        if (liveInv.invoice_type === "ac_unit_sale" && previewInvItems.length === 0) {
+          supabase.from("invoice_items").select("*").eq("invoice_id", liveInv.id).then(({ data }) => {
+            if (data) setPreviewInvItems(data);
+          });
+        }
         return (
-          <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setModalPDF(false)}>
+          <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setModalPDF(false); setPreviewInvItems([]); }}>
             <div style={{ background: "#f8fafc", borderRadius: 20, width: "100%", maxWidth: 680, maxHeight: "92vh", overflowY: "auto", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
               {/* Toolbar */}
               <div style={{ background: "#1E3A5F", padding: "12px 20px", borderRadius: "20px 20px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
@@ -7097,7 +7108,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <button onClick={() => { setModalPDF(false); setTimeout(() => approveInvoice(liveInv), 100); }}
                       style={{ background: "#22c55e", border: "none", color: "#fff", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>✓ Approve Invoice</button>
                   )}
-                  <button onClick={() => setModalPDF(false)} style={{ background: "none", border: "1px solid #ffffff44", color: "#fff", padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>× Tutup</button>
+                  <button onClick={() => { setModalPDF(false); setPreviewInvItems([]); }} style={{ background: "none", border: "1px solid #ffffff44", color: "#fff", padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>× Tutup</button>
                 </div>
               </div>
               {/* Invoice body */}
@@ -7148,13 +7159,38 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 14, fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: "#1E3A5F" }}>
-                      {[["Deskripsi", "auto"], ["Jml Unit", "72px"], ["Harga Satuan", "100px"], ["Subtotal", "100px"]].map(([h, w]) => (
+                      {[["Deskripsi", "auto"], ["Qty", "72px"], ["Harga", "100px"], ["Subtotal", "100px"]].map(([h, w]) => (
                         <th key={h} style={{ padding: "8px 10px", textAlign: h === "Deskripsi" ? "left" : "right", color: "#fff", fontWeight: 700, width: w, fontSize: 10 }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {liveInv.labor > 0 && parseMD(liveInv.materials_detail).length === 0 && (
+                    {/* ── AC Unit Sale — render dari invoice_items ── */}
+                    {liveInv.invoice_type === "ac_unit_sale" && (() => {
+                      const unitItems   = previewInvItems.filter(i => i.item_type === "unit_ac");
+                      const paketItems  = previewInvItems.filter(i => i.item_type === "paket" || i.item_type === "jasa");
+                      const addonItems  = previewInvItems.filter(i => i.item_type === "addon" || i.item_type === "material");
+                      const renderSection = (label, color, items) => items.length === 0 ? null : (
+                        <>
+                          <tr><td colSpan={4} style={{ padding: "6px 10px", background: color + "18", color, fontWeight: 700, fontSize: 10 }}>{label}</td></tr>
+                          {items.map((item, i) => (
+                            <tr key={i} style={{ background: i % 2 === 0 ? "#f8fafc" : "#fff" }}>
+                              <td style={{ padding: "8px 10px", color: "#1e293b" }}>{item.description}</td>
+                              <td style={{ padding: "8px 10px", textAlign: "right", color: "#475569" }}>{item.qty}</td>
+                              <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "monospace", color: "#475569" }}>{(item.unit_price || 0).toLocaleString("id-ID")}</td>
+                              <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</td>
+                            </tr>
+                          ))}
+                        </>
+                      );
+                      return (<>
+                        {renderSection("Unit AC (Passthrough)", "#f59e0b", unitItems)}
+                        {renderSection("Paket Pemasangan & Jasa", "#3b82f6", paketItems)}
+                        {renderSection("Material Tambahan", "#10b981", addonItems)}
+                      </>);
+                    })()}
+                    {/* ── Invoice biasa ── */}
+                    {liveInv.invoice_type !== "ac_unit_sale" && liveInv.labor > 0 && parseMD(liveInv.materials_detail).length === 0 && (
                       <tr style={{ background: "#fff" }}>
                         <td style={{ padding: "8px 10px", color: "#1e293b" }}>{liveInv.service}</td>
                         <td style={{ padding: "8px 10px", color: "#475569", textAlign: "center" }}>{liveInv.units}</td>
