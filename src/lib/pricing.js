@@ -10,7 +10,13 @@ export const PRICE_LIST_DEFAULT = {
     "AC Cassette 5PK": 500000,
     "AC Cassette 6PK": 600000,
     "AC Standing": 100000,
-    "AC Split Duct": 100000,
+    "AC Split Duct 2PK":   200000,
+    "AC Split Duct 2.5PK": 250000,
+    "AC Split Duct 3PK":   300000,
+    "AC Split Duct 3.5PK": 350000,
+    "AC Split Duct 4PK":   400000,
+    "AC Split Duct 5PK":   500000,
+    "AC Split Duct 6PK":   600000,
     "Jasa Service Besar 0,5PK - 1PK": 400000,
     "Jasa Service Besar 1,5PK - 2,5PK": 450000,
     "default": 85000,
@@ -126,7 +132,15 @@ export const getBracketKey = (service, tipe) => {
       if (pk <= 5) return "AC Cassette 5PK";
       return "AC Cassette 6PK";
     }
-    if (isDuct) return "AC Split Duct";
+    if (isDuct) {
+      if (pk <= 2) return "AC Split Duct 2PK";
+      if (pk <= 2.5) return "AC Split Duct 2.5PK";
+      if (pk <= 3) return "AC Split Duct 3PK";
+      if (pk <= 3.5) return "AC Split Duct 3.5PK";
+      if (pk <= 4) return "AC Split Duct 4PK";
+      if (pk <= 5) return "AC Split Duct 5PK";
+      return "AC Split Duct 6PK";
+    }
     if (pk <= 1) return "AC Split 0.5-1PK";
     if (pk <= 2.5) return "AC Split 1.5-2.5PK";
     return "AC Split 1.5-2.5PK";
