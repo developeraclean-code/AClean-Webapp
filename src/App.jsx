@@ -524,7 +524,7 @@ function invalidateCache(...keys) {
 function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
   const { invoices, suggestedAmount, proofUrl: initProof, method: initMethod } = ctx;
   const [selected, setSelected] = useState(invoices.map(i => i.id));
-  const [received, setReceived] = useState(suggestedAmount || invoices.reduce((s, i) => s + (i.status === "PARTIAL_PAID" ? (Number(i.remaining_amount) ?? ((i.total||0)-(Number(i.paid_amount)||0))) : (i.total||0)), 0));
+  const [received, setReceived] = useState(suggestedAmount || invoices.reduce((s, i) => s + (i.status === "PARTIAL_PAID" ? (i.remaining_amount ?? ((i.total||0)-(i.paid_amount||0))) : (i.total||0)), 0));
   const [proofUrl, setProofUrl] = useState(initProof || "");
   const [method, setMethod] = useState(initMethod || "transfer");
   const [loading, setLoading] = useState(false);
@@ -532,7 +532,7 @@ function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
   const selectedInvoices = invoices.filter(i => selected.includes(i.id));
   // Untuk PARTIAL_PAID: tagihan efektif = remaining, bukan total
   const effectiveTagihan = (inv) => inv.status === "PARTIAL_PAID"
-    ? (Number(inv.remaining_amount) ?? ((inv.total || 0) - (Number(inv.paid_amount) || 0)))
+    ? (inv.remaining_amount ?? ((inv.total || 0) - (inv.paid_amount || 0)))
     : (inv.total || 0);
   const totalTagihan = selectedInvoices.reduce((s, i) => s + effectiveTagihan(i), 0);
   const isPartial = received < totalTagihan;
@@ -729,7 +729,6 @@ export default function ACleanWebApp() {
   const CUST_PAGE_SIZE = 20;
   const SCHED_PAGE_SIZE = 15;
   const [modalPDF, setModalPDF] = useState(false);
-  const [previewInvItems, setPreviewInvItems] = useState([]);
   const [modalApproveInv, setModalApproveInv] = useState(false); // popup pilihan approve
   const [pendingApproveInv, setPendingApproveInv] = useState(null); // invoice yang menunggu approve
   const [auditModal, setAuditModal] = useState(null); // { tableName, rowId } | null — Stabilisasi #2B
@@ -1633,13 +1632,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     const { pdf } = await import("@react-pdf/renderer");
     const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
     const logoUrl = await fetchInvoiceLogoUrl();
-    let invoiceItems = [];
-    if (inv.invoice_type === "ac_unit_sale") {
-      const { data } = await supabase.from("invoice_items").select("*").eq("invoice_id", inv.id);
-      invoiceItems = data || [];
-    }
     return await pdf(
-      <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} invoiceItems={invoiceItems} />
+      <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} />
     ).toBlob();
   };
 
@@ -3110,13 +3104,7 @@ ${photoPageHTML}
   const invoiceReminderWA = async (inv) => {
     if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
     const invoiceUrl = await uploadInvoicePDFForWA(inv);
-    // Hitung tagihan: jika ada DP, tagih sisa-nya bukan total
-    const paid = Number(inv.paid_amount) || 0;
-    const sisa = Math.max(0, (inv.total || 0) - paid);
-    const tagihLabel = paid > 0
-      ? `sisa pembayaran *${fmt(sisa)}* (dari total ${fmt(inv.total)} — sudah DP ${fmt(paid)})`
-      : `senilai *${fmt(inv.total)}*`;
-    const msg = `Halo ${inv.customer}, Terlampir Invoice Resmi Pekerjaan Kemaren ${tagihLabel}.\n\nPembayaran Bisa Melalui Transfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nApabila sudah di Transfer Bole dikirimkan Bukti Pembayaran kesini untuk di Konfirmasi Pembayarannya ya Bapak / Ibu. Terima kasih! 🙏`;
+    const msg = `Halo ${inv.customer}, Terlampir Invoice Resmi Pekerjaan Kemaren senilai *${fmt(inv.total)}*.\n\nPembayaran Bisa Melalui Transfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nApabila sudah di Transfer Bole dikirimkan Bukti Pembayaran kesini untuk di Konfirmasi Pembayarannya ya Bapak / Ibu. Terima kasih! 🙏`;
     sendWA(inv.phone, msg, invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {});
   };
 
@@ -3394,7 +3382,7 @@ ${photoPageHTML}
     const originalOrderStatus = ordersData.find(o => o.id === inv.job_id || o.invoice_id === inv.id)?.status;
 
     setInvoicesData(prev => prev.map(i =>
-      i.id === inv.id ? { ...i, status: "PAID", paid_at: paidAt, paid_amount: i.total, remaining_amount: 0, ...(paymentProofUrl ? { payment_proof_url: paymentProofUrl } : {}) } : i
+      i.id === inv.id ? { ...i, status: "PAID", paid_at: paidAt, ...(paymentProofUrl ? { payment_proof_url: paymentProofUrl } : {}) } : i
     ));
     setOrdersData(prev => prev.map(o =>
       (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: "PAID" } : o
@@ -3439,16 +3427,16 @@ ${photoPageHTML}
       );
     }
     // GAP 1.6: Catat ke payments table untuk history + partial payment support
-    // amount = sisa yang dibayar saat ini (total - paid_amount sebelumnya), bukan total
-    // — agar payments history tidak double-count saat ada DP sebelumnya
     try {
-      const sisaDibayar = (inv.total || 0) - (Number(inv.paid_amount) || 0);
       await supabase.from("payments").insert({
         invoice_id: inv.id,
-        amount: sisaDibayar > 0 ? sisaDibayar : (inv.total || 0),
+        amount: inv.total,
         method: method,
         notes: notes || "Lunas",
         paid_at: paidAt,
+        verified: true,
+        verified_by: currentUser?.id || null,
+        verified_at: paidAt,
       });
     } catch (e) { console.warn("payments insert skip:", e?.message); }
     // Update customer last_service
@@ -3463,7 +3451,7 @@ ${photoPageHTML}
     if (!targetInvoices.length) { showNotif("❌ Tidak ada invoice yang dipilih"); return; }
     // Untuk PARTIAL_PAID, tagihan efektif adalah remaining_amount (bukan total)
     const effectiveTagihan = (inv) => inv.status === "PARTIAL_PAID"
-      ? (Number(inv.remaining_amount) ?? ((inv.total || 0) - (Number(inv.paid_amount) || 0)))
+      ? (inv.remaining_amount ?? ((inv.total || 0) - (inv.paid_amount || 0)))
       : (inv.total || 0);
     const totalTagihan = targetInvoices.reduce((s, i) => s + effectiveTagihan(i), 0);
 
@@ -3490,9 +3478,9 @@ ${photoPageHTML}
     const paidAt = getLocalISOString();
     await setAuditUser();
 
-    // Optimistic UI — chk_invoices_status sudah include PARTIAL_PAID (migration 019)
+    // Optimistic UI
     setInvoicesData(prev => prev.map(i => {
-      if (fullyPaid.find(f => f.id === i.id)) return { ...i, status: "PAID", paid_at: paidAt, paid_amount: i.total, remaining_amount: 0, payment_proof_url: proofUrl || i.payment_proof_url };
+      if (fullyPaid.find(f => f.id === i.id)) return { ...i, status: "PAID", paid_at: paidAt, payment_proof_url: proofUrl || i.payment_proof_url };
       const p = partialPaid.find(f => f.id === i.id);
       if (p) return { ...i, status: "PARTIAL_PAID", paid_amount: p._paid_amount, remaining_amount: (i.total || 0) - p._paid_amount, payment_proof_url: proofUrl || i.payment_proof_url };
       return i;
@@ -3512,6 +3500,9 @@ ${photoPageHTML}
         allocation_detail: allocation,
         payment_proof_url: proofUrl || null,
         paid_at: paidAt,
+        verified: true,
+        verified_by: currentUser?.id || null,
+        verified_at: paidAt,
         notes: `Group payment: ${invoiceIds.join(", ")}`,
       }).select("id").single();
       paymentId = paymentRow?.id || null;
@@ -3547,7 +3538,6 @@ ${photoPageHTML}
     }
 
     for (const inv of partialPaid) {
-      // PARTIAL_PAID sekarang valid (migration 019)
       supabase.from("invoices").update({
         status: "PARTIAL_PAID",
         paid_amount: inv._paid_amount,
@@ -4458,8 +4448,7 @@ ${photoPageHTML}
                 trade_in: false,
                 trade_in_amount: 0,
                 total: totalInv,
-                // chk_invoices_status valid: PENDING_APPROVAL bukan PENDING
-                status: "PENDING_APPROVAL",
+                status: "PENDING",
                 garansi_days: 30,
                 garansi_expires: new Date(Date.now() + 30 * 86400000 + 7 * 60 * 60 * 1000).toISOString().slice(0, 10),
                 laporan_id: lapRep?.id || null,
@@ -4845,8 +4834,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
       supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE}
       laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
-      apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx} customersData={customersData}
-      priceListData={priceListData} />
+      apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx} />
   );
 
   // ============================================================
@@ -5160,8 +5148,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       expensePage={expensePage} setExpensePage={setExpensePage} modalExpense={modalExpense} setModalExpense={setModalExpense}
       editExpenseItem={editExpenseItem} setEditExpenseItem={setEditExpenseItem} newExpenseForm={newExpenseForm} setNewExpenseForm={setNewExpenseForm}
       currentUser={currentUser} supabase={supabase} insertExpense={insertExpense} updateExpense={updateExpense} deleteExpense={deleteExpense}
-      auditUserName={auditUserName} setAuditModal={setAuditModal} TODAY={TODAY} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE} fmt={fmt}
-      showNotif={showNotif} showConfirm={showConfirm} />
+      auditUserName={auditUserName} setAuditModal={setAuditModal} TODAY={TODAY} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE} fmt={fmt} />
   );
 
   // ============================================================
@@ -6224,16 +6211,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <button onClick={() => { setModalTeknisi(false); setEditTeknisi(null); }} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
             </div>
             <div style={{ display: "grid", gap: 10 }}>
-              {[["Nama Lengkap", "name"], ["Nomor WA (auto-format 628xxx)", "phone"]].map(([label, key]) => (
+              {[["Nama Lengkap", "name"], ["Nomor WA", "phone"]].map(([label, key]) => (
                 <div key={key}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>{label}</div>
                   <input value={newTeknisiForm[key] || ""} onChange={e => setNewTeknisiForm(f => ({ ...f, [key]: e.target.value }))}
-                    onBlur={key === "phone" ? (e => {
-                      const norm = normalizePhone(e.target.value);
-                      if (norm && norm !== newTeknisiForm.phone) setNewTeknisiForm(f => ({ ...f, phone: norm }));
-                    }) : undefined}
-                    placeholder={key === "phone" ? "0812-3456-7890" : ""}
-                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: key === "phone" ? "monospace" : "inherit" }} />
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
                 </div>
               ))}
               <div>
@@ -7100,15 +7082,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* MODAL — INVOICE PREVIEW */}
       {/* ══════════════════════════════════════════════════════ */}
       {modalPDF && selectedInvoice && (() => {
+        // Always use latest data from invoicesData state
         const liveInv = invoicesData.find(i => i.id === selectedInvoice.id) || selectedInvoice;
-        // Load invoice_items jika ac_unit_sale dan belum di-load
-        if (liveInv.invoice_type === "ac_unit_sale" && previewInvItems.length === 0) {
-          supabase.from("invoice_items").select("*").eq("invoice_id", liveInv.id).then(({ data }) => {
-            if (data) setPreviewInvItems(data);
-          });
-        }
         return (
-          <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setModalPDF(false); setPreviewInvItems([]); }}>
+          <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setModalPDF(false)}>
             <div style={{ background: "#f8fafc", borderRadius: 20, width: "100%", maxWidth: 680, maxHeight: "92vh", overflowY: "auto", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
               {/* Toolbar */}
               <div style={{ background: "#1E3A5F", padding: "12px 20px", borderRadius: "20px 20px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
@@ -7121,7 +7098,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <button onClick={() => { setModalPDF(false); setTimeout(() => approveInvoice(liveInv), 100); }}
                       style={{ background: "#22c55e", border: "none", color: "#fff", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>✓ Approve Invoice</button>
                   )}
-                  <button onClick={() => { setModalPDF(false); setPreviewInvItems([]); }} style={{ background: "none", border: "1px solid #ffffff44", color: "#fff", padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>× Tutup</button>
+                  <button onClick={() => setModalPDF(false)} style={{ background: "none", border: "1px solid #ffffff44", color: "#fff", padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>× Tutup</button>
                 </div>
               </div>
               {/* Invoice body */}
@@ -7172,67 +7149,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 14, fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: "#1E3A5F" }}>
-                      {[["Deskripsi", "auto"], ["Qty", "72px"], ["Harga", "100px"], ["Subtotal", "100px"]].map(([h, w]) => (
+                      {[["Deskripsi", "auto"], ["Jml Unit", "72px"], ["Harga Satuan", "100px"], ["Subtotal", "100px"]].map(([h, w]) => (
                         <th key={h} style={{ padding: "8px 10px", textAlign: h === "Deskripsi" ? "left" : "right", color: "#fff", fontWeight: 700, width: w, fontSize: 10 }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {/* ── AC Unit Sale — render dari invoice_items ── */}
-                    {liveInv.invoice_type === "ac_unit_sale" && (() => {
-                      const unitItems   = previewInvItems.filter(i => i.item_type === "unit_ac");
-                      const paketItems  = previewInvItems.filter(i => i.item_type === "paket" || i.item_type === "jasa");
-                      const addonItems  = previewInvItems.filter(i => i.item_type === "addon" || i.item_type === "material");
-                      const renderSection = (label, color, items) => items.length === 0 ? null : (
-                        <>
-                          <tr><td colSpan={4} style={{ padding: "6px 10px", background: color + "18", color, fontWeight: 700, fontSize: 10 }}>{label}</td></tr>
-                          {items.map((item, i) => (
-                            <tr key={i} style={{ background: i % 2 === 0 ? "#f8fafc" : "#fff" }}>
-                              <td style={{ padding: "8px 10px", color: "#1e293b" }}>{item.description}</td>
-                              <td style={{ padding: "8px 10px", textAlign: "right", color: "#475569" }}>{item.qty}</td>
-                              <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "monospace", color: "#475569" }}>{(item.unit_price || 0).toLocaleString("id-ID")}</td>
-                              <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</td>
-                            </tr>
-                          ))}
-                        </>
-                      );
-                      // Paket section dengan expand include items (sama dengan PDF)
-                      const renderPaketSection = () => {
-                        if (paketItems.length === 0) return null;
-                        const includeItems = liveInv.paket_pasang?.include;
-                        const hasInclude = Array.isArray(includeItems) && includeItems.length > 0;
-                        return (
-                          <>
-                            <tr><td colSpan={4} style={{ padding: "6px 10px", background: "#3b82f618", color: "#3b82f6", fontWeight: 700, fontSize: 10 }}>Paket Pemasangan & Jasa</td></tr>
-                            {paketItems.map((item, i) => (
-                              <>
-                                <tr key={"p" + i} style={{ background: "#eff6ff" }}>
-                                  <td style={{ padding: "8px 10px", color: "#1e40af", fontWeight: 700 }}>{item.description}</td>
-                                  <td style={{ padding: "8px 10px", textAlign: "right", color: "#475569" }}>{item.qty}</td>
-                                  <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "monospace", color: "#475569" }}>{(item.unit_price || 0).toLocaleString("id-ID")}</td>
-                                  <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "monospace", fontWeight: 700, color: "#1e40af" }}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</td>
-                                </tr>
-                                {hasInclude && i === 0 && includeItems.map((inc, ii) => (
-                                  <tr key={"inc" + ii} style={{ background: ii % 2 === 0 ? "#f8faff" : "#f0f4ff" }}>
-                                    <td style={{ padding: "6px 10px 6px 24px", color: "#475569", fontSize: 11 }}>✓ {inc.nama}</td>
-                                    <td style={{ padding: "6px 10px", textAlign: "right", color: "#64748b", fontSize: 11 }}>{inc.qty} {inc.satuan}</td>
-                                    <td style={{ padding: "6px 10px", textAlign: "right", color: "#94a3b8", fontSize: 10 }}>(include)</td>
-                                    <td></td>
-                                  </tr>
-                                ))}
-                              </>
-                            ))}
-                          </>
-                        );
-                      };
-                      return (<>
-                        {renderSection("Unit AC (Passthrough)", "#f59e0b", unitItems)}
-                        {renderPaketSection()}
-                        {renderSection("Material Tambahan", "#10b981", addonItems)}
-                      </>);
-                    })()}
-                    {/* ── Invoice biasa ── */}
-                    {liveInv.invoice_type !== "ac_unit_sale" && liveInv.labor > 0 && parseMD(liveInv.materials_detail).length === 0 && (
+                    {liveInv.labor > 0 && parseMD(liveInv.materials_detail).length === 0 && (
                       <tr style={{ background: "#fff" }}>
                         <td style={{ padding: "8px 10px", color: "#1e293b" }}>{liveInv.service}</td>
                         <td style={{ padding: "8px 10px", color: "#475569", textAlign: "center" }}>{liveInv.units}</td>
@@ -7301,18 +7224,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <td colSpan={3} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700 }}>TOTAL TAGIHAN</td>
                       <td style={{ padding: "8px 10px", color: "#fff", fontFamily: "monospace", fontWeight: 800, fontSize: 14 }}>Rp {liveInv.total.toLocaleString("id-ID")}</td>
                     </tr>
-                    {(Number(liveInv.paid_amount) || 0) > 0 && liveInv.status !== "PAID" && (
-                      <>
-                        <tr style={{ background: "#f0fdf4" }}>
-                          <td colSpan={3} style={{ padding: "8px 10px", color: "#16a34a", fontStyle: "italic" }}>DP / Sudah Dibayar</td>
-                          <td style={{ padding: "8px 10px", color: "#16a34a", fontFamily: "monospace", fontWeight: 700 }}>-{(Number(liveInv.paid_amount) || 0).toLocaleString("id-ID")}</td>
-                        </tr>
-                        <tr style={{ background: "#fef3c7" }}>
-                          <td colSpan={3} style={{ padding: "8px 10px", color: "#92400e", fontWeight: 800 }}>SISA TAGIHAN</td>
-                          <td style={{ padding: "8px 10px", color: "#92400e", fontFamily: "monospace", fontWeight: 800, fontSize: 14 }}>Rp {Math.max(0, liveInv.total - (Number(liveInv.paid_amount) || 0)).toLocaleString("id-ID")}</td>
-                        </tr>
-                      </>
-                    )}
                   </tbody>
                 </table>
                 {/* Footer */}
@@ -7897,15 +7808,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <button onClick={() => setModalAddCustomer(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 24, cursor: "pointer", lineHeight: 1 }}>×</button>
             </div>
             <div style={{ display: "grid", gap: 12 }}>
-              {[["Nama Lengkap", "name", "text", "Nama customer"], ["Nomor HP (auto-format 628xxx)", "phone", "text", "0812-3456-7890"], ["Alamat Lengkap", "address", "text", "Jl. ..."], ["Area/Kecamatan", "area", "text", "Alam Sutera, BSD, dll"]].map(([lbl, key, type, ph]) => (
+              {[["Nama Lengkap", "name", "text", "Nama customer"], ["Nomor HP", "phone", "text", "628xxx"], ["Alamat Lengkap", "address", "text", "Jl. ..."], ["Area/Kecamatan", "area", "text", "Alam Sutera, BSD, dll"]].map(([lbl, key, type, ph]) => (
                 <div key={key}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>{lbl}</div>
                   <input type={type} value={newCustomerForm[key] || ""} onChange={e => setNewCustomerForm(f => ({ ...f, [key]: e.target.value }))}
-                    onBlur={key === "phone" ? (e => {
-                      const norm = normalizePhone(e.target.value);
-                      if (norm && norm !== newCustomerForm.phone) setNewCustomerForm(f => ({ ...f, phone: norm }));
-                    }) : undefined}
-                    placeholder={ph} style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: key === "phone" ? "monospace" : "inherit" }} />
+                    placeholder={ph} style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
                 </div>
               ))}
               <div>
@@ -8689,13 +8596,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     if (!elErr) {
                       // Rule: admin edit = sumber invoice paling benar → regenerate invoice jika ada
                       const existInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id);
-                      // GUARD: invoice AC sale punya source of truth sendiri di invoice_items.
-                      // Admin yang mau ubah tagihan AC sale harus pakai "Edit Material" di Invoice view, bukan dari edit laporan.
-                      if (existInv && existInv.invoice_type === "ac_unit_sale") {
-                        addAgentLog("INVOICE_REGEN_SKIP_AC_SALE",
-                          `Edit laporan ${selectedLaporan.job_id} — invoice AC sale ${existInv.id} TIDAK di-update (gunakan Edit Material di Invoice view)`,
-                          "INFO");
-                      } else if (existInv) {
+                      if (existInv) {
                         const ord = ordersData.find(o => o.id === selectedLaporan.job_id);
                         const vMats = combinedMats.filter(m => m.nama && parseFloat(m.jumlah || 0) > 0);
                         const vMDetail = vMats.map(m => {
@@ -9751,23 +9652,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               repair_gratis: invBase.repair_gratis || undefined,
             };
             // ── 1 invoice per job: query DB langsung untuk cegah race condition ──
-            // GUARD: jika ada invoice ac_unit_sale, JANGAN hapus & jangan buat invoice baru —
-            // invoice AC sale sudah punya unit + paket + DP customer yg tidak boleh hilang.
-            // Material/jasa tambahan dari laporan teknisi akan ditangani via "Edit Material" oleh Owner.
             const { data: existingDB, error: fetchExistingErr } = await supabase
-              .from("invoices").select("id,invoice_type,paid_amount,total").eq("job_id", laporanModal.id);
+              .from("invoices").select("id").eq("job_id", laporanModal.id);
             if (fetchExistingErr) {
               console.error("[INVOICE_PRECHECK] gagal cek existing:", fetchExistingErr.message);
               showNotif("❌ Gagal verifikasi invoice existing — submit dibatalkan. Coba lagi.");
               return;
             }
-            const acSaleInv = (existingDB || []).find(i => i.invoice_type === "ac_unit_sale");
-            const skipInsertACSale = !!acSaleInv;
-            if (acSaleInv) {
-              // Skip seluruh flow create invoice — invoice AC sale tidak boleh dihapus/diganti
-              addAgentLog("INVOICE_SKIP_AC_SALE", `Invoice AC sale ${acSaleInv.id} sudah ada untuk ${laporanModal.id} — skip auto-create dari laporan`, "INFO");
-              showNotif(`✅ Laporan tersimpan — Invoice AC sale ${acSaleInv.id} sudah ada (tidak diubah)`);
-            } else if (existingDB && existingDB.length > 0) {
+            if (existingDB && existingDB.length > 0) {
               // Hapus semua dulu — update local state HANYA setelah semua delete sukses
               for (const old of existingDB) {
                 const { error: delErr } = await deleteInvoice(supabase, old.id, auditUserName(), "TEKNISI_REWRITE_LAPORAN");
@@ -9781,10 +9673,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               setInvoicesData(prev => prev.filter(i => i.job_id !== laporanModal.id));
               addAgentLog("INVOICE_REWRITE", `${existingDB.length} invoice lama dihapus untuk ${laporanModal.id} (rewrite)`, "INFO");
             }
-            // Skip insert invoice baru jika ada AC sale invoice
-            const { error: invErr } = skipInsertACSale
-              ? { error: null }
-              : await insertInvoice(supabase, invPayload);
+            const { error: invErr } = await insertInvoice(supabase, invPayload);
             if (invErr) {
               console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
               let retryOk = false;
@@ -9804,39 +9693,39 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               }
             }
             // Update local state SETELAH DB insert sukses (atau retry sukses)
-            // Skip update state jika invoice AC sale sudah ada — invoice tidak diubah
-            if (!skipInsertACSale) {
-              setInvoicesData(prev => [...prev, newInvoice]);
-              addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
+            setInvoicesData(prev => [...prev, newInvoice]);
 
-              // WA notif ke Owner
-              const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
-              const ownerMsg =
-                "Invoice Menunggu Approval\n"
-                + "Job: " + laporanModal.id + "\n"
-                + "Customer: " + laporanModal.customer + "\n"
-                + "Layanan: " + laporanModal.service + " - " + laporanUnits.length + " unit\n"
-                + "Teknisi: " + laporanModal.teknisi + (laporanModal.helper ? " + " + laporanModal.helper : "") + "\n"
-                + "Total: " + fmt(newInvoice.total) + " Jasa: " + fmt(newInvoice.labor) + " Mat: " + fmt(newInvoice.material) + "\n"
-                + "Invoice: " + invId + " Silakan approve di menu Invoice. — ARA";
-              await Promise.all(ownerAccounts.map(u => {
-                if (u.phone) return sendWA(u.phone, ownerMsg);
-                return Promise.resolve();
-              }));
-              // Fallback if no owner accounts (notify default phone)
-              if (ownerAccounts.length === 0) {
-                try {
-                  const r = await fetch("/api/send-wa", {
-                    method: "POST", headers: await _apiHeaders(),
-                    body: JSON.stringify({ phone: "6281299898937", message: ownerMsg, currentUserRole: currentUser?.role || "Unknown" })
-                  });
-                  if (!r.ok) {
-                    const d = await r.json().catch(() => ({}));
-                    console.warn("[ARA_NOTIFY_OWNER_FAILED]", d.error || r.status);
-                  }
-                } catch (err) {
-                  console.warn("[ARA_NOTIFY_OWNER_FAILED]", err.message);
+            addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
+
+            // WA notif ke Owner
+            const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
+            const ownerMsg =
+              "Invoice Menunggu Approval\n"
+              + "Job: " + laporanModal.id + "\n"
+              + "Customer: " + laporanModal.customer + "\n"
+              + "Layanan: " + laporanModal.service + " - " + laporanUnits.length + " unit\n"
+              + "Teknisi: " + laporanModal.teknisi + (laporanModal.helper ? " + " + laporanModal.helper : "") + "\n"
+              + "Total: " + fmt(newInvoice.total) + " Jasa: " + fmt(newInvoice.labor) + " Mat: " + fmt(newInvoice.material) + "\n"
+              + "Invoice: " + invId + " Silakan approve di menu Invoice. — ARA";
+            // Notify owner accounts
+            await Promise.all(ownerAccounts.map(u => {
+              if (u.phone) return sendWA(u.phone, ownerMsg);
+              return Promise.resolve();
+            }));
+
+            // Fallback if no owner accounts (notify default phone)
+            if (ownerAccounts.length === 0) {
+              try {
+                const r = await fetch("/api/send-wa", {
+                  method: "POST", headers: await _apiHeaders(),
+                  body: JSON.stringify({ phone: "6281299898937", message: ownerMsg, currentUserRole: currentUser?.role || "Unknown" })
+                });
+                if (!r.ok) {
+                  const d = await r.json().catch(() => ({}));
+                  console.warn("[ARA_NOTIFY_OWNER_FAILED]", d.error || r.status);
                 }
+              } catch (err) {
+                console.warn("[ARA_NOTIFY_OWNER_FAILED]", err.message);
               }
             }
           }
