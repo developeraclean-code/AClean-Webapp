@@ -3427,16 +3427,15 @@ ${photoPageHTML}
       );
     }
     // GAP 1.6: Catat ke payments table untuk history + partial payment support
+    // amount = sisa yang dibayar (total - paid_amount sebelumnya), bukan total — hindari double-count saat ada DP
     try {
+      const sisaDibayar = (inv.total || 0) - (Number(inv.paid_amount) || 0);
       await supabase.from("payments").insert({
         invoice_id: inv.id,
-        amount: inv.total,
+        amount: sisaDibayar > 0 ? sisaDibayar : (inv.total || 0),
         method: method,
         notes: notes || "Lunas",
         paid_at: paidAt,
-        verified: true,
-        verified_by: currentUser?.id || null,
-        verified_at: paidAt,
       });
     } catch (e) { console.warn("payments insert skip:", e?.message); }
     // Update customer last_service
@@ -3500,9 +3499,6 @@ ${photoPageHTML}
         allocation_detail: allocation,
         payment_proof_url: proofUrl || null,
         paid_at: paidAt,
-        verified: true,
-        verified_by: currentUser?.id || null,
-        verified_at: paidAt,
         notes: `Group payment: ${invoiceIds.join(", ")}`,
       }).select("id").single();
       paymentId = paymentRow?.id || null;

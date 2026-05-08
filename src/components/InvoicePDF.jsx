@@ -212,14 +212,42 @@ export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItem
               {paketItems.length > 0 && (
                 <>
                   <SectionHeader label="Paket Pemasangan & Jasa" color="#3b82f6" />
-                  {paketItems.map((item, i) => (
-                    <View key={i} style={[s.tr, i % 2 === 1 ? s.trEven : {}]}>
-                      <Text style={[s.td, { flex: 1 }]}>{item.description}</Text>
-                      <Text style={[s.td, { width: 60, textAlign: "right" }]}>{item.qty}</Text>
-                      <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier" }]}>{(item.unit_price || 0).toLocaleString("id-ID")}</Text>
-                      <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</Text>
-                    </View>
-                  ))}
+                  {paketItems.map((item, i) => {
+                    // Cek apakah paket_pasang punya include items — jika ya, expand
+                    const paketSnap = inv.paket_pasang;
+                    const includeItems = paketSnap?.include;
+                    if (Array.isArray(includeItems) && includeItems.length > 0) {
+                      return (
+                        <View key={i}>
+                          {/* Baris paket header — harga total di kanan */}
+                          <View style={[s.tr, { backgroundColor: "#eff6ff" }]}>
+                            <Text style={[s.td, { flex: 1, fontFamily: "Helvetica-Bold", color: "#1e40af" }]}>{item.description}</Text>
+                            <Text style={[s.td, { width: 60 }]}></Text>
+                            <Text style={[s.td, { width: 80 }]}></Text>
+                            <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#1e40af" }]}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</Text>
+                          </View>
+                          {/* Sub-baris include items */}
+                          {includeItems.map((inc, ii) => (
+                            <View key={ii} style={[s.tr, { backgroundColor: ii % 2 === 0 ? "#f8faff" : "#f0f4ff" }]}>
+                              <Text style={[s.td, { flex: 1, paddingLeft: 18, color: "#475569", fontSize: 8.5 }]}>✓ {inc.nama}</Text>
+                              <Text style={[s.td, { width: 60, textAlign: "right", color: "#64748b", fontSize: 8.5 }]}>{inc.qty} {inc.satuan}</Text>
+                              <Text style={[s.td, { width: 80, textAlign: "right", color: "#94a3b8", fontSize: 8 }]}>(include)</Text>
+                              <Text style={[s.td, { width: 80 }]}></Text>
+                            </View>
+                          ))}
+                        </View>
+                      );
+                    }
+                    // Fallback: render normal 1 baris
+                    return (
+                      <View key={i} style={[s.tr, i % 2 === 1 ? s.trEven : {}]}>
+                        <Text style={[s.td, { flex: 1 }]}>{item.description}</Text>
+                        <Text style={[s.td, { width: 60, textAlign: "right" }]}>{item.qty}</Text>
+                        <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier" }]}>{(item.unit_price || 0).toLocaleString("id-ID")}</Text>
+                        <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</Text>
+                      </View>
+                    );
+                  })}
                 </>
               )}
               {addonItems.length > 0 && (

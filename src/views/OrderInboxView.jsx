@@ -1355,13 +1355,17 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
               {form.customer_id && <span style={{ color: cs.green, marginLeft: 6 }}>✓</span>}
             </label>
             <input
-              style={{ ...inputStyle, borderColor: form.customer_id ? cs.green + "88" : cs.border }}
+              style={{ ...inputStyle, borderColor: form.customer_id ? cs.green + "88" : cs.border, fontFamily: "monospace" }}
               value={form.phone}
               onChange={e => {
                 setField("phone", e.target.value);
                 if (form.customer_id) setField("customer_id", null);
               }}
-              placeholder="08xx — auto-lookup customer" />
+              onBlur={e => {
+                const norm = normalizePhone(e.target.value);
+                if (norm && norm !== form.phone) setField("phone", norm);
+              }}
+              placeholder="08xx (auto-format ke 628xxx)" />
             {phoneSuggest.length > 0 && !form.customer_id && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, zIndex: 100, overflow: "hidden", boxShadow: "0 4px 16px #00000066" }}>
                 <div style={{ padding: "5px 12px", fontSize: 10, color: cs.muted, borderBottom: "1px solid " + cs.border + "44" }}>Customer ditemukan:</div>

@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
+import { normalizePhone } from "../lib/phone.js";
 
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
 
@@ -80,7 +81,7 @@ const emptyUnit = () => ({
   qty: 1, harga_satuan: 0, subtotal: 0, is_passthrough: true,
 });
 
-export default function AcUnitInvoiceModal({ onClose, supabase, customersData, showNotif, setInvoicesData, getLocalDate }) {
+export default function AcUnitInvoiceModal({ onClose, supabase, customersData, ordersData, showNotif, setInvoicesData, setOrdersData, getLocalDate }) {
   const [activeTab, setActiveTab] = useState("customer");
   const [saving, setSaving] = useState(false);
 
@@ -121,6 +122,9 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
   const [diskonPct, setDiskonPct] = useState(false);
   const [tradeIn, setTradeIn]     = useState(false);
 
+  // ── Auto-create order install ──
+  const [installDate, setInstallDate] = useState("");
+
   // ── Pembayaran ──
   const [dpMode, setDpMode]       = useState("lunas");
   const [dpAmount, setDpAmount]   = useState("");
@@ -151,9 +155,15 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
     () => acUnits.reduce((s, u) => s + (u.subtotal || 0), 0), [acUnits]
   );
 
+  // Total qty unit AC (untuk paket pemasangan per-unit)
+  const totalUnitsCount = useMemo(
+    () => acUnits.reduce((s, u) => s + (Number(u.qty) || 1), 0), [acUnits]
+  );
+
+  // Paket dihitung per-unit: 1 unit = 1 paket pasang
   const totalPaket = useTanpaPaket
     ? (manualJasa.reduce((s, j) => s + j.subtotal, 0) + manualMat.reduce((s, m) => s + m.subtotal, 0))
-    : (selectedPaket?.harga || 0);
+    : (selectedPaket?.harga || 0) * totalUnitsCount;
 
   const totalAddon = useMemo(
     () => addonItems.reduce((s, a) => s + a.qty * a.harga, 0), [addonItems]
@@ -241,6 +251,7 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
       const invoiceId = "INV-" + today.replace(/-/g, "") + "-" + Math.random().toString(36).toUpperCase().slice(2, 7);
 
       // Tentukan status pembayaran
+      // chk_invoices_status valid: DRAFT, PENDING_APPROVAL, APPROVED, SENT, UNPAID, PARTIAL_PAID, PAID, OVERDUE, CANCELLED
       let status = "UNPAID";
       let paidAt = null;
       let paidAmount = 0;
@@ -249,29 +260,61 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
         paidAt = today;
         paidAmount = grandTotal;
       } else if (dpMode === "dp" && dpVal > 0) {
-        status = "PARTIAL_PAID";
+        status = "PARTIAL_PAID"; // DP / cicilan
         paidAmount = dpVal;
       }
 
       // Insert customer baru jika perlu (tidak ada FK ke invoices, tapi data customer tetap disimpan)
+      // customers.phone UNIQUE → upsert agar tidak gagal jika phone sudah ada di DB
+      // Normalize phone ke format 62xxx agar konsisten dengan customers existing
       if (custMode === "baru" && newCust.name) {
-        const { error: custErr } = await supabase
-          .from("customers")
-          .insert({ name: newCust.name, phone: newCust.phone, area: newCust.area, address: newCust.alamat });
-        if (custErr) console.warn("Gagal simpan customer baru:", custErr.message);
+        const phoneNorm = normalizePhone(newCust.phone || "");
+        const customerRow = {
+          name:    newCust.name.trim(),
+          phone:   phoneNorm || null, // empty → null biar tidak conflict UNIQUE
+          area:    newCust.area || null,
+          address: newCust.alamat || null,
+        };
+        if (phoneNorm) {
+          // Ada phone → upsert biar update jika sudah ada
+          const { error: custErr } = await supabase
+            .from("customers")
+            .upsert(customerRow, { onConflict: "phone", ignoreDuplicates: false });
+          if (custErr) console.warn("Gagal upsert customer baru:", custErr.message);
+        } else {
+          // Tidak ada phone → insert biasa, NULL phone tidak melanggar UNIQUE
+          const { error: custErr } = await supabase.from("customers").insert(customerRow);
+          if (custErr) console.warn("Gagal simpan customer baru:", custErr.message);
+        }
+      }
+
+      // Garansi pemasangan: 30 hari dari tanggal invoice (sama dengan invoice servis biasa)
+      const garansiExpDate = new Date();
+      garansiExpDate.setDate(garansiExpDate.getDate() + 30);
+      const garansiExpires = garansiExpDate.toISOString().slice(0, 10);
+
+      // Jatuh tempo: 7 hari untuk AC sale (lebih lama dari servis biasa karena nominal besar)
+      // Kalau lunas → tidak ada due
+      let dueDate = null;
+      if (status !== "PAID") {
+        const dueObj = new Date();
+        dueObj.setDate(dueObj.getDate() + 7);
+        dueDate = dueObj.toISOString().slice(0, 10);
       }
 
       // Build invoice row — hanya kolom yang ada di tabel invoices
+      // Normalize phone agar match dengan customers DB (format 62xxx)
+      const phoneForInvoice = normalizePhone(custDisplay.phone || "") || null;
       const invoicePayload = {
         id:              invoiceId,
         invoice_type:    "ac_unit_sale",
         status,
         paid_at:         paidAt,
         paid_amount:     paidAmount,
-        remaining_amount: grandTotal - paidAmount,
+        remaining_amount: Math.max(0, grandTotal - paidAmount),
         customer:        custDisplay.name,
-        phone:           custDisplay.phone || null,
-        service:         "Install AC",
+        phone:           phoneForInvoice,
+        service:         "Install",
         total:           grandTotal,
         unit_ac_amount:  totalUnitAC,
         paket_pasang:    useTanpaPaket ? null : (selectedPaket || null),
@@ -282,6 +325,12 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
         trade_in_amount: tradeInNominal,
         notes:           notes || null,
         paid_method:     dpMode !== "nanti" ? payMethod : null,
+        job_id:          null, // akan di-update setelah order dibuat
+        garansi_days:    30,
+        garansi_expires: garansiExpires,
+        due:             dueDate,
+        sent:            true,    // AC sale langsung sent (sudah ada bukti transaksi)
+        sent_at:         new Date().toISOString(),
       };
 
       const { error: invErr } = await supabase
@@ -292,6 +341,13 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
       // Build invoice_items rows — subtotal adalah generated column (qty*unit_price), jangan di-insert
       const items = [];
 
+      // NOTE: invoice_items.qty & unit_price adalah INTEGER di DB —
+      // round eksplisit untuk semua agar tidak ada nilai pecahan masuk
+      const intOr = (v, fallback = 0) => {
+        const n = parseInt(v, 10);
+        return Number.isFinite(n) && n > 0 ? n : fallback;
+      };
+
       // Unit AC rows (passthrough)
       acUnits.forEach(u => {
         if (!u.brand || u.harga_satuan <= 0) return;
@@ -299,19 +355,19 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
           invoice_id:  invoiceId,
           item_type:   "unit_ac",
           description: `${u.brand} ${u.tipe} ${u.kapasitas}${u.model ? " " + u.model : ""}`,
-          qty:         u.qty,
-          unit_price:  u.harga_satuan,
+          qty:         intOr(u.qty, 1),
+          unit_price:  intOr(u.harga_satuan, 0),
         });
       });
 
-      // Paket row
+      // Paket row — qty = total units (1 paket per unit)
       if (!useTanpaPaket && selectedPaket) {
         items.push({
           invoice_id:  invoiceId,
           item_type:   "paket",
           description: selectedPaket.label,
-          qty:         1,
-          unit_price:  selectedPaket.harga,
+          qty:         intOr(totalUnitsCount, 1),
+          unit_price:  intOr(selectedPaket.harga, 0),
         });
       }
 
@@ -323,7 +379,7 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
           item_type:   "jasa",
           description: j.nama,
           qty:         1,
-          unit_price:  j.subtotal,
+          unit_price:  intOr(j.subtotal, 0),
         });
       });
 
@@ -335,7 +391,7 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
           item_type:   "material",
           description: m.nama,
           qty:         1,
-          unit_price:  m.subtotal,
+          unit_price:  intOr(m.subtotal, 0),
         });
       });
 
@@ -346,8 +402,8 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
           invoice_id:  invoiceId,
           item_type:   "addon",
           description: `${a.nama} (${a.satuan})`,
-          qty:         a.qty,
-          unit_price:  a.harga,
+          qty:         intOr(a.qty, 1),
+          unit_price:  intOr(a.harga, 0),
         });
       });
 
@@ -371,7 +427,45 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
         });
       }
 
-      showNotif?.(`✅ Invoice AC berhasil dibuat (${status})`);
+      // ── Auto-create order install ──
+      const totalUnits = acUnits.reduce((s, u) => s + (Number(u.qty) || 1), 0);
+      const jobDate = installDate || today;
+      const jobId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+      const orderPayload = {
+        id:         jobId,
+        customer:   custDisplay.name,
+        phone:      phoneForInvoice,
+        address:    custMode === "existing" ? (selectedCust?.address || custDisplay.area || "") : (newCust.alamat || newCust.area || ""),
+        area:       custMode === "existing" ? (selectedCust?.area || "") : (newCust.area || ""),
+        service:    "Install",
+        type:       "Install",
+        units:      totalUnits,
+        date:       jobDate,
+        time:       "09:00",
+        time_end:   "11:00",
+        status:     "PENDING",
+        invoice_id: invoiceId,
+        dispatch:   false,
+        notes:      `Auto dari Invoice ${invoiceId}${notes ? " · " + notes : ""}`,
+      };
+
+      const { error: orderErr } = await supabase.from("orders").insert(orderPayload);
+      let orderCreatedOK = false;
+      if (orderErr) {
+        console.warn("Gagal buat order install:", orderErr.message);
+        showNotif?.("⚠️ Invoice berhasil, tapi order install gagal dibuat: " + orderErr.message + ". Buat order Install manual via Planning Order.");
+      } else {
+        // Update invoice.job_id ke order yang baru dibuat
+        await supabase.from("invoices").update({ job_id: jobId }).eq("id", invoiceId);
+        if (setOrdersData) {
+          setOrdersData(prev => [orderPayload, ...prev]);
+        }
+        orderCreatedOK = true;
+      }
+
+      if (orderCreatedOK) {
+        showNotif?.(`✅ Invoice AC + Order Install berhasil dibuat`);
+      }
 
       // Refresh invoice list di parent
       if (setInvoicesData) {
@@ -479,15 +573,19 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
               <div style={{ display: "grid", gap: 10 }}>
                 {[
                   { key: "name", label: "Nama Lengkap *", ph: "Budi Santoso / PT Maju Jaya" },
-                  { key: "phone", label: "No HP / WhatsApp *", ph: "0812-3456-7890" },
+                  { key: "phone", label: "No HP / WhatsApp * (auto-format 628xxx)", ph: "0812-3456-7890" },
                   { key: "area", label: "Area / Wilayah", ph: "Kelapa Gading, Sunter..." },
                   { key: "alamat", label: "Alamat Lengkap", ph: "Jl. ... No. ..." },
                 ].map(f => (
                   <div key={f.key}>
                     <label style={{ fontSize: 11, color: cs.muted, display: "block", marginBottom: 4 }}>{f.label}</label>
                     <input value={newCust[f.key]} onChange={e => setNewCust(p => ({ ...p, [f.key]: e.target.value }))}
+                      onBlur={f.key === "phone" ? (e => {
+                        const norm = normalizePhone(e.target.value);
+                        if (norm && norm !== newCust.phone) setNewCust(p => ({ ...p, phone: norm }));
+                      }) : undefined}
                       placeholder={f.ph}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
+                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box", fontFamily: f.key === "phone" ? "monospace" : "inherit" }} />
                   </div>
                 ))}
               </div>
@@ -1068,7 +1166,7 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
                 {[
                   { n: "1", txt: "Invoice dibuat — customer terima ringkasan" },
                   { n: "2", txt: dpMode === "nanti" ? "Invoice UNPAID — belum ada pembayaran" : dpMode === "dp" ? `DP ${dpVal > 0 ? fmt(dpVal) : "..."} dicatat → PARTIAL PAID` : "Bayar lunas → PAID" },
-                  { n: "3", txt: "Jadwal instalasi dibuat di Planning Order" },
+                  { n: "3", txt: `Order install PENDING otomatis dibuat (${installDate || "hari ini"}) — assign teknisi di Planning Order` },
                   { n: "4", txt: "Teknisi install, submit laporan material aktual" },
                   ...(dpMode !== "lunas" ? [
                     { n: "5", txt: "Admin tambah add-on material ke invoice ini" },
@@ -1084,6 +1182,18 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, s
                     <div style={{ fontSize: 12, color: cs.text, paddingTop: 3 }}>{s.txt}</div>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* ── Jadwal Install ── */}
+            <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 4 }}>📅 Jadwal Instalasi</div>
+              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>Order install akan otomatis dibuat dan ter-link ke invoice ini. Teknisi dapat di-assign di Planning Order.</div>
+              <label style={{ fontSize: 11, color: cs.muted, display: "block", marginBottom: 5 }}>Tanggal Install <span style={{ fontWeight: 400 }}>(kosongkan = hari ini)</span></label>
+              <input type="date" value={installDate} onChange={e => setInstallDate(e.target.value)}
+                style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
+              <div style={{ marginTop: 8, fontSize: 11, color: cs.accent, background: cs.accent + "12", borderRadius: 6, padding: "6px 10px" }}>
+                ✓ Order "Install AC" akan dibuat otomatis dengan status PENDING — assign teknisi dari Planning Order
               </div>
             </div>
 

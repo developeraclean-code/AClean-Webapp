@@ -1,11 +1,22 @@
 // Normalisasi: 08xxx / +62xxx / 628xxx / 8xxx → 628xxx
+// - Buang semua karakter selain digit (spasi, strip, kurung, plus, titik)
+// - Auto-prefix 62 untuk format Indonesia
 export const normalizePhone = (p) => {
   if (!p) return "";
-  const d = p.toString().replace(/[\s\-().+]/g, "");
+  // Strip semua selain digit (handle paste dari format lain seperti "+62 812-3456-7890")
+  const d = p.toString().replace(/\D/g, "");
+  if (!d) return "";
   if (d.startsWith("08")) return "62" + d.slice(1);
   if (d.startsWith("62")) return d;
   if (d.startsWith("8")) return "62" + d;
+  // Edge: digit lain (mis. nomor luar negeri) — kembalikan as-is digits only
   return d;
+};
+
+// Validasi nomor Indonesia: harus 628xxxxxxxxx (10-15 digit)
+export const isValidIDPhone = (p) => {
+  const n = normalizePhone(p);
+  return /^628\d{8,12}$/.test(n);
 };
 
 export const samePhone = (a, b) => {

@@ -210,6 +210,9 @@ return (
       // Pendapatan berdasarkan tanggal PENGERJAAN (order.date), bukan tanggal bayar
       const paidInvoices = invoicesData.filter(i => i.status === "PAID" && jobDate(i));
 
+      // Helper: revenue efektif AClean — skip unit_ac_amount (passthrough) untuk ac_unit_sale
+      const effRev = (i) => (i.total || 0) - (i.invoice_type === "ac_unit_sale" ? (i.unit_ac_amount || 0) : 0);
+
       const buildData = (mode) => {
         const start = startOf(mode);
         const filtered = paidInvoices.filter(i => new Date(jobDate(i) + "T00:00:00") >= start);
@@ -218,7 +221,7 @@ return (
           const hours = Array.from({ length: 24 }, (_, h) => ({ label: `${String(h).padStart(2, "0")}:00`, total: 0, count: 0 }));
           paidInvoices.filter(i => jobDate(i) === todayStr).forEach(i => {
             const h = i.paid_at ? new Date(i.paid_at).getHours() : new Date().getHours();
-            hours[h].total += (i.total || 0); hours[h].count++;
+            hours[h].total += effRev(i); hours[h].count++;
           });
           return hours.filter((_, h) => h <= new Date().getHours());
         }
@@ -228,12 +231,12 @@ return (
             const d = new Date(startOf("minggu")); d.setDate(d.getDate() + i);
             const dStr = d.toISOString().slice(0, 10);
             const dayInv = paidInvoices.filter(inv => jobDate(inv) === dStr);
-            return { label: days[d.getDay()], date: dStr, total: dayInv.reduce((s, v) => s + (v.total || 0), 0), count: dayInv.length };
+            return { label: days[d.getDay()], date: dStr, total: dayInv.reduce((s, v) => s + effRev(v), 0), count: dayInv.length };
           });
         }
         if (mode === "bulan") {
           const weeks = [{ label: "Mgg 1", total: 0, count: 0 }, { label: "Mgg 2", total: 0, count: 0 }, { label: "Mgg 3", total: 0, count: 0 }, { label: "Mgg 4+", total: 0, count: 0 }];
-          filtered.forEach(i => { const wk = Math.min(Math.floor((new Date(jobDate(i) + "T00:00:00").getDate() - 1) / 7), 3); weeks[wk].total += (i.total || 0); weeks[wk].count++; });
+          filtered.forEach(i => { const wk = Math.min(Math.floor((new Date(jobDate(i) + "T00:00:00").getDate() - 1) / 7), 3); weeks[wk].total += effRev(i); weeks[wk].count++; });
           return weeks;
         }
         return [];
@@ -250,11 +253,11 @@ return (
       const byPerson = {};
 
       paidInPeriod.forEach(inv => {
-        // Teknisi utama
+        // Teknisi utama — pakai effRev biar skip unit AC passthrough
         const tek = inv.teknisi;
         if (tek) {
           if (!byPerson[tek]) byPerson[tek] = { total: 0, count: 0, role: "Teknisi" };
-          byPerson[tek].total += (inv.total || 0);
+          byPerson[tek].total += effRev(inv);
           byPerson[tek].count++;
         }
       });

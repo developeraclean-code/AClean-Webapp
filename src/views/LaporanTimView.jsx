@@ -246,10 +246,26 @@ const verifyLaporan = async (r) => {
       sent: false, created_at: new Date().toISOString()
     };
     const { data: oldDB, error: fetchOldErr } = await supabase
-      .from("invoices").select("id").eq("job_id", r.job_id);
+      .from("invoices").select("id,invoice_type").eq("job_id", r.job_id);
     if (fetchOldErr) {
       console.error("[AUTO_INVOICE] gagal cek existing:", fetchOldErr.message);
       showNotif("❌ Gagal verifikasi invoice existing — coba lagi.");
+      return;
+    }
+    // GUARD: jika ada invoice AC sale, JANGAN buat invoice baru atau hapus —
+    // invoice AC sale punya unit + paket + DP customer yang tidak boleh hilang
+    const acSaleInDB = (oldDB || []).find(o => o.invoice_type === "ac_unit_sale");
+    if (acSaleInDB) {
+      addAgentLog("INVOICE_AUTO_SKIP_AC_SALE",
+        `Verify laporan ${r.job_id} — invoice AC sale ${acSaleInDB.id} sudah ada, tidak diubah`,
+        "INFO");
+      showNotif(`✅ Laporan verified! Invoice AC sale ${acSaleInDB.id} sudah ada (tidak diubah)`);
+      // Tetap update order status COMPLETED
+      const ord0 = ordersData.find(o => o.id === r.job_id);
+      if (ord0 && ["DISPATCHED","ON_SITE"].includes(ord0.status)) {
+        await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
+        setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+      }
       return;
     }
     if (oldDB && oldDB.length > 0) {
@@ -807,11 +823,18 @@ return (
                   return;
                 }
                 setLaporanReports(p => p.filter(x => x.id !== r.id));
-                // Hapus invoice terkait jika ada
-                const relInv = invoicesData.filter(i => i.job_id === r.job_id);
+                // Hapus invoice terkait jika ada — KECUALI invoice AC sale (punya source of truth sendiri)
+                const relInv = invoicesData.filter(i => i.job_id === r.job_id && i.invoice_type !== "ac_unit_sale");
                 if (relInv.length > 0) {
                   await Promise.all(relInv.map(inv => deleteInvoice(supabase, inv.id, auditUserName(), "LAPORAN_DIHAPUS")));
-                  setInvoicesData(p => p.filter(i => i.job_id !== r.job_id));
+                  setInvoicesData(p => p.filter(i => !(i.job_id === r.job_id && i.invoice_type !== "ac_unit_sale")));
+                }
+                // Notify jika ada AC sale invoice yang skip
+                const acSaleSkipped = invoicesData.find(i => i.job_id === r.job_id && i.invoice_type === "ac_unit_sale");
+                if (acSaleSkipped) {
+                  addAgentLog("LAPORAN_DEL_KEEP_AC_SALE",
+                    `Laporan ${r.job_id} dihapus, tapi invoice AC sale ${acSaleSkipped.id} dipertahankan (source of truth sendiri)`,
+                    "INFO");
                 }
                 // Kembalikan stok material dari transaksi laporan ini
                 const { data: txRows } = await supabase
