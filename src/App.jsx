@@ -321,6 +321,7 @@ Jika "teknisi X tidak masuk hari ini":
 
 ## FITUR VISION — BACA GAMBAR
 - Bukti bayar/transfer → ekstrak bank, nominal, tanggal, pengirim → tawarkan MARK_PAID
+- Jika nominal transfer > total invoice karena biaya admin/transfer bank (selisih ≤ Rp 5.000), tetap anggap LUNAS dan jalankan MARK_PAID — jangan tanya konfirmasi tambahan
 - Gambar kerusakan AC → deskripsikan kondisi → rekomendasikan service
 - Nota/struk belanja → baca item + harga → tawarkan CREATE_EXPENSE
 - Gambar tidak jelas → minta kirim ulang dengan resolusi lebih baik
@@ -3109,7 +3110,13 @@ ${photoPageHTML}
   const invoiceReminderWA = async (inv) => {
     if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
     const invoiceUrl = await uploadInvoicePDFForWA(inv);
-    const msg = `Halo ${inv.customer}, Terlampir Invoice Resmi Pekerjaan Kemaren senilai *${fmt(inv.total)}*.\n\nPembayaran Bisa Melalui Transfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nApabila sudah di Transfer Bole dikirimkan Bukti Pembayaran kesini untuk di Konfirmasi Pembayarannya ya Bapak / Ibu. Terima kasih! 🙏`;
+    // Hitung tagihan: jika ada DP, tagih sisa-nya bukan total
+    const paid = Number(inv.paid_amount) || 0;
+    const sisa = Math.max(0, (inv.total || 0) - paid);
+    const tagihLabel = paid > 0
+      ? `sisa pembayaran *${fmt(sisa)}* (dari total ${fmt(inv.total)} — sudah DP ${fmt(paid)})`
+      : `senilai *${fmt(inv.total)}*`;
+    const msg = `Halo ${inv.customer}, Terlampir Invoice Resmi Pekerjaan Kemaren ${tagihLabel}.\n\nPembayaran Bisa Melalui Transfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nApabila sudah di Transfer Bole dikirimkan Bukti Pembayaran kesini untuk di Konfirmasi Pembayarannya ya Bapak / Ibu. Terima kasih! 🙏`;
     sendWA(inv.phone, msg, invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {});
   };
 
@@ -3387,7 +3394,7 @@ ${photoPageHTML}
     const originalOrderStatus = ordersData.find(o => o.id === inv.job_id || o.invoice_id === inv.id)?.status;
 
     setInvoicesData(prev => prev.map(i =>
-      i.id === inv.id ? { ...i, status: "PAID", paid_at: paidAt, ...(paymentProofUrl ? { payment_proof_url: paymentProofUrl } : {}) } : i
+      i.id === inv.id ? { ...i, status: "PAID", paid_at: paidAt, paid_amount: i.total, remaining_amount: 0, ...(paymentProofUrl ? { payment_proof_url: paymentProofUrl } : {}) } : i
     ));
     setOrdersData(prev => prev.map(o =>
       (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: "PAID" } : o
@@ -3432,10 +3439,13 @@ ${photoPageHTML}
       );
     }
     // GAP 1.6: Catat ke payments table untuk history + partial payment support
+    // amount = sisa yang dibayar saat ini (total - paid_amount sebelumnya), bukan total
+    // — agar payments history tidak double-count saat ada DP sebelumnya
     try {
+      const sisaDibayar = (inv.total || 0) - (Number(inv.paid_amount) || 0);
       await supabase.from("payments").insert({
         invoice_id: inv.id,
-        amount: inv.total,
+        amount: sisaDibayar > 0 ? sisaDibayar : (inv.total || 0),
         method: method,
         notes: notes || "Lunas",
         paid_at: paidAt,
@@ -4839,7 +4849,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
       supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE}
       laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
-      apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx} customersData={customersData} />
+      apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx} customersData={customersData}
+      priceListData={priceListData} />
   );
 
   // ============================================================
@@ -7183,9 +7194,38 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           ))}
                         </>
                       );
+                      // Paket section dengan expand include items (sama dengan PDF)
+                      const renderPaketSection = () => {
+                        if (paketItems.length === 0) return null;
+                        const includeItems = liveInv.paket_pasang?.include;
+                        const hasInclude = Array.isArray(includeItems) && includeItems.length > 0;
+                        return (
+                          <>
+                            <tr><td colSpan={4} style={{ padding: "6px 10px", background: "#3b82f618", color: "#3b82f6", fontWeight: 700, fontSize: 10 }}>Paket Pemasangan & Jasa</td></tr>
+                            {paketItems.map((item, i) => (
+                              <>
+                                <tr key={"p" + i} style={{ background: "#eff6ff" }}>
+                                  <td style={{ padding: "8px 10px", color: "#1e40af", fontWeight: 700 }}>{item.description}</td>
+                                  <td style={{ padding: "8px 10px", textAlign: "right", color: "#475569" }}>{item.qty}</td>
+                                  <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "monospace", color: "#475569" }}>{(item.unit_price || 0).toLocaleString("id-ID")}</td>
+                                  <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "monospace", fontWeight: 700, color: "#1e40af" }}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</td>
+                                </tr>
+                                {hasInclude && i === 0 && includeItems.map((inc, ii) => (
+                                  <tr key={"inc" + ii} style={{ background: ii % 2 === 0 ? "#f8faff" : "#f0f4ff" }}>
+                                    <td style={{ padding: "6px 10px 6px 24px", color: "#475569", fontSize: 11 }}>✓ {inc.nama}</td>
+                                    <td style={{ padding: "6px 10px", textAlign: "right", color: "#64748b", fontSize: 11 }}>{inc.qty} {inc.satuan}</td>
+                                    <td style={{ padding: "6px 10px", textAlign: "right", color: "#94a3b8", fontSize: 10 }}>(include)</td>
+                                    <td></td>
+                                  </tr>
+                                ))}
+                              </>
+                            ))}
+                          </>
+                        );
+                      };
                       return (<>
                         {renderSection("Unit AC (Passthrough)", "#f59e0b", unitItems)}
-                        {renderSection("Paket Pemasangan & Jasa", "#3b82f6", paketItems)}
+                        {renderPaketSection()}
                         {renderSection("Material Tambahan", "#10b981", addonItems)}
                       </>);
                     })()}
@@ -7259,6 +7299,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <td colSpan={3} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700 }}>TOTAL TAGIHAN</td>
                       <td style={{ padding: "8px 10px", color: "#fff", fontFamily: "monospace", fontWeight: 800, fontSize: 14 }}>Rp {liveInv.total.toLocaleString("id-ID")}</td>
                     </tr>
+                    {(Number(liveInv.paid_amount) || 0) > 0 && liveInv.status !== "PAID" && (
+                      <>
+                        <tr style={{ background: "#f0fdf4" }}>
+                          <td colSpan={3} style={{ padding: "8px 10px", color: "#16a34a", fontStyle: "italic" }}>DP / Sudah Dibayar</td>
+                          <td style={{ padding: "8px 10px", color: "#16a34a", fontFamily: "monospace", fontWeight: 700 }}>-{(Number(liveInv.paid_amount) || 0).toLocaleString("id-ID")}</td>
+                        </tr>
+                        <tr style={{ background: "#fef3c7" }}>
+                          <td colSpan={3} style={{ padding: "8px 10px", color: "#92400e", fontWeight: 800 }}>SISA TAGIHAN</td>
+                          <td style={{ padding: "8px 10px", color: "#92400e", fontFamily: "monospace", fontWeight: 800, fontSize: 14 }}>Rp {Math.max(0, liveInv.total - (Number(liveInv.paid_amount) || 0)).toLocaleString("id-ID")}</td>
+                        </tr>
+                      </>
+                    )}
                   </tbody>
                 </table>
                 {/* Footer */}
@@ -8631,7 +8683,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     if (!elErr) {
                       // Rule: admin edit = sumber invoice paling benar → regenerate invoice jika ada
                       const existInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id);
-                      if (existInv) {
+                      // GUARD: invoice AC sale punya source of truth sendiri di invoice_items.
+                      // Admin yang mau ubah tagihan AC sale harus pakai "Edit Material" di Invoice view, bukan dari edit laporan.
+                      if (existInv && existInv.invoice_type === "ac_unit_sale") {
+                        addAgentLog("INVOICE_REGEN_SKIP_AC_SALE",
+                          `Edit laporan ${selectedLaporan.job_id} — invoice AC sale ${existInv.id} TIDAK di-update (gunakan Edit Material di Invoice view)`,
+                          "INFO");
+                      } else if (existInv) {
                         const ord = ordersData.find(o => o.id === selectedLaporan.job_id);
                         const vMats = combinedMats.filter(m => m.nama && parseFloat(m.jumlah || 0) > 0);
                         const vMDetail = vMats.map(m => {
@@ -9687,14 +9745,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               repair_gratis: invBase.repair_gratis || undefined,
             };
             // ── 1 invoice per job: query DB langsung untuk cegah race condition ──
+            // GUARD: jika ada invoice ac_unit_sale, JANGAN hapus & jangan buat invoice baru —
+            // invoice AC sale sudah punya unit + paket + DP customer yg tidak boleh hilang.
+            // Material/jasa tambahan dari laporan teknisi akan ditangani via "Edit Material" oleh Owner.
             const { data: existingDB, error: fetchExistingErr } = await supabase
-              .from("invoices").select("id").eq("job_id", laporanModal.id);
+              .from("invoices").select("id,invoice_type,paid_amount,total").eq("job_id", laporanModal.id);
             if (fetchExistingErr) {
               console.error("[INVOICE_PRECHECK] gagal cek existing:", fetchExistingErr.message);
               showNotif("❌ Gagal verifikasi invoice existing — submit dibatalkan. Coba lagi.");
               return;
             }
-            if (existingDB && existingDB.length > 0) {
+            const acSaleInv = (existingDB || []).find(i => i.invoice_type === "ac_unit_sale");
+            const skipInsertACSale = !!acSaleInv;
+            if (acSaleInv) {
+              // Skip seluruh flow create invoice — invoice AC sale tidak boleh dihapus/diganti
+              addAgentLog("INVOICE_SKIP_AC_SALE", `Invoice AC sale ${acSaleInv.id} sudah ada untuk ${laporanModal.id} — skip auto-create dari laporan`, "INFO");
+              showNotif(`✅ Laporan tersimpan — Invoice AC sale ${acSaleInv.id} sudah ada (tidak diubah)`);
+            } else if (existingDB && existingDB.length > 0) {
               // Hapus semua dulu — update local state HANYA setelah semua delete sukses
               for (const old of existingDB) {
                 const { error: delErr } = await deleteInvoice(supabase, old.id, auditUserName(), "TEKNISI_REWRITE_LAPORAN");
@@ -9708,7 +9775,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               setInvoicesData(prev => prev.filter(i => i.job_id !== laporanModal.id));
               addAgentLog("INVOICE_REWRITE", `${existingDB.length} invoice lama dihapus untuk ${laporanModal.id} (rewrite)`, "INFO");
             }
-            const { error: invErr } = await insertInvoice(supabase, invPayload);
+            // Skip insert invoice baru jika ada AC sale invoice
+            const { error: invErr } = skipInsertACSale
+              ? { error: null }
+              : await insertInvoice(supabase, invPayload);
             if (invErr) {
               console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
               let retryOk = false;
@@ -9728,39 +9798,39 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               }
             }
             // Update local state SETELAH DB insert sukses (atau retry sukses)
-            setInvoicesData(prev => [...prev, newInvoice]);
+            // Skip update state jika invoice AC sale sudah ada — invoice tidak diubah
+            if (!skipInsertACSale) {
+              setInvoicesData(prev => [...prev, newInvoice]);
+              addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
 
-            addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
-
-            // WA notif ke Owner
-            const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
-            const ownerMsg =
-              "Invoice Menunggu Approval\n"
-              + "Job: " + laporanModal.id + "\n"
-              + "Customer: " + laporanModal.customer + "\n"
-              + "Layanan: " + laporanModal.service + " - " + laporanUnits.length + " unit\n"
-              + "Teknisi: " + laporanModal.teknisi + (laporanModal.helper ? " + " + laporanModal.helper : "") + "\n"
-              + "Total: " + fmt(newInvoice.total) + " Jasa: " + fmt(newInvoice.labor) + " Mat: " + fmt(newInvoice.material) + "\n"
-              + "Invoice: " + invId + " Silakan approve di menu Invoice. — ARA";
-            // Notify owner accounts
-            await Promise.all(ownerAccounts.map(u => {
-              if (u.phone) return sendWA(u.phone, ownerMsg);
-              return Promise.resolve();
-            }));
-
-            // Fallback if no owner accounts (notify default phone)
-            if (ownerAccounts.length === 0) {
-              try {
-                const r = await fetch("/api/send-wa", {
-                  method: "POST", headers: await _apiHeaders(),
-                  body: JSON.stringify({ phone: "6281299898937", message: ownerMsg, currentUserRole: currentUser?.role || "Unknown" })
-                });
-                if (!r.ok) {
-                  const d = await r.json().catch(() => ({}));
-                  console.warn("[ARA_NOTIFY_OWNER_FAILED]", d.error || r.status);
+              // WA notif ke Owner
+              const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
+              const ownerMsg =
+                "Invoice Menunggu Approval\n"
+                + "Job: " + laporanModal.id + "\n"
+                + "Customer: " + laporanModal.customer + "\n"
+                + "Layanan: " + laporanModal.service + " - " + laporanUnits.length + " unit\n"
+                + "Teknisi: " + laporanModal.teknisi + (laporanModal.helper ? " + " + laporanModal.helper : "") + "\n"
+                + "Total: " + fmt(newInvoice.total) + " Jasa: " + fmt(newInvoice.labor) + " Mat: " + fmt(newInvoice.material) + "\n"
+                + "Invoice: " + invId + " Silakan approve di menu Invoice. — ARA";
+              await Promise.all(ownerAccounts.map(u => {
+                if (u.phone) return sendWA(u.phone, ownerMsg);
+                return Promise.resolve();
+              }));
+              // Fallback if no owner accounts (notify default phone)
+              if (ownerAccounts.length === 0) {
+                try {
+                  const r = await fetch("/api/send-wa", {
+                    method: "POST", headers: await _apiHeaders(),
+                    body: JSON.stringify({ phone: "6281299898937", message: ownerMsg, currentUserRole: currentUser?.role || "Unknown" })
+                  });
+                  if (!r.ok) {
+                    const d = await r.json().catch(() => ({}));
+                    console.warn("[ARA_NOTIFY_OWNER_FAILED]", d.error || r.status);
+                  }
+                } catch (err) {
+                  console.warn("[ARA_NOTIFY_OWNER_FAILED]", err.message);
                 }
-              } catch (err) {
-                console.warn("[ARA_NOTIFY_OWNER_FAILED]", err.message);
               }
             }
           }
