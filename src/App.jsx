@@ -4016,7 +4016,7 @@ ${photoPageHTML}
     const bizContext = {
       today: TODAY,
       orders: ordersData.map(o => ({ id: o.id, customer: o.customer, service: o.service, type: o.type, units: o.units, status: o.status, date: o.date, time: o.time, teknisi: o.teknisi, helper: o.helper, dispatch: o.dispatch, invoice_id: o.invoice_id })),
-      invoices: invoicesData.map(i => ({ id: i.id, customer: i.customer, phone: i.phone, total: i.total, status: i.status, due: i.due, labor: i.labor, material: i.material, discount: i.discount, trade_in: i.trade_in, trade_in_amount: i.trade_in_amount, materials_detail: (i.materials_detail || []).map(m => ({ nama: m.nama, jumlah: m.jumlah, satuan: m.satuan, harga_satuan: m.harga_satuan, subtotal: m.subtotal })) })),
+      invoices: invoicesData.map(i => ({ id: i.id, customer: i.customer, phone: i.phone, total: i.total, status: i.status, due: i.due, labor: i.labor, material: i.material, discount: i.discount, trade_in: i.trade_in, trade_in_amount: i.trade_in_amount, materials_detail: (Array.isArray(i.materials_detail) ? i.materials_detail : (typeof i.materials_detail === "string" ? (() => { try { return JSON.parse(i.materials_detail); } catch { return []; } })() : [])).map(m => ({ nama: m.nama, jumlah: m.jumlah, satuan: m.satuan, harga_satuan: m.harga_satuan, subtotal: m.subtotal })) })),
       inventory: inventoryData.map(i => ({ code: i.code, name: i.name, stock: i.stock, unit: i.unit, status: i.status, price: i.price, reorder: i.reorder })),
       customers: customersData.map(c => ({ id: c.id, name: c.name, phone: c.phone, area: c.area, total_orders: c.total_orders, is_vip: c.is_vip })),
       laporan: laporanReports.map(r => ({
