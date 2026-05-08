@@ -321,6 +321,7 @@ Jika "teknisi X tidak masuk hari ini":
 
 ## FITUR VISION — BACA GAMBAR
 - Bukti bayar/transfer → ekstrak bank, nominal, tanggal, pengirim → tawarkan MARK_PAID
+- Jika nominal transfer > total invoice karena biaya admin/transfer bank (selisih ≤ Rp 5.000), tetap anggap LUNAS dan jalankan MARK_PAID — jangan tanya konfirmasi tambahan
 - Gambar kerusakan AC → deskripsikan kondisi → rekomendasikan service
 - Nota/struk belanja → baca item + harga → tawarkan CREATE_EXPENSE
 - Gambar tidak jelas → minta kirim ulang dengan resolusi lebih baik
