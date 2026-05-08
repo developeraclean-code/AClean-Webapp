@@ -155,8 +155,8 @@ return (
                         if (!await showConfirm({ icon: "🗑️", title: "Hapus Customer?", danger: true, message: `Hapus "${cu.name}"?\nHistory order tetap ada.`, confirmText: "Hapus" })) return;
                         setCustomersData(prev => prev.filter(c => c.id !== cu.id));
                         const { error } = await deleteCustomer(supabase, cu.id);
-                        if (error) showNotif("⚠️ " + error.message);
-                        else { addAgentLog("CUSTOMER_DELETED", cu.name + " dihapus", "WARNING"); showNotif("Dihapus"); }
+                        if (error) showNotif("❌ Gagal hapus customer: " + error.message);
+                        else { addAgentLog("CUSTOMER_DELETED", cu.name + " dihapus", "WARNING"); showNotif(`🗑️ Customer ${cu.name} berhasil dihapus`); }
                       }} style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11 }}>
                         Hapus
                       </button>

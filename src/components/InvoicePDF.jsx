@@ -98,7 +98,9 @@ function MatRow({ m, idx }) {
 }
 
 // ── Main Component ──
-export default function InvoicePDF({ inv, logoUrl, appSettings = {} }) {
+export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItems = [] }) {
+  const isAcSale = inv.invoice_type === "ac_unit_sale";
+
   const matDetails = (() => {
     const md = inv.materials_detail;
     if (!md) return [];
@@ -120,9 +122,16 @@ export default function InvoicePDF({ inv, logoUrl, appSettings = {} }) {
     ? (inv.material || 0) - matDetails.filter(m => detectKat(m) !== "jasa" && detectKat(m) !== "repair").reduce((s, m) => s + (m.subtotal || 0), 0)
     : 0;
 
+  // AC Unit sale — kelompokkan invoice_items
+  const acUnitItems   = invoiceItems.filter(i => i.item_type === "unit_ac");
+  const paketItems    = invoiceItems.filter(i => i.item_type === "paket" || i.item_type === "jasa");
+  const addonItems    = invoiceItems.filter(i => i.item_type === "addon" || i.item_type === "material");
+  const sisaBayar     = (inv.remaining_amount || 0) > 0 ? inv.remaining_amount : 0;
+
   const statusBox = inv.status === "PAID" ? s.statusPaid
     : inv.status === "OVERDUE" ? s.statusOverdue : s.statusUnpaid;
   const statusText = inv.status === "PAID" ? "LUNAS"
+    : inv.status === "PARTIAL_PAID" ? "DP / CICILAN"
     : inv.status === "OVERDUE" ? "JATUH TEMPO" : "MENUNGGU PEMBAYARAN";
 
   let rowIdx = 0;
@@ -179,13 +188,120 @@ export default function InvoicePDF({ inv, logoUrl, appSettings = {} }) {
         <View style={s.table}>
           <View style={s.thead}>
             <Text style={[s.th, { flex: 1 }]}>Deskripsi</Text>
-            <Text style={[s.th, { width: 60, textAlign: "right" }]}>Jml Unit</Text>
-            <Text style={[s.th, { width: 80, textAlign: "right" }]}>Harga/Unit</Text>
+            <Text style={[s.th, { width: 60, textAlign: "right" }]}>Qty</Text>
+            <Text style={[s.th, { width: 80, textAlign: "right" }]}>Harga</Text>
             <Text style={[s.th, { width: 80, textAlign: "right" }]}>Subtotal</Text>
           </View>
 
+          {/* ── AC Unit Sale — full breakdown ke customer ── */}
+          {isAcSale && (
+            <>
+              {acUnitItems.length > 0 && (
+                <>
+                  <SectionHeader label="Unit AC" color="#f59e0b" />
+                  {acUnitItems.map((item, i) => (
+                    <View key={i} style={[s.tr, i % 2 === 1 ? s.trEven : {}]}>
+                      <Text style={[s.td, { flex: 1 }]}>{item.description}</Text>
+                      <Text style={[s.td, { width: 60, textAlign: "right" }]}>{item.qty}</Text>
+                      <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier" }]}>{(item.unit_price || 0).toLocaleString("id-ID")}</Text>
+                      <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</Text>
+                    </View>
+                  ))}
+                </>
+              )}
+              {paketItems.length > 0 && (
+                <>
+                  <SectionHeader label="Paket Pemasangan & Jasa" color="#3b82f6" />
+                  {paketItems.map((item, i) => {
+                    // Cek apakah paket_pasang punya include items — jika ya, expand
+                    const paketSnap = inv.paket_pasang;
+                    const includeItems = paketSnap?.include;
+                    if (Array.isArray(includeItems) && includeItems.length > 0) {
+                      return (
+                        <View key={i}>
+                          {/* Baris paket header — harga total di kanan */}
+                          <View style={[s.tr, { backgroundColor: "#eff6ff" }]}>
+                            <Text style={[s.td, { flex: 1, fontFamily: "Helvetica-Bold", color: "#1e40af" }]}>{item.description}</Text>
+                            <Text style={[s.td, { width: 60 }]}></Text>
+                            <Text style={[s.td, { width: 80 }]}></Text>
+                            <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#1e40af" }]}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</Text>
+                          </View>
+                          {/* Sub-baris include items */}
+                          {includeItems.map((inc, ii) => (
+                            <View key={ii} style={[s.tr, { backgroundColor: ii % 2 === 0 ? "#f8faff" : "#f0f4ff" }]}>
+                              <Text style={[s.td, { flex: 1, paddingLeft: 18, color: "#475569", fontSize: 8.5 }]}>✓ {inc.nama}</Text>
+                              <Text style={[s.td, { width: 60, textAlign: "right", color: "#64748b", fontSize: 8.5 }]}>{inc.qty} {inc.satuan}</Text>
+                              <Text style={[s.td, { width: 80, textAlign: "right", color: "#94a3b8", fontSize: 8 }]}>(include)</Text>
+                              <Text style={[s.td, { width: 80 }]}></Text>
+                            </View>
+                          ))}
+                        </View>
+                      );
+                    }
+                    // Fallback: render normal 1 baris
+                    return (
+                      <View key={i} style={[s.tr, i % 2 === 1 ? s.trEven : {}]}>
+                        <Text style={[s.td, { flex: 1 }]}>{item.description}</Text>
+                        <Text style={[s.td, { width: 60, textAlign: "right" }]}>{item.qty}</Text>
+                        <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier" }]}>{(item.unit_price || 0).toLocaleString("id-ID")}</Text>
+                        <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</Text>
+                      </View>
+                    );
+                  })}
+                </>
+              )}
+              {addonItems.length > 0 && (
+                <>
+                  <SectionHeader label="Material Tambahan" color="#10b981" />
+                  {addonItems.map((item, i) => (
+                    <View key={i} style={[s.tr, i % 2 === 1 ? s.trEven : {}]}>
+                      <Text style={[s.td, { flex: 1 }]}>{item.description}</Text>
+                      <Text style={[s.td, { width: 60, textAlign: "right" }]}>{item.qty}</Text>
+                      <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier" }]}>{(item.unit_price || 0).toLocaleString("id-ID")}</Text>
+                      <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(item.subtotal || item.qty * item.unit_price || 0).toLocaleString("id-ID")}</Text>
+                    </View>
+                  ))}
+                </>
+              )}
+              {(inv.discount || 0) > 0 && (
+                <View style={[s.tr, { backgroundColor: "#fff1f2" }]}>
+                  <Text style={[s.td, { flex: 1, color: "#be123c", fontStyle: "italic" }]}>Diskon</Text>
+                  <Text style={[s.td, { width: 60 }]}>—</Text>
+                  <Text style={[s.td, { width: 80 }]}>—</Text>
+                  <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(inv.discount || 0).toLocaleString("id-ID")}</Text>
+                </View>
+              )}
+              {inv.trade_in && (inv.trade_in_amount || 0) > 0 && (
+                <View style={[s.tr, { backgroundColor: "#fff1f2" }]}>
+                  <Text style={[s.td, { flex: 1, color: "#be123c", fontStyle: "italic" }]}>Trade-In Unit Lama</Text>
+                  <Text style={[s.td, { width: 60 }]}>—</Text>
+                  <Text style={[s.td, { width: 80 }]}>—</Text>
+                  <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(inv.trade_in_amount || 0).toLocaleString("id-ID")}</Text>
+                </View>
+              )}
+              <View style={s.totalRow}>
+                <Text style={[s.totalTd, { flex: 1 }]}>TOTAL TAGIHAN</Text>
+                <Text style={[s.totalTd, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>Rp {(inv.total || 0).toLocaleString("id-ID")}</Text>
+              </View>
+              {(inv.paid_amount || 0) > 0 && inv.status !== "PAID" && (
+                <>
+                  <View style={[s.tr, { backgroundColor: "#f0fdf4" }]}>
+                    <Text style={[s.td, { flex: 1, color: "#16a34a" }]}>DP / Sudah Dibayar</Text>
+                    <Text style={[s.td, { width: 60 }]}>—</Text>
+                    <Text style={[s.td, { width: 80 }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#16a34a" }]}>-{(inv.paid_amount || 0).toLocaleString("id-ID")}</Text>
+                  </View>
+                  <View style={[s.totalRow, { backgroundColor: "#fef3c7" }]}>
+                    <Text style={[s.totalTd, { flex: 1, color: "#92400e" }]}>SISA TAGIHAN</Text>
+                    <Text style={[s.totalTd, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#92400e" }]}>Rp {sisaBayar.toLocaleString("id-ID")}</Text>
+                  </View>
+                </>
+              )}
+            </>
+          )}
+
           {/* Fallback: invoice lama tanpa matDetails */}
-          {inv.labor > 0 && matDetails.length === 0 && (
+          {!isAcSale && inv.labor > 0 && matDetails.length === 0 && (
             <View style={[s.tr]}>
               <Text style={[s.td, { flex: 1 }]}>{inv.service || "Jasa Servis AC"}</Text>
               <Text style={[s.td, { width: 60, textAlign: "right" }]}>{unitCount}</Text>
@@ -194,70 +310,74 @@ export default function InvoicePDF({ inv, logoUrl, appSettings = {} }) {
             </View>
           )}
 
-          {jasaRows.length > 0 && (
+          {/* ── Invoice servis biasa (bukan AC sale) ── */}
+          {!isAcSale && (
             <>
-              <SectionHeader label="Jasa / Layanan" color="#3b82f6" />
-              {jasaRows.map((m, i) => <MatRow key={i} m={m} idx={rowIdx++} />)}
-            </>
-          )}
-          {repairRows.length > 0 && (
-            <>
-              <SectionHeader label="Repair / Perbaikan" color="#f59e0b" />
-              {repairRows.map((m, i) => <MatRow key={i} m={m} idx={rowIdx++} />)}
-            </>
-          )}
-          {matRows.length > 0 && (
-            <>
-              <SectionHeader label="Material / Sparepart" color="#10b981" />
-              {matRows.map((m, i) => <MatRow key={i} m={m} idx={rowIdx++} />)}
-            </>
-          )}
-          {freonRows.length > 0 && (
-            <>
-              <SectionHeader label="Freon / Kuras Vacum" color="#06b6d4" />
-              {freonRows.map((m, i) => <MatRow key={i} m={m} idx={rowIdx++} />)}
-            </>
-          )}
-          {matDetails.length === 0 && (inv.material || 0) > 0 && (
-            <>
-              <SectionHeader label="Material / Freon" color="#06b6d4" />
-              <View style={s.tr}>
-                <Text style={[s.td, { flex: 1, color: "#475569", fontStyle: "italic" }]}>Material & Freon (total)</Text>
-                <Text style={[s.td, { width: 60, textAlign: "right", color: "#94a3b8" }]}>—</Text>
-                <Text style={[s.td, { width: 80, textAlign: "right", color: "#94a3b8" }]}>—</Text>
-                <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(inv.material || 0).toLocaleString("id-ID")}</Text>
+              {jasaRows.length > 0 && (
+                <>
+                  <SectionHeader label="Jasa / Layanan" color="#3b82f6" />
+                  {jasaRows.map((m, i) => <MatRow key={i} m={m} idx={rowIdx++} />)}
+                </>
+              )}
+              {repairRows.length > 0 && (
+                <>
+                  <SectionHeader label="Repair / Perbaikan" color="#f59e0b" />
+                  {repairRows.map((m, i) => <MatRow key={i} m={m} idx={rowIdx++} />)}
+                </>
+              )}
+              {matRows.length > 0 && (
+                <>
+                  <SectionHeader label="Material / Sparepart" color="#10b981" />
+                  {matRows.map((m, i) => <MatRow key={i} m={m} idx={rowIdx++} />)}
+                </>
+              )}
+              {freonRows.length > 0 && (
+                <>
+                  <SectionHeader label="Freon / Kuras Vacum" color="#06b6d4" />
+                  {freonRows.map((m, i) => <MatRow key={i} m={m} idx={rowIdx++} />)}
+                </>
+              )}
+              {matDetails.length === 0 && (inv.material || 0) > 0 && (
+                <>
+                  <SectionHeader label="Material / Freon" color="#06b6d4" />
+                  <View style={s.tr}>
+                    <Text style={[s.td, { flex: 1, color: "#475569", fontStyle: "italic" }]}>Material & Freon (total)</Text>
+                    <Text style={[s.td, { width: 60, textAlign: "right", color: "#94a3b8" }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", color: "#94a3b8" }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(inv.material || 0).toLocaleString("id-ID")}</Text>
+                  </View>
+                </>
+              )}
+              {hasRemainMat && remainMat > 0 && (
+                <View style={s.tr}>
+                  <Text style={[s.td, { flex: 1, color: "#475569", fontStyle: "italic" }]}>Material & Freon</Text>
+                  <Text style={[s.td, { width: 60, color: "#94a3b8" }]}>—</Text>
+                  <Text style={[s.td, { width: 80, color: "#94a3b8" }]}>—</Text>
+                  <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{remainMat.toLocaleString("id-ID")}</Text>
+                </View>
+              )}
+              {(inv.discount || 0) > 0 && (
+                <View style={[s.tr, { backgroundColor: "#fff1f2" }]}>
+                  <Text style={[s.td, { flex: 1, color: "#be123c", fontStyle: "italic" }]}>Discount</Text>
+                  <Text style={[s.td, { width: 60, textAlign: "right", color: "#be123c" }]}>—</Text>
+                  <Text style={[s.td, { width: 80, textAlign: "right", color: "#be123c" }]}>—</Text>
+                  <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(inv.discount || 0).toLocaleString("id-ID")}</Text>
+                </View>
+              )}
+              {inv.trade_in && (inv.trade_in_amount || 0) > 0 && (
+                <View style={[s.tr, { backgroundColor: "#fff1f2" }]}>
+                  <Text style={[s.td, { flex: 1, color: "#be123c", fontStyle: "italic" }]}>Trade-In AC Lama</Text>
+                  <Text style={[s.td, { width: 60, textAlign: "right", color: "#be123c" }]}>—</Text>
+                  <Text style={[s.td, { width: 80, textAlign: "right", color: "#be123c" }]}>—</Text>
+                  <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(inv.trade_in_amount || 0).toLocaleString("id-ID")}</Text>
+                </View>
+              )}
+              <View style={s.totalRow}>
+                <Text style={[s.totalTd, { flex: 1 }]}>TOTAL TAGIHAN</Text>
+                <Text style={[s.totalTd, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>Rp {(inv.total || 0).toLocaleString("id-ID")}</Text>
               </View>
             </>
           )}
-          {hasRemainMat && remainMat > 0 && (
-            <View style={s.tr}>
-              <Text style={[s.td, { flex: 1, color: "#475569", fontStyle: "italic" }]}>Material & Freon</Text>
-              <Text style={[s.td, { width: 60, color: "#94a3b8" }]}>—</Text>
-              <Text style={[s.td, { width: 80, color: "#94a3b8" }]}>—</Text>
-              <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{remainMat.toLocaleString("id-ID")}</Text>
-            </View>
-          )}
-          {(inv.discount || 0) > 0 && (
-            <View style={[s.tr, { backgroundColor: "#fff1f2" }]}>
-              <Text style={[s.td, { flex: 1, color: "#be123c", fontStyle: "italic" }]}>Discount</Text>
-              <Text style={[s.td, { width: 60, textAlign: "right", color: "#be123c" }]}>—</Text>
-              <Text style={[s.td, { width: 80, textAlign: "right", color: "#be123c" }]}>—</Text>
-              <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(inv.discount || 0).toLocaleString("id-ID")}</Text>
-            </View>
-          )}
-          {inv.trade_in && (inv.trade_in_amount || 0) > 0 && (
-            <View style={[s.tr, { backgroundColor: "#fff1f2" }]}>
-              <Text style={[s.td, { flex: 1, color: "#be123c", fontStyle: "italic" }]}>Trade-In AC Lama</Text>
-              <Text style={[s.td, { width: 60, textAlign: "right", color: "#be123c" }]}>—</Text>
-              <Text style={[s.td, { width: 80, textAlign: "right", color: "#be123c" }]}>—</Text>
-              <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(inv.trade_in_amount || 0).toLocaleString("id-ID")}</Text>
-            </View>
-          )}
-
-          <View style={s.totalRow}>
-            <Text style={[s.totalTd, { flex: 1 }]}>TOTAL TAGIHAN</Text>
-            <Text style={[s.totalTd, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>Rp {(inv.total || 0).toLocaleString("id-ID")}</Text>
-          </View>
         </View>
 
         {/* ── Garansi ── */}

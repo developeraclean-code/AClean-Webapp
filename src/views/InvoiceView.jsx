@@ -1,11 +1,120 @@
 import { memo, useState, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
+import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
+const [showAcUnitModal, setShowAcUnitModal] = useState(false);
+const [addonModalInvId, setAddonModalInvId] = useState(null);
+const [addonItems, setAddonItems] = useState([]);
+const [existingAddons, setExistingAddons] = useState([]); // addon yg sudah tersimpan di DB
+const [loadingAddons, setLoadingAddons] = useState(false);
+const [savingAddon, setSavingAddon] = useState(false);
+const addonModalInv = addonModalInvId ? invoicesData.find(i => i.id === addonModalInvId) || null : null;
+
+// Material & jasa instalasi dari price list — filter Install + Material category
+const addonPriceOptions = useMemo(() => {
+  return (priceListData || [])
+    .filter(p => p.is_active !== false)
+    .map(p => ({ nama: p.type, satuan: p.unit || "Unit", harga: Number(p.price) || 0, service: p.service }))
+    .sort((a, b) => a.service.localeCompare(b.service) || a.nama.localeCompare(b.nama));
+}, [priceListData]);
+
+// Recalculate invoice total dari invoice_items di DB — single source of truth
+const recalcInvoiceFromItems = async (invoiceId) => {
+  const { data: items } = await supabase
+    .from("invoice_items").select("item_type,qty,unit_price,subtotal").eq("invoice_id", invoiceId);
+  if (!items) return null;
+  const sumUnit   = items.filter(i => i.item_type === "unit_ac").reduce((s, i) => s + (i.subtotal || i.qty * i.unit_price), 0);
+  const sumPaket  = items.filter(i => ["paket","jasa"].includes(i.item_type)).reduce((s, i) => s + (i.subtotal || i.qty * i.unit_price), 0);
+  const sumAddon  = items.filter(i => i.item_type === "addon").reduce((s, i) => s + (i.subtotal || i.qty * i.unit_price), 0);
+  const inv = invoicesData.find(i => i.id === invoiceId);
+  const discount   = inv?.discount || 0;
+  const tradeIn    = inv?.trade_in_amount || 0;
+  const paidAmount = Number(inv?.paid_amount) || 0;
+  const newTotal     = sumUnit + sumPaket + sumAddon - discount - tradeIn;
+  const newMaterial  = sumAddon;
+  const newLabor     = sumPaket;
+  const newRemaining = Math.max(0, newTotal - paidAmount);
+  // Status logic:
+  // - remaining = 0  → PAID
+  // - remaining > 0 + paid_amount > 0  → PARTIAL_PAID (DP/cicilan)
+  // - remaining > 0 + paid_amount = 0  → pertahankan status (UNPAID/OVERDUE/PENDING_APPROVAL)
+  //   kecuali status lama PAID (artinya ada tambahan tagihan setelah lunas) → demote ke UNPAID
+  let newStatus;
+  if (newRemaining <= 0) {
+    newStatus = "PAID";
+  } else if (paidAmount > 0) {
+    newStatus = "PARTIAL_PAID";
+  } else if (inv?.status === "PAID") {
+    newStatus = "UNPAID"; // ada tambahan tagihan setelah lunas
+  } else {
+    newStatus = inv?.status || "UNPAID";
+  }
+  const { error } = await supabase.from("invoices").update({
+    total: newTotal, material: newMaterial, labor: newLabor,
+    remaining_amount: newRemaining, status: newStatus,
+  }).eq("id", invoiceId);
+  if (error) throw error;
+  setInvoicesData(prev => prev.map(i => i.id === invoiceId
+    ? { ...i, total: newTotal, material: newMaterial, labor: newLabor, remaining_amount: newRemaining, status: newStatus }
+    : i));
+  return { newTotal, newMaterial, newRemaining, newStatus };
+};
+
+const handleSaveAddon = async () => {
+  if (!addonModalInv) return;
+  const validItems = addonItems.filter(a => a.nama && a.qty > 0 && a.harga > 0);
+  if (validItems.length === 0) { showNotif("⚠️ Isi minimal 1 item"); return; }
+  setSavingAddon(true);
+  try {
+    // Merge item nama+harga sama dalam satu session
+    const merged = [];
+    validItems.forEach(a => {
+      const ex = merged.find(m => m.nama === a.nama && m.harga === a.harga);
+      if (ex) ex.qty += a.qty;
+      else merged.push({ ...a });
+    });
+    // qty & unit_price di DB adalah INTEGER — round eksplisit
+    const rows = merged.map(a => ({
+      invoice_id: addonModalInv.id, item_type: "addon",
+      description: a.nama,
+      qty: Math.max(1, parseInt(a.qty, 10) || 1),
+      unit_price: Math.max(0, parseInt(a.harga, 10) || 0),
+    }));
+    const { error: itemErr } = await supabase.from("invoice_items").insert(rows);
+    if (itemErr) throw itemErr;
+
+    await recalcInvoiceFromItems(addonModalInv.id);
+
+    // Refresh existing addons list
+    const { data } = await supabase.from("invoice_items").select("id,description,qty,unit_price,subtotal,item_type")
+      .eq("invoice_id", addonModalInv.id).eq("item_type", "addon");
+    setExistingAddons(data || []);
+    setAddonItems([]);
+    showNotif(`✅ ${merged.length} item material disimpan`);
+  } catch (err) {
+    showNotif("❌ Gagal simpan: " + (err.message || err));
+  } finally {
+    setSavingAddon(false);
+  }
+};
+
+const handleDeleteAddon = async (item) => {
+  if (!addonModalInv) return;
+  try {
+    const { error } = await supabase.from("invoice_items").delete().eq("id", item.id);
+    if (error) throw error;
+    setExistingAddons(prev => prev.filter(a => a.id !== item.id));
+    await recalcInvoiceFromItems(addonModalInv.id);
+    showNotif("🗑 Item dihapus");
+  } catch (err) {
+    showNotif("❌ Gagal hapus: " + (err.message || err));
+  }
+};
 
 // Deteksi customer dengan multi-invoice unpaid untuk Group Payment
 const multiInvoiceCustomers = useMemo(() => {
@@ -24,6 +133,10 @@ return (
   <div style={{ display: "grid", gap: 14 }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
       <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>🧾 Invoice <span style={{ fontSize: 13, color: cs.muted, fontWeight: 400 }}>({filteredInv.length})</span></div>
+      <button onClick={() => setShowAcUnitModal(true)} style={{
+        background: "#f59e0b22", border: "1px solid #f59e0b55", color: "#f59e0b",
+        padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12
+      }}>🛒 Jual Unit AC</button>
       <button onClick={() => { const unpaid = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE"); unpaid.forEach(inv => invoiceReminderWA(inv)); showNotif(`📨 Reminder dikirim ke ${unpaid.length} customer`); }}
         style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
         🔔 Kirim Reminder ({unpaidCnt})
@@ -366,10 +479,27 @@ return (
             <div style={{ fontWeight: 800, fontSize: 18, color: cs.text, fontFamily: "monospace" }}>{fmt(inv.total)}</div>
           </div>
           {/* GAP 3 — breakdown nilai */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
-            <div style={{ background: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? cs.green + "10" : cs.surface, borderRadius: 6, padding: "6px 10px", border: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? "1px solid " + cs.green + "33" : "none" }}><div style={{ color: cs.muted }}>Jasa</div><div style={{ color: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? cs.green : cs.text, fontWeight: 700 }}>{inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? "Rp 0 (Garansi)" : fmt(inv.labor)}</div></div>
-            <div style={{ background: cs.surface, borderRadius: 6, padding: "6px 10px" }}><div style={{ color: cs.muted }}>Material</div><div style={{ color: cs.text, fontWeight: 700 }}>{fmt(inv.material)}</div></div>
-          </div>
+          {inv.invoice_type === "ac_unit_sale" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
+              <div style={{ background: "#f59e0b12", border: "1px solid #f59e0b33", borderRadius: 6, padding: "6px 10px" }}>
+                <div style={{ color: "#f59e0b" }}>Unit AC</div>
+                <div style={{ color: cs.text, fontWeight: 700 }}>{fmt(inv.unit_ac_amount)}</div>
+              </div>
+              <div style={{ background: cs.accent + "12", border: "1px solid " + cs.accent + "33", borderRadius: 6, padding: "6px 10px" }}>
+                <div style={{ color: cs.accent }}>Paket Instalasi</div>
+                <div style={{ color: cs.text, fontWeight: 700 }}>{fmt(inv.labor)}</div>
+              </div>
+              <div style={{ background: cs.surface, borderRadius: 6, padding: "6px 10px" }}>
+                <div style={{ color: cs.muted }}>Omset AClean</div>
+                <div style={{ color: cs.green, fontWeight: 700 }}>{fmt((inv.labor || 0) + (inv.material || 0))}</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
+              <div style={{ background: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? cs.green + "10" : cs.surface, borderRadius: 6, padding: "6px 10px", border: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? "1px solid " + cs.green + "33" : "none" }}><div style={{ color: cs.muted }}>Jasa</div><div style={{ color: inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? cs.green : cs.text, fontWeight: 700 }}>{inv.garansi_status === "GARANSI_DENGAN_MATERIAL" || inv.garansi_status === "GARANSI_AKTIF" ? "Rp 0 (Garansi)" : fmt(inv.labor)}</div></div>
+              <div style={{ background: cs.surface, borderRadius: 6, padding: "6px 10px" }}><div style={{ color: cs.muted }}>Material</div><div style={{ color: cs.text, fontWeight: 700 }}>{fmt(inv.material)}</div></div>
+            </div>
+          )}
           {((inv.discount || 0) > 0 || inv.trade_in) && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
               {(inv.discount || 0) > 0 && (
@@ -387,9 +517,23 @@ return (
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>👁 Preview</button>
-            {/* Edit invoice — Owner bisa edit semua status kecuali PAID */}
-            {/* Edit invoice */}
-            {inv.status !== "PAID" &&
+            {/* Edit Material — khusus invoice AC unit sale (Owner only, kecuali CANCELLED) */}
+            {inv.invoice_type === "ac_unit_sale" && currentUser?.role === "Owner" && inv.status !== "CANCELLED" && (
+              <button onClick={async () => {
+                setAddonModalInvId(inv.id);
+                setAddonItems([]);
+                setExistingAddons([]);
+                setLoadingAddons(true);
+                const { data } = await supabase.from("invoice_items").select("id,description,qty,unit_price,subtotal,item_type").eq("invoice_id", inv.id).eq("item_type", "addon");
+                setExistingAddons(data || []);
+                setLoadingAddons(false);
+              }}
+                style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                🔩 Edit Material
+              </button>
+            )}
+            {/* Edit invoice — hanya untuk invoice NON ac_unit_sale */}
+            {inv.invoice_type !== "ac_unit_sale" && inv.status !== "PAID" &&
               (currentUser?.role === "Owner" ||
                 (currentUser?.role === "Admin" && inv.status === "PENDING_APPROVAL")) && (
                 <button onClick={() => {
@@ -544,16 +688,17 @@ return (
                 <button onClick={() => invoiceReminderWA(inv)} style={{ background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>⚠️ Reminder OVERDUE</button>
               </>
             )}
+            {/* Partial payment panel — invoice DP / cicilan */}
             {inv.status === "PARTIAL_PAID" && (
               <>
                 <div style={{ width: "100%", background: "#06b6d415", border: "1px dashed #06b6d444", borderRadius: 8, padding: "8px 12px", fontSize: 11 }}>
-                  <span style={{ color: "#06b6d4", fontWeight: 700 }}>💳 Partial: {fmt(inv.paid_amount || 0)} terbayar</span>
-                  <span style={{ color: cs.muted }}> · sisa {fmt(inv.remaining_amount ?? ((inv.total || 0) - (inv.paid_amount || 0)))}</span>
+                  <span style={{ color: "#06b6d4", fontWeight: 700 }}>💳 Partial: {fmt(Number(inv.paid_amount) || 0)} terbayar</span>
+                  <span style={{ color: cs.muted }}> · sisa {fmt(Number(inv.remaining_amount) ?? ((inv.total || 0) - (Number(inv.paid_amount) || 0)))}</span>
                 </div>
                 <button onClick={async () => {
                   if (await showConfirm({
                     icon: "💰", title: "Lunasi Sisa?",
-                    message: `Lunasi sisa ${fmt(inv.remaining_amount ?? ((inv.total||0)-(inv.paid_amount||0)))} untuk invoice ${inv.id}?`,
+                    message: `Lunasi sisa ${fmt(Number(inv.remaining_amount) ?? ((inv.total||0)-(Number(inv.paid_amount)||0)))} untuk invoice ${inv.id}?`,
                     confirmText: "Ya, Lunas"
                   })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
                 }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Lunasi Sisa</button>
@@ -568,12 +713,19 @@ return (
                 <button onClick={() => invoiceReminderWA(inv)} style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>🔔 Reminder</button>
               </>
             )}
-            {/* Hapus Invoice — Owner only, hanya status PENDING_APPROVAL */}
-            {currentUser?.role === "Owner" && inv.status === "PENDING_APPROVAL" && (
+            {/* Hapus Invoice — Owner only.
+                Allowed:
+                - PENDING_APPROVAL: invoice biasa belum approve
+                - ac_unit_sale (any status): admin batalin transaksi penjualan AC */}
+            {currentUser?.role === "Owner" && (inv.status === "PENDING_APPROVAL" || inv.invoice_type === "ac_unit_sale") && (
               <button onClick={async () => {
+                const isAcSale = inv.invoice_type === "ac_unit_sale";
+                const warnPaid = isAcSale && (Number(inv.paid_amount) || 0) > 0
+                  ? `\n\n⚠️ Customer SUDAH BAYAR ${fmt(Number(inv.paid_amount) || 0)}. Pastikan refund sudah diproses sebelum hapus.`
+                  : "";
                 if (!await showConfirm({
                   icon: "🗑️", title: "Hapus Invoice?", danger: true,
-                  message: `Hapus invoice ${inv.id}?\n\nInvoice akan dihapus permanen dari database.\nOrder terkait akan kembali ke status COMPLETED.`,
+                  message: `Hapus invoice ${inv.id}?\n\nInvoice + invoice_items + payment history akan dihapus permanen.\nOrder install terkait tetap ada (linkage di-unset).${warnPaid}`,
                   confirmText: "Hapus Permanen"
                 })) return;
                 setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
@@ -652,6 +804,161 @@ return (
           style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid " + cs.border, background: curPgI === totPgI ? cs.surface : cs.card, color: curPgI === totPgI ? cs.muted : cs.text, cursor: curPgI === totPgI ? "not-allowed" : "pointer", fontSize: 12 }}>Next →</button>
         <span style={{ fontSize: 11, color: cs.muted }}>{filteredInv.length} invoice</span>
       </div>
+    )}
+
+    {/* ── Modal Edit Material AC Unit ── */}
+    {addonModalInv && (
+      <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}
+        onClick={e => { if (e.target === e.currentTarget) { setAddonModalInvId(null); setAddonItems([]); } }}>
+        <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", padding: "18px 20px", boxSizing: "border-box" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>🔩 Edit Material</div>
+              <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{addonModalInv.id} · {addonModalInv.customer}</div>
+            </div>
+            <button onClick={() => { setAddonModalInvId(null); setAddonItems([]); }}
+              style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+          </div>
+
+          {/* Info ringkas invoice */}
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+              <span style={{ color: cs.muted }}>Total saat ini</span>
+              <span style={{ fontWeight: 700, color: cs.text, fontFamily: "monospace" }}>{fmt(addonModalInv.total)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: cs.muted }}>Material tersimpan</span>
+              <span style={{ color: cs.green, fontFamily: "monospace" }}>{fmt(addonModalInv.material)}</span>
+            </div>
+          </div>
+
+          {/* Existing addons — edit qty / delete */}
+          {(loadingAddons || existingAddons.length > 0) && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>MATERIAL TERSIMPAN</div>
+              {loadingAddons ? (
+                <div style={{ fontSize: 11, color: cs.muted, padding: "8px 0" }}>Memuat...</div>
+              ) : existingAddons.map((a, ai) => (
+                <div key={a.id || ai} style={{ background: cs.card, borderRadius: 8, padding: "8px 12px", marginBottom: 5 }}>
+                  <div style={{ fontSize: 12, color: cs.text, fontWeight: 600, marginBottom: 5 }}>{a.description}</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 32px", gap: 6, alignItems: "center" }}>
+                    <input type="number" min="1" step="1" value={a.qty}
+                      onChange={async e => {
+                        const newQty = parseInt(e.target.value, 10) || 0;
+                        if (newQty <= 0) return;
+                        const { error } = await supabase.from("invoice_items").update({ qty: newQty }).eq("id", a.id);
+                        if (error) { showNotif("❌ Gagal update: " + error.message); return; }
+                        setExistingAddons(prev => prev.map(x => x.id === a.id ? { ...x, qty: newQty } : x));
+                        await recalcInvoiceFromItems(addonModalInv.id);
+                      }}
+                      style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "5px 8px", color: cs.text, fontSize: 12, textAlign: "center", boxSizing: "border-box" }} />
+                    <div style={{ fontSize: 11, color: cs.muted }}>× {fmt(a.unit_price)} = <span style={{ color: cs.green, fontWeight: 700 }}>{fmt(a.qty * a.unit_price)}</span></div>
+                    <button onClick={() => handleDeleteAddon(a)}
+                      style={{ background: "#ef444415", border: "1px solid #ef444433", color: "#ef4444", borderRadius: 6, padding: "5px 8px", cursor: "pointer", fontSize: 14, fontWeight: 700 }}>×</button>
+                  </div>
+                </div>
+              ))}
+              <div style={{ borderTop: "1px solid " + cs.border, marginTop: 10, paddingTop: 6, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                <span style={{ color: cs.muted }}>Total material tersimpan</span>
+                <span style={{ fontWeight: 700, color: cs.green, fontFamily: "monospace" }}>{fmt(existingAddons.reduce((s, a) => s + a.qty * a.unit_price, 0))}</span>
+              </div>
+            </div>
+          )}
+
+          <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>TAMBAH MATERIAL BARU</div>
+          {/* Item list — dropdown dari price list */}
+          <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
+            {addonItems.map((a, ai) => (
+              <div key={a._id} style={{ background: cs.card, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 6 }}>
+                {/* Baris 1: dropdown item full width */}
+                <select
+                  value={a.nama}
+                  onChange={e => {
+                    const picked = addonPriceOptions.find(p => p.nama === e.target.value);
+                    setAddonItems(prev => prev.map((x, xi) => xi === ai
+                      ? { ...x, nama: e.target.value, harga: picked?.harga || x.harga, satuan: picked?.satuan || x.satuan }
+                      : x));
+                  }}
+                  style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: a.nama ? cs.text : cs.muted, fontSize: 12, boxSizing: "border-box" }}>
+                  <option value="">— Pilih item dari price list —</option>
+                  {["Install", "Material", "Repair", "Cleaning", "Complain"].map(svc => {
+                    const items = addonPriceOptions.filter(p => p.service === svc);
+                    if (items.length === 0) return null;
+                    return (
+                      <optgroup key={svc} label={"── " + svc + " ──"}>
+                        {items.map((p, pi) => (
+                          <option key={pi} value={p.nama}>{p.nama} ({p.satuan}){p.harga > 0 ? "  •  Rp " + p.harga.toLocaleString("id-ID") : ""}</option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
+                </select>
+                {/* Baris 2: qty + satuan + harga + hapus */}
+                <div style={{ display: "grid", gridTemplateColumns: "70px 50px 1fr 32px", gap: 6, alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 9, color: cs.muted, marginBottom: 2 }}>QTY</div>
+                    <input type="number" min="1" step="1" value={a.qty}
+                      onChange={e => setAddonItems(p => p.map((x, xi) => xi === ai ? { ...x, qty: parseInt(e.target.value, 10) || 0 } : x))}
+                      style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 6px", color: cs.text, fontSize: 12, textAlign: "center", boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ fontSize: 10, color: cs.muted, paddingTop: 14, textAlign: "center" }}>{a.satuan || "Unit"}</div>
+                  <div>
+                    <div style={{ fontSize: 9, color: cs.muted, marginBottom: 2 }}>HARGA/SAT (Rp)</div>
+                    <input type="number" min="0" step="1000" value={a.harga || ""}
+                      onChange={e => setAddonItems(p => p.map((x, xi) => xi === ai ? { ...x, harga: parseInt(e.target.value) || 0 } : x))}
+                      placeholder="0"
+                      style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 8px", color: cs.green, fontSize: 12, fontFamily: "monospace", textAlign: "right", boxSizing: "border-box" }} />
+                  </div>
+                  <button onClick={() => setAddonItems(p => p.filter((_, xi) => xi !== ai))}
+                    style={{ background: "#ef444415", border: "none", color: "#ef4444", borderRadius: 6, padding: "6px", cursor: "pointer", fontSize: 14, marginTop: 14 }}>×</button>
+                </div>
+                {/* Subtotal per baris */}
+                {a.qty > 0 && a.harga > 0 && (
+                  <div style={{ textAlign: "right", fontSize: 11, color: cs.muted }}>
+                    Subtotal: <span style={{ fontWeight: 700, color: cs.green, fontFamily: "monospace" }}>{fmt(a.qty * a.harga)}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+            <button onClick={() => setAddonItems(p => [...p, { _id: Date.now(), nama: "", qty: 1, harga: 0 }])}
+              style={{ padding: "10px", borderRadius: 8, background: cs.card, border: "1px dashed " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 12 }}>
+              + Tambah Baris
+            </button>
+          </div>
+
+          {/* Total material baru */}
+          {addonItems.some(a => a.qty > 0 && a.harga > 0) && (
+            <div style={{ background: cs.green + "12", border: "1px solid " + cs.green + "33", borderRadius: 8, padding: "10px 14px", marginBottom: 14, display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span style={{ color: cs.muted }}>Total material baru</span>
+              <span style={{ fontWeight: 800, color: cs.green, fontFamily: "monospace" }}>
+                + {fmt(addonItems.reduce((s, a) => s + (a.qty * a.harga || 0), 0))}
+              </span>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => { setAddonModalInvId(null); setAddonItems([]); }} disabled={savingAddon}
+              style={{ flex: 1, padding: "11px", borderRadius: 10, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 13 }}>Batal</button>
+            <button onClick={handleSaveAddon} disabled={savingAddon}
+              style={{ flex: 2, padding: "11px", borderRadius: 10, background: savingAddon ? cs.border : cs.green, border: "none", color: "#fff", fontWeight: 700, cursor: savingAddon ? "not-allowed" : "pointer", fontSize: 13 }}>
+              {savingAddon ? "Menyimpan..." : "✅ Simpan Material"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showAcUnitModal && (
+      <AcUnitInvoiceModal
+        onClose={() => setShowAcUnitModal(false)}
+        supabase={supabase}
+        customersData={customersData || []}
+        ordersData={ordersData || []}
+        setOrdersData={setOrdersData}
+        showNotif={showNotif}
+        setInvoicesData={setInvoicesData}
+        getLocalDate={getLocalDate}
+      />
     )}
   </div>
 );

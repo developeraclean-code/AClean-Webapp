@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, currentUser, supabase, insertExpense, updateExpense, deleteExpense, auditUserName, setAuditModal, TODAY, EXPENSE_PAGE_SIZE, fmt }) {
+function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, currentUser, supabase, insertExpense, updateExpense, deleteExpense, auditUserName, setAuditModal, TODAY, EXPENSE_PAGE_SIZE, fmt, showNotif, showConfirm }) {
 const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin" || currentUser?.role === "Finance";
 
 const PETTY_CASH_SUBS = ["Bensin Motor", "Perbaikan Motor", "Parkir", "Kasbon Karyawan", "Lembur", "Bonus", "Lain-lain"];
@@ -60,22 +60,29 @@ const saveExpense = async () => {
   };
   if (editExpenseItem) {
     const { error } = await updateExpense(supabase, editExpenseItem.id, payload, auditUserName());
-    if (error) { alert("Gagal update: " + error.message); return; }
+    if (error) { showNotif?.("❌ Gagal update biaya: " + error.message); return; }
     setExpensesData(prev => prev.map(x => x.id === editExpenseItem.id ? { ...x, ...payload } : x));
+    showNotif?.(`✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) diperbarui`);
   } else {
     const { data, error } = await insertExpense(supabase, { ...payload, last_changed_by: auditUserName() });
-    if (error) { alert("Gagal simpan: " + error.message); return; }
+    if (error) { showNotif?.("❌ Gagal simpan biaya: " + error.message); return; }
     setExpensesData(prev => [data, ...prev]);
+    showNotif?.(`✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) tersimpan`);
   }
   setModalExpense(false);
   resetForm();
 };
 
 const handleDeleteExpense = async (item) => {
-  if (!window.confirm(`Hapus biaya "${item.subcategory}" Rp ${Number(item.amount).toLocaleString("id-ID")}?`)) return;
+  const confirmed = showConfirm
+    ? await showConfirm({ icon: "🗑️", title: "Hapus Biaya?", danger: true,
+        message: `Hapus biaya "${item.subcategory}" ${fmt(item.amount)}?`, confirmText: "Ya, Hapus" })
+    : window.confirm(`Hapus biaya "${item.subcategory}" Rp ${Number(item.amount).toLocaleString("id-ID")}?`);
+  if (!confirmed) return;
   const { error } = await deleteExpense(supabase, item.id, auditUserName());
-  if (error) { alert("Gagal hapus: " + error.message); return; }
+  if (error) { showNotif?.("❌ Gagal hapus biaya: " + error.message); return; }
   setExpensesData(prev => prev.filter(x => x.id !== item.id));
+  showNotif?.(`🗑️ Biaya ${item.subcategory} dihapus`);
 };
 
 return (

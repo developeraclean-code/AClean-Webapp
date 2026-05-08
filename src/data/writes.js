@@ -30,13 +30,29 @@ export const insertInvoice = (supabase, payload) =>
 export const updateInvoice = (supabase, id, fields, userName) =>
   supabase.from("invoices").update({ ...fields, last_changed_by: userName }).eq("id", id);
 
-export const markInvoicePaid = (supabase, id, paidAt, userName) =>
-  supabase.from("invoices").update({
-    status: "PAID", paid_at: paidAt, last_changed_by: userName
+export const markInvoicePaid = async (supabase, id, paidAt, userName) => {
+  // Saat melunasi: status=PAID, paid_at=now, paid_amount=total, remaining=0
+  // Hindari kondisi "PAID tapi remaining_amount masih ada" yg bikin display salah.
+  const { data: inv } = await supabase
+    .from("invoices").select("total").eq("id", id).single();
+  const total = Number(inv?.total) || 0;
+  return supabase.from("invoices").update({
+    status: "PAID",
+    paid_at: paidAt,
+    paid_amount: total,
+    remaining_amount: 0,
+    last_changed_by: userName,
   }).eq("id", id);
+};
 
 export const deleteInvoice = async (supabase, id, userName, reason = "MANUAL_DELETE") => {
   await supabase.from("invoices").update({ last_changed_by: `${userName}::${reason}` }).eq("id", id);
+  // payment_logs FK NO ACTION — hapus dulu agar invoice bisa dihapus
+  await supabase.from("payment_logs").delete().eq("invoice_id", id);
+  // Untuk invoice AC unit sale, ada order install yang auto-created — clear linkage
+  // Order tidak dihapus (ada laporan teknisi yang link ke order), hanya unset invoice_id
+  await supabase.from("orders").update({ invoice_id: null }).eq("invoice_id", id);
+  // invoice_items + payments akan terhapus via FK CASCADE
   return supabase.from("invoices").delete().eq("id", id);
 };
 

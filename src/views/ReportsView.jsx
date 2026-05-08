@@ -58,7 +58,10 @@ const paidInv = allInv.filter(i => i.status === "PAID" && filterInvByPeriod(i));
 const unpaidInv = allInv.filter(i => i.status === "UNPAID");
 const overdueInv = allInv.filter(i => i.status === "OVERDUE");
 const pendingInv = allInv.filter(i => i.status === "PENDING_APPROVAL");
-const totalRevenue = paidInv.reduce((a, b) => a + (b.total || 0), 0);
+const totalRevenue = paidInv.reduce((a, b) => {
+  const passthrough = b.invoice_type === "ac_unit_sale" ? (b.unit_ac_amount || 0) : 0;
+  return a + (b.total || 0) - passthrough;
+}, 0);
 const totalLabor = paidInv.reduce((a, b) => a + (b.labor || 0), 0);
 const totalMaterial = paidInv.reduce((a, b) => a + (b.material || 0), 0);
 const totalDiscount = paidInv.reduce((a, b) => a + (b.discount || 0) + (b.trade_in ? (b.trade_in_amount || 0) : 0), 0);
@@ -77,20 +80,23 @@ const completionRate = ordersAll > 0 ? Math.round(ordersDone / ordersAll * 100) 
 const avgOrderVal = paidInv.length > 0 ? Math.round(totalRevenue / paidInv.length) : 0;
 
 // ── Revenue per layanan (periode ini) ──
+// Untuk ac_unit_sale: kurangi unit_ac_amount (passthrough) agar revenue Install hanya hitung paket+addon
+const effRevenue = (i) => (i.total || 0) - (i.invoice_type === "ac_unit_sale" ? (i.unit_ac_amount || 0) : 0);
 const revBreakdown = [
-  ["Cleaning", paidInv.filter(i => (i.service || "").toLowerCase().includes("cleaning")).reduce((a, b) => a + (b.total || 0), 0), cs.accent, paidInv.filter(i => (i.service || "").toLowerCase().includes("cleaning")).length],
-  ["Install", paidInv.filter(i => (i.service || "").toLowerCase().includes("install")).reduce((a, b) => a + (b.total || 0), 0), cs.green, paidInv.filter(i => (i.service || "").toLowerCase().includes("install")).length],
-  ["Repair", paidInv.filter(i => (i.service || "").toLowerCase().includes("repair")).reduce((a, b) => a + (b.total || 0), 0), cs.yellow, paidInv.filter(i => (i.service || "").toLowerCase().includes("repair")).length],
-  ["Complain", paidInv.filter(i => (i.service || "").toLowerCase().includes("complain")).reduce((a, b) => a + (b.total || 0), 0), cs.red, paidInv.filter(i => (i.service || "").toLowerCase().includes("complain")).length],
+  ["Cleaning", paidInv.filter(i => (i.service || "").toLowerCase().includes("cleaning")).reduce((a, b) => a + effRevenue(b), 0), cs.accent, paidInv.filter(i => (i.service || "").toLowerCase().includes("cleaning")).length],
+  ["Install", paidInv.filter(i => (i.service || "").toLowerCase().includes("install")).reduce((a, b) => a + effRevenue(b), 0), cs.green, paidInv.filter(i => (i.service || "").toLowerCase().includes("install")).length],
+  ["Repair", paidInv.filter(i => (i.service || "").toLowerCase().includes("repair")).reduce((a, b) => a + effRevenue(b), 0), cs.yellow, paidInv.filter(i => (i.service || "").toLowerCase().includes("repair")).length],
+  ["Complain", paidInv.filter(i => (i.service || "").toLowerCase().includes("complain")).reduce((a, b) => a + effRevenue(b), 0), cs.red, paidInv.filter(i => (i.service || "").toLowerCase().includes("complain")).length],
 ].filter(([, rev, , cnt]) => rev > 0 || cnt > 0);
 
 // ── Teknisi performance — filter sesuai periode ──
 const tekPerf = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(name => {
   const myOrders = ordersPeriod.filter(o => o.teknisi === name);
   const myDone = myOrders.filter(o => DONE_STATUSES.includes(o.status)).length;
+  // Revenue teknisi: skip unit_ac_amount untuk ac_unit_sale (teknisi hanya benefit dari labor)
   const myRev = paidInv
     .filter(i => myOrders.some(o => o.id === i.job_id))
-    .reduce((a, b) => a + (b.total || 0), 0);
+    .reduce((a, b) => a + effRevenue(b), 0);
   return { name, done: myDone, total: myOrders.length, rev: myRev };
 }).filter(t => t.total > 0).sort((a, b) => b.done - a.done);
 const maxDone = Math.max(...tekPerf.map(t => t.done), 1);
