@@ -34,7 +34,7 @@ Harga ini sudah di-update langsung oleh Owner dari tampilan Price List.
 ${hargaSection}
 
 ## DATA BISNIS LIVE (${localTime})
-${JSON.stringify(bizClean, null, 2)}
+${JSON.stringify(bizClean)}
 
 ## ACTION TOOLKIT — gunakan tag [ACTION]...[/ACTION] untuk eksekusi data
 

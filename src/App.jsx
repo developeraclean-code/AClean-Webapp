@@ -524,7 +524,7 @@ function invalidateCache(...keys) {
 function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
   const { invoices, suggestedAmount, proofUrl: initProof, method: initMethod } = ctx;
   const [selected, setSelected] = useState(invoices.map(i => i.id));
-  const [received, setReceived] = useState(suggestedAmount || invoices.reduce((s, i) => s + (i.status === "PARTIAL_PAID" ? (i.remaining_amount ?? ((i.total||0)-(i.paid_amount||0))) : (i.total||0)), 0));
+  const [received, setReceived] = useState(suggestedAmount || invoices.reduce((s, i) => s + (i.status === "PARTIAL_PAID" ? (Number(i.remaining_amount) ?? ((i.total||0)-(Number(i.paid_amount)||0))) : (i.total||0)), 0));
   const [proofUrl, setProofUrl] = useState(initProof || "");
   const [method, setMethod] = useState(initMethod || "transfer");
   const [loading, setLoading] = useState(false);
@@ -532,7 +532,7 @@ function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
   const selectedInvoices = invoices.filter(i => selected.includes(i.id));
   // Untuk PARTIAL_PAID: tagihan efektif = remaining, bukan total
   const effectiveTagihan = (inv) => inv.status === "PARTIAL_PAID"
-    ? (inv.remaining_amount ?? ((inv.total || 0) - (inv.paid_amount || 0)))
+    ? (Number(inv.remaining_amount) ?? ((inv.total || 0) - (Number(inv.paid_amount) || 0)))
     : (inv.total || 0);
   const totalTagihan = selectedInvoices.reduce((s, i) => s + effectiveTagihan(i), 0);
   const isPartial = received < totalTagihan;
@@ -3449,9 +3449,6 @@ ${photoPageHTML}
         method: method,
         notes: notes || "Lunas",
         paid_at: paidAt,
-        verified: true,
-        verified_by: currentUser?.id || null,
-        verified_at: paidAt,
       });
     } catch (e) { console.warn("payments insert skip:", e?.message); }
     // Update customer last_service
@@ -3466,7 +3463,7 @@ ${photoPageHTML}
     if (!targetInvoices.length) { showNotif("❌ Tidak ada invoice yang dipilih"); return; }
     // Untuk PARTIAL_PAID, tagihan efektif adalah remaining_amount (bukan total)
     const effectiveTagihan = (inv) => inv.status === "PARTIAL_PAID"
-      ? (inv.remaining_amount ?? ((inv.total || 0) - (inv.paid_amount || 0)))
+      ? (Number(inv.remaining_amount) ?? ((inv.total || 0) - (Number(inv.paid_amount) || 0)))
       : (inv.total || 0);
     const totalTagihan = targetInvoices.reduce((s, i) => s + effectiveTagihan(i), 0);
 
@@ -3493,9 +3490,9 @@ ${photoPageHTML}
     const paidAt = getLocalISOString();
     await setAuditUser();
 
-    // Optimistic UI
+    // Optimistic UI — chk_invoices_status sudah include PARTIAL_PAID (migration 019)
     setInvoicesData(prev => prev.map(i => {
-      if (fullyPaid.find(f => f.id === i.id)) return { ...i, status: "PAID", paid_at: paidAt, payment_proof_url: proofUrl || i.payment_proof_url };
+      if (fullyPaid.find(f => f.id === i.id)) return { ...i, status: "PAID", paid_at: paidAt, paid_amount: i.total, remaining_amount: 0, payment_proof_url: proofUrl || i.payment_proof_url };
       const p = partialPaid.find(f => f.id === i.id);
       if (p) return { ...i, status: "PARTIAL_PAID", paid_amount: p._paid_amount, remaining_amount: (i.total || 0) - p._paid_amount, payment_proof_url: proofUrl || i.payment_proof_url };
       return i;
@@ -3515,9 +3512,6 @@ ${photoPageHTML}
         allocation_detail: allocation,
         payment_proof_url: proofUrl || null,
         paid_at: paidAt,
-        verified: true,
-        verified_by: currentUser?.id || null,
-        verified_at: paidAt,
         notes: `Group payment: ${invoiceIds.join(", ")}`,
       }).select("id").single();
       paymentId = paymentRow?.id || null;
@@ -3553,6 +3547,7 @@ ${photoPageHTML}
     }
 
     for (const inv of partialPaid) {
+      // PARTIAL_PAID sekarang valid (migration 019)
       supabase.from("invoices").update({
         status: "PARTIAL_PAID",
         paid_amount: inv._paid_amount,
@@ -4031,7 +4026,7 @@ ${photoPageHTML}
     const bizContext = {
       today: TODAY,
       orders: ordersData.map(o => ({ id: o.id, customer: o.customer, service: o.service, type: o.type, units: o.units, status: o.status, date: o.date, time: o.time, teknisi: o.teknisi, helper: o.helper, dispatch: o.dispatch, invoice_id: o.invoice_id })),
-      invoices: invoicesData.map(i => ({ id: i.id, customer: i.customer, phone: i.phone, total: i.total, status: i.status, due: i.due, labor: i.labor, material: i.material, discount: i.discount, trade_in: i.trade_in, trade_in_amount: i.trade_in_amount, materials_detail: (i.materials_detail || []).map(m => ({ nama: m.nama, jumlah: m.jumlah, satuan: m.satuan, harga_satuan: m.harga_satuan, subtotal: m.subtotal })) })),
+      invoices: invoicesData.map(i => ({ id: i.id, customer: i.customer, phone: i.phone, total: i.total, status: i.status, due: i.due, labor: i.labor, material: i.material, discount: i.discount, trade_in: i.trade_in, trade_in_amount: i.trade_in_amount, materials_detail: (Array.isArray(i.materials_detail) ? i.materials_detail : (typeof i.materials_detail === "string" ? (() => { try { return JSON.parse(i.materials_detail); } catch { return []; } })() : [])).map(m => ({ nama: m.nama, jumlah: m.jumlah, satuan: m.satuan, harga_satuan: m.harga_satuan, subtotal: m.subtotal })) })),
       inventory: inventoryData.map(i => ({ code: i.code, name: i.name, stock: i.stock, unit: i.unit, status: i.status, price: i.price, reorder: i.reorder })),
       customers: customersData.map(c => ({ id: c.id, name: c.name, phone: c.phone, area: c.area, total_orders: c.total_orders, is_vip: c.is_vip })),
       laporan: laporanReports.map(r => ({
@@ -4463,7 +4458,8 @@ ${photoPageHTML}
                 trade_in: false,
                 trade_in_amount: 0,
                 total: totalInv,
-                status: "PENDING",
+                // chk_invoices_status valid: PENDING_APPROVAL bukan PENDING
+                status: "PENDING_APPROVAL",
                 garansi_days: 30,
                 garansi_expires: new Date(Date.now() + 30 * 86400000 + 7 * 60 * 60 * 1000).toISOString().slice(0, 10),
                 laporan_id: lapRep?.id || null,
@@ -5164,7 +5160,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       expensePage={expensePage} setExpensePage={setExpensePage} modalExpense={modalExpense} setModalExpense={setModalExpense}
       editExpenseItem={editExpenseItem} setEditExpenseItem={setEditExpenseItem} newExpenseForm={newExpenseForm} setNewExpenseForm={setNewExpenseForm}
       currentUser={currentUser} supabase={supabase} insertExpense={insertExpense} updateExpense={updateExpense} deleteExpense={deleteExpense}
-      auditUserName={auditUserName} setAuditModal={setAuditModal} TODAY={TODAY} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE} fmt={fmt} />
+      auditUserName={auditUserName} setAuditModal={setAuditModal} TODAY={TODAY} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE} fmt={fmt}
+      showNotif={showNotif} showConfirm={showConfirm} />
   );
 
   // ============================================================
@@ -6227,11 +6224,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <button onClick={() => { setModalTeknisi(false); setEditTeknisi(null); }} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
             </div>
             <div style={{ display: "grid", gap: 10 }}>
-              {[["Nama Lengkap", "name"], ["Nomor WA", "phone"]].map(([label, key]) => (
+              {[["Nama Lengkap", "name"], ["Nomor WA (auto-format 628xxx)", "phone"]].map(([label, key]) => (
                 <div key={key}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>{label}</div>
                   <input value={newTeknisiForm[key] || ""} onChange={e => setNewTeknisiForm(f => ({ ...f, [key]: e.target.value }))}
-                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                    onBlur={key === "phone" ? (e => {
+                      const norm = normalizePhone(e.target.value);
+                      if (norm && norm !== newTeknisiForm.phone) setNewTeknisiForm(f => ({ ...f, phone: norm }));
+                    }) : undefined}
+                    placeholder={key === "phone" ? "0812-3456-7890" : ""}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: key === "phone" ? "monospace" : "inherit" }} />
                 </div>
               ))}
               <div>
@@ -7895,11 +7897,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               <button onClick={() => setModalAddCustomer(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 24, cursor: "pointer", lineHeight: 1 }}>×</button>
             </div>
             <div style={{ display: "grid", gap: 12 }}>
-              {[["Nama Lengkap", "name", "text", "Nama customer"], ["Nomor HP", "phone", "text", "628xxx"], ["Alamat Lengkap", "address", "text", "Jl. ..."], ["Area/Kecamatan", "area", "text", "Alam Sutera, BSD, dll"]].map(([lbl, key, type, ph]) => (
+              {[["Nama Lengkap", "name", "text", "Nama customer"], ["Nomor HP (auto-format 628xxx)", "phone", "text", "0812-3456-7890"], ["Alamat Lengkap", "address", "text", "Jl. ..."], ["Area/Kecamatan", "area", "text", "Alam Sutera, BSD, dll"]].map(([lbl, key, type, ph]) => (
                 <div key={key}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>{lbl}</div>
                   <input type={type} value={newCustomerForm[key] || ""} onChange={e => setNewCustomerForm(f => ({ ...f, [key]: e.target.value }))}
-                    placeholder={ph} style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                    onBlur={key === "phone" ? (e => {
+                      const norm = normalizePhone(e.target.value);
+                      if (norm && norm !== newCustomerForm.phone) setNewCustomerForm(f => ({ ...f, phone: norm }));
+                    }) : undefined}
+                    placeholder={ph} style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: key === "phone" ? "monospace" : "inherit" }} />
                 </div>
               ))}
               <div>
