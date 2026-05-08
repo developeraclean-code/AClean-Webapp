@@ -2,12 +2,14 @@ import { memo, useState, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
+import QuotationView from "./QuotationView.jsx";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
 const [showAcUnitModal, setShowAcUnitModal] = useState(false);
+const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation"
 const [addonModalInvId, setAddonModalInvId] = useState(null);
 const [addonItems, setAddonItems] = useState([]);
 const [existingAddons, setExistingAddons] = useState([]); // addon yg sudah tersimpan di DB
@@ -131,6 +133,44 @@ const curPgI = Math.min(invoicePage, totPgI);
 const pageInv = filteredInv.slice((curPgI - 1) * INV_PAGE_SIZE, curPgI * INV_PAGE_SIZE);
 return (
   <div style={{ display: "grid", gap: 14 }}>
+    {/* Sub-tab: Invoice | Quotation */}
+    <div style={{ display: "flex", gap: 4, borderBottom: "1px solid " + cs.border, paddingBottom: 8 }}>
+      {[
+        { key: "invoice",   label: "🧾 Invoice" },
+        { key: "quotation", label: "📋 Quotation" },
+      ].map(t => (
+        <button key={t.key} onClick={() => setInvoiceSubTab(t.key)}
+          style={{ padding: "7px 18px", borderRadius: "8px 8px 0 0", border: "none", cursor: "pointer", fontSize: 13, fontWeight: invoiceSubTab === t.key ? 800 : 500,
+            background: invoiceSubTab === t.key ? cs.accent + "22" : "transparent",
+            color: invoiceSubTab === t.key ? cs.accent : cs.muted }}>
+          {t.label}
+        </button>
+      ))}
+    </div>
+
+    {/* Quotation sub-view */}
+    {invoiceSubTab === "quotation" && (
+      <QuotationView
+        quotationsData={quotationsData || []}
+        setQuotationsData={setQuotationsData}
+        customersData={customersData}
+        showNotif={showNotif}
+        showConfirm={showConfirm}
+        currentUser={currentUser}
+        supabase={supabase}
+        getLocalDate={getLocalDate}
+        fmt={fmt}
+        priceListData={priceListData}
+        invoicesData={invoicesData}
+        setInvoicesData={setInvoicesData}
+        ordersData={ordersData}
+        setOrdersData={setOrdersData}
+        sendWAFn={sendWAFn}
+      />
+    )}
+
+    {/* Invoice view (default) */}
+    {invoiceSubTab === "invoice" && <>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
       <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>🧾 Invoice <span style={{ fontSize: 13, color: cs.muted, fontWeight: 400 }}>({filteredInv.length})</span></div>
       <button onClick={() => setShowAcUnitModal(true)} style={{
@@ -960,6 +1000,7 @@ return (
         getLocalDate={getLocalDate}
       />
     )}
+    </>}
   </div>
 );
 }

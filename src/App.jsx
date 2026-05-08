@@ -892,6 +892,9 @@ export default function ACleanWebApp() {
   const [invoicesData, setInvoicesData] = useState(INVOICES_DATA);
   const [inventoryData, setInventoryData] = useState(INVENTORY_DATA);
 
+  // Quotation state
+  const [quotationsData, setQuotationsData] = useState([]);
+
   // GAP 3 — State untuk edit invoice
   const [modalEditInvoice, setModalEditInvoice] = useState(false);
   const [editInvoiceData, setEditInvoiceData] = useState(null);
@@ -2471,8 +2474,10 @@ ${photoPageHTML}
           cachedFetch("agent_logs", () => fetchAgentLogs(supabase)),
           cachedFetch("inv_tx", () => fetchInventoryTransactions(supabase)),
           cachedFetch("inv_units", () => fetchInventoryUnits(supabase)),
+          supabase.from("quotations").select("*").order("created_at", { ascending: false }).limit(200),
         ]);
-        const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
+        const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes, invUnitsRes, quotationsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
+        if (!quotationsRes?.error && quotationsRes?.data) setQuotationsData(quotationsRes.data);
         // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
         // Jika error = fallback ke demo data yang sudah di-init
         if (!ordersRes.error && ordersRes.data) setOrdersData(ordersRes.data);
@@ -4831,7 +4836,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE}
       laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
       apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx}
-      customersData={customersData} />
+      customersData={customersData}
+      quotationsData={quotationsData} setQuotationsData={setQuotationsData} />
   );
 
   // ============================================================
