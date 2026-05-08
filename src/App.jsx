@@ -4799,7 +4799,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     } else if (invoiceFilter === "Hari Ini") {
       filteredInv = filteredInv.filter(inv => (inv.created_at || "").slice(0, 10) === todayDateStr);
     } else if (invoiceFilter === "Tanpa Bukti") {
-      filteredInv = filteredInv.filter(inv => inv.status === "PAID" && inv.total > 0 && !inv.payment_proof_url && inv.payment_proof_url !== "verified-no-proof");
+      filteredInv = filteredInv.filter(inv => inv.status === "PAID" && inv.total > 0 && !inv.repair_gratis && !inv.payment_proof_url && inv.payment_proof_url !== "verified-no-proof");
     } else if (invoiceFilter !== "Semua") {
       filteredInv = filteredInv.filter(inv => inv.status === invoiceFilter);
     }
@@ -8672,8 +8672,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         const isEditGratis = editRepairType === "gratis-garansi" || editRepairType === "gratis-customer";
                         const newRepairGratis = isEditGratis ? editRepairType : (existInv?.repair_gratis || undefined);
 
-                        // If admin explicitly chose gratis → override status to PAID
-                        if (isEditGratis && finalTotal3 === 0) {
+                        // If admin explicitly chose gratis → force total=0, status=PAID, proof=verified-no-proof
+                        if (isEditGratis) {
+                          finalLabor3 = 0;
+                          finalMat3 = 0;
+                          finalTotal3 = 0;
                           newInvoiceStatus3 = "PAID";
                           const alasan = editGratisAlasan.trim() || "(tidak ada alasan)";
                           addAgentLog("ADMIN_EDIT_GRATIS_APPROVED",
@@ -8690,6 +8693,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           labor: finalLabor3, material: finalMat3, total: totalInv,
                           status: newInvoiceStatus3,
                           repair_gratis: newRepairGratis ?? null,
+                          // Gratis → tidak butuh bukti bayar, tandai agar tidak masuk filter "Tanpa Bukti"
+                          ...(isEditGratis ? { payment_proof_url: "verified-no-proof", paid_at: new Date().toISOString() } : {}),
                           updated_at: new Date().toISOString(),
                         };
                         const { error: invUpdErr } = await updateInvoice(supabase, existInv.id, invUpdFields, auditUserName());
