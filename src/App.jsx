@@ -4836,7 +4836,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE}
       laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
       apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx}
-      customersData={customersData}
+      customersData={customersData} priceListData={priceListData}
       quotationsData={quotationsData} setQuotationsData={setQuotationsData} />
   );
 

@@ -534,7 +534,7 @@ export default function QuotationModal({
                   <div style={{ display: "grid", gap: 8 }}>
                     {/* Price list lookup untuk jasa */}
                     <div>
-                      <input value={jasaSearch} onChange={e => setJasaSearch(e.target.value)}
+                      <input value={jasaSearch} onChange={e => { setJasaSearch(e.target.value); setShowJasaPicker(true); }}
                         onFocus={() => setShowJasaPicker(true)}
                         placeholder="Cari jasa dari price list..." style={{ ...inp, marginBottom: 6 }} />
                       {showJasaPicker && jasaSearch && (
@@ -576,7 +576,7 @@ export default function QuotationModal({
 
                 {/* Price list picker */}
                 <div style={{ marginBottom: 10 }}>
-                  <input value={addonSearch} onChange={e => setAddonSearch(e.target.value)}
+                  <input value={addonSearch} onChange={e => { setAddonSearch(e.target.value); setShowAddonPicker(true); }}
                     onFocus={() => setShowAddonPicker(true)}
                     placeholder="Cari dari price list..." style={{ ...inp, marginBottom: 6 }} />
                   {showAddonPicker && addonSearch && (
