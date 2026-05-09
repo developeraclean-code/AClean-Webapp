@@ -9,6 +9,18 @@ const KAPASITAS_OPT   = ["0.5 PK", "0.75 PK", "1 PK", "1.5 PK", "2 PK", "2.5 PK"
 const TIPE_UNIT       = ["Split Standard", "Split Inverter", "Cassette", "Split Duct", "Floor Standing"];
 const TRADE_IN_AMOUNT = 250000;
 
+const PRESET_NOTES = `Catatan Pekerjaan :
+1. Jasa Kami tidak termasuk Jasa Perapian Tembok / Plafon / Dan Sebagainya.
+2. Penambahan Material / Jasa diluar Pekerjaan Quotation ini.
+3. Apabila ditemukan kerusakan Sparepart lain / Pekerjaan lain Maka akan diberikan penawaran tambahan
+
+Catatan Term Of Payment:
+1. Payment : Cash / Bank Transfer 100%
+2. Instalation : 1~14 Days, After Payment
+3. Price Include Shipment
+4. Validation : 15 Days
+5. Transfer BCA : 8830-8830-11 ( Malda Retta )`;
+
 const DEFAULT_PAKET = [
   { key: "paket_05_1pk", label: "Paket Pemasangan 0,5PK – 1PK", harga: 1400000,
     include: [
@@ -110,8 +122,10 @@ export default function QuotationModal({
     }
     return [];
   });
-  const [addonSearch, setAddonSearch]     = useState("");
+  const [addonSearch, setAddonSearch]       = useState("");
   const [showAddonPicker, setShowAddonPicker] = useState(false);
+  const [jasaSearch, setJasaSearch]         = useState("");
+  const [showJasaPicker, setShowJasaPicker] = useState(false);
 
   // ── Diskon & Trade-In ──
   const [diskon, setDiskon]       = useState(isEdit ? (editData.discount || 0) : 0);
@@ -191,6 +205,10 @@ export default function QuotationModal({
 
   const filteredAddon = addonSearch
     ? priceOptions.filter(p => p.nama.toLowerCase().includes(addonSearch.toLowerCase()))
+    : priceOptions;
+
+  const filteredJasa = jasaSearch
+    ? priceOptions.filter(p => p.nama.toLowerCase().includes(jasaSearch.toLowerCase()))
     : priceOptions;
 
   // ── Unit helpers ──
@@ -514,6 +532,27 @@ export default function QuotationModal({
                   </div>
                 ) : (
                   <div style={{ display: "grid", gap: 8 }}>
+                    {/* Price list lookup untuk jasa */}
+                    <div>
+                      <input value={jasaSearch} onChange={e => setJasaSearch(e.target.value)}
+                        onFocus={() => setShowJasaPicker(true)}
+                        placeholder="Cari jasa dari price list..." style={{ ...inp, marginBottom: 6 }} />
+                      {showJasaPicker && jasaSearch && (
+                        <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid " + cs.border, borderRadius: 8, background: cs.surface, marginBottom: 6 }}>
+                          {filteredJasa.slice(0, 20).map((p, i) => (
+                            <div key={i} onClick={() => {
+                              setJasaItems(prev => [...prev, { _id: Math.random(), nama: p.nama, qty: 1, harga: p.harga }]);
+                              setJasaSearch(""); setShowJasaPicker(false);
+                            }} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, color: cs.text, borderBottom: "1px solid " + cs.border + "33" }}>
+                              {p.nama} — {fmt(p.harga)}/{p.satuan}
+                            </div>
+                          ))}
+                          {filteredJasa.length === 0 && (
+                            <div style={{ padding: 10, color: cs.muted, fontSize: 12 }}>Tidak ditemukan di price list</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     {jasaItems.map((j, idx) => (
                       <div key={j._id} style={{ display: "grid", gridTemplateColumns: "1fr 60px 120px auto", gap: 6, alignItems: "center" }}>
                         <input value={j.nama} onChange={e => setJasaItems(p => p.map((x, i) => i === idx ? { ...x, nama: e.target.value } : x))}
@@ -526,7 +565,7 @@ export default function QuotationModal({
                           style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 16 }}>×</button>
                       </div>
                     ))}
-                    <button onClick={() => setJasaItems(p => [...p, emptyJasa()])} style={btn(cs.accent)}>+ Tambah Jasa</button>
+                    <button onClick={() => setJasaItems(p => [...p, emptyJasa()])} style={btn(cs.accent)}>+ Manual</button>
                   </div>
                 )}
               </div>
@@ -596,8 +635,14 @@ export default function QuotationModal({
 
               {/* Notes */}
               <div>
-                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Catatan / Scope Pekerjaan</div>
-                <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <div style={{ fontSize: 11, color: cs.muted }}>Catatan / Scope Pekerjaan</div>
+                  <button onClick={() => setNotes(PRESET_NOTES)}
+                    style={{ fontSize: 11, color: cs.accent, background: cs.accent + "11", border: "1px solid " + cs.accent + "33", borderRadius: 6, padding: "2px 10px", cursor: "pointer", fontWeight: 600 }}>
+                    📋 Isi Preset
+                  </button>
+                </div>
+                <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={6}
                   style={{ ...inp, resize: "vertical" }} placeholder="Deskripsi pekerjaan, syarat & ketentuan..." />
               </div>
             </>
