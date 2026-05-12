@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
+import { smartSearchNormalize } from "../lib/phone.js";
 
 function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, currentUser, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, isMobile, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, addAgentLog, auditUserName, showConfirm, showNotif, openWA, openLaporanModal, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
 // Hitung minggu dinamis berdasarkan weekOffset
@@ -211,7 +212,7 @@ return (
         <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: cs.muted, fontSize: 13, pointerEvents: "none" }}>🔍</span>
         <input id="searchSchedule"
           value={searchSchedule}
-          onChange={e => setSearchSchedule(e.target.value)}
+          onChange={e => setSearchSchedule(smartSearchNormalize(e.target.value))}
           placeholder="Cari customer, teknisi, alamat, Job ID..."
           style={{ width: "100%", background: cs.card, border: "1px solid " + (searchSchedule ? cs.accent : cs.border), borderRadius: 10, padding: "9px 36px", color: cs.text, fontSize: 12, boxSizing: "border-box", outline: "none" }}
         />

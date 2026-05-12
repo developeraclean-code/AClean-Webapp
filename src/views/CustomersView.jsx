@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
-import { normalizePhone } from "../lib/phone.js";
+import { normalizePhone, smartSearchNormalize } from "../lib/phone.js";
 
 // Warna avatar deterministik berdasarkan nama
 const AVATAR_COLORS = [
@@ -69,7 +69,7 @@ return (
         {/* Search */}
         <div style={{ position: "relative" }}>
           <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: cs.muted, pointerEvents: "none" }}>🔍</span>
-          <input id="searchCustomer" value={searchCustomer} onChange={e => { setSearchCustomer(e.target.value); setCustomerPage(1); }}
+          <input id="searchCustomer" value={searchCustomer} onChange={e => { setSearchCustomer(smartSearchNormalize(e.target.value)); setCustomerPage(1); }}
             placeholder="Cari nama, nomor telepon, area, atau alamat..."
             style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px 10px 36px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
           {searchCustomer && (

@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
+import { smartSearchNormalize } from "../lib/phone.js";
 
 function OrdersView({ ordersData, setOrdersData, orderFilter, setOrderFilter, orderTekFilter, setOrderTekFilter, orderDateFrom, setOrderDateFrom, orderDateTo, setOrderDateTo, searchOrder, setSearchOrder, orderPage, setOrderPage, orderServiceFilter, setOrderServiceFilter, currentUser, customersData, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setModalOrder, showConfirm, showNotif, dispatchStatus, sendDispatchWA, deleteOrder, addAgentLog, auditUserName, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, ORDER_PAGE_SIZE }) {
 // ── SIM-1+2: search + teknisi filter + pagination ──
@@ -114,7 +115,7 @@ return (
     {/* Search bar */}
     <div style={{ position: "relative" }}>
       <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: cs.muted, fontSize: 14, pointerEvents: "none" }}>🔍</span>
-      <input id="searchOrder" value={searchOrder} onChange={e => { setSearchOrder(e.target.value); setOrderPage(1); }}
+      <input id="searchOrder" value={searchOrder} onChange={e => { setSearchOrder(smartSearchNormalize(e.target.value)); setOrderPage(1); }}
         placeholder="Cari nama customer, Job ID, telepon, atau teknisi..."
         style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px 10px 36px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
       {searchOrder && <button onClick={() => { setSearchOrder(""); setOrderPage(1); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16 }}>✕</button>}

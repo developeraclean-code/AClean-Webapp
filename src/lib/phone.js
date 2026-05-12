@@ -23,3 +23,13 @@ export const samePhone = (a, b) => {
   if (!a || !b) return false;
   return normalizePhone(a) === normalizePhone(b);
 };
+
+// Auto-format search input: jika input terlihat seperti nomor HP (0812, +62, 628, 8xxx),
+// kembalikan versi normalized 628xxx agar search langsung cocok.
+// Jika bukan nomor HP (ada huruf, dll) kembalikan string asli.
+export const smartSearchNormalize = (val) => {
+  if (!val) return val;
+  const stripped = val.replace(/[\s\-().+]/g, "");
+  if (/^\d{5,}$/.test(stripped)) return normalizePhone(stripped);
+  return val;
+};

@@ -1,15 +1,20 @@
 import { memo, useState, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
+import { smartSearchNormalize } from "../lib/phone.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
+import { BlobProvider } from "@react-pdf/renderer";
+import QuotationPDF from "../components/QuotationPDF.jsx";
 
 function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
+const [confirmingCash, setConfirmingCash] = useState(false);
 const [showAcUnitModal, setShowAcUnitModal] = useState(false);
 const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation"
+const [quoPDFData, setQuoPDFData] = useState(null); // quotation untuk preview PDF
 const [addonModalInvId, setAddonModalInvId] = useState(null);
 const [addonItems, setAddonItems] = useState([]);
 const [existingAddons, setExistingAddons] = useState([]); // addon yg sudah tersimpan di DB
@@ -166,7 +171,42 @@ return (
         ordersData={ordersData}
         setOrdersData={setOrdersData}
         sendWAFn={sendWAFn}
+        onOpenPDF={(quo) => setQuoPDFData(quo)}
       />
+    )}
+
+    {/* Quotation PDF Preview Modal */}
+    {quoPDFData && (
+      <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 450, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 16 }}
+        onClick={() => setQuoPDFData(null)}>
+        <div style={{ background: cs.surface, borderRadius: 16, padding: 16, width: "100%", maxWidth: 540 }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>👁 Preview PDF — {quoPDFData.id}</div>
+            <button onClick={() => setQuoPDFData(null)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+          </div>
+          <BlobProvider document={<QuotationPDF quo={quoPDFData} appSettings={{}} />}>
+            {({ url, loading, error }) => {
+              if (loading) return <div style={{ textAlign: "center", padding: 24, color: cs.muted }}>Membuat PDF...</div>;
+              if (error) return <div style={{ textAlign: "center", padding: 24, color: "#f87171" }}>Gagal buat PDF</div>;
+              return (
+                <div style={{ display: "flex", gap: 10 }}>
+                  <a href={url} target="_blank" rel="noreferrer"
+                    style={{ flex: 1, padding: "12px 0", borderRadius: 10, background: cs.accent, color: "#fff", fontWeight: 700, fontSize: 13, textAlign: "center", textDecoration: "none" }}>
+                    🔗 Buka PDF
+                  </a>
+                  <a href={url} download={`${quoPDFData.id}.pdf`}
+                    style={{ flex: 1, padding: "12px 0", borderRadius: 10, background: "#22c55e22", border: "1px solid #22c55e44", color: "#4ade80", fontWeight: 700, fontSize: 13, textAlign: "center", textDecoration: "none" }}>
+                    ⬇️ Download
+                  </a>
+                </div>
+              );
+            }}
+          </BlobProvider>
+          <div style={{ marginTop: 10, padding: "8px 12px", background: cs.card, borderRadius: 8, fontSize: 12, color: cs.muted }}>
+            Customer: <strong style={{ color: cs.text }}>{quoPDFData.customer}</strong> · Total: <strong style={{ color: cs.accent }}>{fmt(quoPDFData.total)}</strong>
+          </div>
+        </div>
+      </div>
     )}
 
     {/* Invoice view (default) */}
@@ -388,7 +428,7 @@ return (
     {/* Search */}
     <div style={{ position: "relative" }}>
       <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: cs.muted, pointerEvents: "none" }}>🔍</span>
-      <input id="searchInvoice" value={searchInvoice} onChange={e => { setSearchInvoice(e.target.value); setInvoicePage(1); }}
+      <input id="searchInvoice" value={searchInvoice} onChange={e => { setSearchInvoice(smartSearchNormalize(e.target.value)); setInvoicePage(1); }}
         placeholder="Cari nama customer, no. telepon, atau ID invoice..."
         style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px 10px 36px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
       {searchInvoice && <button onClick={() => { setSearchInvoice(""); setInvoicePage(1); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16 }}>✕</button>}
@@ -459,21 +499,17 @@ return (
     )}
 
     {invoiceFilter === "Tanpa Bukti" && (
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <button
           disabled={scanningBukti}
           onClick={async () => {
             setScanningBukti(true);
             try {
               const headers = apiHeaders ? await apiHeaders() : {};
-              const res = await fetch("/api/cron-reminder?task=bukti-bayar", {
-                method: "GET",
-                headers,
-              });
+              const res = await fetch("/api/cron-reminder?task=bukti-bayar", { method: "GET", headers });
               const json = await res.json().catch(() => ({}));
               const updated = json.updated ?? 0;
               if (updated > 0) {
-                // Refresh invoices dari Supabase supaya bukti baru langsung muncul
                 const { data } = await supabase
                   .from("invoices")
                   .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent,sent_at,created_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url,repair_gratis")
@@ -497,6 +533,41 @@ return (
           }}>
           {scanningBukti ? "Sedang scan R2..." : "Scan Bukti Sekarang"}
         </button>
+        {/* Konfirmasi Cash — hanya Finance & Owner */}
+        {(currentUser?.role === "Finance" || currentUser?.role === "Owner") && (() => {
+          const targets = filteredInv.filter(i => i.status === "PAID" && i.total > 0 && !i.repair_gratis && !i.payment_proof_url);
+          if (targets.length === 0) return null;
+          return (
+            <button
+              disabled={confirmingCash}
+              onClick={async () => {
+                setConfirmingCash(true);
+                try {
+                  const ids = targets.map(i => i.id);
+                  const { error } = await supabase.from("invoices")
+                    .update({ payment_proof_url: "verified-no-proof", notes: "Dikonfirmasi cash oleh Finance" })
+                    .in("id", ids);
+                  if (error) throw error;
+                  setInvoicesData(prev => prev.map(i => ids.includes(i.id)
+                    ? { ...i, payment_proof_url: "verified-no-proof", notes: "Dikonfirmasi cash oleh Finance" }
+                    : i));
+                  addAgentLog("FINANCE_CONFIRM_CASH", `${ids.length} invoice dikonfirmasi cash: ${ids.slice(0,3).join(", ")}${ids.length > 3 ? "..." : ""}`, "SUCCESS");
+                  showNotif(`✅ ${ids.length} invoice dikonfirmasi sebagai cash`);
+                } catch (e) {
+                  showNotif("❌ Gagal konfirmasi: " + e.message);
+                } finally {
+                  setConfirmingCash(false);
+                }
+              }}
+              style={{
+                padding: "7px 16px", borderRadius: 8, border: "1px solid #10b98166",
+                background: confirmingCash ? cs.surface : "#10b98118", color: confirmingCash ? cs.muted : "#10b981",
+                cursor: confirmingCash ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600,
+              }}>
+              {confirmingCash ? "Memproses..." : `✓ Konfirmasi Cash (${targets.length})`}
+            </button>
+          );
+        })()}
         <span style={{ fontSize: 11, color: cs.muted }}>Cari bukti transfer di R2 dan link ke invoice PAID tanpa bukti</span>
       </div>
     )}

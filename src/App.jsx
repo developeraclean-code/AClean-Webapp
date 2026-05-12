@@ -3903,26 +3903,31 @@ ${photoPageHTML}
             .single();
 
           if (custErr) {
-            // Fallback: upsert jika insert gagal (misal phone sudah ada di DB tapi belum di state)
-            const { data: upsertedCust, error: upsertErr } = await supabase
+            // Fallback: phone sudah ada di DB tapi belum di state lokal — fetch & link saja, jangan override nama/alamat
+            const { data: existingInDB } = await supabase
               .from("customers")
-              .upsert(insertPayload, { onConflict: "phone", ignoreDuplicates: false })
-              .select()
-              .single();
-            if (upsertErr) {
+              .select("id,name,phone,address,area,total_orders,last_service")
+              .eq("phone", normalizePhone(form.phone))
+              .maybeSingle();
+            if (existingInDB) {
+              // Customer sudah ada — hanya update stats, jangan override nama/alamat
+              const updatedOrders = (existingInDB.total_orders || 0) + 1;
+              await supabase.from("customers")
+                .update({ total_orders: updatedOrders, last_service: orderDate })
+                .eq("id", existingInDB.id);
+              await supabase.from("orders").update({ customer_id: existingInDB.id }).eq("id", newId);
+              setCustomersData(prev => {
+                const alreadyIn = prev.find(c => c.id === existingInDB.id);
+                if (alreadyIn) return prev.map(c => c.id === existingInDB.id ? { ...c, total_orders: updatedOrders, last_service: orderDate } : c);
+                return [...prev, { ...existingInDB, total_orders: updatedOrders, last_service: orderDate }];
+              });
+              setOrdersData(prev => prev.map(o => o.id === newId ? { ...o, customer_id: existingInDB.id } : o));
+              addAgentLog("CUSTOMER_LINKED", "Customer existing (beda lokasi): " + existingInDB.name + " (" + form.phone + ")", "SUCCESS");
+            } else {
               addAgentLog("CUSTOMER_SAVE_ERROR",
                 "Gagal simpan customer " + form.customer + ": " + custErr.message, "ERROR");
               showNotif("⚠️ Customer gagal ke DB: " + custErr.message + " — tambah manual di menu Customer");
               setCustomersData(prev => [...prev, { ...insertPayload, id: "CUST_LOCAL_" + Date.now() }]);
-            } else {
-              const c2 = upsertedCust || { ...insertPayload, id: "CUST_" + Date.now() };
-              setCustomersData(prev => [...prev, c2]);
-              if (c2.id && !c2.id.startsWith("CUST_")) {
-                await supabase.from("orders").update({ customer_id: c2.id }).eq("id", newId);
-                setOrdersData(prev => prev.map(o => o.id === newId ? { ...o, customer_id: c2.id } : o));
-              }
-              addAgentLog("CUSTOMER_AUTO_ADDED", "Customer baru: " + form.customer + " (" + form.phone + ")", "SUCCESS");
-              showNotif("✅ Order + Customer baru " + form.customer + " tersimpan!");
             }
           } else {
             const c1 = savedCust || { ...insertPayload, id: "CUST_" + Date.now() };
