@@ -132,7 +132,11 @@ export default function QuotationView({
       }));
       if (items.length > 0) {
         const { error: itemErr } = await supabase.from("invoice_items").insert(items);
-        if (itemErr) console.warn("Gagal insert invoice_items:", itemErr.message);
+        if (itemErr) {
+          // Rollback: hapus invoice yang sudah terbuat
+          await supabase.from("invoices").delete().eq("id", invoiceId);
+          throw new Error("Gagal simpan items invoice: " + itemErr.message);
+        }
       }
 
       // 3. Buat order (tanpa tanggal/teknisi — diset manual di Planning Order)

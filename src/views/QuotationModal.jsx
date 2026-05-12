@@ -537,7 +537,7 @@ export default function QuotationModal({
                       <input value={jasaSearch} onChange={e => { setJasaSearch(e.target.value); setShowJasaPicker(true); }}
                         onFocus={() => setShowJasaPicker(true)}
                         placeholder="Cari jasa dari price list..." style={{ ...inp, marginBottom: 6 }} />
-                      {showJasaPicker && jasaSearch && (
+                      {showJasaPicker && (
                         <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid " + cs.border, borderRadius: 8, background: cs.surface, marginBottom: 6 }}>
                           {filteredJasa.slice(0, 20).map((p, i) => (
                             <div key={i} onClick={() => {
@@ -579,7 +579,7 @@ export default function QuotationModal({
                   <input value={addonSearch} onChange={e => { setAddonSearch(e.target.value); setShowAddonPicker(true); }}
                     onFocus={() => setShowAddonPicker(true)}
                     placeholder="Cari dari price list..." style={{ ...inp, marginBottom: 6 }} />
-                  {showAddonPicker && addonSearch && (
+                  {showAddonPicker && (
                     <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid " + cs.border, borderRadius: 8, background: cs.surface }}>
                       {filteredAddon.slice(0, 20).map((p, i) => (
                         <div key={i} onClick={() => {
