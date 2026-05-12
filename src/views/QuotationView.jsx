@@ -45,6 +45,8 @@ export default function QuotationView({
   const [showModal, setShowModal]     = useState(false);
   const [editData, setEditData]       = useState(null);
   const [approvingId, setApprovingId] = useState(null);
+  const [approveTargetId, setApproveTargetId] = useState(null);
+  const [approveDate, setApproveDate]          = useState("");
 
   const canEdit = currentUser?.role === "Owner" || currentUser?.role === "Admin";
 
@@ -72,18 +74,14 @@ export default function QuotationView({
     };
   }, [quotationsData, today]);
 
-  // ── Approve: convert quotation → invoice + order ──
-  const handleApprove = async (quo) => {
-    const ok = await showConfirm?.({
-      icon: "✅", title: "Approve Quotation?",
-      message: `Approve ${quo.id} untuk ${quo.customer}?\n\nInvoice + Order install akan dibuat otomatis.`,
-      confirmText: "Ya, Approve"
-    });
-    if (!ok) return;
-
+  // ── Approve: convert quotation → invoice + order (ke Planning Order) ──
+  const handleApprove = async (quo, scheduledDate) => {
     setApprovingId(quo.id);
+    setApproveTargetId(null);
+    setApproveDate("");
     try {
       const todayStr = getLocalDate?.() || new Date().toISOString().slice(0, 10);
+      const orderDate = scheduledDate || todayStr;
       const invoiceId = "INV-" + todayStr.replace(/-/g, "") + "-" + Math.random().toString(36).toUpperCase().slice(2, 7);
       const jobId     = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
 
@@ -139,7 +137,7 @@ export default function QuotationView({
         }
       }
 
-      // 3. Buat order (tanpa tanggal/teknisi — diset manual di Planning Order)
+      // 3. Buat order → masuk Planning Order (status PENDING, teknisi kosong)
       const totalUnits = (quo.items || []).filter(i => i.item_type === "unit_ac").reduce((s, i) => s + (i.qty || 1), 0) || 1;
       const orderPayload = {
         id:         jobId,
@@ -150,12 +148,13 @@ export default function QuotationView({
         service:    "Install",
         type:       "Install",
         units:      totalUnits,
-        date:       todayStr,
+        date:       orderDate,
         time:       "09:00",
         time_end:   "11:00",
         status:     "PENDING",
         invoice_id: invoiceId,
         dispatch:   false,
+        source:     "quotation",
         notes:      `Auto dari Quotation ${quo.id}${quo.notes ? " · " + quo.notes : ""}`,
       };
       const { error: orderErr } = await supabase.from("orders").insert(orderPayload);
@@ -323,10 +322,12 @@ export default function QuotationView({
                   )}
 
                   {canEdit && (quo.status === "SENT" || quo.status === "DRAFT" || expired) && quo.status !== "CANCELLED" && (
-                    <button onClick={() => handleApprove(quo)} disabled={approving}
-                      style={btnStyle("#22c55e", approving)}>
-                      {approving ? "..." : "✅ Approve"}
-                    </button>
+                    approveTargetId === quo.id ? null : (
+                      <button onClick={() => { setApproveTargetId(quo.id); setApproveDate(today); }} disabled={approving}
+                        style={btnStyle("#22c55e", approving)}>
+                        {approving ? "..." : "✅ Approve"}
+                      </button>
+                    )
                   )}
 
                   {canEdit && quo.status !== "APPROVED" && quo.status !== "CANCELLED" && (
@@ -334,6 +335,28 @@ export default function QuotationView({
                       style={btnStyle("#ef4444")}>❌ Cancel</button>
                   )}
                 </div>
+
+                {/* Inline Approve panel with date picker */}
+                {approveTargetId === quo.id && canEdit && quo.status !== "APPROVED" && quo.status !== "CANCELLED" && (
+                  <div style={{ marginTop: 12, background: "#22c55e10", border: "1px solid #22c55e33", borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#4ade80", marginBottom: 8 }}>📅 Tanggal Pengerjaan</div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <input type="date" value={approveDate} onChange={e => setApproveDate(e.target.value)}
+                        style={{ flex: 1, minWidth: 140, background: "#0f172a", border: "1px solid #22c55e44", borderRadius: 8, padding: "7px 10px", color: "#f8fafc", fontSize: 13, outline: "none" }} />
+                      <button onClick={() => handleApprove(quo, approveDate)} disabled={approving || !approveDate}
+                        style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: "#22c55e", color: "#fff", fontWeight: 700, fontSize: 12, cursor: approving || !approveDate ? "not-allowed" : "pointer", opacity: approving || !approveDate ? 0.6 : 1 }}>
+                        {approving ? "Proses..." : "✅ Konfirmasi Approve"}
+                      </button>
+                      <button onClick={() => { setApproveTargetId(null); setApproveDate(""); }}
+                        style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #64748b44", background: "transparent", color: "#94a3b8", fontSize: 12, cursor: "pointer" }}>
+                        Batal
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>
+                      Order akan masuk ke Planning Order. Assign teknisi dari sana.
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
