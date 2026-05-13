@@ -829,6 +829,8 @@ export default function ACleanWebApp() {
   const [editStockMats, setEditStockMats] = useState([]);     // stock-linked materials (tabung/roll) for edit modal
   const [laporanRekomendasi, setLaporanRekomendasi] = useState("");
   const [laporanCatatan, setLaporanCatatan] = useState("");
+  const [laporanSurveyHasil, setLaporanSurveyHasil] = useState("");
+  const [laporanSurveyCatatan, setLaporanSurveyCatatan] = useState("");
   const [laporanInstallItems, setLaporanInstallItems] = useState({}); // key→qty untuk Report Install
   const [historyPreview, setHistoryPreview] = useState(null); // customer untuk preview history
   const [matSearchId, setMatSearchId] = useState(null); // id material yang sedang di-search
@@ -2131,6 +2133,8 @@ ${photoPageHTML}
     setLaporanInstallItems(_installDefaults);
     setLaporanRekomendasi("");
     setLaporanCatatan("");
+    setLaporanSurveyHasil("");
+    setLaporanSurveyCatatan("");
     setActiveUnitIdx(0);
     setShowMatPreset(false);
 
@@ -8998,6 +9002,50 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           try {
           // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
           const isInstall = laporanModal?.service === "Install";
+          const isSurvey = laporanModal?.service === "Survey";
+
+          // ── Survey: submit langsung, bypass 4-step wizard ──
+          if (isSurvey) {
+            if (!laporanSurveyHasil.trim()) {
+              showNotif("⚠️ Hasil Survey wajib diisi");
+              submitLaporanLock.current = false;
+              return;
+            }
+            const now = new Date().toLocaleString("id-ID", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+            const reportId = "LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase();
+            const surveyReport = {
+              id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
+              helper: laporanModal.helper || null, customer: laporanModal.customer,
+              service: "Survey", date: laporanModal.date, submitted: now,
+              status: "SUBMITTED", total_units: 0, units: [], materials: [], fotos: [],
+              total_freon: 0, rekomendasi: "", catatan_global: "",
+              hasil_survey: laporanSurveyHasil.trim(),
+              catatan_rekomendasi: laporanSurveyCatatan.trim(),
+              editLog: [],
+            };
+            setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), surveyReport]);
+            showNotif("⏳ Menyimpan laporan survey...");
+            try {
+              await supabase.from("service_reports").delete().eq("job_id", reportId).neq("id", reportId);
+            } catch (_) {}
+            const { error: sErr } = await supabase.from("service_reports").upsert({
+              id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
+              helper: laporanModal.helper || null, customer: laporanModal.customer,
+              service: "Survey", date: laporanModal.date, status: "SUBMITTED",
+              total_units: 0, total_freon: 0, submitted_at: new Date().toISOString(),
+              foto_urls: [], rekomendasi: "", catatan_global: "",
+              hasil_survey: laporanSurveyHasil.trim(),
+              catatan_rekomendasi: laporanSurveyCatatan.trim(),
+              submitted: now,
+            }, { onConflict: "id" });
+            if (sErr) { showNotif("⚠️ Tersimpan lokal, sync gagal: " + sErr.message); }
+            else { showNotif("✅ Laporan Survey terkirim!"); }
+            const admR2 = userAccounts.filter(u => u.role === "Admin" || u.role === "Owner");
+            admR2.forEach(u => { if (u.phone) sendWA(u.phone, "Laporan Survey\nJob: " + laporanModal.id + "\nCustomer: " + laporanModal.customer + "\nTeknisi: " + laporanModal.teknisi + "\n\nHasil: " + laporanSurveyHasil.trim().slice(0, 200)); });
+            setLaporanSubmitted(true);
+            submitLaporanLock.current = false;
+            return;
+          }
 
           // ── 2. Validasi unit untuk non-Install ──
           if (!isInstall && incompleteUnits.length > 0) {
@@ -9857,6 +9905,34 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                   <button onClick={() => setLaporanModal(null)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 24, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
                 </div>
+
+                {/* ── SURVEY: Simplified 2-field form (bypass 4-step wizard) ── */}
+                {laporanModal.service === "Survey" ? (
+                  <div style={{ display: "grid", gap: 14 }}>
+                    <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: cs.muted }}>
+                      📋 Survey — tidak ada invoice. Isi hasil survey dan catatan/rekomendasi untuk Owner/Admin.
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 6 }}>Hasil Survey *</div>
+                      <textarea value={laporanSurveyHasil} onChange={e => setLaporanSurveyHasil(e.target.value)}
+                        rows={4} placeholder="Kondisi AC, temuan, kendala, dll..."
+                        style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 6 }}>Catatan / Rekomendasi</div>
+                      <textarea value={laporanSurveyCatatan} onChange={e => setLaporanSurveyCatatan(e.target.value)}
+                        rows={3} placeholder="Rekomendasi tindak lanjut, jenis pekerjaan yang disarankan, dll..."
+                        style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
+                    </div>
+                    <button onClick={submitLaporan} disabled={!laporanSurveyHasil.trim()}
+                      style={{ background: laporanSurveyHasil.trim() ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface,
+                        border: "none", color: laporanSurveyHasil.trim() ? "#fff" : cs.muted,
+                        padding: "13px", borderRadius: 10, cursor: laporanSurveyHasil.trim() ? "pointer" : "not-allowed",
+                        fontWeight: 800, fontSize: 14 }}>
+                      ✓ Submit Laporan Survey
+                    </button>
+                  </div>
+                ) : (<>
 
                 {/* Step bar */}
                 <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
@@ -11113,6 +11189,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     </div>
                   </div>
                 )}
+                </>)}
               </div>
             </div>
           </>

@@ -13,6 +13,8 @@ const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
 const [confirmingCash, setConfirmingCash] = useState(false);
 const [showAcUnitModal, setShowAcUnitModal] = useState(false);
+const [dpInvId, setDpInvId] = useState(null);
+const [dpAmount, setDpAmount] = useState("");
 const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation"
 const [quoPDFData, setQuoPDFData] = useState(null); // quotation untuk preview PDF
 const [addonModalInvId, setAddonModalInvId] = useState(null);
@@ -783,6 +785,37 @@ return (
                     confirmText: "Ya, Lunas"
                   })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
                 }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tandai Lunas</button>
+                {(inv.invoice_type === "quotation_converted" || inv.invoice_type === "ac_unit_sale") && (
+                  <button onClick={() => { setDpInvId(inv.id); setDpAmount(""); }}
+                    style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                    💳 Catat DP
+                  </button>
+                )}
+                {/* Inline DP input */}
+                {dpInvId === inv.id && (
+                  <div style={{ width: "100%", background: "#06b6d410", border: "1px solid #06b6d433", borderRadius: 8, padding: "10px 12px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12, color: "#06b6d4", fontWeight: 700 }}>💳 Jumlah DP:</span>
+                    <input type="number" value={dpAmount} onChange={e => setDpAmount(e.target.value)} min={1} max={inv.total - 1}
+                      placeholder="Rp..." style={{ flex: 1, minWidth: 100, background: "#0f172a", border: "1px solid #06b6d444", borderRadius: 6, padding: "6px 10px", color: "#f8fafc", fontSize: 13, outline: "none" }} />
+                    <button onClick={async () => {
+                      const amt = Number(dpAmount);
+                      if (!amt || amt <= 0 || amt >= inv.total) { showNotif("⚠️ Jumlah DP tidak valid"); return; }
+                      const remaining = inv.total - amt;
+                      const { error } = await supabase.from("invoices").update({
+                        paid_amount: amt, remaining_amount: remaining, status: "PARTIAL_PAID",
+                        notes: (inv.notes ? inv.notes + " · " : "") + `DP ${fmt(amt)}`
+                      }).eq("id", inv.id);
+                      if (error) { showNotif("❌ Gagal catat DP: " + error.message); return; }
+                      setInvoicesData(prev => prev.map(i => i.id === inv.id
+                        ? { ...i, paid_amount: amt, remaining_amount: remaining, status: "PARTIAL_PAID", notes: (i.notes ? i.notes + " · " : "") + `DP ${fmt(amt)}` } : i));
+                      setDpInvId(null); setDpAmount("");
+                      showNotif(`✅ DP ${fmt(amt)} tercatat — sisa ${fmt(remaining)}`);
+                    }} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#06b6d4", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                      Simpan DP
+                    </button>
+                    <button onClick={() => { setDpInvId(null); setDpAmount(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #64748b44", background: "transparent", color: "#94a3b8", fontSize: 12, cursor: "pointer" }}>Batal</button>
+                  </div>
+                )}
                 <button onClick={() => invoiceReminderWA(inv)} style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>🔔 Reminder</button>
               </>
             )}
