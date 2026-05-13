@@ -30,7 +30,7 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
 
   useEffect(() => { load(); }, []);
 
-  const brands  = ["Semua", ...BRAND_LIST.filter(b => rows.some(r => r.brand === b)), ...rows.map(r => r.brand).filter(b => !BRAND_LIST.includes(b)).filter((b, i, a) => a.indexOf(b) === i)];
+  const brands  = ["Semua", ...[...new Set(rows.map(r => r.brand))].sort((a, b) => { const ai = BRAND_LIST.indexOf(a); const bi = BRAND_LIST.indexOf(b); return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi); })];
   const tipes   = ["Semua", ...TIPE_LIST.filter(t => rows.some(r => r.tipe === t))];
 
   let filtered = rows.filter(r => {
@@ -51,6 +51,9 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
 
   const handleSave = async () => {
     if (!editId) return;
+    const hu = Number(editForm.harga_unit) || 0;
+    const hip = Number(editForm.harga_inc_pasang) || 0;
+    if (hip > 0 && hip < hu) { showNotif("⚠️ Harga Inc. Pasang tidak boleh lebih kecil dari Harga Unit"); return; }
     setSaving(true);
     const { error } = await supabase.from("ac_price_list").update({
       brand: editForm.brand,
@@ -72,6 +75,16 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
   const handleAdd = async () => {
     if (!addForm.brand || !addForm.tipe || !addForm.kapasitas) { showNotif("❌ Brand, tipe, dan kapasitas wajib diisi"); return; }
     if (!addForm.harga_unit || isNaN(Number(addForm.harga_unit))) { showNotif("❌ Harga unit harus berupa angka"); return; }
+    const hu = Number(addForm.harga_unit);
+    const hip = Number(addForm.harga_inc_pasang) || 0;
+    if (hip > 0 && hip < hu) { showNotif("⚠️ Harga Inc. Pasang tidak boleh lebih kecil dari Harga Unit"); return; }
+    // Cek duplikat brand+tipe+kapasitas+seri
+    const seriKey = addForm.seri.trim().toLowerCase();
+    const isDupe = rows.some(r =>
+      r.brand === addForm.brand && r.tipe === addForm.tipe &&
+      r.kapasitas === addForm.kapasitas && (r.seri || "").toLowerCase() === seriKey
+    );
+    if (isDupe) { showNotif(`⚠️ Item ${addForm.brand} ${addForm.tipe} ${addForm.kapasitas}${addForm.seri ? " (" + addForm.seri + ")" : ""} sudah ada`); return; }
     setSaving(true);
     const payload = {
       brand: addForm.brand.trim(),

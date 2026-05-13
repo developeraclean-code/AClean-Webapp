@@ -4,10 +4,7 @@ import { normalizePhone } from "../lib/phone.js";
 
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
 
-const BRAND_SHORTCUTS = [
-  "Daikin", "Panasonic", "Sharp", "Samsung", "LG",
-  "Mitsubishi", "Gree", "Haier", "Midea", "Hisense",
-];
+const BRAND_SHORTCUTS = ["Daikin", "Panasonic", "Sharp", "Gree", "Samsung", "LG", "Mitsubishi", "Haier", "Midea", "Hisense"];
 const KAPASITAS_OPT = ["0.5 PK", "0.75 PK", "1 PK", "1.5 PK", "2 PK", "2.5 PK", "3 PK", "4 PK", "5 PK"];
 const TIPE_UNIT = ["Split Standard", "Split Inverter", "Cassette", "Split Duct", "Floor Standing"];
 
@@ -150,6 +147,15 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
       });
   }, [supabase]);
 
+  // ── Load ac_price_list untuk auto-fill harga unit ──
+  const [acPriceList, setAcPriceList] = useState([]);
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("ac_price_list").select("brand,tipe,kapasitas,seri,nama_varian,harga_unit,harga_inc_pasang")
+      .eq("is_active", true)
+      .then(({ data }) => setAcPriceList(data || []));
+  }, [supabase]);
+
   // ── Kalkulasi ──
   const totalUnitAC = useMemo(
     () => acUnits.reduce((s, u) => s + (u.subtotal || 0), 0), [acUnits]
@@ -200,8 +206,25 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
     setAcUnits(prev => prev.map((u, i) => {
       if (i !== idx) return u;
       const up = { ...u, [field]: val };
+      // Auto-fill harga dari ac_price_list saat brand/tipe/kapasitas berubah
+      if (field === "brand" || field === "tipe" || field === "kapasitas") {
+        const match = acPriceList.find(p =>
+          p.brand === up.brand && p.tipe === up.tipe && p.kapasitas === up.kapasitas
+        );
+        if (match && up.harga_satuan === 0) {
+          up.harga_satuan = match.harga_unit;
+          up._priceHint = match;
+        } else if (match) {
+          up._priceHint = match;
+        } else {
+          up._priceHint = null;
+        }
+      }
       if (field === "qty" || field === "harga_satuan")
         up.subtotal = (Number(up.qty) || 0) * (Number(up.harga_satuan) || 0);
+      // Recalc subtotal jika auto-fill harga
+      if ((field === "brand" || field === "tipe" || field === "kapasitas") && up.harga_satuan > 0)
+        up.subtotal = (Number(up.qty) || 1) * up.harga_satuan;
       return up;
     }));
   };
@@ -684,6 +707,21 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
                       style={{ width: "100%", background: cs.surface, border: "1px solid #f59e0b55", borderRadius: 8, padding: "8px 12px", color: "#f59e0b", fontSize: 14, fontFamily: "monospace", fontWeight: 700, boxSizing: "border-box" }} />
                   </div>
                 </div>
+
+                {/* Price hint dari ac_price_list */}
+                {unit._priceHint && (
+                  <div style={{ marginTop: 6, background: "#f59e0b0d", border: "1px solid #f59e0b33", borderRadius: 7, padding: "6px 10px", fontSize: 11, color: cs.muted, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <span>📋 <b style={{ color: cs.text }}>{unit._priceHint.seri || ""} {unit._priceHint.nama_varian || ""}</b></span>
+                    <span>Unit only: <b style={{ color: "#f59e0b", fontFamily: "monospace" }}>{fmt(unit._priceHint.harga_unit)}</b></span>
+                    {unit._priceHint.harga_inc_pasang > 0 && (
+                      <span>Inc. Pasang: <b style={{ color: "#22c55e", fontFamily: "monospace" }}>{fmt(unit._priceHint.harga_inc_pasang)}</b></span>
+                    )}
+                    <button onMouseDown={() => updateUnit(idx, "harga_satuan", unit._priceHint.harga_unit)}
+                      style={{ background: "#f59e0b22", border: "1px solid #f59e0b44", color: "#f59e0b", borderRadius: 5, padding: "2px 8px", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>
+                      Pakai Unit Only
+                    </button>
+                  </div>
+                )}
 
                 {unit.subtotal > 0 && (
                   <div style={{ marginTop: 8, textAlign: "right", fontSize: 12, color: "#f59e0b" }}>

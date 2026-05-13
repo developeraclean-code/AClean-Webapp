@@ -152,6 +152,15 @@ export default function QuotationModal({
       });
   }, [supabase]);
 
+  // ── Load ac_price_list untuk auto-fill harga unit ──
+  const [acPriceList, setAcPriceList] = useState([]);
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("ac_price_list").select("brand,tipe,kapasitas,seri,nama_varian,harga_unit,harga_inc_pasang")
+      .eq("is_active", true)
+      .then(({ data }) => setAcPriceList(data || []));
+  }, [supabase]);
+
   // ── Inisialisasi customer saat edit ──
   useEffect(() => {
     if (isEdit && editData.customer && customersData) {
@@ -216,8 +225,24 @@ export default function QuotationModal({
     setAcUnits(prev => prev.map((u, i) => {
       if (i !== idx) return u;
       const up = { ...u, [field]: val };
+      // Auto-fill harga dari ac_price_list saat brand/tipe/kapasitas berubah
+      if (field === "brand" || field === "tipe" || field === "kapasitas") {
+        const match = acPriceList.find(p =>
+          p.brand === up.brand && p.tipe === up.tipe && p.kapasitas === up.kapasitas
+        );
+        if (match && (up.harga_satuan === 0 || !up.harga_satuan)) {
+          up.harga_satuan = match.harga_unit;
+          up._priceHint = match;
+        } else if (match) {
+          up._priceHint = match;
+        } else {
+          up._priceHint = null;
+        }
+      }
       if (field === "qty" || field === "harga_satuan")
         up.subtotal = (Number(up.qty) || 0) * (Number(up.harga_satuan) || 0);
+      if ((field === "brand" || field === "tipe" || field === "kapasitas") && up.harga_satuan > 0)
+        up.subtotal = (Number(up.qty) || 1) * up.harga_satuan;
       return up;
     }));
   };
@@ -484,6 +509,18 @@ export default function QuotationModal({
                           <div style={{ gridColumn: "span 2" }}>
                             <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Harga Satuan (passthrough)</div>
                             <input type="number" min="0" value={u.harga_satuan || ""} onChange={e => updateUnit(idx, "harga_satuan", Number(e.target.value))} style={inp} placeholder="0" />
+                            {/* Price hint dari ac_price_list */}
+                            {u._priceHint && (
+                              <div style={{ marginTop: 5, background: "#f59e0b0d", border: "1px solid #f59e0b33", borderRadius: 6, padding: "5px 9px", fontSize: 11, color: cs.muted, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                                <span>📋 <b style={{ color: cs.text }}>{[u._priceHint.seri, u._priceHint.nama_varian].filter(Boolean).join(" · ")}</b></span>
+                                <span>Unit: <b style={{ color: "#f59e0b", fontFamily: "monospace" }}>{fmt(u._priceHint.harga_unit)}</b></span>
+                                {u._priceHint.harga_inc_pasang > 0 && (
+                                  <span>Inc. Pasang: <b style={{ color: "#22c55e", fontFamily: "monospace" }}>{fmt(u._priceHint.harga_inc_pasang)}</b></span>
+                                )}
+                                <button onMouseDown={() => updateUnit(idx, "harga_satuan", u._priceHint.harga_unit)}
+                                  style={{ background: "#f59e0b22", border: "1px solid #f59e0b44", color: "#f59e0b", borderRadius: 4, padding: "1px 7px", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>Pakai</button>
+                              </div>
+                            )}
                             {u.subtotal > 0 && <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>Subtotal: {fmt(u.subtotal)}</div>}
                           </div>
                         </div>
