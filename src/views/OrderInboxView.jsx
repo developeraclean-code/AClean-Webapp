@@ -1358,12 +1358,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
               style={{ ...inputStyle, borderColor: form.customer_id ? cs.green + "88" : cs.border, fontFamily: "monospace" }}
               value={form.phone}
               onChange={e => {
-                setField("phone", e.target.value);
+                const norm = normalizePhone(e.target.value) || e.target.value;
+                setField("phone", norm);
                 if (form.customer_id) setField("customer_id", null);
-              }}
-              onBlur={e => {
-                const norm = normalizePhone(e.target.value);
-                if (norm && norm !== form.phone) setField("phone", norm);
               }}
               placeholder="08xx (auto-format ke 628xxx)" />
             {phoneSuggest.length > 0 && !form.customer_id && (

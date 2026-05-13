@@ -7823,7 +7823,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               {[["Nama Lengkap", "name", "text", "Nama customer"], ["Nomor HP", "phone", "text", "628xxx"], ["Alamat Lengkap", "address", "text", "Jl. ..."], ["Area/Kecamatan", "area", "text", "Alam Sutera, BSD, dll"]].map(([lbl, key, type, ph]) => (
                 <div key={key}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>{lbl}</div>
-                  <input type={type} value={newCustomerForm[key] || ""} onChange={e => setNewCustomerForm(f => ({ ...f, [key]: e.target.value }))}
+                  <input type={type} value={newCustomerForm[key] || ""} onChange={e => {
+                    const val = key === "phone" ? (normalizePhone(e.target.value) || e.target.value) : e.target.value;
+                    setNewCustomerForm(f => ({ ...f, [key]: val }));
+                  }}
                     placeholder={ph} style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
                   {key === "phone" && (() => {
                     const samePhoneCustomers = newCustomerForm.phone
