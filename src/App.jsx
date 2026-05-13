@@ -7825,6 +7825,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>{lbl}</div>
                   <input type={type} value={newCustomerForm[key] || ""} onChange={e => setNewCustomerForm(f => ({ ...f, [key]: e.target.value }))}
                     placeholder={ph} style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                  {key === "phone" && (() => {
+                    const samePhoneCustomers = newCustomerForm.phone
+                      ? customersData.filter(cu => samePhone(cu.phone, newCustomerForm.phone) && cu.id !== (selectedCustomer?.id || ""))
+                      : [];
+                    return samePhoneCustomers.length > 0 ? (
+                      <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 4 }}>
+                        ℹ️ HP ini sudah dipakai: {samePhoneCustomers.map(c => c.name).join(", ")} — boleh tambah dengan nama berbeda (multi-lokasi)
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               ))}
               <div>
@@ -7842,9 +7852,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   if (!newCustomerForm.name || !newCustomerForm.phone) { showNotif("Nama dan nomor HP wajib diisi"); return; }
                   const _normPhone = normalizePhone(newCustomerForm.phone);
                   if (!_normPhone || !/^\d{9,15}$/.test(_normPhone)) { showNotif("⚠️ Nomor HP tidak valid — harus angka 9-15 digit (contoh: 08123456789)"); return; }
-                  // GAP 6: cek duplikat phone sebelum submit
-                  const existPhone = customersData.find(cu => samePhone(cu.phone, newCustomerForm.phone) && cu.id !== (selectedCustomer?.id || ""));
-                  if (existPhone) { showNotif(`⚠️ Nomor HP sudah terdaftar atas nama "${existPhone.name}". Tidak bisa duplikat.`); return; }
+                  // Cek duplikat: phone + nama harus unik (beda nama = beda lokasi, diizinkan)
+                  const existExact = customersData.find(cu => sameCustomer(cu, newCustomerForm.phone, newCustomerForm.name) && cu.id !== (selectedCustomer?.id || ""));
+                  if (existExact) { showNotif(`⚠️ Customer "${existExact.name}" dengan nomor HP ini sudah terdaftar.`); return; }
                   if (selectedCustomer && selectedCustomer.id) {
                     // UPDATE existing customer
                     setCustomersData(prev => prev.map(cu => cu.id === selectedCustomer.id ? { ...cu, ...newCustomerForm } : cu));
