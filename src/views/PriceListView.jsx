@@ -15,7 +15,7 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
   const [editId, setEditId]       = useState(null);
   const [editForm, setEditForm]   = useState({});
   const [addModal, setAddModal]   = useState(false);
-  const [addForm, setAddForm]     = useState({ brand: "Daikin", tipe: "Split Standard", kapasitas: "1 PK", harga_unit: "", harga_inc_pasang: "" });
+  const [addForm, setAddForm]     = useState({ brand: "Daikin", tipe: "Split Standard", kapasitas: "1 PK", seri: "", nama_varian: "", harga_unit: "", harga_inc_pasang: "" });
   const [saving, setSaving]       = useState(false);
 
   const canEdit = currentUser?.role === "Owner" || currentUser?.role === "Admin";
@@ -38,7 +38,8 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
     if (filterTipe  !== "Semua" && r.tipe  !== filterTipe)  return false;
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      return r.brand.toLowerCase().includes(q) || r.tipe.toLowerCase().includes(q) || r.kapasitas.toLowerCase().includes(q);
+      return r.brand.toLowerCase().includes(q) || r.tipe.toLowerCase().includes(q) || r.kapasitas.toLowerCase().includes(q)
+        || (r.seri || "").toLowerCase().includes(q) || (r.nama_varian || "").toLowerCase().includes(q);
     }
     return true;
   });
@@ -55,6 +56,8 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
       brand: editForm.brand,
       tipe:  editForm.tipe,
       kapasitas: editForm.kapasitas,
+      seri: editForm.seri || "",
+      nama_varian: editForm.nama_varian || "",
       harga_unit:       Number(editForm.harga_unit) || 0,
       harga_inc_pasang: Number(editForm.harga_inc_pasang) || 0,
       updated_at: new Date().toISOString(),
@@ -74,6 +77,8 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
       brand: addForm.brand.trim(),
       tipe:  addForm.tipe.trim(),
       kapasitas: addForm.kapasitas.trim(),
+      seri: addForm.seri.trim() || "",
+      nama_varian: addForm.nama_varian.trim() || "",
       harga_unit:       Number(addForm.harga_unit) || 0,
       harga_inc_pasang: Number(addForm.harga_inc_pasang) || 0,
       is_active: true,
@@ -83,7 +88,7 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
     if (error) { showNotif("❌ Gagal tambah: " + error.message); return; }
     setRows(prev => [...prev, data || payload]);
     setAddModal(false);
-    setAddForm({ brand: "Daikin", tipe: "Split Standard", kapasitas: "1 PK", harga_unit: "", harga_inc_pasang: "" });
+    setAddForm({ brand: "Daikin", tipe: "Split Standard", kapasitas: "1 PK", seri: "", nama_varian: "", harga_unit: "", harga_inc_pasang: "" });
     showNotif("✅ Item harga AC ditambahkan");
   };
 
@@ -102,7 +107,7 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
     <div style={{ display: "grid", gap: 14 }}>
       {/* Toolbar */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Cari brand, tipe..."
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Cari brand, seri, varian..."
           style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 12, minWidth: 180 }} />
         <select value={filterBrand} onChange={e => setFilterBrand(e.target.value)}
           style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 12, cursor: "pointer" }}>
@@ -138,10 +143,10 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
         <div style={{ background: cs.card, borderRadius: 14, padding: 40, textAlign: "center", color: cs.muted }}>Tidak ada item ditemukan</div>
       ) : (
         <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 750 }}>
             <thead>
               <tr style={{ background: cs.surface, borderBottom: "1px solid " + cs.border }}>
-                {["Brand", "Tipe", "Kapasitas", "Harga Unit", "Inc. Pasang", canEdit ? "Aksi" : ""].filter(Boolean).map(h => (
+                {["Brand", "Seri / Varian", "Tipe", "Kapasitas", "Harga Unit", "Inc. Pasang", canEdit ? "Aksi" : ""].filter(Boolean).map(h => (
                   <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 700, color: cs.muted, whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -155,6 +160,22 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
                       {isEdit
                         ? <select value={editForm.brand} onChange={e => setEditForm(f => ({ ...f, brand: e.target.value }))} style={selStyle}>{BRAND_LIST.map(b => <option key={b}>{b}</option>)}<option value={editForm.brand}>{editForm.brand}</option></select>
                         : <span style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{r.brand}</span>}
+                    </td>
+                    <td style={{ padding: "9px 14px", minWidth: 160 }}>
+                      {isEdit ? (
+                        <div style={{ display: "grid", gap: 4 }}>
+                          <input value={editForm.seri || ""} onChange={e => setEditForm(f => ({ ...f, seri: e.target.value }))}
+                            placeholder="Seri (contoh: FTKQ)" style={{ ...inputStyle }} />
+                          <input value={editForm.nama_varian || ""} onChange={e => setEditForm(f => ({ ...f, nama_varian: e.target.value }))}
+                            placeholder="Nama varian" style={{ ...inputStyle }} />
+                        </div>
+                      ) : (
+                        <div>
+                          {r.seri && <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent, fontFamily: "monospace" }}>{r.seri}</div>}
+                          {r.nama_varian && <div style={{ fontSize: 11, color: cs.muted }}>{r.nama_varian}</div>}
+                          {!r.seri && !r.nama_varian && <span style={{ fontSize: 11, color: cs.border }}>—</span>}
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: "9px 14px" }}>
                       {isEdit
@@ -191,7 +212,7 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
                           </div>
                         ) : (
                           <div style={{ display: "flex", gap: 6 }}>
-                            <button onClick={() => { setEditId(r.id); setEditForm({ brand: r.brand, tipe: r.tipe, kapasitas: r.kapasitas, harga_unit: r.harga_unit, harga_inc_pasang: r.harga_inc_pasang }); }}
+                            <button onClick={() => { setEditId(r.id); setEditForm({ brand: r.brand, tipe: r.tipe, kapasitas: r.kapasitas, seri: r.seri || "", nama_varian: r.nama_varian || "", harga_unit: r.harga_unit, harga_inc_pasang: r.harga_inc_pasang }); }}
                               style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
                               ✏️ Edit
                             </button>
@@ -236,6 +257,17 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
                     style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13 }}>
                     {opts.map(o => <option key={o}>{o}</option>)}
                   </select>
+                </div>
+              ))}
+              {[
+                { label: "Seri (opsional)", key: "seri", ph: "contoh: FTKQ, CS-LN, AH-X6" },
+                { label: "Nama Varian (opsional)", key: "nama_varian", ph: "contoh: Flash Inverter, Low Watt" },
+              ].map(({ label, key, ph }) => (
+                <div key={key}>
+                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>{label}</div>
+                  <input type="text" value={addForm[key]} placeholder={ph}
+                    onChange={e => setAddForm(f => ({ ...f, [key]: e.target.value }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
                 </div>
               ))}
               {[
