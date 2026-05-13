@@ -7904,22 +7904,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     };
                     const { data: savedCust, error: cErr } = await insertCustomer(supabase, dbCust);
                     if (cErr) {
-                      // Fallback upsert jika phone sudah ada di DB
-                      const { data: upsertCust, error: cErr2 } = await upsertCustomer(supabase, dbCust, "phone");
-                      if (cErr2) {
-                        showNotif("⚠️ Gagal simpan ke DB: " + cErr.message);
-                        // Tetap tampil di state lokal
-                        setCustomersData(prev => [...prev, { ...dbCust, id: "CUST_L_" + Date.now(), last_service: "-", ac_units: 0 }]);
-                      } else {
-                        setCustomersData(prev => [...prev, upsertCust || { ...dbCust, id: "CUST_" + Date.now() }]);
-                        addAgentLog("CUSTOMER_ADDED", "Customer baru: " + newCustomerForm.name, "SUCCESS");
-                        showNotif("✅ Customer " + newCustomerForm.name + " berhasil ditambahkan");
-                      }
-                    } else {
-                      setCustomersData(prev => [...prev, savedCust || { ...dbCust, id: "CUST_" + Date.now() }]);
-                      addAgentLog("CUSTOMER_ADDED", "Customer baru: " + newCustomerForm.name + " (" + newCustomerForm.area + ")", "SUCCESS");
-                      showNotif("✅ Customer " + newCustomerForm.name + " berhasil ditambahkan");
+                      showNotif("⚠️ Gagal simpan customer: " + cErr.message);
+                      return;
                     }
+                    setCustomersData(prev => [...prev, savedCust || { ...dbCust, id: "CUST_" + Date.now() }]);
+                    addAgentLog("CUSTOMER_ADDED", "Customer baru: " + newCustomerForm.name + " (" + newCustomerForm.area + ")", "SUCCESS");
+                    showNotif("✅ Customer " + newCustomerForm.name + " berhasil ditambahkan");
                   }
                   setModalAddCustomer(false); setNewCustomerForm({ name: "", phone: "", address: "", area: "", notes: "", is_vip: false });
                 }}
