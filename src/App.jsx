@@ -9459,7 +9459,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
           const BIAYA_CEK = (() => {
             const pl = priceListData.find(r => r.service === "Repair" && r.type === "Biaya Pengecekan AC");
-            return (pl && pl.price > 0) ? pl.price : 100000;
+            return (pl && pl.price > 0) ? pl.price : 0;
           })();
 
           // ── FINAL LABOR/TOTAL untuk Complain ──────────────────────────────
@@ -9653,7 +9653,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               // ✨ FIX: skip jika isRepairGratis=true — repair gratis tidak boleh kena biaya cek
               if (isRepairSvc && !isRepairGratis && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa")) {
                 const biayaCekItem = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
-                const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 100000;
+                const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 0;
                 mDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek, keterangan: "jasa" });
               }
 
