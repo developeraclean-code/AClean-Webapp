@@ -219,7 +219,14 @@ return (
         background: "#f59e0b22", border: "1px solid #f59e0b55", color: "#f59e0b",
         padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12
       }}>🛒 Jual Unit AC</button>
-      <button onClick={() => { const unpaid = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE"); unpaid.forEach(inv => invoiceReminderWA(inv)); showNotif(`📨 Reminder dikirim ke ${unpaid.length} customer`); }}
+      <button onClick={() => {
+        const unpaid = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE");
+        if (unpaid.length === 0) { showNotif("Tidak ada invoice UNPAID/OVERDUE."); return; }
+        const ok = window.confirm(`Kirim reminder WhatsApp ke ${unpaid.length} customer dengan invoice belum lunas?\n\nYakin ingin melanjutkan?`);
+        if (!ok) return;
+        unpaid.forEach(inv => invoiceReminderWA(inv));
+        showNotif(`📨 Reminder dikirim ke ${unpaid.length} customer`);
+      }}
         style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
         🔔 Kirim Reminder ({unpaidCnt})
       </button>
