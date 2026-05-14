@@ -140,11 +140,11 @@ const curPgI = Math.min(invoicePage, totPgI);
 const pageInv = filteredInv.slice((curPgI - 1) * INV_PAGE_SIZE, curPgI * INV_PAGE_SIZE);
 return (
   <div style={{ display: "grid", gap: 14 }}>
-    {/* Sub-tab: Invoice | Quotation */}
+    {/* Sub-tab: Invoice | Quotation — Quotation disembunyikan untuk Finance */}
     <div style={{ display: "flex", gap: 4, borderBottom: "1px solid " + cs.border, paddingBottom: 8 }}>
       {[
         { key: "invoice",   label: "🧾 Invoice" },
-        { key: "quotation", label: "📋 Quotation" },
+        ...(currentUser?.role !== "Finance" ? [{ key: "quotation", label: "📋 Quotation" }] : []),
       ].map(t => (
         <button key={t.key} onClick={() => setInvoiceSubTab(t.key)}
           style={{ padding: "7px 18px", borderRadius: "8px 8px 0 0", border: "none", cursor: "pointer", fontSize: 13, fontWeight: invoiceSubTab === t.key ? 800 : 500,
@@ -215,10 +215,12 @@ return (
     {invoiceSubTab === "invoice" && <>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
       <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>🧾 Invoice <span style={{ fontSize: 13, color: cs.muted, fontWeight: 400 }}>({filteredInv.length})</span></div>
-      <button onClick={() => setShowAcUnitModal(true)} style={{
-        background: "#f59e0b22", border: "1px solid #f59e0b55", color: "#f59e0b",
-        padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12
-      }}>🛒 Jual Unit AC</button>
+      {currentUser?.role !== "Finance" && (
+        <button onClick={() => setShowAcUnitModal(true)} style={{
+          background: "#f59e0b22", border: "1px solid #f59e0b55", color: "#f59e0b",
+          padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12
+        }}>🛒 Jual Unit AC</button>
+      )}
       <button onClick={() => {
         const unpaid = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE");
         if (unpaid.length === 0) { showNotif("Tidak ada invoice UNPAID/OVERDUE."); return; }
