@@ -2269,9 +2269,9 @@ ${photoPageHTML}
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
     if (role === "Teknisi" || role === "Helper")
       return menu === "dashboard" || menu === "schedule" || menu === "myreport";
-    // Finance: akses finance hub, invoice, biaya, statistik, customer (read-only konteks)
+    // Finance: akses finance hub, invoice, biaya, statistik
     if (role === "Finance")
-      return ["finance", "invoice", "biaya", "reports", "customers"].includes(menu);
+      return ["finance", "invoice", "biaya", "reports"].includes(menu);
     // wa-inbox: Owner + Admin only (handled above — teknisi/helper excluded by default)
     return false;
   };
