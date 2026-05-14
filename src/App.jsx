@@ -3310,8 +3310,19 @@ ${photoPageHTML}
       i.id === inv.id ? { ...i, status: "UNPAID", sent: sentAt, due } : i
     ));
     setOrdersData(prev => prev.map(o =>
-      o.id === inv.job_id ? { ...o, invoice_id: inv.id, status: "INVOICE_APPROVED" } : o
+      // Multi-hari: propagate ke parent + semua child multi-day
+      (o.id === inv.job_id || (o.parent_job_id === inv.job_id && o.is_multi_day))
+        ? { ...o, invoice_id: inv.id, status: "INVOICE_APPROVED" } : o
     ));
+    // Sync ke DB untuk child multi-day juga
+    {
+      const childIds = (ordersData || [])
+        .filter(o => o.parent_job_id === inv.job_id && o.is_multi_day)
+        .map(o => o.id);
+      if (childIds.length > 0) {
+        supabase.from("orders").update({ invoice_id: inv.id, status: "INVOICE_APPROVED" }).in("id", childIds);
+      }
+    }
     // GAP 4: simpan approved_by, trigger DB akan catat audit_log
     await setAuditUser();
     // Update invoice — try full, fallback minimal
@@ -3394,8 +3405,19 @@ ${photoPageHTML}
       i.id === inv.id ? { ...i, status: "PAID", paid_at: paidAt, ...(paymentProofUrl ? { payment_proof_url: paymentProofUrl } : {}) } : i
     ));
     setOrdersData(prev => prev.map(o =>
-      (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: "PAID" } : o
+      // Multi-hari: parent + child multi-day + via invoice_id link → semua PAID
+      (o.id === inv.job_id || o.invoice_id === inv.id || (o.parent_job_id === inv.job_id && o.is_multi_day))
+        ? { ...o, status: "PAID" } : o
     ));
+    // Sync ke DB untuk child multi-day yang belum punya invoice_id link
+    {
+      const childIds = (ordersData || [])
+        .filter(o => o.parent_job_id === inv.job_id && o.is_multi_day)
+        .map(o => o.id);
+      if (childIds.length > 0) {
+        supabase.from("orders").update({ status: "PAID" }).in("id", childIds);
+      }
+    }
     await setAuditUser();
     {
       const { error: mpErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName());
@@ -9521,6 +9543,22 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
           } else {
             // BUAT invoice
+            // Multi-hari: jika ini order anak (child) MULTI-DAY, cek apakah parent sudah punya invoice aktif
+            // Penting: jangan trigger untuk Complain→Repair (parent_job_id ada tapi is_multi_day=false)
+            const isMultiDayChild = !!laporanModal.parent_job_id && laporanModal.is_multi_day === true;
+            const parentInvoice = isMultiDayChild
+              ? invoicesData.find(i => i.job_id === laporanModal.parent_job_id)
+              : null;
+            if (isMultiDayChild && parentInvoice && !["CANCELLED", "PAID"].includes(parentInvoice.status)) {
+              // Invoice parent sudah ada & masih aktif — notif saja, jangan buat invoice baru
+              showNotif(`ℹ️ Laporan hari ke-${laporanModal.day_number || "?"} terkirim. Invoice induk ${parentInvoice.id} sudah ada — minta Admin/Owner update total jika ada tambahan.`);
+              addAgentLog("MULTI_DAY_CHILD_LAPORAN",
+                `Laporan child ${laporanModal.id} (hari ${laporanModal.day_number || "?"}) — invoice parent ${parentInvoice.id} sudah ada, skip buat invoice baru`,
+                "INFO");
+              setLaporanModal(null);
+              return;
+            }
+
             const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
             const invId = "INV-" + todayInv.replace(/-/g, "").slice(0, 8) + "-" + invSeq;
             const gDays = 30; // Semua service: garansi 30 hari dari terbit invoice
@@ -9671,7 +9709,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             // Recalculate total dari mDetail (menangkap inject transport fee dll yang bisa merubah total)
             const finalTotalFromDetail = mDetail.reduce((s, r) => s + (r.subtotal || 0), 0);
             const newInvoice = {
-              id: invId, job_id: laporanModal.id,
+              id: invId,
+              // Multi-hari: jika child MULTI-DAY, invoice di-link ke parent (hari pertama)
+              // Bukan multi-day (mis. Complain→Repair) → invoice tetap pakai ID order sendiri
+              job_id: (laporanModal.parent_job_id && laporanModal.is_multi_day === true)
+                ? laporanModal.parent_job_id
+                : laporanModal.id,
               customer: laporanModal.customer,
               phone: laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
               service: laporanModal.service + (laporanModal.type ? " - " + laporanModal.type : ""),

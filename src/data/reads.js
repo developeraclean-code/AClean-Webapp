@@ -5,7 +5,7 @@
 
 export const fetchOrders = (supabase) =>
   supabase.from("orders")
-    .select("id,customer,customer_id,phone,address,area,service,type,units,teknisi,helper,date,time,time_end,status,notes,dispatch,dispatch_at,invoice_id,created_at,teknisi_id,helper_id,teknisi2,helper2,teknisi3,helper3,source,team_slot,on_site_at,parent_job_id")
+    .select("id,customer,customer_id,phone,address,area,service,type,units,teknisi,helper,date,time,time_end,status,notes,dispatch,dispatch_at,invoice_id,created_at,teknisi_id,helper_id,teknisi2,helper2,teknisi3,helper3,source,team_slot,on_site_at,parent_job_id,is_multi_day,day_number")
     .order("date", { ascending: false }).limit(500);
 
 export const fetchInvoices = (supabase) =>
