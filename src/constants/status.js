@@ -6,6 +6,7 @@ export const statusColor = {
   INVOICE_CREATED: "#3b82f6", INVOICE_APPROVED: "#6366f1",
   PAID: "#22c55e", COMPLETED: "#22c55e", CANCELLED: "#ef4444", RESCHEDULED: "#f97316",
   IN_PROGRESS: "#38bdf8",
+  CONTINUED: "#f97316",
   UNPAID: "#f59e0b", OVERDUE: "#ef4444", PENDING_APPROVAL: "#a78bfa", PARTIAL: "#06b6d4",
 };
 
@@ -15,5 +16,6 @@ export const statusLabel = {
   INVOICE_CREATED: "Invoice Dibuat", INVOICE_APPROVED: "Invoice Dikirim",
   PAID: "Lunas", COMPLETED: "Selesai", CANCELLED: "Dibatalkan", RESCHEDULED: "Dijadwal Ulang",
   IN_PROGRESS: "Sedang Dikerjakan",
+  CONTINUED: "Lanjut Besok",
   UNPAID: "Belum Bayar", OVERDUE: "Terlambat", PENDING_APPROVAL: "Menunggu Approve", PARTIAL: "Bayar Sebagian",
 };

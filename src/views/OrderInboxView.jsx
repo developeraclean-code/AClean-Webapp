@@ -333,7 +333,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
   );
 }
 
-const INBOX_STATUSES = ["PENDING", "CONFIRMED", "CANCELLED"];
+const INBOX_STATUSES = ["PENDING", "CONFIRMED", "CONTINUED", "CANCELLED"];
 const WEEK_DAYS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 const DAY_NAMES  = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
 
@@ -882,6 +882,44 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     });
   }
 
+  // ── Multi-hari: state saat form diisi sebagai lanjutan order lain ──
+  const [continuationFrom, setContinuationFrom] = useState(null); // order induk
+
+  // Buat order lanjutan — pre-fill form dari parent, tambah 1 hari, kosongkan tim
+  function handleCreateContinuation(parentOrder) {
+    // Hitung tanggal berikutnya yang belum ada child di hari itu
+    // Hanya hitung child MULTI-DAY (skip Complain→Repair child yang non-multi-day)
+    const existingDays = ordersData
+      .filter(o => (o.parent_job_id === parentOrder.id && o.is_multi_day) || o.id === parentOrder.id)
+      .map(o => o.date)
+      .sort();
+    const lastDate = existingDays[existingDays.length - 1] || parentOrder.date;
+    const next = new Date(lastDate);
+    next.setDate(next.getDate() + 1);
+    const nextDate = next.toISOString().slice(0, 10);
+
+    const dayNum = existingDays.length + 1; // hari ke-N berikutnya
+
+    setContinuationFrom({ ...parentOrder, _dayNum: dayNum });
+    setEditId(null);
+    setForm({
+      customer: parentOrder.customer || "",
+      phone: parentOrder.phone || "",
+      service: parentOrder.service || "Cleaning",
+      type: parentOrder.type || "",
+      address: parentOrder.address || "",
+      date: nextDate,
+      time: parentOrder.time ? parentOrder.time.slice(0, 5) : "09:00",
+      time_end: parentOrder.time_end ? parentOrder.time_end.slice(0, 5) : calcTimeEnd(parentOrder.time || "09:00", parentOrder.service || "Cleaning", parentOrder.units || 1),
+      team_slot: "",
+      notes: parentOrder.notes || "",
+      status: "PENDING",
+      units: parentOrder.units || 1,
+      customer_id: parentOrder.customer_id || null,
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   // ── Bulk WA ke semua teknisi & helper hari ini ──
   const [bulkDispatching, setBulkDispatching] = useState(false);
 
@@ -1053,6 +1091,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       source: "whatsapp",
       ...(form.customer_id ? { customer_id: form.customer_id } : {}),
       last_changed_by: auditUserName(),
+      // Multi-hari: tandai jika ini order lanjutan
+      ...(continuationFrom ? {
+        parent_job_id: continuationFrom.id,
+        is_multi_day: true,
+        day_number: continuationFrom._dayNum || 2,
+      } : {}),
     };
 
     try {
@@ -1074,6 +1118,37 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         const id = "WA-" + Date.now();
         const { error } = await supabase.from("orders").insert({ ...payload, id });
         if (error) throw error;
+
+        // Jika ini order lanjutan: update parent jadi CONTINUED + tandai is_multi_day
+        if (continuationFrom) {
+          const parentId = continuationFrom.id;
+          // Update parent
+          const { error: pErr } = await supabase.from("orders")
+            .update({ status: "CONTINUED", is_multi_day: true, day_number: 1 })
+            .eq("id", parentId);
+          if (pErr) console.warn("Update parent multi-day failed:", pErr.message);
+
+          // Tandai sibling multi-day yang sudah ada (bulk via .in untuk konsisten)
+          // Filter: hanya sibling MULTI-DAY (skip Repair-from-Complain yang non-multi-day)
+          const siblingIds = ordersData
+            .filter(o => o.parent_job_id === parentId && o.is_multi_day)
+            .map(o => o.id);
+          if (siblingIds.length > 0) {
+            const { error: sErr } = await supabase.from("orders")
+              .update({ is_multi_day: true })
+              .in("id", siblingIds);
+            if (sErr) console.warn("Update sibling multi-day failed:", sErr.message);
+          }
+
+          // State update lokal
+          setOrdersData(prev => prev.map(o => {
+            if (o.id === parentId) return { ...o, status: "CONTINUED", is_multi_day: true, day_number: 1 };
+            if (siblingIds.includes(o.id)) return { ...o, is_multi_day: true };
+            return o;
+          }));
+          setContinuationFrom(null);
+        }
+
         // Auto-save customer if not already linked
         if (!form.customer_id && payload.customer) {
           const { data: saved } = await supabase.from("customers").upsert(
@@ -1086,7 +1161,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           }
         }
         setOrdersData(prev => [{ ...payload, id, created_at: new Date().toISOString() }, ...prev]);
-        showNotif("Order masuk disimpan");
+        showNotif(continuationFrom ? `✅ Order lanjutan Hari ${payload.day_number} dibuat` : "Order masuk disimpan");
       }
       setForm({ ...EMPTY_FORM, date: TODAY });
     } catch (e) {
@@ -1119,6 +1194,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   function handleCancelEdit() {
     setEditId(null);
+    setContinuationFrom(null);
     setForm({ ...EMPTY_FORM, date: TODAY });
   }
 
@@ -1131,17 +1207,45 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   }
 
   async function handleDelete(order) {
+    // Multi-hari: cek apakah ini induk dari pekerjaan multi-day
+    const childOrders = ordersData.filter(o => o.parent_job_id === order.id && o.is_multi_day);
+    const isMultiDayParent = childOrders.length > 0;
+
+    let cascadeMessage = `Hapus order ${order.customer} (${order.date})?`;
+    if (isMultiDayParent) {
+      cascadeMessage = `⚠️ Order ini adalah INDUK dari pekerjaan ${childOrders.length + 1} hari.\n\n`
+        + `Jika dihapus, ${childOrders.length} order lanjutan di hari berikutnya juga akan ikut dihapus:\n`
+        + childOrders.map(c => `  • ${c.id} (${c.date})`).join("\n")
+        + `\n\nLanjutkan?`;
+    }
+
     const ok = await showConfirm({
-      icon: "🗑", title: "Hapus Order?",
-      message: `Hapus order ${order.customer} (${order.date})?`,
-      confirmText: "Hapus",
+      icon: "🗑",
+      title: isMultiDayParent ? "Hapus Pekerjaan Multi-Hari?" : "Hapus Order?",
+      message: cascadeMessage,
+      confirmText: isMultiDayParent ? `Hapus Semua (${childOrders.length + 1} order)` : "Hapus",
     });
     if (!ok) return;
+
+    // Hapus child dulu (kalau ada) supaya FK SET NULL tidak meninggalkan orphan-state di app
+    if (isMultiDayParent) {
+      const childIds = childOrders.map(c => c.id);
+      await supabase.from("orders").update({ last_changed_by: auditUserName() }).in("id", childIds);
+      const { error: cErr } = await supabase.from("orders").delete().in("id", childIds);
+      if (cErr) return showNotif("Gagal hapus order lanjutan: " + cErr.message);
+      setOrdersData(prev => prev.filter(o => !childIds.includes(o.id)));
+    }
+
     await supabase.from("orders").update({ last_changed_by: auditUserName() }).eq("id", order.id);
     const { error } = await supabase.from("orders").delete().eq("id", order.id);
     if (error) return showNotif("Gagal hapus: " + error.message);
     setOrdersData(prev => prev.filter(o => o.id !== order.id));
-    showNotif("Order dihapus");
+
+    if (isMultiDayParent) {
+      showNotif(`✅ ${childOrders.length + 1} order multi-hari berhasil dihapus`);
+    } else {
+      showNotif("Order dihapus");
+    }
   }
 
   // ── Grid data: order per hari per teknisi ──
@@ -1279,10 +1383,21 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       />
 
       {/* ═══ FORM QUICK ENTRY ═══ */}
-      <div style={{ background: cs.surface, border: "1px solid " + (editId ? cs.yellow : cs.border), borderRadius: 14, padding: 20 }}>
-        <div style={{ fontWeight: 800, fontSize: 15, color: editId ? cs.yellow : cs.text, marginBottom: 16 }}>
-          {editId ? "✏️ Edit Planning — " + editId : "➕ Tambah Planning Order"}
+      <div style={{ background: cs.surface, border: "1px solid " + (editId ? cs.yellow : continuationFrom ? "#f97316" : cs.border), borderRadius: 14, padding: 20 }}>
+        <div style={{ fontWeight: 800, fontSize: 15, color: editId ? cs.yellow : continuationFrom ? "#f97316" : cs.text, marginBottom: continuationFrom ? 8 : 16 }}>
+          {editId ? "✏️ Edit Planning — " + editId : continuationFrom ? `🔗 Buat Order Lanjutan (Hari ${continuationFrom._dayNum})` : "➕ Tambah Planning Order"}
         </div>
+
+        {/* Banner: order lanjutan dari parent */}
+        {continuationFrom && (
+          <div style={{ background: "#f9731618", border: "1px solid #f9731666", borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ color: "#f97316", fontWeight: 700 }}>🔗 Lanjutan dari:</span>
+            <span style={{ color: cs.text }}>{continuationFrom.customer} — {continuationFrom.date} ({continuationFrom.service})</span>
+            <span style={{ color: cs.muted, fontSize: 11 }}>ID: {continuationFrom.id}</span>
+            <button onClick={handleCancelEdit}
+              style={{ background: "transparent", border: "none", color: cs.muted, cursor: "pointer", fontSize: 11, marginLeft: "auto" }}>✕ Batal</button>
+          </div>
+        )}
 
         {/* Conflict warning */}
         {conflict && (
@@ -1685,8 +1800,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                 return (
                   <tr key={o.id} style={{
                     borderBottom: "1px solid " + cs.border + "44",
-                    background: isEditing ? cs.yellow + "08" : isCancelled ? cs.red + "06" : isToday ? cs.accent + "06" : "transparent",
+                    background: isEditing ? cs.yellow + "08" : isCancelled ? cs.red + "06" : (o.parent_job_id && o.is_multi_day) ? "#f9731608" : isToday ? cs.accent + "06" : "transparent",
                     opacity: isCancelled ? 0.6 : 1,
+                    borderLeft: (o.parent_job_id && o.is_multi_day) ? "3px solid #f9731688" : o.is_multi_day ? "3px solid #f9731644" : "3px solid transparent",
                   }}>
                     {/* Tanggal + Jam */}
                     <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
@@ -1698,6 +1814,11 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                         {o.time?.slice(0,5) || "—"}
                         {o.time_end && <span> – {o.time_end?.slice(0,5)}</span>}
                       </div>
+                      {o.is_multi_day && (
+                        <div style={{ fontSize: 10, color: "#f97316", fontWeight: 700, marginTop: 2 }}>
+                          {(o.parent_job_id && o.is_multi_day) ? `🔗 Lanjutan Hari ${o.day_number || "?"}` : "📋 Multi-Hari"}
+                        </div>
+                      )}
                     </td>
 
                     {/* Customer */}
@@ -1774,10 +1895,24 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
                     {/* Aksi */}
                     <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                      {/* Badge hari ke-N untuk order multi-hari */}
+                      {o.is_multi_day && (
+                        <div style={{ fontSize: 10, color: "#f97316", fontWeight: 700, marginBottom: 4 }}>
+                          {(o.parent_job_id && o.is_multi_day) ? `🔗 Hari ${o.day_number || "?"}` : `📋 Induk (${ordersData.filter(c => c.parent_job_id === o.id && c.is_multi_day).length + 1} hari)`}
+                        </div>
+                      )}
                       <button onClick={() => handleEdit(o)}
-                        style={{ background: cs.accent + "22", color: cs.accent, border: "1px solid " + cs.accent + "44", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", marginRight: 6, fontWeight: 600 }}>
+                        style={{ background: cs.accent + "22", color: cs.accent, border: "1px solid " + cs.accent + "44", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", marginRight: 4, fontWeight: 600 }}>
                         Edit
                       </button>
+                      {/* Tombol Buat Order Lanjutan — hanya muncul untuk order yang bisa dilanjutkan
+                          Skip child multi-day, tapi non-multi-day (mis. Repair dari Complain) tetap bisa di-lanjutkan */}
+                      {!(o.parent_job_id && o.is_multi_day) && !["CANCELLED", "COMPLETED", "PAID"].includes(o.status) && (
+                        <button onClick={() => handleCreateContinuation(o)}
+                          style={{ background: "#f9731618", color: "#f97316", border: "1px solid #f9731644", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", marginRight: 4, fontWeight: 600 }}>
+                          +Lanjutan
+                        </button>
+                      )}
                       <button onClick={() => handleDelete(o)}
                         style={{ background: cs.red + "18", color: cs.red, border: "1px solid " + cs.red + "44", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
                         Hapus

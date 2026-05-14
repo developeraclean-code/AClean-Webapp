@@ -590,6 +590,18 @@ return (
               <span style={{ fontFamily: "monospace", fontWeight: 800, color: cs.accent, fontSize: 14 }}>{inv.id}</span>
               <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 99, background: (statusColor[inv.status] || cs.muted) + "22", color: statusColor[inv.status] || cs.muted, border: "1px solid " + (statusColor[inv.status] || cs.muted) + "44", fontWeight: 700 }}>{inv.status.replace(/_/g, " ")}</span>
               {inv.follow_up > 0 && <span style={{ fontSize: 10, color: cs.yellow }}>Follow-up: {inv.follow_up}x</span>}
+              {/* Badge multi-hari: tampil jika ada child orders MULTI-DAY terkait invoice ini */}
+              {(() => {
+                const parentOrder = (ordersData || []).find(o => o.id === inv.job_id);
+                const childOrders = (ordersData || []).filter(o => o.parent_job_id === inv.job_id && o.is_multi_day);
+                if (childOrders.length === 0 && !parentOrder?.is_multi_day) return null;
+                const totalDays = 1 + childOrders.length;
+                return (
+                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: "#f9731618", color: "#f97316", border: "1px solid #f9731644", fontWeight: 700 }}>
+                    📋 Multi-Hari ({totalDays} hari)
+                  </span>
+                );
+              })()}
               {inv.garansi_expires && (() => {
                 const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
                 if (daysLeft < 0) return <span style={{ fontSize: 10, color: cs.muted, background: cs.surface, padding: "1px 6px", borderRadius: 4 }}>🔒 Garansi selesai</span>;

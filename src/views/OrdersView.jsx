@@ -224,13 +224,31 @@ return (
                   )}
                   {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                     <button onClick={async () => {
+                      // Multi-hari: cek apakah ini induk dari pekerjaan multi-day
+                      const childOrders = (ordersData || []).filter(c => c.parent_job_id === o.id && c.is_multi_day);
+                      const isMultiDayParent = childOrders.length > 0;
+
+                      const baseMsg = `Hapus order ${o.id} — ${o.customer}?\n\nTindakan ini tidak bisa dibatalkan.\nOrder yang sudah ada invoice TIDAK bisa dihapus.`;
+                      const multiMsg = isMultiDayParent
+                        ? `\n\n⚠️ INDUK pekerjaan ${childOrders.length + 1} hari. ${childOrders.length} order lanjutan akan ikut dihapus:\n`
+                          + childOrders.map(c => `  • ${c.id} (${c.date})`).join("\n")
+                        : "";
+
                       if (!await showConfirm({
-                        icon: "🗑️", title: "Hapus Order?", danger: true,
-                        message: `Hapus order ${o.id} — ${o.customer}?\n\nTindakan ini tidak bisa dibatalkan.\nOrder yang sudah ada invoice TIDAK bisa dihapus.`,
-                        confirmText: "Ya, Hapus"
+                        icon: "🗑️",
+                        title: isMultiDayParent ? "Hapus Pekerjaan Multi-Hari?" : "Hapus Order?",
+                        danger: true,
+                        message: baseMsg + multiMsg,
+                        confirmText: isMultiDayParent ? `Ya, Hapus Semua (${childOrders.length + 1})` : "Ya, Hapus"
                       })) return;
                       if (o.invoice_id) {
                         showNotif("❌ Tidak bisa hapus: order sudah punya invoice " + o.invoice_id);
+                        return;
+                      }
+                      // Blok jika ada child yang sudah punya invoice
+                      const childWithInvoice = childOrders.find(c => c.invoice_id);
+                      if (childWithInvoice) {
+                        showNotif(`❌ Tidak bisa hapus: order lanjutan ${childWithInvoice.id} sudah punya invoice ${childWithInvoice.invoice_id}`);
                         return;
                       }
                       // Blok hapus jika status sudah COMPLETED (kecuali Owner)
@@ -238,14 +256,25 @@ return (
                         showNotif("❌ Admin tidak bisa hapus order yang sudah selesai. Hubungi Owner.");
                         return;
                       }
+                      // Hapus child dulu
+                      if (isMultiDayParent) {
+                        const childIds = childOrders.map(c => c.id);
+                        const { error: cErr } = await supabase.from("orders").delete().in("id", childIds);
+                        if (cErr) { showNotif("❌ Gagal hapus order lanjutan: " + cErr.message); return; }
+                        try { await supabase.from("technician_schedule").delete().in("order_id", childIds); } catch (_) { }
+                        setOrdersData(prev => prev.filter(x => !childIds.includes(x.id)));
+                      }
                       const { error: delErr } = await deleteOrder(supabase, o.id, auditUserName());
                       if (delErr) { showNotif("❌ Gagal hapus: " + delErr.message); return; }
                       try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch (_) { }
                       setOrdersData(prev => prev.filter(x => x.id !== o.id));
                       addAgentLog("ORDER_DELETED",
-                        `${currentUser?.role} hapus order ${o.id} — ${o.customer} (${o.service}) tgl ${o.date}`,
+                        `${currentUser?.role} hapus order ${o.id} — ${o.customer} (${o.service}) tgl ${o.date}`
+                          + (isMultiDayParent ? ` + ${childOrders.length} child multi-day` : ""),
                         "WARNING");
-                      showNotif("✅ Order " + o.id + " berhasil dihapus");
+                      showNotif(isMultiDayParent
+                        ? `✅ ${childOrders.length + 1} order multi-hari berhasil dihapus`
+                        : "✅ Order " + o.id + " berhasil dihapus");
                     }} title={currentUser?.role === "Admin"
                       ? "Hapus order (tidak bisa jika sudah selesai/ada invoice)"
                       : "Hapus order (Owner)"}

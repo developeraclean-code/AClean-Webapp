@@ -72,10 +72,12 @@ const totalPending = pendingInv.reduce((a, b) => a + (b.total || 0), 0);
 const totalOverdue = overdueInv.reduce((a, b) => a + (b.total || 0), 0);
 
 // ── Orders — filter sesuai periode ──
-const DONE_STATUSES = ["COMPLETED", "REPORT_SUBMITTED", "VERIFIED"];
+// Multi-hari: parent + child dianggap 1 job (jangan double-count completion rate)
+const DONE_STATUSES = ["COMPLETED", "REPORT_SUBMITTED", "VERIFIED", "PAID", "INVOICE_APPROVED", "INVOICE_CREATED"];
 const ordersPeriod = ordersData.filter(filterOrderByPeriod);  // orders di periode ini
-const ordersDone = ordersPeriod.filter(o => DONE_STATUSES.includes(o.status)).length;
-const ordersAll = ordersPeriod.length;
+const ordersPeriodUnique = ordersPeriod.filter(o => !(o.parent_job_id && o.is_multi_day));  // hanya parent/standalone
+const ordersDone = ordersPeriodUnique.filter(o => DONE_STATUSES.includes(o.status) || o.status === "CONTINUED").length;
+const ordersAll = ordersPeriodUnique.length;
 const completionRate = ordersAll > 0 ? Math.round(ordersDone / ordersAll * 100) : 0;
 const avgOrderVal = paidInv.length > 0 ? Math.round(totalRevenue / paidInv.length) : 0;
 
@@ -90,14 +92,22 @@ const revBreakdown = [
 ].filter(([, rev, , cnt]) => rev > 0 || cnt > 0);
 
 // ── Teknisi performance — filter sesuai periode ──
+// Multi-hari: tiap hari child dianggap "1 job teknisi" (karena teknisi memang bekerja di hari itu)
+// Revenue: bagi rata invoice ke jumlah hari kalau multi-day
 const tekPerf = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(name => {
   const myOrders = ordersPeriod.filter(o => o.teknisi === name);
-  const myDone = myOrders.filter(o => DONE_STATUSES.includes(o.status)).length;
-  // Revenue teknisi: skip unit_ac_amount untuk ac_unit_sale (teknisi hanya benefit dari labor)
+  const myDone = myOrders.filter(o => DONE_STATUSES.includes(o.status) || o.status === "CONTINUED").length;
+  // Revenue: untuk multi-day, invoice di-link ke parent saja → match via id atau via parent_job_id
   const myRev = paidInv
-    .filter(i => myOrders.some(o => o.id === i.job_id))
-    .reduce((a, b) => a + effRevenue(b), 0);
-  return { name, done: myDone, total: myOrders.length, rev: myRev };
+    .filter(i => myOrders.some(o => o.id === i.job_id || o.parent_job_id === i.job_id))
+    .reduce((a, b) => {
+      // Bagi revenue rata kalau multi-day (biar tidak over-count satu invoice ke teknisi yang berbeda di hari berbeda)
+      const linkedOrders = ordersData.filter(o => o.id === b.job_id || (o.parent_job_id === b.job_id && o.is_multi_day));
+      const myShare = linkedOrders.filter(o => o.teknisi === name).length;
+      const totalDays = Math.max(linkedOrders.length, 1);
+      return a + (effRevenue(b) * myShare / totalDays);
+    }, 0);
+  return { name, done: myDone, total: myOrders.length, rev: Math.round(myRev) };
 }).filter(t => t.total > 0).sort((a, b) => b.done - a.done);
 const maxDone = Math.max(...tekPerf.map(t => t.done), 1);
 
