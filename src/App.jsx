@@ -1332,8 +1332,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     { key: "pipa_2pk", label: "Pipa AC Hoda 2PK", satuan: "Meter", default: 0 },
     { key: "pipa_25pk", label: "Pipa AC Hoda 2,5PK", satuan: "Meter", default: 0 },
     { key: "pipa_3pk", label: "Pipa AC Hoda 3PK", satuan: "Meter", default: 0 },
-    { key: "kabel_15", label: "Kabel Eterna 3x1,5", satuan: "Meter", default: 0 },
-    { key: "kabel_25", label: "Kabel Eterna 3x2,5", satuan: "Meter", default: 0 },
+    { key: "kabel_15", label: "Kabel Listrik 3x1,5", satuan: "Meter", default: 0 },
+    { key: "kabel_25", label: "Kabel Listrik 3x2,5", satuan: "Meter", default: 0 },
     { key: "ducttape_biasa", label: "Duct Tape Non Lem", satuan: "Piece", default: 0 },
     { key: "ducttape_lem", label: "Duct Tape Lem", satuan: "Piece", default: 0 },
     { key: "jasa_pipa_ac", label: "Jasa Penarikan Pipa AC", satuan: "Meter", default: 0 },
@@ -9082,8 +9082,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             "pipa_2pk": "SKU023",  // Pipa AC Hoda 2PK
             "pipa_25pk": "SKU024",  // Pipa AC Hoda 2,5PK
             "pipa_3pk": "SKU057",  // Pipa AC Hoda 3PK
-            "kabel_15": "SKU025",  // Kabel Eterna 3x1,5
-            "kabel_25": "SKU026",  // Kabel Eterna 3x2,5
+            "kabel_15": "SKU025",  // Kabel Listrik 3x1,5
+            "kabel_25": "SKU026",  // Kabel Listrik 3x2,5
             "ducttape_biasa": "SKU031",
             "ducttape_lem": "SKU030",
             "dinabolt": "SKU058",
@@ -10594,7 +10594,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             return t.includes("kapasitor") || t.includes("naple") || t.includes("breket")
                               || t.includes("dinabolt") || t.includes("armaflex") || t.includes("freon r-")
                               || t.includes("freon r3") || t.includes("freon r4") || t.includes("freon r2")
-                              || t.includes("pipa ac") || t.includes("kabel eterna") || t.includes("duct tape");
+                              || t.includes("pipa ac") || t.includes("kabel listrik") || t.includes("duct tape");
                           };
                           const barangOpt = priceListData
                             .filter(r => _isBarangItem(r) && parseInt(r.price || 0) > 0)
