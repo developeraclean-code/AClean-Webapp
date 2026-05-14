@@ -106,7 +106,13 @@ const DashboardTab = ({
   const toggleMutasi = async (jobId, invoiceId) => {
     if (savingId) return;
     const current = mutasiChecked[jobId];
-    const newChecked = current ? !current.checked : true;
+    const isCurrentlyChecked = !!current?.checked;
+    if (isCurrentlyChecked) {
+      const checkedBy = current?.checked_by ? ` (dicek oleh ${current.checked_by})` : "";
+      const ok = window.confirm(`Batalkan centang mutasi ini${checkedBy}?\n\nYakin ingin membatalkan?`);
+      if (!ok) return;
+    }
+    const newChecked = isCurrentlyChecked ? false : true;
     setSavingId(jobId);
     setMutasiError(null);
 
