@@ -3134,7 +3134,7 @@ ${photoPageHTML}
     if (plItem && plItem.price > 0) return plItem.price * (units || 1);
     // ✨ PHASE 3: Handle unknown services by defaulting to Cleaning
     const svcMap = PRICE_LIST[service] || PRICE_LIST["Maintenance"] || PRICE_LIST["Cleaning"];
-    const hargaPerUnit = svcMap[type] || svcMap["default"] || 85000;
+    const hargaPerUnit = svcMap?.[type] ?? svcMap?.["default"] ?? 0;
     return hargaPerUnit * (units || 1);
   }, [priceListData]);
 
@@ -3195,9 +3195,9 @@ ${photoPageHTML}
 
     // 4. Freon specific
     if (!h && isF) {
-      h = nama2.includes("r22") ? PRICE_LIST["freon_R22"] || 450000 :
-        nama2.includes("r32") ? PRICE_LIST["freon_R32"] || 450000 :
-          PRICE_LIST["freon_R410A"] || 450000;
+      h = nama2.includes("r22") ? (PRICE_LIST["freon_R22"] || 0) :
+        nama2.includes("r32") ? (PRICE_LIST["freon_R32"] || 0) :
+          (PRICE_LIST["freon_R410A"] || 0);
     }
 
     return h;
@@ -4400,8 +4400,8 @@ ${photoPageHTML}
                 effectiveType = ord.type;
               }
 
-              const labor = PRICE_LIST[ord.service]?.[effectiveType] ||
-                PRICE_LIST[ord.service]?.["default"] || 85000;
+              const labor = PRICE_LIST[ord.service]?.[effectiveType] ??
+                PRICE_LIST[ord.service]?.["default"] ?? 0;
               const laborTotal = labor * (ord.units || 1);
 
               // ── Baca material + freon dari laporan teknisi ──
