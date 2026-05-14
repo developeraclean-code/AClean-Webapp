@@ -3144,7 +3144,7 @@ ${photoPageHTML}
     const nama2 = (nama || "").toLowerCase();
     const isF = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => nama2.includes(k));
     const mkNorm = (s) => (s || "").toLowerCase()
-      .replace(/,/g, ".").replace(/eterna\s*/g, "").replace(/hoda\s*/g, "")
+      .replace(/,/g, ".").replace(/eterna\s*/g, "").replace(/hoda\s*/g, "").replace(/listrik\s*/g, "")
       .replace(/[-\s]/g, "").replace(/r410a?$/, "r410").replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
     const norm = mkNorm(nama);
     let h = 0;
@@ -3208,7 +3208,7 @@ ${photoPageHTML}
       const raw = (m.nama || "").toLowerCase().trim();
       const norm = raw
         .replace(/,/g, ".")
-        .replace(/eterna\s*/g, "")
+        .replace(/eterna\s*/g, "").replace(/listrik\s*/g, "")
         .replace(/[-\s]/g, "")
         .replace(/r410a?$/, "r410")
         .replace(/r22a?$/, "r22")
@@ -3216,7 +3216,7 @@ ${photoPageHTML}
       const isJasaItem = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama || "").trim());
 
       const mkN = (s) => (s || "").toLowerCase()
-        .replace(/,/g, ".").replace(/eterna\s*/g, "").replace(/hoda\s*/g, "")
+        .replace(/,/g, ".").replace(/eterna\s*/g, "").replace(/hoda\s*/g, "").replace(/listrik\s*/g, "")
         .replace(/[-\s]/g, "").replace(/r410a?$/, "r410").replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
 
       // PRIORITY 1a: priceListData DB exact match
