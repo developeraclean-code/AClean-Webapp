@@ -581,18 +581,20 @@ function PriceListView({ priceListData, setPriceListData, priceListSvcTab, setPr
                 <button onClick={async () => {
                   if (!plNewForm.type.trim()) { showNotif("❌ Tipe/Nama item wajib diisi"); return; }
                   if (!plNewForm.price || isNaN(Number(plNewForm.price))) { showNotif("❌ Harga harus berupa angka"); return; }
+                  const typeTrimmed = plNewForm.type.trim();
+                  const duplikat = priceListData.find(r => r.service === plNewForm.service && r.type.trim().toLowerCase() === typeTrimmed.toLowerCase());
+                  if (duplikat) { showNotif(`❌ Item "${typeTrimmed}" di layanan ${plNewForm.service} sudah ada. Edit item tersebut jika ingin ubah harga.`); return; }
                   const newItem = {
                     service: plNewForm.service,
                     category: plNewForm.category || null,
-                    type: plNewForm.type.trim(),
-                    code: plNewForm.code.trim() || (plNewForm.service.slice(0, 3).toUpperCase() + "-" + Date.now().toString().slice(-4)),
+                    type: typeTrimmed,
                     price: Number(plNewForm.price),
                     unit: plNewForm.unit.trim() || "unit",
-                    notes: plNewForm.notes.trim(),
+                    notes: plNewForm.notes.trim() || null,
                     is_active: true,
                   };
                   const { data, error } = await supabase.from("price_list").insert(newItem).select().single();
-                  if (error) { showNotif("❌ Gagal simpan: " + error.message); return; }
+                  if (error) { showNotif("❌ Gagal simpan: " + (error.message || error.code)); return; }
                   setPriceListData(prev => [...prev, data || newItem]);
                   setPriceListSyncedAt(new Date());
                   addAgentLog("PRICELIST_ADD", `Item baru "${newItem.type}" (${newItem.service}) Rp${fmt(newItem.price)} ditambah oleh ${currentUser?.name}`, "SUCCESS");
