@@ -17,6 +17,18 @@ function validateAndNormalizePhone(phone) {
   return normalized;
 }
 
+// Semua format phone yang mungkin tersimpan di DB — untuk query OR matching
+function buildPhoneVariants(normalized) {
+  // normalized = "628xxx" (output dari validateAndNormalizePhone)
+  if (!normalized || !normalized.startsWith("62")) return [normalized];
+  const digits = normalized.slice(2); // hilangkan "62"
+  return [
+    normalized,            // 628xxx  (Fonnte format)
+    "0" + digits,          // 08xxx   (format lokal)
+    "+" + normalized,      // +628xxx (format internasional)
+  ];
+}
+
 function validateMessage(msg, maxLen = 4096) {
   if (!msg || typeof msg !== "string") return null;
   const trimmed = msg.trim();
@@ -266,17 +278,21 @@ export default async function handler(req, res) {
                     let matchedInvoiceId = null;
                     let matchedOrderId = null;
                     try {
+                      // Fix Bug 1: cari semua format phone yang mungkin (628xxx, 08xxx, +628xxx)
+                      const phoneVariants = buildPhoneVariants(sender);
+                      const phoneFilter = phoneVariants.map(p => "phone.eq." + encodeURIComponent(p)).join(",");
                       const [invRes, ordRes] = await Promise.all([
-                        fetch(SU + "/rest/v1/invoices?select=id,total,status,order_id&phone=eq." + encodeURIComponent(sender) +
-                          "&order=created_at.desc&limit=1",
+                        // Fix Bug 2: tambah filter status UNPAID/OVERDUE/PARTIAL_PAID
+                        fetch(SU + "/rest/v1/invoices?select=id,total,status,job_id&or=(" + phoneFilter + ")" +
+                          "&status=in.(UNPAID,OVERDUE,PARTIAL_PAID)&order=created_at.desc&limit=1",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
-                        fetch(SU + "/rest/v1/orders?select=id,status&phone=eq." + encodeURIComponent(sender) +
+                        fetch(SU + "/rest/v1/orders?select=id,status&or=(" + phoneFilter + ")" +
                           "&order=created_at.desc&limit=1",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } })
                       ]);
                       if (invRes.ok) {
                         const invs = await invRes.json();
-                        if (invs?.length > 0) { matchedInvoiceId = invs[0].id; matchedOrderId = invs[0].order_id || null; }
+                        if (invs?.length > 0) { matchedInvoiceId = invs[0].id; matchedOrderId = invs[0].job_id || null; }
                       }
                       if (!matchedOrderId && ordRes.ok) {
                         const ords = await ordRes.json(); if (ords?.length > 0) matchedOrderId = ords[0].id;
@@ -440,12 +456,16 @@ export default async function handler(req, res) {
                     let matchedInvoice = null;
                     let matchedOrderId = null;
                     try {
-                      // Cari invoice UNPAID/OVERDUE by phone (status filter ketat)
+                      // Fix Bug 1: cari semua format phone yang mungkin (628xxx, 08xxx, +628xxx)
+                      const phoneVariants = buildPhoneVariants(sender);
+                      const phoneFilter = phoneVariants.map(p => "phone.eq." + encodeURIComponent(p)).join(",");
+
+                      // Fix Bug 2: tambah PARTIAL_PAID ke status filter
                       const [invRes2, ordRes] = await Promise.all([
-                        fetch(SU + "/rest/v1/invoices?select=id,job_id,total,status&phone=eq." + encodeURIComponent(sender) +
-                          "&status=in.(UNPAID,OVERDUE)&order=created_at.desc&limit=1",
+                        fetch(SU + "/rest/v1/invoices?select=id,job_id,total,status&or=(" + phoneFilter + ")" +
+                          "&status=in.(UNPAID,OVERDUE,PARTIAL_PAID)&order=created_at.desc&limit=1",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
-                        fetch(SU + "/rest/v1/orders?select=id,status&phone=eq." + encodeURIComponent(sender) +
+                        fetch(SU + "/rest/v1/orders?select=id,status&or=(" + phoneFilter + ")" +
                           "&order=created_at.desc&limit=1",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } })
                       ]);
@@ -457,9 +477,11 @@ export default async function handler(req, res) {
                         }
                       }
                       // Fallback: cari invoice PAID tanpa bukti bayar dari HP yang sama
+                      // Fix Bug 4: fallback ini sekarang juga bisa di-patch karena savedImageUrl
+                      // sudah tersedia di titik ini (setelah R2 upload selesai)
                       if (!matchedInvoice) {
                         const invPaidRes = await fetch(
-                          SU + "/rest/v1/invoices?select=id,job_id,total,status&phone=eq." + encodeURIComponent(sender) +
+                          SU + "/rest/v1/invoices?select=id,job_id,total,status&or=(" + phoneFilter + ")" +
                           "&status=eq.PAID&payment_proof_url=is.null&order=created_at.desc&limit=1",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } }
                         );
@@ -481,12 +503,16 @@ export default async function handler(req, res) {
 
                     // ── Auto-patch payment_proof_url ke invoice (tanpa auto-PAID) ──
                     // Owner tetap konfirmasi manual setelah cek bukti
-                    if (matchedInvoice && savedImageUrl) {
+                    if (matchedInvoiceId && savedImageUrl) {
                       fetch(SU + "/rest/v1/invoices?id=eq." + encodeURIComponent(matchedInvoiceId), {
                         method: "PATCH",
                         headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
                         body: JSON.stringify({ payment_proof_url: savedImageUrl, updated_at: new Date().toISOString() })
                       }).catch(e => console.warn("[PAY_AUTO_PATCH]", e.message));
+                    }
+                    // Fix Bug 3: jika invoice tidak ditemukan tapi bukti ada, log warning ke owner
+                    if (!matchedInvoiceId && savedImageUrl) {
+                      console.warn("[PAY_AUTO_PATCH] Bukti transfer tersimpan di R2 tapi invoice tidak ditemukan untuk", sender, savedImageUrl);
                     }
 
                     // Simpan ke payment_suggestions
