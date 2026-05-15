@@ -555,11 +555,16 @@ export default async function handler(req, res) {
 
             const araRes = await fetch("https://api.anthropic.com/v1/messages", {
               method: "POST",
-              headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
+              headers: {
+                "Content-Type": "application/json",
+                "x-api-key": AK,
+                "anthropic-version": "2023-06-01",
+                "anthropic-beta": "prompt-caching-2024-07-31",
+              },
               body: JSON.stringify({
                 model: "claude-haiku-4-5",
                 max_tokens: 500,
-                system: customerBrain,
+                system: [{ type: "text", text: customerBrain, cache_control: { type: "ephemeral" } }],
                 messages: history
               })
             });

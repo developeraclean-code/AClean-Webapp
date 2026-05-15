@@ -78,11 +78,29 @@ ${JSON.stringify(bizClean)}
 async function callClaude(msgs, sys, model) {
   const ALLOWED_CLAUDE = ["claude-haiku-4-5"];
   const safeModel = ALLOWED_CLAUDE.includes(model) ? model : "claude-haiku-4-5";
+  // Split system prompt: static part (brain + price list) cached, dynamic part not
+  // Cache TTL is 5 minutes — saves ~70-80% token cost on repeated ARA/chatbot calls
+  const staticBreak = sys.indexOf("## DATA BISNIS LIVE");
+  const staticPart  = staticBreak > 0 ? sys.slice(0, staticBreak).trimEnd() : sys;
+  const dynamicPart = staticBreak > 0 ? sys.slice(staticBreak) : "";
+
+  const systemBlocks = dynamicPart
+    ? [
+        { type: "text", text: staticPart, cache_control: { type: "ephemeral" } },
+        { type: "text", text: dynamicPart },
+      ]
+    : sys; // fallback: string biasa jika tidak ada split point
+
   // LLM calls can take up to 30 seconds
   const r = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method:"POST",
-    headers:{"Content-Type":"application/json","x-api-key":process.env.ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01"},
-    body: JSON.stringify({model: safeModel, max_tokens:1024, system:sys, messages:msgs})
+    headers:{
+      "Content-Type":"application/json",
+      "x-api-key":process.env.ANTHROPIC_API_KEY,
+      "anthropic-version":"2023-06-01",
+      "anthropic-beta":"prompt-caching-2024-07-31",
+    },
+    body: JSON.stringify({model: safeModel, max_tokens:1024, system:systemBlocks, messages:msgs})
   }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message||"Claude error");
