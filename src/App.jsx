@@ -1106,6 +1106,18 @@ export default function ACleanWebApp() {
   // ── Notification ──
   const [notification, setNotification] = useState(null);
   const notifTimer = useRef(null);
+
+  // Undo toast: simpan data yang baru dihapus untuk 10 detik
+  const [undoToast, setUndoToast] = useState(null); // { label, onUndo, timer }
+  const showUndoToast = (label, onUndo) => {
+    if (undoToast?.timer) clearTimeout(undoToast.timer);
+    const timer = setTimeout(() => setUndoToast(null), 10000);
+    setUndoToast({ label, onUndo, timer });
+  };
+  const dismissUndoToast = () => {
+    if (undoToast?.timer) clearTimeout(undoToast.timer);
+    setUndoToast(null);
+  };
   // G8 FIX: Browser push notification support
   const requestPushPermission = async () => {
     if (!("Notification" in window)) return;
@@ -1341,6 +1353,8 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     { key: "dinabolt", label: "DINABOLT Set", satuan: "Set", default: 0 },
     { key: "karet_mounting", label: "KARET MOUNTING", satuan: "Set", default: 0 },
     { key: "breket_outdoor", label: "Breket Outdoor Inc Dinabolt", satuan: "Piece", default: 0 },
+    { key: "paralon", label: "Paralon", satuan: "Meter", default: 0 },
+    { key: "selang_flexibel_drain", label: "Selang Flexibel Drain", satuan: "Meter", default: 0 },
     { key: "kuras_vacum_r32", label: "Kuras Vacum + Isi Freon R32/R410", satuan: "Unit", default: 0 },
     { key: "kuras_vacum_r22", label: "Kuras Vacum Freon R22", satuan: "Unit", default: 0 },
     { key: "freon_r22", label: "Freon R-22", satuan: "KG", default: 0 },
@@ -3422,6 +3436,20 @@ ${photoPageHTML}
     {
       const { error: mpErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName());
       if (mpErr) {
+        // Guard errors dari markInvoicePaid (status conflict/race condition) — jangan fallback
+        const isGuardError = mpErr.message?.includes("sudah") || mpErr.message?.includes("tidak ditemukan");
+        if (isGuardError) {
+          setInvoicesData(prev => prev.map(i =>
+            i.id === inv.id ? { ...i, status: originalInvStatus, paid_at: inv.paid_at || null } : i
+          ));
+          if (originalOrderStatus) {
+            setOrdersData(prev => prev.map(o =>
+              (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: originalOrderStatus } : o
+            ));
+          }
+          showNotif(`❌ ${mpErr.message}`);
+          return;
+        }
         console.warn("mark paid with paid_at failed, trying fallback:", mpErr.message);
         const { error: fbErr } = await updateInvoice(supabase, inv.id, { status: "PAID" }, auditUserName());
         if (fbErr) {
@@ -3459,16 +3487,21 @@ ${photoPageHTML}
     }
     // GAP 1.6: Catat ke payments table untuk history + partial payment support
     // amount = sisa yang dibayar (total - paid_amount sebelumnya), bukan total — hindari double-count saat ada DP
-    try {
+    {
       const sisaDibayar = (inv.total || 0) - (Number(inv.paid_amount) || 0);
-      await supabase.from("payments").insert({
+      const { error: pmtErr } = await supabase.from("payments").insert({
         invoice_id: inv.id,
         amount: sisaDibayar > 0 ? sisaDibayar : (inv.total || 0),
         method: method,
         notes: notes || "Lunas",
         paid_at: paidAt,
       });
-    } catch (e) { console.warn("payments insert skip:", e?.message); }
+      if (pmtErr?.code === "23505" && pmtErr?.message?.includes("payment_proof")) {
+        showNotif("⚠️ Bukti pembayaran ini sudah pernah digunakan. Cek invoice yang terkait.");
+        return;
+      }
+      if (pmtErr) console.warn("payments insert skip:", pmtErr?.message);
+    }
     // Update customer last_service
     if (inv.phone) await supabase.from("customers").update({ last_service: paidAt.slice(0, 10) }).eq("phone", inv.phone);
     addAgentLog("PAYMENT_CONFIRMED", `Invoice ${inv.id} LUNAS — ${inv.customer} ${fmt(inv.total)} via ${method}`, "SUCCESS");
@@ -3484,6 +3517,12 @@ ${photoPageHTML}
       ? (inv.remaining_amount ?? ((inv.total || 0) - (inv.paid_amount || 0)))
       : (inv.total || 0);
     const totalTagihan = targetInvoices.reduce((s, i) => s + effectiveTagihan(i), 0);
+
+    // Block over-payment signifikan (toleransi Rp 1.000 untuk pembulatan)
+    if (totalReceived > totalTagihan + 1000) {
+      showNotif(`❌ Jumlah bayar (${fmt(totalReceived)}) melebihi total tagihan (${fmt(totalTagihan)}). Cek kembali.`);
+      return;
+    }
 
     // Greedy alokasi: invoice terlama dulu, pakai effective tagihan
     const sorted = [...targetInvoices].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -3518,8 +3557,8 @@ ${photoPageHTML}
 
     // Simpan 1 record payment untuk 1 transfer
     let paymentId = null;
-    try {
-      const { data: paymentRow } = await supabase.from("payments").insert({
+    {
+      const { data: paymentRow, error: gpErr } = await supabase.from("payments").insert({
         customer_phone: customerPhone,
         customer_name: sorted[0]?.customer,
         total_amount: totalReceived,
@@ -3532,8 +3571,13 @@ ${photoPageHTML}
         paid_at: paidAt,
         notes: `Group payment: ${invoiceIds.join(", ")}`,
       }).select("id").single();
+      if (gpErr?.code === "23505" && gpErr?.message?.includes("payment_proof")) {
+        showNotif("⚠️ Bukti pembayaran ini sudah pernah digunakan. Cek invoice yang terkait.");
+        return;
+      }
+      if (gpErr) console.warn("group payment insert:", gpErr?.message);
       paymentId = paymentRow?.id || null;
-    } catch (e) { console.warn("group payment insert:", e?.message); }
+    }
 
     // Junction table: 1 payment → banyak invoice
     if (paymentId) {
@@ -4792,7 +4836,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       currentUser={currentUser} supabase={supabase}
       showNotif={showNotif} showConfirm={showConfirm}
       auditUserName={auditUserName} TODAY={TODAY}
-      sendWA={sendWA} />
+      sendWA={sendWA} showUndoToast={showUndoToast} />
   );
 
   const renderOrders = () => (
@@ -4804,7 +4848,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setActiveMenu={setActiveMenu} setEditOrderItem={setEditOrderItem} setEditOrderForm={setEditOrderForm} setModalEditOrder={setModalEditOrder}
       setModalOrder={setModalOrder} showConfirm={showConfirm} showNotif={showNotif} dispatchStatus={dispatchStatus} sendDispatchWA={sendDispatchWA}
       deleteOrder={deleteOrder} addAgentLog={addAgentLog} auditUserName={auditUserName}
-      downloadRekapHarian={downloadRekapHarian} triggerRekapHarian={triggerRekapHarian} supabase={supabase} TODAY={TODAY} ORDER_PAGE_SIZE={ORDER_PAGE_SIZE} />
+      downloadRekapHarian={downloadRekapHarian} triggerRekapHarian={triggerRekapHarian} supabase={supabase} TODAY={TODAY} ORDER_PAGE_SIZE={ORDER_PAGE_SIZE}
+      showUndoToast={showUndoToast} insertOrder={insertOrder} />
   );
 
   // ============================================================
@@ -5110,7 +5155,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       agentLogPage={agentLogPage} setAgentLogPage={setAgentLogPage} />
   );
 
-  const renderDeletedAudit = () => <DeletedAuditView supabase={supabase} />;
+  const renderDeletedAudit = () => <DeletedAuditView supabase={supabase} currentUser={currentUser} showNotif={showNotif} setOrdersData={setOrdersData} setInvoicesData={setInvoicesData} />;
 
   // ============================================================
   // RENDER REPORTS
@@ -10369,7 +10414,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         ))}
                         {/* ── Group 2: Material ── */}
                         <div style={{ fontSize: 10, fontWeight: 700, color: cs.muted, letterSpacing: 1, textTransform: "uppercase", marginTop: 6 }}>Material</div>
-                        {INSTALL_ITEMS.filter(it => ["pipa_1pk", "pipa_2pk", "pipa_25pk", "pipa_3pk", "kabel_15", "kabel_25", "ducttape_biasa", "ducttape_lem", "jasa_pipa_ac", "jasa_pipa_ruko", "dinabolt", "karet_mounting", "breket_outdoor"].includes(it.key)).map(item => (
+                        {INSTALL_ITEMS.filter(it => ["pipa_1pk", "pipa_2pk", "pipa_25pk", "pipa_3pk", "kabel_15", "kabel_25", "ducttape_biasa", "ducttape_lem", "jasa_pipa_ac", "jasa_pipa_ruko", "dinabolt", "karet_mounting", "breket_outdoor", "paralon", "selang_flexibel_drain"].includes(it.key)).map(item => (
                           <div key={item.key} style={{
                             display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center",
                             background: parseFloat(laporanInstallItems[item.key] || 0) > 0 ? cs.green + "08" : cs.card,
@@ -11269,6 +11314,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {notification && (
         <div style={{ position: "fixed", bottom: 24, right: 24, background: "linear-gradient(135deg,#1e293b,#0f172a)", border: "1px solid " + cs.accent + "66", color: cs.text, padding: "12px 20px", borderRadius: 12, fontSize: 13, fontWeight: 600, zIndex: 1000, boxShadow: "0 8px 32px #000a", maxWidth: 360 }}>
           {notification}
+        </div>
+      )}
+
+      {/* Undo Toast — muncul 10 detik setelah delete */}
+      {undoToast && (
+        <div style={{ position: "fixed", bottom: notification ? 80 : 24, right: 24, background: "#1e293b", border: "1px solid #f9731666", color: cs.text, padding: "12px 16px", borderRadius: 12, fontSize: 13, fontWeight: 600, zIndex: 1001, boxShadow: "0 8px 32px #000a", maxWidth: 380, display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ flex: 1 }}>🗑 {undoToast.label}</span>
+          <button onClick={async () => { await undoToast.onUndo(); dismissUndoToast(); }}
+            style={{ background: "#f97316", color: "#fff", border: "none", borderRadius: 8, padding: "5px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+            ↩ Undo
+          </button>
+          <button onClick={dismissUndoToast}
+            style={{ background: "transparent", color: cs.muted, border: "none", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "0 2px" }}>✕</button>
         </div>
       )}
 
