@@ -3,7 +3,7 @@ import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { smartSearchNormalize } from "../lib/phone.js";
 
-function OrdersView({ ordersData, setOrdersData, orderFilter, setOrderFilter, orderTekFilter, setOrderTekFilter, orderDateFrom, setOrderDateFrom, orderDateTo, setOrderDateTo, searchOrder, setSearchOrder, orderPage, setOrderPage, orderServiceFilter, setOrderServiceFilter, currentUser, customersData, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setModalOrder, showConfirm, showNotif, dispatchStatus, sendDispatchWA, deleteOrder, addAgentLog, auditUserName, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, ORDER_PAGE_SIZE }) {
+function OrdersView({ ordersData, setOrdersData, orderFilter, setOrderFilter, orderTekFilter, setOrderTekFilter, orderDateFrom, setOrderDateFrom, orderDateTo, setOrderDateTo, searchOrder, setSearchOrder, orderPage, setOrderPage, orderServiceFilter, setOrderServiceFilter, currentUser, customersData, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setModalOrder, showConfirm, showNotif, dispatchStatus, sendDispatchWA, deleteOrder, addAgentLog, auditUserName, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, ORDER_PAGE_SIZE, showUndoToast, insertOrder }) {
 // ── SIM-1+2: search + teknisi filter + pagination ──
 const allTekOrd = ["Semua", ...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
 const sMap2 = { "Pending": "PENDING", "Confirmed": "CONFIRMED", "In Progress": "IN_PROGRESS", "Completed": "COMPLETED", "Cancelled": "CANCELLED" };
@@ -256,6 +256,9 @@ return (
                         showNotif("❌ Admin tidak bisa hapus order yang sudah selesai. Hubungi Owner.");
                         return;
                       }
+                      // Simpan snapshot untuk undo
+                      const allDeleted = [o, ...childOrders];
+
                       // Hapus child dulu
                       if (isMultiDayParent) {
                         const childIds = childOrders.map(c => c.id);
@@ -272,9 +275,19 @@ return (
                         `${currentUser?.role} hapus order ${o.id} — ${o.customer} (${o.service}) tgl ${o.date}`
                           + (isMultiDayParent ? ` + ${childOrders.length} child multi-day` : ""),
                         "WARNING");
-                      showNotif(isMultiDayParent
-                        ? `✅ ${childOrders.length + 1} order multi-hari berhasil dihapus`
-                        : "✅ Order " + o.id + " berhasil dihapus");
+
+                      // Undo toast 10 detik
+                      const undoLabel = isMultiDayParent
+                        ? `${allDeleted.length} order multi-hari "${o.customer}" dihapus`
+                        : `Order "${o.customer}" (${o.date}) dihapus`;
+                      showUndoToast?.(undoLabel, async () => {
+                        for (const ord of allDeleted) {
+                          const { last_changed_by: _, ...clean } = ord;
+                          await supabase.from("orders").insert(clean);
+                        }
+                        setOrdersData(prev => [...allDeleted, ...prev]);
+                        showNotif(`↩ ${allDeleted.length} order dikembalikan`);
+                      });
                     }} title={currentUser?.role === "Admin"
                       ? "Hapus order (tidak bisa jika sudah selesai/ada invoice)"
                       : "Hapus order (Owner)"}

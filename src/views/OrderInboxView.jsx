@@ -709,7 +709,7 @@ const EMPTY_FORM = {
   customer_id: null,
 };
 
-export default function OrderInboxView({ ordersData, setOrdersData, customersData, teknisiData, currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY, sendWA }) {
+export default function OrderInboxView({ ordersData, setOrdersData, customersData, teknisiData, currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY, sendWA, showUndoToast, insertOrder }) {
   const [form, setForm] = useState({ ...EMPTY_FORM, date: TODAY });
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -1207,7 +1207,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   }
 
   async function handleDelete(order) {
-    // Multi-hari: cek apakah ini induk dari pekerjaan multi-day
     const childOrders = ordersData.filter(o => o.parent_job_id === order.id && o.is_multi_day);
     const isMultiDayParent = childOrders.length > 0;
 
@@ -1227,7 +1226,10 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     });
     if (!ok) return;
 
-    // Hapus child dulu (kalau ada) supaya FK SET NULL tidak meninggalkan orphan-state di app
+    // Simpan snapshot untuk undo (parent + children)
+    const allDeleted = [order, ...childOrders];
+
+    // Hapus child dulu
     if (isMultiDayParent) {
       const childIds = childOrders.map(c => c.id);
       await supabase.from("orders").update({ last_changed_by: auditUserName() }).in("id", childIds);
@@ -1241,11 +1243,20 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     if (error) return showNotif("Gagal hapus: " + error.message);
     setOrdersData(prev => prev.filter(o => o.id !== order.id));
 
-    if (isMultiDayParent) {
-      showNotif(`✅ ${childOrders.length + 1} order multi-hari berhasil dihapus`);
-    } else {
-      showNotif("Order dihapus");
-    }
+    // Undo toast 10 detik — re-insert semua yang dihapus
+    const label = isMultiDayParent
+      ? `${childOrders.length + 1} order multi-hari "${order.customer}" dihapus`
+      : `Order "${order.customer}" (${order.date}) dihapus`;
+
+    showUndoToast?.(label, async () => {
+      // Re-insert dari snapshot, urut parent dulu lalu child (FK constraint)
+      for (const o of allDeleted) {
+        const { last_changed_by: _, ...clean } = o;
+        await supabase.from("orders").insert(clean);
+      }
+      setOrdersData(prev => [...allDeleted, ...prev]);
+      showNotif(`↩ ${allDeleted.length} order dikembalikan`);
+    });
   }
 
   // ── Grid data: order per hari per teknisi ──

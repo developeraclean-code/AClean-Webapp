@@ -31,18 +31,29 @@ export const updateInvoice = (supabase, id, fields, userName) =>
   supabase.from("invoices").update({ ...fields, last_changed_by: userName }).eq("id", id);
 
 export const markInvoicePaid = async (supabase, id, paidAt, userName) => {
-  // Saat melunasi: status=PAID, paid_at=now, paid_amount=total, remaining=0
-  // Hindari kondisi "PAID tapi remaining_amount masih ada" yg bikin display salah.
   const { data: inv } = await supabase
-    .from("invoices").select("total").eq("id", id).single();
-  const total = Number(inv?.total) || 0;
-  return supabase.from("invoices").update({
+    .from("invoices").select("total,status").eq("id", id).single();
+
+  if (!inv) return { data: null, error: { message: "Invoice tidak ditemukan" } };
+
+  const PAYABLE_STATUSES = ["UNPAID", "OVERDUE", "PARTIAL_PAID", "PENDING_APPROVAL"];
+  if (!PAYABLE_STATUSES.includes(inv.status)) {
+    return { data: null, error: { message: `Invoice sudah ${inv.status} — tidak bisa dibayar ulang` } };
+  }
+
+  const total = Number(inv.total) || 0;
+  const { data, error } = await supabase.from("invoices").update({
     status: "PAID",
     paid_at: paidAt,
     paid_amount: total,
     remaining_amount: 0,
     last_changed_by: userName,
-  }).eq("id", id);
+  }).eq("id", id).in("status", PAYABLE_STATUSES).select("id");
+
+  if (!error && (!data || data.length === 0)) {
+    return { data: null, error: { message: "Invoice sudah diproses oleh pengguna lain — refresh halaman" } };
+  }
+  return { data, error };
 };
 
 export const deleteInvoice = async (supabase, id, userName, reason = "MANUAL_DELETE") => {

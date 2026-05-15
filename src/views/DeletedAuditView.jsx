@@ -193,12 +193,14 @@ const selectStyle = {
   color: cs.text, padding: "5px 10px", fontSize: 12, cursor: "pointer",
 };
 
-function DeletedAuditView({ supabase }) {
-  const [tab, setTab] = useState("deleted"); // "deleted" | "gratis" | "highrisk"
-  const [deletedRows, setDeletedRows] = useState([]);
+function DeletedAuditView({ supabase, currentUser, showNotif, setOrdersData, setInvoicesData }) {
+  const [tab, setTab] = useState("deleted"); // "deleted" | "orders_deleted" | "gratis" | "highrisk"
+  const [deletedRows, setDeletedRows] = useState([]);       // invoice deletes
+  const [deletedOrders, setDeletedOrders] = useState([]);   // order deletes
   const [highRiskLogs, setHighRiskLogs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [restoring, setRestoring] = useState(null); // row.id yang sedang di-restore
 
   const [dateFilter, setDateFilter] = useState("Semua");
   const [userFilter, setUserFilter] = useState("Semua");
@@ -222,20 +224,16 @@ function DeletedAuditView({ supabase }) {
         return;
       }
 
-      const [deletedRes, highRiskRes] = await Promise.all([
-        supabase
-          .from("audit_log")
-          .select("*")
-          .eq("table_name", "invoices")
-          .eq("action", "DELETE")
-          .order("changed_at", { ascending: false })
-          .limit(500),
-        supabase
-          .from("agent_logs")
-          .select("*")
+      const [deletedRes, deletedOrdersRes, highRiskRes] = await Promise.all([
+        supabase.from("audit_log").select("*")
+          .eq("table_name", "invoices").eq("action", "DELETE")
+          .order("changed_at", { ascending: false }).limit(500),
+        supabase.from("audit_log").select("*")
+          .eq("table_name", "orders").eq("action", "DELETE")
+          .order("changed_at", { ascending: false }).limit(500),
+        supabase.from("agent_logs").select("*")
           .in("action", HIGH_RISK_ACTIONS)
-          .order("created_at", { ascending: false })
-          .limit(500),
+          .order("created_at", { ascending: false }).limit(500),
       ]);
       if (deletedRes.error) {
         if (deletedRes.error.code === "PGRST301" || deletedRes.error.message?.includes("JWT")) {
@@ -246,6 +244,7 @@ function DeletedAuditView({ supabase }) {
       }
       if (highRiskRes.error) throw new Error("agent_logs: " + highRiskRes.error.message);
       setDeletedRows(deletedRes.data || []);
+      setDeletedOrders(deletedOrdersRes.data || []);
       setHighRiskLogs(highRiskRes.data || []);
     } catch (e) {
       setError(e.message);
@@ -264,6 +263,7 @@ function DeletedAuditView({ supabase }) {
   };
 
   const activeRows = tab === "deleted" ? deletedRows
+    : tab === "orders_deleted" ? deletedOrders
     : tab === "gratis" ? highRiskLogs.filter(l => l.action === "ADMIN_EDIT_GRATIS_APPROVED")
     : highRiskLogs;
 
@@ -307,8 +307,44 @@ function DeletedAuditView({ supabase }) {
   });
 
   const deletedCount = deletedRows.length;
+  const deletedOrdersCount = deletedOrders.length;
   const gratisCount = highRiskLogs.filter(l => l.action === "ADMIN_EDIT_GRATIS_APPROVED").length;
   const highRiskCount = highRiskLogs.length;
+  const isOwner = currentUser?.role === "Owner";
+
+  // Restore invoice dari before_data
+  const handleRestoreInvoice = async (row) => {
+    if (!isOwner) return;
+    const d = row.before_data;
+    if (!d || !d.id) { showNotif?.("❌ Data tidak lengkap untuk restore"); return; }
+    setRestoring(row.id);
+    const { error } = await supabase.from("invoices").insert(d);
+    setRestoring(null);
+    if (error) {
+      if (error.code === "23505") showNotif?.("⚠️ Invoice " + d.id + " sudah ada (mungkin sudah di-restore sebelumnya)");
+      else showNotif?.("❌ Gagal restore: " + error.message);
+      return;
+    }
+    setInvoicesData?.(prev => [d, ...prev]);
+    showNotif?.("✅ Invoice " + d.id + " berhasil di-restore");
+  };
+
+  // Restore order dari before_data
+  const handleRestoreOrder = async (row) => {
+    if (!isOwner) return;
+    const d = row.before_data;
+    if (!d || !d.id) { showNotif?.("❌ Data tidak lengkap untuk restore"); return; }
+    setRestoring(row.id);
+    const { error } = await supabase.from("orders").insert(d);
+    setRestoring(null);
+    if (error) {
+      if (error.code === "23505") showNotif?.("⚠️ Order " + d.id + " sudah ada");
+      else showNotif?.("❌ Gagal restore: " + error.message);
+      return;
+    }
+    setOrdersData?.(prev => [d, ...prev]);
+    showNotif?.("✅ Order " + d.id + " (" + (d.customer || "") + ") berhasil di-restore");
+  };
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -333,9 +369,10 @@ function DeletedAuditView({ supabase }) {
       </div>
 
       {/* Stats Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
         {[
           { label: "Invoice Dihapus", value: deletedCount, color: C.red, icon: "🗑" },
+          { label: "Order Dihapus", value: deletedOrdersCount, color: C.red, icon: "📋" },
           { label: "Edit Gratis (WARNING)", value: gratisCount, color: C.yellow, icon: "⚠" },
           { label: "Total High-Risk Actions", value: highRiskCount, color: C.accent, icon: "🔴" },
         ].map(({ label, value, color, icon }) => (
@@ -349,10 +386,19 @@ function DeletedAuditView({ supabase }) {
         ))}
       </div>
 
+      {isOwner && (
+        <div style={{ fontSize: 11, color: "#f97316", background: "#f9731610", border: "1px solid #f9731633", borderRadius: 8, padding: "6px 12px" }}>
+          🔑 Owner: Tombol <strong>Restore</strong> tersedia di setiap baris untuk mengembalikan data yang terhapus.
+        </div>
+      )}
+
       {/* Tabs */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button style={tabStyle("deleted")} onClick={() => changeTab("deleted")}>
           🗑 Invoice Dihapus ({deletedCount})
+        </button>
+        <button style={tabStyle("orders_deleted")} onClick={() => changeTab("orders_deleted")}>
+          📋 Order Dihapus ({deletedOrdersCount})
         </button>
         <button style={tabStyle("gratis")} onClick={() => changeTab("gratis")}>
           ⚠ Edit Gratis ({gratisCount})
@@ -431,7 +477,11 @@ function DeletedAuditView({ supabase }) {
             Tidak ada data untuk filter ini.
           </div>
         ) : tab === "deleted" ? (
-          <DeletedTable rows={pageRows} onViewSnapshot={setSnapshotRow} C={C} />
+          <DeletedTable rows={pageRows} onViewSnapshot={setSnapshotRow} C={C}
+            isOwner={isOwner} onRestore={handleRestoreInvoice} restoring={restoring} />
+        ) : tab === "orders_deleted" ? (
+          <DeletedOrdersTable rows={pageRows} onViewSnapshot={setSnapshotRow} C={C}
+            isOwner={isOwner} onRestore={handleRestoreOrder} restoring={restoring} />
         ) : (
           <HighRiskTable rows={pageRows} onViewDetail={setDetailLog} isGratis={tab === "gratis"} C={C} />
         )}
@@ -456,12 +506,12 @@ function DeletedAuditView({ supabase }) {
   );
 }
 
-function DeletedTable({ rows, onViewSnapshot, C }) {
+function DeletedTable({ rows, onViewSnapshot, C, isOwner, onRestore, restoring }) {
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
       <thead>
         <tr style={{ background: C.surface }}>
-          {["Waktu Hapus", "Penyebab", "Invoice ID", "Pelanggan", "Total", "Status Lama", "Oleh", "Bukti"].map(h => (
+          {["Waktu Hapus", "Penyebab", "Invoice ID", "Pelanggan", "Total", "Status Lama", "Oleh", "Aksi"].map(h => (
             <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: C.muted, fontWeight: 600, fontSize: 11, borderBottom: "1px solid " + C.border, whiteSpace: "nowrap" }}>{h}</th>
           ))}
         </tr>
@@ -473,6 +523,7 @@ function DeletedTable({ rows, onViewSnapshot, C }) {
           const userName = parseUserName(row.changed_by);
           const meta = REASON_META[reason];
           const isRisky = meta?.risk ?? true;
+          const isRestoring = restoring === row.id;
           return (
             <tr key={row.id} style={{
               borderBottom: "1px solid " + C.border,
@@ -484,18 +535,58 @@ function DeletedTable({ rows, onViewSnapshot, C }) {
               <td style={{ padding: "10px 14px", color: C.text, fontWeight: 600 }}>{d.customer || d.customer_name || <span style={{ color: C.muted }}>-</span>}</td>
               <td style={{ padding: "10px 14px", color: isRisky ? C.red : C.green, fontWeight: 700, whiteSpace: "nowrap" }}>{fmtRupiah(d.total)}</td>
               <td style={{ padding: "10px 14px" }}>
-                <span style={{
-                  fontSize: 10, padding: "2px 8px", borderRadius: 4,
-                  background: C.yellow + "22", color: C.yellow, border: "1px solid " + C.yellow + "44",
-                  fontFamily: "monospace", fontWeight: 700,
-                }}>{d.status || "-"}</span>
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: C.yellow + "22", color: C.yellow, border: "1px solid " + C.yellow + "44", fontFamily: "monospace", fontWeight: 700 }}>{d.status || "-"}</span>
               </td>
               <td style={{ padding: "10px 14px", color: isRisky ? C.red : C.muted, fontWeight: isRisky ? 600 : 400 }}>{userName || "system"}</td>
+              <td style={{ padding: "10px 14px", display: "flex", gap: 6, whiteSpace: "nowrap" }}>
+                <button onClick={() => onViewSnapshot(row)} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid " + C.border, background: C.surface, color: C.muted, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>Lihat</button>
+                {isOwner && (
+                  <button onClick={() => onRestore(row)} disabled={isRestoring} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #22c55e66", background: isRestoring ? C.surface : "#22c55e18", color: isRestoring ? C.muted : "#22c55e", cursor: isRestoring ? "not-allowed" : "pointer", fontSize: 11, fontWeight: 700 }}>
+                    {isRestoring ? "..." : "↩ Restore"}
+                  </button>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function DeletedOrdersTable({ rows, onViewSnapshot, C, isOwner, onRestore, restoring }) {
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+      <thead>
+        <tr style={{ background: C.surface }}>
+          {["Waktu Hapus", "Order ID", "Pelanggan", "Service", "Tanggal", "Status Lama", "Dihapus Oleh", "Aksi"].map(h => (
+            <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: C.muted, fontWeight: 600, fontSize: 11, borderBottom: "1px solid " + C.border, whiteSpace: "nowrap" }}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => {
+          const d = row.before_data || {};
+          const userName = parseUserName(row.changed_by);
+          const isRestoring = restoring === row.id;
+          return (
+            <tr key={row.id} style={{ borderBottom: "1px solid " + C.border, background: i % 2 === 0 ? "transparent" : C.surface + "44" }}>
+              <td style={{ padding: "10px 14px", color: C.muted, whiteSpace: "nowrap", fontSize: 11 }}>{fmtDate(row.changed_at)}</td>
+              <td style={{ padding: "10px 14px", fontFamily: "monospace", color: C.accent, fontSize: 11 }}>{row.row_id}</td>
+              <td style={{ padding: "10px 14px", color: C.text, fontWeight: 600 }}>{d.customer || "-"}</td>
+              <td style={{ padding: "10px 14px", color: C.muted }}>{d.service}{d.type ? " - " + d.type : ""}</td>
+              <td style={{ padding: "10px 14px", color: C.muted, whiteSpace: "nowrap" }}>{d.date || "-"}</td>
               <td style={{ padding: "10px 14px" }}>
-                <button onClick={() => onViewSnapshot(row)} style={{
-                  padding: "4px 12px", borderRadius: 6, border: "1px solid " + C.border,
-                  background: C.surface, color: C.muted, cursor: "pointer", fontSize: 11, fontWeight: 600,
-                }}>Lihat Data</button>
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: C.red + "22", color: C.red, border: "1px solid " + C.red + "44", fontFamily: "monospace", fontWeight: 700 }}>{d.status || "-"}</span>
+              </td>
+              <td style={{ padding: "10px 14px", color: C.muted }}>{userName || "system"}</td>
+              <td style={{ padding: "10px 14px", display: "flex", gap: 6, whiteSpace: "nowrap" }}>
+                <button onClick={() => onViewSnapshot(row)} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid " + C.border, background: C.surface, color: C.muted, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>Lihat</button>
+                {isOwner && (
+                  <button onClick={() => onRestore(row)} disabled={isRestoring} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #22c55e66", background: isRestoring ? C.surface : "#22c55e18", color: isRestoring ? C.muted : "#22c55e", cursor: isRestoring ? "not-allowed" : "pointer", fontSize: 11, fontWeight: 700 }}>
+                    {isRestoring ? "..." : "↩ Restore"}
+                  </button>
+                )}
               </td>
             </tr>
           );
