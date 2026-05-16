@@ -2,6 +2,17 @@ import React, { lazy, Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 
+// Auto-reload saat dynamic import gagal (deploy baru di Vercel — asset hash lama hilang).
+// Cek flag agar tidak infinite reload loop.
+window.addEventListener('vite:preloadError', (event) => {
+  if (sessionStorage.getItem('chunk_reload') === '1') return;
+  sessionStorage.setItem('chunk_reload', '1');
+  event.preventDefault();
+  window.location.reload();
+});
+// Reset flag setelah app load sukses
+setTimeout(() => sessionStorage.removeItem('chunk_reload'), 5000);
+
 const CustomerPortalView = lazy(() => import('./views/CustomerPortalView.jsx'))
 
 // Deteksi path /status/:token — render portal tanpa App shell
