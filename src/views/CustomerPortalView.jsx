@@ -209,20 +209,62 @@ export default function CustomerPortalView({ token: tokenProp }) {
 
 // ── SUB-COMPONENTS ──
 
+const TIERS = [
+  { label: "Bronze",   min: 1,  max: 4,  badge: "🥉", color: "#a16207", bg: "#fef9c3", border: "#fde047" },
+  { label: "Silver",   min: 5,  max: 9,  badge: "🥈", color: "#475569", bg: "#f1f5f9", border: "#94a3b8" },
+  { label: "Gold",     min: 10, max: 14, badge: "🥇", color: "#b45309", bg: "#fffbeb", border: "#fbbf24" },
+  { label: "Platinum", min: 15, max: Infinity, badge: "💎", color: "#6d28d9", bg: "#f5f3ff", border: "#a78bfa" },
+];
+
+function getTier(count) {
+  return TIERS.find(t => count >= t.min && count <= t.max) || TIERS[0];
+}
+
 function CustomerCard({ data }) {
+  const totalOrders = data.orders?.length || 0;
+  const tier = getTier(totalOrders);
+  const nextTier = TIERS[TIERS.indexOf(tier) + 1] || null;
+  const progressPct = nextTier
+    ? Math.min(100, Math.round(((totalOrders - tier.min) / (nextTier.min - tier.min)) * 100))
+    : 100;
+
   return (
     <div style={s.customerCard}>
-      <div style={s.customerLabel}>Portal Servis</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={s.customerLabel}>Portal Servis</div>
+        {totalOrders >= 1 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5, background: tier.bg, border: "1px solid " + tier.border, borderRadius: 20, padding: "3px 10px" }}>
+            <span style={{ fontSize: 14 }}>{tier.badge}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: tier.color }}>{tier.label}</span>
+          </div>
+        )}
+      </div>
       <div style={s.customerName}>{data.customer_name || "Pelanggan AClean"}</div>
       <div style={s.customerPhone}>📱 {data.phone}</div>
       <div style={s.customerMeta}>
-        <span style={s.badge}>
-          {data.orders?.length || 0} kali servis
-        </span>
+        <span style={s.badge}>{totalOrders} kali servis</span>
         {data.orders?.length > 0 && (
           <span style={s.badge}>Servis terakhir {fmtDateShort(data.orders[0]?.date)}</span>
         )}
       </div>
+      {nextTier && totalOrders >= 1 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+            <span style={{ fontSize: 10, color: "#64748b" }}>
+              {nextTier.min - totalOrders} servis lagi menuju {nextTier.badge} {nextTier.label}
+            </span>
+            <span style={{ fontSize: 10, color: "#64748b" }}>{progressPct}%</span>
+          </div>
+          <div style={{ height: 6, background: "#e2e8f0", borderRadius: 99, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: progressPct + "%", background: "linear-gradient(90deg,#38bdf8,#0369a1)", borderRadius: 99, transition: "width 0.5s" }} />
+          </div>
+        </div>
+      )}
+      {!nextTier && totalOrders >= 1 && (
+        <div style={{ marginTop: 8, fontSize: 11, color: "#6d28d9", fontWeight: 600 }}>
+          💎 Anda adalah Pelanggan Platinum kami! Terima kasih atas kepercayaan Anda.
+        </div>
+      )}
     </div>
   );
 }

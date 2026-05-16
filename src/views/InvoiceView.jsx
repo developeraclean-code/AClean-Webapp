@@ -79,7 +79,26 @@ const savePayment = async (inv) => {
     setPaySaving(false);
   }
 };
-const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation"
+const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation" | "voucher"
+const [voucherList, setVoucherList]     = useState([]);
+const [voucherStats, setVoucherStats]   = useState(null);
+const [voucherFilter, setVoucherFilter] = useState("active"); // "all" | "active" | "claimed" | "expired"
+const [voucherSearch, setVoucherSearch] = useState("");
+const [voucherLoading, setVoucherLoading] = useState(false);
+
+const loadVouchers = async (filter = voucherFilter, search = voucherSearch) => {
+  setVoucherLoading(true);
+  try {
+    const hdrs = await apiHeaders();
+    const params = new URLSearchParams({ status: filter });
+    if (search.trim()) params.set("search", search.trim());
+    const r = await fetch("/api/admin-vouchers?" + params.toString(), { headers: hdrs });
+    const d = r.ok ? await r.json() : {};
+    setVoucherList(d.vouchers || []);
+    setVoucherStats(d.stats || null);
+  } catch { /* silent */ }
+  finally { setVoucherLoading(false); }
+};
 const [quoPDFData, setQuoPDFData] = useState(null); // quotation untuk preview PDF
 const [addonModalInvId, setAddonModalInvId] = useState(null);
 const [addonItems, setAddonItems] = useState([]);
@@ -204,13 +223,17 @@ const curPgI = Math.min(invoicePage, totPgI);
 const pageInv = filteredInv.slice((curPgI - 1) * INV_PAGE_SIZE, curPgI * INV_PAGE_SIZE);
 return (
   <div style={{ display: "grid", gap: 14 }}>
-    {/* Sub-tab: Invoice | Quotation — Quotation disembunyikan untuk Finance */}
+    {/* Sub-tab: Invoice | Quotation | Voucher */}
     <div style={{ display: "flex", gap: 4, borderBottom: "1px solid " + cs.border, paddingBottom: 8 }}>
       {[
         { key: "invoice",   label: "🧾 Invoice" },
         ...(currentUser?.role !== "Finance" ? [{ key: "quotation", label: "📋 Quotation" }] : []),
+        ...(["Owner","Admin"].includes(currentUser?.role) ? [{ key: "voucher", label: "🎁 Voucher" }] : []),
       ].map(t => (
-        <button key={t.key} onClick={() => setInvoiceSubTab(t.key)}
+        <button key={t.key} onClick={() => {
+          setInvoiceSubTab(t.key);
+          if (t.key === "voucher") loadVouchers("active", "");
+        }}
           style={{ padding: "7px 18px", borderRadius: "8px 8px 0 0", border: "none", cursor: "pointer", fontSize: 13, fontWeight: invoiceSubTab === t.key ? 800 : 500,
             background: invoiceSubTab === t.key ? cs.accent + "22" : "transparent",
             color: invoiceSubTab === t.key ? cs.accent : cs.muted }}>
@@ -273,6 +296,23 @@ return (
           </div>
         </div>
       </div>
+    )}
+
+    {/* Voucher Admin sub-view */}
+    {invoiceSubTab === "voucher" && (
+      <VoucherAdminTab
+        voucherList={voucherList}
+        voucherStats={voucherStats}
+        voucherFilter={voucherFilter}
+        setVoucherFilter={setVoucherFilter}
+        voucherSearch={voucherSearch}
+        setVoucherSearch={setVoucherSearch}
+        voucherLoading={voucherLoading}
+        loadVouchers={loadVouchers}
+        apiHeaders={apiHeaders}
+        showNotif={showNotif}
+        fmt={fmt}
+      />
     )}
 
     {/* Invoice view (default) */}
@@ -1291,6 +1331,114 @@ return (
     </>}
   </div>
 );
+}
+
+// ── Voucher Admin Tab ──────────────────────────────────────────────────────────
+function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherFilter, voucherSearch, setVoucherSearch, voucherLoading, loadVouchers, apiHeaders, showNotif, fmt }) {
+  const [cancellingId, setCancellingId] = useState(null);
+
+  const handleCancel = async (v) => {
+    if (!window.confirm(`Batalkan voucher ${v.code} milik ${v.customer_name}?`)) return;
+    setCancellingId(v.id);
+    try {
+      const hdrs = await apiHeaders();
+      const r = await fetch("/api/cancel-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ id: v.id }) });
+      if (r.ok) {
+        showNotif(`✅ Voucher ${v.code} dibatalkan`);
+        loadVouchers(voucherFilter, voucherSearch);
+      } else showNotif("❌ Gagal membatalkan voucher", "error");
+    } catch { showNotif("❌ Gagal membatalkan voucher", "error"); }
+    finally { setCancellingId(null); }
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const getVoucherStatus = (v) => {
+    if (v.claimed_at) return { label: "Diklaim", color: "#22c55e", bg: "#f0fdf4" };
+    if (!v.is_valid)  return { label: "Dibatalkan", color: "#94a3b8", bg: "#f1f5f9" };
+    if (v.expires_at && v.expires_at < today) return { label: "Expired", color: "#f87171", bg: "#fef2f2" };
+    return { label: "Aktif", color: "#0ea5e9", bg: "#f0f9ff" };
+  };
+
+  const typeLabel = (v) => v.type === "discount_pct" ? `Diskon ${v.value}%`
+    : v.type === "free_unit" ? `${v.value} Unit Gratis` : v.type;
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      {/* Stats */}
+      {voucherStats && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+          {[
+            { label: "Total", val: voucherStats.total, color: cs.text },
+            { label: "Aktif", val: voucherStats.active, color: "#0ea5e9" },
+            { label: "Diklaim", val: voucherStats.claimed, color: "#22c55e" },
+            { label: "Expired", val: voucherStats.expired, color: "#f87171" },
+          ].map(s => (
+            <div key={s.label} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.val}</div>
+              <div style={{ fontSize: 11, color: cs.muted }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Filter + Search */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 4 }}>
+          {["active","claimed","expired","all"].map(f => (
+            <button key={f} onClick={() => { setVoucherFilter(f); loadVouchers(f, voucherSearch); }}
+              style={{ padding: "6px 14px", borderRadius: 20, border: "1px solid " + (voucherFilter === f ? cs.accent : cs.border), background: voucherFilter === f ? cs.accent + "22" : "transparent", color: voucherFilter === f ? cs.accent : cs.muted, cursor: "pointer", fontSize: 12, fontWeight: voucherFilter === f ? 700 : 400 }}>
+              {{ active: "Aktif", claimed: "Diklaim", expired: "Expired", all: "Semua" }[f]}
+            </button>
+          ))}
+        </div>
+        <input value={voucherSearch} onChange={e => setVoucherSearch(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && loadVouchers(voucherFilter, voucherSearch)}
+          placeholder="Cari kode / phone / nama..."
+          style={{ flex: 1, minWidth: 180, padding: "7px 12px", borderRadius: 8, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12 }} />
+        <button onClick={() => loadVouchers(voucherFilter, voucherSearch)}
+          style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: cs.accent, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+          {voucherLoading ? "..." : "Cari"}
+        </button>
+      </div>
+
+      {/* List */}
+      {voucherLoading ? (
+        <div style={{ textAlign: "center", padding: 32, color: cs.muted }}>Memuat voucher...</div>
+      ) : voucherList.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 32, color: cs.muted }}>Tidak ada voucher ditemukan</div>
+      ) : (
+        <div style={{ display: "grid", gap: 6 }}>
+          {voucherList.map(v => {
+            const st = getVoucherStatus(v);
+            const canCancel = !v.claimed_at && v.is_valid;
+            return (
+              <div key={v.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px", display: "flex", gap: 12, alignItems: "center" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, fontSize: 13, color: cs.text, letterSpacing: 1 }}>{v.code}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 12, background: st.bg, color: st.color }}>{st.label}</span>
+                    <span style={{ fontSize: 11, color: cs.muted, background: cs.surface, padding: "2px 8px", borderRadius: 12 }}>{typeLabel(v)}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: cs.muted, marginTop: 3 }}>
+                    {v.customer_name || "—"} · {v.phone}
+                    {v.expires_at && <span style={{ marginLeft: 8 }}>Exp: {v.expires_at}</span>}
+                    {v.claimed_at && v.claimed_order_id && <span style={{ marginLeft: 8, color: "#22c55e" }}>→ {v.claimed_order_id}</span>}
+                  </div>
+                  {v.description && <div style={{ fontSize: 11, color: cs.muted, marginTop: 2, fontStyle: "italic" }}>{v.description}</div>}
+                </div>
+                {canCancel && (
+                  <button onClick={() => handleCancel(v)} disabled={cancellingId === v.id}
+                    style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #f8717144", background: "#fef2f2", color: "#f87171", cursor: cancellingId === v.id ? "not-allowed" : "pointer", fontSize: 11, fontWeight: 600, flexShrink: 0 }}>
+                    {cancellingId === v.id ? "..." : "Batalkan"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default memo(InvoiceView);

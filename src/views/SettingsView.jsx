@@ -815,8 +815,20 @@ function SettingsView({
                   {
                     key: "voucher_loyalty_enabled",
                     label: "Voucher Loyalty Otomatis",
-                    desc: "Beri voucher otomatis saat customer mencapai milestone: 3x servis (diskon 10%), 5x (1 unit gratis), 10x (diskon 20%).",
+                    desc: "Beri voucher otomatis saat milestone: 2x (diskon 5%), 5x (diskon 10%), 10x (1 unit gratis), 15x (diskon 15%).",
                     icon: "🎁",
+                  },
+                  {
+                    key: "voucher_winback_enabled",
+                    label: "Voucher Win-Back (Inactive >180 hari)",
+                    desc: "Kirim diskon 10% ke customer yang >6 bulan tidak servis. Cooldown 30 hari per customer.",
+                    icon: "💌",
+                  },
+                  {
+                    key: "voucher_expiry_reminder_enabled",
+                    label: "Reminder Voucher Akan Expired (H-3)",
+                    desc: "WA otomatis H-3 sebelum voucher habis masa berlakunya. Hanya sekali per voucher.",
+                    icon: "⏰",
                   },
                 ].map(({ key, label, desc, icon }) => {
                   const isOn = appSettings[key] === "true";

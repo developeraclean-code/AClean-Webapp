@@ -638,23 +638,25 @@ async function taskRatingPrompt() {
           .in("status",["COMPLETED","INVOICE_APPROVED"]);
 
         const MILESTONES = [
-          { at: 3,  type: "discount_pct", value: 10, desc: "Diskon 10% untuk servis berikutnya — hadiah pelanggan setia ke-3 kali!" },
-          { at: 5,  type: "free_unit",    value: 1,  desc: "1 unit cuci AC GRATIS — terima kasih sudah setia 5 kali servis!" },
-          { at: 10, type: "discount_pct", value: 20, desc: "Diskon 20% untuk servis berikutnya — VIP Member 10x servis!" },
+          { at: 2,  type: "discount_pct", value: 5,  desc: "Diskon 5% untuk servis berikutnya — terima kasih sudah kembali!" },
+          { at: 5,  type: "discount_pct", value: 10, desc: "Diskon 10% untuk servis berikutnya — pelanggan setia ke-5 kali!" },
+          { at: 10, type: "free_unit",    value: 1,  desc: "1 unit cuci AC GRATIS — terima kasih sudah setia 10 kali servis!" },
+          { at: 15, type: "discount_pct", value: 15, desc: "Diskon 15% untuk servis berikutnya — VIP Member 15x servis!" },
         ];
 
         const milestone = MILESTONES.find(m => m.at === count);
         if (milestone) {
-          // Cek belum pernah dapat voucher milestone ini
-          const code = `ACL-${o.phone.slice(-4)}-${milestone.at}X`;
-          const { data: existVoucher } = await sb.from("customer_vouchers").select("id").eq("code", code).limit(1);
-          if (!existVoucher?.length) {
-            const expiresAt = new Date(Date.now() + 90*24*60*60*1000).toISOString().slice(0,10);
-            await sb.from("customer_vouchers").insert({
-              phone: o.phone, customer_name: o.customer,
-              code, type: milestone.type, value: milestone.value,
-              description: milestone.desc, expires_at: expiresAt,
-            });
+          const { randomBytes } = await import("crypto");
+          const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+          const code = "ACL-" + Array.from(randomBytes(6)).map(b => chars[b % chars.length]).join("");
+          const expiresAt = new Date(Date.now() + 90*24*60*60*1000).toISOString().slice(0,10);
+          const { error: insErr } = await sb.from("customer_vouchers").insert({
+            phone: o.phone, customer_name: o.customer,
+            code, type: milestone.type, value: milestone.value,
+            description: milestone.desc, expires_at: expiresAt,
+            trigger: "milestone", milestone_at: milestone.at, is_valid: true,
+          });
+          if (!insErr) {
             const voucherMsg =
               `🎁 *Voucher Spesial untuk ${o.customer}!*\n\n` +
               `${milestone.desc}\n\n` +
@@ -677,7 +679,7 @@ async function taskRatingPrompt() {
 // TASK 10: Servis Reminder — customer >90 hari tidak servis
 // ══════════════════════════════════════════════════
 async function taskServisReminder() {
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["servis_reminder_enabled","customer_portal_enabled"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["servis_reminder_enabled","customer_portal_enabled","voucher_winback_enabled"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
 
   if (togMap["servis_reminder_enabled"] !== "true") {
@@ -695,7 +697,7 @@ async function taskServisReminder() {
 
   // Customer dengan last_service < 90 hari lalu, ada phone, aktif
   const { data: customers } = await sb.from("customers")
-    .select("id,name,phone,last_service,last_rating_request")
+    .select("id,name,phone,last_service,last_rating_request,last_winback_sent")
     .not("phone","is",null)
     .lt("last_service", cutoff)
     .not("last_service","is",null)
@@ -741,10 +743,105 @@ async function taskServisReminder() {
       // Update last_rating_request agar tidak spam
       await sb.from("customers").update({ last_rating_request: todayStr }).eq("id", c.id);
       await log("SERVIS_REMINDER_SENT", `Reminder → ${c.name} (${daysSince} hari sejak servis terakhir)`, "SUCCESS");
+
+      // Win-back voucher jika customer inactive >180 hari dan fitur aktif
+      if (togMap["voucher_winback_enabled"] === "true" && daysSince >= 180) {
+        try {
+          // Cooldown 30 hari per customer untuk winback
+          const lastWinback = c.last_winback_sent;
+          if (!lastWinback || Math.floor((Date.now()-new Date(lastWinback).getTime())/86400000) >= 30) {
+            const { randomBytes } = await import("crypto");
+            const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+            const wbCode = "ACL-" + Array.from(randomBytes(6)).map(b => chars[b % chars.length]).join("");
+            const expiresAt = new Date(Date.now() + 60*24*60*60*1000).toISOString().slice(0,10);
+            const { error: wbErr } = await sb.from("customer_vouchers").insert({
+              phone: c.phone, customer_name: c.name,
+              code: wbCode, type: "discount_pct", value: 10,
+              description: "Diskon 10% spesial — kami kangen Anda! Gunakan saat servis berikutnya.",
+              expires_at: expiresAt, trigger: "winback", is_valid: true,
+            });
+            if (!wbErr) {
+              const wbMsg =
+                `Halo ${c.name}! 💙\n\n` +
+                `Sudah lama tidak berjumpa — kami kangen pelanggan setia kami!\n\n` +
+                `Sebagai tanda rindu, kami siapkan voucher spesial untuk Anda:\n\n` +
+                `🎁 *Diskon 10%* untuk servis berikutnya\n` +
+                `Kode: *${wbCode}*\n` +
+                `Berlaku hingga: ${expiresAt}\n\n` +
+                `Sebutkan kode ini saat booking. Kami siap melayani! ❄️\n— AClean Service`;
+              await sendWA(c.phone, wbMsg);
+              await sb.from("customers").update({ last_winback_sent: todayStr }).eq("id", c.id);
+              await log("WINBACK_VOUCHER", `Win-back ${wbCode} → ${c.name} (${daysSince} hari inactive)`, "SUCCESS");
+            }
+          }
+        } catch(e) { /* winback opsional — tidak blok */ }
+      }
     } else skipped++;
   }
 
   return { sent, skipped };
+}
+
+// ══════════════════════════════════════════════════
+// TASK 11: Voucher Expiry Reminder — H-3 sebelum expired
+// ══════════════════════════════════════════════════
+async function taskVoucherExpiryReminder() {
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["voucher_expiry_reminder_enabled","customer_portal_enabled"]);
+  const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
+
+  if (togMap["voucher_expiry_reminder_enabled"] !== "true") {
+    await log("VOUCHER_EXPIRY","Dilewati — voucher_expiry_reminder_enabled OFF","INFO");
+    return { skipped: true };
+  }
+
+  const APP_URL = process.env.APP_URL || "https://aclean.id";
+  const today = new Date();
+  const in3days = new Date(today.getTime() + 3*24*60*60*1000).toISOString().slice(0,10);
+  const todayStr = today.toISOString().slice(0,10);
+
+  // Cari voucher: expires dalam 3 hari, belum diklaim, valid, reminder belum dikirim
+  const { data: vouchers } = await sb.from("customer_vouchers")
+    .select("id,phone,customer_name,code,type,value,expires_at")
+    .is("claimed_at", null)
+    .eq("is_valid", true)
+    .eq("reminder_sent", false)
+    .gte("expires_at", todayStr)
+    .lte("expires_at", in3days)
+    .limit(100);
+
+  if (!vouchers?.length) return { sent: 0, reason: "Tidak ada voucher yang akan expired dalam 3 hari" };
+
+  let sent = 0;
+  for (const v of vouchers) {
+    if (!v.phone) continue;
+
+    const typeLabel = v.type === "discount_pct" ? `Diskon ${v.value}%`
+      : v.type === "free_unit" ? `${v.value} Unit Cuci Gratis`
+      : "Voucher Servis";
+
+    // Get portal token untuk link
+    const { data: tokRows } = await sb.from("customer_tokens")
+      .select("token").eq("phone", v.phone).limit(1);
+    const token = tokRows?.[0]?.token;
+    const portalLine = token
+      ? `\n\nLihat voucher di portal Anda:\n${APP_URL}/status/${token}`
+      : "";
+
+    const msg =
+      `Halo ${v.customer_name || "Pelanggan"}! ⏰\n\n` +
+      `Voucher Anda *${typeLabel}* (kode: *${v.code}*) akan habis masa berlakunya pada *${v.expires_at}*.\n\n` +
+      `Segera gunakan sebelum expired! Sebutkan kode ini saat booking.${portalLine}\n\n` +
+      `— AClean Service`;
+
+    const ok = await sendWA(v.phone, msg);
+    if (ok) {
+      sent++;
+      await sb.from("customer_vouchers").update({ reminder_sent: true }).eq("id", v.id);
+      await log("VOUCHER_EXPIRY_SENT", `Reminder → ${v.customer_name} kode ${v.code} exp ${v.expires_at}`, "SUCCESS");
+    }
+  }
+
+  return { sent, total: vouchers.length };
 }
 
 // TASK 8: Weekly Report — Minggu 09:00 WIB (02:00 UTC)
@@ -878,9 +975,10 @@ export default async function handler(req, res) {
     else if (task === "bukti-bayar")   result = await taskScanBuktiBayar();
     else if (task === "backup")        result = await taskBackupData();
     else if (task === "weekly")        result = await taskWeeklyReport();
-    else if (task === "rating-prompt") result = await taskRatingPrompt();
-    else if (task === "servis-reminder") result = await taskServisReminder();
-    else                               result = await taskReminder();
+    else if (task === "rating-prompt")    result = await taskRatingPrompt();
+    else if (task === "servis-reminder")  result = await taskServisReminder();
+    else if (task === "voucher-expiry")   result = await taskVoucherExpiryReminder();
+    else                                  result = await taskReminder();
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });
   } catch(err) {

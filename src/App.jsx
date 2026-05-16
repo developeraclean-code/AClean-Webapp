@@ -920,6 +920,10 @@ export default function ACleanWebApp() {
   const [editAddType, setEditAddType] = useState(''); // 'jasa' | 'material'
   const [editAddSearch, setEditAddSearch] = useState('');
   const [editJasaItems, setEditJasaItems] = useState([]); // jasa items per-row
+  const [voucherCheckCode, setVoucherCheckCode] = useState("");
+  const [voucherCheckResult, setVoucherCheckResult] = useState(null); // null | { valid, voucher } | { error }
+  const [voucherCheckLoading, setVoucherCheckLoading] = useState(false);
+  const [voucherApplied, setVoucherApplied] = useState(null); // voucher yang sudah diterapkan
 
   // GAP 7/8 — ARA Chat state (live LLM)
   const [araPanel, setAraPanel] = useState(false);
@@ -7204,6 +7208,74 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: "#f43f5e", fontSize: 13, fontFamily: "monospace", fontWeight: 700 }} />
                   </div>
 
+                  {/* Cek Voucher Loyalty */}
+                  <div style={{ borderTop: "1px dashed #be123c33", paddingTop: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#f43f5e", marginBottom: 6 }}>🎁 Voucher Loyalty</div>
+                    {voucherApplied ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, padding: "8px 10px" }}>
+                        <span style={{ fontSize: 14 }}>✅</span>
+                        <div style={{ flex: 1, fontSize: 12 }}>
+                          <strong style={{ color: "#15803d" }}>{voucherApplied.code}</strong>
+                          <span style={{ color: "#16a34a", marginLeft: 6 }}>{voucherApplied.type_label}</span>
+                        </div>
+                        <button onClick={() => { setVoucherApplied(null); setVoucherCheckResult(null); setVoucherCheckCode(""); setEditInvoiceForm(f => ({ ...f, discount: 0 })); }}
+                          style={{ fontSize: 11, color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}>Hapus</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <input value={voucherCheckCode}
+                          onChange={e => { setVoucherCheckCode(e.target.value.toUpperCase()); setVoucherCheckResult(null); }}
+                          placeholder="Kode voucher (cth: ACL-K3M9P2)"
+                          style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 12, fontFamily: "monospace" }} />
+                        <button
+                          disabled={voucherCheckLoading || !voucherCheckCode.trim()}
+                          onClick={async () => {
+                            if (!voucherCheckCode.trim() || !editInvoiceData?.phone) return;
+                            setVoucherCheckLoading(true);
+                            setVoucherCheckResult(null);
+                            try {
+                              const hdrs = await _apiHeaders();
+                              const r = await fetch("/api/validate-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ code: voucherCheckCode.trim(), phone: editInvoiceData.phone, invoice_id: editInvoiceData.id }) });
+                              const d = await r.json();
+                              if (r.ok && d.valid) setVoucherCheckResult({ valid: true, voucher: d.voucher });
+                              else setVoucherCheckResult({ error: d.error || "Voucher tidak valid" });
+                            } catch { setVoucherCheckResult({ error: "Gagal cek voucher" }); }
+                            finally { setVoucherCheckLoading(false); }
+                          }}
+                          style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: voucherCheckLoading ? cs.border : "#f43f5e", color: "#fff", cursor: voucherCheckLoading ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}>
+                          {voucherCheckLoading ? "..." : "Cek"}
+                        </button>
+                      </div>
+                    )}
+                    {voucherCheckResult?.error && (
+                      <div style={{ marginTop: 6, fontSize: 11, color: "#f87171", padding: "6px 10px", background: "#fef2f2", borderRadius: 6 }}>❌ {voucherCheckResult.error}</div>
+                    )}
+                    {voucherCheckResult?.valid && !voucherApplied && (
+                      <div style={{ marginTop: 6, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, padding: "8px 12px" }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#15803d", marginBottom: 4 }}>✅ Voucher Valid — {voucherCheckResult.voucher.type_label}</div>
+                        <div style={{ fontSize: 11, color: "#16a34a" }}>{voucherCheckResult.voucher.customer_name} · {voucherCheckResult.voucher.description}</div>
+                        <button onClick={async () => {
+                          const v = voucherCheckResult.voucher;
+                          // Hitung diskon: discount_pct = % dari total invoice, free_unit = gratis per unit (0 rupiah)
+                          let discountAmt = 0;
+                          if (v.type === "discount_pct") discountAmt = Math.round((newTotal * v.value) / 100);
+                          else if (v.type === "free_unit") discountAmt = 0; // free unit dicatat terpisah
+                          setEditInvoiceForm(f => ({ ...f, discount: discountAmt }));
+                          setVoucherApplied(v);
+                          setVoucherCheckResult(null);
+                          // Klaim voucher di DB
+                          try {
+                            const hdrs = await _apiHeaders();
+                            await fetch("/api/claim-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ code: v.code, invoice_id: editInvoiceData.id }) });
+                          } catch { /* silent, voucher tetap tercatat di DB nanti saat save invoice */ }
+                        }}
+                          style={{ marginTop: 8, padding: "7px 0", width: "100%", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                          Terapkan Voucher
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Trade-In AC Lama */}
                   <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: cs.text, background: editInvoiceForm.trade_in ? "#be123c12" : cs.surface, border: "1px solid " + (editInvoiceForm.trade_in ? "#be123c44" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
                     <input type="checkbox"
@@ -7245,7 +7317,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
                 {/* ── Action buttons ── */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
-                  <button onClick={() => { setModalEditInvoice(false); setEditAddType(''); setEditAddSearch(''); }}
+                  <button onClick={() => { setModalEditInvoice(false); setEditAddType(''); setEditAddSearch(''); setVoucherCheckCode(""); setVoucherCheckResult(null); setVoucherApplied(null); }}
                     style={{ padding: "11px", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, color: cs.text, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
                     Batal
                   </button>
@@ -7467,7 +7539,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 )}
                 {liveInv.status === "PENDING_APPROVAL" &&
                   (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, discount: liveInv.discount || 0, trade_in: liveInv.trade_in || false, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => jasaSvcNames.some(s => (m.nama || "").includes(s))); const _mLv = _aLv.filter(m => !jasaSvcNames.some(s => (m.nama || "").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
+                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, discount: liveInv.discount || 0, trade_in: liveInv.trade_in || false, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => jasaSvcNames.some(s => (m.nama || "").includes(s))); const _mLv = _aLv.filter(m => !jasaSvcNames.some(s => (m.nama || "").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setVoucherCheckCode(""); setVoucherCheckResult(null); setVoucherApplied(null); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
                   )}
               </div>
             </div>
