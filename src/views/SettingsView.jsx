@@ -215,7 +215,6 @@ function TeamPresetsPanel({ supabase, showNotif, currentUser }) {
   };
 
   const isOwnerOrAdmin = ["owner","admin"].includes((currentUser?.role || "").toLowerCase());
-  const isOwner = currentUser?.role === "Owner";
 
   return (
     <Card>
@@ -262,6 +261,8 @@ function SettingsView({
   setEditPwdTarget, setEditPwdForm, setModalEditPwd,
   showNotif, showConfirm, addAgentLog, _apiHeaders, _ls, supabase,
 }) {
+
+  const isOwner = currentUser?.role === "Owner";
 
   // ── LLM Providers (Owner view: hanya Anthropic + Minimax) ─────────────────
   // Model dibatasi 1 per provider — otomatis terset saat ganti provider
