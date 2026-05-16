@@ -34,10 +34,13 @@ function hasValidTime(timeStr) {
 }
 
 // ── Conflict detection: pakai durasi aktual, bukan ±1 jam flat ──
-function hasConflict(orders, teknisi, date, time, excludeId = null, service = "Cleaning", units = 1) {
+function hasConflict(orders, teknisi, date, time, excludeId = null, service = "Cleaning", units = 1, timeEnd = null) {
   if (!teknisi || !date || !hasValidTime(time)) return null;
   const startMin = toMinutes(time);
-  const durMin = Math.round(hitungDurasi(service, units) * 60);
+  const timeEndMin = toMinutes(timeEnd);
+  const durMin = (timeEndMin !== null && timeEndMin > startMin)
+    ? timeEndMin - startMin
+    : Math.round(hitungDurasi(service, units) * 60);
   const endMin = startMin + durMin;
   const conflicts = orders.filter(o => {
     if (o.id === excludeId) return false;
@@ -46,7 +49,10 @@ function hasConflict(orders, teknisi, date, time, excludeId = null, service = "C
     if (!hasValidTime(o.time)) return false;
     if (!["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS","ON_SITE"].includes(o.status)) return false;
     const oStartMin = toMinutes(o.time);
-    const oDurMin = Math.round(hitungDurasi(o.service || "Cleaning", o.units || 1) * 60);
+    const oTimeEndMin = toMinutes(o.time_end);
+    const oDurMin = (oTimeEndMin !== null && oTimeEndMin > oStartMin)
+      ? oTimeEndMin - oStartMin
+      : Math.round(hitungDurasi(o.service || "Cleaning", o.units || 1) * 60);
     const oEndMin = oStartMin + oDurMin;
     return startMin < oEndMin && endMin > oStartMin;
   });
@@ -212,18 +218,26 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                   {tekOrders.map(o => {
                     const startMin = toMinutes(o.time);
                     if (startMin === null) return null;
-                    const durMin = Math.round(hitungDurasi(o.service, o.units) * 60);
+                    // Pakai time_end manual jika ada, fallback ke durasi otomatis
+                    const timeEndMin = toMinutes(o.time_end);
+                    const durMin = (timeEndMin !== null && timeEndMin > startMin)
+                      ? timeEndMin - startMin
+                      : Math.round(hitungDurasi(o.service, o.units) * 60);
                     const endMin = startMin + durMin;
 
                     // Clamp ke grid
                     const leftPct = minToPercent(startMin);
                     const widthPct = minToPercent(endMin) - leftPct;
 
-                    // Konflik: overlap dengan order lain di teknisi yang sama
+                    // Konflik: overlap dengan order lain di teknisi yang sama (pakai time_end jika ada)
                     const isConflict = tekOrders.some(o2 => {
                       if (o2.id === o.id) return false;
                       const s2 = toMinutes(o2.time);
-                      const e2 = s2 + Math.round(hitungDurasi(o2.service, o2.units) * 60);
+                      if (s2 === null) return false;
+                      const t2End = toMinutes(o2.time_end);
+                      const e2 = (t2End !== null && t2End > s2)
+                        ? t2End
+                        : s2 + Math.round(hitungDurasi(o2.service, o2.units) * 60);
                       return startMin < e2 && endMin > s2;
                     });
 
@@ -987,8 +1001,8 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // Conflict check realtime — pakai durasi aktual order ini
   const conflict = useMemo(() =>
-    hasConflict(ordersData, form.teknisi, form.date, form.time, editId, form.service, form.units),
-    [ordersData, form.teknisi, form.date, form.time, editId, form.service, form.units]
+    hasConflict(ordersData, form.teknisi, form.date, form.time, editId, form.service, form.units, form.time_end),
+    [ordersData, form.teknisi, form.date, form.time, form.time_end, editId, form.service, form.units]
   );
 
   // Autocomplete: cari by nama ATAU nomor WA
