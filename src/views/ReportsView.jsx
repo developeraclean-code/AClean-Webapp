@@ -1,8 +1,40 @@
-import { memo } from "react";
+import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 
-function ReportsView({ ordersData, invoicesData, laporanReports, customersData, teknisiData, inventoryData, isMobile, currentUser, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, fmt, invoiceReminderWA, getTechColor, TODAY, expensesData }) {
+function ReportsView({ ordersData, invoicesData, laporanReports, customersData, teknisiData, inventoryData, isMobile, currentUser, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, fmt, invoiceReminderWA, getTechColor, TODAY, expensesData, supabase }) {
 const techColors = Object.fromEntries([...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(n => [n, getTechColor(n, teknisiData)]))
+
+// ── Rating Dashboard state ──
+const [ratings, setRatings] = useState([]);
+const [ratingLoaded, setRatingLoaded] = useState(false);
+const isOwnerOrAdmin = ["Owner","Admin"].includes(currentUser?.role);
+
+useEffect(() => {
+  if (!isOwnerOrAdmin || !supabase) return;
+  supabase.from("customer_feedback")
+    .select("id,order_id,phone,customer,teknisi,rating,comment,service,created_at")
+    .order("created_at", { ascending: false })
+    .limit(500)
+    .then(({ data }) => { setRatings(data || []); setRatingLoaded(true); });
+}, [isOwnerOrAdmin, supabase]);
+
+// Agregasi rating per teknisi
+const ratingByTeknisi = Object.values(
+  ratings.reduce((acc, r) => {
+    const tek = r.teknisi || "Tidak Diketahui";
+    if (!acc[tek]) acc[tek] = { teknisi: tek, total: 0, count: 0, reviews: [] };
+    acc[tek].total += r.rating;
+    acc[tek].count += 1;
+    acc[tek].reviews.push(r);
+    return acc;
+  }, {})
+).map(t => ({ ...t, avg: (t.total / t.count).toFixed(1) }))
+ .sort((a, b) => b.avg - a.avg);
+
+const totalRatings = ratings.length;
+const overallAvg = totalRatings > 0 ? (ratings.reduce((s, r) => s + r.rating, 0) / totalRatings).toFixed(1) : null;
+const lowRatings = ratings.filter(r => r.rating <= 2);
+const starDist = [5,4,3,2,1].map(s => ({ star: s, count: ratings.filter(r => r.rating === s).length }));
 // ── Filter helper berdasarkan periode yang dipilih ──
 const tahunIni = TODAY.slice(0, 4);
 
@@ -378,6 +410,129 @@ return (
         })}
       </div>
     </div>
+    {/* ── SECTION 6: Rating & Customer Satisfaction (Owner/Admin) ── */}
+    {isOwnerOrAdmin && (
+      <div style={{ display: "grid", gap: 14 }}>
+        <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>⭐ Customer Satisfaction</div>
+
+        {/* Overview stats */}
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)", gap: 10 }}>
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: 28, fontWeight: 900, color: "#f59e0b" }}>{overallAvg || "—"}</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Rating Rata-rata</div>
+            <div style={{ fontSize: 10, color: cs.muted }}>dari skala 1-5</div>
+          </div>
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: 28, fontWeight: 900, color: cs.accent }}>{totalRatings}</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Total Review</div>
+            <div style={{ fontSize: 10, color: cs.muted }}>dari customer</div>
+          </div>
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: 28, fontWeight: 900, color: cs.green }}>{ratings.filter(r => r.rating >= 4).length}</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Review Positif</div>
+            <div style={{ fontSize: 10, color: cs.muted }}>bintang 4-5</div>
+          </div>
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: 28, fontWeight: 900, color: cs.red }}>{lowRatings.length}</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Perlu Perhatian</div>
+            <div style={{ fontSize: 10, color: cs.muted }}>bintang 1-2</div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 }}>
+          {/* Distribusi bintang */}
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 16 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: cs.text, marginBottom: 12 }}>Distribusi Bintang</div>
+            {ratingLoaded && totalRatings === 0 ? (
+              <div style={{ textAlign: "center", color: cs.muted, fontSize: 12, padding: 16 }}>Belum ada rating</div>
+            ) : starDist.map(({ star, count }) => {
+              const pct = totalRatings > 0 ? Math.round((count / totalRatings) * 100) : 0;
+              const color = star >= 4 ? "#22c55e" : star === 3 ? "#f59e0b" : "#f87171";
+              return (
+                <div key={star} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, minWidth: 20, color: "#f59e0b", fontWeight: 700 }}>{"★".repeat(star)}</span>
+                  <div style={{ flex: 1, height: 8, background: cs.surface, borderRadius: 99, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: pct + "%", background: color, borderRadius: 99, transition: "width 0.5s" }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: cs.muted, minWidth: 28, textAlign: "right" }}>{count}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Rating per teknisi */}
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 16 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: cs.text, marginBottom: 12 }}>Rating per Teknisi</div>
+            {ratingByTeknisi.length === 0 ? (
+              <div style={{ textAlign: "center", color: cs.muted, fontSize: 12, padding: 16 }}>Belum ada rating</div>
+            ) : ratingByTeknisi.map(t => {
+              const avg = parseFloat(t.avg);
+              const color = avg >= 4 ? cs.green : avg >= 3 ? "#f59e0b" : cs.red;
+              return (
+                <div key={t.teknisi} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid " + cs.border + "55" }}>
+                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: getTechColor(t.teknisi, teknisiData) + "33", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: getTechColor(t.teknisi, teknisiData), flexShrink: 0 }}>
+                    {t.teknisi.charAt(0)}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>{t.teknisi}</div>
+                    <div style={{ fontSize: 10, color: cs.muted }}>{t.count} review</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 16, fontWeight: 900, color, fontFamily: "monospace" }}>★ {t.avg}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Review negatif yang perlu ditindaklanjuti */}
+        {lowRatings.length > 0 && (
+          <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: 16 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: "#dc2626", marginBottom: 12 }}>⚠️ Review Negatif — Perlu Tindak Lanjut ({lowRatings.length})</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {lowRatings.slice(0, 10).map(r => (
+                <div key={r.id} style={{ background: "#fff", borderRadius: 8, padding: "10px 12px", border: "1px solid #fecaca" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div>
+                      <span style={{ fontWeight: 700, fontSize: 12, color: "#dc2626" }}>{"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}</span>
+                      <span style={{ fontSize: 11, color: cs.muted, marginLeft: 8 }}>{r.customer}</span>
+                      {r.teknisi && <span style={{ fontSize: 10, marginLeft: 6, padding: "1px 6px", borderRadius: 99, background: cs.surface, color: cs.muted }}>Tim: {r.teknisi}</span>}
+                    </div>
+                    <span style={{ fontSize: 10, color: cs.muted, flexShrink: 0 }}>{new Date(r.created_at).toLocaleDateString("id-ID", { day:"numeric", month:"short" })}</span>
+                  </div>
+                  {r.comment && <div style={{ fontSize: 11, color: cs.text, marginTop: 5, fontStyle: "italic" }}>"{r.comment}"</div>}
+                  {r.service && <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>{r.service}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 10 review terbaru */}
+        {ratings.length > 0 && (
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 16 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: cs.text, marginBottom: 12 }}>💬 Review Terbaru</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {ratings.slice(0, 8).map(r => {
+                const starColor = r.rating >= 4 ? "#f59e0b" : r.rating === 3 ? "#94a3b8" : "#f87171";
+                return (
+                  <div key={r.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", paddingBottom: 8, borderBottom: "1px solid " + cs.border + "55" }}>
+                    <div style={{ fontSize: 18, flexShrink: 0, color: starColor }}>{"★".repeat(r.rating)}<span style={{ color: cs.border }}>{"★".repeat(5-r.rating)}</span></div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: cs.text }}>{r.customer} <span style={{ fontWeight: 400, color: cs.muted }}>· {r.service}</span></div>
+                      {r.comment && <div style={{ fontSize: 11, color: cs.muted, marginTop: 2, fontStyle: "italic" }}>"{r.comment}"</div>}
+                      <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{r.teknisi} · {new Date(r.created_at).toLocaleDateString("id-ID",{day:"numeric",month:"short",year:"numeric"})}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+
   </div>
 );
 }

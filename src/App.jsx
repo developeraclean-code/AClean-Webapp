@@ -5236,7 +5236,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       statsPeriod={statsPeriod} setStatsPeriod={setStatsPeriod} statsMingguOff={statsMingguOff} setStatsMingguOff={setStatsMingguOff}
       statsDateFrom={statsDateFrom} setStatsDateFrom={setStatsDateFrom} statsDateTo={statsDateTo} setStatsDateTo={setStatsDateTo}
       bulanIni={bulanIni} fmt={fmt} invoiceReminderWA={invoiceReminderWA} getTechColor={getTechColor} TODAY={TODAY}
-      expensesData={expensesData} />
+      expensesData={expensesData} supabase={supabase} />
   );
 
   // ============================================================
