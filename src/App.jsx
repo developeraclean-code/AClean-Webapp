@@ -3113,7 +3113,34 @@ ${photoPageHTML}
       } catch (e) { /* dispatch_logs opsional */ }
       addAgentLog("DISPATCH_WA_SENT", `WA dispatch ke ${order.teknisi} untuk ${order.id}`, "SUCCESS");
       showNotif(`✅ WA Dispatch terkirim ke ${order.teknisi}${order.helper ? " + " + order.helper : ""}`);
-      // WA ke customer TIDAK dikirim saat dispatch — teknisi belum tentu langsung berangkat
+
+      // Kirim link portal ke customer jika fitur aktif
+      if (appSettings?.customer_portal_enabled === "true" && order.phone) {
+        try {
+          const hdrs = await _apiHeaders();
+          const tokRes = await fetch("/api/generate-customer-token", {
+            method: "POST", headers: hdrs,
+            body: JSON.stringify({ phone: order.phone, customer_name: order.customer }),
+          });
+          if (tokRes.ok) {
+            const { link } = await tokRes.json();
+            const tgl = new Date(order.date).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
+            const team = [order.teknisi, order.helper].filter(Boolean).join(" & ");
+            const portalMsg =
+              `Halo ${order.customer}! 👋\n\n` +
+              `Tim AClean sedang menuju lokasi Anda sekarang 🚗\n\n` +
+              `📋 Detail Servis:\n` +
+              `• Layanan  : ${order.service}\n` +
+              `• Jadwal   : ${tgl} · ${order.time || "--:--"}\n` +
+              `• Tim      : ${team || order.teknisi}\n` +
+              `• Lokasi   : ${order.address || "-"}\n\n` +
+              `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
+              `Link aktif 7 hari. Pertanyaan? Balas pesan ini.\n— AClean Service`;
+            await sendWA(order.phone, portalMsg);
+            addAgentLog("PORTAL_LINK_SENT", `Link portal terkirim ke ${order.customer} (${order.phone})`, "SUCCESS");
+          }
+        } catch (e) { /* portal link opsional — tidak blok dispatch */ }
+      }
     } else {
       showNotif("📱 WA dibuka manual di browser");
     }

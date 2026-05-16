@@ -215,6 +215,7 @@ function TeamPresetsPanel({ supabase, showNotif, currentUser }) {
   };
 
   const isOwnerOrAdmin = ["owner","admin"].includes((currentUser?.role || "").toLowerCase());
+  const isOwner = currentUser?.role === "Owner";
 
   return (
     <Card>
@@ -753,6 +754,47 @@ function SettingsView({
             💡 <b>Mode aman:</b> Auto-Reply <b>OFF</b> + Forward <b>ON</b> = pesan diteruskan ke Owner, dibalas manual.
           </div>
         </Card>
+
+        {/* Customer Self-Service Portal */}
+        {isOwner && (
+          <Card>
+            <CardHeader icon="🔗" title="Customer Self-Service Portal" subtitle="Link status servis dikirim otomatis ke customer via WA saat dispatch" />
+            {[
+              {
+                key: "customer_portal_enabled",
+                label: "Aktifkan Customer Portal",
+                desc: "Saat tim di-dispatch, customer otomatis menerima WA berisi link untuk memantau status job & riwayat servis mereka. Link berlaku 7 hari.",
+                icon: "🔗",
+              },
+            ].map(({ key, label, desc, icon }) => {
+              const isOn = appSettings[key] === "true";
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0" }}>
+                  <span style={{ fontSize: 18, minWidth: 24 }}>{icon}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, color: isOn ? cs.text : cs.muted, fontSize: 13 }}>{label}</div>
+                    <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{desc}</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: isOn ? cs.green : cs.muted, minWidth: 24 }}>{isOn ? "ON" : "OFF"}</span>
+                    <div onClick={async () => {
+                      const newVal = isOn ? "false" : "true";
+                      setAppSettings(prev => ({ ...prev, [key]: newVal }));
+                      await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
+                      showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
+                    }}
+                      style={{ width: 44, height: 24, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
+                      <div style={{ position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff", top: 2, left: isOn ? 22 : 2, transition: "left .2s", boxShadow: "0 1px 3px #0004" }} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ marginTop: 8, padding: "10px 12px", background: cs.surface, borderRadius: 8, fontSize: 11, color: cs.muted }}>
+              🔗 Customer buka: <b>aclean.id/status/TOKEN</b> — bisa lihat status tim, riwayat servis, dan invoice. Tidak perlu login.
+            </div>
+          </Card>
+        )}
 
         {/* Cron Jobs */}
         <Card>

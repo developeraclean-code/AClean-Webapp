@@ -2,7 +2,7 @@
 import { setCorsHeaders, checkRateLimit, validateInternalToken } from "./_auth.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token"];
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status"];
 
 // ── VALIDATION HELPERS ──
 function validateAndNormalizePhone(phone) {
@@ -1386,6 +1386,97 @@ export default async function handler(req, res) {
       }
 
       return res.status(400).json({ error: "Action tidak dikenal: " + action });
+    }
+
+    // ── CUSTOMER-STATUS (PUBLIC) ──
+    // Dipanggil oleh halaman portal customer — tidak butuh auth, hanya token customer
+    if (route === "customer-status") {
+      if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+      const token = String(req.query.token || "").trim();
+      if (!token) return res.status(400).json({ error: "Token diperlukan" });
+
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
+
+      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
+
+      // Lookup token
+      const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=*`, { headers });
+      if (!tokRes.ok) return res.status(500).json({ error: "DB error" });
+      const tokRows = await tokRes.json();
+      if (!tokRows.length) return res.status(404).json({ error: "Token tidak ditemukan", code: "NOT_FOUND" });
+
+      const tokRow = tokRows[0];
+      const isExpired = new Date(tokRow.expires_at) < new Date();
+
+      // Update last_used (fire and forget)
+      fetch(`${SU}/rest/v1/customer_tokens?id=eq.${tokRow.id}`, {
+        method: "PATCH", headers,
+        body: JSON.stringify({ last_used: new Date().toISOString() })
+      }).catch(() => {});
+
+      const phone = tokRow.phone;
+      const variants = buildPhoneVariants(phone);
+      const phoneFilter = variants.map(v => `phone=eq.${encodeURIComponent(v)}`).join(",");
+
+      // Query orders & invoices berdasarkan phone (ambil 20 terbaru)
+      const [ordRes, invRes] = await Promise.all([
+        fetch(`${SU}/rest/v1/orders?or=(${phoneFilter})&order=date.desc,time.desc&limit=20&select=id,customer,phone,address,area,service,type,units,teknisi,helper,teknisi2,helper2,date,time,time_end,status,notes`, { headers }),
+        fetch(`${SU}/rest/v1/invoices?or=(${phoneFilter})&order=created_at.desc&limit=20&select=id,job_id,customer,phone,service,units,labor,material,total,status,due,paid_at,paid_amount,remaining_amount,garansi_days,garansi_expires,paid_method,invoice_type`, { headers }),
+      ]);
+
+      const orders = ordRes.ok ? await ordRes.json() : [];
+      const invoices = invRes.ok ? await invRes.json() : [];
+
+      // Ambil nama customer dari order pertama
+      const customerName = orders[0]?.customer || tokRow.customer_name || "";
+
+      return res.status(200).json({
+        expired: isExpired,
+        phone,
+        customer_name: customerName,
+        orders,
+        invoices,
+        token_created: tokRow.created_at,
+        token_expires: tokRow.expires_at,
+      });
+    }
+
+    // ── GENERATE-CUSTOMER-TOKEN (PRIVATE — admin/owner) ──
+    if (route === "generate-customer-token") {
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const b = req.body || {};
+      const phone = validateAndNormalizePhone(b.phone);
+      if (!phone) return res.status(400).json({ error: "Nomor HP tidak valid" });
+
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
+
+      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json", "Prefer": "return=representation" };
+
+      // Generate token 24 bytes hex
+      const { randomBytes } = await import("crypto");
+      const token = randomBytes(24).toString("hex");
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 hari
+
+      // Upsert: satu token per phone (replace jika sudah ada)
+      const delRes = await fetch(`${SU}/rest/v1/customer_tokens?phone=eq.${encodeURIComponent(phone)}`, { method: "DELETE", headers });
+      if (!delRes.ok && delRes.status !== 404) return res.status(500).json({ error: "Gagal reset token lama" });
+
+      const insRes = await fetch(`${SU}/rest/v1/customer_tokens`, {
+        method: "POST", headers,
+        body: JSON.stringify({ phone, token, expires_at: expiresAt, customer_name: sanitizeName(b.customer_name || "") }),
+      });
+      if (!insRes.ok) {
+        const e = await insRes.json().catch(() => ({}));
+        return res.status(500).json({ error: "Gagal simpan token", detail: e });
+      }
+
+      const appUrl = process.env.APP_URL || "https://aclean.id";
+      const link = `${appUrl}/status/${token}`;
+      return res.status(200).json({ ok: true, token, link, expires_at: expiresAt });
     }
 
     return res.status(404).json({ error: "Route tidak ditemukan: /api/" + route });
