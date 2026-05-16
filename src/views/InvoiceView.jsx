@@ -15,6 +15,70 @@ const [confirmingCash, setConfirmingCash] = useState(false);
 const [showAcUnitModal, setShowAcUnitModal] = useState(false);
 const [dpInvId, setDpInvId] = useState(null);
 const [dpAmount, setDpAmount] = useState("");
+
+// ── Multi-payment panel ──
+const [payPanelInvId, setPayPanelInvId] = useState(null); // invoice.id yang panel terbuka
+const [payHistory, setPayHistory]       = useState([]);   // invoice_payments rows
+const [payLoading, setPayLoading]       = useState(false);
+const [payForm, setPayForm]             = useState({ amount: "", method: "transfer", notes: "", paid_at: "" });
+const [paySaving, setPaySaving]         = useState(false);
+
+const openPayPanel = async (inv) => {
+  setPayPanelInvId(inv.id);
+  setPayForm({ amount: "", method: "transfer", notes: "", paid_at: getLocalDate() });
+  setPayLoading(true);
+  const { data } = await supabase.from("invoice_payments")
+    .select("id,amount,method,notes,paid_at,recorded_by_name,created_at")
+    .eq("invoice_id", inv.id)
+    .order("paid_at", { ascending: true });
+  setPayHistory(data || []);
+  setPayLoading(false);
+};
+
+const savePayment = async (inv) => {
+  const amt = Number(payForm.amount);
+  if (!amt || amt <= 0) { showNotif("⚠️ Jumlah tidak valid"); return; }
+  const remaining = Math.max(0, (inv.remaining_amount ?? inv.total) - amt);
+  const newPaidAmount = (Number(inv.paid_amount) || 0) + amt;
+  const newStatus = remaining <= 0 ? "PAID" : "PARTIAL_PAID";
+  setPaySaving(true);
+  try {
+    // Insert ke invoice_payments
+    const { error: e1 } = await supabase.from("invoice_payments").insert({
+      invoice_id: inv.id,
+      amount: amt,
+      method: payForm.method,
+      notes: payForm.notes || null,
+      paid_at: payForm.paid_at || getLocalDate(),
+      recorded_by_name: currentUser?.name || "Admin",
+    });
+    if (e1) throw e1;
+
+    // Update invoice aggregate
+    const updateFields = {
+      paid_amount: newPaidAmount,
+      remaining_amount: remaining,
+      status: newStatus,
+    };
+    if (newStatus === "PAID") updateFields.paid_at = payForm.paid_at || getLocalDate();
+    const { error: e2 } = await supabase.from("invoices").update(updateFields).eq("id", inv.id);
+    if (e2) throw e2;
+
+    setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...updateFields } : i));
+    // Refresh history
+    const { data } = await supabase.from("invoice_payments")
+      .select("id,amount,method,notes,paid_at,recorded_by_name,created_at")
+      .eq("invoice_id", inv.id).order("paid_at", { ascending: true });
+    setPayHistory(data || []);
+    setPayForm({ amount: "", method: "transfer", notes: "", paid_at: getLocalDate() });
+    showNotif(`✅ Pembayaran ${fmt(amt)} tercatat — ${remaining > 0 ? "sisa " + fmt(remaining) : "LUNAS"}`);
+    if (newStatus === "PAID") setPayPanelInvId(null);
+  } catch (err) {
+    showNotif("❌ Gagal simpan: " + err.message, "error");
+  } finally {
+    setPaySaving(false);
+  }
+};
 const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation"
 const [quoPDFData, setQuoPDFData] = useState(null); // quotation untuk preview PDF
 const [addonModalInvId, setAddonModalInvId] = useState(null);
@@ -806,6 +870,10 @@ return (
                     confirmText: "Ya, Lunas"
                   })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
                 }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tandai Lunas</button>
+                <button onClick={() => payPanelInvId === inv.id ? setPayPanelInvId(null) : openPayPanel(inv)}
+                  style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                  {payPanelInvId === inv.id ? "✕ Tutup" : "💳 Catat Pembayaran"}
+                </button>
                 {(inv.invoice_type === "quotation_converted" || inv.invoice_type === "ac_unit_sale") && (
                   <button onClick={() => { setDpInvId(inv.id); setDpAmount(""); }}
                     style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
@@ -850,6 +918,10 @@ return (
                     confirmText: "Ya, Lunas"
                   })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
                 }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tandai Lunas</button>
+                <button onClick={() => payPanelInvId === inv.id ? setPayPanelInvId(null) : openPayPanel(inv)}
+                  style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                  {payPanelInvId === inv.id ? "✕ Tutup" : "💳 Catat Pembayaran"}
+                </button>
                 <button onClick={() => invoiceReminderWA(inv)} style={{ background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>⚠️ Reminder OVERDUE</button>
               </>
             )}
@@ -867,6 +939,10 @@ return (
                     confirmText: "Ya, Lunas"
                   })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
                 }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Lunasi Sisa</button>
+                <button onClick={() => payPanelInvId === inv.id ? setPayPanelInvId(null) : openPayPanel(inv)}
+                  style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                  {payPanelInvId === inv.id ? "✕ Tutup" : "💳 Riwayat Bayar"}
+                </button>
                 {setGroupPaymentCtx && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                   <button onClick={() => {
                     const sameCust = invoicesData.filter(i => i.phone === inv.phone && ["UNPAID","OVERDUE","PARTIAL_PAID"].includes(i.status));
@@ -956,6 +1032,93 @@ return (
               style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
             >📜 Riwayat</button>
           </div>
+
+          {/* ── Multi-Payment Panel ── */}
+          {payPanelInvId === inv.id && (
+            <div style={{ borderTop: "1px solid #06b6d433", background: "#06b6d408", padding: "14px 18px" }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "#06b6d4", marginBottom: 10 }}>💳 Riwayat Pembayaran — {inv.id}</div>
+              {/* Progress bar */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 4 }}>
+                  <span style={{ color: cs.muted }}>Terbayar: <b style={{ color: cs.text }}>{fmt(Number(inv.paid_amount) || 0)}</b></span>
+                  <span style={{ color: cs.muted }}>Total: <b style={{ color: cs.text }}>{fmt(inv.total)}</b></span>
+                </div>
+                <div style={{ height: 8, background: cs.surface, borderRadius: 99, overflow: "hidden" }}>
+                  <div style={{ height: "100%", borderRadius: 99, background: inv.total > 0 && (Number(inv.paid_amount) || 0) >= inv.total ? cs.green : "#06b6d4",
+                    width: inv.total > 0 ? Math.min(100, Math.round(((Number(inv.paid_amount) || 0) / inv.total) * 100)) + "%" : "0%" }} />
+                </div>
+              </div>
+              {/* History list */}
+              {payLoading ? (
+                <div style={{ fontSize: 12, color: cs.muted, padding: "8px 0" }}>⏳ Memuat riwayat...</div>
+              ) : payHistory.length === 0 ? (
+                <div style={{ fontSize: 12, color: cs.muted, fontStyle: "italic", padding: "4px 0 8px" }}>Belum ada pembayaran tercatat.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 4, marginBottom: 10 }}>
+                  {payHistory.map((p, pi) => (
+                    <div key={p.id || pi} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto", gap: 8, alignItems: "center", fontSize: 12, background: cs.card, borderRadius: 7, padding: "7px 10px" }}>
+                      <span style={{ fontSize: 16 }}>{p.method === "cash" ? "💵" : p.method === "qris" ? "📱" : "🏦"}</span>
+                      <div>
+                        <div style={{ fontWeight: 600, color: cs.text }}>{fmt(p.amount)}</div>
+                        <div style={{ fontSize: 10, color: cs.muted }}>{p.paid_at} · {p.method} {p.notes ? "· " + p.notes : ""}</div>
+                      </div>
+                      <div style={{ fontSize: 10, color: cs.muted }}>{p.recorded_by_name || "—"}</div>
+                      <span style={{ fontSize: 10, background: cs.green + "22", color: cs.green, padding: "2px 7px", borderRadius: 99, fontWeight: 700 }}>
+                        #{pi + 1}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Form tambah bayar baru */}
+              {["UNPAID","OVERDUE","PARTIAL_PAID"].includes(inv.status) && (
+                <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 14px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 8 }}>+ Tambah Pembayaran</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: cs.muted, marginBottom: 3 }}>Jumlah (Rp) *</div>
+                      <input type="number" min="1" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
+                        placeholder={fmt(inv.remaining_amount ?? inv.total)}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid #06b6d444", borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: cs.muted, marginBottom: 3 }}>Metode</div>
+                      <select value={payForm.method} onChange={e => setPayForm(f => ({ ...f, method: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12, outline: "none" }}>
+                        <option value="transfer">Transfer Bank</option>
+                        <option value="cash">Cash</option>
+                        <option value="qris">QRIS</option>
+                        <option value="lainnya">Lainnya</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: cs.muted, marginBottom: 3 }}>Tanggal Bayar</div>
+                      <input type="date" value={payForm.paid_at} onChange={e => setPayForm(f => ({ ...f, paid_at: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: cs.muted, marginBottom: 3 }}>Catatan (opsional)</div>
+                      <input value={payForm.notes} onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))}
+                        placeholder="DP pertama, cicilan, dll..."
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                    </div>
+                  </div>
+                  {payForm.amount && Number(payForm.amount) > 0 && (
+                    <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8 }}>
+                      Sisa setelah bayar: <b style={{ color: Number(payForm.amount) >= (inv.remaining_amount ?? inv.total) ? cs.green : "#06b6d4" }}>
+                        {fmt(Math.max(0, (inv.remaining_amount ?? inv.total) - Number(payForm.amount)))}
+                      </b>
+                      {Number(payForm.amount) >= (inv.remaining_amount ?? inv.total) && " (LUNAS ✅)"}
+                    </div>
+                  )}
+                  <button onClick={() => savePayment(inv)} disabled={paySaving}
+                    style={{ width: "100%", background: "#06b6d4", border: "none", color: "#0a0f1e", borderRadius: 9, padding: "10px", fontWeight: 800, fontSize: 13, cursor: "pointer", opacity: paySaving ? 0.7 : 1 }}>
+                    {paySaving ? "⏳ Menyimpan..." : "✅ Simpan Pembayaran"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ))}
     </div>

@@ -56,6 +56,7 @@ const ExpensesView = lazy(() => import("./views/ExpensesView.jsx"));
 const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
 const OrderInboxView = lazy(() => import("./views/OrderInboxView.jsx"));
 const FinanceView = lazy(() => import("./views/FinanceView.jsx"));
+const TechMobileView = lazy(() => import("./views/TechMobileView.jsx"));
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -4798,7 +4799,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   // RENDER DASHBOARD
   // ============================================================
-  const renderDashboard = () => (
+  const renderDashboard = () => {
+    // Mobile teknisi/helper: tampilkan TechMobileView yang lebih sederhana
+    if (isMobile && isTekRoleGlobal) {
+      return (
+        <TechMobileView
+          currentUser={currentUser}
+          ordersData={ordersData}
+          TODAY={TODAY}
+          openLaporanModal={openLaporanModal}
+          updateOrderStatus={updateOrderStatus}
+          supabase={supabase}
+          sendWA={sendWA}
+          auditUserName={auditUserName}
+          showNotif={showNotif}
+          setActiveMenu={setActiveMenu}
+        />
+      );
+    }
+    return (
     <DashboardView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} inventoryData={inventoryData}
       teknisiData={teknisiData} omsetView={omsetView} setOmsetView={setOmsetView} isMobile={isMobile} waConversations={waConversations}
       bulanIni={bulanIni} setActiveMenu={setActiveMenu} setInvoiceFilter={setInvoiceFilter} setModalOrder={setModalOrder}
@@ -4809,7 +4828,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       customersData={customersData} laporanReports={laporanReports} findCustomer={findCustomer}
       setSelectedCustomer={setSelectedCustomer} setCustomerTab={setCustomerTab}
       expensesData={expensesData} />
-  );
+    );
+  };
 
   // ============================================================
   // RENDER CUSTOMERS
@@ -5227,7 +5247,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       expensePage={expensePage} setExpensePage={setExpensePage} modalExpense={modalExpense} setModalExpense={setModalExpense}
       editExpenseItem={editExpenseItem} setEditExpenseItem={setEditExpenseItem} newExpenseForm={newExpenseForm} setNewExpenseForm={setNewExpenseForm}
       currentUser={currentUser} supabase={supabase} insertExpense={insertExpense} updateExpense={updateExpense} deleteExpense={deleteExpense}
-      auditUserName={auditUserName} setAuditModal={setAuditModal} TODAY={TODAY} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE} fmt={fmt} />
+      auditUserName={auditUserName} setAuditModal={setAuditModal} TODAY={TODAY} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE} fmt={fmt}
+      showNotif={showNotif} showConfirm={showConfirm} appSettings={appSettings} setAppSettings={setAppSettings} />
   );
 
   // ============================================================
@@ -5641,17 +5662,84 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   );
                 }
                 return (
-                  <div style={{
-                    padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                    background: exactMatch ? "#16a34a18" : "#f59e0b18",
-                    border: "1px solid " + (exactMatch ? "#16a34a44" : "#f59e0b44"),
-                    color: exactMatch ? "#16a34a" : "#d97706",
-                    display: "flex", alignItems: "center", gap: 8
-                  }}>
-                    {exactMatch ? "✅" : "🆕"}
-                    {exactMatch
-                      ? `Customer EXISTING: ${exactMatch.name} — ${exactMatch.total_orders || 0} order sebelumnya`
-                      : "Customer BARU — akan otomatis ditambahkan ke menu Customer"}
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{
+                      padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                      background: exactMatch ? "#16a34a18" : "#f59e0b18",
+                      border: "1px solid " + (exactMatch ? "#16a34a44" : "#f59e0b44"),
+                      color: exactMatch ? "#16a34a" : "#d97706",
+                      display: "flex", alignItems: "center", gap: 8
+                    }}>
+                      {exactMatch ? "✅" : "🆕"}
+                      {exactMatch
+                        ? `Customer EXISTING: ${exactMatch.name} — ${exactMatch.total_orders || 0} order sebelumnya`
+                        : "Customer BARU — akan otomatis ditambahkan ke menu Customer"}
+                    </div>
+                    {/* ── Service History Panel ── */}
+                    {exactMatch && (() => {
+                      const history = buildCustomerHistory(exactMatch, ordersData, laporanReports, invoicesData);
+                      const recentJobs = (history.orders || [])
+                        .filter(o => o.status !== "CANCELLED")
+                        .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
+                        .slice(0, 3);
+                      if (recentJobs.length === 0) return null;
+
+                      // Kumpulkan semua unit AC yang pernah diservice
+                      const knownUnits = [];
+                      const unitSet = new Set();
+                      laporanReports.forEach(r => {
+                        if (!samePhone(r.phone || "", exactMatch.phone)) return;
+                        const units = typeof r.units_json === "string" ? JSON.parse(r.units_json || "[]") : (r.units_json || []);
+                        units.forEach(u => {
+                          const label = [u.brand, u.type, u.capacity ? u.capacity + "PK" : ""].filter(Boolean).join(" ");
+                          if (label && !unitSet.has(label)) { unitSet.add(label); knownUnits.push(label); }
+                        });
+                      });
+
+                      // Hint: sudah lama tidak cleaning?
+                      const lastCleaning = recentJobs.find(o => (o.service || "").toLowerCase().includes("cleaning"));
+                      const daysSinceCleaning = lastCleaning
+                        ? Math.floor((new Date() - new Date(lastCleaning.date)) / 86400000)
+                        : null;
+
+                      return (
+                        <div style={{ background: cs.card, border: "1px solid " + cs.accent + "33", borderRadius: 10, overflow: "hidden" }}>
+                          <div style={{ padding: "8px 12px", background: cs.accent + "12", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: cs.accent }}>📋 Riwayat {recentJobs.length} job terakhir</span>
+                            {daysSinceCleaning !== null && daysSinceCleaning > 90 && (
+                              <span style={{ fontSize: 10, background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "2px 8px", borderRadius: 99 }}>
+                                💡 Terakhir cleaning {daysSinceCleaning}h lalu
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ padding: "8px 12px", display: "grid", gap: 6 }}>
+                            {recentJobs.map(o => (
+                              <div key={o.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 11 }}>
+                                <span style={{ color: cs.muted, minWidth: 68, fontFamily: "monospace" }}>{o.date}</span>
+                                <div style={{ flex: 1 }}>
+                                  <span style={{ color: cs.text, fontWeight: 600 }}>{o.service}</span>
+                                  <span style={{ color: cs.muted }}> · {o.units} unit</span>
+                                  {o.teknisi && <span style={{ color: cs.muted }}> · {o.teknisi}</span>}
+                                  {o.notes && <div style={{ color: cs.muted, fontSize: 10, marginTop: 1, fontStyle: "italic" }}>{o.notes.slice(0, 60)}{o.notes.length > 60 ? "…" : ""}</div>}
+                                </div>
+                                <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 99, background: o.status === "COMPLETED" ? cs.green + "22" : cs.yellow + "22", color: o.status === "COMPLETED" ? cs.green : cs.yellow, whiteSpace: "nowrap" }}>
+                                  {o.status === "COMPLETED" ? "✅ Selesai" : o.status}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                          {knownUnits.length > 0 && (
+                            <div style={{ padding: "6px 12px", borderTop: "1px solid " + cs.border + "44", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                              <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>AC diketahui:</span>
+                              {knownUnits.slice(0, 5).map((u, i) => (
+                                <span key={i} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: cs.accent + "18", border: "1px solid " + cs.accent + "33", color: cs.accent }}>{u}</span>
+                              ))}
+                              {knownUnits.length > 5 && <span style={{ fontSize: 10, color: cs.muted }}>+{knownUnits.length - 5}</span>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()}

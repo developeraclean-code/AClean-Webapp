@@ -225,6 +225,31 @@ export default function QuotationView({
         )}
       </div>
 
+      {/* Conversion Rate Stats */}
+      {canEdit && (quotationsData || []).length > 0 && (() => {
+        const all = quotationsData || [];
+        const total = all.length;
+        const converted = all.filter(q => q.status === "APPROVED" && q.job_id).length;
+        const sent = all.filter(q => q.status === "SENT" && !isExpired(q)).length;
+        const expired = all.filter(q => isExpired(q)).length;
+        const rate = total > 0 ? Math.round(converted / total * 100) : 0;
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+            {[
+              { label: "Total",      val: total,     color: cs.muted },
+              { label: "Menunggu",   val: sent,      color: "#60a5fa" },
+              { label: "Converted",  val: converted, color: "#4ade80" },
+              { label: "Conv. Rate", val: rate + "%", color: rate >= 50 ? "#4ade80" : rate >= 25 ? "#f59e0b" : "#f87171" },
+            ].map(s => (
+              <div key={s.label} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: s.color }}>{s.val}</div>
+                <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
       {/* Search */}
       <input value={search} onChange={e => setSearch(e.target.value)}
         placeholder="Cari customer, ID quotation, no HP..."
