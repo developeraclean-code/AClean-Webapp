@@ -1,13 +1,78 @@
-import { memo } from "react";
+import { memo, useState, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 
-function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, currentUser, supabase, insertExpense, updateExpense, deleteExpense, auditUserName, setAuditModal, TODAY, EXPENSE_PAGE_SIZE, fmt, showNotif, showConfirm }) {
+function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, currentUser, supabase, insertExpense, updateExpense, deleteExpense, auditUserName, setAuditModal, TODAY, EXPENSE_PAGE_SIZE, fmt, showNotif, showConfirm, appSettings, setAppSettings }) {
 const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin" || currentUser?.role === "Finance";
+const isOwner = currentUser?.role === "Owner";
 
 const PETTY_CASH_SUBS = ["Bensin Motor", "Perbaikan Motor", "Parkir", "Kasbon Karyawan", "Lembur", "Bonus", "Lain-lain"];
 const MATERIAL_SUBS = ["Pipa AC", "Kabel", "Freon", "Material Lain"];
 // Quick-filter chips (for petty_cash tab only)
 const QUICK_FILTERS = ["Semua", "Bensin Motor", "Parkir", "Kasbon Karyawan"];
+
+// ── Budget state ──
+const [showBudgetPanel, setShowBudgetPanel] = useState(false);
+const [budgetForm, setBudgetForm] = useState(null); // null | { category, subcategory, amount }
+const [budgetSaving, setBudgetSaving] = useState(false);
+
+// Budget data dari app_settings.expense_budgets (JSON: { "petty_cash::Bensin Motor": 500000, ... })
+const budgetMap = useMemo(() => {
+  try { return JSON.parse(appSettings?.expense_budgets || "{}"); } catch { return {}; }
+}, [appSettings?.expense_budgets]);
+
+const budgetKey = (cat, sub) => sub ? `${cat}::${sub}` : cat;
+
+// Hitung pengeluaran bulan ini per kategori & sub
+const nowDate = new Date();
+const thisMonthPrefix = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, "0")}`;
+const spendThisMonth = useMemo(() => {
+  const map = {};
+  expensesData.forEach(e => {
+    if (!(e.date || "").startsWith(thisMonthPrefix)) return;
+    const catKey = budgetKey(e.category, null);
+    map[catKey] = (map[catKey] || 0) + Number(e.amount || 0);
+    if (e.subcategory) {
+      const subKey = budgetKey(e.category, e.subcategory);
+      map[subKey] = (map[subKey] || 0) + Number(e.amount || 0);
+    }
+  });
+  return map;
+}, [expensesData, thisMonthPrefix]);
+
+const saveBudget = async () => {
+  if (!budgetForm) return;
+  setBudgetSaving(true);
+  const key = budgetKey(budgetForm.category, budgetForm.subcategory);
+  const newMap = { ...budgetMap };
+  const amt = Number(budgetForm.amount);
+  if (!amt || amt <= 0) { delete newMap[key]; } else { newMap[key] = amt; }
+  const newVal = JSON.stringify(newMap);
+  const { error } = await supabase.from("app_settings")
+    .upsert({ key: "expense_budgets", value: newVal }, { onConflict: "key" });
+  if (error) { showNotif?.("❌ Gagal simpan budget: " + error.message); }
+  else {
+    setAppSettings?.(p => ({ ...p, expense_budgets: newVal }));
+    showNotif?.("✅ Budget disimpan");
+    setBudgetForm(null);
+  }
+  setBudgetSaving(false);
+};
+
+// Budget items to display: semua kategori + sub yang punya budget atau spending bulan ini
+const ALL_BUDGET_ITEMS = [
+  { label: "💰 Petty Cash (Total)", cat: "petty_cash", sub: null },
+  ...PETTY_CASH_SUBS.map(s => ({ label: s, cat: "petty_cash", sub: s })),
+  { label: "🔧 Material (Total)", cat: "material_purchase", sub: null },
+  ...MATERIAL_SUBS.map(s => ({ label: s, cat: "material_purchase", sub: s })),
+];
+
+// Alert: kategori yang >80% budget
+const budgetAlerts = ALL_BUDGET_ITEMS.filter(item => {
+  const k = budgetKey(item.cat, item.sub);
+  const b = budgetMap[k] || 0;
+  const s = spendThisMonth[k] || 0;
+  return b > 0 && s >= b * 0.8;
+});
 
 // Apply filters
 const filtered = expensesData.filter(e => {
@@ -100,6 +165,136 @@ return (
         </button>
       )}
     </div>
+
+    {/* Budget Alert Banner */}
+    {isOwnerAdmin && budgetAlerts.length > 0 && (
+      <div style={{ background: cs.red + "10", border: "1px solid " + cs.red + "44", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 16 }}>⚠️</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 12, color: cs.red }}>Budget hampir habis bulan ini:</div>
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+            {budgetAlerts.map(item => {
+              const k = budgetKey(item.cat, item.sub);
+              const pct = Math.round((spendThisMonth[k] || 0) / budgetMap[k] * 100);
+              return `${item.label} (${pct}%)`;
+            }).join(" · ")}
+          </div>
+        </div>
+        <button onClick={() => setShowBudgetPanel(v => !v)}
+          style={{ fontSize: 11, padding: "4px 12px", borderRadius: 7, background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red, cursor: "pointer", fontWeight: 600 }}>
+          {showBudgetPanel ? "Tutup" : "Lihat Budget"}
+        </button>
+      </div>
+    )}
+
+    {/* Budget Toggle Button */}
+    {isOwnerAdmin && budgetAlerts.length === 0 && (
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button onClick={() => setShowBudgetPanel(v => !v)}
+          style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, background: showBudgetPanel ? cs.accent + "22" : cs.surface, border: "1px solid " + (showBudgetPanel ? cs.accent : cs.border), color: showBudgetPanel ? cs.accent : cs.muted, cursor: "pointer", fontWeight: 600 }}>
+          {showBudgetPanel ? "✕ Sembunyikan Budget" : "💰 Kelola Budget Bulanan"}
+        </button>
+      </div>
+    )}
+
+    {/* Budget Panel */}
+    {isOwnerAdmin && showBudgetPanel && (
+      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>💰 Budget Bulanan</div>
+            <div style={{ fontSize: 11, color: cs.muted }}>Bulan ini: {new Date().toLocaleDateString("id-ID", { month: "long", year: "numeric" })}</div>
+          </div>
+          {isOwner && (
+            <button onClick={() => setBudgetForm({ category: "petty_cash", subcategory: null, amount: "" })}
+              style={{ fontSize: 11, padding: "6px 12px", borderRadius: 7, background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, cursor: "pointer", fontWeight: 600 }}>
+              ✏️ Set Budget
+            </button>
+          )}
+        </div>
+        <div style={{ padding: "12px 16px", display: "grid", gap: 8 }}>
+          {ALL_BUDGET_ITEMS.map(item => {
+            const k = budgetKey(item.cat, item.sub);
+            const budget = budgetMap[k] || 0;
+            const spent = spendThisMonth[k] || 0;
+            const pct = budget > 0 ? Math.min(100, Math.round(spent / budget * 100)) : 0;
+            const isOver = budget > 0 && spent >= budget;
+            const isWarn = budget > 0 && spent >= budget * 0.8 && !isOver;
+            const barColor = isOver ? cs.red : isWarn ? cs.yellow : cs.green;
+            const isTotal = item.sub === null;
+            return (
+              <div key={k} style={{ paddingLeft: isTotal ? 0 : 16, borderLeft: isTotal ? "none" : "2px solid " + cs.border + "44" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                  <div style={{ fontSize: isTotal ? 12 : 11, fontWeight: isTotal ? 700 : 400, color: isTotal ? cs.text : cs.muted }}>{item.label}</div>
+                  <div style={{ fontSize: 11, color: spent > 0 ? cs.text : cs.muted, textAlign: "right" }}>
+                    {spent > 0 ? "Rp " + spent.toLocaleString("id-ID") : "—"}
+                    {budget > 0 && <span style={{ color: cs.muted }}> / Rp {budget.toLocaleString("id-ID")}</span>}
+                  </div>
+                  {isOwner && (
+                    <button onClick={() => setBudgetForm({ category: item.cat, subcategory: item.sub, amount: String(budget || "") })}
+                      style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, background: "transparent", border: "1px solid " + cs.border + "66", color: cs.muted, cursor: "pointer" }}>
+                      {budget > 0 ? "Ubah" : "Set"}
+                    </button>
+                  )}
+                </div>
+                {budget > 0 ? (
+                  <div style={{ height: 5, background: cs.surface, borderRadius: 99, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: pct + "%", background: barColor, borderRadius: 99, transition: "width .4s" }} />
+                  </div>
+                ) : (
+                  <div style={{ height: 5, background: cs.surface + "55", borderRadius: 99 }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    )}
+
+    {/* Modal Set Budget */}
+    {budgetForm !== null && isOwner && (
+      <div style={{ position: "fixed", inset: 0, background: "#00000088", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        onClick={e => { if (e.target === e.currentTarget) setBudgetForm(null); }}>
+        <div style={{ background: cs.bg, border: "1px solid " + cs.border, borderRadius: 14, padding: 24, width: "100%", maxWidth: 380 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: cs.text, marginBottom: 16 }}>
+            Set Budget Bulanan
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Kategori</label>
+            <select value={budgetForm.category} onChange={e => setBudgetForm(f => ({ ...f, category: e.target.value, subcategory: null }))}
+              style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, color: cs.text, padding: "8px 10px", fontSize: 13 }}>
+              <option value="petty_cash">💰 Petty Cash</option>
+              <option value="material_purchase">🔧 Pembelian Material</option>
+            </select>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Sub-kategori (kosongkan = semua)</label>
+            <select value={budgetForm.subcategory || ""} onChange={e => setBudgetForm(f => ({ ...f, subcategory: e.target.value || null }))}
+              style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, color: cs.text, padding: "8px 10px", fontSize: 13 }}>
+              <option value="">-- Semua --</option>
+              {(budgetForm.category === "material_purchase" ? MATERIAL_SUBS : PETTY_CASH_SUBS).map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Budget per Bulan (Rp)</label>
+            <input type="number" min="0" value={budgetForm.amount} onChange={e => setBudgetForm(f => ({ ...f, amount: e.target.value }))}
+              placeholder="500000" autoFocus
+              style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, color: cs.text, padding: "9px 12px", fontSize: 13, boxSizing: "border-box" }} />
+            <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>Kosongkan / isi 0 untuk hapus budget</div>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setBudgetForm(null)}
+              style={{ flex: 1, background: "transparent", border: "1px solid " + cs.border, borderRadius: 9, color: cs.muted, padding: 10, cursor: "pointer", fontSize: 13 }}>Batal</button>
+            <button onClick={saveBudget} disabled={budgetSaving}
+              style={{ flex: 2, background: cs.accent, border: "none", color: "#0a0f1e", padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13, opacity: budgetSaving ? 0.7 : 1 }}>
+              {budgetSaving ? "⏳ Menyimpan..." : "✅ Simpan Budget"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* Tab bar */}
     <div style={{ display: "flex", gap: 6 }}>

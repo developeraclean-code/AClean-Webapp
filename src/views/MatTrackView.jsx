@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useState, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
 
@@ -8,6 +8,73 @@ const TRACK_ITEMS = inventoryData.filter(item =>
   item.material_type === "pipa" ||
   item.material_type === "kabel"
 );
+
+// ── Tab utama: stok vs laporan freon ──
+const [mainTab, setMainTab] = useState("stok"); // "stok" | "laporan_freon"
+
+// ── State untuk laporan freon ──
+const now = new Date();
+const [freonReportMonth, setFreonReportMonth] = useState(now.getMonth() + 1); // 1-12
+const [freonReportYear, setFreonReportYear]   = useState(now.getFullYear());
+
+// Agregasi data freon usage untuk laporan
+const freonReport = useMemo(() => {
+  const mm = String(freonReportMonth).padStart(2, "0");
+  const prefix = `${freonReportYear}-${mm}`;
+
+  // Ambil semua usage freon di bulan ini
+  const freonTxs = invTxData.filter(tx => {
+    if (tx.qty >= 0) return false; // hanya usage (negatif)
+    if (!isFreonTx(tx)) return false;
+    const txDate = tx.job_date || tx.created_at?.slice(0, 10) || "";
+    return txDate.startsWith(prefix);
+  });
+
+  // Group by inventory_code (tipe freon)
+  const byType = {};
+  freonTxs.forEach(tx => {
+    const code = tx.inventory_code || "UNKNOWN";
+    const name = tx.inventory_name || code;
+    if (!byType[code]) byType[code] = { code, name, totalQty: 0, totalActual: 0, txCount: 0, byTeknisi: {} };
+    const qty = Math.abs(tx.qty_actual != null ? tx.qty_actual : tx.qty);
+    byType[code].totalQty    += Math.abs(tx.qty);
+    byType[code].totalActual += tx.qty_actual != null ? Math.abs(tx.qty_actual) : Math.abs(tx.qty);
+    byType[code].txCount     += 1;
+    const tek = tx.teknisi_name || "Tidak diketahui";
+    if (!byType[code].byTeknisi[tek]) byType[code].byTeknisi[tek] = { qty: 0, actual: 0, count: 0 };
+    byType[code].byTeknisi[tek].qty    += Math.abs(tx.qty);
+    byType[code].byTeknisi[tek].actual += tx.qty_actual != null ? Math.abs(tx.qty_actual) : Math.abs(tx.qty);
+    byType[code].byTeknisi[tek].count  += 1;
+  });
+
+  // Group by teknisi (semua tipe freon)
+  const byTeknisi = {};
+  freonTxs.forEach(tx => {
+    const tek = tx.teknisi_name || "Tidak diketahui";
+    if (!byTeknisi[tek]) byTeknisi[tek] = { name: tek, totalActual: 0, txCount: 0, byType: {} };
+    const actual = tx.qty_actual != null ? Math.abs(tx.qty_actual) : Math.abs(tx.qty);
+    byTeknisi[tek].totalActual += actual;
+    byTeknisi[tek].txCount     += 1;
+    const code = tx.inventory_code || "UNKNOWN";
+    const name = tx.inventory_name || code;
+    if (!byTeknisi[tek].byType[code]) byTeknisi[tek].byType[code] = { name, actual: 0 };
+    byTeknisi[tek].byType[code].actual += actual;
+  });
+
+  // Harga per kg per tipe freon (dari inventoryData)
+  const priceMap = {};
+  inventoryData.forEach(item => {
+    if (isFreonTx({ inventory_name: item.name, inventory_code: item.code })) {
+      priceMap[item.code] = item.price || 0;
+    }
+  });
+
+  const totalKg   = Object.values(byType).reduce((s, t) => s + t.totalActual, 0);
+  const totalCost = Object.values(byType).reduce((s, t) => s + (t.totalActual * (priceMap[t.code] || 0)), 0);
+  const unconfirmed = freonTxs.filter(tx => tx.qty_actual == null).length;
+
+  return { byType, byTeknisi, priceMap, totalKg, totalCost, unconfirmed, txCount: freonTxs.length };
+}, [invTxData, inventoryData, freonReportMonth, freonReportYear]);
 
 // ── State untuk inline mini-form unit fisik ──
 const [addUnitFor, setAddUnitFor]   = useState(null); // inventory_code sedang tambah unit
@@ -240,11 +307,154 @@ return (
         <div style={{ fontWeight: 800, fontSize: 18, color: cs.text }}>🧮 Stok & Tracking Material</div>
         <div style={{ fontSize: 12, color: cs.muted }}>Stok per tabung/roll · Auto-deduct dari laporan teknisi</div>
       </div>
-      <button onClick={() => setModalStok(true)}
-        style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-        + Material Baru
-      </button>
+      {mainTab === "stok" && isOwnerAdmin && (
+        <button onClick={() => setModalStok(true)}
+          style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+          + Material Baru
+        </button>
+      )}
     </div>
+
+    {/* Tab Switcher: Stok vs Laporan Freon */}
+    {isOwnerAdmin && (
+      <div style={{ display: "flex", gap: 4, background: cs.surface, borderRadius: 10, padding: 4, alignSelf: "flex-start" }}>
+        {[
+          { id: "stok",          label: "📦 Stok & Tracking" },
+          { id: "laporan_freon", label: "📊 Laporan Freon" },
+        ].map(t => (
+          <button key={t.id} onClick={() => setMainTab(t.id)}
+            style={{ padding: "7px 16px", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", transition: "all .2s",
+              background: mainTab === t.id ? cs.accent : "transparent",
+              color:      mainTab === t.id ? "#fff"    : cs.muted }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+    )}
+
+    {/* ═══════════════════════════════════════════════
+        TAB: LAPORAN FREON
+        ═══════════════════════════════════════════════ */}
+    {mainTab === "laporan_freon" && isOwnerAdmin && (
+      <div style={{ display: "grid", gap: 16 }}>
+        {/* Filter bulan & tahun */}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: cs.muted, fontWeight: 600 }}>Periode:</span>
+          <select value={freonReportMonth} onChange={e => setFreonReportMonth(Number(e.target.value))}
+            style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 12, outline: "none" }}>
+            {["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"].map((m, i) => (
+              <option key={i} value={i + 1}>{m}</option>
+            ))}
+          </select>
+          <select value={freonReportYear} onChange={e => setFreonReportYear(Number(e.target.value))}
+            style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 12, outline: "none" }}>
+            {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+          {freonReport.unconfirmed > 0 && (
+            <span style={{ fontSize: 11, background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, borderRadius: 6, padding: "3px 10px", fontWeight: 600 }}>
+              ⚠️ {freonReport.unconfirmed} transaksi belum ditimbang (pakai angka laporan)
+            </span>
+          )}
+        </div>
+
+        {/* Summary cards */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+          {[
+            { label: "Total Freon Terpakai", value: freonReport.totalKg.toFixed(1) + " kg", sub: freonReport.txCount + " transaksi", color: cs.accent },
+            { label: "Estimasi Biaya", value: "Rp " + freonReport.totalCost.toLocaleString("id-ID"), sub: "berdasarkan harga/kg", color: cs.green },
+            { label: "Belum Dikonfirmasi", value: freonReport.unconfirmed + " transaksi", sub: "angka perkiraan laporan", color: freonReport.unconfirmed > 0 ? cs.yellow : cs.muted },
+          ].map((c, i) => (
+            <div key={i} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px" }}>
+              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>{c.label}</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: c.color }}>{c.value}</div>
+              <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{c.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Per tipe freon */}
+        {Object.keys(freonReport.byType).length === 0 ? (
+          <div style={{ background: cs.card, borderRadius: 12, padding: 32, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+            Tidak ada pemakaian freon pada periode ini
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>❄️ Per Tipe Freon</div>
+            {Object.values(freonReport.byType).sort((a, b) => b.totalActual - a.totalActual).map(ft => {
+              const price = freonReport.priceMap[ft.code] || 0;
+              const cost  = ft.totalActual * price;
+              return (
+                <div key={ft.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, overflow: "hidden" }}>
+                  {/* Header tipe freon */}
+                  <div style={{ padding: "12px 16px", borderBottom: "1px solid " + cs.border, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>{ft.name}</div>
+                      <div style={{ fontSize: 11, color: cs.muted }}>{ft.txCount} pemakaian · {price > 0 ? "Rp " + price.toLocaleString("id-ID") + "/kg" : "harga belum diset"}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 17, fontWeight: 800, color: cs.accent }}>{ft.totalActual.toFixed(1)} kg</div>
+                      {price > 0 && <div style={{ fontSize: 11, color: cs.green }}>≈ Rp {cost.toLocaleString("id-ID")}</div>}
+                    </div>
+                  </div>
+                  {/* Breakdown per teknisi */}
+                  <div style={{ padding: "8px 16px 12px" }}>
+                    <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700, marginBottom: 6 }}>BREAKDOWN PER TEKNISI</div>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      {Object.entries(ft.byTeknisi).sort((a, b) => b[1].actual - a[1].actual).map(([tek, td]) => {
+                        const pct = ft.totalActual > 0 ? Math.round(td.actual / ft.totalActual * 100) : 0;
+                        return (
+                          <div key={tek} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, alignItems: "center", fontSize: 12 }}>
+                            <div>
+                              <div style={{ color: cs.text, fontWeight: 500 }}>{tek}</div>
+                              <div style={{ height: 4, background: cs.surface, borderRadius: 99, marginTop: 3, overflow: "hidden" }}>
+                                <div style={{ height: "100%", width: pct + "%", background: cs.accent, borderRadius: 99 }} />
+                              </div>
+                            </div>
+                            <div style={{ fontWeight: 700, color: cs.text, textAlign: "right" }}>{td.actual.toFixed(1)} kg</div>
+                            <div style={{ color: cs.muted, fontSize: 10, width: 36, textAlign: "right" }}>{pct}%</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Per teknisi (ringkasan semua tipe) */}
+        {Object.keys(freonReport.byTeknisi).length > 0 && (
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ padding: "12px 16px", borderBottom: "1px solid " + cs.border }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>👷 Ringkasan Per Teknisi</div>
+            </div>
+            <div style={{ padding: "8px 16px", display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, fontSize: 11, fontWeight: 700, color: cs.muted, borderBottom: "1px solid " + cs.border + "55" }}>
+              <div>Teknisi</div><div style={{ textAlign: "right" }}>Total (kg)</div><div style={{ textAlign: "right" }}>Transaksi</div>
+            </div>
+            {Object.values(freonReport.byTeknisi).sort((a, b) => b.totalActual - a.totalActual).map((td, i) => (
+              <div key={td.name} style={{ padding: "10px 16px", display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, alignItems: "center", background: i % 2 === 0 ? "transparent" : cs.surface, fontSize: 12, borderBottom: "1px solid " + cs.border + "33" }}>
+                <div>
+                  <div style={{ fontWeight: 600, color: cs.text }}>{td.name}</div>
+                  <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>
+                    {Object.entries(td.byType).map(([code, bt]) => bt.name + ": " + bt.actual.toFixed(1) + " kg").join(" · ")}
+                  </div>
+                </div>
+                <div style={{ fontWeight: 700, color: cs.accent, textAlign: "right" }}>{td.totalActual.toFixed(1)} kg</div>
+                <div style={{ color: cs.muted, textAlign: "right" }}>{td.txCount}x</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* ═══════════════════════════════════════════════
+        TAB: STOK & TRACKING (konten existing)
+        ═══════════════════════════════════════════════ */}
+    {(mainTab === "stok" || !isOwnerAdmin) && (<>
 
     {/* ── Sub-tab Filter: Aktif / Diarsipkan / Semua ── */}
     {isOwnerAdmin && (
@@ -728,6 +938,7 @@ return (
         ))}
       </div>
     )}
+    </>)} {/* end TAB stok */}
   </div>
 );
 }
