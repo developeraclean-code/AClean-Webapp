@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 const API_BASE = "/api";
 
@@ -57,9 +57,12 @@ const SERVICE_BG = (service = "") => {
 
 export default function CustomerPortalView({ token: tokenProp }) {
   const token = tokenProp || window.__portalToken || "";
-  const [data, setData]     = useState(null);
+  const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError]   = useState(null);
+  const [error, setError]     = useState(null);
+  const [vouchers, setVouchers] = useState([]);
+  const [ratingTarget, setRatingTarget] = useState(null); // order yang mau di-rating
+  const [ratedOrders, setRatedOrders]   = useState({}); // { order_id: true }
 
   useEffect(() => {
     if (!token) { setError("not_found"); setLoading(false); return; }
@@ -67,7 +70,17 @@ export default function CustomerPortalView({ token: tokenProp }) {
       .then(r => r.json())
       .then(d => {
         if (d.error) setError(d.code === "NOT_FOUND" ? "not_found" : "error");
-        else setData(d);
+        else {
+          setData(d);
+          // Fetch vouchers paralel
+          fetch(`${API_BASE}/customer-vouchers?token=${encodeURIComponent(token)}`)
+            .then(r => r.json()).then(v => setVouchers(v.vouchers || [])).catch(() => {});
+          // Cek hash anchor #rating
+          if (window.location.hash === "#rating" && d.orders?.length > 0) {
+            const lastDone = d.orders.find(o => ["COMPLETED","INVOICE_APPROVED"].includes(o.status));
+            if (lastDone) setRatingTarget(lastDone);
+          }
+        }
       })
       .catch(() => setError("error"))
       .finally(() => setLoading(false));
@@ -83,10 +96,15 @@ export default function CustomerPortalView({ token: tokenProp }) {
     !["COMPLETED","INVOICE_APPROVED","CANCELLED"].includes(o.status) && o.date >= todayStr
   ) || null;
 
-  // Job selesai terbaru (untuk garansi)
+  // Job selesai terbaru (untuk garansi + rating)
   const lastDoneJob = data.orders?.find(o => ["COMPLETED","INVOICE_APPROVED"].includes(o.status));
   const lastInvoice = data.invoices?.[0] || null;
   const garansiInvoice = lastInvoice?.garansi_expires ? lastInvoice : null;
+
+  // Job selesai yang belum di-rating (hanya tampilkan tombol jika ada)
+  const unratedJob = data.orders?.find(o =>
+    ["COMPLETED","INVOICE_APPROVED"].includes(o.status) && !ratedOrders[o.id]
+  ) || null;
 
   return (
     <div style={s.page}>
@@ -132,6 +150,34 @@ export default function CustomerPortalView({ token: tokenProp }) {
         {/* GARANSI */}
         {garansiInvoice && (
           <GaransiCard inv={garansiInvoice} />
+        )}
+
+        {/* RATING PROMPT — jika ada job selesai belum di-rating */}
+        {unratedJob && !ratingTarget && (
+          <RatingPrompt job={unratedJob} onOpen={() => setRatingTarget(unratedJob)} />
+        )}
+
+        {/* RATING FORM — aktif saat customer klik beri rating */}
+        {ratingTarget && (
+          <RatingForm
+            job={ratingTarget}
+            token={token}
+            onDone={() => {
+              setRatedOrders(prev => ({ ...prev, [ratingTarget.id]: true }));
+              setRatingTarget(null);
+            }}
+            onCancel={() => setRatingTarget(null)}
+          />
+        )}
+
+        {/* VOUCHER */}
+        {vouchers.length > 0 && (
+          <>
+            <div style={s.sectionLabel}>Voucher Anda</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {vouchers.map(v => <VoucherCard key={v.id} voucher={v} />)}
+            </div>
+          </>
         )}
 
         {/* RIWAYAT */}
@@ -362,6 +408,137 @@ function HistoryItem({ order, invoice }) {
         )}
         {!inv && stDone && <div style={{ ...s.historyStatus, ...s.hsDone }}>Selesai</div>}
       </div>
+    </div>
+  );
+}
+
+// ── RATING PROMPT ──
+function RatingPrompt({ job, onOpen }) {
+  return (
+    <div style={{ background: "linear-gradient(135deg,#fef9c3,#fef3c7)", border: "1px solid #fcd34d", borderRadius: 16, padding: "16px 18px", display: "flex", alignItems: "center", gap: 12 }}>
+      <span style={{ fontSize: 28 }}>⭐</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: "#92400e" }}>Bagaimana servis kami?</div>
+        <div style={{ fontSize: 11, color: "#a16207", marginTop: 2 }}>{job.service} · {fmtDateShort(job.date)}</div>
+      </div>
+      <button onClick={onOpen}
+        style={{ background: "#f59e0b", border: "none", color: "#fff", borderRadius: 10, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+        Beri Rating
+      </button>
+    </div>
+  );
+}
+
+// ── RATING FORM ──
+function RatingForm({ job, token, onDone, onCancel }) {
+  const [selected, setSelected] = useState(0);
+  const [hover, setHover]       = useState(0);
+  const [comment, setComment]   = useState("");
+  const [saving, setSaving]     = useState(false);
+  const [msg, setMsg]           = useState(null);
+
+  const submit = async () => {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      const r = await fetch(`${API_BASE}/submit-rating`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, order_id: job.id, rating: selected, comment }),
+      });
+      const d = await r.json();
+      if (r.ok) { setMsg("success"); setTimeout(onDone, 1800); }
+      else setMsg(d.error || "Gagal kirim rating");
+    } catch { setMsg("Gagal kirim, coba lagi"); }
+    finally { setSaving(false); }
+  };
+
+  const LABELS = ["", "Sangat Buruk", "Buruk", "Cukup", "Bagus", "Sangat Bagus"];
+  const active = hover || selected;
+
+  return (
+    <div style={{ background: "#fff", border: "2px solid #fcd34d", borderRadius: 18, overflow: "hidden" }}>
+      <div style={{ background: "linear-gradient(135deg,#fef9c3,#fef3c7)", padding: "14px 18px", borderBottom: "1px solid #fde68a" }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: "#92400e" }}>⭐ Beri Rating Servis</div>
+        <div style={{ fontSize: 11, color: "#a16207", marginTop: 2 }}>{job.service} · {fmtDateShort(job.date)}</div>
+      </div>
+      <div style={{ padding: "20px 18px", display: "grid", gap: 16 }}>
+        {msg === "success" ? (
+          <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>🙏</div>
+            <div style={{ fontWeight: 700, color: "#16a34a", fontSize: 15 }}>Terima kasih atas rating Anda!</div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>Masukan Anda sangat berarti untuk AClean</div>
+          </div>
+        ) : (
+          <>
+            {/* Bintang */}
+            <div style={{ textAlign: "center" }}>
+              <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 6 }}>
+                {[1,2,3,4,5].map(i => (
+                  <span key={i}
+                    onClick={() => setSelected(i)}
+                    onMouseEnter={() => setHover(i)}
+                    onMouseLeave={() => setHover(0)}
+                    style={{ fontSize: 36, cursor: "pointer", color: i <= active ? "#f59e0b" : "#e2e8f0", transition: "color .15s, transform .1s", transform: i === active ? "scale(1.2)" : "scale(1)", display: "inline-block" }}>
+                    ★
+                  </span>
+                ))}
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: active ? "#92400e" : "#94a3b8", minHeight: 20 }}>
+                {active ? LABELS[active] : "Pilih bintang"}
+              </div>
+            </div>
+
+            {/* Komentar */}
+            <textarea
+              value={comment}
+              onChange={e => setComment(e.target.value)}
+              placeholder="Ceritakan pengalaman Anda (opsional)..."
+              maxLength={500}
+              rows={3}
+              style={{ width: "100%", border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 12px", fontSize: 13, color: "#334155", resize: "none", outline: "none", fontFamily: "inherit", boxSizing: "border-box" }}
+            />
+
+            {msg && msg !== "success" && (
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#dc2626" }}>{msg}</div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
+              <button onClick={onCancel} disabled={saving}
+                style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "11px", fontSize: 13, cursor: "pointer", color: "#64748b" }}>
+                Batal
+              </button>
+              <button onClick={submit} disabled={!selected || saving}
+                style={{ background: selected ? "#f59e0b" : "#e2e8f0", border: "none", borderRadius: 10, padding: "11px", fontSize: 13, fontWeight: 700, cursor: selected ? "pointer" : "default", color: selected ? "#fff" : "#94a3b8", transition: "background .2s" }}>
+                {saving ? "Mengirim..." : "Kirim Rating ⭐"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── VOUCHER CARD ──
+function VoucherCard({ voucher: v }) {
+  const typeLabel = v.type === "discount_pct" ? `Diskon ${v.value}%`
+    : v.type === "free_unit" ? `${v.value} Unit Gratis`
+    : v.type === "free_service" ? "Servis Gratis" : v.type;
+
+  return (
+    <div style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)", border: "1px solid #86efac", borderRadius: 14, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ width: 44, height: 44, borderRadius: 12, background: "#16a34a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>🎁</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 800, fontSize: 15, color: "#15803d" }}>{typeLabel}</div>
+        {v.description && <div style={{ fontSize: 11, color: "#16a34a", marginTop: 2 }}>{v.description}</div>}
+        <div style={{ fontSize: 10, color: "#4ade80", marginTop: 4, fontFamily: "monospace", letterSpacing: 1 }}>KODE: {v.code}</div>
+      </div>
+      {v.expires_at && (
+        <div style={{ fontSize: 10, color: "#16a34a", textAlign: "right", flexShrink: 0 }}>
+          Berlaku s/d<br /><strong>{fmtDateShort(v.expires_at)}</strong>
+        </div>
+      )}
     </div>
   );
 }

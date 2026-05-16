@@ -567,6 +567,186 @@ async function taskBackupData() {
 }
 
 // ══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
+// TASK 9: Rating Prompt H+1 — cek order COMPLETED kemarin, kirim WA minta rating
+// ══════════════════════════════════════════════════
+async function taskRatingPrompt() {
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["rating_prompt_enabled","cron_jobs","customer_portal_enabled","voucher_loyalty_enabled"]);
+  const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
+
+  if (togMap["rating_prompt_enabled"] !== "true") {
+    await log("RATING_PROMPT","Dilewati — rating_prompt_enabled OFF","INFO");
+    return { skipped: true };
+  }
+  if (togMap["customer_portal_enabled"] !== "true") {
+    await log("RATING_PROMPT","Dilewati — customer_portal_enabled OFF","INFO");
+    return { skipped: true };
+  }
+
+  const APP_URL = process.env.APP_URL || "https://aclean.id";
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0,10);
+
+  // Order COMPLETED/INVOICE_APPROVED kemarin, ada phone, belum dapat rating
+  const { data: orders } = await sb.from("orders")
+    .select("id,customer,phone,service,teknisi,date")
+    .eq("date", yesterday)
+    .in("status",["COMPLETED","INVOICE_APPROVED"])
+    .not("phone","is",null);
+
+  if (!orders?.length) return { sent: 0, reason: "Tidak ada order selesai kemarin" };
+
+  // Ambil order_id yang sudah punya rating
+  const orderIds = orders.map(o => o.id);
+  const { data: existing } = await sb.from("customer_feedback").select("order_id").in("order_id", orderIds);
+  const ratedSet = new Set((existing||[]).map(r => r.order_id));
+
+  let sent = 0, skipped = 0;
+  for (const o of orders) {
+    if (ratedSet.has(o.id) || !o.phone) { skipped++; continue; }
+
+    // Get atau buat portal token
+    const { data: tokRows } = await sb.from("customer_tokens")
+      .select("token,expires_at").eq("phone", o.phone).limit(1);
+
+    let token = tokRows?.[0]?.token;
+    // Buat token baru jika belum ada
+    if (!token) {
+      const { randomBytes } = await import("crypto");
+      token = randomBytes(24).toString("hex");
+      const expiresAt = new Date(Date.now() + 7*24*60*60*1000).toISOString();
+      await sb.from("customer_tokens").insert({ phone: o.phone, token, expires_at: expiresAt, customer_name: o.customer });
+    }
+
+    const link = `${APP_URL}/status/${token}#rating`;
+    const msg =
+      `Halo ${o.customer}! 😊\n\n` +
+      `Terima kasih telah mempercayakan servis AC ke AClean.\n\n` +
+      `Bagaimana pengalaman servis Anda kemarin?\n` +
+      `⭐ Beri rating di sini (5 detik):\n${link}\n\n` +
+      `Masukan Anda sangat berarti untuk kami 🙏\n— AClean Service`;
+
+    const ok = await sendWA(o.phone, msg);
+    if (ok) { sent++; await log("RATING_PROMPT_SENT", `Rating WA → ${o.customer} (${o.phone}) job ${o.id}`, "SUCCESS"); }
+    else skipped++;
+
+    // Phase 3B — cek milestone voucher jika fitur aktif
+    if (togMap["voucher_loyalty_enabled"] === "true") {
+      try {
+        const { count } = await sb.from("orders")
+          .select("id", { count: "exact", head: true })
+          .eq("phone", o.phone)
+          .in("status",["COMPLETED","INVOICE_APPROVED"]);
+
+        const MILESTONES = [
+          { at: 3,  type: "discount_pct", value: 10, desc: "Diskon 10% untuk servis berikutnya — hadiah pelanggan setia ke-3 kali!" },
+          { at: 5,  type: "free_unit",    value: 1,  desc: "1 unit cuci AC GRATIS — terima kasih sudah setia 5 kali servis!" },
+          { at: 10, type: "discount_pct", value: 20, desc: "Diskon 20% untuk servis berikutnya — VIP Member 10x servis!" },
+        ];
+
+        const milestone = MILESTONES.find(m => m.at === count);
+        if (milestone) {
+          // Cek belum pernah dapat voucher milestone ini
+          const code = `ACL-${o.phone.slice(-4)}-${milestone.at}X`;
+          const { data: existVoucher } = await sb.from("customer_vouchers").select("id").eq("code", code).limit(1);
+          if (!existVoucher?.length) {
+            const expiresAt = new Date(Date.now() + 90*24*60*60*1000).toISOString().slice(0,10);
+            await sb.from("customer_vouchers").insert({
+              phone: o.phone, customer_name: o.customer,
+              code, type: milestone.type, value: milestone.value,
+              description: milestone.desc, expires_at: expiresAt,
+            });
+            const voucherMsg =
+              `🎁 *Voucher Spesial untuk ${o.customer}!*\n\n` +
+              `${milestone.desc}\n\n` +
+              `Kode voucher Anda: *${code}*\n` +
+              `Berlaku hingga: ${expiresAt}\n\n` +
+              `Lihat voucher di portal: ${APP_URL}/status/${token}\n\n` +
+              `Sebutkan kode ini saat booking berikutnya 😊\n— AClean Service`;
+            await sendWA(o.phone, voucherMsg);
+            await log("VOUCHER_CREATED", `Voucher ${code} → ${o.customer} (milestone ${milestone.at}x)`, "SUCCESS");
+          }
+        }
+      } catch(e) { /* voucher opsional — tidak blok */ }
+    }
+  }
+
+  return { sent, skipped };
+}
+
+// ══════════════════════════════════════════════════
+// TASK 10: Servis Reminder — customer >90 hari tidak servis
+// ══════════════════════════════════════════════════
+async function taskServisReminder() {
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["servis_reminder_enabled","customer_portal_enabled"]);
+  const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
+
+  if (togMap["servis_reminder_enabled"] !== "true") {
+    await log("SERVIS_REMINDER","Dilewati — servis_reminder_enabled OFF","INFO");
+    return { skipped: true };
+  }
+  if (togMap["customer_portal_enabled"] !== "true") {
+    await log("SERVIS_REMINDER","Dilewati — customer_portal_enabled OFF","INFO");
+    return { skipped: true };
+  }
+
+  const APP_URL = process.env.APP_URL || "https://aclean.id";
+  const today = new Date();
+  const cutoff = new Date(today.getTime() - 90*24*60*60*1000).toISOString().slice(0,10);
+
+  // Customer dengan last_service < 90 hari lalu, ada phone, aktif
+  const { data: customers } = await sb.from("customers")
+    .select("id,name,phone,last_service,last_rating_request")
+    .not("phone","is",null)
+    .lt("last_service", cutoff)
+    .not("last_service","is",null)
+    .limit(50); // max 50 per run agar tidak spam
+
+  if (!customers?.length) return { sent: 0, reason: "Tidak ada customer yang perlu diingatkan" };
+
+  const todayStr = today.toISOString().slice(0,10);
+  let sent = 0, skipped = 0;
+
+  for (const c of customers) {
+    // Jangan kirimi yang sudah dapat reminder dalam 30 hari terakhir
+    if (c.last_rating_request) {
+      const daysSinceReminder = Math.floor((Date.now() - new Date(c.last_rating_request).getTime()) / 86400000);
+      if (daysSinceReminder < 30) { skipped++; continue; }
+    }
+
+    const daysSince = Math.floor((Date.now() - new Date(c.last_service).getTime()) / 86400000);
+
+    // Get portal token
+    const { data: tokRows } = await sb.from("customer_tokens")
+      .select("token").eq("phone", c.phone).limit(1);
+    let token = tokRows?.[0]?.token;
+    if (!token) {
+      const { randomBytes } = await import("crypto");
+      token = randomBytes(24).toString("hex");
+      const expiresAt = new Date(Date.now() + 7*24*60*60*1000).toISOString();
+      await sb.from("customer_tokens").insert({ phone: c.phone, token, expires_at: expiresAt, customer_name: c.name });
+    }
+
+    const lastServiceFmt = new Date(c.last_service).toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"});
+    const link = `${APP_URL}/status/${token}`;
+    const msg =
+      `Halo ${c.name}! 👋\n\n` +
+      `AC Anda terakhir dirawat ${daysSince} hari lalu (${lastServiceFmt}).\n\n` +
+      `Untuk menjaga performa AC tetap optimal, disarankan cuci AC setiap 3 bulan. ❄️\n\n` +
+      `Mau jadwalkan servis berikutnya? Balas pesan ini atau:\n${link}\n\n` +
+      `— AClean Service`;
+
+    const ok = await sendWA(c.phone, msg);
+    if (ok) {
+      sent++;
+      // Update last_rating_request agar tidak spam
+      await sb.from("customers").update({ last_rating_request: todayStr }).eq("id", c.id);
+      await log("SERVIS_REMINDER_SENT", `Reminder → ${c.name} (${daysSince} hari sejak servis terakhir)`, "SUCCESS");
+    } else skipped++;
+  }
+
+  return { sent, skipped };
+}
+
 // TASK 8: Weekly Report — Minggu 09:00 WIB (02:00 UTC)
 // Ringkasan 7 hari terakhir: order, revenue, laporan, top teknisi
 // ══════════════════════════════════════════════════
@@ -691,14 +871,16 @@ export default async function handler(req, res) {
 
   try {
     let result;
-    if (task === "daily")           result = await taskDaily();
-    else if (task === "stock")      result = await taskStock();
-    else if (task === "cleanup")    result = await taskCleanup();
-    else if (task === "wa-cleanup") result = await taskWaCleanup();
-    else if (task === "bukti-bayar") result = await taskScanBuktiBayar();
-    else if (task === "backup")     result = await taskBackupData();
-    else if (task === "weekly")     result = await taskWeeklyReport();
-    else                            result = await taskReminder();
+    if (task === "daily")              result = await taskDaily();
+    else if (task === "stock")         result = await taskStock();
+    else if (task === "cleanup")       result = await taskCleanup();
+    else if (task === "wa-cleanup")    result = await taskWaCleanup();
+    else if (task === "bukti-bayar")   result = await taskScanBuktiBayar();
+    else if (task === "backup")        result = await taskBackupData();
+    else if (task === "weekly")        result = await taskWeeklyReport();
+    else if (task === "rating-prompt") result = await taskRatingPrompt();
+    else if (task === "servis-reminder") result = await taskServisReminder();
+    else                               result = await taskReminder();
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });
   } catch(err) {

@@ -2,7 +2,7 @@
 import { setCorsHeaders, checkRateLimit, validateInternalToken } from "./_auth.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status"];
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers"];
 
 // ── VALIDATION HELPERS ──
 function validateAndNormalizePhone(phone) {
@@ -1442,6 +1442,115 @@ export default async function handler(req, res) {
         token_created: tokRow.created_at,
         token_expires: tokRow.expires_at,
       });
+    }
+
+    // ── SUBMIT-RATING (PUBLIC — dari portal customer) ──
+    if (route === "submit-rating") {
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      if (!checkRateLimit(req, "submit-rating", 10)) return res.status(429).json({ error: "Terlalu banyak request" });
+      const b = req.body || {};
+      const token = String(b.token || "").trim();
+      const rating = parseInt(b.rating);
+      const comment = String(b.comment || "").trim().slice(0, 500);
+
+      if (!token) return res.status(400).json({ error: "Token diperlukan" });
+      if (!rating || rating < 1 || rating > 5) return res.status(400).json({ error: "Rating 1-5 diperlukan" });
+
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
+      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json", "Prefer": "return=representation" };
+
+      // Validasi token → dapat phone
+      const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,customer_name`, { headers });
+      const tokRows = tokRes.ok ? await tokRes.json() : [];
+      if (!tokRows.length) return res.status(404).json({ error: "Token tidak valid" });
+      const { phone, customer_name } = tokRows[0];
+
+      // Cek order_id dari body atau ambil job terakhir
+      const orderId = String(b.order_id || "").trim();
+      let jobData = { order_id: orderId, service: "", teknisi: "" };
+      if (orderId) {
+        const orRes = await fetch(`${SU}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=id,service,teknisi`, { headers });
+        const orRows = orRes.ok ? await orRes.json() : [];
+        if (orRows[0]) jobData = { order_id: orRows[0].id, service: orRows[0].service, teknisi: orRows[0].teknisi };
+      }
+
+      // Cek duplikasi rating untuk order yang sama
+      if (jobData.order_id) {
+        const dupRes = await fetch(`${SU}/rest/v1/customer_feedback?order_id=eq.${encodeURIComponent(jobData.order_id)}&phone=eq.${encodeURIComponent(phone)}&select=id`, { headers });
+        const dupRows = dupRes.ok ? await dupRes.json() : [];
+        if (dupRows.length) return res.status(409).json({ error: "Rating sudah diberikan untuk job ini" });
+      }
+
+      // Simpan rating
+      const insRes = await fetch(`${SU}/rest/v1/customer_feedback`, {
+        method: "POST", headers,
+        body: JSON.stringify({
+          order_id: jobData.order_id || "unknown",
+          phone, customer: customer_name || "",
+          teknisi: jobData.teknisi || "",
+          service: jobData.service || "",
+          rating, comment: comment || null,
+        }),
+      });
+      if (!insRes.ok) return res.status(500).json({ error: "Gagal simpan rating" });
+
+      // Alert ke owner via WA jika rating ≤ 2
+      if (rating <= 2) {
+        const FT = process.env.FONNTE_TOKEN;
+        const ownerPhone = process.env.OWNER_PHONE;
+        if (FT && ownerPhone) {
+          const alertMsg =
+            `⚠️ *Rating Rendah dari Customer*\n\n` +
+            `⭐ Rating: ${rating}/5\n` +
+            `👤 Customer: ${customer_name || phone}\n` +
+            `🔧 Job: ${jobData.order_id || "-"}\n` +
+            `🛠 Teknisi: ${jobData.teknisi || "-"}\n` +
+            `💬 Komentar: ${comment || "(tidak ada)"}\n\n` +
+            `Segera follow-up untuk cegah churn! — AClean System`;
+          fetch("https://api.fonnte.com/send", {
+            method: "POST",
+            headers: { "Authorization": FT, "Content-Type": "application/json" },
+            body: JSON.stringify({ target: ownerPhone, message: alertMsg }),
+          }).catch(() => {});
+        }
+      }
+
+      return res.status(200).json({ ok: true, message: "Rating berhasil disimpan. Terima kasih! 🙏" });
+    }
+
+    // ── CUSTOMER-VOUCHERS (PUBLIC — dari portal customer) ──
+    if (route === "customer-vouchers") {
+      if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+      if (!checkRateLimit(req, "customer-vouchers", 20)) return res.status(429).json({ error: "Terlalu banyak request" });
+      const token = String(req.query.token || "").trim();
+      if (!token) return res.status(400).json({ error: "Token diperlukan" });
+
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
+      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
+
+      // Validasi token
+      const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone`, { headers });
+      const tokRows = tokRes.ok ? await tokRes.json() : [];
+      if (!tokRows.length) return res.status(404).json({ error: "Token tidak valid" });
+      const { phone } = tokRows[0];
+
+      const variants = buildPhoneVariants(phone);
+      const phoneFilter = variants.map(v => `phone=eq.${encodeURIComponent(v)}`).join(",");
+
+      // Ambil voucher aktif (belum diklaim, belum expired)
+      const today = new Date().toISOString().slice(0, 10);
+      const vRes = await fetch(
+        `${SU}/rest/v1/customer_vouchers?or=(${phoneFilter})&claimed_at=is.null&order=created_at.desc&select=*`,
+        { headers }
+      );
+      const vouchers = vRes.ok ? await vRes.json() : [];
+      const active = vouchers.filter(v => !v.expires_at || v.expires_at >= today);
+
+      return res.status(200).json({ vouchers: active });
     }
 
     // ── GENERATE-CUSTOMER-TOKEN (PRIVATE — admin/owner) ──

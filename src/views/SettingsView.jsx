@@ -794,6 +794,59 @@ function SettingsView({
             <div style={{ marginTop: 8, padding: "10px 12px", background: cs.surface, borderRadius: 8, fontSize: 11, color: cs.muted }}>
               🔗 Customer buka: <b>aclean.id/status/TOKEN</b> — bisa lihat status tim, riwayat servis, dan invoice. Tidak perlu login.
             </div>
+
+            {/* Sub-fitur portal — hanya aktif jika portal ON */}
+            {appSettings?.customer_portal_enabled === "true" && (
+              <div style={{ marginTop: 12, borderTop: "1px solid " + cs.border, paddingTop: 12 }}>
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8, fontWeight: 600 }}>Fitur Tambahan Portal (Phase 2 & 3)</div>
+                {[
+                  {
+                    key: "rating_prompt_enabled",
+                    label: "Rating Pasca-Servis (H+1)",
+                    desc: "Kirim WA otomatis H+1 setelah job selesai, minta customer beri rating ⭐. Rating ≤2 → alert langsung ke Owner.",
+                    icon: "⭐",
+                  },
+                  {
+                    key: "servis_reminder_enabled",
+                    label: "Reminder Servis Berkala",
+                    desc: "Kirim WA otomatis ke customer yang >90 hari tidak servis. Maks 50 customer per minggu.",
+                    icon: "📅",
+                  },
+                  {
+                    key: "voucher_loyalty_enabled",
+                    label: "Voucher Loyalty Otomatis",
+                    desc: "Beri voucher otomatis saat customer mencapai milestone: 3x servis (diskon 10%), 5x (1 unit gratis), 10x (diskon 20%).",
+                    icon: "🎁",
+                  },
+                ].map(({ key, label, desc, icon }) => {
+                  const isOn = appSettings[key] === "true";
+                  return (
+                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 0", borderBottom: "1px solid " + cs.border + "55" }}>
+                      <span style={{ fontSize: 16, minWidth: 22 }}>{icon}</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, color: isOn ? cs.text : cs.muted, fontSize: 12 }}>{label}</div>
+                        <div style={{ fontSize: 10, color: cs.muted, marginTop: 1 }}>{desc}</div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: isOn ? cs.green : cs.muted, minWidth: 22 }}>{isOn ? "ON" : "OFF"}</span>
+                        <div onClick={async () => {
+                          const newVal = isOn ? "false" : "true";
+                          setAppSettings(prev => ({ ...prev, [key]: newVal }));
+                          await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
+                          showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
+                        }}
+                          style={{ width: 40, height: 22, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
+                          <div style={{ position: "absolute", width: 16, height: 16, borderRadius: "50%", background: "#fff", top: 2, left: isOn ? 20 : 2, transition: "left .2s", boxShadow: "0 1px 3px #0004" }} />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ marginTop: 8, fontSize: 10, color: cs.muted }}>
+                  💡 Semua fitur ini default <b>OFF</b> — aktifkan satu per satu untuk trial & error.
+                </div>
+              </div>
+            )}
           </Card>
         )}
 
