@@ -1648,18 +1648,18 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
 
 
   // Generate Invoice PDF blob via @react-pdf/renderer (reliable, no rasterization)
-  const generateInvoicePDFBlob = async (inv) => {
+  const generateInvoicePDFBlob = async (inv, portalLink = null) => {
     const { pdf } = await import("@react-pdf/renderer");
     const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
     const logoUrl = await fetchInvoiceLogoUrl();
     return await pdf(
-      <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} />
+      <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} portalLink={portalLink} />
     ).toBlob();
   };
 
-  const uploadInvoicePDFForWA = async (inv) => {
+  const uploadInvoicePDFForWA = async (inv, portalLink = null) => {
     try {
-      const blob = await generateInvoicePDFBlob(inv);
+      const blob = await generateInvoicePDFBlob(inv, portalLink);
       if (!blob) return null;
       const filename = `Invoice_${inv.id}.pdf`;
       const base64 = await new Promise((resolve, reject) => {
@@ -3152,10 +3152,27 @@ ${photoPageHTML}
     await sendDispatchWA(order);
   };
 
+  // ── Helper: generate/refresh portal token dan return link ──
+  const getPortalLink = async (phone, customerName) => {
+    if (!phone || appSettings?.customer_portal_enabled !== "true") return null;
+    try {
+      const hdrs = await _apiHeaders();
+      const r = await fetch("/api/generate-customer-token", {
+        method: "POST", headers: hdrs,
+        body: JSON.stringify({ phone, customer_name: customerName || "" }),
+      });
+      if (!r.ok) return null;
+      const { link } = await r.json();
+      return link || null;
+    } catch { return null; }
+  };
+
   const invoiceReminderWA = async (inv) => {
     if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
-    const invoiceUrl = await uploadInvoicePDFForWA(inv);
-    const msg = `Halo ${inv.customer}, Terlampir Invoice Resmi Pekerjaan Kemaren senilai *${fmt(inv.total)}*.\n\nPembayaran Bisa Melalui Transfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nApabila sudah di Transfer Bole dikirimkan Bukti Pembayaran kesini untuk di Konfirmasi Pembayarannya ya Bapak / Ibu. Terima kasih! 🙏`;
+    const portalLink = await getPortalLink(inv.phone, inv.customer);
+    const invoiceUrl = await uploadInvoicePDFForWA(inv, portalLink);
+    const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
+    const msg = `Halo ${inv.customer}, Terlampir Invoice Resmi Pekerjaan Kemaren senilai *${fmt(inv.total)}*.\n\nPembayaran Bisa Melalui Transfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nApabila sudah di Transfer Bole dikirimkan Bukti Pembayaran kesini untuk di Konfirmasi Pembayarannya ya Bapak / Ibu. Terima kasih! 🙏${portalLine}`;
     sendWA(inv.phone, msg, invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {});
   };
 
@@ -3403,8 +3420,10 @@ ${photoPageHTML}
     const due = await approveInvoiceCore(inv);
 
     // Generate PDF invoice → upload → kirim sebagai attachment Fonnte
-    const invoiceUrl = await uploadInvoicePDFForWA(inv);
-    const waMsg = `Halo ${inv.customer}, invoice *AClean Service* telah disiapkan:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nTerima kasih! 🙏`;
+    const portalLink = await getPortalLink(inv.phone, inv.customer);
+    const invoiceUrl = await uploadInvoicePDFForWA(inv, portalLink);
+    const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
+    const waMsg = `Halo ${inv.customer}, invoice *AClean Service* telah disiapkan:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nTerima kasih! 🙏${portalLine}`;
     const sent = await sendWA(inv.phone, waMsg, invoiceUrl
       ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` }
       : {}

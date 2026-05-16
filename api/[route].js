@@ -1392,6 +1392,7 @@ export default async function handler(req, res) {
     // Dipanggil oleh halaman portal customer — tidak butuh auth, hanya token customer
     if (route === "customer-status") {
       if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+      if (!checkRateLimit(req, "customer-status", 30)) return res.status(429).json({ error: "Terlalu banyak request, coba lagi sebentar" });
       const token = String(req.query.token || "").trim();
       if (!token) return res.status(400).json({ error: "Token diperlukan" });
 

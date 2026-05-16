@@ -98,7 +98,7 @@ function MatRow({ m, idx }) {
 }
 
 // ── Main Component ──
-export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItems = [] }) {
+export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItems = [], portalLink = null }) {
   const isAcSale = inv.invoice_type === "ac_unit_sale";
 
   const matDetails = (() => {
@@ -410,6 +410,15 @@ export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItem
           <Text style={{ fontStyle: "italic", marginTop: 3, color: "#94a3b8" }}>
             Terima kasih telah mempercayakan perawatan AC Anda kepada {appSettings.company_name || "AClean"}
           </Text>
+          {portalLink ? (
+            <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#e2e8f0", borderTopStyle: "solid" }}>
+              <Text style={{ fontSize: 8, color: "#0369a1", fontFamily: "Helvetica-Bold" }}>
+                🔗 Portal Servis Anda (riwayat, foto & invoice):
+              </Text>
+              <Text style={{ fontSize: 8, color: "#0369a1", marginTop: 2 }}>{portalLink}</Text>
+              <Text style={{ fontSize: 7, color: "#94a3b8", marginTop: 2 }}>Simpan link ini untuk akses riwayat servis kapan saja</Text>
+            </View>
+          ) : null}
         </View>
 
       </Page>
