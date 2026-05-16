@@ -9,13 +9,21 @@ const TRACK_ITEMS = inventoryData.filter(item =>
   item.material_type === "kabel"
 );
 
-// ── Tab utama: stok vs laporan freon ──
-const [mainTab, setMainTab] = useState("stok"); // "stok" | "laporan_freon"
+// ── Tab utama: stok vs laporan ──
+const [mainTab, setMainTab] = useState("stok"); // "stok" | "laporan_freon" | "laporan_pipa" | "laporan_kabel"
 
 // ── State untuk laporan freon ──
 const now = new Date();
 const [freonReportMonth, setFreonReportMonth] = useState(now.getMonth() + 1); // 1-12
 const [freonReportYear, setFreonReportYear]   = useState(now.getFullYear());
+
+// ── State untuk laporan pipa ──
+const [pipaReportMonth, setPipaReportMonth] = useState(now.getMonth() + 1);
+const [pipaReportYear, setPipaReportYear]   = useState(now.getFullYear());
+
+// ── State untuk laporan kabel ──
+const [kabelReportMonth, setKabelReportMonth] = useState(now.getMonth() + 1);
+const [kabelReportYear, setKabelReportYear]   = useState(now.getFullYear());
 
 // Agregasi data freon usage untuk laporan
 const freonReport = useMemo(() => {
@@ -75,6 +83,66 @@ const freonReport = useMemo(() => {
 
   return { byType, byTeknisi, priceMap, totalKg, totalCost, unconfirmed, txCount: freonTxs.length };
 }, [invTxData, inventoryData, freonReportMonth, freonReportYear]);
+
+// ── Helper: buat laporan per material_type (pipa / kabel) ──
+function buildMatReport(type, month, year) {
+  const mm     = String(month).padStart(2, "0");
+  const prefix = `${year}-${mm}`;
+  const txs    = invTxData.filter(tx => {
+    if (tx.qty >= 0) return false;
+    const item = inventoryData.find(i => i.code === tx.inventory_code);
+    if (!item || item.material_type !== type) return false;
+    const txDate = tx.job_date || tx.created_at?.slice(0, 10) || "";
+    return txDate.startsWith(prefix);
+  });
+
+  const byItem = {};
+  txs.forEach(tx => {
+    const code = tx.inventory_code || "UNKNOWN";
+    const name = tx.inventory_name || code;
+    if (!byItem[code]) byItem[code] = { code, name, totalQty: 0, txCount: 0, byTeknisi: {} };
+    byItem[code].totalQty += Math.abs(tx.qty);
+    byItem[code].txCount  += 1;
+    const tek = tx.teknisi_name || "Tidak diketahui";
+    if (!byItem[code].byTeknisi[tek]) byItem[code].byTeknisi[tek] = { qty: 0, count: 0 };
+    byItem[code].byTeknisi[tek].qty   += Math.abs(tx.qty);
+    byItem[code].byTeknisi[tek].count += 1;
+  });
+
+  const byTeknisi = {};
+  txs.forEach(tx => {
+    const tek = tx.teknisi_name || "Tidak diketahui";
+    if (!byTeknisi[tek]) byTeknisi[tek] = { name: tek, totalQty: 0, txCount: 0, byItem: {} };
+    byTeknisi[tek].totalQty += Math.abs(tx.qty);
+    byTeknisi[tek].txCount  += 1;
+    const code = tx.inventory_code || "UNKNOWN";
+    const name = tx.inventory_name || code;
+    if (!byTeknisi[tek].byItem[code]) byTeknisi[tek].byItem[code] = { name, qty: 0 };
+    byTeknisi[tek].byItem[code].qty += Math.abs(tx.qty);
+  });
+
+  const priceMap = {};
+  inventoryData.forEach(item => {
+    if (item.material_type === type) priceMap[item.code] = item.price || 0;
+  });
+
+  const unitMap = {};
+  inventoryData.forEach(item => {
+    if (item.material_type === type) unitMap[item.code] = item.unit || "m";
+  });
+
+  const totalQty  = Object.values(byItem).reduce((s, t) => s + t.totalQty, 0);
+  const totalCost = Object.values(byItem).reduce((s, t) => s + (t.totalQty * (priceMap[t.code] || 0)), 0);
+
+  return { byItem, byTeknisi, priceMap, unitMap, totalQty, totalCost, txCount: txs.length };
+}
+
+const pipaReport  = useMemo(() => buildMatReport("pipa",  pipaReportMonth,  pipaReportYear),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [invTxData, inventoryData, pipaReportMonth,  pipaReportYear]);
+const kabelReport = useMemo(() => buildMatReport("kabel", kabelReportMonth, kabelReportYear),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [invTxData, inventoryData, kabelReportMonth, kabelReportYear]);
 
 // ── State untuk inline mini-form unit fisik ──
 const [addUnitFor, setAddUnitFor]   = useState(null); // inventory_code sedang tambah unit
@@ -317,10 +385,12 @@ return (
 
     {/* Tab Switcher: Stok vs Laporan Freon */}
     {isOwnerAdmin && (
-      <div style={{ display: "flex", gap: 4, background: cs.surface, borderRadius: 10, padding: 4, alignSelf: "flex-start" }}>
+      <div style={{ display: "flex", gap: 4, background: cs.surface, borderRadius: 10, padding: 4, alignSelf: "flex-start", flexWrap: "wrap" }}>
         {[
-          { id: "stok",          label: "📦 Stok & Tracking" },
-          { id: "laporan_freon", label: "📊 Laporan Freon" },
+          { id: "stok",           label: "📦 Stok & Tracking" },
+          { id: "laporan_freon",  label: "❄️ Laporan Freon" },
+          { id: "laporan_pipa",   label: "🔧 Laporan Pipa" },
+          { id: "laporan_kabel",  label: "⚡ Laporan Kabel" },
         ].map(t => (
           <button key={t.id} onClick={() => setMainTab(t.id)}
             style={{ padding: "7px 16px", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", transition: "all .2s",
@@ -452,9 +522,237 @@ return (
     )}
 
     {/* ═══════════════════════════════════════════════
+        TAB: LAPORAN PIPA
+        ═══════════════════════════════════════════════ */}
+    {mainTab === "laporan_pipa" && isOwnerAdmin && (() => {
+      const rpt   = pipaReport;
+      const BULAN = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+      const defaultUnit = "m";
+      return (
+        <div style={{ display: "grid", gap: 16 }}>
+          {/* Filter bulan & tahun */}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, color: cs.muted, fontWeight: 600 }}>Periode:</span>
+            <select value={pipaReportMonth} onChange={e => setPipaReportMonth(Number(e.target.value))}
+              style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 12, outline: "none" }}>
+              {BULAN.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select>
+            <select value={pipaReportYear} onChange={e => setPipaReportYear(Number(e.target.value))}
+              style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 12, outline: "none" }}>
+              {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+
+          {/* Summary cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+            {[
+              { label: "Total Pipa Terpakai", value: rpt.totalQty.toFixed(1) + " m", sub: rpt.txCount + " transaksi", color: "#f97316" },
+              { label: "Estimasi Biaya", value: "Rp " + rpt.totalCost.toLocaleString("id-ID"), sub: "berdasarkan harga/m", color: cs.green },
+              { label: "Jenis Pipa", value: Object.keys(rpt.byItem).length + " item", sub: "yang digunakan bulan ini", color: cs.accent },
+            ].map((c, i) => (
+              <div key={i} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px" }}>
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>{c.label}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: c.color }}>{c.value}</div>
+                <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{c.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Per item pipa */}
+          {Object.keys(rpt.byItem).length === 0 ? (
+            <div style={{ background: cs.card, borderRadius: 12, padding: 32, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+              Tidak ada pemakaian pipa pada periode ini
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>🔧 Per Jenis Pipa</div>
+              {Object.values(rpt.byItem).sort((a, b) => b.totalQty - a.totalQty).map(ft => {
+                const price = rpt.priceMap[ft.code] || 0;
+                const unit  = rpt.unitMap[ft.code]  || defaultUnit;
+                const cost  = ft.totalQty * price;
+                return (
+                  <div key={ft.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, overflow: "hidden" }}>
+                    <div style={{ padding: "12px 16px", borderBottom: "1px solid " + cs.border, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>{ft.name}</div>
+                        <div style={{ fontSize: 11, color: cs.muted }}>{ft.txCount} pemakaian · {price > 0 ? "Rp " + price.toLocaleString("id-ID") + "/" + unit : "harga belum diset"}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 17, fontWeight: 800, color: "#f97316" }}>{ft.totalQty.toFixed(1)} {unit}</div>
+                        {price > 0 && <div style={{ fontSize: 11, color: cs.green }}>≈ Rp {cost.toLocaleString("id-ID")}</div>}
+                      </div>
+                    </div>
+                    <div style={{ padding: "8px 16px 12px" }}>
+                      <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700, marginBottom: 6 }}>BREAKDOWN PER TEKNISI</div>
+                      <div style={{ display: "grid", gap: 4 }}>
+                        {Object.entries(ft.byTeknisi).sort((a, b) => b[1].qty - a[1].qty).map(([tek, td]) => {
+                          const pct = ft.totalQty > 0 ? Math.round(td.qty / ft.totalQty * 100) : 0;
+                          return (
+                            <div key={tek} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, alignItems: "center", fontSize: 12 }}>
+                              <div>
+                                <div style={{ color: cs.text, fontWeight: 500 }}>{tek}</div>
+                                <div style={{ height: 4, background: cs.surface, borderRadius: 99, marginTop: 3, overflow: "hidden" }}>
+                                  <div style={{ height: "100%", width: pct + "%", background: "#f97316", borderRadius: 99 }} />
+                                </div>
+                              </div>
+                              <div style={{ fontWeight: 700, color: cs.text, textAlign: "right" }}>{td.qty.toFixed(1)} {unit}</div>
+                              <div style={{ color: cs.muted, fontSize: 10, width: 36, textAlign: "right" }}>{pct}%</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Per teknisi ringkasan */}
+          {Object.keys(rpt.byTeknisi).length > 0 && (
+            <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid " + cs.border }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>👷 Ringkasan Per Teknisi</div>
+              </div>
+              <div style={{ padding: "8px 16px", display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, fontSize: 11, fontWeight: 700, color: cs.muted, borderBottom: "1px solid " + cs.border + "55" }}>
+                <div>Teknisi</div><div style={{ textAlign: "right" }}>Total (m)</div><div style={{ textAlign: "right" }}>Transaksi</div>
+              </div>
+              {Object.values(rpt.byTeknisi).sort((a, b) => b.totalQty - a.totalQty).map((td, i) => (
+                <div key={td.name} style={{ padding: "10px 16px", display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, alignItems: "center", background: i % 2 === 0 ? "transparent" : cs.surface, fontSize: 12, borderBottom: "1px solid " + cs.border + "33" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: cs.text }}>{td.name}</div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>
+                      {Object.entries(td.byItem).map(([, bt]) => bt.name + ": " + bt.qty.toFixed(1) + " m").join(" · ")}
+                    </div>
+                  </div>
+                  <div style={{ fontWeight: 700, color: "#f97316", textAlign: "right" }}>{td.totalQty.toFixed(1)} m</div>
+                  <div style={{ color: cs.muted, textAlign: "right" }}>{td.txCount}x</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    })()}
+
+    {/* ═══════════════════════════════════════════════
+        TAB: LAPORAN KABEL
+        ═══════════════════════════════════════════════ */}
+    {mainTab === "laporan_kabel" && isOwnerAdmin && (() => {
+      const rpt   = kabelReport;
+      const BULAN = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+      const defaultUnit = "m";
+      return (
+        <div style={{ display: "grid", gap: 16 }}>
+          {/* Filter bulan & tahun */}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, color: cs.muted, fontWeight: 600 }}>Periode:</span>
+            <select value={kabelReportMonth} onChange={e => setKabelReportMonth(Number(e.target.value))}
+              style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 12, outline: "none" }}>
+              {BULAN.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select>
+            <select value={kabelReportYear} onChange={e => setKabelReportYear(Number(e.target.value))}
+              style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 12, outline: "none" }}>
+              {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+
+          {/* Summary cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+            {[
+              { label: "Total Kabel Terpakai", value: rpt.totalQty.toFixed(1) + " m", sub: rpt.txCount + " transaksi", color: "#a78bfa" },
+              { label: "Estimasi Biaya", value: "Rp " + rpt.totalCost.toLocaleString("id-ID"), sub: "berdasarkan harga/m", color: cs.green },
+              { label: "Jenis Kabel", value: Object.keys(rpt.byItem).length + " item", sub: "yang digunakan bulan ini", color: cs.accent },
+            ].map((c, i) => (
+              <div key={i} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px" }}>
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>{c.label}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: c.color }}>{c.value}</div>
+                <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{c.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Per item kabel */}
+          {Object.keys(rpt.byItem).length === 0 ? (
+            <div style={{ background: cs.card, borderRadius: 12, padding: 32, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+              Tidak ada pemakaian kabel pada periode ini
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>⚡ Per Jenis Kabel</div>
+              {Object.values(rpt.byItem).sort((a, b) => b.totalQty - a.totalQty).map(ft => {
+                const price = rpt.priceMap[ft.code] || 0;
+                const unit  = rpt.unitMap[ft.code]  || defaultUnit;
+                const cost  = ft.totalQty * price;
+                return (
+                  <div key={ft.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, overflow: "hidden" }}>
+                    <div style={{ padding: "12px 16px", borderBottom: "1px solid " + cs.border, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>{ft.name}</div>
+                        <div style={{ fontSize: 11, color: cs.muted }}>{ft.txCount} pemakaian · {price > 0 ? "Rp " + price.toLocaleString("id-ID") + "/" + unit : "harga belum diset"}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 17, fontWeight: 800, color: "#a78bfa" }}>{ft.totalQty.toFixed(1)} {unit}</div>
+                        {price > 0 && <div style={{ fontSize: 11, color: cs.green }}>≈ Rp {cost.toLocaleString("id-ID")}</div>}
+                      </div>
+                    </div>
+                    <div style={{ padding: "8px 16px 12px" }}>
+                      <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700, marginBottom: 6 }}>BREAKDOWN PER TEKNISI</div>
+                      <div style={{ display: "grid", gap: 4 }}>
+                        {Object.entries(ft.byTeknisi).sort((a, b) => b[1].qty - a[1].qty).map(([tek, td]) => {
+                          const pct = ft.totalQty > 0 ? Math.round(td.qty / ft.totalQty * 100) : 0;
+                          return (
+                            <div key={tek} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, alignItems: "center", fontSize: 12 }}>
+                              <div>
+                                <div style={{ color: cs.text, fontWeight: 500 }}>{tek}</div>
+                                <div style={{ height: 4, background: cs.surface, borderRadius: 99, marginTop: 3, overflow: "hidden" }}>
+                                  <div style={{ height: "100%", width: pct + "%", background: "#a78bfa", borderRadius: 99 }} />
+                                </div>
+                              </div>
+                              <div style={{ fontWeight: 700, color: cs.text, textAlign: "right" }}>{td.qty.toFixed(1)} {unit}</div>
+                              <div style={{ color: cs.muted, fontSize: 10, width: 36, textAlign: "right" }}>{pct}%</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Per teknisi ringkasan */}
+          {Object.keys(rpt.byTeknisi).length > 0 && (
+            <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid " + cs.border }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>👷 Ringkasan Per Teknisi</div>
+              </div>
+              <div style={{ padding: "8px 16px", display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, fontSize: 11, fontWeight: 700, color: cs.muted, borderBottom: "1px solid " + cs.border + "55" }}>
+                <div>Teknisi</div><div style={{ textAlign: "right" }}>Total (m)</div><div style={{ textAlign: "right" }}>Transaksi</div>
+              </div>
+              {Object.values(rpt.byTeknisi).sort((a, b) => b.totalQty - a.totalQty).map((td, i) => (
+                <div key={td.name} style={{ padding: "10px 16px", display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, alignItems: "center", background: i % 2 === 0 ? "transparent" : cs.surface, fontSize: 12, borderBottom: "1px solid " + cs.border + "33" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: cs.text }}>{td.name}</div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>
+                      {Object.entries(td.byItem).map(([, bt]) => bt.name + ": " + bt.qty.toFixed(1) + " m").join(" · ")}
+                    </div>
+                  </div>
+                  <div style={{ fontWeight: 700, color: "#a78bfa", textAlign: "right" }}>{td.totalQty.toFixed(1)} m</div>
+                  <div style={{ color: cs.muted, textAlign: "right" }}>{td.txCount}x</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    })()}
+
+    {/* ═══════════════════════════════════════════════
         TAB: STOK & TRACKING (konten existing)
         ═══════════════════════════════════════════════ */}
-    {(mainTab === "stok" || !isOwnerAdmin) && (<>
+    {(mainTab === "stok" || (!isOwnerAdmin)) && (<>
 
     {/* ── Sub-tab Filter: Aktif / Diarsipkan / Semua ── */}
     {isOwnerAdmin && (
