@@ -1089,6 +1089,7 @@ export default function ACleanWebApp() {
   // ── WA Conversations reaktif ──
   const [waConversations, setWaConversations] = useState(WA_CONVERSATIONS);
   const [waMessages, setWaMessages] = useState([]);  // chat history conv aktif
+  const [waSearch, setWaSearch] = useState("");
   const [paymentSuggestions, setPaymentSuggestions] = useState([]);
   const [paymentSuggestBanner, setPaymentSuggestBanner] = useState(null);
   const [groupPaymentCtx, setGroupPaymentCtx] = useState(null); // { phone, invoices, suggestedAmount, proofUrl }
@@ -2744,7 +2745,7 @@ ${photoPageHTML}
 
         // Load WA conversations dari Supabase (tabel opsional)
         try {
-          const waRes = await fetchWaConversations(supabase, 50);
+          const waRes = await fetchWaConversations(supabase, 150);
           if (!waRes.error && waRes.data && waRes.data.length > 0) setWaConversations(waRes.data);
         } catch (e) { /* WA tabel belum ada - skip */ }
 
@@ -2975,7 +2976,7 @@ ${photoPageHTML}
       try {
         ch7 = supabase.channel("rt-wa-conv-" + _tabId)
           .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, () =>
-            fetchWaConversations(supabase, 50)
+            fetchWaConversations(supabase, 150)
               .then(({ data, error }) => { if (data && !error) setWaConversations(data); }))
           .subscribe((status) => {
             if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
@@ -2990,7 +2991,7 @@ ${photoPageHTML}
               if (prev[0]?.phone === phone) return [...prev, payload.new];
               return prev;
             });
-            fetchWaConversations(supabase, 50)
+            fetchWaConversations(supabase, 150)
               .then(({ data, error }) => { if (data && !error) setWaConversations(data); });
           })
           .subscribe((status) => {
@@ -4358,6 +4359,10 @@ ${photoPageHTML}
       })(),
       logikaDurasi: "Cleaning: 1u=1j,2u=2j,3u=3j,4u=3j,5-6u=4j,7-8u=5j,9-10u=6j,>10=sehari | Install: 1-3u=1hari,4+u=2hari | Repair: 60-120mnt/unit | Complain: 1u=30mnt,setiap tambahan unit +15mnt",
       jamKerja: "09:00-17:00 WIB",
+      recentWa: waConversations.slice(0, 20).map(c => {
+        const cust = customersData.find(x => samePhone(x.phone, c.phone));
+        return { phone: c.phone, name: c.name, lastMessage: c.last_message || c.last || "", updatedAt: c.updated_at, unread: c.unread || 0, intent: c.intent || "", customerName: cust?.name || null, totalOrders: cust?.total_orders || 0, isKnownCustomer: !!cust };
+      }),
       revenueStats: {
         bulanIni: invoicesData.filter(i => i.status === "PAID" && String(i.sent || i.created_at || "").startsWith(bulanIni)).reduce((a, b) => a + (b.total || 0), 0),
         totalUnpaid: invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").reduce((a, b) => a + (b.total || 0), 0),
@@ -7859,85 +7864,156 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* ══════════════════════════════════════════════════════ */}
       {/* WA PANEL */}
       {/* ══════════════════════════════════════════════════════ */}
-      {waPanel && (
+      {waPanel && (() => {
+        // Filter + match customer untuk semua conv
+        const waSearchLower = waSearch.toLowerCase();
+        const filteredConvs = waConversations.map(conv => {
+          const cust = customersData.find(x => samePhone(x.phone, conv.phone));
+          return { ...conv, _cust: cust || null };
+        }).filter(conv => {
+          if (!waSearchLower) return true;
+          return (conv.name || "").toLowerCase().includes(waSearchLower) ||
+            (conv.phone || "").includes(waSearch) ||
+            (conv._cust?.name || "").toLowerCase().includes(waSearchLower) ||
+            (conv.last_message || conv.last || "").toLowerCase().includes(waSearchLower);
+        });
+        const selConvCust = selectedConv ? customersData.find(x => samePhone(x.phone, selectedConv.phone)) : null;
+        const selConvOrders = selectedConv ? ordersData.filter(o => samePhone(o.phone || "", selectedConv.phone) || (selConvCust && o.customer === selConvCust.name)).slice(0, 5) : [];
+        return (
         <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 300, display: "flex", justifyContent: "flex-end" }} onClick={() => setWaPanel(false)}>
-          <div style={{ width: isMobile ? "100%" : 420, background: cs.surface, borderLeft: isMobile ? "none" : "1px solid " + cs.border, display: "flex", flexDirection: "column", height: "100vh" }} onClick={e => e.stopPropagation()}>
-            <div style={{ background: cs.card, padding: "16px 20px", borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-              <div>
-                <div style={{ fontWeight: 800, color: "#25D366", fontSize: 14 }}>📱 WhatsApp Monitor</div>
-                <div style={{ fontSize: 11, color: cs.muted }}>via {waProvider === "fonnte" ? "Fonnte" : waProvider === "wa_cloud" ? "WA Cloud API" : "Twilio"} · Real-time</div>
+          <div style={{ width: isMobile ? "100%" : 440, background: cs.surface, borderLeft: isMobile ? "none" : "1px solid " + cs.border, display: "flex", flexDirection: "column", height: "100vh" }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{ background: cs.card, padding: "12px 16px", borderBottom: "1px solid " + cs.border, flexShrink: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 800, color: "#25D366", fontSize: 14 }}>📱 WhatsApp Monitor</div>
+                  <div style={{ fontSize: 10, color: cs.muted }}>via {waProvider === "fonnte" ? "Fonnte" : waProvider === "wa_cloud" ? "WA Cloud API" : "Twilio"} · {waConversations.length} chat dimuat</div>
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <button onClick={async () => {
+                    const { data, error } = await fetchWaConversations(supabase, 150);
+                    if (error) {
+                      if (error.code === "42P01") showNotif("⚠️ Tabel wa_conversations belum dibuat");
+                      else showNotif("⚠️ WA Monitor error: " + (error.message || error.code));
+                    } else {
+                      if (data) setWaConversations(data);
+                      showNotif(data?.length > 0 ? `✅ ${data.length} percakapan dimuat` : "ℹ️ Belum ada percakapan masuk");
+                    }
+                  }} style={{ background: "none", border: "1px solid " + cs.border, color: cs.muted, fontSize: 11, padding: "4px 8px", borderRadius: 7, cursor: "pointer" }}>🔄</button>
+                  <button onClick={() => setWaPanel(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+                </div>
               </div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button onClick={async () => {
-                  const { data, error } = await fetchWaConversations(supabase, 50);
-                  if (error) {
-                    if (error.code === "42P01") showNotif("⚠️ Tabel wa_conversations belum dibuat — jalankan SQL setup di Supabase");
-                    else showNotif("⚠️ WA Monitor error: " + (error.message || error.code));
-                    console.error("[WA_MONITOR_REFRESH]", error);
-                  } else {
-                    if (data) setWaConversations(data);
-                    showNotif(data?.length > 0 ? `✅ ${data.length} percakapan dimuat` : "ℹ️ Belum ada percakapan masuk");
-                  }
-                }}
-                  style={{ background: "none", border: "1px solid " + cs.border, color: cs.muted, fontSize: 12, padding: "4px 10px", borderRadius: 8, cursor: "pointer" }}>🔄</button>
-                <button onClick={() => setWaPanel(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
-              </div>
+              {/* Search bar */}
+              {!selectedConv && (
+                <div style={{ position: "relative" }}>
+                  <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: cs.muted, pointerEvents: "none" }}>🔍</span>
+                  <input value={waSearch} onChange={e => setWaSearch(e.target.value)}
+                    placeholder="Cari nama, nomor, atau isi pesan..."
+                    style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 30px 7px 30px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                  {waSearch && <button onClick={() => setWaSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>}
+                </div>
+              )}
             </div>
             <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+              {/* Conversation list */}
               <div style={{ width: "100%", overflowY: "auto", display: selectedConv ? "none" : "block" }}>
-                {waConversations.length === 0 && (
-                  <div style={{ padding: 12, fontSize: 10, color: cs.muted, textAlign: "center", lineHeight: 1.6 }}>
-                    <div style={{ fontSize: 20, marginBottom: 6 }}>📭</div>
-                    <div>Belum ada pesan masuk</div>
-                    <div style={{ marginTop: 6, color: cs.accent, fontSize: 9 }}>
-                      Pastikan:<br/>
-                      1. Tabel SQL sudah dibuat<br/>
-                      2. Webhook Fonnte aktif<br/>
-                      3. Klik 🔄 setelah kirim WA test
-                    </div>
+                {filteredConvs.length === 0 && (
+                  <div style={{ padding: 16, fontSize: 11, color: cs.muted, textAlign: "center", lineHeight: 1.8 }}>
+                    {waSearch ? (
+                      <div>Tidak ada hasil untuk <b>"{waSearch}"</b></div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 22, marginBottom: 6 }}>📭</div>
+                        <div>Belum ada pesan masuk</div>
+                        <div style={{ marginTop: 6, color: cs.accent, fontSize: 10 }}>Pastikan webhook Fonnte aktif · Klik 🔄 setelah kirim WA test</div>
+                      </>
+                    )}
                   </div>
                 )}
-                {waConversations.map(conv => (
-                  <div key={conv.id} onClick={() => {
-                    setSelectedConv(conv);
-                    // Load chat history dari wa_messages
-                    supabase.from("wa_messages").select("id,phone,name,content,role,created_at,image_url")
-                      .eq("phone", conv.phone)
-                      .order("created_at", { ascending: true })
-                      .limit(100)
-                      .then(({ data, error }) => {
-                        if (error && error.code === "42703") {
-                          // Kolom image_url belum ada — fallback tanpa image_url
-                          supabase.from("wa_messages").select("id,phone,name,content,role,created_at")
-                            .eq("phone", conv.phone).order("created_at", { ascending: true }).limit(100)
-                            .then(({ data: d2 }) => { if (d2) setWaMessages(d2); });
-                        } else if (data) {
-                          setWaMessages(data);
-                        }
-                      });
-                    // Reset unread di DB + state
-                    supabase.from("wa_conversations").update({ unread: 0 }).eq("phone", conv.phone).then(() => {});
-                    setWaConversations(prev => prev.map(cv => cv.id === conv.id ? { ...cv, unread: 0 } : cv));
-                  }}
-                    style={{ padding: "10px 12px", borderBottom: "1px solid " + cs.border, cursor: "pointer", background: selectedConv?.id === conv.id ? cs.accent + "12" : "transparent" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div style={{ fontWeight: 700, color: cs.text, fontSize: 12, marginBottom: 1 }}>{conv.name}</div>
-                      {conv.unread > 0 && <span style={{ background: cs.green, color: "#fff", fontSize: 9, borderRadius: "50%", minWidth: 15, height: 15, padding: "0 3px", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, flexShrink: 0 }}>{conv.unread}</span>}
+                {filteredConvs.map(conv => {
+                  const cust = conv._cust;
+                  const isKnown = !!cust;
+                  return (
+                    <div key={conv.id} onClick={() => {
+                      setSelectedConv(conv);
+                      supabase.from("wa_messages").select("id,phone,name,content,role,created_at,image_url")
+                        .eq("phone", conv.phone).order("created_at", { ascending: true }).limit(100)
+                        .then(({ data, error }) => {
+                          if (error && error.code === "42703") {
+                            supabase.from("wa_messages").select("id,phone,name,content,role,created_at")
+                              .eq("phone", conv.phone).order("created_at", { ascending: true }).limit(100)
+                              .then(({ data: d2 }) => { if (d2) setWaMessages(d2); });
+                          } else if (data) setWaMessages(data);
+                        });
+                      supabase.from("wa_conversations").update({ unread: 0 }).eq("phone", conv.phone).then(() => {});
+                      setWaConversations(prev => prev.map(cv => cv.id === conv.id ? { ...cv, unread: 0 } : cv));
+                    }}
+                      style={{ padding: "10px 14px", borderBottom: "1px solid " + cs.border, cursor: "pointer", background: "transparent", transition: "background 0.1s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = cs.card}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 1 }}>
+                            <span style={{ fontWeight: 700, color: cs.text, fontSize: 12 }}>{conv.name}</span>
+                            {isKnown ? (
+                              <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: "#25D36622", color: "#25D366", fontWeight: 700, flexShrink: 0 }}>✓ {cust.name}</span>
+                            ) : (
+                              <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: cs.yellow + "22", color: cs.yellow, fontWeight: 600, flexShrink: 0 }}>Baru</span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 9, color: cs.accent, marginBottom: 2 }}>{conv.phone}{isKnown && cust.total_orders > 0 ? ` · ${cust.total_orders}× order` : ""}</div>
+                          <div style={{ fontSize: 10, color: cs.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{conv.last_message || conv.last || ""}</div>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                          {conv.unread > 0 && <span style={{ background: "#25D366", color: "#fff", fontSize: 9, borderRadius: "50%", minWidth: 16, height: 16, padding: "0 3px", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>{conv.unread}</span>}
+                          {conv.updated_at && <span style={{ fontSize: 9, color: cs.muted }}>{new Date(conv.updated_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</span>}
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ fontSize: 9, color: cs.accent, marginBottom: 2 }}>{conv.phone}</div>
-                    <div style={{ fontSize: 10, color: cs.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{conv.last_message || conv.last}</div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+              {/* Chat detail */}
               <div style={{ flex: 1, flexDirection: "column", display: !selectedConv ? "none" : "flex" }}>
                 {selectedConv ? (
                   <>
-                    <div style={{ padding: "10px 14px", borderBottom: "1px solid " + cs.border, flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
-                      <button onClick={() => setSelectedConv(null)} style={{ background: "none", border: "none", color: cs.accent, fontSize: 22, cursor: "pointer", padding: "0 6px", lineHeight: 1, fontWeight: 700 }}>‹</button>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{selectedConv.name}</div>
-                        <div style={{ fontSize: 10, color: cs.muted }}>{selectedConv.phone} · {selectedConv.intent}</div>
+                    {/* Chat header dengan info customer */}
+                    <div style={{ padding: "10px 14px", borderBottom: "1px solid " + cs.border, flexShrink: 0, background: cs.card }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: selConvCust ? 6 : 0 }}>
+                        <button onClick={() => { setSelectedConv(null); }} style={{ background: "none", border: "none", color: cs.accent, fontSize: 22, cursor: "pointer", padding: "0 4px", lineHeight: 1, fontWeight: 700 }}>‹</button>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{selectedConv.name}</div>
+                          <div style={{ fontSize: 10, color: cs.muted }}>{selectedConv.phone}{selectedConv.intent ? " · " + selectedConv.intent : ""}</div>
+                        </div>
+                        {/* Tombol buat customer jika belum terdaftar */}
+                        {!selConvCust && isOwnerAdmin && (
+                          <button onClick={async () => {
+                            const name = window.prompt("Nama customer untuk " + selectedConv.phone + ":", selectedConv.name || "");
+                            if (!name?.trim()) return;
+                            const { data: newCust, error } = await supabase.from("customers").insert({ name: name.trim(), phone: normalizePhone(selectedConv.phone), area: "", total_orders: 0 }).select().single();
+                            if (error) { showNotif("❌ Gagal buat customer: " + error.message); return; }
+                            setCustomersData(prev => [...prev, newCust]);
+                            showNotif("✅ Customer " + name.trim() + " ditambahkan!");
+                          }} style={{ padding: "5px 10px", background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 7, cursor: "pointer", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                            + Simpan Customer
+                          </button>
+                        )}
                       </div>
+                      {/* Customer info strip */}
+                      {selConvCust && (
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: "#25D36622", color: "#25D366", fontWeight: 700 }}>✓ {selConvCust.name}</span>
+                          {selConvCust.area && <span style={{ fontSize: 10, color: cs.muted }}>{selConvCust.area}</span>}
+                          {selConvCust.total_orders > 0 && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: cs.accent + "22", color: cs.accent, fontWeight: 600 }}>{selConvCust.total_orders}× order</span>}
+                          {selConvCust.is_vip && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: cs.yellow + "22", color: cs.yellow, fontWeight: 700 }}>⭐ VIP</span>}
+                          {selConvOrders.length > 0 && (
+                            <button onClick={() => { setWaPanel(false); setActiveMenu("orders"); }}
+                              style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: cs.surface, border: "1px solid " + cs.border, color: cs.text, cursor: "pointer" }}>
+                              📋 {selConvOrders.length} order terakhir
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div style={{ flex: 1, padding: "12px 14px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
                       {waMessages.length === 0 ? (
@@ -8003,7 +8079,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ═══════ MODAL TAMBAH/EDIT PENGGUNA ═══════ */}
       {modalAddUser && (() => {
