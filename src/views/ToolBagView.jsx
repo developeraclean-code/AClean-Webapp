@@ -1,52 +1,107 @@
 import { memo, useState, useEffect, useCallback, Fragment } from "react";
 import { cs } from "../theme/cs.js";
 
-const TECHNICIANS = ["Mulyadi","Boim","Yadi","Aji","Agung","Putra","Usaeri","Alat Proyek"];
+const BAGS = Array.from({ length: 10 }, (_, i) => `Tas ${i + 1}`);
+
+const TOOL_CHECKLIST = [
+  { name: "Tang Ampere", is_priority: true },
+  { name: "Manifold", is_priority: true },
+  { name: "Kunci Inggris Ukuran 10", is_priority: false },
+  { name: "Kunci Inggris Ukuran 8", is_priority: false },
+  { name: "Kunci L Set", is_priority: false },
+  { name: "Palu", is_priority: false },
+  { name: "Pahat", is_priority: false },
+  { name: "Tang Lancip", is_priority: false },
+  { name: "Tang Kombinasi", is_priority: false },
+  { name: "Tang Potong", is_priority: false },
+  { name: "Obeng Standar", is_priority: false },
+  { name: "Obeng Cebol", is_priority: false },
+  { name: "Obeng Minus", is_priority: false },
+  { name: "Water Pass", is_priority: false },
+  { name: "Meteran Roll 5 Meter", is_priority: false },
+  { name: "Flaring Tool", is_priority: false },
+  { name: "Cutter Pipa AC", is_priority: false },
+  { name: "Mata Las Hicook", is_priority: false },
+  { name: "Kunci Pas 10", is_priority: false },
+  { name: "Kunci Pas 12", is_priority: false },
+  { name: "Kabel Roll", is_priority: false },
+  { name: "Test Pen Kecil", is_priority: false },
+  { name: "Gergaji Besi", is_priority: false },
+  { name: "Cutter Standar", is_priority: false }
+];
 
 const STATUS_COLOR = {
-  OK: cs.green,
-  WARNING: cs.yellow,
-  CRITICAL: cs.red,
-  ERROR: cs.muted
+  OK: cs.green, WARNING: cs.yellow, CRITICAL: cs.red, ERROR: cs.muted
 };
 const STATUS_ICON = { OK: "✅", WARNING: "⚠️", CRITICAL: "🚨", ERROR: "❌" };
 
-function ToolBagView({ supabase, currentUser, showNotif }) {
-  const [selectedTech, setSelectedTech] = useState("Semua");
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0,10));
+// Helper: dapat awal minggu (Senin) untuk tanggal tertentu
+function getMondayOf(dateStr) {
+  const d = new Date(dateStr);
+  const day = d.getDay(); // 0=Sun, 1=Mon, ...
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function formatDateISO(d) { return d.toISOString().slice(0, 10); }
+
+function ToolBagView({ supabase, showNotif }) {
+  const [weekStart, setWeekStart] = useState(getMondayOf(new Date()));
   const [checks, setChecks] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [expandedRow, setExpandedRow] = useState(null);
+  const [selectedBag, setSelectedBag] = useState(null); // "Tas 1" | null
+
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 7);
 
   const loadChecks = useCallback(async () => {
     setLoading(true);
-    let query = supabase
+    const { data, error } = await supabase
       .from("tool_bag_checks")
       .select("*")
-      .gte("checked_at", selectedDate + "T00:00:00")
-      .lte("checked_at", selectedDate + "T23:59:59.999")
-      .order("checked_at", { ascending: false });
-    if (selectedTech !== "Semua") query = query.eq("technician", selectedTech);
-    const { data, error } = await query.limit(100);
+      .gte("checked_at", weekStart.toISOString())
+      .lt("checked_at", weekEnd.toISOString())
+      .order("checked_at", { ascending: false })
+      .limit(500);
     if (!error) setChecks(data || []);
     else if (showNotif) showNotif("Gagal load data: " + error.message);
     setLoading(false);
-  }, [supabase, selectedDate, selectedTech, showNotif]);
+  }, [supabase, weekStart, weekEnd, showNotif]);
 
   useEffect(() => { loadChecks(); }, [loadChecks]);
 
-  // Summary per teknisi untuk tanggal terpilih
-  const summary = TECHNICIANS.map(tech => {
-    const pagi = checks.find(c => c.technician === tech && c.session_type === "pagi");
-    const pulang = checks.find(c => c.technician === tech && c.session_type === "pulang");
-    return { tech, pagi, pulang };
+  // Hitung status per tas untuk minggu ini
+  const bagSummary = BAGS.map(bagId => {
+    const bagChecks = checks.filter(c => c.bag_id === bagId);
+    const totalChecks = bagChecks.length;
+    const criticalCount = bagChecks.filter(c => c.status === "CRITICAL").length;
+    const warningCount = bagChecks.filter(c => c.status === "WARNING").length;
+    const okCount = bagChecks.filter(c => c.status === "OK").length;
+    const errorCount = bagChecks.filter(c => c.status === "ERROR").length;
+    const lastCheck = bagChecks[0]; // sudah sorted desc
+    const hasIssue = criticalCount > 0 || warningCount > 0;
+    const overallStatus = totalChecks === 0 ? "NODATA"
+      : criticalCount > 0 ? "CRITICAL"
+      : warningCount > 0 ? "WARNING"
+      : "OK";
+    return { bagId, totalChecks, criticalCount, warningCount, okCount, errorCount, lastCheck, hasIssue, overallStatus };
   });
 
-  // Hitung statistik
-  const totalChecks = checks.length;
-  const criticalCount = checks.filter(c => c.status === "CRITICAL").length;
-  const warningCount = checks.filter(c => c.status === "WARNING").length;
-  const okCount = checks.filter(c => c.status === "OK").length;
+  const weekLabel = `${weekStart.toLocaleDateString("id-ID", { day:"numeric", month:"short" })} – ${new Date(weekEnd.getTime()-1).toLocaleDateString("id-ID", { day:"numeric", month:"short", year:"numeric" })}`;
+
+  // Pindah minggu
+  const goWeek = (delta) => {
+    const newStart = new Date(weekStart);
+    newStart.setDate(newStart.getDate() + delta * 7);
+    setWeekStart(newStart);
+    setSelectedBag(null);
+  };
+
+  // Statistik global minggu ini
+  const totalThisWeek = checks.length;
+  const issuesThisWeek = checks.filter(c => c.status === "CRITICAL" || c.status === "WARNING").length;
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -55,7 +110,7 @@ function ToolBagView({ supabase, currentUser, showNotif }) {
         <div>
           <div style={{ fontWeight: 800, fontSize: 22, color: cs.text }}>🎒 Tas Teknisi</div>
           <div style={{ fontSize: 12, color: cs.muted, marginTop: 4 }}>
-            Teknisi kirim foto ke nomor WA AClean dengan caption: <b>"Pagi [Nama]"</b> atau <b>"Pulang [Nama]"</b>
+            Kirim foto ke WA AClean: <b>"Pagi Tas 1"</b>, <b>"Pulang Tas 5"</b>, dst (Tas 1 – Tas 10)
           </div>
         </div>
         <button onClick={loadChecks}
@@ -64,13 +119,32 @@ function ToolBagView({ supabase, currentUser, showNotif }) {
         </button>
       </div>
 
+      {/* Week Navigator */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, padding: "10px 14px" }}>
+        <button onClick={() => goWeek(-1)}
+          style={{ padding: "6px 12px", background: cs.surface, border: `1px solid ${cs.border}`, borderRadius: 8, color: cs.text, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+          ← Minggu Lalu
+        </button>
+        <div style={{ flex: 1, textAlign: "center", fontSize: 14, fontWeight: 700, color: cs.text }}>
+          📅 {weekLabel}
+        </div>
+        <button onClick={() => goWeek(1)} disabled={weekEnd > new Date()}
+          style={{ padding: "6px 12px", background: weekEnd > new Date() ? cs.surface + "44" : cs.surface, border: `1px solid ${cs.border}`, borderRadius: 8, color: weekEnd > new Date() ? cs.muted : cs.text, cursor: weekEnd > new Date() ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600 }}>
+          Minggu Depan →
+        </button>
+        <button onClick={() => { setWeekStart(getMondayOf(new Date())); setSelectedBag(null); }}
+          style={{ padding: "6px 12px", background: cs.accent + "22", border: `1px solid ${cs.accent}44`, borderRadius: 8, color: cs.accent, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+          Hari Ini
+        </button>
+      </div>
+
       {/* Statistik */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
         {[
-          { label: "Total Check", value: totalChecks, color: cs.accent },
-          { label: "✅ OK", value: okCount, color: cs.green },
-          { label: "⚠️ Warning", value: warningCount, color: cs.yellow },
-          { label: "🚨 Critical", value: criticalCount, color: cs.red }
+          { label: "Total Check", value: totalThisWeek, color: cs.accent },
+          { label: "✅ OK", value: checks.filter(c => c.status === "OK").length, color: cs.green },
+          { label: "⚠️ Issues", value: issuesThisWeek, color: issuesThisWeek > 0 ? cs.red : cs.muted },
+          { label: "Tas Bermasalah", value: bagSummary.filter(b => b.hasIssue).length, color: bagSummary.filter(b => b.hasIssue).length > 0 ? cs.red : cs.green }
         ].map((s, i) => (
           <div key={i} style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ fontSize: 11, color: cs.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: 0.5 }}>{s.label}</div>
@@ -79,183 +153,261 @@ function ToolBagView({ supabase, currentUser, showNotif }) {
         ))}
       </div>
 
-      {/* Filter Bar */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ fontSize: 12, color: cs.muted }}>Filter:</div>
-        <input type="date" value={selectedDate}
-          onChange={e => setSelectedDate(e.target.value)}
-          style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 8, padding: "6px 12px", color: cs.text, fontSize: 13 }} />
-        <select value={selectedTech} onChange={e => setSelectedTech(e.target.value)}
-          style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 8, padding: "6px 12px", color: cs.text, fontSize: 13 }}>
-          <option value="Semua">Semua Teknisi</option>
-          {TECHNICIANS.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
-      </div>
-
-      {/* Summary Grid per Teknisi */}
+      {/* Grid 10 Tas */}
       <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 14 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, marginBottom: 10 }}>Status Per Teknisi — {new Date(selectedDate).toLocaleDateString("id-ID", { weekday:"long", day:"numeric", month:"long" })}</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
-          {summary.map(({ tech, pagi, pulang }) => (
-            <div key={tech} style={{ background: cs.surface, border: `1px solid ${cs.border}`, borderRadius: 10, padding: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: cs.text, marginBottom: 8 }}>{tech}</div>
-              <div style={{ display: "grid", gap: 4, fontSize: 11 }}>
-                <SessionBadge label="Pagi" check={pagi} />
-                <SessionBadge label="Pulang" check={pulang} />
-              </div>
-            </div>
-          ))}
+        <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, marginBottom: 12 }}>
+          Status Semua Tas — Minggu Ini
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
+          {bagSummary.map(b => {
+            const isSelected = selectedBag === b.bagId;
+            const accentColor = b.overallStatus === "NODATA" ? cs.muted
+              : b.overallStatus === "CRITICAL" ? cs.red
+              : b.overallStatus === "WARNING" ? cs.yellow
+              : cs.green;
+            return (
+              <button key={b.bagId} onClick={() => setSelectedBag(isSelected ? null : b.bagId)}
+                style={{
+                  background: isSelected ? accentColor + "22" : cs.surface,
+                  border: `2px solid ${isSelected ? accentColor : (b.hasIssue ? cs.red + "66" : cs.border)}`,
+                  borderRadius: 12,
+                  padding: 14,
+                  cursor: "pointer",
+                  textAlign: "left",
+                  position: "relative",
+                  transition: "all 0.15s"
+                }}>
+                {b.hasIssue && (
+                  <div style={{ position: "absolute", top: 8, right: 8, fontSize: 18 }}>
+                    {b.criticalCount > 0 ? "🚨" : "⚠️"}
+                  </div>
+                )}
+                <div style={{ fontWeight: 800, fontSize: 16, color: cs.text, marginBottom: 6 }}>
+                  🎒 {b.bagId}
+                </div>
+                {b.totalChecks === 0 ? (
+                  <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada check</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>
+                      {b.totalChecks}× check
+                    </div>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", fontSize: 10 }}>
+                      {b.okCount > 0 && (
+                        <span style={{ padding: "2px 6px", borderRadius: 4, background: cs.green + "22", color: cs.green, fontWeight: 600 }}>
+                          ✅ {b.okCount}
+                        </span>
+                      )}
+                      {b.warningCount > 0 && (
+                        <span style={{ padding: "2px 6px", borderRadius: 4, background: cs.yellow + "22", color: cs.yellow, fontWeight: 600 }}>
+                          ⚠️ {b.warningCount}
+                        </span>
+                      )}
+                      {b.criticalCount > 0 && (
+                        <span style={{ padding: "2px 6px", borderRadius: 4, background: cs.red + "22", color: cs.red, fontWeight: 700 }}>
+                          🚨 {b.criticalCount}
+                        </span>
+                      )}
+                    </div>
+                  </>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* History Table */}
-      <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, overflow: "hidden" }}>
-        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${cs.border}`, fontSize: 13, fontWeight: 700, color: cs.text }}>
-          History Check ({checks.length})
+      {/* Detail Tas Terpilih */}
+      {selectedBag && (
+        <BagDetail
+          bagId={selectedBag}
+          checks={checks.filter(c => c.bag_id === selectedBag)}
+          onClose={() => setSelectedBag(null)}
+        />
+      )}
+
+      {!selectedBag && (
+        <div style={{ background: cs.surface, border: `1px dashed ${cs.border}`, borderRadius: 12, padding: 18, textAlign: "center", fontSize: 12, color: cs.muted }}>
+          💡 Klik salah satu tas di atas untuk lihat detail checklist & history minggu ini
         </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
-            <thead>
-              <tr style={{ background: cs.surface }}>
-                {["Waktu","Teknisi","Sesi","Status","Alat Kurang","Foto",""].map(h => (
-                  <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={7} style={{ padding: 24, textAlign: "center", color: cs.muted, fontSize: 13 }}>Loading...</td></tr>
-              ) : checks.length === 0 ? (
-                <tr><td colSpan={7} style={{ padding: 24, textAlign: "center", color: cs.muted, fontSize: 13 }}>Belum ada check pada tanggal ini</td></tr>
-              ) : checks.map((c, i) => {
-                const missing = Array.isArray(c.tools_missing) ? c.tools_missing : [];
-                const priorityMissing = missing.filter(t => t.is_priority);
-                const isExpanded = expandedRow === c.id;
-                return (
-                  <Fragment key={c.id}>
-                    <tr style={{ borderTop: `1px solid ${cs.border}`, background: i%2 === 0 ? "transparent" : cs.surface + "80" }}>
-                      <td style={{ padding: "9px 12px", fontSize: 12, color: cs.muted }}>
-                        {new Date(c.checked_at).toLocaleTimeString("id-ID", { hour:"2-digit", minute:"2-digit" })}
+      )}
+
+      {loading && <div style={{ textAlign: "center", color: cs.muted, fontSize: 12 }}>Loading...</div>}
+    </div>
+  );
+}
+
+function BagDetail({ bagId, checks, onClose }) {
+  // Hitung untuk setiap alat: berapa kali ada/missing dalam minggu ini
+  const toolStats = TOOL_CHECKLIST.map(tool => {
+    let foundCount = 0;
+    let missingCount = 0;
+    checks.forEach(c => {
+      const found = (Array.isArray(c.tools_found) ? c.tools_found : []).some(t =>
+        (t.name || "").toLowerCase() === tool.name.toLowerCase()
+      );
+      const missing = (Array.isArray(c.tools_missing) ? c.tools_missing : []).some(t =>
+        (t.name || "").toLowerCase() === tool.name.toLowerCase()
+      );
+      if (found) foundCount++;
+      if (missing) missingCount++;
+    });
+    return { ...tool, foundCount, missingCount };
+  });
+
+  const problemTools = toolStats.filter(t => t.missingCount > 0);
+  const hasIssues = problemTools.length > 0;
+
+  return (
+    <div style={{ background: cs.card, border: `2px solid ${hasIssues ? cs.red + "66" : cs.border}`, borderRadius: 14, overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${cs.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: hasIssues ? cs.red + "11" : cs.surface }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: cs.text }}>🎒 Detail {bagId}</div>
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+            {checks.length} check minggu ini · {problemTools.length} alat bermasalah
+          </div>
+        </div>
+        <button onClick={onClose}
+          style={{ background: "none", border: `1px solid ${cs.border}`, color: cs.muted, padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontSize: 11 }}>
+          ✕ Tutup
+        </button>
+      </div>
+
+      {/* Warning banner jika ada issues */}
+      {hasIssues && (
+        <div style={{ padding: "10px 16px", background: cs.red + "22", borderBottom: `1px solid ${cs.red}44`, color: cs.red, fontSize: 12, fontWeight: 600 }}>
+          🚨 Ada {problemTools.length} alat yang tidak lengkap dalam minggu ini — segera konfirmasi ke teknisi pemegang tas
+        </div>
+      )}
+
+      {/* Checklist 24 Alat */}
+      <div style={{ padding: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
+          Checklist 24 Alat — Minggu Ini
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 8 }}>
+          {toolStats.map(t => {
+            const hasProblem = t.missingCount > 0;
+            const color = hasProblem ? cs.red : (t.foundCount > 0 ? cs.green : cs.muted);
+            return (
+              <div key={t.name} style={{
+                background: hasProblem ? cs.red + "11" : cs.surface,
+                border: `1px solid ${hasProblem ? cs.red + "44" : cs.border}`,
+                borderRadius: 8,
+                padding: "8px 12px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center"
+              }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: cs.text, display: "flex", alignItems: "center", gap: 6 }}>
+                    {t.is_priority && <span style={{ fontSize: 10 }}>🔴</span>}
+                    {t.name}
+                  </div>
+                  {t.is_priority && (
+                    <div style={{ fontSize: 9, color: cs.red, fontWeight: 700, marginTop: 1 }}>WAJIB</div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  {t.foundCount > 0 && (
+                    <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: cs.green + "22", color: cs.green, fontWeight: 600 }}>
+                      ✓ {t.foundCount}×
+                    </span>
+                  )}
+                  {t.missingCount > 0 && (
+                    <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: cs.red + "33", color: cs.red, fontWeight: 700 }}>
+                      ✗ {t.missingCount}×
+                    </span>
+                  )}
+                  {t.foundCount === 0 && t.missingCount === 0 && (
+                    <span style={{ fontSize: 10, color: cs.muted }}>—</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* History Check Minggu Ini */}
+      <div style={{ borderTop: `1px solid ${cs.border}` }}>
+        <div style={{ padding: "12px 16px", fontSize: 12, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>
+          History Check Minggu Ini ({checks.length})
+        </div>
+        {checks.length === 0 ? (
+          <div style={{ padding: "24px 16px", textAlign: "center", color: cs.muted, fontSize: 12, fontStyle: "italic" }}>
+            Belum ada foto check untuk {bagId} minggu ini
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: cs.surface }}>
+                  {["Tanggal","Sesi","Status","Alat Kurang","Foto"].map(h => (
+                    <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {checks.map((c, i) => {
+                  const missing = Array.isArray(c.tools_missing) ? c.tools_missing : [];
+                  const priorityMissing = missing.filter(t => t.is_priority);
+                  return (
+                    <tr key={c.id} style={{ borderTop: `1px solid ${cs.border}`, background: i%2 === 0 ? "transparent" : cs.surface + "60" }}>
+                      <td style={{ padding: "8px 12px", fontSize: 12, color: cs.muted }}>
+                        {new Date(c.checked_at).toLocaleDateString("id-ID", { weekday:"short", day:"numeric", month:"short" })}
+                        <div style={{ fontSize: 10 }}>{new Date(c.checked_at).toLocaleTimeString("id-ID", { hour:"2-digit", minute:"2-digit" })}</div>
                       </td>
-                      <td style={{ padding: "9px 12px", fontSize: 13, fontWeight: 600, color: cs.text }}>{c.technician}</td>
-                      <td style={{ padding: "9px 12px" }}>
-                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 6,
+                      <td style={{ padding: "8px 12px" }}>
+                        <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4,
                           background: (c.session_type === "pagi" ? cs.accent : cs.yellow) + "22",
-                          color: c.session_type === "pagi" ? cs.accent : cs.yellow }}>
+                          color: c.session_type === "pagi" ? cs.accent : cs.yellow, fontWeight: 600 }}>
                           {c.session_type === "pagi" ? "🌅 Pagi" : "🌇 Pulang"}
                         </span>
                       </td>
-                      <td style={{ padding: "9px 12px" }}>
-                        <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 6,
+                      <td style={{ padding: "8px 12px" }}>
+                        <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 6,
                           background: STATUS_COLOR[c.status] + "22", color: STATUS_COLOR[c.status],
                           border: `1px solid ${STATUS_COLOR[c.status]}44`, fontWeight: 700 }}>
                           {STATUS_ICON[c.status]} {c.status}
                         </span>
                       </td>
-                      <td style={{ padding: "9px 12px", fontSize: 12 }}>
+                      <td style={{ padding: "8px 12px", fontSize: 11 }}>
                         {missing.length === 0 ? (
                           <span style={{ color: cs.green }}>Lengkap</span>
                         ) : (
-                          <span>
-                            {priorityMissing.length > 0 && (
-                              <span style={{ color: cs.red, fontWeight: 600 }}>🔴 {priorityMissing.length} wajib</span>
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                            {priorityMissing.map((t, idx) => (
+                              <span key={idx} style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: cs.red + "33", color: cs.red, fontWeight: 700 }}>
+                                🔴 {t.name}
+                              </span>
+                            ))}
+                            {missing.filter(t => !t.is_priority).slice(0, 3).map((t, idx) => (
+                              <span key={idx} style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: cs.yellow + "22", color: cs.yellow, fontWeight: 600 }}>
+                                🟡 {t.name}
+                              </span>
+                            ))}
+                            {missing.filter(t => !t.is_priority).length > 3 && (
+                              <span style={{ fontSize: 9, color: cs.muted }}>+{missing.filter(t => !t.is_priority).length - 3}</span>
                             )}
-                            {priorityMissing.length > 0 && missing.length > priorityMissing.length && <span style={{ color: cs.muted }}> · </span>}
-                            {missing.length - priorityMissing.length > 0 && (
-                              <span style={{ color: cs.yellow }}>🟡 {missing.length - priorityMissing.length} lain</span>
-                            )}
-                          </span>
+                          </div>
                         )}
                       </td>
-                      <td style={{ padding: "9px 12px" }}>
+                      <td style={{ padding: "8px 12px" }}>
                         {c.photo_url ? (
                           <a href={c.photo_url} target="_blank" rel="noreferrer"
-                            style={{ fontSize: 11, color: cs.accent, textDecoration: "none" }}>📷 Lihat</a>
-                        ) : <span style={{ color: cs.muted, fontSize: 11 }}>—</span>}
-                      </td>
-                      <td style={{ padding: "9px 12px" }}>
-                        <button onClick={() => setExpandedRow(isExpanded ? null : c.id)}
-                          style={{ fontSize: 11, color: cs.accent, background: "none", border: "none", cursor: "pointer", padding: "2px 8px" }}>
-                          {isExpanded ? "▲" : "▼"} Detail
-                        </button>
+                            style={{ fontSize: 10, color: cs.accent, textDecoration: "none" }}>📷 Lihat</a>
+                        ) : <span style={{ color: cs.muted, fontSize: 10 }}>—</span>}
                       </td>
                     </tr>
-                    {isExpanded && (
-                      <tr>
-                        <td colSpan={7} style={{ padding: 0, background: cs.surface }}>
-                          <DetailPanel check={c} />
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SessionBadge({ label, check }) {
-  if (!check) {
-    return (
-      <span style={{ padding: "2px 8px", borderRadius: 6, background: cs.muted + "22", color: cs.muted, border: `1px solid ${cs.muted}44` }}>
-        — {label}
-      </span>
-    );
-  }
-  const color = STATUS_COLOR[check.status];
-  return (
-    <span style={{ padding: "2px 8px", borderRadius: 6, background: color + "22", color, border: `1px solid ${color}44`, fontWeight: 600 }}>
-      {STATUS_ICON[check.status]} {label}
-    </span>
-  );
-}
-
-function DetailPanel({ check }) {
-  const found = Array.isArray(check.tools_found) ? check.tools_found : [];
-  const missing = Array.isArray(check.tools_missing) ? check.tools_missing : [];
-  return (
-    <div style={{ padding: 16, borderTop: `1px solid ${cs.border}` }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <div>
-          <div style={{ fontSize: 11, color: cs.green, fontWeight: 700, marginBottom: 8, letterSpacing: 0.5 }}>
-            ✅ ALAT TERDETEKSI ({found.length})
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-          {found.length === 0 ? (
-            <div style={{ fontSize: 12, color: cs.muted, fontStyle: "italic" }}>Tidak ada alat yang terdeteksi</div>
-          ) : found.map((t, i) => (
-            <div key={i} style={{ fontSize: 12, color: cs.text, padding: "3px 0" }}>
-              • {t.name} {t.qty > 1 && <span style={{ color: cs.muted }}>×{t.qty}</span>}
-              {t.confidence && <span style={{ fontSize: 10, color: cs.muted, marginLeft: 4 }}>({t.confidence})</span>}
-            </div>
-          ))}
-        </div>
-        <div>
-          <div style={{ fontSize: 11, color: cs.red, fontWeight: 700, marginBottom: 8, letterSpacing: 0.5 }}>
-            ❌ ALAT TIDAK TERDETEKSI ({missing.length})
-          </div>
-          {missing.length === 0 ? (
-            <div style={{ fontSize: 12, color: cs.green, fontStyle: "italic" }}>Semua lengkap</div>
-          ) : missing.map((t, i) => (
-            <div key={i} style={{ fontSize: 12, color: t.is_priority ? cs.red : cs.yellow, padding: "3px 0", fontWeight: t.is_priority ? 600 : 400 }}>
-              {t.is_priority ? "🔴" : "🟡"} {t.name} {t.is_priority && <span style={{ fontSize: 10 }}>(WAJIB)</span>}
-            </div>
-          ))}
-        </div>
+        )}
       </div>
-      {check.notes && (
-        <div style={{ fontSize: 11, color: cs.muted, marginTop: 12, padding: 8, background: cs.card, borderRadius: 6, border: `1px solid ${cs.border}` }}>
-          <b>Catatan AI:</b> {check.notes}
-        </div>
-      )}
-      {check.sender_phone && (
-        <div style={{ fontSize: 10, color: cs.muted, marginTop: 8 }}>
-          Dikirim dari: {check.sender_phone} · {new Date(check.checked_at).toLocaleString("id-ID")}
-        </div>
-      )}
     </div>
   );
 }

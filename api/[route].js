@@ -246,19 +246,17 @@ export default async function handler(req, res) {
       const mediaUrl = fonnteMediaUrl || (isMediaMessage ? message : null);
 
       // ── DETECT TOOL BAG PHOTO ──
-      // Caption format: "Pagi [Nama]" / "Pulang [Nama]" / "Sore [Nama]"
-      const KNOWN_TECHNICIANS = ["mulyadi","boim","yadi","aji","agung","putra","usaeri","alat proyek"];
+      // Caption format: "Pagi Tas 1" / "Pulang Tas 5" / "Pagi tas1" — angka 1-10
       const toolBagCaption = (() => {
         const cap = (wb.caption || message || "").trim();
         if (!cap || cap.length > 50) return null;
-        const m = cap.match(/^(pagi|pulang|sore|selesai|morning)\s+(.{2,30})$/i);
+        // Match: (pagi|pulang|sore|selesai) + tas + digit 1-10
+        const m = cap.match(/^(pagi|pulang|sore|selesai|morning)\s+tas\s*(\d{1,2})$/i);
         if (!m) return null;
         const sessionType = /^(pagi|morning)$/i.test(m[1]) ? "pagi" : "pulang";
-        const namePart = m[2].trim().toLowerCase();
-        const found = KNOWN_TECHNICIANS.find(t =>
-          t === namePart || t.split(" ")[0] === namePart || namePart.includes(t.split(" ")[0])
-        );
-        return { sessionType, nameRaw: m[2].trim(), techFound: found || null };
+        const bagNum = parseInt(m[2]);
+        if (bagNum < 1 || bagNum > 10) return { sessionType, bagId: null, bagNumRaw: m[2] };
+        return { sessionType, bagId: "Tas " + bagNum, bagNumRaw: m[2] };
       })();
       const isToolBagPhoto = !!(toolBagCaption && isMediaMessage);
 
@@ -357,15 +355,14 @@ export default async function handler(req, res) {
       // Flow: download foto → Claude Vision analisa vs checklist → upload R2 → simpan DB → WA warning ke Owner
       if (isToolBagPhoto && mediaUrl && SU && SK) {
         const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
-        if (AK && toolBagCaption.techFound) {
+        if (AK && toolBagCaption.bagId) {
           try {
-            const techName = toolBagCaption.techFound;
+            const bagId = toolBagCaption.bagId;
             const sessionType = toolBagCaption.sessionType;
-            const properTechName = techName.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 
-            // Cek duplikat: skip jika sudah ada record untuk teknisi+sesi dalam 30 menit terakhir
+            // Cek duplikat: skip jika sudah ada record untuk bag+sesi dalam 30 menit terakhir
             const dupCheckRes = await fetch(
-              SU + "/rest/v1/tool_bag_checks?technician=eq." + encodeURIComponent(properTechName) +
+              SU + "/rest/v1/tool_bag_checks?bag_id=eq." + encodeURIComponent(bagId) +
               "&session_type=eq." + sessionType +
               "&checked_at=gte." + encodeURIComponent(new Date(Date.now() - 30*60*1000).toISOString()) +
               "&select=id&limit=1",
@@ -377,19 +374,19 @@ export default async function handler(req, res) {
               if (FT) fetch("https://api.fonnte.com/send", {
                 method: "POST",
                 headers: { Authorization: FT, "Content-Type": "application/json" },
-                body: JSON.stringify({ target: sender, message: `ℹ️ Foto tas ${properTechName} (${sessionType}) sudah diterima sebelumnya. Terima kasih!`, delay: "1", countryCode: "62" })
+                body: JSON.stringify({ target: sender, message: `ℹ️ Foto ${bagId} (${sessionType}) sudah diterima sebelumnya. Terima kasih!`, delay: "1", countryCode: "62" })
               }).catch(()=>{});
             } else {
               // Ambil checklist dari DB
               const checklistRes = await fetch(
-                SU + "/rest/v1/tool_bag_checklist?technician=eq." + encodeURIComponent(properTechName) +
+                SU + "/rest/v1/tool_bag_checklist?bag_id=eq." + encodeURIComponent(bagId) +
                 "&select=tool_name,qty_min,is_priority",
                 { headers: { apikey: SK, Authorization: "Bearer " + SK } }
               );
               const checklist = checklistRes.ok ? await checklistRes.json() : [];
 
               if (checklist.length === 0) {
-                console.warn("[TOOL_BAG] Checklist kosong untuk", properTechName);
+                console.warn("[TOOL_BAG] Checklist kosong untuk", bagId);
               } else {
                 const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(15000) });
                 if (imgFetch.ok) {
@@ -472,9 +469,9 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                         try {
                           const crypto = await import("crypto");
                           const ext = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg";
-                          const techSlug = properTechName.toLowerCase().replace(/\s+/g, "_");
+                          const bagSlug = bagId.toLowerCase().replace(/\s+/g, "_");
                           const dateStr = new Date().toISOString().slice(0,10);
-                          const r2ObjectKey = `tool-bag/${dateStr}_${techSlug}_${sessionType}_${Date.now()}.${ext}`;
+                          const r2ObjectKey = `tool-bag/${dateStr}_${bagSlug}_${sessionType}_${Date.now()}.${ext}`;
                           const r2Host = r2Account + ".r2.cloudflarestorage.com";
                           const r2Endpoint = "https://" + r2Host + "/" + r2Bucket + "/" + r2ObjectKey;
                           const imgBuffer = Buffer.from(imgBuf);
@@ -511,7 +508,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       method: "POST",
                       headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
                       body: JSON.stringify({
-                        technician: properTechName,
+                        bag_id: bagId,
                         session_type: sessionType,
                         photo_url: photoR2Path,
                         sender_phone: sender,
@@ -531,12 +528,12 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       const priorityList = toolsMissing.filter(t => t.is_priority).map(t => `🔴 *${t.name}* (WAJIB)`).join("\n");
                       const normalList = toolsMissing.filter(t => !t.is_priority).map(t => `🟡 ${t.name}`).join("\n");
                       let warnMsg = checkStatus === "CRITICAL"
-                        ? `🚨 *ALERT TAS TEKNISI — ${properTechName}*\n`
-                        : `⚠️ *Warning Tas Teknisi — ${properTechName}*\n`;
+                        ? `🚨 *ALERT — ${bagId}*\n`
+                        : `⚠️ *Warning — ${bagId}*\n`;
                       warnMsg += `${sessionLabel} | ${dateLabel}\n\n`;
                       if (priorityList) warnMsg += `*Alat WAJIB tidak terdeteksi:*\n${priorityList}\n\n`;
                       if (normalList) warnMsg += `*Alat lain tidak terdeteksi:*\n${normalList}\n\n`;
-                      warnMsg += `_Cek detail di webapp → 🎒 Tas Teknisi_`;
+                      warnMsg += `_Cek detail di webapp → Inventori → Tas Teknisi_`;
                       fetch("https://api.fonnte.com/send", {
                         method: "POST",
                         headers: { Authorization: FT, "Content-Type": "application/json" },
@@ -550,9 +547,9 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       if (checkStatus === "ERROR") {
                         konfirMsg = `⚠️ Foto tas tidak bisa dianalisa (${analysisResult?.photo_quality || "blur/gelap"}). Mohon kirim ulang foto yang lebih jelas, terang, dan dekat. Terima kasih!`;
                       } else if (checkStatus === "OK") {
-                        konfirMsg = `✅ Tas ${sessionType} *${properTechName}* sudah dicek — semua alat lengkap! 👍`;
+                        konfirMsg = `✅ ${bagId} (${sessionType}) sudah dicek — semua alat lengkap! 👍`;
                       } else {
-                        konfirMsg = `📸 Foto tas *${properTechName}* diterima. ${toolsMissing.length} alat tidak terdeteksi — Owner sudah dinotifikasi.`;
+                        konfirMsg = `📸 Foto ${bagId} diterima. ${toolsMissing.length} alat tidak terdeteksi — Owner sudah dinotifikasi.`;
                       }
                       fetch("https://api.fonnte.com/send", {
                         method: "POST",
@@ -567,14 +564,14 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
           } catch(tbErr) {
             console.warn("[TOOL_BAG] error:", tbErr.message);
           }
-        } else if (toolBagCaption && !toolBagCaption.techFound) {
-          // Nama tidak dikenal — balas teknisi
+        } else if (toolBagCaption && !toolBagCaption.bagId) {
+          // Nomor tas di luar range 1-10
           if (FT) fetch("https://api.fonnte.com/send", {
             method: "POST",
             headers: { Authorization: FT, "Content-Type": "application/json" },
             body: JSON.stringify({
               target: sender,
-              message: `❓ Nama teknisi "${toolBagCaption.nameRaw}" tidak dikenal.\nMohon kirim ulang dengan format:\n"Pagi [Nama]" atau "Pulang [Nama]"\n\nNama terdaftar: Mulyadi, Boim, Yadi, Aji, Agung, Putra, Usaeri`,
+              message: `❓ Nomor tas "${toolBagCaption.bagNumRaw}" tidak valid.\nMohon kirim ulang dengan format:\n"Pagi Tas 1" atau "Pulang Tas 5"\n\nNomor tas yang terdaftar: Tas 1 - Tas 10`,
               delay: "1", countryCode: "62"
             })
           }).catch(()=>{});

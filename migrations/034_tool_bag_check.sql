@@ -1,22 +1,21 @@
 -- ═══════════════════════════════════════════════════════════
 -- Migration 034: Tas Teknisi (Tool Bag Check)
--- Tabel: tool_bag_checks       — hasil cek harian (pagi/pulang)
---        tool_bag_checklist    — daftar alat standar per teknisi (seed)
+-- Identifier: Tas 1 .. Tas 10 (bukan nama teknisi — agar fleksibel saat pergantian orang)
 -- ═══════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS tool_bag_checklist (
   id          uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  technician  text NOT NULL,
+  bag_id      text NOT NULL,           -- "Tas 1", "Tas 2", ..., "Tas 10"
   tool_name   text NOT NULL,
   qty_min     int  NOT NULL DEFAULT 1,
   is_priority boolean NOT NULL DEFAULT false,
   created_at  timestamptz DEFAULT now(),
-  UNIQUE(technician, tool_name)
+  UNIQUE(bag_id, tool_name)
 );
 
 CREATE TABLE IF NOT EXISTS tool_bag_checks (
   id              uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  technician      text NOT NULL,
+  bag_id          text NOT NULL,
   session_type    text NOT NULL CHECK (session_type IN ('pagi','pulang')),
   checked_at      timestamptz DEFAULT now(),
   photo_url       text,
@@ -31,9 +30,9 @@ CREATE TABLE IF NOT EXISTS tool_bag_checks (
   created_at      timestamptz DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_tbc_technician ON tool_bag_checks(technician, checked_at DESC);
-CREATE INDEX IF NOT EXISTS idx_tbc_status     ON tool_bag_checks(status, checked_at DESC);
-CREATE INDEX IF NOT EXISTS idx_tbc_date       ON tool_bag_checks(checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tbc_bag    ON tool_bag_checks(bag_id, checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tbc_status ON tool_bag_checks(status, checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tbc_date   ON tool_bag_checks(checked_at DESC);
 
 ALTER TABLE tool_bag_checks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tool_bag_checklist ENABLE ROW LEVEL SECURITY;
@@ -43,12 +42,12 @@ CREATE POLICY "service_full" ON tool_bag_checks USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "service_full" ON tool_bag_checklist;
 CREATE POLICY "service_full" ON tool_bag_checklist USING (true) WITH CHECK (true);
 
--- ─── SEED: 24 alat standar untuk 8 teknisi ───
+-- ─── SEED: 24 alat untuk Tas 1 - Tas 10 ───
 DO $$
 DECLARE
-  tech_names text[] := ARRAY['Mulyadi','Boim','Yadi','Aji','Agung','Putra','Usaeri','Alat Proyek'];
-  tech_name  text;
-  tools      jsonb := '[
+  bag_num int;
+  bag_id_text text;
+  tools jsonb := '[
     {"name":"Tang Ampere","qty_min":1,"is_priority":true},
     {"name":"Manifold","qty_min":1,"is_priority":true},
     {"name":"Kunci Inggris Ukuran 10","qty_min":1,"is_priority":false},
@@ -76,11 +75,12 @@ DECLARE
   ]';
   tool jsonb;
 BEGIN
-  FOREACH tech_name IN ARRAY tech_names LOOP
+  FOR bag_num IN 1..10 LOOP
+    bag_id_text := 'Tas ' || bag_num;
     FOR tool IN SELECT * FROM jsonb_array_elements(tools) LOOP
-      INSERT INTO tool_bag_checklist (technician, tool_name, qty_min, is_priority)
-      VALUES (tech_name, tool->>'name', (tool->>'qty_min')::int, (tool->>'is_priority')::boolean)
-      ON CONFLICT (technician, tool_name) DO NOTHING;
+      INSERT INTO tool_bag_checklist (bag_id, tool_name, qty_min, is_priority)
+      VALUES (bag_id_text, tool->>'name', (tool->>'qty_min')::int, (tool->>'is_priority')::boolean)
+      ON CONFLICT (bag_id, tool_name) DO NOTHING;
     END LOOP;
   END LOOP;
 END $$;
