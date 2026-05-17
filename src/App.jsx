@@ -6606,37 +6606,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 </select>
               </div>
 
-              {/* ── Toggle: Buat Akun Login (hanya saat tambah baru) ── */}
+              {/* ── Email Login (wajib untuk akun baru) ── */}
               {!editTeknisi && (
-                <div style={{ background: cs.card, border: "1px solid " + (newTeknisiForm.buatAkun ? cs.accent : cs.border), borderRadius: 10, padding: "12px 14px" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                    <input id="field_checkbox_17" type="checkbox" checked={!!newTeknisiForm.buatAkun}
-                      onChange={e => setNewTeknisiForm(f => ({ ...f, buatAkun: e.target.checked, email: "", password: "" }))}
-                      style={{ width: 16, height: 16, accentColor: cs.accent }} />
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: newTeknisiForm.buatAkun ? cs.accent : cs.text }}>🔑 Buat Akun Login</div>
-                      <div style={{ fontSize: 11, color: cs.muted, marginTop: 1 }}>Teknisi bisa login ke app untuk submit laporan</div>
-                    </div>
-                  </label>
-                  {newTeknisiForm.buatAkun && (
-                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-                      <div>
-                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Email Login</div>
-                        <input id="field_email_18" type="email" value={newTeknisiForm.email || ""} placeholder="contoh: mulyadi@aclean.id"
-                          onChange={e => setNewTeknisiForm(f => ({ ...f, email: e.target.value }))}
-                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.accent + "44", borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box", outline: "none" }} />
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Password</div>
-                        <input id="field_password_19" type="password" value={newTeknisiForm.password || ""} placeholder="min. 6 karakter"
-                          onChange={e => setNewTeknisiForm(f => ({ ...f, password: e.target.value }))}
-                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.accent + "44", borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box", outline: "none" }} />
-                      </div>
-                      <div style={{ fontSize: 11, color: cs.muted, background: cs.accent + "10", borderRadius: 7, padding: "8px 10px" }}>
-                        💡 Email & password ini dipakai teknisi untuk login di halaman utama app
-                      </div>
-                    </div>
-                  )}
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Email Login <span style={{ color: cs.red }}>*</span></div>
+                  <input type="email" value={newTeknisiForm.email || ""} placeholder="contoh: ari@aclean.id"
+                    onChange={e => setNewTeknisiForm(f => ({ ...f, email: e.target.value }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 5, background: cs.accent + "10", borderRadius: 7, padding: "7px 10px" }}>
+                    🔑 Password otomatis: <b style={{ color: cs.accent }}>{["Helper"].includes(newTeknisiForm.role) ? "helper123" : "teknisi123"}</b> — langsung aktif tanpa konfirmasi email
+                  </div>
                 </div>
               )}
 
@@ -6648,36 +6627,50 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       message: `Hapus ${editTeknisi.name} dari tim dan database?\n\nPerhatian: Tindakan ini tidak bisa dibatalkan.\nOrder yang sudah ada tidak terpengaruh.`,
                       confirmText: "Hapus Permanen"
                     })) return;
-                    // Hapus dari local state
-                    setTeknisiData(prev => prev.filter(t => t.id !== editTeknisi.id));
-                    // Hapus dari Supabase (jika punya UUID id)
-                    if (editTeknisi.id && !String(editTeknisi.id).startsWith("Tech")) {
-                      const { error } = await supabase.from("user_profiles").delete().eq("id", editTeknisi.id);
-                      if (error) showNotif("⚠️ Hapus lokal berhasil, DB gagal: " + error.message);
-                      else { addAgentLog("TEKNISI_DELETED", "Anggota " + editTeknisi.name + " dihapus dari tim", "WARNING"); showNotif("✅ " + editTeknisi.name + " berhasil dihapus dari tim & database"); }
+                    const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
+                    if (isUUID(editTeknisi.id)) {
+                      const res = await fetch("/api/manage-user", {
+                        method: "POST", headers: await _apiHeaders(),
+                        body: JSON.stringify({ action: "delete", userId: editTeknisi.id, callerRole: currentUser?.role })
+                      });
+                      const result = await res.json();
+                      if (!result.ok) { showNotif("⚠️ " + (result.error || "Hapus gagal")); return; }
                     } else {
-                      showNotif("✅ " + editTeknisi.name + " dihapus dari daftar lokal");
+                      await supabase.from("user_profiles").delete().eq("id", editTeknisi.id);
                     }
+                    setTeknisiData(prev => prev.filter(t => t.id !== editTeknisi.id));
+                    setUserAccounts(prev => prev.filter(u => u.id !== editTeknisi.id));
+                    addAgentLog("TEKNISI_DELETED", "Anggota " + editTeknisi.name + " dihapus dari tim", "WARNING");
+                    showNotif("✅ " + editTeknisi.name + " berhasil dihapus dari tim & database");
                     setModalTeknisi(false); setEditTeknisi(null);
                   }}
                     style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "9px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>🗑️ Hapus dari Tim &amp; DB</button>
                   {editTeknisi?.status === "standby" ? (
                     <button onClick={async () => {
-                      setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? { ...t, status: "active", active: true } : t));
-                      if (!String(editTeknisi.id).startsWith("Tech")) {
+                      const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
+                      if (isUUID(editTeknisi.id)) {
+                        const res = await fetch("/api/manage-user", { method: "POST", headers: await _apiHeaders(), body: JSON.stringify({ action: "toggle-active", userId: editTeknisi.id, active: true, callerRole: currentUser?.role }) });
+                        const result = await res.json();
+                        if (!result.ok) { showNotif("⚠️ " + (result.error || "Gagal aktifkan")); return; }
+                      } else {
                         await supabase.from("user_profiles").update({ active: true, status: "active" }).eq("id", editTeknisi.id);
                       }
+                      setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? { ...t, status: "active", active: true } : t));
                       showNotif(editTeknisi.name + " diaktifkan kembali ✅");
                       setModalTeknisi(false); setEditTeknisi(null);
                     }}
                       style={{ background: cs.green + "18", border: "1px solid " + cs.green + "33", color: cs.green, padding: "9px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>▶ Aktifkan Kembali</button>
                   ) : (
                     <button onClick={async () => {
-                      setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? { ...t, status: "standby", active: false } : t));
-                      if (!String(editTeknisi.id).startsWith("Tech")) {
-                        await supabase.from("user_profiles").update({ active: false }).eq("id", editTeknisi.id);
-                        await supabase.from("user_profiles").update({ status: "standby" }).eq("id", editTeknisi.id);
+                      const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
+                      if (isUUID(editTeknisi.id)) {
+                        const res = await fetch("/api/manage-user", { method: "POST", headers: await _apiHeaders(), body: JSON.stringify({ action: "toggle-active", userId: editTeknisi.id, active: false, callerRole: currentUser?.role }) });
+                        const result = await res.json();
+                        if (!result.ok) { showNotif("⚠️ " + (result.error || "Gagal nonaktifkan")); return; }
+                      } else {
+                        await supabase.from("user_profiles").update({ active: false, status: "standby" }).eq("id", editTeknisi.id);
                       }
+                      setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? { ...t, status: "standby", active: false } : t));
                       showNotif(editTeknisi.name + " dinonaktifkan (standby). Data tetap tersimpan.");
                       setModalTeknisi(false); setEditTeknisi(null);
                     }}
@@ -6690,59 +6683,39 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <button onClick={async () => {
                   if (!newTeknisiForm.name || !newTeknisiForm.phone) { showNotif("Nama dan nomor HP wajib diisi"); return; }
                   if (editTeknisi) {
-                    // Update existing
+                    // ── Update existing via backend ──
                     const upd = { name: newTeknisiForm.name, phone: newTeknisiForm.phone, role: newTeknisiForm.role, skills: newTeknisiForm.skills || [] };
-                    setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? { ...t, ...upd } : t));
-                    const { error: tErr } = await supabase.from("user_profiles").update(upd).eq("id", editTeknisi.id);
-                    if (tErr) showNotif("⚠️ Update lokal saja, DB gagal");
-                    else { addAgentLog("TEKNISI_UPDATED", "Data " + newTeknisiForm.name + " diupdate", "SUCCESS"); showNotif("✅ " + newTeknisiForm.name + " berhasil diupdate"); }
-                  } else {
-                    // ── Add new teknisi ──
-                    let profileId = null;
-
-                    // Step 1: Buat akun Auth dulu (kalau diminta)
-                    if (newTeknisiForm.buatAkun) {
-                      if (!newTeknisiForm.email || !newTeknisiForm.password) {
-                        showNotif("❌ Email dan password wajib diisi untuk buat akun login"); return;
-                      }
-                      if (newTeknisiForm.password.length < 6) {
-                        showNotif("❌ Password minimal 6 karakter"); return;
-                      }
-                      const { data: authData, error: authErr } = await supabase.auth.admin
-                        ? supabase.auth.admin.createUser({ email: newTeknisiForm.email, password: newTeknisiForm.password, email_confirm: true })
-                        : await (async () => {
-                          // Fallback: pakai signUp biasa (kirim email konfirmasi)
-                          const r = await supabase.auth.signUp({ email: newTeknisiForm.email, password: newTeknisiForm.password });
-                          return r;
-                        })();
-                      if (authErr) { showNotif("❌ Gagal buat akun: " + authErr.message); return; }
-                      profileId = authData?.user?.id || null;
-                    }
-
-                    // Step 2: Insert ke user_profiles
-                    const newTek = {
-                      ...(profileId ? { id: profileId } : {}),
-                      name: newTeknisiForm.name,
-                      phone: newTeknisiForm.phone,
-                      role: newTeknisiForm.role,
-                      skills: newTeknisiForm.skills || [],
-                      status: "active",
-                      jobs_today: 0,
-                      ...(newTeknisiForm.email ? { email: newTeknisiForm.email } : {}),
-                    };
-                    const { error: tErr, data: tData } = await supabase.from("user_profiles").insert(newTek).select().single();
-                    if (tErr) {
-                      showNotif("⚠️ Tersimpan lokal, DB gagal: " + tErr.message);
-                      setTeknisiData(prev => [...prev, { ...newTek, id: "TMP_" + Date.now() }]);
+                    const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
+                    if (isUUID(editTeknisi.id)) {
+                      const res = await fetch("/api/manage-user", {
+                        method: "POST", headers: await _apiHeaders(),
+                        body: JSON.stringify({ action: "update", userId: editTeknisi.id, name: upd.name, role: upd.role, phone: upd.phone, callerRole: currentUser?.role })
+                      });
+                      const result = await res.json();
+                      if (!result.ok) { showNotif("⚠️ " + (result.error || "Update gagal")); return; }
                     } else {
-                      setTeknisiData(prev => [...prev, tData || newTek]);
-                      addAgentLog("TEKNISI_ADDED", "Anggota baru: " + newTeknisiForm.name + " (" + newTeknisiForm.role + ")" + (newTeknisiForm.buatAkun ? " + akun login" : ""), "SUCCESS");
-                      if (newTeknisiForm.buatAkun) {
-                        showNotif("✅ " + newTeknisiForm.name + " ditambahkan + akun login dibuat! Cek email untuk konfirmasi.");
-                      } else {
-                        showNotif("✅ " + newTeknisiForm.name + " berhasil ditambahkan (tanpa akun login)");
-                      }
+                      await supabase.from("user_profiles").update(upd).eq("id", editTeknisi.id);
                     }
+                    setTeknisiData(prev => prev.map(t => t.id === editTeknisi.id ? { ...t, ...upd } : t));
+                    addAgentLog("TEKNISI_UPDATED", "Data " + newTeknisiForm.name + " diupdate", "SUCCESS");
+                    showNotif("✅ " + newTeknisiForm.name + " berhasil diupdate");
+                  } else {
+                    // ── Tambah anggota baru via backend manage-user ──
+                    if (!newTeknisiForm.email) { showNotif("❌ Email wajib diisi untuk membuat akun login"); return; }
+                    const autoPass = newTeknisiForm.role === "Helper" ? "helper123" : "teknisi123";
+                    const res = await fetch("/api/manage-user", {
+                      method: "POST", headers: await _apiHeaders(),
+                      body: JSON.stringify({ action: "create", email: newTeknisiForm.email, password: autoPass, name: newTeknisiForm.name, role: newTeknisiForm.role, phone: newTeknisiForm.phone, callerRole: currentUser?.role })
+                    });
+                    const result = await res.json();
+                    if (!result.ok) { showNotif("❌ " + (result.error || "Gagal buat akun")); return; }
+                    const uid = result.user?.id;
+                    const colorMap = { Teknisi: "#22c55e", Helper: "#a78bfa", Supervisor: "#38bdf8" };
+                    const newTek = { id: uid, name: newTeknisiForm.name, role: newTeknisiForm.role, phone: newTeknisiForm.phone, email: newTeknisiForm.email, skills: [], jobs_today: 0, status: "active", active: true, color: colorMap[newTeknisiForm.role] || "#22c55e", avatar: newTeknisiForm.name.charAt(0).toUpperCase() };
+                    setTeknisiData(prev => [...prev, newTek]);
+                    setUserAccounts(prev => prev.find(u => u.id === uid) ? prev : [...prev, { ...newTek, lastLogin: "Belum login" }]);
+                    addAgentLog("TEKNISI_ADDED", "Anggota baru: " + newTeknisiForm.name + " (" + newTeknisiForm.role + ") + akun login", "SUCCESS");
+                    showNotif("✅ " + newTeknisiForm.name + " ditambahkan — langsung aktif — password: " + autoPass);
                   }
                   setModalTeknisi(false); setEditTeknisi(null); setNewTeknisiForm({ name: "", role: "Teknisi", phone: "", skills: [], email: "", password: "", buatAkun: false });
                 }}
