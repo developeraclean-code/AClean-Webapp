@@ -1691,7 +1691,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     }
   };
 
-  // ── Multi-invoice merged PDF (1 file PDF berisi banyak invoice, 1 page per invoice) ──
+  // ── Multi-invoice merged PDF (1 dokumen tagihan gabungan: section per pekerjaan, total agregat) ──
   const generateMergedInvoicePDFBlob = async (invList, portalLink = null) => {
     if (!Array.isArray(invList) || invList.length === 0) return null;
     const { pdf } = await import("@react-pdf/renderer");
@@ -1699,7 +1699,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     const logoUrl = await fetchInvoiceLogoUrl();
     const entries = invList.map(inv => ({ inv, invoiceItems: [] }));
     return await pdf(
-      <InvoicePDF invList={entries} logoUrl={logoUrl} appSettings={appSettings} portalLink={portalLink} />
+      <InvoicePDF invList={entries} unified={true} logoUrl={logoUrl} appSettings={appSettings} portalLink={portalLink} />
     ).toBlob();
   };
 
@@ -3318,15 +3318,14 @@ ${photoPageHTML}
       return s + sisa;
     }, 0);
     const lines = sorted.map((i, idx) => {
-      const sisa = (i.status === "PAID") ? 0
-        : (i.remaining_amount > 0 ? Number(i.remaining_amount) : Number(i.total) || 0);
       const tgl = i.created_at ? new Date(i.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "—";
-      const sisaTxt = sisa > 0 ? `Sisa: ${fmt(sisa)}` : "✅ Lunas";
-      return `${idx + 1}. *${i.id}* — ${i.service || "Servis AC"}\n   📅 ${tgl} • Total: ${fmt(i.total)} • ${sisaTxt}`;
-    }).join("\n\n");
+      return `${idx + 1}. ${i.service || "Servis AC"} — 📅 ${tgl}`;
+    }).join("\n");
     const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
-    const sisaLine = sisaAll > 0 ? `\n💸 *Sisa Tagihan: ${fmt(sisaAll)}*` : "";
-    const msg = `Halo ${customer}, Terlampir ${sorted.length} invoice servis kami yang digabung dalam 1 dokumen PDF:\n\n${lines}\n\n💰 *Total Keseluruhan: ${fmt(totalAll)}*${sisaLine}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nMohon kirimkan bukti transfer setelah pembayaran ya. Terima kasih! 🙏${portalLine}`;
+    const tagihanLine = sisaAll > 0
+      ? `💰 *Total Tagihan: ${fmt(sisaAll)}*${totalAll !== sisaAll ? ` _(dari ${fmt(totalAll)})_` : ""}`
+      : `✅ *Semua sudah lunas — total ${fmt(totalAll)}*`;
+    const msg = `Halo ${customer}, Terlampir tagihan gabungan untuk ${sorted.length} pekerjaan servis kami dalam 1 dokumen PDF:\n\n${lines}\n\n${tagihanLine}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nMohon kirimkan bukti transfer setelah pembayaran ya. Terima kasih! 🙏${portalLine}`;
     const sent = await sendWA(phone, msg, uploaded ? { url: uploaded.url, filename: uploaded.filename } : {});
     if (sent) {
       showNotif(`✅ ${sorted.length} invoice terkirim digabung ke ${customer}${uploaded ? " 📎" : ""}`);

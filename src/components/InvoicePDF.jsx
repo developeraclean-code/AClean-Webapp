@@ -99,13 +99,27 @@ function MatRow({ m, idx }) {
 
 // ── Main Component ──
 //
-// Mode tunggal:  <InvoicePDF inv={...} invoiceItems={[...]} />
-// Mode gabung:   <InvoicePDF invList={[{inv, invoiceItems}, ...]} />
-//
-// Mode gabung me-render setiap invoice sebagai <Page> terpisah dalam satu <Document>
-// sehingga customer terima 1 file PDF berisi banyak invoice.
-export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItems = [], portalLink = null, invList = null }) {
+// Mode tunggal:    <InvoicePDF inv={...} />
+// Mode gabung-multi-page (deprecated default):
+//                   <InvoicePDF invList={[{inv, invoiceItems}, ...]} />
+// Mode gabung-unified (1 halaman, section per pekerjaan, 1 total keseluruhan):
+//                   <InvoicePDF invList={[...]} unified={true} />
+export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItems = [], portalLink = null, invList = null, unified = false }) {
   if (Array.isArray(invList) && invList.length > 0) {
+    // Unified: render 1 dokumen tagihan gabungan dengan section per invoice
+    if (unified) {
+      return (
+        <Document>
+          <MergedInvoicePage
+            invList={invList.map(e => (e && e.inv ? e : { inv: e, invoiceItems: [] }))}
+            logoUrl={logoUrl}
+            appSettings={appSettings}
+            portalLink={portalLink}
+          />
+        </Document>
+      );
+    }
+    // Multi-page (backward-compat)
     return (
       <Document>
         {invList.map((entry, idx) => {
@@ -471,6 +485,273 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
           ) : null}
         </View>
 
+    </Page>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merged Invoice — 1 halaman gabungan dengan section per pekerjaan
+// ─────────────────────────────────────────────────────────────────────────────
+function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = null }) {
+  const first = invList[0]?.inv || {};
+  const customer = first.customer || "";
+  const phone = first.phone || "";
+
+  // Total agregat
+  const totalAll   = invList.reduce((s, e) => s + (Number(e.inv?.total) || 0), 0);
+  const paidAll    = invList.reduce((s, e) => s + (Number(e.inv?.paid_amount) || 0), 0);
+  const sisaAll    = invList.reduce((s, e) => {
+    const inv = e.inv || {};
+    if (inv.status === "PAID") return s;
+    const sisa = Number(inv.remaining_amount) > 0 ? Number(inv.remaining_amount) : Number(inv.total) || 0;
+    return s + sisa;
+  }, 0);
+
+  // Due date: ambil yang terjauh (paling longgar untuk customer)
+  const dueDates = invList.map(e => e.inv?.due).filter(Boolean);
+  const dueLatest = dueDates.length > 0
+    ? dueDates.sort((a, b) => new Date(b) - new Date(a))[0]
+    : null;
+
+  // Garansi: ambil expiry paling akhir (terpanjang)
+  const garansiExpires = invList.map(e => e.inv?.garansi_expires).filter(Boolean);
+  const garansiLatest = garansiExpires.length > 0
+    ? garansiExpires.sort((a, b) => new Date(b) - new Date(a))[0]
+    : null;
+
+  // Status gabungan: kalau semua PAID → LUNAS, kalau ada paid amount → PARTIAL, else UNPAID
+  const allPaid = invList.every(e => e.inv?.status === "PAID");
+  const aggStatus = allPaid ? "PAID" : (paidAll > 0 ? "PARTIAL_PAID" : "UNPAID");
+  const statusBoxStyle = aggStatus === "PAID" ? s.statusPaid : s.statusUnpaid;
+  const statusLabel = aggStatus === "PAID" ? "LUNAS"
+    : aggStatus === "PARTIAL_PAID" ? "DP / CICILAN" : "MENUNGGU PEMBAYARAN";
+
+  // Display ID gabungan: ambil semua ID, di-tampilkan di sub-header
+  const allIds = invList.map(e => e.inv?.id).filter(Boolean);
+  const mergedId = allIds.length === 2 ? allIds.join(" + ") : `${allIds[0]} +${allIds.length - 1} lainnya`;
+
+  return (
+    <Page size="A4" style={s.page}>
+      {/* ── Header ── */}
+      <View style={s.header}>
+        <View style={s.headerTop}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            {logoUrl ? <Image src={logoUrl} style={{ width: 48, height: 48, objectFit: "contain" }} /> : null}
+            <View>
+              <Text style={s.brand}>AClean Service</Text>
+              <Text style={s.brandSub}>Jasa Servis & Perawatan AC Profesional</Text>
+            </View>
+          </View>
+          <View>
+            <Text style={s.invLabel}>INVOICE GABUNGAN</Text>
+            <View style={s.invBadge}>
+              <Text>{invList.length} Pekerjaan</Text>
+            </View>
+          </View>
+        </View>
+        <View style={s.headerSub}>
+          <Text style={s.headerSubTxt}>📍 {appSettings.company_addr || ""}</Text>
+          <Text style={s.headerSubTxt}>📞 {appSettings.wa_number || ""}</Text>
+          <Text style={s.headerSubTxt}>🏦 {appSettings.bank_name} {appSettings.bank_number} a.n. {appSettings.bank_holder}</Text>
+        </View>
+      </View>
+
+      {/* ── Detail Grid ── */}
+      <View style={s.grid2}>
+        <View style={[s.box, s.boxBlue]}>
+          <Text style={s.boxTitle}>Detail Invoice</Text>
+          <InfoRow label="Tanggal" value={fmtDate(new Date())} bold />
+          <InfoRow label="Nomor" value={mergedId} />
+          <InfoRow label="Pekerjaan" value={`${invList.length} servis digabung`} />
+          {dueLatest ? <InfoRow label="Jatuh Tempo" value={dueLatest} /> : null}
+        </View>
+        <View style={[s.box, s.boxWhite]}>
+          <Text style={s.boxTitle}>Tagihan Kepada</Text>
+          <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 12, marginBottom: 4 }}>{customer}</Text>
+          <Text style={{ color: "#64748b", fontSize: 9 }}>📱 {phone || "—"}</Text>
+          <Text style={{ color: "#64748b", fontSize: 9, marginTop: 3 }}>📋 {invList.length} pekerjaan servis</Text>
+        </View>
+      </View>
+
+      {/* ── Section per pekerjaan ── */}
+      {invList.map((entry, idx) => {
+        const inv = entry.inv || {};
+        const tgl = inv.created_at ? fmtDate(inv.created_at) : "—";
+        const unitCount  = Array.isArray(inv.units) ? inv.units.length : (Number(inv.units) || 1);
+        const matDetails = (() => {
+          const md = inv.materials_detail;
+          if (!md) return [];
+          if (Array.isArray(md)) return md;
+          try { return JSON.parse(md); } catch { return []; }
+        })();
+        const jasaRows   = matDetails.filter(m => detectKat(m) === "jasa");
+        const repairRows = matDetails.filter(m => detectKat(m) === "repair");
+        const freonRows  = matDetails.filter(m => detectKat(m) === "freon");
+        const matRows    = matDetails.filter(m => detectKat(m) === "mat");
+        const sectionSubtotal = (Number(inv.total) || 0);
+
+        return (
+          <View key={idx} style={{ marginBottom: 10, borderRadius: 6, border: "1px solid #e2e8f0", overflow: "hidden" }} wrap={false}>
+            {/* Section header */}
+            <View style={{ backgroundColor: "#1E5BA8", padding: "8 12", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 10 }}>
+                  Pekerjaan #{idx + 1} — {inv.service || "Servis AC"}
+                </Text>
+                <Text style={{ color: "#cbd5e1", fontSize: 8, marginTop: 1 }}>
+                  📅 {tgl} · {inv.id} · {unitCount} unit
+                </Text>
+              </View>
+              <Text style={{ color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 11 }}>
+                {fmt(sectionSubtotal)}
+              </Text>
+            </View>
+
+            {/* Section content */}
+            {matDetails.length > 0 ? (
+              <View>
+                {jasaRows.length > 0 && (
+                  <View style={[s.thead, { backgroundColor: "#3b82f618", borderRadius: 0 }]}>
+                    <Text style={[s.sectionHdr, { color: "#3b82f6" }]}>Jasa / Layanan</Text>
+                  </View>
+                )}
+                {jasaRows.map((m, i) => <MatRow key={"j"+i} m={m} idx={i} />)}
+                {repairRows.length > 0 && (
+                  <View style={[s.thead, { backgroundColor: "#f59e0b18", borderRadius: 0 }]}>
+                    <Text style={[s.sectionHdr, { color: "#f59e0b" }]}>Repair / Perbaikan</Text>
+                  </View>
+                )}
+                {repairRows.map((m, i) => <MatRow key={"r"+i} m={m} idx={i} />)}
+                {matRows.length > 0 && (
+                  <View style={[s.thead, { backgroundColor: "#10b98118", borderRadius: 0 }]}>
+                    <Text style={[s.sectionHdr, { color: "#10b981" }]}>Material / Sparepart</Text>
+                  </View>
+                )}
+                {matRows.map((m, i) => <MatRow key={"m"+i} m={m} idx={i} />)}
+                {freonRows.length > 0 && (
+                  <View style={[s.thead, { backgroundColor: "#06b6d418", borderRadius: 0 }]}>
+                    <Text style={[s.sectionHdr, { color: "#06b6d4" }]}>Freon / Kuras Vacum</Text>
+                  </View>
+                )}
+                {freonRows.map((m, i) => <MatRow key={"f"+i} m={m} idx={i} />)}
+                {(Number(inv.discount) || 0) > 0 && (
+                  <View style={[s.tr, { backgroundColor: "#fff1f2" }]}>
+                    <Text style={[s.td, { flex: 1, color: "#be123c", fontStyle: "italic" }]}>Diskon</Text>
+                    <Text style={[s.td, { width: 60 }]}>—</Text>
+                    <Text style={[s.td, { width: 80 }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(Number(inv.discount) || 0).toLocaleString("id-ID")}</Text>
+                  </View>
+                )}
+              </View>
+            ) : (
+              // Fallback: invoice tanpa materials_detail — tampilkan ringkas labor + material
+              <View>
+                {(Number(inv.labor) || 0) > 0 && (
+                  <View style={s.tr}>
+                    <Text style={[s.td, { flex: 1 }]}>{inv.service || "Jasa Servis AC"}</Text>
+                    <Text style={[s.td, { width: 60, textAlign: "right" }]}>{unitCount}</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier" }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(Number(inv.labor) || 0).toLocaleString("id-ID")}</Text>
+                  </View>
+                )}
+                {(Number(inv.material) || 0) > 0 && (
+                  <View style={[s.tr, s.trEven]}>
+                    <Text style={[s.td, { flex: 1, color: "#475569", fontStyle: "italic" }]}>Material & Freon</Text>
+                    <Text style={[s.td, { width: 60 }]}>—</Text>
+                    <Text style={[s.td, { width: 80 }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{(Number(inv.material) || 0).toLocaleString("id-ID")}</Text>
+                  </View>
+                )}
+                {(Number(inv.discount) || 0) > 0 && (
+                  <View style={[s.tr, { backgroundColor: "#fff1f2" }]}>
+                    <Text style={[s.td, { flex: 1, color: "#be123c", fontStyle: "italic" }]}>Diskon</Text>
+                    <Text style={[s.td, { width: 60 }]}>—</Text>
+                    <Text style={[s.td, { width: 80 }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(Number(inv.discount) || 0).toLocaleString("id-ID")}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Status per section (subtle) */}
+            {inv.status === "PAID" ? (
+              <View style={{ padding: "4 12", backgroundColor: "#f0fdf4", borderTop: "1px solid #86efac" }}>
+                <Text style={{ fontSize: 8, color: "#16a34a", fontFamily: "Helvetica-Bold" }}>✓ Lunas — {inv.paid_at ? fmtDate(inv.paid_at) : ""}</Text>
+              </View>
+            ) : (Number(inv.paid_amount) || 0) > 0 ? (
+              <View style={{ padding: "4 12", backgroundColor: "#fef3c7", borderTop: "1px solid #fde68a" }}>
+                <Text style={{ fontSize: 8, color: "#92400e", fontFamily: "Helvetica-Bold" }}>
+                  DP: {fmt(inv.paid_amount)} • Sisa: {fmt(inv.remaining_amount || (Number(inv.total) - Number(inv.paid_amount)))}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        );
+      })}
+
+      {/* ── Total Akumulasi ── */}
+      <View style={{ marginTop: 4, marginBottom: 12, border: "2px solid #1E5BA8", borderRadius: 6, overflow: "hidden" }}>
+        <View style={{ flexDirection: "row", padding: "8 14", backgroundColor: "#f0f4f8", borderBottom: "1px solid #e2e8f0" }}>
+          <Text style={{ flex: 1, fontSize: 10, color: "#64748b" }}>Subtotal {invList.length} pekerjaan</Text>
+          <Text style={{ fontSize: 10, color: "#1e293b", fontFamily: "Helvetica-Bold" }}>{fmt(totalAll)}</Text>
+        </View>
+        {paidAll > 0 && (
+          <View style={{ flexDirection: "row", padding: "6 14", backgroundColor: "#f0fdf4" }}>
+            <Text style={{ flex: 1, fontSize: 9, color: "#16a34a" }}>Sudah dibayar</Text>
+            <Text style={{ fontSize: 9, color: "#16a34a", fontFamily: "Helvetica-Bold" }}>- {fmt(paidAll)}</Text>
+          </View>
+        )}
+        <View style={{ flexDirection: "row", padding: "10 14", backgroundColor: aggStatus === "PAID" ? "#16a34a" : "#1E5BA8" }}>
+          <Text style={{ flex: 1, color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 12 }}>
+            {aggStatus === "PAID" ? "TOTAL DIBAYAR" : "TOTAL TAGIHAN"}
+          </Text>
+          <Text style={{ color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 13 }}>
+            {fmt(aggStatus === "PAID" ? totalAll : sisaAll)}
+          </Text>
+        </View>
+      </View>
+
+      {/* ── Garansi ── */}
+      {garansiLatest ? (
+        <View style={s.garansiBox}>
+          <Text>Garansi servis — berlaku sampai {garansiLatest}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</Text>
+        </View>
+      ) : null}
+
+      {/* ── Footer Grid ── */}
+      <View style={s.footerGrid}>
+        <View style={s.bankBox}>
+          <Text style={s.boxTitle}>Informasi Pembayaran</Text>
+          <Text style={{ color: "#475569", fontSize: 9 }}>Transfer Bank {appSettings.bank_name || "BCA"}</Text>
+          <Text style={s.bankNum}>{appSettings.bank_number || ""}</Text>
+          <Text style={{ color: "#475569", fontSize: 9 }}>a.n. {appSettings.bank_holder || ""}</Text>
+          <Text style={{ marginTop: 6, fontSize: 9, color: "#64748b" }}>Kirim bukti transfer via WhatsApp ke nomor di atas</Text>
+        </View>
+        <View style={statusBoxStyle}>
+          <Text style={s.boxTitle}>Status Pembayaran</Text>
+          <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 12, marginBottom: 3 }}>{statusLabel}</Text>
+          {dueLatest ? <Text style={{ fontSize: 9, color: "#64748b" }}>Jatuh tempo: {dueLatest}</Text> : null}
+          {aggStatus === "PARTIAL_PAID" && (
+            <Text style={{ fontSize: 9, color: "#92400e", marginTop: 3 }}>Sudah dibayar: {fmt(paidAll)}</Text>
+          )}
+        </View>
+      </View>
+
+      {/* ── Footer Note ── */}
+      <View style={s.footerNote}>
+        <Text>Pertanyaan? Hubungi kami via WhatsApp: {appSettings.wa_number || ""}</Text>
+        <Text style={{ fontStyle: "italic", marginTop: 3, color: "#94a3b8" }}>
+          Terima kasih telah mempercayakan perawatan AC Anda kepada {appSettings.company_name || "AClean"}
+        </Text>
+        {portalLink ? (
+          <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#e2e8f0", borderTopStyle: "solid" }}>
+            <Text style={{ fontSize: 8, color: "#0369a1", fontFamily: "Helvetica-Bold" }}>
+              🔗 Portal Servis Anda (riwayat, foto & invoice):
+            </Text>
+            <Text style={{ fontSize: 8, color: "#0369a1", marginTop: 2 }}>{portalLink}</Text>
+          </View>
+        ) : null}
+      </View>
     </Page>
   );
 }
