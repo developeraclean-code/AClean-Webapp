@@ -25,8 +25,8 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
   const [checks, setChecks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedBag, setSelectedBag] = useState(null);
-  const [checklistTemplate, setChecklistTemplate] = useState([]); // unique tools dari DB
-  const [showManageModal, setShowManageModal] = useState(false);
+  const [bagChecklist, setBagChecklist] = useState([]); // checklist khusus tas yang dipilih
+  const [bagToolCounts, setBagToolCounts] = useState({}); // { "Tas 1": 24, "Tas 2": 26, ... }
 
   const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
 
@@ -47,21 +47,35 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
     setLoading(false);
   }, [supabase, weekStart, weekEnd, showNotif]);
 
-  // Load checklist template (ambil unique tool dari Tas 1, asumsi semua tas punya checklist sama)
-  const loadChecklist = useCallback(async () => {
+  // Load checklist khusus untuk tas yang dipilih
+  const loadBagChecklist = useCallback(async (bagId) => {
+    if (!bagId) { setBagChecklist([]); return; }
     const { data, error } = await supabase
       .from("tool_bag_checklist")
       .select("tool_name,is_priority,qty_min")
-      .eq("bag_id", "Tas 1")
+      .eq("bag_id", bagId)
       .order("is_priority", { ascending: false })
       .order("tool_name");
     if (!error) {
-      setChecklistTemplate((data || []).map(t => ({ name: t.tool_name, is_priority: t.is_priority, qty_min: t.qty_min })));
+      setBagChecklist((data || []).map(t => ({ name: t.tool_name, is_priority: t.is_priority, qty_min: t.qty_min })));
+    }
+  }, [supabase]);
+
+  // Hitung jumlah alat per tas — untuk badge di grid
+  const loadBagToolCounts = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("tool_bag_checklist")
+      .select("bag_id");
+    if (!error) {
+      const counts = {};
+      (data || []).forEach(r => { counts[r.bag_id] = (counts[r.bag_id] || 0) + 1; });
+      setBagToolCounts(counts);
     }
   }, [supabase]);
 
   useEffect(() => { loadChecks(); }, [loadChecks]);
-  useEffect(() => { loadChecklist(); }, [loadChecklist]);
+  useEffect(() => { loadBagChecklist(selectedBag); }, [selectedBag, loadBagChecklist]);
+  useEffect(() => { loadBagToolCounts(); }, [loadBagToolCounts]);
 
   // Hitung status per tas untuk minggu ini
   const bagSummary = BAGS.map(bagId => {
@@ -104,18 +118,10 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
             Kirim foto ke WA AClean: <b>"Pagi Tas 1"</b>, <b>"Pulang Tas 5"</b>, dst (Tas 1 – Tas 10)
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {isOwnerAdmin && (
-            <button onClick={() => setShowManageModal(true)}
-              style={{ padding: "8px 14px", background: cs.surface, color: cs.text, border: `1px solid ${cs.border}`, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
-              ✏️ Kelola Alat ({checklistTemplate.length})
-            </button>
-          )}
-          <button onClick={loadChecks}
-            style={{ padding: "8px 14px", background: cs.accent, color: "#000", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
-            🔄 Refresh
-          </button>
-        </div>
+        <button onClick={loadChecks}
+          style={{ padding: "8px 14px", background: cs.accent, color: "#000", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+          🔄 Refresh
+        </button>
       </div>
 
       {/* Week Navigator */}
@@ -181,8 +187,11 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
                     {b.criticalCount > 0 ? "🚨" : "⚠️"}
                   </div>
                 )}
-                <div style={{ fontWeight: 800, fontSize: 16, color: cs.text, marginBottom: 6 }}>
-                  🎒 {b.bagId}
+                <div style={{ fontWeight: 800, fontSize: 16, color: cs.text, marginBottom: 6, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                  <span>🎒 {b.bagId}</span>
+                  <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: cs.accent + "22", color: cs.accent, fontWeight: 700 }}>
+                    {bagToolCounts[b.bagId] || 0} alat
+                  </span>
                 </div>
                 {b.totalChecks === 0 ? (
                   <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada check</div>
@@ -221,20 +230,13 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
         <BagDetail
           bagId={selectedBag}
           checks={checks.filter(c => c.bag_id === selectedBag)}
-          checklistTemplate={checklistTemplate}
+          checklistTemplate={bagChecklist}
           onClose={() => setSelectedBag(null)}
-        />
-      )}
-
-      {/* Modal Kelola Alat */}
-      {showManageModal && (
-        <ManageChecklistModal
+          isOwnerAdmin={isOwnerAdmin}
           supabase={supabase}
-          checklistTemplate={checklistTemplate}
-          onClose={() => setShowManageModal(false)}
-          onChanged={() => { loadChecklist(); }}
           showNotif={showNotif}
           showConfirm={showConfirm}
+          onChecklistChanged={() => { loadBagChecklist(selectedBag); loadBagToolCounts(); }}
         />
       )}
 
@@ -249,7 +251,9 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
   );
 }
 
-function BagDetail({ bagId, checks, checklistTemplate, onClose }) {
+function BagDetail({ bagId, checks, checklistTemplate, onClose, isOwnerAdmin, supabase, showNotif, showConfirm, onChecklistChanged }) {
+  const [showManage, setShowManage] = useState(false);
+
   // Hitung untuk setiap alat: berapa kali ada/missing dalam minggu ini
   const toolStats = checklistTemplate.map(tool => {
     let foundCount = 0;
@@ -273,18 +277,39 @@ function BagDetail({ bagId, checks, checklistTemplate, onClose }) {
   return (
     <div style={{ background: cs.card, border: `2px solid ${hasIssues ? cs.red + "66" : cs.border}`, borderRadius: 14, overflow: "hidden" }}>
       {/* Header */}
-      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${cs.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: hasIssues ? cs.red + "11" : cs.surface }}>
+      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${cs.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: hasIssues ? cs.red + "11" : cs.surface, flexWrap: "wrap", gap: 8 }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 800, color: cs.text }}>🎒 Detail {bagId}</div>
           <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
-            {checks.length} check minggu ini · {problemTools.length} alat bermasalah
+            {checks.length} check minggu ini · {checklistTemplate.length} alat · {problemTools.length} bermasalah
           </div>
         </div>
-        <button onClick={onClose}
-          style={{ background: "none", border: `1px solid ${cs.border}`, color: cs.muted, padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontSize: 11 }}>
-          ✕ Tutup
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          {isOwnerAdmin && (
+            <button onClick={() => setShowManage(true)}
+              style={{ padding: "6px 12px", background: cs.accent + "22", border: `1px solid ${cs.accent}44`, color: cs.accent, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 11 }}>
+              ✏️ Kelola Alat {bagId}
+            </button>
+          )}
+          <button onClick={onClose}
+            style={{ background: "none", border: `1px solid ${cs.border}`, color: cs.muted, padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontSize: 11 }}>
+            ✕ Tutup
+          </button>
+        </div>
       </div>
+
+      {/* Modal Kelola Alat Per Tas */}
+      {showManage && (
+        <ManageChecklistModal
+          bagId={bagId}
+          supabase={supabase}
+          checklistTemplate={checklistTemplate}
+          onClose={() => setShowManage(false)}
+          onChanged={() => { onChecklistChanged?.(); }}
+          showNotif={showNotif}
+          showConfirm={showConfirm}
+        />
+      )}
 
       {/* Warning banner jika ada issues */}
       {hasIssues && (
@@ -429,40 +454,40 @@ function BagDetail({ bagId, checks, checklistTemplate, onClose }) {
   );
 }
 
-function ManageChecklistModal({ supabase, checklistTemplate, onClose, onChanged, showNotif, showConfirm }) {
+function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onChanged, showNotif, showConfirm }) {
   const [editingTool, setEditingTool] = useState(null); // { name, is_priority, qty_min, originalName }
   const [newName, setNewName] = useState("");
   const [newPriority, setNewPriority] = useState(false);
   const [newQty, setNewQty] = useState(1);
   const [saving, setSaving] = useState(false);
+  const [showCopyMenu, setShowCopyMenu] = useState(false);
 
-  // Tambah alat baru ke SEMUA tas (10 tas × 1 alat = 10 inserts)
+  // Tambah alat baru ke tas INI saja
   const handleAdd = async () => {
     if (!newName.trim()) { showNotif?.("Nama alat wajib diisi"); return; }
     const name = newName.trim();
     if (checklistTemplate.some(t => t.name.toLowerCase() === name.toLowerCase())) {
-      showNotif?.("Alat sudah ada di checklist");
+      showNotif?.("Alat sudah ada di " + bagId);
       return;
     }
     const qty = Math.max(1, parseInt(newQty) || 1);
     setSaving(true);
-    const rows = BAGS.map(bag => ({
-      bag_id: bag,
+    const { error } = await supabase.from("tool_bag_checklist").insert({
+      bag_id: bagId,
       tool_name: name,
       qty_min: qty,
       is_priority: newPriority
-    }));
-    const { error } = await supabase.from("tool_bag_checklist").insert(rows);
+    });
     setSaving(false);
     if (error) { showNotif?.("Gagal tambah: " + error.message); return; }
-    showNotif?.("✅ Alat \"" + name + "\" (qty " + qty + ") ditambahkan ke semua tas");
+    showNotif?.("✅ \"" + name + "\" (qty " + qty + ") ditambahkan ke " + bagId);
     setNewName("");
     setNewPriority(false);
     setNewQty(1);
     onChanged?.();
   };
 
-  // Edit alat: rename + toggle priority + qty (update semua tas dengan tool_name lama)
+  // Edit alat di tas INI saja
   const handleSaveEdit = async () => {
     if (!editingTool) return;
     const newToolName = editingTool.name.trim();
@@ -471,38 +496,69 @@ function ManageChecklistModal({ supabase, checklistTemplate, onClose, onChanged,
     setSaving(true);
     const { error } = await supabase.from("tool_bag_checklist")
       .update({ tool_name: newToolName, is_priority: editingTool.is_priority, qty_min: qty })
+      .eq("bag_id", bagId)
       .eq("tool_name", editingTool.originalName);
     setSaving(false);
     if (error) { showNotif?.("Gagal update: " + error.message); return; }
-    showNotif?.("✏️ Alat diperbarui");
+    showNotif?.("✏️ Alat di " + bagId + " diperbarui");
     setEditingTool(null);
     onChanged?.();
   };
 
-  // Quick adjust qty (+/-) tanpa masuk mode edit
+  // Quick adjust qty (+/-) hanya di tas INI
   const handleQtyChange = async (tool, delta) => {
     const newQtyVal = Math.max(1, (tool.qty_min || 1) + delta);
     if (newQtyVal === tool.qty_min) return;
     const { error } = await supabase.from("tool_bag_checklist")
       .update({ qty_min: newQtyVal })
+      .eq("bag_id", bagId)
       .eq("tool_name", tool.name);
     if (error) { showNotif?.("Gagal update qty: " + error.message); return; }
-    showNotif?.("📦 " + tool.name + " — qty: " + newQtyVal);
+    showNotif?.("📦 " + tool.name + " (" + bagId + ") — qty: " + newQtyVal);
     onChanged?.();
   };
 
-  // Hapus alat dari semua tas
+  // Hapus alat dari tas INI saja
   const handleDelete = async (tool) => {
     const ok = showConfirm
-      ? await showConfirm({ icon: "🗑️", title: "Hapus Alat?", danger: true,
-          message: `Hapus "${tool.name}" dari checklist SEMUA tas (Tas 1 - Tas 10)? Tidak bisa dibatalkan.`,
+      ? await showConfirm({ icon: "🗑️", title: "Hapus dari " + bagId + "?", danger: true,
+          message: `Hapus "${tool.name}" dari ${bagId}? Tas lain tidak terpengaruh.`,
           confirmText: "Hapus" })
-      : window.confirm(`Hapus "${tool.name}" dari semua tas?`);
+      : window.confirm(`Hapus "${tool.name}" dari ${bagId}?`);
     if (!ok) return;
     const { error } = await supabase.from("tool_bag_checklist")
-      .delete().eq("tool_name", tool.name);
+      .delete()
+      .eq("bag_id", bagId)
+      .eq("tool_name", tool.name);
     if (error) { showNotif?.("Gagal hapus: " + error.message); return; }
-    showNotif?.("🗑️ Alat \"" + tool.name + "\" dihapus dari semua tas");
+    showNotif?.("🗑️ \"" + tool.name + "\" dihapus dari " + bagId);
+    onChanged?.();
+  };
+
+  // Salin checklist dari tas lain
+  const handleCopyFrom = async (sourceBagId) => {
+    if (sourceBagId === bagId) return;
+    const ok = showConfirm
+      ? await showConfirm({ icon: "📋", title: "Salin dari " + sourceBagId + "?",
+          message: `Salin SEMUA alat dari ${sourceBagId} ke ${bagId}. Alat yang sudah ada di ${bagId} tidak akan duplikat.`,
+          confirmText: "Salin" })
+      : window.confirm(`Salin alat dari ${sourceBagId} ke ${bagId}?`);
+    if (!ok) return;
+    // Fetch alat di source bag
+    const { data: srcTools, error: srcErr } = await supabase
+      .from("tool_bag_checklist")
+      .select("tool_name,is_priority,qty_min")
+      .eq("bag_id", sourceBagId);
+    if (srcErr || !srcTools?.length) { showNotif?.("Gagal salin: tas sumber kosong"); return; }
+    const existing = new Set(checklistTemplate.map(t => t.name.toLowerCase()));
+    const newRows = srcTools
+      .filter(t => !existing.has(t.tool_name.toLowerCase()))
+      .map(t => ({ bag_id: bagId, tool_name: t.tool_name, is_priority: t.is_priority, qty_min: t.qty_min }));
+    if (newRows.length === 0) { showNotif?.("Tidak ada alat baru untuk disalin"); setShowCopyMenu(false); return; }
+    const { error } = await supabase.from("tool_bag_checklist").insert(newRows);
+    if (error) { showNotif?.("Gagal salin: " + error.message); return; }
+    showNotif?.("📋 " + newRows.length + " alat disalin dari " + sourceBagId + " ke " + bagId);
+    setShowCopyMenu(false);
     onChanged?.();
   };
 
@@ -517,17 +573,35 @@ function ManageChecklistModal({ supabase, checklistTemplate, onClose, onChanged,
           width: "100%", maxWidth: 720, maxHeight: "90vh", overflow: "auto"
         }}>
         {/* Header */}
-        <div style={{ padding: "14px 16px", borderBottom: `1px solid ${cs.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: cs.card, zIndex: 1 }}>
+        <div style={{ padding: "14px 16px", borderBottom: `1px solid ${cs.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: cs.card, zIndex: 1, flexWrap: "wrap", gap: 8 }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: cs.text }}>✏️ Kelola Checklist Alat</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: cs.text }}>✏️ Kelola Alat — {bagId}</div>
             <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
-              Perubahan otomatis berlaku untuk semua tas (Tas 1 – Tas 10)
+              Perubahan hanya berlaku untuk <b>{bagId}</b> (tas lain tidak terpengaruh)
             </div>
           </div>
-          <button onClick={onClose}
-            style={{ background: "none", border: `1px solid ${cs.border}`, color: cs.muted, padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontSize: 11 }}>
-            ✕ Tutup
-          </button>
+          <div style={{ display: "flex", gap: 6, position: "relative" }}>
+            <button onClick={() => setShowCopyMenu(!showCopyMenu)}
+              style={{ padding: "6px 12px", background: cs.surface, border: `1px solid ${cs.border}`, color: cs.text, borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+              📋 Salin dari Tas Lain
+            </button>
+            {showCopyMenu && (
+              <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 8, padding: 6, boxShadow: "0 4px 12px rgba(0,0,0,0.4)", zIndex: 2, minWidth: 140 }}>
+                {BAGS.filter(b => b !== bagId).map(b => (
+                  <button key={b} onClick={() => handleCopyFrom(b)}
+                    style={{ display: "block", width: "100%", padding: "6px 10px", background: "none", border: "none", color: cs.text, textAlign: "left", cursor: "pointer", fontSize: 12, borderRadius: 4 }}
+                    onMouseEnter={e => e.target.style.background = cs.surface}
+                    onMouseLeave={e => e.target.style.background = "transparent"}>
+                    📋 {b}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button onClick={onClose}
+              style={{ background: "none", border: `1px solid ${cs.border}`, color: cs.muted, padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontSize: 11 }}>
+              ✕ Tutup
+            </button>
+          </div>
         </div>
 
         {/* Form Tambah */}
