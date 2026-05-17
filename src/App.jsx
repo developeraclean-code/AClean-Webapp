@@ -52,6 +52,7 @@ const ReportsView = lazy(() => import("./views/ReportsView.jsx"));
 const LaporanTimView = lazy(() => import("./views/LaporanTimView.jsx"));
 const MyReportView = lazy(() => import("./views/MyReportView.jsx"));
 const MatTrackView = lazy(() => import("./views/MatTrackView.jsx"));
+const ToolBagView = lazy(() => import("./views/ToolBagView.jsx"));
 const ExpensesView = lazy(() => import("./views/ExpensesView.jsx"));
 const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
 const OrderInboxView = lazy(() => import("./views/OrderInboxView.jsx"));
@@ -5003,6 +5004,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id: "monitoring", icon: "🔍", label: "Monitoring" },
     { id: "settings", icon: "⚙️", label: "Pengaturan" },
     { id: "mattrack", icon: "🧮", label: "Stok Material" },
+    { id: "toolbag", icon: "🎒", label: "Tas Teknisi" },
     { id: "biaya", icon: "💸", label: "Biaya" },
     // Teknisi-only menu (not shown to Owner/Admin)
     { id: "myreport", icon: "📋", label: "Laporan Saya" },
@@ -5537,6 +5539,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       case "agentlog": return renderAgentLog();
       case "deletedaudit": return renderDeletedAudit();
       case "mattrack": return renderMatTrack();
+      case "toolbag": return (
+        <ToolBagView supabase={supabase} currentUser={currentUser} showNotif={showNotif} />
+      );
       case "biaya": return renderExpenses();
       case "monitoring": return renderMonitoring();
       case "settings": return renderSettings();
