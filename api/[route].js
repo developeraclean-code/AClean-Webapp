@@ -180,7 +180,139 @@ export default async function handler(req, res) {
       if (!message) return res.status(400).json({ error: "Message is required and must be 1-4096 characters" });
 
       // ── VALIDATION: Group message check ──
-      if (wb.isGroup === true || wb.isGroup === "true") return res.status(200).json({ status: "skipped" });
+      if (wb.isGroup === true || wb.isGroup === "true") {
+        // Group messages: proses sebagai input satu arah ke ARA (no AI reply, no personal flow)
+        const SU_g = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+        const SK_g = process.env.SUPABASE_SERVICE_KEY;
+        const FT_g = process.env.FONNTE_TOKEN;
+        const OP_g = process.env.OWNER_PHONE;
+
+        // Step 1: Validasi pengirim (wb.participant = nomor anggota grup)
+        const participantRaw = wb.participant || "";
+        // Fonnte format: "628xxx@s.whatsapp.net" atau "628xxx"
+        const participantClean = participantRaw.replace(/@s\.whatsapp\.net$/i, "").replace(/@.*$/, "");
+        const participantNorm = validateAndNormalizePhone(participantClean);
+
+        if (!participantNorm || !SU_g || !SK_g) {
+          return res.status(200).json({ status: "skipped", reason: "invalid_participant" });
+        }
+
+        // Cek user_profiles — coba 628xxx dan 08xxx variant
+        let senderProfile = null;
+        try {
+          const variants = buildPhoneVariants(participantNorm);
+          for (const v of variants) {
+            const pRes = await fetch(
+              SU_g + "/rest/v1/user_profiles?select=name,role,phone&phone=eq." + encodeURIComponent(v) + "&active=eq.true&limit=1",
+              { headers: { apikey: SK_g, Authorization: "Bearer " + SK_g } }
+            );
+            if (pRes.ok) {
+              const rows = await pRes.json();
+              if (rows && rows.length > 0) { senderProfile = rows[0]; break; }
+            }
+          }
+        } catch(pErr) {
+          console.warn("[receive-wa] group participant lookup failed:", pErr.message);
+        }
+
+        if (!senderProfile) {
+          return res.status(200).json({ status: "skipped", reason: "not_registered" });
+        }
+
+        const profileName = senderProfile.name || participantNorm;
+        const groupId = wb.sender || wb.group || null; // grup ID dari Fonnte
+        let parsedType = "general";
+        let parsedAmount = null;
+        let parsedJobId = null;
+        let parsedOk = false;
+        let expenseSaved = false;
+
+        // Step 2: Parse format pesan
+        const msgLower = message.toLowerCase();
+
+        // BIAYA pattern
+        const biayaMatch = message.match(/^(bensin|makan|parkir|tol|belanja|beli|transport|bbm|solar|pertamax|consumable)[\s:]+(.+)/i);
+        if (biayaMatch) {
+          parsedType = "biaya";
+          const rawBiaya = biayaMatch[2];
+          // Parse nominal: rb/k → *1000, jt → *1000000
+          let nominalStr = rawBiaya
+            .replace(/(\d+)\s*(jt|juta)/gi, (_, n) => String(parseInt(n) * 1000000))
+            .replace(/(\d+)\s*(rb|ribu|k)/gi, (_, n) => String(parseInt(n) * 1000));
+          const nominalMatch = nominalStr.match(/[\d]{4,}/);
+          if (nominalMatch) {
+            parsedAmount = parseInt(nominalMatch[0]);
+            parsedOk = true;
+            // Simpan ke operational_expenses
+            if (SU_g && SK_g) {
+              const today = new Date().toISOString().slice(0, 10);
+              fetch(SU_g + "/rest/v1/operational_expenses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+                body: JSON.stringify({
+                  date: today,
+                  category: biayaMatch[1].toLowerCase(),
+                  description: message,
+                  amount: parsedAmount,
+                  teknisi: profileName,
+                  source: "wa_group",
+                  notes: "via WA grup"
+                })
+              }).catch(e => console.error("[WA_GROUP_EXPENSE]", e.message));
+              expenseSaved = true;
+            }
+          }
+        }
+
+        // LAPORAN SINGKAT pattern
+        if (parsedType === "general") {
+          const laporanMatch = message.match(/^(selesai|done|finish|beres|kelar)[\s]+([A-Z0-9\-]+)/i);
+          if (laporanMatch) {
+            parsedType = "laporan";
+            parsedJobId = laporanMatch[2];
+            parsedOk = true;
+          }
+        }
+
+        // STOK HABIS pattern
+        if (parsedType === "general") {
+          const stokMatch = message.match(/^(stok|material|freon|bahan)\s+(.+?)\s+(habis|kosong|mau habis)/i);
+          if (stokMatch) {
+            parsedType = "stok_alert";
+            parsedOk = true;
+          }
+        }
+
+        // Step 3: Simpan ke wa_group_logs
+        if (SU_g && SK_g) {
+          fetch(SU_g + "/rest/v1/wa_group_logs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+            body: JSON.stringify({
+              sender_phone: participantNorm,
+              sender_name: profileName,
+              group_id: groupId,
+              type: parsedType,
+              content: message,
+              job_id: parsedJobId,
+              amount: parsedAmount,
+              parsed_ok: parsedOk
+            })
+          }).catch(e => console.error("[WA_GROUP_LOG]", e.message));
+        }
+
+        // Step 4: Notif owner jika biaya atau stok_alert
+        if ((parsedType === "biaya" || parsedType === "stok_alert") && FT_g && OP_g) {
+          const ownerMsg = "📋 *Laporan Grup*\n👤 " + profileName + ": " + message + "\n✅ Dicatat otomatis";
+          fetch("https://api.fonnte.com/send", {
+            method: "POST",
+            headers: { Authorization: FT_g, "Content-Type": "application/json" },
+            body: JSON.stringify({ target: OP_g, message: ownerMsg, delay: "1", countryCode: "62" })
+          }).catch(() => {});
+        }
+
+        return res.status(200).json({ status: "group_processed", type: parsedType });
+      }
 
       const FT = process.env.FONNTE_TOKEN;
       const OP = process.env.OWNER_PHONE;

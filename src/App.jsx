@@ -2993,6 +2993,48 @@ ${photoPageHTML}
             });
             fetchWaConversations(supabase, 150)
               .then(({ data, error }) => { if (data && !error) setWaConversations(data); });
+
+            // Push notification + suara saat WA baru dari customer
+            const newMsg = payload.new;
+            if (newMsg?.role === "customer") {
+              // 1. Suara — buat AudioContext inline (tidak perlu file eksternal)
+              try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain); gain.connect(ctx.destination);
+                osc.frequency.value = 880;
+                osc.type = "sine";
+                gain.gain.setValueAtTime(0.3, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.4);
+              } catch(_) {}
+
+              // 2. Browser push notification
+              const senderDisplay = newMsg.name || newMsg.phone || "Customer";
+              const msgPreview = (newMsg.content || "").slice(0, 60);
+              if (typeof Notification !== "undefined") {
+                if (Notification.permission === "granted") {
+                  new Notification("📱 WA Baru — " + senderDisplay, {
+                    body: msgPreview || "(foto/media)",
+                    icon: "/favicon.ico",
+                    tag: "wa-" + (newMsg.phone || ""),
+                    renotify: true
+                  });
+                } else if (Notification.permission === "default") {
+                  Notification.requestPermission().then(perm => {
+                    if (perm === "granted") {
+                      new Notification("📱 WA Baru — " + senderDisplay, {
+                        body: msgPreview || "(foto/media)",
+                        icon: "/favicon.ico",
+                        tag: "wa-" + (newMsg.phone || "")
+                      });
+                    }
+                  });
+                }
+              }
+            }
           })
           .subscribe((status) => {
             if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_messages — tabel mungkin belum ada");
