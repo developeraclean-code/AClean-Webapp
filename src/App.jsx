@@ -4363,6 +4363,12 @@ ${photoPageHTML}
         const cust = customersData.find(x => samePhone(x.phone, c.phone));
         return { phone: c.phone, name: c.name, lastMessage: c.last_message || c.last || "", updatedAt: c.updated_at, unread: c.unread || 0, intent: c.intent || "", customerName: cust?.name || null, totalOrders: cust?.total_orders || 0, isKnownCustomer: !!cust };
       }),
+      pendingPayments: paymentSuggestions.map(p => ({
+        phone: p.phone, senderName: p.sender_name, amount: p.amount || null,
+        bank: p.bank || null, invoiceId: p.invoice_id || null, orderId: p.order_id || null,
+        status: p.status, source: p.source, createdAt: p.created_at,
+        hasProof: !!(p.image_url || p.source === "image"),
+      })),
       revenueStats: {
         bulanIni: invoicesData.filter(i => i.status === "PAID" && String(i.sent || i.created_at || "").startsWith(bulanIni)).reduce((a, b) => a + (b.total || 0), 0),
         totalUnpaid: invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").reduce((a, b) => a + (b.total || 0), 0),
