@@ -1691,6 +1691,49 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     }
   };
 
+  // ── Multi-invoice merged PDF (1 file PDF berisi banyak invoice, 1 page per invoice) ──
+  const generateMergedInvoicePDFBlob = async (invList, portalLink = null) => {
+    if (!Array.isArray(invList) || invList.length === 0) return null;
+    const { pdf } = await import("@react-pdf/renderer");
+    const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
+    const logoUrl = await fetchInvoiceLogoUrl();
+    const entries = invList.map(inv => ({ inv, invoiceItems: [] }));
+    return await pdf(
+      <InvoicePDF invList={entries} logoUrl={logoUrl} appSettings={appSettings} portalLink={portalLink} />
+    ).toBlob();
+  };
+
+  const uploadMergedInvoicePDFForWA = async (invList, portalLink = null) => {
+    try {
+      const blob = await generateMergedInvoicePDFBlob(invList, portalLink);
+      if (!blob) return null;
+      const first = invList[0]?.id || "merge";
+      const filename = `Invoice_Gabungan_${first}_x${invList.length}.pdf`;
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const res = await fetch("/api/upload-foto", {
+        method: "POST", headers: await _apiHeaders(),
+        body: JSON.stringify({
+          base64, filename,
+          folder: "invoices", mimeType: "application/pdf"
+        })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.success && d.key) {
+        return { url: `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`, filename };
+      }
+      console.warn("[uploadMergedInvoicePDFForWA] upload response:", d);
+      return null;
+    } catch (err) {
+      console.warn("[uploadMergedInvoicePDFForWA] gagal:", err.message);
+      return null;
+    }
+  };
+
   // ─────────────────────────────────────────────────────────────────────────────
   // SERVICE REPORT CARD — HTML builder + preview + WA upload
   // ─────────────────────────────────────────────────────────────────────────────
@@ -3178,6 +3221,59 @@ ${photoPageHTML}
     const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
     const msg = `Halo ${inv.customer}, Terlampir Invoice Resmi Pekerjaan Kemaren senilai *${fmt(inv.total)}*.\n\nPembayaran Bisa Melalui Transfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nApabila sudah di Transfer Bole dikirimkan Bukti Pembayaran kesini untuk di Konfirmasi Pembayarannya ya Bapak / Ibu. Terima kasih! 🙏${portalLine}`;
     sendWA(inv.phone, msg, invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {});
+  };
+
+  // ── Kirim beberapa invoice digabung jadi 1 PDF (1 page per invoice) ──
+  // Validasi: semua invoice harus customer/phone yang sama. Otomatis sort by created_at asc.
+  const mergedInvoiceWA = async (invList) => {
+    if (!Array.isArray(invList) || invList.length < 2) {
+      showNotif("⚠️ Pilih minimal 2 invoice untuk digabung");
+      return false;
+    }
+    const phone = invList[0]?.phone;
+    if (!phone) { showNotif("⚠️ No. HP customer tidak tersedia"); return false; }
+    const allSamePhone = invList.every(i => i.phone === phone);
+    if (!allSamePhone) {
+      showNotif("⚠️ Semua invoice harus dari customer/nomor yang sama");
+      return false;
+    }
+    const sorted = [...invList].sort((a, b) =>
+      new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+    );
+    const customer = sorted[0]?.customer || "";
+    showNotif(`⏳ Menggabungkan ${sorted.length} invoice...`);
+    const portalLink = await getPortalLink(phone, customer);
+    const uploaded = await uploadMergedInvoicePDFForWA(sorted, portalLink);
+    if (!uploaded) {
+      showNotif("⚠️ Gagal upload PDF gabungan — fallback teks saja");
+    }
+    const totalAll = sorted.reduce((s, i) => s + (Number(i.total) || 0), 0);
+    const sisaAll = sorted.reduce((s, i) => {
+      const sisa = (i.status === "PAID") ? 0
+        : (i.remaining_amount > 0 ? Number(i.remaining_amount) : Number(i.total) || 0);
+      return s + sisa;
+    }, 0);
+    const lines = sorted.map((i, idx) => {
+      const sisa = (i.status === "PAID") ? 0
+        : (i.remaining_amount > 0 ? Number(i.remaining_amount) : Number(i.total) || 0);
+      const tgl = i.created_at ? new Date(i.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "—";
+      const sisaTxt = sisa > 0 ? `Sisa: ${fmt(sisa)}` : "✅ Lunas";
+      return `${idx + 1}. *${i.id}* — ${i.service || "Servis AC"}\n   📅 ${tgl} • Total: ${fmt(i.total)} • ${sisaTxt}`;
+    }).join("\n\n");
+    const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
+    const sisaLine = sisaAll > 0 ? `\n💸 *Sisa Tagihan: ${fmt(sisaAll)}*` : "";
+    const msg = `Halo ${customer}, Terlampir ${sorted.length} invoice servis kami yang digabung dalam 1 dokumen PDF:\n\n${lines}\n\n💰 *Total Keseluruhan: ${fmt(totalAll)}*${sisaLine}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nMohon kirimkan bukti transfer setelah pembayaran ya. Terima kasih! 🙏${portalLine}`;
+    const sent = await sendWA(phone, msg, uploaded ? { url: uploaded.url, filename: uploaded.filename } : {});
+    if (sent) {
+      showNotif(`✅ ${sorted.length} invoice terkirim digabung ke ${customer}${uploaded ? " 📎" : ""}`);
+      addAgentLog("INVOICE_MERGED_SEND",
+        `${sorted.length} invoice digabung & dikirim ke ${customer} (${phone}) oleh ${currentUser?.name || "—"}: ${sorted.map(i => i.id).join(", ")}`,
+        "SUCCESS"
+      );
+    } else {
+      showNotif(`⚠️ Gagal kirim WA ke ${customer} — cek koneksi Fonnte`);
+    }
+    return !!sent;
   };
 
   // ── SEC-01: HTML Escape helper untuk prevent XSS di PDF generator ──
@@ -4975,7 +5071,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setEditInvoiceData={setEditInvoiceData} setEditInvoiceForm={setEditInvoiceForm} setEditJasaItems={setEditJasaItems}
       setEditInvoiceItems={setEditInvoiceItems} setModalEditInvoice={setModalEditInvoice}
       ordersData={ordersData} setOrdersData={setOrdersData} setActiveMenu={setActiveMenu} setAuditModal={setAuditModal}
-      invoiceReminderWA={invoiceReminderWA} approveInvoice={approveInvoice} markPaid={markPaid}
+      invoiceReminderWA={invoiceReminderWA} mergedInvoiceWA={mergedInvoiceWA} approveInvoice={approveInvoice} markPaid={markPaid}
       showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog} auditUserName={auditUserName}
       markInvoicePaid={markInvoicePaid} updateOrderStatus={updateOrderStatus} deleteInvoice={deleteInvoice} updateInvoice={updateInvoice}
       getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}

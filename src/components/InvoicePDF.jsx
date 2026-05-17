@@ -98,7 +98,48 @@ function MatRow({ m, idx }) {
 }
 
 // ── Main Component ──
-export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItems = [], portalLink = null }) {
+//
+// Mode tunggal:  <InvoicePDF inv={...} invoiceItems={[...]} />
+// Mode gabung:   <InvoicePDF invList={[{inv, invoiceItems}, ...]} />
+//
+// Mode gabung me-render setiap invoice sebagai <Page> terpisah dalam satu <Document>
+// sehingga customer terima 1 file PDF berisi banyak invoice.
+export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItems = [], portalLink = null, invList = null }) {
+  if (Array.isArray(invList) && invList.length > 0) {
+    return (
+      <Document>
+        {invList.map((entry, idx) => {
+          const e = entry && entry.inv ? entry : { inv: entry, invoiceItems: [] };
+          return (
+            <InvoicePage
+              key={(e.inv?.id || "inv") + "-" + idx}
+              inv={e.inv}
+              logoUrl={logoUrl}
+              appSettings={appSettings}
+              invoiceItems={e.invoiceItems || []}
+              portalLink={portalLink}
+              pageIndex={idx}
+              pageTotal={invList.length}
+            />
+          );
+        })}
+      </Document>
+    );
+  }
+  return (
+    <Document>
+      <InvoicePage
+        inv={inv}
+        logoUrl={logoUrl}
+        appSettings={appSettings}
+        invoiceItems={invoiceItems}
+        portalLink={portalLink}
+      />
+    </Document>
+  );
+}
+
+function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portalLink = null, pageIndex = null, pageTotal = null }) {
   const isAcSale = inv.invoice_type === "ac_unit_sale";
 
   const matDetails = (() => {
@@ -135,10 +176,19 @@ export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItem
     : inv.status === "OVERDUE" ? "JATUH TEMPO" : "MENUNGGU PEMBAYARAN";
 
   let rowIdx = 0;
+  const hasPageLabel = pageTotal && pageTotal > 1;
 
   return (
-    <Document>
-      <Page size="A4" style={s.page}>
+    <Page size="A4" style={s.page}>
+
+        {/* ── Multi-invoice page label ── */}
+        {hasPageLabel ? (
+          <View style={{ marginBottom: 6, flexDirection: "row", justifyContent: "flex-end" }}>
+            <Text style={{ fontSize: 8, color: "#64748b", backgroundColor: "#f1f5f9", padding: "3 8", borderRadius: 4 }}>
+              Invoice {pageIndex + 1} dari {pageTotal}
+            </Text>
+          </View>
+        ) : null}
 
         {/* ── Header ── */}
         <View style={s.header}>
@@ -421,7 +471,6 @@ export default function InvoicePDF({ inv, logoUrl, appSettings = {}, invoiceItem
           ) : null}
         </View>
 
-      </Page>
-    </Document>
+    </Page>
   );
 }

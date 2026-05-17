@@ -7,7 +7,7 @@ import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
 import QuotationPDF from "../components/QuotationPDF.jsx";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
@@ -79,6 +79,46 @@ const savePayment = async (inv) => {
     setPaySaving(false);
   }
 };
+// ── Multi-select & merge-send state ──
+const [mergeMode, setMergeMode]     = useState(false);
+const [mergeSelectedIds, setMergeSelectedIds] = useState([]); // array of invoice.id
+const [mergeSending, setMergeSending] = useState(false);
+
+const toggleMergeId = (id) => {
+  setMergeSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+};
+const clearMergeSelection = () => { setMergeSelectedIds([]); };
+const exitMergeMode = () => { setMergeMode(false); setMergeSelectedIds([]); };
+
+// Invoices yang sedang terpilih (objek lengkap)
+const mergeSelectedInvs = useMemo(
+  () => mergeSelectedIds.map(id => invoicesData.find(i => i.id === id)).filter(Boolean),
+  [mergeSelectedIds, invoicesData]
+);
+
+// Validasi: semua harus phone yang sama
+const mergeSameCustomer = useMemo(() => {
+  if (mergeSelectedInvs.length < 2) return true;
+  const p0 = mergeSelectedInvs[0].phone;
+  return mergeSelectedInvs.every(i => i.phone && i.phone === p0);
+}, [mergeSelectedInvs]);
+
+const handleSendMerged = async () => {
+  if (mergeSelectedInvs.length < 2) { showNotif("⚠️ Pilih minimal 2 invoice"); return; }
+  if (!mergeSameCustomer) { showNotif("⚠️ Semua invoice harus dari customer/nomor yang sama"); return; }
+  if (typeof mergedInvoiceWA !== "function") { showNotif("⚠️ Fitur belum tersedia"); return; }
+  const customer = mergeSelectedInvs[0].customer || "customer";
+  const ok = await showConfirm({
+    title: "Gabung & Kirim Invoice",
+    message: `Kirim ${mergeSelectedInvs.length} invoice digabung jadi 1 PDF ke ${customer} (${mergeSelectedInvs[0].phone})?\n\nInvoice yang dipilih:\n${mergeSelectedInvs.map(i => `• ${i.id} — ${fmt(i.total)}`).join("\n")}`,
+  });
+  if (!ok) return;
+  setMergeSending(true);
+  const sent = await mergedInvoiceWA(mergeSelectedInvs);
+  setMergeSending(false);
+  if (sent) { exitMergeMode(); }
+};
+
 const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation" | "voucher"
 const [voucherList, setVoucherList]     = useState([]);
 const [voucherStats, setVoucherStats]   = useState(null);
@@ -336,6 +376,19 @@ return (
         style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
         🔔 Kirim Reminder ({unpaidCnt})
       </button>
+      {currentUser?.role !== "Finance" && (
+        <button onClick={() => { mergeMode ? exitMergeMode() : setMergeMode(true); }}
+          style={{
+            background: mergeMode ? cs.accent : cs.accent + "22",
+            border: "1px solid " + cs.accent + (mergeMode ? "" : "44"),
+            color: mergeMode ? "#fff" : cs.accent,
+            padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12
+          }}
+          title={mergeMode ? "Keluar mode gabung" : "Gabung beberapa invoice jadi 1 PDF untuk dikirim ke customer"}
+        >
+          {mergeMode ? "✕ Keluar Mode Gabung" : "🗂️ Mode Gabung Invoice"}
+        </button>
+      )}
       <button onClick={async () => {
         try {
           if (!window.XLSX) {
@@ -686,11 +739,57 @@ return (
         <span style={{ fontSize: 11, color: cs.muted }}>Cari bukti transfer di R2 dan link ke invoice PAID tanpa bukti</span>
       </div>
     )}
+
+    {/* ── Mode Gabung — banner instruksi ── */}
+    {mergeMode && (
+      <div style={{
+        background: cs.accent + "12", border: "1px dashed " + cs.accent + "66", borderRadius: 10,
+        padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between",
+        alignItems: "center", flexWrap: "wrap", gap: 10
+      }}>
+        <div style={{ fontSize: 12, color: cs.text }}>
+          <b style={{ color: cs.accent }}>🗂️ Mode Gabung Invoice aktif.</b>
+          {" "}Centang minimal 2 invoice dari <b>customer/nomor yang sama</b> untuk digabung jadi 1 PDF.
+          {mergeSelectedInvs.length > 0 && (
+            <span style={{ marginLeft: 8, color: cs.muted }}>
+              Customer terpilih: <b style={{ color: cs.text }}>{mergeSelectedInvs[0].customer}</b> ({mergeSelectedInvs[0].phone})
+            </span>
+          )}
+        </div>
+        {mergeSelectedIds.length > 0 && (
+          <button onClick={clearMergeSelection}
+            style={{ background: "transparent", border: "1px solid " + cs.muted + "55", color: cs.muted, padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>
+            Bersihkan ({mergeSelectedIds.length})
+          </button>
+        )}
+      </div>
+    )}
+
     <div style={{ display: "grid", gap: 12 }}>
-      {pageInv.map(inv => (
-        <div key={inv.id} style={{ background: cs.card, border: "1px solid " + (statusColor[inv.status] || cs.border) + "44", borderRadius: 14, padding: 18 }}>
+      {pageInv.map(inv => {
+        const isSelected = mergeMode && mergeSelectedIds.includes(inv.id);
+        const firstSelected = mergeMode && mergeSelectedInvs.length > 0 ? mergeSelectedInvs[0] : null;
+        const phoneMismatch = mergeMode && firstSelected && firstSelected.phone && inv.phone && firstSelected.phone !== inv.phone && !isSelected;
+        return (
+        <div key={inv.id} style={{
+          background: isSelected ? cs.accent + "12" : cs.card,
+          border: "2px solid " + (isSelected ? cs.accent : phoneMismatch ? "transparent" : (statusColor[inv.status] || cs.border) + "44"),
+          opacity: phoneMismatch ? 0.4 : 1,
+          borderRadius: 14, padding: 18,
+          transition: "all 0.15s",
+        }}>
           <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {mergeMode && (
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  disabled={phoneMismatch}
+                  onChange={() => toggleMergeId(inv.id)}
+                  style={{ width: 20, height: 20, cursor: phoneMismatch ? "not-allowed" : "pointer", accentColor: cs.accent }}
+                  title={phoneMismatch ? `Customer berbeda — hanya bisa gabung invoice dengan customer yang sama (${firstSelected?.phone})` : "Pilih invoice untuk digabung"}
+                />
+              )}
               <span style={{ fontFamily: "monospace", fontWeight: 800, color: cs.accent, fontSize: 14 }}>{inv.id}</span>
               <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 99, background: (statusColor[inv.status] || cs.muted) + "22", color: statusColor[inv.status] || cs.muted, border: "1px solid " + (statusColor[inv.status] || cs.muted) + "44", fontWeight: 700 }}>{inv.status.replace(/_/g, " ")}</span>
               {inv.follow_up > 0 && <span style={{ fontSize: 10, color: cs.yellow }}>Follow-up: {inv.follow_up}x</span>}
@@ -1160,7 +1259,8 @@ return (
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
     {/* Pagination Invoice */}
     {totPgI > 1 && (
@@ -1327,6 +1427,57 @@ return (
         setInvoicesData={setInvoicesData}
         getLocalDate={getLocalDate}
       />
+    )}
+
+    {/* ── Floating Action Bar: Gabung & Kirim ── */}
+    {mergeMode && mergeSelectedIds.length > 0 && (
+      <div style={{
+        position: "fixed",
+        bottom: isMobile ? 12 : 24,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 50,
+        background: cs.card,
+        border: "1px solid " + cs.accent + "66",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+        borderRadius: 14,
+        padding: "10px 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        flexWrap: "wrap",
+        maxWidth: "92vw",
+      }}>
+        <div style={{ fontSize: 12, color: cs.text }}>
+          <b style={{ color: cs.accent }}>{mergeSelectedIds.length} invoice dipilih</b>
+          {mergeSelectedInvs.length > 0 && (
+            <span style={{ marginLeft: 8, color: cs.muted }}>
+              · Total {fmt(mergeSelectedInvs.reduce((s, i) => s + (Number(i.total) || 0), 0))}
+            </span>
+          )}
+        </div>
+        {!mergeSameCustomer && (
+          <span style={{ fontSize: 11, color: "#ef4444", background: "#ef444418", padding: "3px 8px", borderRadius: 6, border: "1px solid #ef444444" }}>
+            ⚠️ Customer/nomor berbeda
+          </span>
+        )}
+        <button onClick={handleSendMerged}
+          disabled={mergeSending || mergeSelectedIds.length < 2 || !mergeSameCustomer}
+          style={{
+            background: (mergeSending || mergeSelectedIds.length < 2 || !mergeSameCustomer) ? cs.muted + "44" : "#25D366",
+            border: "none",
+            color: (mergeSending || mergeSelectedIds.length < 2 || !mergeSameCustomer) ? cs.muted : "#fff",
+            padding: "8px 18px", borderRadius: 9,
+            cursor: (mergeSending || mergeSelectedIds.length < 2 || !mergeSameCustomer) ? "not-allowed" : "pointer",
+            fontWeight: 700, fontSize: 12,
+          }}>
+          {mergeSending ? "⏳ Mengirim..." : `📨 Gabung & Kirim (${mergeSelectedIds.length})`}
+        </button>
+        <button onClick={exitMergeMode}
+          style={{ background: "transparent", border: "1px solid " + cs.muted + "55", color: cs.muted, padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>
+          ✕ Batal
+        </button>
+      </div>
     )}
     </>}
   </div>
