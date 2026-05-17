@@ -1,7 +1,7 @@
 import { memo, useState, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
-import { smartSearchNormalize } from "../lib/phone.js";
+import { smartSearchNormalize, samePhone } from "../lib/phone.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
@@ -96,11 +96,11 @@ const mergeSelectedInvs = useMemo(
   [mergeSelectedIds, invoicesData]
 );
 
-// Validasi: semua harus phone yang sama
+// Validasi: semua harus phone yang sama (pakai samePhone untuk handle beda format: 08xxx vs +62xxx)
 const mergeSameCustomer = useMemo(() => {
   if (mergeSelectedInvs.length < 2) return true;
   const p0 = mergeSelectedInvs[0].phone;
-  return mergeSelectedInvs.every(i => i.phone && i.phone === p0);
+  return mergeSelectedInvs.every(i => samePhone(i.phone, p0));
 }, [mergeSelectedInvs]);
 
 const handleSendMerged = async () => {
@@ -769,7 +769,7 @@ return (
       {pageInv.map(inv => {
         const isSelected = mergeMode && mergeSelectedIds.includes(inv.id);
         const firstSelected = mergeMode && mergeSelectedInvs.length > 0 ? mergeSelectedInvs[0] : null;
-        const phoneMismatch = mergeMode && firstSelected && firstSelected.phone && inv.phone && firstSelected.phone !== inv.phone && !isSelected;
+        const phoneMismatch = mergeMode && firstSelected && firstSelected.phone && inv.phone && !samePhone(firstSelected.phone, inv.phone) && !isSelected;
         return (
         <div key={inv.id} style={{
           background: isSelected ? cs.accent + "12" : cs.card,
