@@ -1,6 +1,8 @@
-import { memo } from "react";
+import { memo, useState, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
 import { displayStock } from "../lib/inventory.js";
+
+const ToolBagView = lazy(() => import("./ToolBagView.jsx"));
 
 const INV_PAGE_SIZE = 15;
 
@@ -11,6 +13,19 @@ function InventoryView({
   setModalRestock, setRestockItem, setRestockForm, TODAY,
 }) {
   const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+  const [activeTab, setActiveTab] = useState("material");
+
+  if (activeTab === "toolbag") {
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <InventoryTabs activeTab={activeTab} setActiveTab={setActiveTab} />
+        <Suspense fallback={<div style={{ padding: 24, color: cs.muted, fontSize: 13 }}>Loading Tas Teknisi...</div>}>
+          <ToolBagView supabase={supabase} currentUser={currentUser} showNotif={showNotif} showConfirm={showConfirm} />
+        </Suspense>
+      </div>
+    );
+  }
+
   const filteredInvt = inventoryData.filter(item =>
     !searchInventory ||
     (item.name || "").toLowerCase().includes(searchInventory.toLowerCase()) ||
@@ -26,6 +41,7 @@ function InventoryView({
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      <InventoryTabs activeTab={activeTab} setActiveTab={setActiveTab} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>📦 Inventori Material</div>
         {isOwnerAdmin && (
@@ -107,6 +123,36 @@ function InventoryView({
           <span style={{ fontSize: 11, color: cs.muted }}>{filteredInvt.length} item</span>
         </div>
       )}
+    </div>
+  );
+}
+
+function InventoryTabs({ activeTab, setActiveTab }) {
+  const tabs = [
+    { id: "material", label: "📦 Inventori Material" },
+    { id: "toolbag",  label: "🎒 Tas Teknisi" }
+  ];
+  return (
+    <div style={{ display: "flex", gap: 4, borderBottom: "1px solid " + cs.border, marginBottom: 4 }}>
+      {tabs.map(t => {
+        const isActive = activeTab === t.id;
+        return (
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
+            style={{
+              padding: "10px 16px",
+              background: isActive ? cs.card : "transparent",
+              border: "none",
+              borderBottom: isActive ? "2px solid " + cs.accent : "2px solid transparent",
+              color: isActive ? cs.accent : cs.muted,
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: isActive ? 700 : 500,
+              marginBottom: -1
+            }}>
+            {t.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
