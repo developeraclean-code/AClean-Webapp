@@ -264,12 +264,14 @@ const multiInvoiceCustomers = useMemo(() => {
   return Object.entries(phoneMap).filter(([, arr]) => arr.length > 1);
 }, [invoicesData]);
 
-// ── Customer dengan multi-invoice (semua status), untuk fitur Mode Gabung kirim WA ──
+// ── Customer dengan multi-invoice belum lunas, untuk fitur Mode Gabung kirim WA ──
 // Pakai samePhone() agar 08xxx vs +62xxx dari customer yg sama ter-group jadi satu.
+// Filter status sama dengan mergeFilteredInv supaya picker & stage-select konsisten.
 const mergeCandidates = useMemo(() => {
   const groups = []; // [{ phone, customer, invoices: [...] }]
   invoicesData.forEach(inv => {
-    if (!inv.phone || inv.status === "CANCELLED") return;
+    if (!inv.phone) return;
+    if (!["UNPAID","OVERDUE","PARTIAL_PAID"].includes(inv.status)) return;
     const found = groups.find(g => samePhone(g.phone, inv.phone));
     if (found) found.invoices.push(inv);
     else groups.push({ phone: inv.phone, customer: inv.customer || "(tanpa nama)", invoices: [inv] });
@@ -289,10 +291,11 @@ const mergeCandidates = useMemo(() => {
     .sort((a, b) => b.invoices.length - a.invoices.length); // banyak dulu
 }, [invoicesData]);
 // Saat Mode Gabung "select" aktif, tampilkan HANYA invoice customer terpilih (semua, tanpa pagination)
+// Filter status: hanya invoice yang masih punya tagihan (UNPAID/OVERDUE/PARTIAL_PAID) — sesuai intent fitur.
 const mergeFilteredInv = useMemo(() => {
   if (mergeStage !== "select" || !mergePhone) return null;
   return invoicesData
-    .filter(i => i.phone && samePhone(i.phone, mergePhone) && i.status !== "CANCELLED")
+    .filter(i => i.phone && samePhone(i.phone, mergePhone) && ["UNPAID","OVERDUE","PARTIAL_PAID"].includes(i.status))
     .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 }, [mergeStage, mergePhone, invoicesData]);
 
