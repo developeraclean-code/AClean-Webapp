@@ -68,39 +68,40 @@ export default async function handler(req, res) {
       const FT = process.env.FONNTE_TOKEN;
       if (!FT) return res.status(500).json({ error: "FONNTE_TOKEN belum diset", detail: "FONNTE_TOKEN_NOT_SET" });
 
-      // ── ATTACHMENT: Download file dari R2 proxy → upload binary langsung ke Fonnte ──
-      // Fonnte butuh URL dengan ekstensi jelas ATAU file binary langsung
-      // Karena /api/foto?key=... tidak punya ekstensi di URL, kita fetch dulu lalu kirim binary
+      // ── ATTACHMENT: kirim URL langsung ke Fonnte (tanpa re-fetch di server) ──
+      // Fonnte support parameter "url" untuk file yang bisa diakses publik.
+      // Jika URL adalah proxy internal (/api/foto?key=...), resolve ke direct R2 URL
+      // agar Fonnte bisa fetch langsung — jauh lebih cepat, tidak makan waktu serverless.
       const hasAttachment = b.url && typeof b.url === "string" && b.url.startsWith("http");
+
+      // Resolve proxy URL → direct R2 public URL
+      const resolveDirectUrl = (proxyUrl) => {
+        try {
+          const u = new URL(proxyUrl);
+          const key = u.searchParams.get("key");
+          if (!key) return proxyUrl;
+          const r2Account = process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_ACCOUNT_ID;
+          const r2Bucket  = process.env.R2_BUCKET_NAME || "aclean-files";
+          const r2PublicUrl = process.env.R2_PUBLIC_URL; // e.g. https://pub-xxx.r2.dev
+          if (r2PublicUrl) return `${r2PublicUrl}/${key}`;
+          if (r2Account)   return `https://${r2Account}.r2.cloudflarestorage.com/${r2Bucket}/${key}`;
+        } catch { /* fallback ke URL asli */ }
+        return proxyUrl;
+      };
 
       let fonnteRes;
       if (hasAttachment) {
+        const directUrl = resolveDirectUrl(b.url);
+        const fname = b.filename || "dokumen.pdf";
+        console.log("[send-wa] Sending URL attachment:", directUrl, "filename:", fname);
         try {
-          // Fetch file dari R2 proxy (server-side, bisa akses internal)
-          const fileRes = await fetch(b.url);
-          if (!fileRes.ok) throw new Error("Gagal fetch file: " + fileRes.status);
-          const fileBuffer = await fileRes.arrayBuffer();
-          const ct = fileRes.headers.get("content-type") || "image/jpeg";
-          const fname = b.filename || "invoice.jpg";
-
-          // Kirim ke Fonnte sebagai binary upload (multipart form-data dengan field "file")
-          const { FormData: NodeFormData, File: NodeFile } = await import("node:buffer").catch(() => ({}));
-          const form = new FormData();
-          form.append("target", target);
-          form.append("message", msg);
-          form.append("delay", "2");
-          form.append("countryCode", "62");
-          // Kirim sebagai Blob dengan nama file yang jelas berekstensi .jpg
-          const blob = new Blob([fileBuffer], { type: ct });
-          form.append("file", blob, fname);
-          console.log("[send-wa] Sending binary attachment:", fname, "size:", fileBuffer.byteLength, "type:", ct);
           fonnteRes = await fetch("https://api.fonnte.com/send", {
             method: "POST",
-            headers: { "Authorization": FT },
-            body: form
+            headers: { "Authorization": FT, "Content-Type": "application/json" },
+            body: JSON.stringify({ target, message: msg, url: directUrl, filename: fname, delay: "2", countryCode: "62" })
           });
         } catch (fetchErr) {
-          console.warn("[send-wa] Gagal fetch/upload file, fallback teks:", fetchErr.message);
+          console.warn("[send-wa] Gagal kirim URL ke Fonnte:", fetchErr.message);
           fonnteRes = null;
         }
       }
