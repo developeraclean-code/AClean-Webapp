@@ -3,33 +3,6 @@ import { cs } from "../theme/cs.js";
 
 const BAGS = Array.from({ length: 10 }, (_, i) => `Tas ${i + 1}`);
 
-const TOOL_CHECKLIST = [
-  { name: "Tang Ampere", is_priority: true },
-  { name: "Manifold", is_priority: true },
-  { name: "Kunci Inggris Ukuran 10", is_priority: false },
-  { name: "Kunci Inggris Ukuran 8", is_priority: false },
-  { name: "Kunci L Set", is_priority: false },
-  { name: "Palu", is_priority: false },
-  { name: "Pahat", is_priority: false },
-  { name: "Tang Lancip", is_priority: false },
-  { name: "Tang Kombinasi", is_priority: false },
-  { name: "Tang Potong", is_priority: false },
-  { name: "Obeng Standar", is_priority: false },
-  { name: "Obeng Cebol", is_priority: false },
-  { name: "Obeng Minus", is_priority: false },
-  { name: "Water Pass", is_priority: false },
-  { name: "Meteran Roll 5 Meter", is_priority: false },
-  { name: "Flaring Tool", is_priority: false },
-  { name: "Cutter Pipa AC", is_priority: false },
-  { name: "Mata Las Hicook", is_priority: false },
-  { name: "Kunci Pas 10", is_priority: false },
-  { name: "Kunci Pas 12", is_priority: false },
-  { name: "Kabel Roll", is_priority: false },
-  { name: "Test Pen Kecil", is_priority: false },
-  { name: "Gergaji Besi", is_priority: false },
-  { name: "Cutter Standar", is_priority: false }
-];
-
 const STATUS_COLOR = {
   OK: cs.green, WARNING: cs.yellow, CRITICAL: cs.red, ERROR: cs.muted
 };
@@ -47,11 +20,15 @@ function getMondayOf(dateStr) {
 
 function formatDateISO(d) { return d.toISOString().slice(0, 10); }
 
-function ToolBagView({ supabase, showNotif }) {
+function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
   const [weekStart, setWeekStart] = useState(getMondayOf(new Date()));
   const [checks, setChecks] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [selectedBag, setSelectedBag] = useState(null); // "Tas 1" | null
+  const [selectedBag, setSelectedBag] = useState(null);
+  const [checklistTemplate, setChecklistTemplate] = useState([]); // unique tools dari DB
+  const [showManageModal, setShowManageModal] = useState(false);
+
+  const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
 
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekEnd.getDate() + 7);
@@ -70,7 +47,21 @@ function ToolBagView({ supabase, showNotif }) {
     setLoading(false);
   }, [supabase, weekStart, weekEnd, showNotif]);
 
+  // Load checklist template (ambil unique tool dari Tas 1, asumsi semua tas punya checklist sama)
+  const loadChecklist = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("tool_bag_checklist")
+      .select("tool_name,is_priority,qty_min")
+      .eq("bag_id", "Tas 1")
+      .order("is_priority", { ascending: false })
+      .order("tool_name");
+    if (!error) {
+      setChecklistTemplate((data || []).map(t => ({ name: t.tool_name, is_priority: t.is_priority, qty_min: t.qty_min })));
+    }
+  }, [supabase]);
+
   useEffect(() => { loadChecks(); }, [loadChecks]);
+  useEffect(() => { loadChecklist(); }, [loadChecklist]);
 
   // Hitung status per tas untuk minggu ini
   const bagSummary = BAGS.map(bagId => {
@@ -113,10 +104,18 @@ function ToolBagView({ supabase, showNotif }) {
             Kirim foto ke WA AClean: <b>"Pagi Tas 1"</b>, <b>"Pulang Tas 5"</b>, dst (Tas 1 – Tas 10)
           </div>
         </div>
-        <button onClick={loadChecks}
-          style={{ padding: "8px 14px", background: cs.accent, color: "#000", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
-          🔄 Refresh
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {isOwnerAdmin && (
+            <button onClick={() => setShowManageModal(true)}
+              style={{ padding: "8px 14px", background: cs.surface, color: cs.text, border: `1px solid ${cs.border}`, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+              ✏️ Kelola Alat ({checklistTemplate.length})
+            </button>
+          )}
+          <button onClick={loadChecks}
+            style={{ padding: "8px 14px", background: cs.accent, color: "#000", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+            🔄 Refresh
+          </button>
+        </div>
       </div>
 
       {/* Week Navigator */}
@@ -222,7 +221,20 @@ function ToolBagView({ supabase, showNotif }) {
         <BagDetail
           bagId={selectedBag}
           checks={checks.filter(c => c.bag_id === selectedBag)}
+          checklistTemplate={checklistTemplate}
           onClose={() => setSelectedBag(null)}
+        />
+      )}
+
+      {/* Modal Kelola Alat */}
+      {showManageModal && (
+        <ManageChecklistModal
+          supabase={supabase}
+          checklistTemplate={checklistTemplate}
+          onClose={() => setShowManageModal(false)}
+          onChanged={() => { loadChecklist(); }}
+          showNotif={showNotif}
+          showConfirm={showConfirm}
         />
       )}
 
@@ -237,9 +249,9 @@ function ToolBagView({ supabase, showNotif }) {
   );
 }
 
-function BagDetail({ bagId, checks, onClose }) {
+function BagDetail({ bagId, checks, checklistTemplate, onClose }) {
   // Hitung untuk setiap alat: berapa kali ada/missing dalam minggu ini
-  const toolStats = TOOL_CHECKLIST.map(tool => {
+  const toolStats = checklistTemplate.map(tool => {
     let foundCount = 0;
     let missingCount = 0;
     checks.forEach(c => {
@@ -281,10 +293,10 @@ function BagDetail({ bagId, checks, onClose }) {
         </div>
       )}
 
-      {/* Checklist 24 Alat */}
+      {/* Checklist Alat */}
       <div style={{ padding: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
-          Checklist 24 Alat — Minggu Ini
+          Checklist {toolStats.length} Alat — Minggu Ini
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 8 }}>
           {toolStats.map(t => {
@@ -407,6 +419,194 @@ function BagDetail({ bagId, checks, onClose }) {
             </table>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ManageChecklistModal({ supabase, checklistTemplate, onClose, onChanged, showNotif, showConfirm }) {
+  const [editingTool, setEditingTool] = useState(null); // { name, is_priority, originalName } | null
+  const [newName, setNewName] = useState("");
+  const [newPriority, setNewPriority] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Tambah alat baru ke SEMUA tas (10 tas × 1 alat = 10 inserts)
+  const handleAdd = async () => {
+    if (!newName.trim()) { showNotif?.("Nama alat wajib diisi"); return; }
+    const name = newName.trim();
+    if (checklistTemplate.some(t => t.name.toLowerCase() === name.toLowerCase())) {
+      showNotif?.("Alat sudah ada di checklist");
+      return;
+    }
+    setSaving(true);
+    const rows = BAGS.map(bag => ({
+      bag_id: bag,
+      tool_name: name,
+      qty_min: 1,
+      is_priority: newPriority
+    }));
+    const { error } = await supabase.from("tool_bag_checklist").insert(rows);
+    setSaving(false);
+    if (error) { showNotif?.("Gagal tambah: " + error.message); return; }
+    showNotif?.("✅ Alat \"" + name + "\" ditambahkan ke semua tas");
+    setNewName("");
+    setNewPriority(false);
+    onChanged?.();
+  };
+
+  // Edit alat: rename + toggle priority (update semua tas dengan tool_name lama)
+  const handleSaveEdit = async () => {
+    if (!editingTool) return;
+    const newToolName = editingTool.name.trim();
+    if (!newToolName) { showNotif?.("Nama alat tidak boleh kosong"); return; }
+    setSaving(true);
+    const { error } = await supabase.from("tool_bag_checklist")
+      .update({ tool_name: newToolName, is_priority: editingTool.is_priority })
+      .eq("tool_name", editingTool.originalName);
+    setSaving(false);
+    if (error) { showNotif?.("Gagal update: " + error.message); return; }
+    showNotif?.("✏️ Alat diperbarui");
+    setEditingTool(null);
+    onChanged?.();
+  };
+
+  // Hapus alat dari semua tas
+  const handleDelete = async (tool) => {
+    const ok = showConfirm
+      ? await showConfirm({ icon: "🗑️", title: "Hapus Alat?", danger: true,
+          message: `Hapus "${tool.name}" dari checklist SEMUA tas (Tas 1 - Tas 10)? Tidak bisa dibatalkan.`,
+          confirmText: "Hapus" })
+      : window.confirm(`Hapus "${tool.name}" dari semua tas?`);
+    if (!ok) return;
+    const { error } = await supabase.from("tool_bag_checklist")
+      .delete().eq("tool_name", tool.name);
+    if (error) { showNotif?.("Gagal hapus: " + error.message); return; }
+    showNotif?.("🗑️ Alat \"" + tool.name + "\" dihapus dari semua tas");
+    onChanged?.();
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 16
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()}
+        style={{
+          background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14,
+          width: "100%", maxWidth: 720, maxHeight: "90vh", overflow: "auto"
+        }}>
+        {/* Header */}
+        <div style={{ padding: "14px 16px", borderBottom: `1px solid ${cs.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: cs.card, zIndex: 1 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: cs.text }}>✏️ Kelola Checklist Alat</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+              Perubahan otomatis berlaku untuk semua tas (Tas 1 – Tas 10)
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{ background: "none", border: `1px solid ${cs.border}`, color: cs.muted, padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontSize: 11 }}>
+            ✕ Tutup
+          </button>
+        </div>
+
+        {/* Form Tambah */}
+        <div style={{ padding: 16, borderBottom: `1px solid ${cs.border}`, background: cs.surface + "44" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            ➕ Tambah Alat Baru
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              type="text"
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              placeholder="Nama alat (contoh: Bor Listrik)"
+              style={{ flex: 1, minWidth: 200, background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 13, outline: "none" }}
+              onKeyDown={e => { if (e.key === "Enter") handleAdd(); }}
+            />
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: cs.text, cursor: "pointer" }}>
+              <input type="checkbox" checked={newPriority} onChange={e => setNewPriority(e.target.checked)} />
+              🔴 WAJIB
+            </label>
+            <button onClick={handleAdd} disabled={saving || !newName.trim()}
+              style={{ padding: "8px 16px", background: newName.trim() ? cs.green : cs.muted + "44", color: newName.trim() ? "#fff" : cs.muted, border: "none", borderRadius: 8, fontWeight: 700, cursor: newName.trim() && !saving ? "pointer" : "not-allowed", fontSize: 12 }}>
+              {saving ? "..." : "+ Tambah"}
+            </button>
+          </div>
+        </div>
+
+        {/* List Alat Existing */}
+        <div style={{ padding: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Daftar Alat ({checklistTemplate.length})
+          </div>
+          {checklistTemplate.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: cs.muted, fontSize: 12, fontStyle: "italic" }}>
+              Belum ada alat. Tambahkan via form di atas.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 6 }}>
+              {checklistTemplate.map(tool => {
+                const isEditing = editingTool?.originalName === tool.name;
+                return (
+                  <div key={tool.name} style={{
+                    background: cs.surface,
+                    border: `1px solid ${isEditing ? cs.accent : cs.border}`,
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center"
+                  }}>
+                    {isEditing ? (
+                      <>
+                        <input
+                          type="text"
+                          value={editingTool.name}
+                          onChange={e => setEditingTool({ ...editingTool, name: e.target.value })}
+                          style={{ flex: 1, background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 6, padding: "5px 10px", color: cs.text, fontSize: 13, outline: "none" }}
+                          autoFocus
+                        />
+                        <label style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, color: cs.text, cursor: "pointer" }}>
+                          <input type="checkbox" checked={editingTool.is_priority}
+                            onChange={e => setEditingTool({ ...editingTool, is_priority: e.target.checked })} />
+                          🔴
+                        </label>
+                        <button onClick={handleSaveEdit} disabled={saving}
+                          style={{ padding: "5px 10px", background: cs.green, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                          {saving ? "..." : "Simpan"}
+                        </button>
+                        <button onClick={() => setEditingTool(null)}
+                          style={{ padding: "5px 10px", background: cs.surface, color: cs.muted, border: `1px solid ${cs.border}`, borderRadius: 6, cursor: "pointer", fontSize: 11 }}>
+                          Batal
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: cs.text, display: "flex", alignItems: "center", gap: 6 }}>
+                          {tool.is_priority && <span style={{ fontSize: 10 }}>🔴</span>}
+                          {tool.name}
+                          {tool.is_priority && (
+                            <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: cs.red + "22", color: cs.red, fontWeight: 700 }}>
+                              WAJIB
+                            </span>
+                          )}
+                        </div>
+                        <button onClick={() => setEditingTool({ name: tool.name, originalName: tool.name, is_priority: tool.is_priority })}
+                          style={{ padding: "5px 10px", background: cs.accent + "22", color: cs.accent, border: `1px solid ${cs.accent}44`, borderRadius: 6, cursor: "pointer", fontSize: 11 }}>
+                          ✏️ Edit
+                        </button>
+                        <button onClick={() => handleDelete(tool)}
+                          style={{ padding: "5px 10px", background: cs.red + "22", color: cs.red, border: `1px solid ${cs.red}44`, borderRadius: 6, cursor: "pointer", fontSize: 11 }}>
+                          🗑️
+                        </button>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -20,7 +20,7 @@ function InventoryView({
       <div style={{ display: "grid", gap: 16 }}>
         <InventoryTabs activeTab={activeTab} setActiveTab={setActiveTab} />
         <Suspense fallback={<div style={{ padding: 24, color: cs.muted, fontSize: 13 }}>Loading Tas Teknisi...</div>}>
-          <ToolBagView supabase={supabase} currentUser={currentUser} showNotif={showNotif} />
+          <ToolBagView supabase={supabase} currentUser={currentUser} showNotif={showNotif} showConfirm={showConfirm} />
         </Suspense>
       </div>
     );
