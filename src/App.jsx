@@ -3225,9 +3225,14 @@ ${photoPageHTML}
 
   // ── Kirim beberapa invoice digabung jadi 1 PDF (1 page per invoice) ──
   // Validasi: semua invoice harus customer/phone yang sama. Otomatis sort by created_at asc.
+  // Cap maksimal 5 invoice per gabungan (UX & payload safety).
   const mergedInvoiceWA = async (invList) => {
     if (!Array.isArray(invList) || invList.length < 2) {
       showNotif("⚠️ Pilih minimal 2 invoice untuk digabung");
+      return false;
+    }
+    if (invList.length > 5) {
+      showNotif("⚠️ Maksimal 5 invoice per gabungan");
       return false;
     }
     const phone = invList[0]?.phone;
@@ -3253,27 +3258,16 @@ ${photoPageHTML}
         : (i.remaining_amount > 0 ? Number(i.remaining_amount) : Number(i.total) || 0);
       return s + sisa;
     }, 0);
-    // Build line breakdown; ringkas jika invoice banyak agar pesan WA <= 4096 char
-    const compact = sorted.length > 20;
     const lines = sorted.map((i, idx) => {
       const sisa = (i.status === "PAID") ? 0
         : (i.remaining_amount > 0 ? Number(i.remaining_amount) : Number(i.total) || 0);
       const tgl = i.created_at ? new Date(i.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "—";
       const sisaTxt = sisa > 0 ? `Sisa: ${fmt(sisa)}` : "✅ Lunas";
-      if (compact) {
-        // Format ringkas: 1 baris per invoice
-        return `${idx + 1}. ${i.id} • ${tgl} • ${fmt(i.total)} • ${sisaTxt}`;
-      }
       return `${idx + 1}. *${i.id}* — ${i.service || "Servis AC"}\n   📅 ${tgl} • Total: ${fmt(i.total)} • ${sisaTxt}`;
-    }).join(compact ? "\n" : "\n\n");
+    }).join("\n\n");
     const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
     const sisaLine = sisaAll > 0 ? `\n💸 *Sisa Tagihan: ${fmt(sisaAll)}*` : "";
-    let msg = `Halo ${customer}, Terlampir ${sorted.length} invoice servis kami yang digabung dalam 1 dokumen PDF:\n\n${lines}\n\n💰 *Total Keseluruhan: ${fmt(totalAll)}*${sisaLine}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nMohon kirimkan bukti transfer setelah pembayaran ya. Terima kasih! 🙏${portalLine}`;
-    // Safety net: hard cap 4000 char (limit server = 4096)
-    if (msg.length > 4000) {
-      const shortLines = `${sorted.length} invoice terlampir dalam PDF — silakan cek detail di lampiran.`;
-      msg = `Halo ${customer}, Terlampir ${sorted.length} invoice servis kami yang digabung dalam 1 dokumen PDF.\n\n${shortLines}\n\n💰 *Total Keseluruhan: ${fmt(totalAll)}*${sisaLine}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nMohon kirimkan bukti transfer setelah pembayaran ya. Terima kasih! 🙏${portalLine}`;
-    }
+    const msg = `Halo ${customer}, Terlampir ${sorted.length} invoice servis kami yang digabung dalam 1 dokumen PDF:\n\n${lines}\n\n💰 *Total Keseluruhan: ${fmt(totalAll)}*${sisaLine}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nMohon kirimkan bukti transfer setelah pembayaran ya. Terima kasih! 🙏${portalLine}`;
     const sent = await sendWA(phone, msg, uploaded ? { url: uploaded.url, filename: uploaded.filename } : {});
     if (sent) {
       showNotif(`✅ ${sorted.length} invoice terkirim digabung ke ${customer}${uploaded ? " 📎" : ""}`);

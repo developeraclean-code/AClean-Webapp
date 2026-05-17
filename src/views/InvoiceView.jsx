@@ -79,33 +79,38 @@ const savePayment = async (inv) => {
     setPaySaving(false);
   }
 };
-// ── Multi-select & merge-send state ──
-const [mergeMode, setMergeMode]     = useState(false);
-const [mergeSelectedIds, setMergeSelectedIds] = useState([]); // array of invoice.id
+// ── Mode Gabung Invoice (2 stage: picker → select) ──
+// Stage "picker"  : tampilkan modal list customer yang punya >=2 invoice
+// Stage "select"  : setelah customer dipilih, filter invoice ke customer itu saja, user centang max 5
+const MERGE_MAX = 5;
+const [mergeStage, setMergeStage]     = useState(null); // null | "picker" | "select"
+const [mergePhone, setMergePhone]     = useState(null); // phone customer yang dipilih
+const [mergeSelectedIds, setMergeSelectedIds] = useState([]);
 const [mergeSending, setMergeSending] = useState(false);
 
+const mergeMode = mergeStage === "select"; // backward-compat untuk card render
+
 const toggleMergeId = (id) => {
-  setMergeSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  setMergeSelectedIds(prev => {
+    if (prev.includes(id)) return prev.filter(x => x !== id);
+    if (prev.length >= MERGE_MAX) {
+      showNotif(`⚠️ Maksimal ${MERGE_MAX} invoice per gabungan`);
+      return prev;
+    }
+    return [...prev, id];
+  });
 };
 const clearMergeSelection = () => { setMergeSelectedIds([]); };
-const exitMergeMode = () => { setMergeMode(false); setMergeSelectedIds([]); };
+const exitMergeMode = () => { setMergeStage(null); setMergePhone(null); setMergeSelectedIds([]); };
 
-// Invoices yang sedang terpilih (objek lengkap)
+// Invoice yang terpilih (selalu sub-set dari customer yang dipilih)
 const mergeSelectedInvs = useMemo(
   () => mergeSelectedIds.map(id => invoicesData.find(i => i.id === id)).filter(Boolean),
   [mergeSelectedIds, invoicesData]
 );
 
-// Validasi: semua harus phone yang sama (pakai samePhone untuk handle beda format: 08xxx vs +62xxx)
-const mergeSameCustomer = useMemo(() => {
-  if (mergeSelectedInvs.length < 2) return true;
-  const p0 = mergeSelectedInvs[0].phone;
-  return mergeSelectedInvs.every(i => samePhone(i.phone, p0));
-}, [mergeSelectedInvs]);
-
 const handleSendMerged = async () => {
   if (mergeSelectedInvs.length < 2) { showNotif("⚠️ Pilih minimal 2 invoice"); return; }
-  if (!mergeSameCustomer) { showNotif("⚠️ Semua invoice harus dari customer/nomor yang sama"); return; }
   if (typeof mergedInvoiceWA !== "function") { showNotif("⚠️ Fitur belum tersedia"); return; }
   const customer = mergeSelectedInvs[0].customer || "customer";
   const ok = await showConfirm({
@@ -258,9 +263,43 @@ const multiInvoiceCustomers = useMemo(() => {
   });
   return Object.entries(phoneMap).filter(([, arr]) => arr.length > 1);
 }, [invoicesData]);
-const totPgI = Math.ceil(filteredInv.length / INV_PAGE_SIZE) || 1;
+
+// ── Customer dengan multi-invoice (semua status), untuk fitur Mode Gabung kirim WA ──
+// Pakai samePhone() agar 08xxx vs +62xxx dari customer yg sama ter-group jadi satu.
+const mergeCandidates = useMemo(() => {
+  const groups = []; // [{ phone, customer, invoices: [...] }]
+  invoicesData.forEach(inv => {
+    if (!inv.phone || inv.status === "CANCELLED") return;
+    const found = groups.find(g => samePhone(g.phone, inv.phone));
+    if (found) found.invoices.push(inv);
+    else groups.push({ phone: inv.phone, customer: inv.customer || "(tanpa nama)", invoices: [inv] });
+  });
+  return groups
+    .filter(g => g.invoices.length >= 2)
+    .map(g => ({
+      ...g,
+      invoices: [...g.invoices].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)),
+      totalAll: g.invoices.reduce((s, i) => s + (Number(i.total) || 0), 0),
+      sisaAll: g.invoices.reduce((s, i) => {
+        if (i.status === "PAID") return s;
+        const sisa = i.remaining_amount > 0 ? Number(i.remaining_amount) : Number(i.total) || 0;
+        return s + sisa;
+      }, 0),
+    }))
+    .sort((a, b) => b.invoices.length - a.invoices.length); // banyak dulu
+}, [invoicesData]);
+// Saat Mode Gabung "select" aktif, tampilkan HANYA invoice customer terpilih (semua, tanpa pagination)
+const mergeFilteredInv = useMemo(() => {
+  if (mergeStage !== "select" || !mergePhone) return null;
+  return invoicesData
+    .filter(i => i.phone && samePhone(i.phone, mergePhone) && i.status !== "CANCELLED")
+    .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+}, [mergeStage, mergePhone, invoicesData]);
+
+const displayInv = mergeFilteredInv || filteredInv;
+const totPgI = mergeFilteredInv ? 1 : (Math.ceil(filteredInv.length / INV_PAGE_SIZE) || 1);
 const curPgI = Math.min(invoicePage, totPgI);
-const pageInv = filteredInv.slice((curPgI - 1) * INV_PAGE_SIZE, curPgI * INV_PAGE_SIZE);
+const pageInv = mergeFilteredInv ? mergeFilteredInv : filteredInv.slice((curPgI - 1) * INV_PAGE_SIZE, curPgI * INV_PAGE_SIZE);
 return (
   <div style={{ display: "grid", gap: 14 }}>
     {/* Sub-tab: Invoice | Quotation | Voucher */}
@@ -377,16 +416,23 @@ return (
         🔔 Kirim Reminder ({unpaidCnt})
       </button>
       {currentUser?.role !== "Finance" && (
-        <button onClick={() => { mergeMode ? exitMergeMode() : setMergeMode(true); }}
+        <button onClick={() => {
+          if (mergeStage) { exitMergeMode(); return; }
+          if (mergeCandidates.length === 0) {
+            showNotif("Tidak ada customer dengan lebih dari 1 invoice");
+            return;
+          }
+          setMergeStage("picker");
+        }}
           style={{
-            background: mergeMode ? cs.accent : cs.accent + "22",
-            border: "1px solid " + cs.accent + (mergeMode ? "" : "44"),
-            color: mergeMode ? "#fff" : cs.accent,
+            background: mergeStage ? cs.accent : cs.accent + "22",
+            border: "1px solid " + cs.accent + (mergeStage ? "" : "44"),
+            color: mergeStage ? "#fff" : cs.accent,
             padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12
           }}
-          title={mergeMode ? "Keluar mode gabung" : "Gabung beberapa invoice jadi 1 PDF untuk dikirim ke customer"}
+          title={mergeStage ? "Keluar mode gabung" : `Gabung 2-${MERGE_MAX} invoice dari customer yang sama jadi 1 PDF`}
         >
-          {mergeMode ? "✕ Keluar Mode Gabung" : "🗂️ Mode Gabung Invoice"}
+          {mergeStage ? "✕ Keluar Mode Gabung" : `🗂️ Mode Gabung Invoice (${mergeCandidates.length})`}
         </button>
       )}
       <button onClick={async () => {
@@ -740,41 +786,46 @@ return (
       </div>
     )}
 
-    {/* ── Mode Gabung — banner instruksi ── */}
-    {mergeMode && (
-      <div style={{
-        background: cs.accent + "12", border: "1px dashed " + cs.accent + "66", borderRadius: 10,
-        padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between",
-        alignItems: "center", flexWrap: "wrap", gap: 10
-      }}>
-        <div style={{ fontSize: 12, color: cs.text }}>
-          <b style={{ color: cs.accent }}>🗂️ Mode Gabung Invoice aktif.</b>
-          {" "}Centang minimal 2 invoice dari <b>customer/nomor yang sama</b> untuk digabung jadi 1 PDF.
-          {mergeSelectedInvs.length > 0 && (
+    {/* ── Mode Gabung — banner instruksi (stage select) ── */}
+    {mergeMode && (() => {
+      const cust = pageInv[0] || {};
+      return (
+        <div style={{
+          background: cs.accent + "12", border: "1px dashed " + cs.accent + "66", borderRadius: 10,
+          padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between",
+          alignItems: "center", flexWrap: "wrap", gap: 10
+        }}>
+          <div style={{ fontSize: 12, color: cs.text }}>
+            <b style={{ color: cs.accent }}>🗂️ Mode Gabung Invoice — {cust.customer || "—"}</b>
             <span style={{ marginLeft: 8, color: cs.muted }}>
-              Customer terpilih: <b style={{ color: cs.text }}>{mergeSelectedInvs[0].customer}</b> ({mergeSelectedInvs[0].phone})
+              📱 {cust.phone || "—"} · {pageInv.length} invoice tersedia · centang 2-{MERGE_MAX} untuk gabung
             </span>
-          )}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => { setMergeStage("picker"); setMergeSelectedIds([]); }}
+              style={{ background: "transparent", border: "1px solid " + cs.accent + "66", color: cs.accent, padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+              ← Ganti Customer
+            </button>
+            {mergeSelectedIds.length > 0 && (
+              <button onClick={clearMergeSelection}
+                style={{ background: "transparent", border: "1px solid " + cs.muted + "55", color: cs.muted, padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>
+                Bersihkan ({mergeSelectedIds.length})
+              </button>
+            )}
+          </div>
         </div>
-        {mergeSelectedIds.length > 0 && (
-          <button onClick={clearMergeSelection}
-            style={{ background: "transparent", border: "1px solid " + cs.muted + "55", color: cs.muted, padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>
-            Bersihkan ({mergeSelectedIds.length})
-          </button>
-        )}
-      </div>
-    )}
+      );
+    })()}
 
     <div style={{ display: "grid", gap: 12 }}>
       {pageInv.map(inv => {
         const isSelected = mergeMode && mergeSelectedIds.includes(inv.id);
-        const firstSelected = mergeMode && mergeSelectedInvs.length > 0 ? mergeSelectedInvs[0] : null;
-        const phoneMismatch = mergeMode && firstSelected && firstSelected.phone && inv.phone && !samePhone(firstSelected.phone, inv.phone) && !isSelected;
+        const atCapacity = mergeMode && !isSelected && mergeSelectedIds.length >= MERGE_MAX;
         return (
         <div key={inv.id} style={{
           background: isSelected ? cs.accent + "12" : cs.card,
-          border: "2px solid " + (isSelected ? cs.accent : phoneMismatch ? "transparent" : (statusColor[inv.status] || cs.border) + "44"),
-          opacity: phoneMismatch ? 0.4 : 1,
+          border: "2px solid " + (isSelected ? cs.accent : (statusColor[inv.status] || cs.border) + "44"),
+          opacity: atCapacity ? 0.5 : 1,
           borderRadius: 14, padding: 18,
           transition: "all 0.15s",
         }}>
@@ -784,10 +835,10 @@ return (
                 <input
                   type="checkbox"
                   checked={isSelected}
-                  disabled={phoneMismatch}
+                  disabled={atCapacity}
                   onChange={() => toggleMergeId(inv.id)}
-                  style={{ width: 20, height: 20, cursor: phoneMismatch ? "not-allowed" : "pointer", accentColor: cs.accent }}
-                  title={phoneMismatch ? `Customer berbeda — hanya bisa gabung invoice dengan customer yang sama (${firstSelected?.phone})` : "Pilih invoice untuk digabung"}
+                  style={{ width: 20, height: 20, cursor: atCapacity ? "not-allowed" : "pointer", accentColor: cs.accent }}
+                  title={atCapacity ? `Maksimal ${MERGE_MAX} invoice per gabungan` : "Pilih invoice untuk digabung"}
                 />
               )}
               <span style={{ fontFamily: "monospace", fontWeight: 800, color: cs.accent, fontSize: 14 }}>{inv.id}</span>
@@ -1429,6 +1480,64 @@ return (
       />
     )}
 
+    {/* ── Modal Picker: pilih customer untuk Mode Gabung ── */}
+    {mergeStage === "picker" && (
+      <div onClick={exitMergeMode}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div onClick={(e) => e.stopPropagation()}
+          style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 0, maxWidth: 560, width: "100%", maxHeight: "85vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "16px 20px", borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: cs.text }}>🗂️ Pilih Customer untuk Digabung</div>
+              <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{mergeCandidates.length} customer punya 2+ invoice belum lunas (max {MERGE_MAX} invoice per gabungan)</div>
+            </div>
+            <button onClick={exitMergeMode} style={{ background: "transparent", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer", padding: 4 }}>✕</button>
+          </div>
+          <div style={{ overflowY: "auto", padding: "8px 12px" }}>
+            {mergeCandidates.length === 0 ? (
+              <div style={{ padding: 40, textAlign: "center", color: cs.muted }}>
+                Tidak ada customer dengan lebih dari 1 invoice.
+              </div>
+            ) : (
+              mergeCandidates.map(g => (
+                <button key={g.phone}
+                  onClick={() => {
+                    setMergePhone(g.phone);
+                    setMergeStage("select");
+                    setMergeSelectedIds([]);
+                    setInvoicePage(1);
+                  }}
+                  style={{
+                    width: "100%", textAlign: "left",
+                    background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10,
+                    padding: "12px 14px", marginBottom: 8, cursor: "pointer",
+                    display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                    transition: "all 0.15s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = cs.accent + "18"; e.currentTarget.style.borderColor = cs.accent + "66"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = cs.surface; e.currentTarget.style.borderColor = cs.border; }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, color: cs.text, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {g.customer}
+                    </div>
+                    <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+                      📱 {g.phone} · {g.invoices.length} invoice
+                      {g.sisaAll > 0 && <span style={{ color: "#f43f5e", marginLeft: 8 }}>· Sisa {fmt(g.sisaAll)}</span>}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: cs.text }}>{fmt(g.totalAll)}</div>
+                    <div style={{ fontSize: 10, color: cs.accent, marginTop: 2 }}>Pilih →</div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+
     {/* ── Floating Action Bar: Gabung & Kirim ── */}
     {mergeMode && mergeSelectedIds.length > 0 && (
       <div style={{
@@ -1456,19 +1565,14 @@ return (
             </span>
           )}
         </div>
-        {!mergeSameCustomer && (
-          <span style={{ fontSize: 11, color: "#ef4444", background: "#ef444418", padding: "3px 8px", borderRadius: 6, border: "1px solid #ef444444" }}>
-            ⚠️ Customer/nomor berbeda
-          </span>
-        )}
         <button onClick={handleSendMerged}
-          disabled={mergeSending || mergeSelectedIds.length < 2 || !mergeSameCustomer}
+          disabled={mergeSending || mergeSelectedIds.length < 2}
           style={{
-            background: (mergeSending || mergeSelectedIds.length < 2 || !mergeSameCustomer) ? cs.muted + "44" : "#25D366",
+            background: (mergeSending || mergeSelectedIds.length < 2) ? cs.muted + "44" : "#25D366",
             border: "none",
-            color: (mergeSending || mergeSelectedIds.length < 2 || !mergeSameCustomer) ? cs.muted : "#fff",
+            color: (mergeSending || mergeSelectedIds.length < 2) ? cs.muted : "#fff",
             padding: "8px 18px", borderRadius: 9,
-            cursor: (mergeSending || mergeSelectedIds.length < 2 || !mergeSameCustomer) ? "not-allowed" : "pointer",
+            cursor: (mergeSending || mergeSelectedIds.length < 2) ? "not-allowed" : "pointer",
             fontWeight: 700, fontSize: 12,
           }}>
           {mergeSending ? "⏳ Mengirim..." : `📨 Gabung & Kirim (${mergeSelectedIds.length})`}
