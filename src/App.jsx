@@ -9595,7 +9595,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), newReport]);
 
           // ── 6. WA notif ke Admin/Owner ──
-          const adminUsers = userAccounts.filter(u => u.role === "Admin" || u.role === "Owner");
+          const adminUsers = userAccounts.filter(u => u.role === "Owner");
           const matCount = isInstall
             ? INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length
             : laporanMaterials.length;
