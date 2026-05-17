@@ -1703,6 +1703,29 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     ).toBlob();
   };
 
+  // Preview tanpa upload — buka di tab baru agar user bisa cek isi PDF sebelum kirim
+  const previewMergedInvoicePDF = async (invList) => {
+    if (!Array.isArray(invList) || invList.length < 2) {
+      showNotif("⚠️ Pilih minimal 2 invoice untuk preview");
+      return false;
+    }
+    showNotif("⏳ Membuat preview PDF...");
+    try {
+      const sorted = [...invList].sort((a, b) =>
+        new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+      );
+      const blob = await generateMergedInvoicePDFBlob(sorted, null);
+      if (!blob) { showNotif("⚠️ Gagal buat preview"); return false; }
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      return true;
+    } catch (err) {
+      showNotif("⚠️ Gagal preview: " + (err?.message || "unknown"));
+      return false;
+    }
+  };
+
   const uploadMergedInvoicePDFForWA = async (invList, portalLink = null) => {
     try {
       const blob = await generateMergedInvoicePDFBlob(invList, portalLink);
@@ -3220,27 +3243,63 @@ ${photoPageHTML}
     const invoiceUrl = await uploadInvoicePDFForWA(inv, portalLink);
     const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
     const msg = `Halo ${inv.customer}, Terlampir Invoice Resmi Pekerjaan Kemaren senilai *${fmt(inv.total)}*.\n\nPembayaran Bisa Melalui Transfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nApabila sudah di Transfer Bole dikirimkan Bukti Pembayaran kesini untuk di Konfirmasi Pembayarannya ya Bapak / Ibu. Terima kasih! 🙏${portalLine}`;
-    sendWA(inv.phone, msg, invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {});
+    const sent = await sendWA(inv.phone, msg, invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {});
+    if (sent) await writeInvoiceSendAudit([inv.id], "single", null);
+  };
+
+  // ── Audit kirim WA per-invoice (update kolom wa_sent_count, wa_last_sent_at, dll) ──
+  const writeInvoiceSendAudit = async (invIds, mode, batchInfo) => {
+    if (!Array.isArray(invIds) || invIds.length === 0) return;
+    const now = new Date().toISOString();
+    try {
+      // Ambil sent_count saat ini agar bisa increment
+      const { data: current } = await supabase.from("invoices")
+        .select("id,wa_sent_count").in("id", invIds);
+      const updates = (current || []).map(c => ({
+        id: c.id,
+        wa_sent_count: (c.wa_sent_count || 0) + 1,
+        wa_last_sent_at: now,
+        wa_last_sent_mode: mode,
+        wa_last_sent_batch: batchInfo || null,
+      }));
+      // Upsert batch
+      for (const u of updates) {
+        await supabase.from("invoices").update({
+          wa_sent_count: u.wa_sent_count,
+          wa_last_sent_at: u.wa_last_sent_at,
+          wa_last_sent_mode: u.wa_last_sent_mode,
+          wa_last_sent_batch: u.wa_last_sent_batch,
+        }).eq("id", u.id);
+      }
+      // Refresh local state
+      setInvoicesData(prev => prev.map(i => {
+        const u = updates.find(x => x.id === i.id);
+        return u ? { ...i, ...u } : i;
+      }));
+    } catch (err) {
+      console.warn("[writeInvoiceSendAudit] gagal:", err.message);
+    }
   };
 
   // ── Kirim beberapa invoice digabung jadi 1 PDF (1 page per invoice) ──
   // Validasi: semua invoice harus customer/phone yang sama. Otomatis sort by created_at asc.
   // Cap maksimal 5 invoice per gabungan (UX & payload safety).
+  // Return: { ok: bool, error?: string, retryContext?: object }
   const mergedInvoiceWA = async (invList) => {
     if (!Array.isArray(invList) || invList.length < 2) {
       showNotif("⚠️ Pilih minimal 2 invoice untuk digabung");
-      return false;
+      return { ok: false, error: "min" };
     }
     if (invList.length > 5) {
       showNotif("⚠️ Maksimal 5 invoice per gabungan");
-      return false;
+      return { ok: false, error: "max" };
     }
     const phone = invList[0]?.phone;
-    if (!phone) { showNotif("⚠️ No. HP customer tidak tersedia"); return false; }
+    if (!phone) { showNotif("⚠️ No. HP customer tidak tersedia"); return { ok: false, error: "no_phone" }; }
     const allSamePhone = invList.every(i => samePhone(i.phone, phone));
     if (!allSamePhone) {
       showNotif("⚠️ Semua invoice harus dari customer/nomor yang sama");
-      return false;
+      return { ok: false, error: "diff_customer" };
     }
     const sorted = [...invList].sort((a, b) =>
       new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
@@ -3271,14 +3330,18 @@ ${photoPageHTML}
     const sent = await sendWA(phone, msg, uploaded ? { url: uploaded.url, filename: uploaded.filename } : {});
     if (sent) {
       showNotif(`✅ ${sorted.length} invoice terkirim digabung ke ${customer}${uploaded ? " 📎" : ""}`);
+      const ids = sorted.map(i => i.id);
       addAgentLog("INVOICE_MERGED_SEND",
-        `${sorted.length} invoice digabung & dikirim ke ${customer} (${phone}) oleh ${currentUser?.name || "—"}: ${sorted.map(i => i.id).join(", ")}`,
+        `${sorted.length} invoice digabung & dikirim ke ${customer} (${phone}) oleh ${currentUser?.name || "—"}: ${ids.join(", ")}`,
         "SUCCESS"
       );
+      // Audit DB per-invoice
+      await writeInvoiceSendAudit(ids, "merged", ids.join(","));
+      return { ok: true };
     } else {
       showNotif(`⚠️ Gagal kirim WA ke ${customer} — cek koneksi Fonnte`);
+      return { ok: false, error: "send_failed", retryContext: { invList: sorted } };
     }
-    return !!sent;
   };
 
   // ── SEC-01: HTML Escape helper untuk prevent XSS di PDF generator ──
@@ -5076,7 +5139,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setEditInvoiceData={setEditInvoiceData} setEditInvoiceForm={setEditInvoiceForm} setEditJasaItems={setEditJasaItems}
       setEditInvoiceItems={setEditInvoiceItems} setModalEditInvoice={setModalEditInvoice}
       ordersData={ordersData} setOrdersData={setOrdersData} setActiveMenu={setActiveMenu} setAuditModal={setAuditModal}
-      invoiceReminderWA={invoiceReminderWA} mergedInvoiceWA={mergedInvoiceWA} approveInvoice={approveInvoice} markPaid={markPaid}
+      invoiceReminderWA={invoiceReminderWA} mergedInvoiceWA={mergedInvoiceWA} previewMergedInvoicePDF={previewMergedInvoicePDF} approveInvoice={approveInvoice} markPaid={markPaid}
       showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog} auditUserName={auditUserName}
       markInvoicePaid={markInvoicePaid} updateOrderStatus={updateOrderStatus} deleteInvoice={deleteInvoice} updateInvoice={updateInvoice}
       getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}

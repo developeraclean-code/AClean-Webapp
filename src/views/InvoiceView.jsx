@@ -7,7 +7,7 @@ import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
 import QuotationPDF from "../components/QuotationPDF.jsx";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, previewMergedInvoicePDF, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
@@ -87,6 +87,9 @@ const [mergeStage, setMergeStage]     = useState(null); // null | "picker" | "se
 const [mergePhone, setMergePhone]     = useState(null); // phone customer yang dipilih
 const [mergeSelectedIds, setMergeSelectedIds] = useState([]);
 const [mergeSending, setMergeSending] = useState(false);
+const [mergePreviewing, setMergePreviewing] = useState(false);
+// Snapshot invoice list yang terakhir gagal kirim — agar bisa di-retry tanpa hilang state UI
+const [lastFailedMerge, setLastFailedMerge] = useState(null); // { invList, customer, phone, ts }
 
 const mergeMode = mergeStage === "select"; // backward-compat untuk card render
 
@@ -109,20 +112,60 @@ const mergeSelectedInvs = useMemo(
   [mergeSelectedIds, invoicesData]
 );
 
-const handleSendMerged = async () => {
+// Preview PDF gabungan tanpa kirim — buka di tab baru
+const handlePreviewMerged = async () => {
   if (mergeSelectedInvs.length < 2) { showNotif("⚠️ Pilih minimal 2 invoice"); return; }
-  if (typeof mergedInvoiceWA !== "function") { showNotif("⚠️ Fitur belum tersedia"); return; }
-  const customer = mergeSelectedInvs[0].customer || "customer";
-  const ok = await showConfirm({
-    title: "Gabung & Kirim Invoice",
-    message: `Kirim ${mergeSelectedInvs.length} invoice digabung jadi 1 PDF ke ${customer} (${mergeSelectedInvs[0].phone})?\n\nInvoice yang dipilih:\n${mergeSelectedInvs.map(i => `• ${i.id} — ${fmt(i.total)}`).join("\n")}`,
-  });
-  if (!ok) return;
-  setMergeSending(true);
-  const sent = await mergedInvoiceWA(mergeSelectedInvs);
-  setMergeSending(false);
-  if (sent) { exitMergeMode(); }
+  if (typeof previewMergedInvoicePDF !== "function") { showNotif("⚠️ Preview belum tersedia"); return; }
+  setMergePreviewing(true);
+  await previewMergedInvoicePDF(mergeSelectedInvs);
+  setMergePreviewing(false);
 };
+
+const handleSendMerged = async (retryInvList = null) => {
+  const invs = retryInvList || mergeSelectedInvs;
+  if (invs.length < 2) { showNotif("⚠️ Pilih minimal 2 invoice"); return; }
+  if (typeof mergedInvoiceWA !== "function") { showNotif("⚠️ Fitur belum tersedia"); return; }
+  const customer = invs[0].customer || "customer";
+  const isRetry = !!retryInvList;
+  if (!isRetry) {
+    const ok = await showConfirm({
+      title: "Gabung & Kirim Invoice",
+      message: `Kirim ${invs.length} invoice digabung jadi 1 PDF ke ${customer} (${invs[0].phone})?\n\nInvoice yang dipilih:\n${invs.map(i => `• ${i.id} — ${fmt(i.total)}`).join("\n")}`,
+    });
+    if (!ok) return;
+  }
+  setMergeSending(true);
+  const res = await mergedInvoiceWA(invs);
+  setMergeSending(false);
+  if (res.ok) {
+    setLastFailedMerge(null);
+    exitMergeMode();
+  } else if (res.error === "send_failed" && res.retryContext) {
+    // Simpan untuk retry — panel retry akan muncul
+    setLastFailedMerge({
+      invList: res.retryContext.invList,
+      customer,
+      phone: invs[0].phone,
+      ts: new Date(),
+    });
+  }
+};
+
+const handleRetryFailed = async () => {
+  if (!lastFailedMerge) return;
+  // Ambil snapshot terbaru dari invoicesData — jangan pakai snapshot lama
+  // (status invoice mungkin sudah berubah sejak gagal kirim)
+  const freshInvs = lastFailedMerge.invList
+    .map(old => invoicesData.find(i => i.id === old.id))
+    .filter(Boolean);
+  if (freshInvs.length < 2) {
+    showNotif("⚠️ Beberapa invoice sudah dihapus — tidak bisa retry");
+    dismissRetry();
+    return;
+  }
+  await handleSendMerged(freshInvs);
+};
+const dismissRetry = () => setLastFailedMerge(null);
 
 const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation" | "voucher"
 const [voucherList, setVoucherList]     = useState([]);
@@ -789,6 +832,38 @@ return (
       </div>
     )}
 
+    {/* ── Retry panel: muncul jika pengiriman terakhir gagal ── */}
+    {lastFailedMerge && (
+      <div style={{
+        background: "#f59e0b18", border: "1px solid #f59e0b66", borderRadius: 10,
+        padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
+        flexWrap: "wrap", gap: 10
+      }}>
+        <div style={{ fontSize: 12, color: cs.text }}>
+          <b style={{ color: "#f59e0b" }}>⚠️ Pengiriman terakhir gagal</b>
+          <span style={{ marginLeft: 8, color: cs.muted }}>
+            {lastFailedMerge.invList.length} invoice ke {lastFailedMerge.customer} ({lastFailedMerge.phone}) — {lastFailedMerge.ts.toLocaleTimeString("id-ID")}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={handleRetryFailed} disabled={mergeSending}
+            style={{
+              background: mergeSending ? cs.muted + "44" : "#f59e0b",
+              border: "none", color: "#fff",
+              padding: "7px 14px", borderRadius: 8,
+              cursor: mergeSending ? "not-allowed" : "pointer",
+              fontWeight: 700, fontSize: 12
+            }}>
+            {mergeSending ? "⏳ Mengirim..." : "🔄 Coba Lagi"}
+          </button>
+          <button onClick={dismissRetry}
+            style={{ background: "transparent", border: "1px solid " + cs.muted + "55", color: cs.muted, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>
+            Tutup
+          </button>
+        </div>
+      </div>
+    )}
+
     {/* ── Mode Gabung — banner instruksi (stage select) ── */}
     {mergeMode && (() => {
       const cust = pageInv[0] || {};
@@ -847,6 +922,14 @@ return (
               <span style={{ fontFamily: "monospace", fontWeight: 800, color: cs.accent, fontSize: 14 }}>{inv.id}</span>
               <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 99, background: (statusColor[inv.status] || cs.muted) + "22", color: statusColor[inv.status] || cs.muted, border: "1px solid " + (statusColor[inv.status] || cs.muted) + "44", fontWeight: 700 }}>{inv.status.replace(/_/g, " ")}</span>
               {inv.follow_up > 0 && <span style={{ fontSize: 10, color: cs.yellow }}>Follow-up: {inv.follow_up}x</span>}
+              {/* Badge audit kirim WA — tampil jika sudah pernah dikirim */}
+              {(inv.wa_sent_count || 0) > 0 && (
+                <span
+                  title={`Terakhir kirim: ${inv.wa_last_sent_at ? new Date(inv.wa_last_sent_at).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}${inv.wa_last_sent_mode ? " (" + inv.wa_last_sent_mode + ")" : ""}`}
+                  style={{ fontSize: 10, padding: "2px 6px", borderRadius: 99, background: "#25D36618", color: "#25D366", border: "1px solid #25D36644", fontWeight: 700 }}>
+                  📨 {inv.wa_sent_count}x{inv.wa_last_sent_mode === "merged" ? " (gabung)" : ""}
+                </span>
+              )}
               {/* Badge multi-hari: tampil jika ada child orders MULTI-DAY terkait invoice ini */}
               {(() => {
                 const parentOrder = (ordersData || []).find(o => o.id === inv.job_id);
@@ -1502,7 +1585,13 @@ return (
                 Tidak ada customer dengan lebih dari 1 invoice.
               </div>
             ) : (
-              mergeCandidates.map(g => (
+              mergeCandidates.map(g => {
+                // Cek apakah ada invoice yang baru di-kirim < 24 jam (tanda over-spam)
+                const recentSent = g.invoices.some(i => {
+                  if (!i.wa_last_sent_at) return false;
+                  return (Date.now() - new Date(i.wa_last_sent_at).getTime()) < 24 * 3600 * 1000;
+                });
+                return (
                 <button key={g.phone}
                   onClick={() => {
                     setMergePhone(g.phone);
@@ -1521,8 +1610,14 @@ return (
                   onMouseLeave={(e) => { e.currentTarget.style.background = cs.surface; e.currentTarget.style.borderColor = cs.border; }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, color: cs.text, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <div style={{ fontWeight: 700, color: cs.text, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
                       {g.customer}
+                      {recentSent && (
+                        <span title="Sudah dikirim < 24 jam lalu — jangan over-spam"
+                          style={{ fontSize: 9, padding: "1px 6px", borderRadius: 99, background: "#f59e0b22", color: "#f59e0b", border: "1px solid #f59e0b66", fontWeight: 700 }}>
+                          ⏰ baru kirim
+                        </span>
+                      )}
                     </div>
                     <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
                       📱 {g.phone} · {g.invoices.length} invoice
@@ -1534,7 +1629,8 @@ return (
                     <div style={{ fontSize: 10, color: cs.accent, marginTop: 2 }}>Pilih →</div>
                   </div>
                 </button>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -1568,14 +1664,27 @@ return (
             </span>
           )}
         </div>
-        <button onClick={handleSendMerged}
-          disabled={mergeSending || mergeSelectedIds.length < 2}
+        <button onClick={handlePreviewMerged}
+          disabled={mergePreviewing || mergeSending || mergeSelectedIds.length < 2}
           style={{
-            background: (mergeSending || mergeSelectedIds.length < 2) ? cs.muted + "44" : "#25D366",
+            background: (mergePreviewing || mergeSending || mergeSelectedIds.length < 2) ? cs.muted + "33" : cs.accent + "22",
+            border: "1px solid " + cs.accent + ((mergePreviewing || mergeSending || mergeSelectedIds.length < 2) ? "33" : "66"),
+            color: (mergePreviewing || mergeSending || mergeSelectedIds.length < 2) ? cs.muted : cs.accent,
+            padding: "8px 14px", borderRadius: 9,
+            cursor: (mergePreviewing || mergeSending || mergeSelectedIds.length < 2) ? "not-allowed" : "pointer",
+            fontWeight: 700, fontSize: 12,
+          }}
+          title="Buka PDF gabungan di tab baru untuk cek isi sebelum kirim">
+          {mergePreviewing ? "⏳" : "👁 Preview"}
+        </button>
+        <button onClick={() => handleSendMerged()}
+          disabled={mergeSending || mergePreviewing || mergeSelectedIds.length < 2}
+          style={{
+            background: (mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? cs.muted + "44" : "#25D366",
             border: "none",
-            color: (mergeSending || mergeSelectedIds.length < 2) ? cs.muted : "#fff",
+            color: (mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? cs.muted : "#fff",
             padding: "8px 18px", borderRadius: 9,
-            cursor: (mergeSending || mergeSelectedIds.length < 2) ? "not-allowed" : "pointer",
+            cursor: (mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? "not-allowed" : "pointer",
             fontWeight: 700, fontSize: 12,
           }}>
           {mergeSending ? "⏳ Mengirim..." : `📨 Gabung & Kirim (${mergeSelectedIds.length})`}
