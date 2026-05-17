@@ -395,25 +395,33 @@ export default async function handler(req, res) {
                     const base64Img = Buffer.from(imgBuf).toString("base64");
                     const mimeType = (imgFetch.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
 
-                    const toolListText = checklist.map(t =>
-                      `- ${t.tool_name}${t.is_priority ? " [WAJIB]" : ""}`
+                    // Filter out qty_min=0 items (known absent from this bag)
+                    const activeChecklist = checklist.filter(t => (t.qty_min ?? 1) > 0);
+                    const toolListText = activeChecklist.map(t =>
+                      `- ${t.tool_name} (dibutuhkan: ${t.qty_min || 1}×)${t.is_priority ? " [WAJIB]" : ""}`
                     ).join("\n");
+                    const absentItems = checklist.filter(t => (t.qty_min ?? 1) === 0);
 
                     const visionPrompt = `Kamu adalah quality control untuk tim teknisi AC. Analisa foto tas alat teknisi ini dengan teliti.
 
-DAFTAR ALAT YANG HARUS ADA DI TAS:
+DAFTAR ALAT YANG HARUS ADA DI TAS (cek keberadaan & jumlahnya):
 ${toolListText}
 
-INSTRUKSI:
-1. Identifikasi setiap alat yang TERLIHAT JELAS di foto
-2. Tandai alat yang TIDAK TERLIHAT sebagai hilang
-3. Jika foto buram, gelap, atau terlalu jauh sehingga tidak bisa dianalisa → status "foto_tidak_layak"
+${absentItems.length > 0 ? `ALAT YANG SUDAH DIKETAHUI TIDAK ADA (ABAIKAN — jangan cari di foto):
+${absentItems.map(t => `- ${t.tool_name}`).join("\n")}
+
+` : ""}INSTRUKSI:
+1. Identifikasi setiap alat yang TERLIHAT JELAS di foto dan hitung jumlahnya
+2. Bandingkan jumlah ditemukan vs jumlah yang dibutuhkan (qty_min)
+3. Tandai sebagai hilang jika tidak ditemukan ATAU jumlahnya kurang dari yang dibutuhkan
+4. Abaikan alat yang sudah ada di daftar "TIDAK ADA" di atas
+5. Jika foto buram, gelap, atau terlalu jauh sehingga tidak bisa dianalisa → status "foto_tidak_layak"
 
 FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 {
   "photo_quality": "ok" | "blur" | "too_dark" | "too_far" | "foto_tidak_layak",
   "tools_found": [{"name":"Tang Ampere","qty":1,"confidence":"high"}],
-  "tools_missing": [{"name":"Manifold","is_priority":true}],
+  "tools_missing": [{"name":"Manifold","is_priority":true,"qty_expected":1,"qty_found":0}],
   "notes": "catatan singkat opsional"
 }`;
 
@@ -448,10 +456,10 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                     if (analysisResult && analysisResult.photo_quality !== "foto_tidak_layak") {
                       toolsFound = analysisResult.tools_found || [];
                       toolsMissing = analysisResult.tools_missing || [];
-                      // Cross-reference: tools_missing harus include is_priority dari checklist
+                      // Cross-reference: tools_missing harus include is_priority + qty_expected dari activeChecklist
                       toolsMissing = toolsMissing.map(t => {
-                        const cl = checklist.find(c => c.tool_name.toLowerCase() === (t.name||"").toLowerCase());
-                        return { name: t.name, is_priority: cl?.is_priority || t.is_priority || false };
+                        const cl = activeChecklist.find(c => c.tool_name.toLowerCase() === (t.name||"").toLowerCase());
+                        return { name: t.name, is_priority: cl?.is_priority || t.is_priority || false, qty_expected: cl?.qty_min || 1, qty_found: t.qty_found || 0 };
                       });
                       const hasCriticalMissing = toolsMissing.some(t => t.is_priority);
                       const hasWarning = toolsMissing.length > 0;

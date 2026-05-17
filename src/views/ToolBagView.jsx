@@ -325,8 +325,9 @@ function BagDetail({ bagId, checks, checklistTemplate, onClose, isOwnerAdmin, su
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 8 }}>
           {toolStats.map(t => {
-            const hasProblem = t.missingCount > 0;
-            const color = hasProblem ? cs.red : (t.foundCount > 0 ? cs.green : cs.muted);
+            const isKnownAbsent = (t.qty_min ?? 1) === 0;
+            const hasProblem = !isKnownAbsent && t.missingCount > 0;
+            const color = isKnownAbsent ? cs.muted : hasProblem ? cs.red : (t.foundCount > 0 ? cs.green : cs.muted);
             return (
               <div key={t.name} style={{
                 background: hasProblem ? cs.red + "11" : cs.surface,
@@ -341,9 +342,9 @@ function BagDetail({ bagId, checks, checklistTemplate, onClose, isOwnerAdmin, su
                   <div style={{ fontSize: 12, fontWeight: 600, color: cs.text, display: "flex", alignItems: "center", gap: 6 }}>
                     {t.is_priority && <span style={{ fontSize: 10 }}>🔴</span>}
                     {t.name}
-                    {(t.qty_min || 1) > 1 && (
-                      <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: cs.accent + "22", color: cs.accent, fontWeight: 700 }}>
-                        {t.qty_min}×
+                    {(t.qty_min ?? 1) === 0 && (
+                      <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: cs.muted + "22", color: cs.muted, fontWeight: 600, textDecoration: "line-through" }}>
+                        tidak ada
                       </span>
                     )}
                   </div>
@@ -352,18 +353,25 @@ function BagDetail({ bagId, checks, checklistTemplate, onClose, isOwnerAdmin, su
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  {/* Expected qty badge — always shown */}
+                  {(t.qty_min ?? 1) === 0 ? (
+                    <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: cs.muted + "22", color: cs.muted, fontWeight: 700, textDecoration: "line-through" }}>
+                      0 — tidak ada
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: cs.accent + "22", color: cs.accent, fontWeight: 700 }}>
+                      {t.qty_min ?? 1}×
+                    </span>
+                  )}
                   {t.foundCount > 0 && (
                     <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: cs.green + "22", color: cs.green, fontWeight: 600 }}>
-                      ✓ {t.foundCount}×
+                      ✓ {t.foundCount}
                     </span>
                   )}
                   {t.missingCount > 0 && (
                     <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: cs.red + "33", color: cs.red, fontWeight: 700 }}>
-                      ✗ {t.missingCount}×
+                      ✗ {t.missingCount}
                     </span>
-                  )}
-                  {t.foundCount === 0 && t.missingCount === 0 && (
-                    <span style={{ fontSize: 10, color: cs.muted }}>—</span>
                   )}
                 </div>
               </div>
@@ -492,7 +500,7 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
     if (!editingTool) return;
     const newToolName = editingTool.name.trim();
     if (!newToolName) { showNotif?.("Nama alat tidak boleh kosong"); return; }
-    const qty = Math.max(1, parseInt(editingTool.qty_min) || 1);
+    const qty = Math.max(0, parseInt(editingTool.qty_min) || 0);
     setSaving(true);
     const { error } = await supabase.from("tool_bag_checklist")
       .update({ tool_name: newToolName, is_priority: editingTool.is_priority, qty_min: qty })
@@ -505,16 +513,16 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
     onChanged?.();
   };
 
-  // Quick adjust qty (+/-) hanya di tas INI
+  // Quick adjust qty (+/-) hanya di tas INI — 0 = "tidak ada"
   const handleQtyChange = async (tool, delta) => {
-    const newQtyVal = Math.max(1, (tool.qty_min || 1) + delta);
+    const newQtyVal = Math.max(0, (tool.qty_min || 1) + delta);
     if (newQtyVal === tool.qty_min) return;
     const { error } = await supabase.from("tool_bag_checklist")
       .update({ qty_min: newQtyVal })
       .eq("bag_id", bagId)
       .eq("tool_name", tool.name);
     if (error) { showNotif?.("Gagal update qty: " + error.message); return; }
-    showNotif?.("📦 " + tool.name + " (" + bagId + ") — qty: " + newQtyVal);
+    showNotif?.("📦 " + tool.name + " (" + bagId + ") — qty: " + (newQtyVal === 0 ? "0 (tidak ada)" : newQtyVal));
     onChanged?.();
   };
 
@@ -669,13 +677,16 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
                           style={{ flex: 1, background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 6, padding: "5px 10px", color: cs.text, fontSize: 13, outline: "none" }}
                           autoFocus
                         />
-                        <div style={{ display: "flex", alignItems: "center", gap: 2, background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 6, padding: 2 }}>
-                          <button onClick={() => setEditingTool({ ...editingTool, qty_min: Math.max(1, (editingTool.qty_min || 1) - 1) })}
-                            style={{ width: 22, height: 22, background: cs.surface, color: cs.text, border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>−</button>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: cs.text, minWidth: 18, textAlign: "center" }}>{editingTool.qty_min || 1}</span>
-                          <button onClick={() => setEditingTool({ ...editingTool, qty_min: (editingTool.qty_min || 1) + 1 })}
+                        <div style={{ display: "flex", alignItems: "center", gap: 2, background: cs.card, border: `1px solid ${(editingTool.qty_min ?? 1) === 0 ? cs.red : cs.border}`, borderRadius: 6, padding: 2 }}>
+                          <button onClick={() => setEditingTool({ ...editingTool, qty_min: Math.max(0, (editingTool.qty_min ?? 1) - 1) })} disabled={(editingTool.qty_min ?? 1) <= 0}
+                            style={{ width: 22, height: 22, background: (editingTool.qty_min ?? 1) <= 0 ? cs.surface + "44" : cs.surface, color: (editingTool.qty_min ?? 1) <= 0 ? cs.muted : cs.text, border: "none", borderRadius: 4, cursor: (editingTool.qty_min ?? 1) <= 0 ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}>−</button>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: (editingTool.qty_min ?? 1) === 0 ? cs.red : cs.text, minWidth: 18, textAlign: "center" }}>{editingTool.qty_min ?? 1}</span>
+                          <button onClick={() => setEditingTool({ ...editingTool, qty_min: (editingTool.qty_min ?? 1) + 1 })}
                             style={{ width: 22, height: 22, background: cs.surface, color: cs.text, border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>+</button>
                         </div>
+                        {(editingTool.qty_min ?? 1) === 0 && (
+                          <span style={{ fontSize: 9, color: cs.red, fontWeight: 600 }}>tidak ada</span>
+                        )}
                         <label style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, color: cs.text, cursor: "pointer" }}>
                           <input type="checkbox" checked={editingTool.is_priority}
                             onChange={e => setEditingTool({ ...editingTool, is_priority: e.target.checked })} />
@@ -701,16 +712,19 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
                             </span>
                           )}
                         </div>
-                        {/* Quick qty adjust */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 2, background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 6, padding: 2 }}>
-                          <button onClick={() => handleQtyChange(tool, -1)} disabled={(tool.qty_min || 1) <= 1}
-                            style={{ width: 22, height: 22, background: (tool.qty_min || 1) <= 1 ? cs.surface + "44" : cs.surface, color: (tool.qty_min || 1) <= 1 ? cs.muted : cs.text, border: "none", borderRadius: 4, cursor: (tool.qty_min || 1) <= 1 ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}>−</button>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: cs.text, minWidth: 24, textAlign: "center" }}>
-                            {tool.qty_min || 1}<span style={{ fontSize: 9, color: cs.muted }}>×</span>
+                        {/* Quick qty adjust — 0 = "tidak ada" */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 2, background: cs.card, border: `1px solid ${(tool.qty_min || 1) === 0 ? cs.red : cs.border}`, borderRadius: 6, padding: 2 }}>
+                          <button onClick={() => handleQtyChange(tool, -1)} disabled={(tool.qty_min ?? 1) <= 0}
+                            style={{ width: 22, height: 22, background: (tool.qty_min ?? 1) <= 0 ? cs.surface + "44" : cs.surface, color: (tool.qty_min ?? 1) <= 0 ? cs.muted : cs.text, border: "none", borderRadius: 4, cursor: (tool.qty_min ?? 1) <= 0 ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}>−</button>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: (tool.qty_min ?? 1) === 0 ? cs.red : cs.text, minWidth: 24, textAlign: "center" }}>
+                            {(tool.qty_min ?? 1) === 0 ? <span title="Tidak ada di tas ini">0</span> : tool.qty_min || 1}<span style={{ fontSize: 9, color: cs.muted }}>×</span>
                           </span>
                           <button onClick={() => handleQtyChange(tool, +1)}
                             style={{ width: 22, height: 22, background: cs.surface, color: cs.text, border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>+</button>
                         </div>
+                        {(tool.qty_min ?? 1) === 0 && (
+                          <span style={{ fontSize: 9, color: cs.red, fontWeight: 700 }}>tidak ada</span>
+                        )}
                         <button onClick={() => setEditingTool({ name: tool.name, originalName: tool.name, is_priority: tool.is_priority, qty_min: tool.qty_min || 1 })}
                           style={{ padding: "5px 10px", background: cs.accent + "22", color: cs.accent, border: `1px solid ${cs.accent}44`, borderRadius: 6, cursor: "pointer", fontSize: 11 }}>
                           ✏️ Edit
