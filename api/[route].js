@@ -682,7 +682,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       if (priorityList) warnMsg += `*Alat WAJIB tidak terdeteksi:*\n${priorityList}\n\n`;
                       if (normalList) warnMsg += `*Alat lain tidak terdeteksi:*\n${normalList}\n\n`;
                       warnMsg += `_Cek detail di webapp → Inventori → Tas Teknisi_`;
-                      fetch("https://api.fonnte.com/send", {
+                      await fetch("https://api.fonnte.com/send", {
                         method: "POST",
                         headers: { Authorization: FT, "Content-Type": "application/json" },
                         body: JSON.stringify({ target: OP, message: warnMsg, delay: "1", countryCode: "62" })
@@ -699,7 +699,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       } else {
                         konfirMsg = `📸 Foto ${bagId} diterima. ${toolsMissing.length} alat tidak terdeteksi — Owner sudah dinotifikasi.`;
                       }
-                      fetch("https://api.fonnte.com/send", {
+                      await fetch("https://api.fonnte.com/send", {
                         method: "POST",
                         headers: { Authorization: FT, "Content-Type": "application/json" },
                         body: JSON.stringify({ target: sender, message: konfirMsg, delay: "2", countryCode: "62" })
