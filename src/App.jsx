@@ -2554,20 +2554,17 @@ ${photoPageHTML}
     if (!isLoggedIn) return;
 
     const loadAll = async () => {
-        // A.4 OPTIMIZATION: Add LIMIT to initial queries untuk faster page load
+        // Opsi-A: agent_logs, expenses, quotations dikeluarkan dari loadAll — diload on-demand saat view dibuka
         const results = await Promise.allSettled([
           cachedFetch("orders", () => fetchOrders(supabase)),
           cachedFetch("invoices", () => fetchInvoices(supabase)),
           cachedFetch("customers", () => fetchCustomers(supabase)),
           cachedFetch("inventory", () => fetchInventory(supabase)),
           cachedFetch("service_reports", () => fetchServiceReports(supabase)),
-          cachedFetch("agent_logs", () => fetchAgentLogs(supabase)),
           cachedFetch("inv_tx", () => fetchInventoryTransactions(supabase)),
           cachedFetch("inv_units", () => fetchInventoryUnits(supabase)),
-          supabase.from("quotations").select("*").order("created_at", { ascending: false }).limit(200),
         ]);
-        const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, logsRes, invTxRes, invUnitsRes, quotationsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
-        if (!quotationsRes?.error && quotationsRes?.data) setQuotationsData(quotationsRes.data);
+        const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, invTxRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
         // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
         // Jika error = fallback ke demo data yang sudah di-init
         if (!ordersRes.error && ordersRes.data) setOrdersData(ordersRes.data);
@@ -2614,13 +2611,9 @@ ${photoPageHTML}
           setLaporanReports(Array.from(dedupedMap.values()));
         }
         // Jika DB error total, keep demo data (already in useState init)
-        if (!logsRes.error && logsRes.data && logsRes.data.length > 0) setAgentLogs(logsRes.data);
+        // agent_logs: load on-demand di renderAgentLog()
 
-        // ── Load Expenses ──
-        try {
-          const expRes = await cachedFetch("expenses", () => fetchExpenses(supabase));
-          if (!expRes.error && expRes.data) setExpensesData(expRes.data);
-        } catch (e) { /* tabel belum ada, skip */ }
+        // ── Expenses & agent_logs: load on-demand (opsi-A, bukan di sini) ──
 
         // ── Auto-cleanup agent_logs > 90 hari: dilakukan oleh cron backend,
         //    bukan frontend — setelah RLS fix, anon/authenticated tidak bisa DELETE ──
@@ -2745,7 +2738,7 @@ ${photoPageHTML}
 
         // Load WA conversations dari Supabase (tabel opsional)
         try {
-          const waRes = await fetchWaConversations(supabase, 150);
+          const waRes = await fetchWaConversations(supabase, 100);
           if (!waRes.error && waRes.data && waRes.data.length > 0) setWaConversations(waRes.data);
         } catch (e) { /* WA tabel belum ada - skip */ }
 
@@ -2975,9 +2968,25 @@ ${photoPageHTML}
     if (_waMonitorOn) {
       try {
         ch7 = supabase.channel("rt-wa-conv-" + _tabId)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, () =>
-            fetchWaConversations(supabase, 150)
-              .then(({ data, error }) => { if (data && !error) setWaConversations(data); }))
+          .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, (payload) => {
+            // Opsi-B: update lokal tanpa re-fetch — hemat egress
+            const row = payload.new || payload.old;
+            if (!row?.phone) return;
+            if (payload.eventType === "DELETE") {
+              setWaConversations(prev => prev.filter(c => c.phone !== row.phone));
+            } else {
+              setWaConversations(prev => {
+                const idx = prev.findIndex(c => c.phone === row.phone);
+                if (idx >= 0) {
+                  const next = [...prev];
+                  next[idx] = { ...next[idx], ...row };
+                  next.sort((a, b) => (b.updated_at || "") > (a.updated_at || "") ? 1 : -1);
+                  return next;
+                }
+                return [row, ...prev].slice(0, 100);
+              });
+            }
+          })
           .subscribe((status) => {
             if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
           });
@@ -3055,7 +3064,7 @@ ${photoPageHTML}
       }
     }
 
-    // Payment suggestions — HANYA Owner/Admin, hanya jam kerja, 2 menit polling
+    // Payment suggestions — HANYA Owner/Admin, hanya jam kerja, 5 menit polling (Opsi-C)
     const _isFinanceRole = ["Owner", "Admin"].includes(currentUser?.role);
     const _payDetectOn = appSettings?.wa_payment_detect !== "false";
     const _payPoll = (_isFinanceRole && _payDetectOn && isWorkingHours()) ? setInterval(() => {
@@ -3073,7 +3082,7 @@ ${photoPageHTML}
             }
           }
         });
-    }, 2 * 60 * 1000) : null;
+    }, 5 * 60 * 1000) : null;
 
     return () => {
       clearInterval(window._rtPoll_1617); delete window._rtPoll_1617;
@@ -5575,6 +5584,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     return () => clearInterval(interval);
   }, [activeMenu, currentUser]);
 
+  // Opsi-A: on-demand load untuk agent_logs, expenses, quotations — tidak masuk loadAll
+  useEffect(() => {
+    if (!currentUser) return;
+    if (activeMenu === "agentlog") {
+      fetchAgentLogs(supabase).then(({ data, error }) => { if (!error && data?.length > 0) setAgentLogs(data); });
+    } else if (activeMenu === "biaya") {
+      fetchExpenses(supabase).then(({ data, error }) => { if (!error && data) setExpensesData(data); }).catch(() => {});
+    } else if (activeMenu === "order-masuk") {
+      supabase.from("quotations").select("*").order("created_at", { ascending: false }).limit(200)
+        .then(({ data, error }) => { if (!error && data) setQuotationsData(data); });
+    }
+  }, [activeMenu, currentUser]);
+
   const renderMonitoring = () => (
     <MonitoringView monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} _apiHeaders={_apiHeaders} />
   );
@@ -7950,7 +7972,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 </div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <button onClick={async () => {
-                    const { data, error } = await fetchWaConversations(supabase, 150);
+                    const { data, error } = await fetchWaConversations(supabase, 100);
                     if (error) {
                       if (error.code === "42P01") showNotif("⚠️ Tabel wa_conversations belum dibuat");
                       else showNotif("⚠️ WA Monitor error: " + (error.message || error.code));
