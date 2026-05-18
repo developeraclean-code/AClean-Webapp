@@ -508,7 +508,7 @@ export default async function handler(req, res) {
               // Ambil checklist dari DB
               const checklistRes = await fetch(
                 SU + "/rest/v1/tool_bag_checklist?bag_id=eq." + encodeURIComponent(bagId) +
-                "&select=tool_name,qty_min,is_priority",
+                "&qty_min=gt.0&select=tool_name,qty_min,is_priority",
                 { headers: { apikey: SK, Authorization: "Bearer " + SK } }
               );
               const checklist = checklistRes.ok ? await checklistRes.json() : [];
@@ -696,17 +696,20 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       const updateLabel = existingId ? " _(diperbarui)_" : "";
                       const sessionLabel = sessionType === "pagi" ? "Pagi" : "Pulang";
 
-                      // Bagian 1: List alat sesuai checklist setting
+                      // Bagian 1: List alat sesuai checklist (qty_min > 0 = ada di tas)
+                      const activeNames = new Set(checklist.map(t => t.tool_name.toLowerCase()));
                       const checklistList = checklist.map(t => `${t.is_priority ? "🔴" : "⚪"} ${t.tool_name}${t.is_priority ? " (WAJIB)" : ""}`).join("\n");
 
-                      // Bagian 2: Alat terdeteksi AI
-                      const foundList = toolsFound.length > 0
-                        ? toolsFound.map(t => `✅ ${t.name}`).join("\n")
+                      // Bagian 2: Alat terdeteksi AI — hanya yang ada di checklist aktif
+                      const foundInChecklist = toolsFound.filter(t => activeNames.has(t.name.toLowerCase()));
+                      const foundList = foundInChecklist.length > 0
+                        ? foundInChecklist.map(t => `✅ ${t.name}`).join("\n")
                         : "_Tidak ada alat yang terdeteksi_";
 
-                      // Bagian 3: Alat tidak terdeteksi
-                      const priorityMissing = toolsMissing.filter(t => t.is_priority).map(t => `🔴 ${t.name} (WAJIB)`).join("\n");
-                      const normalMissing = toolsMissing.filter(t => !t.is_priority).map(t => `🟡 ${t.name}`).join("\n");
+                      // Bagian 3: Alat tidak terdeteksi — hanya yang ada di checklist aktif
+                      const missingInChecklist = toolsMissing.filter(t => activeNames.has(t.name.toLowerCase()));
+                      const priorityMissing = missingInChecklist.filter(t => t.is_priority).map(t => `🔴 ${t.name} (WAJIB)`).join("\n");
+                      const normalMissing = missingInChecklist.filter(t => !t.is_priority).map(t => `🟡 ${t.name}`).join("\n");
                       const missingList = [priorityMissing, normalMissing].filter(Boolean).join("\n") || "_Semua alat lengkap!_";
 
                       if (checkStatus === "ERROR") {
