@@ -305,7 +305,7 @@ function BagDetail({ bagId, checks, checklistTemplate, onClose, isOwnerAdmin, su
           supabase={supabase}
           checklistTemplate={checklistTemplate}
           onClose={() => setShowManage(false)}
-          onChanged={() => { onChecklistChanged?.(); }}
+          onChanged={() => { setShowManage(false); onChecklistChanged?.(); }}
           showNotif={showNotif}
           showConfirm={showConfirm}
         />
@@ -463,12 +463,19 @@ function BagDetail({ bagId, checks, checklistTemplate, onClose, isOwnerAdmin, su
 }
 
 function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onChanged, showNotif, showConfirm }) {
+  const [localTools, setLocalTools] = useState(() => checklistTemplate.slice());
+  const [dirty, setDirty] = useState(false);
   const [editingTool, setEditingTool] = useState(null); // { name, is_priority, qty_min, originalName }
   const [newName, setNewName] = useState("");
   const [newPriority, setNewPriority] = useState(false);
   const [newQty, setNewQty] = useState(1);
   const [saving, setSaving] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
+
+  const handleClose = () => {
+    if (dirty) onChanged?.();
+    onClose();
+  };
 
   // Tambah alat baru ke tas INI saja
   const handleAdd = async () => {
@@ -489,10 +496,11 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
     setSaving(false);
     if (error) { showNotif?.("Gagal tambah: " + error.message); return; }
     showNotif?.("✅ \"" + name + "\" (qty " + qty + ") ditambahkan ke " + bagId);
+    setLocalTools(prev => [...prev, { name, is_priority: newPriority, qty_min: qty }]);
     setNewName("");
     setNewPriority(false);
     setNewQty(1);
-    onChanged?.();
+    setDirty(true);
   };
 
   // Edit alat di tas INI saja
@@ -509,8 +517,9 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
     setSaving(false);
     if (error) { showNotif?.("Gagal update: " + error.message); return; }
     showNotif?.("✏️ Alat di " + bagId + " diperbarui");
+    setLocalTools(prev => prev.map(t => t.name === editingTool.originalName ? { ...t, name: newToolName, is_priority: editingTool.is_priority, qty_min: qty } : t));
     setEditingTool(null);
-    onChanged?.();
+    setDirty(true);
   };
 
   // Quick adjust qty (+/-) hanya di tas INI — 0 = "tidak ada"
@@ -523,7 +532,8 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
       .eq("tool_name", tool.name);
     if (error) { showNotif?.("Gagal update qty: " + error.message); return; }
     showNotif?.("📦 " + tool.name + " (" + bagId + ") — qty: " + (newQtyVal === 0 ? "0 (tidak ada)" : newQtyVal));
-    onChanged?.();
+    setLocalTools(prev => prev.map(t => t.name === tool.name ? { ...t, qty_min: newQtyVal } : t));
+    setDirty(true);
   };
 
   // Hapus alat dari tas INI saja
@@ -540,7 +550,8 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
       .eq("tool_name", tool.name);
     if (error) { showNotif?.("Gagal hapus: " + error.message); return; }
     showNotif?.("🗑️ \"" + tool.name + "\" dihapus dari " + bagId);
-    onChanged?.();
+    setLocalTools(prev => prev.filter(t => t.name !== tool.name));
+    setDirty(true);
   };
 
   // Salin checklist dari tas lain
@@ -566,15 +577,16 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
     const { error } = await supabase.from("tool_bag_checklist").insert(newRows);
     if (error) { showNotif?.("Gagal salin: " + error.message); return; }
     showNotif?.("📋 " + newRows.length + " alat disalin dari " + sourceBagId + " ke " + bagId);
+    setLocalTools(prev => [...prev, ...newRows.map(r => ({ name: r.tool_name, is_priority: r.is_priority, qty_min: r.qty_min }))]);
     setShowCopyMenu(false);
-    onChanged?.();
+    setDirty(true);
   };
 
   return (
     <div style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16
-    }} onClick={onClose}>
+    }} onClick={handleClose}>
       <div onClick={e => e.stopPropagation()}
         style={{
           background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14,
@@ -605,7 +617,7 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
                 ))}
               </div>
             )}
-            <button onClick={onClose}
+            <button onClick={handleClose}
               style={{ background: "none", border: `1px solid ${cs.border}`, color: cs.muted, padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontSize: 11 }}>
               ✕ Tutup
             </button>
@@ -648,15 +660,15 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
         {/* List Alat Existing */}
         <div style={{ padding: 16 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
-            Daftar Alat ({checklistTemplate.length})
+            Daftar Alat ({localTools.length})
           </div>
-          {checklistTemplate.length === 0 ? (
+          {localTools.length === 0 ? (
             <div style={{ padding: 24, textAlign: "center", color: cs.muted, fontSize: 12, fontStyle: "italic" }}>
               Belum ada alat. Tambahkan via form di atas.
             </div>
           ) : (
             <div style={{ display: "grid", gap: 6 }}>
-              {checklistTemplate.map(tool => {
+              {localTools.map(tool => {
                 const isEditing = editingTool?.originalName === tool.name;
                 return (
                   <div key={tool.name} style={{
