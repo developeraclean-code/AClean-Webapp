@@ -644,22 +644,28 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                     }
 
                     // Simpan record ke tool_bag_checks
-                    fetch(SU + "/rest/v1/tool_bag_checks", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-                      body: JSON.stringify({
-                        bag_id: bagId,
-                        session_type: sessionType,
-                        photo_url: photoR2Path,
-                        sender_phone: sender,
-                        ai_raw_response: rawText.slice(0, 2000),
-                        tools_found: toolsFound,
-                        tools_missing: toolsMissing,
-                        status: checkStatus,
-                        warning_sent: false,
-                        notes: analysisResult?.notes || (analysisResult?.photo_quality || null)
-                      })
-                    }).catch(e => console.error("[TOOL_BAG_SAVE]", e.message));
+                    try {
+                      const saveRes = await fetch(SU + "/rest/v1/tool_bag_checks", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                        body: JSON.stringify({
+                          bag_id: bagId,
+                          session_type: sessionType,
+                          photo_url: photoR2Path,
+                          sender_phone: sender,
+                          ai_raw_response: rawText.slice(0, 2000),
+                          tools_found: toolsFound,
+                          tools_missing: toolsMissing,
+                          status: checkStatus,
+                          warning_sent: false,
+                          notes: analysisResult?.notes || (analysisResult?.photo_quality || null)
+                        })
+                      });
+                      if (!saveRes.ok) {
+                        const errBody = await saveRes.text().catch(() => "");
+                        console.error("[TOOL_BAG_SAVE] HTTP", saveRes.status, errBody.slice(0, 200));
+                      }
+                    } catch(saveErr) { console.error("[TOOL_BAG_SAVE]", saveErr.message); }
 
                     // Kirim WA Warning ke Owner jika ada masalah
                     if ((checkStatus === "WARNING" || checkStatus === "CRITICAL") && FT && OP) {
