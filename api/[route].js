@@ -609,9 +609,11 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                         try {
                           const crypto = await import("crypto");
                           const ext = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg";
-                          const bagSlug = bagId.toLowerCase().replace(/\s+/g, "_");
-                          const dateStr = new Date().toISOString().slice(0,10);
-                          const r2ObjectKey = `tool-bag/${dateStr}_${bagSlug}_${sessionType}_${Date.now()}.${ext}`;
+                          const bagSlug = bagId.toLowerCase().replace(/\s+/g, "-");
+                          const now0 = new Date();
+                          const monthStr = now0.toISOString().slice(0, 7); // "2026-05"
+                          const dateStr = now0.toISOString().slice(0, 10);  // "2026-05-18"
+                          const r2ObjectKey = `tool-bag/${monthStr}/${bagSlug}/${dateStr}_${sessionType}_${Date.now()}.${ext}`;
                           const r2Host = r2Account + ".r2.cloudflarestorage.com";
                           const r2Endpoint = "https://" + r2Host + "/" + r2Bucket + "/" + r2ObjectKey;
                           const imgBuffer = Buffer.from(imgBuf);
