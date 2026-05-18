@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback, Fragment } from "react";
+import { memo, useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { cs } from "../theme/cs.js";
 
 const BAGS = Array.from({ length: 10 }, (_, i) => `Tas ${i + 1}`);
@@ -30,22 +30,31 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
 
   const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
 
+  // Stable refs untuk props yang sering re-create di parent → cegah re-fire useEffect
+  const showNotifRef = useRef(showNotif);
+  showNotifRef.current = showNotif;
+
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekEnd.getDate() + 7);
+  // Stable string key untuk minggu — cegah Date object baru tiap render trigger re-fetch
+  const weekKey = weekStart.toISOString().slice(0, 10);
 
   const loadChecks = useCallback(async () => {
     setLoading(true);
+    const start = new Date(weekKey);
+    const end = new Date(weekKey);
+    end.setDate(end.getDate() + 7);
     const { data, error } = await supabase
       .from("tool_bag_checks")
       .select("*")
-      .gte("checked_at", weekStart.toISOString())
-      .lt("checked_at", weekEnd.toISOString())
+      .gte("checked_at", start.toISOString())
+      .lt("checked_at", end.toISOString())
       .order("checked_at", { ascending: false })
       .limit(500);
     if (!error) setChecks(data || []);
-    else if (showNotif) showNotif("Gagal load data: " + error.message);
+    else if (showNotifRef.current) showNotifRef.current("Gagal load data: " + error.message);
     setLoading(false);
-  }, [supabase, weekStart, weekEnd, showNotif]);
+  }, [supabase, weekKey]);
 
   // Satu fetch untuk checklist tas yang dipilih + badge counts semua tas
   // Digabung agar tidak ada 2 request paralel saat selectedBag berubah
@@ -467,10 +476,49 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
   const [saving, setSaving] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
 
-  const handleClose = () => {
+  // Queue debounce per-tool — kumpulkan beberapa klik +/- jadi 1 UPDATE
+  const qtyQueueRef = useRef({}); // { toolName: timerId }
+  const pendingValuesRef = useRef({}); // { toolName: latestQty } — nilai final yang akan di-UPDATE
+  // Notif debounce — cegah spam re-render App saat banyak update
+  const notifTimerRef = useRef(null);
+  const queueNotif = (msg) => {
+    if (notifTimerRef.current) clearTimeout(notifTimerRef.current);
+    notifTimerRef.current = setTimeout(() => showNotif?.(msg), 300);
+  };
+
+  // Flush HANYA tool yang punya pending qty (bukan semua tools)
+  const flushPendingQty = async () => {
+    const pendingNames = Object.keys(pendingValuesRef.current);
+    if (pendingNames.length === 0) return;
+    // Cancel semua timer pending
+    Object.values(qtyQueueRef.current).forEach(t => clearTimeout(t));
+    qtyQueueRef.current = {};
+    const updates = pendingNames.map(name =>
+      supabase.from("tool_bag_checklist")
+        .update({ qty_min: pendingValuesRef.current[name] })
+        .eq("bag_id", bagId)
+        .eq("tool_name", name)
+    );
+    pendingValuesRef.current = {};
+    await Promise.allSettled(updates);
+  };
+
+  const handleClose = async () => {
+    if (notifTimerRef.current) clearTimeout(notifTimerRef.current);
+    if (Object.keys(pendingValuesRef.current).length > 0) {
+      await flushPendingQty();
+    }
     if (dirty) onChanged?.();
     onClose();
   };
+
+  useEffect(() => {
+    // Cleanup pending timers saat unmount
+    return () => {
+      Object.values(qtyQueueRef.current).forEach(t => clearTimeout(t));
+      if (notifTimerRef.current) clearTimeout(notifTimerRef.current);
+    };
+  }, []);
 
   // Tambah alat baru ke tas INI saja
   const handleAdd = async () => {
@@ -500,7 +548,7 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
 
   // Edit alat di tas INI saja
   const handleSaveEdit = async () => {
-    if (!editingTool) return;
+    if (!editingTool || saving) return;
     const newToolName = editingTool.name.trim();
     if (!newToolName) { showNotif?.("Nama alat tidak boleh kosong"); return; }
     const qty = Math.max(0, parseInt(editingTool.qty_min) || 0);
@@ -517,18 +565,29 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
     setDirty(true);
   };
 
-  // Quick adjust qty (+/-) hanya di tas INI — 0 = "tidak ada"
-  const handleQtyChange = async (tool, delta) => {
-    const newQtyVal = Math.max(0, (tool.qty_min || 1) + delta);
-    if (newQtyVal === tool.qty_min) return;
-    const { error } = await supabase.from("tool_bag_checklist")
-      .update({ qty_min: newQtyVal })
-      .eq("bag_id", bagId)
-      .eq("tool_name", tool.name);
-    if (error) { showNotif?.("Gagal update qty: " + error.message); return; }
-    showNotif?.("📦 " + tool.name + " (" + bagId + ") — qty: " + (newQtyVal === 0 ? "0 (tidak ada)" : newQtyVal));
-    setLocalTools(prev => prev.map(t => t.name === tool.name ? { ...t, qty_min: newQtyVal } : t));
+  // Quick adjust qty (+/-) — optimistic UI + debounced DB call per tool
+  // User klik 5× cepat → UI update 5×, DB call hanya 1× dengan nilai final
+  const handleQtyChange = (tool, delta) => {
+    const currentVal = pendingValuesRef.current[tool.name] ?? tool.qty_min ?? 1;
+    const newQty = Math.max(0, currentVal + delta);
+    if (newQty === currentVal) return;
+    // 1. Update UI lokal langsung (responsif)
+    setLocalTools(prev => prev.map(t => t.name === tool.name ? { ...t, qty_min: newQty } : t));
     setDirty(true);
+    // 2. Simpan nilai terbaru di ref + reset timer
+    pendingValuesRef.current[tool.name] = newQty;
+    if (qtyQueueRef.current[tool.name]) clearTimeout(qtyQueueRef.current[tool.name]);
+    qtyQueueRef.current[tool.name] = setTimeout(async () => {
+      const finalQty = pendingValuesRef.current[tool.name];
+      delete qtyQueueRef.current[tool.name];
+      delete pendingValuesRef.current[tool.name];
+      const { error } = await supabase.from("tool_bag_checklist")
+        .update({ qty_min: finalQty })
+        .eq("bag_id", bagId)
+        .eq("tool_name", tool.name);
+      if (error) showNotif?.("Gagal update qty: " + error.message);
+      else queueNotif("📦 " + tool.name + " — qty: " + (finalQty === 0 ? "0 (tidak ada)" : finalQty));
+    }, 600); // 600ms debounce — single DB call walau user klik 10× cepat
   };
 
   // Hapus alat dari tas INI saja
@@ -683,6 +742,10 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
                           onChange={e => setEditingTool({ ...editingTool, name: e.target.value })}
                           style={{ flex: 1, background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 6, padding: "5px 10px", color: cs.text, fontSize: 13, outline: "none" }}
                           autoFocus
+                          autoComplete="off"
+                          spellCheck={false}
+                          data-1p-ignore
+                          data-lpignore="true"
                         />
                         <div style={{ display: "flex", alignItems: "center", gap: 2, background: cs.card, border: `1px solid ${(editingTool.qty_min ?? 1) === 0 ? cs.red : cs.border}`, borderRadius: 6, padding: 2 }}>
                           <button onClick={() => setEditingTool({ ...editingTool, qty_min: Math.max(0, (editingTool.qty_min ?? 1) - 1) })} disabled={(editingTool.qty_min ?? 1) <= 0}
