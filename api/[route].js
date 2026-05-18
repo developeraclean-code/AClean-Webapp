@@ -694,15 +694,27 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                     if (FT) {
                       let konfirMsg;
                       const updateLabel = existingId ? " _(diperbarui)_" : "";
+                      const sessionLabel = sessionType === "pagi" ? "Pagi" : "Pulang";
+
+                      // Bagian 1: List alat sesuai checklist setting
+                      const checklistList = checklist.map(t => `${t.is_priority ? "🔴" : "⚪"} ${t.tool_name}${t.is_priority ? " (WAJIB)" : ""}`).join("\n");
+
+                      // Bagian 2: Alat terdeteksi AI
+                      const foundList = toolsFound.length > 0
+                        ? toolsFound.map(t => `✅ ${t.name}`).join("\n")
+                        : "_Tidak ada alat yang terdeteksi_";
+
+                      // Bagian 3: Alat tidak terdeteksi
+                      const priorityMissing = toolsMissing.filter(t => t.is_priority).map(t => `🔴 ${t.name} (WAJIB)`).join("\n");
+                      const normalMissing = toolsMissing.filter(t => !t.is_priority).map(t => `🟡 ${t.name}`).join("\n");
+                      const missingList = [priorityMissing, normalMissing].filter(Boolean).join("\n") || "_Semua alat lengkap!_";
+
                       if (checkStatus === "ERROR") {
-                        konfirMsg = `⚠️ Foto tas tidak bisa dianalisa (${analysisResult?.photo_quality || "blur/gelap"}). Mohon kirim ulang foto yang lebih jelas, terang, dan dekat. Terima kasih!`;
+                        konfirMsg = `⚠️ Foto tas tidak bisa dianalisa (${analysisResult?.photo_quality || "blur/gelap"}).\n\n📝 *Note:* Foto ulang yang jelas agar terbaca dengan benar. Pastikan pencahayaan cukup, dekat, dan semua alat terlihat. Terima kasih!`;
                       } else if (checkStatus === "OK") {
-                        konfirMsg = `✅ ${bagId} (${sessionType}) sudah dicek — semua alat lengkap! 👍${updateLabel}`;
+                        konfirMsg = `✅ *${bagId} — ${sessionLabel}*${updateLabel}\nSemua alat lengkap! 👍\n\n📋 *List Alat ${bagId}:*\n${checklistList}\n\n🔍 *Alat Terdeteksi AI:*\n${foundList}`;
                       } else {
-                        const priorityMissing = toolsMissing.filter(t => t.is_priority).map(t => `🔴 ${t.name} (WAJIB)`).join("\n");
-                        const normalMissing = toolsMissing.filter(t => !t.is_priority).map(t => `🟡 ${t.name}`).join("\n");
-                        const missingList = [priorityMissing, normalMissing].filter(Boolean).join("\n");
-                        konfirMsg = `📸 Foto ${bagId} diterima${updateLabel}.\n\n*${toolsMissing.length} alat tidak terdeteksi:*\n${missingList}\n\nOwner sudah dinotifikasi.`;
+                        konfirMsg = `📸 *${bagId} — ${sessionLabel}*${updateLabel}\n\n📋 *List Alat ${bagId}:*\n${checklistList}\n\n🔍 *Alat Terdeteksi AI:*\n${foundList}\n\n❌ *Alat Tidak Terdeteksi AI:*\n${missingList}\n\n📝 *Note:* Foto ulang yang jelas agar terbaca dengan benar. Pastikan semua alat terlihat di foto.`;
                       }
                       await fetch("https://api.fonnte.com/send", {
                         method: "POST",
