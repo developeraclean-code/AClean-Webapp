@@ -532,8 +532,8 @@ export default async function handler(req, res) {
 
                     const TOOL_VISUAL_GUIDE = `
 PANDUAN VISUAL ALAT (gunakan untuk identifikasi):
-- Tang Ampere: tang berbentuk seperti tang biasa tapi ada kepala/rahang bulat besar di tengah (clamp meter) untuk mengukur arus, biasanya ada layar LCD digital di badan tang, warna dominan kuning/hitam/merah
-- Manifold: alat dengan 2-3 selang warna merah, biru, kuning/hijau terhubung ke blok logam dengan 2-3 gauge/manometer bulat besar, dipakai untuk mengukur tekanan freon AC
+- Tang Ampere Value: tang merk Value berbentuk seperti tang biasa tapi ada kepala/rahang bulat besar di tengah (clamp meter) untuk mengukur arus, biasanya ada layar LCD digital di badan tang, warna dominan kuning/hitam/merah — jika terlihat clamp meter/tang ampere apapun merknya, catat sebagai "Tang Ampere Value"
+- Manifold Value: alat merk Value dengan 2-3 selang warna merah, biru, kuning/hijau terhubung ke blok logam dengan 2-3 gauge/manometer bulat besar, dipakai untuk mengukur tekanan freon AC — jika terlihat manifold gauge apapun merknya, catat sebagai "Manifold Value"
 - Kunci Inggris Ukuran 10: kunci pas/wrench logam kecil ukuran kepala ~10mm, rahang bisa diputar, lebih kecil dari kunci inggris ukuran 8 yang lebih besar
 - Kunci Inggris Ukuran 8: kunci pas/wrench logam ukuran kepala ~8mm, lebih besar dari ukuran 10 — PERHATIAN: ukuran 8 justru lebih besar fisiknya dari ukuran 10 karena nomor merujuk ke ukuran baut bukan ukuran kunci
 - Kunci L Set: set kunci berbentuk huruf L (hex/allen key), biasanya dalam satu set/pouch berisi banyak ukuran dari kecil ke besar, bentuk silinder panjang dengan ujung segi enam
