@@ -530,20 +530,51 @@ export default async function handler(req, res) {
                     ).join("\n");
                     const absentItems = checklist.filter(t => (t.qty_min ?? 1) === 0);
 
+                    const TOOL_VISUAL_GUIDE = `
+PANDUAN VISUAL ALAT (gunakan untuk identifikasi):
+- Tang Ampere: tang berbentuk seperti tang biasa tapi ada kepala/rahang bulat besar di tengah (clamp meter) untuk mengukur arus, biasanya ada layar LCD digital di badan tang, warna dominan kuning/hitam/merah
+- Manifold: alat dengan 2-3 selang warna merah, biru, kuning/hijau terhubung ke blok logam dengan 2-3 gauge/manometer bulat besar, dipakai untuk mengukur tekanan freon AC
+- Kunci Inggris Ukuran 10: kunci pas/wrench logam kecil ukuran kepala ~10mm, rahang bisa diputar, lebih kecil dari kunci inggris ukuran 8 yang lebih besar
+- Kunci Inggris Ukuran 8: kunci pas/wrench logam ukuran kepala ~8mm, lebih besar dari ukuran 10 — PERHATIAN: ukuran 8 justru lebih besar fisiknya dari ukuran 10 karena nomor merujuk ke ukuran baut bukan ukuran kunci
+- Kunci L Set: set kunci berbentuk huruf L (hex/allen key), biasanya dalam satu set/pouch berisi banyak ukuran dari kecil ke besar, bentuk silinder panjang dengan ujung segi enam
+- Palu: gagang panjang kayu/plastik dengan kepala logam berat di ujung, digunakan untuk memukul
+- Pahat: batang logam panjang lurus dengan ujung pipih/runcing, lebih kecil dari palu, biasanya 20-30cm
+- Tang Lancip: tang dengan rahang panjang runcing/lancip seperti jarum di ujungnya, untuk memegang benda kecil di tempat sempit
+- Tang Kombinasi: tang serbaguna dengan rahang bergerigi di bagian depan dan pemotong kawat di tengah, ukuran sedang
+- Tang Potong: tang dengan rahang berbentuk V tanpa gigi, khusus untuk memotong kawat/kabel, ujung rahang tajam/rata
+- Obeng Standar: obeng kepala plus/bintang (+) berukuran sedang-panjang, gagang biasanya merah/kuning/hitam
+- Obeng Cebol: obeng pendek/kecil kepala plus (+) untuk ruang sempit, panjang total hanya 10-15cm
+- Obeng Minus: obeng kepala minus/flat (-) ujung pipih lurus, gagang biasanya berwarna
+- Water Pass: alat pengukur kerataan berbentuk tabung panjang (30-60cm) dengan gelembung udara di dalam tabung kaca di tengahnya, berwarna kuning/hijau/silver
+- Meteran Roll 5 Meter: pita ukur dalam kotak plastik kecil, bisa ditarik dan otomatis menggulung kembali, biasanya kuning atau oranye
+- Flaring Tool: alat khusus pipa tembaga terdiri dari klem/ragum logam dengan lubang berbagai ukuran dan cone/bor kerucut terpisah, untuk membuat flare di ujung pipa AC
+- Cutter Pipa AC: pemotong pipa berbentuk lingkaran kecil dengan roda pemotong, cara pakai diputar mengelilingi pipa, ukuran kecil genggaman satu tangan
+- Mata Las Hicook: tabung/botol kecil gas las portabel dengan selang kecil dan torch/nozel pembakar di ujung, atau kepala torch-nya saja, digunakan untuk menyolder pipa
+- Kunci Pas 10: kunci pas/wrench berbentuk U di kedua ujung (double end), salah satu ujung ukuran 10mm, logam silver/chrome, bentuk lurus
+- Kunci Pas 12: kunci pas/wrench double end salah satu ujung ukuran 12mm, sedikit lebih besar dari kunci pas 10
+- Kabel Roll: gulungan kabel listrik/extension cord panjang dengan stop kontak di ujungnya, digulung rapi berbentuk lingkaran/koil besar
+- Test Pen Kecil: obeng kecil transparan dengan lampu indikator di dalamnya untuk mendeteksi arus listrik, ukuran kecil seperti pulpen
+- Gergaji Besi: gergaji dengan bingkai logam berbentuk U/C dan bilah bergerigi tipis di tengahnya, digunakan untuk memotong logam/pipa
+- Cutter Standar: pisau cutter biasa dengan bilah bisa digeser masuk-keluar dari gagang plastik, ukuran standar genggaman tangan`;
+
                     const visionPrompt = `Kamu adalah quality control untuk tim teknisi AC. Analisa foto tas alat teknisi ini dengan teliti.
 
 DAFTAR ALAT YANG HARUS ADA DI TAS (cek keberadaan & jumlahnya):
 ${toolListText}
 
-${absentItems.length > 0 ? `ALAT YANG SUDAH DIKETAHUI TIDAK ADA (ABAIKAN — jangan cari di foto):
+${absentItems.length > 0 ? `ALAT YANG SUDAH DIKETAHUI TIDAK ADA DI TAS INI (ABAIKAN — jangan cari di foto):
 ${absentItems.map(t => `- ${t.tool_name}`).join("\n")}
 
-` : ""}INSTRUKSI:
-1. Identifikasi setiap alat yang TERLIHAT JELAS di foto dan hitung jumlahnya
-2. Bandingkan jumlah ditemukan vs jumlah yang dibutuhkan (qty_min)
-3. Tandai sebagai hilang jika tidak ditemukan ATAU jumlahnya kurang dari yang dibutuhkan
-4. Abaikan alat yang sudah ada di daftar "TIDAK ADA" di atas
-5. Jika foto buram, gelap, atau terlalu jauh sehingga tidak bisa dianalisa → status "foto_tidak_layak"
+` : ""}${TOOL_VISUAL_GUIDE}
+
+INSTRUKSI:
+1. Gunakan panduan visual di atas untuk mengidentifikasi setiap alat dengan benar
+2. Identifikasi setiap alat yang TERLIHAT JELAS di foto dan hitung jumlahnya
+3. Bandingkan jumlah ditemukan vs jumlah yang dibutuhkan (qty_min)
+4. Tandai sebagai hilang jika tidak ditemukan ATAU jumlahnya kurang dari yang dibutuhkan
+5. Abaikan alat yang sudah ada di daftar "TIDAK ADA DI TAS INI" di atas
+6. Jika foto buram, gelap, atau terlalu jauh sehingga tidak bisa dianalisa → status "foto_tidak_layak"
+7. Gunakan confidence "high" hanya jika yakin betul, "medium" jika cukup yakin, "low" jika tidak yakin
 
 FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 {
