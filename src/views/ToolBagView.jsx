@@ -47,35 +47,30 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
     setLoading(false);
   }, [supabase, weekStart, weekEnd, showNotif]);
 
-  // Load checklist khusus untuk tas yang dipilih
-  const loadBagChecklist = useCallback(async (bagId) => {
+  // Satu fetch untuk checklist tas yang dipilih + badge counts semua tas
+  // Digabung agar tidak ada 2 request paralel saat selectedBag berubah
+  const loadChecklistData = useCallback(async (bagId) => {
     if (!bagId) { setBagChecklist([]); return; }
-    const { data, error } = await supabase
-      .from("tool_bag_checklist")
-      .select("tool_name,is_priority,qty_min")
-      .eq("bag_id", bagId)
-      .order("is_priority", { ascending: false })
-      .order("tool_name");
-    if (!error) {
-      setBagChecklist((data || []).map(t => ({ name: t.tool_name, is_priority: t.is_priority, qty_min: t.qty_min })));
+    const [checklistRes, countsRes] = await Promise.all([
+      supabase.from("tool_bag_checklist")
+        .select("tool_name,is_priority,qty_min")
+        .eq("bag_id", bagId)
+        .order("is_priority", { ascending: false })
+        .order("tool_name"),
+      supabase.from("tool_bag_checklist").select("bag_id"),
+    ]);
+    if (!checklistRes.error) {
+      setBagChecklist((checklistRes.data || []).map(t => ({ name: t.tool_name, is_priority: t.is_priority, qty_min: t.qty_min })));
     }
-  }, [supabase]);
-
-  // Hitung jumlah alat per tas — untuk badge di grid
-  const loadBagToolCounts = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("tool_bag_checklist")
-      .select("bag_id");
-    if (!error) {
+    if (!countsRes.error) {
       const counts = {};
-      (data || []).forEach(r => { counts[r.bag_id] = (counts[r.bag_id] || 0) + 1; });
+      (countsRes.data || []).forEach(r => { counts[r.bag_id] = (counts[r.bag_id] || 0) + 1; });
       setBagToolCounts(counts);
     }
   }, [supabase]);
 
   useEffect(() => { loadChecks(); }, [loadChecks]);
-  useEffect(() => { loadBagChecklist(selectedBag); }, [selectedBag, loadBagChecklist]);
-  useEffect(() => { loadBagToolCounts(); }, [loadBagToolCounts]);
+  useEffect(() => { loadChecklistData(selectedBag); }, [selectedBag, loadChecklistData]);
 
   // Hitung status per tas untuk minggu ini
   const bagSummary = BAGS.map(bagId => {
@@ -236,7 +231,7 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
           supabase={supabase}
           showNotif={showNotif}
           showConfirm={showConfirm}
-          onChecklistChanged={() => { loadBagChecklist(selectedBag); loadBagToolCounts(); }}
+          onChecklistChanged={() => { loadChecklistData(selectedBag); }}
         />
       )}
 
