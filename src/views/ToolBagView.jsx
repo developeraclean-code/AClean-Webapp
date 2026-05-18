@@ -481,7 +481,7 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
   const handleAdd = async () => {
     if (!newName.trim()) { showNotif?.("Nama alat wajib diisi"); return; }
     const name = newName.trim();
-    if (checklistTemplate.some(t => t.name.toLowerCase() === name.toLowerCase())) {
+    if (localTools.some(t => t.name.toLowerCase() === name.toLowerCase())) {
       showNotif?.("Alat sudah ada di " + bagId);
       return;
     }
@@ -569,7 +569,7 @@ function ManageChecklistModal({ bagId, supabase, checklistTemplate, onClose, onC
       .select("tool_name,is_priority,qty_min")
       .eq("bag_id", sourceBagId);
     if (srcErr || !srcTools?.length) { showNotif?.("Gagal salin: tas sumber kosong"); return; }
-    const existing = new Set(checklistTemplate.map(t => t.name.toLowerCase()));
+    const existing = new Set(localTools.map(t => t.name.toLowerCase()));
     const newRows = srcTools
       .filter(t => !existing.has(t.tool_name.toLowerCase()))
       .map(t => ({ bag_id: bagId, tool_name: t.tool_name, is_priority: t.is_priority, qty_min: t.qty_min }));
