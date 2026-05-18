@@ -699,7 +699,10 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       } else if (checkStatus === "OK") {
                         konfirMsg = `✅ ${bagId} (${sessionType}) sudah dicek — semua alat lengkap! 👍${updateLabel}`;
                       } else {
-                        konfirMsg = `📸 Foto ${bagId} diterima${updateLabel}. ${toolsMissing.length} alat tidak terdeteksi — Owner sudah dinotifikasi.`;
+                        const priorityMissing = toolsMissing.filter(t => t.is_priority).map(t => `🔴 ${t.name} (WAJIB)`).join("\n");
+                        const normalMissing = toolsMissing.filter(t => !t.is_priority).map(t => `🟡 ${t.name}`).join("\n");
+                        const missingList = [priorityMissing, normalMissing].filter(Boolean).join("\n");
+                        konfirMsg = `📸 Foto ${bagId} diterima${updateLabel}.\n\n*${toolsMissing.length} alat tidak terdeteksi:*\n${missingList}\n\nOwner sudah dinotifikasi.`;
                       }
                       await fetch("https://api.fonnte.com/send", {
                         method: "POST",
