@@ -492,23 +492,19 @@ export default async function handler(req, res) {
             const bagId = toolBagCaption.bagId;
             const sessionType = toolBagCaption.sessionType;
 
-            // Cek duplikat: skip jika sudah ada record untuk bag+sesi dalam 30 menit terakhir
+            // Cek apakah sudah ada record untuk bag+sesi hari ini (untuk di-overwrite)
+            const todayStart = new Date(); todayStart.setHours(0,0,0,0);
             const dupCheckRes = await fetch(
               SU + "/rest/v1/tool_bag_checks?bag_id=eq." + encodeURIComponent(bagId) +
               "&session_type=eq." + sessionType +
-              "&checked_at=gte." + encodeURIComponent(new Date(Date.now() - 30*60*1000).toISOString()) +
+              "&checked_at=gte." + encodeURIComponent(todayStart.toISOString()) +
               "&select=id&limit=1",
               { headers: { apikey: SK, Authorization: "Bearer " + SK } }
             ).catch(() => null);
-            const isDuplicate = dupCheckRes?.ok && (await dupCheckRes.json()).length > 0;
+            const dupRows = dupCheckRes?.ok ? await dupCheckRes.json() : [];
+            const existingId = dupRows.length > 0 ? dupRows[0].id : null;
 
-            if (isDuplicate) {
-              if (FT) fetch("https://api.fonnte.com/send", {
-                method: "POST",
-                headers: { Authorization: FT, "Content-Type": "application/json" },
-                body: JSON.stringify({ target: sender, message: `ℹ️ Foto ${bagId} (${sessionType}) sudah diterima sebelumnya. Terima kasih!`, delay: "1", countryCode: "62" })
-              }).catch(()=>{});
-            } else {
+            {
               // Ambil checklist dari DB
               const checklistRes = await fetch(
                 SU + "/rest/v1/tool_bag_checklist?bag_id=eq." + encodeURIComponent(bagId) +
@@ -645,23 +641,28 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       }
                     }
 
-                    // Simpan record ke tool_bag_checks
+                    // Simpan record ke tool_bag_checks — UPDATE jika sudah ada hari ini, INSERT jika baru
                     try {
-                      const saveRes = await fetch(SU + "/rest/v1/tool_bag_checks", {
-                        method: "POST",
+                      const savePayload = {
+                        photo_url: photoR2Path,
+                        sender_phone: sender,
+                        ai_raw_response: rawText.slice(0, 2000),
+                        tools_found: toolsFound,
+                        tools_missing: toolsMissing,
+                        status: checkStatus,
+                        warning_sent: false,
+                        checked_at: new Date().toISOString(),
+                        notes: analysisResult?.notes || (analysisResult?.photo_quality || null)
+                      };
+                      const saveUrl = existingId
+                        ? SU + "/rest/v1/tool_bag_checks?id=eq." + existingId
+                        : SU + "/rest/v1/tool_bag_checks";
+                      const saveMethod = existingId ? "PATCH" : "POST";
+                      if (!existingId) { savePayload.bag_id = bagId; savePayload.session_type = sessionType; }
+                      const saveRes = await fetch(saveUrl, {
+                        method: saveMethod,
                         headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-                        body: JSON.stringify({
-                          bag_id: bagId,
-                          session_type: sessionType,
-                          photo_url: photoR2Path,
-                          sender_phone: sender,
-                          ai_raw_response: rawText.slice(0, 2000),
-                          tools_found: toolsFound,
-                          tools_missing: toolsMissing,
-                          status: checkStatus,
-                          warning_sent: false,
-                          notes: analysisResult?.notes || (analysisResult?.photo_quality || null)
-                        })
+                        body: JSON.stringify(savePayload)
                       });
                       if (!saveRes.ok) {
                         const errBody = await saveRes.text().catch(() => "");
@@ -692,12 +693,13 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                     // Konfirmasi balik ke teknisi
                     if (FT) {
                       let konfirMsg;
+                      const updateLabel = existingId ? " _(diperbarui)_" : "";
                       if (checkStatus === "ERROR") {
                         konfirMsg = `⚠️ Foto tas tidak bisa dianalisa (${analysisResult?.photo_quality || "blur/gelap"}). Mohon kirim ulang foto yang lebih jelas, terang, dan dekat. Terima kasih!`;
                       } else if (checkStatus === "OK") {
-                        konfirMsg = `✅ ${bagId} (${sessionType}) sudah dicek — semua alat lengkap! 👍`;
+                        konfirMsg = `✅ ${bagId} (${sessionType}) sudah dicek — semua alat lengkap! 👍${updateLabel}`;
                       } else {
-                        konfirMsg = `📸 Foto ${bagId} diterima. ${toolsMissing.length} alat tidak terdeteksi — Owner sudah dinotifikasi.`;
+                        konfirMsg = `📸 Foto ${bagId} diterima${updateLabel}. ${toolsMissing.length} alat tidak terdeteksi — Owner sudah dinotifikasi.`;
                       }
                       await fetch("https://api.fonnte.com/send", {
                         method: "POST",
