@@ -2991,11 +2991,22 @@ ${photoPageHTML}
               if (prev[0]?.phone === phone) return [...prev, payload.new];
               return prev;
             });
-            fetchWaConversations(supabase, 150)
-              .then(({ data, error }) => { if (data && !error) setWaConversations(data); });
-
-            // Push notification + suara saat WA baru dari customer
+            // Update state lokal tanpa re-fetch — hemat egress DB
             const newMsg = payload.new;
+            if (newMsg?.phone) {
+              setWaConversations(prev => {
+                const phone = newMsg.phone;
+                const idx = prev.findIndex(c => c.phone === phone);
+                const now = new Date().toISOString();
+                if (idx >= 0) {
+                  const updated = { ...prev[idx], last_message: newMsg.message || prev[idx].last_message, last_reply: newMsg.role === "bot" ? (newMsg.message || prev[idx].last_reply) : prev[idx].last_reply, updated_at: now, unread: newMsg.role === "customer" ? (prev[idx].unread || 0) + 1 : prev[idx].unread };
+                  const rest = prev.filter((_, i) => i !== idx);
+                  return [updated, ...rest];
+                }
+                return [{ phone, last_message: newMsg.message, last_reply: null, updated_at: now, unread: newMsg.role === "customer" ? 1 : 0, id: newMsg.phone }, ...prev.slice(0, 149)];
+              });
+            }
+
             if (newMsg?.role === "customer") {
               // 1. Suara — buat AudioContext inline (tidak perlu file eksternal)
               try {
