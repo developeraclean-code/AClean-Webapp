@@ -371,11 +371,20 @@ export default async function handler(req, res) {
       }
 
       // ── DETECT MEDIA MESSAGE (Fonnte image/document webhook) ──
-      // Fonnte kirim url gambar di field "message" sebagai URL string, atau di field "url"
-      const fonnteMediaUrl = (wb.type === "image" || wb.type === "document") && wb.url ? wb.url : null;
+      // C-3 fix: whitelist URL hanya dari domain Fonnte — blokir SSRF ke internal/arbitrary URL
+      const isSafeFonnteUrl = (url) => {
+        if (!url || typeof url !== "string") return false;
+        try {
+          const u = new URL(url);
+          // Hanya izinkan HTTPS dari domain fonnte.com
+          return u.protocol === "https:" && (u.hostname === "api.fonnte.com" || u.hostname.endsWith(".fonnte.com"));
+        } catch { return false; }
+      };
+      const fonnteMediaUrl = (wb.type === "image" || wb.type === "document") && isSafeFonnteUrl(wb.url) ? wb.url : null;
       const isMediaMessage = wb.type === "image" || wb.type === "document" ||
         (typeof message === "string" && /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|pdf)(\?|$)/i.test(message));
-      const mediaUrl = fonnteMediaUrl || (isMediaMessage ? message : null);
+      // Untuk mediaUrl dari message field, juga wajib domain Fonnte
+      const mediaUrl = fonnteMediaUrl || (isMediaMessage && isSafeFonnteUrl(message) ? message : null);
 
       // ── DETECT TOOL BAG PHOTO ──
       // Caption format: "Pagi Tas 1" / "Pulang Tas 5" / "Pagi tas1" — angka 1-10
@@ -1791,11 +1800,32 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const SK = process.env.SUPABASE_SERVICE_KEY;
       if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
 
-      // ── Role check: verifikasi caller adalah Owner atau Admin ──
-      // Menggunakan callerRole dari frontend (sudah divalidasi INTERNAL_API_SECRET di atas).
-      // Tidak pakai callerUserId karena session lama bisa tidak punya UUID.
-      const { action, userId, name, email, password, role, phone, callerRole: rawCallerRole } = req.body || {};
-      const callerRole = (rawCallerRole || "").trim();
+      // ── Role check: verifikasi caller dari DB, bukan dari body (C-2 fix) ──
+      const { action, userId, name, email, password, role, phone } = req.body || {};
+
+      // Ambil Supabase JWT dari Authorization header untuk identifikasi caller
+      const bearerToken = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+      let callerRole = "";
+      if (bearerToken) {
+        try {
+          // Decode JWT payload (tanpa verify — verify sudah dilakukan oleh validateInternalToken di atas via X-Internal-Token)
+          // Ambil sub (user ID) dari JWT lalu query user_profiles
+          const parts = bearerToken.split(".");
+          if (parts.length === 3) {
+            const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+            const callerId = payload.sub;
+            if (callerId) {
+              const profRes = await fetch(`${SU}/rest/v1/user_profiles?id=eq.${encodeURIComponent(callerId)}&select=role&limit=1`, {
+                headers: { apikey: SK, Authorization: "Bearer " + SK }
+              });
+              const profData = profRes.ok ? await profRes.json() : [];
+              callerRole = profData[0]?.role ? ((profData[0].role).charAt(0).toUpperCase() + (profData[0].role).slice(1).toLowerCase()) : "";
+            }
+          }
+        } catch (jwtErr) {
+          console.warn("[manage-user] JWT decode error:", jwtErr.message);
+        }
+      }
 
       if (!["Owner", "Admin"].includes(callerRole)) {
         return res.status(403).json({ error: "Forbidden: hanya Owner/Admin yang bisa manage user" });
@@ -1895,7 +1925,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
     // Dipanggil oleh halaman portal customer — tidak butuh auth, hanya token customer
     if (route === "customer-status") {
       if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
-      if (!checkRateLimit(req, "customer-status", 30)) return res.status(429).json({ error: "Terlalu banyak request, coba lagi sebentar" });
+      if (!await checkRateLimit(req, res, 30, 60000)) return;
       const token = String(req.query.token || "").trim();
       if (!token) return res.status(400).json({ error: "Token diperlukan" });
 
@@ -1913,6 +1943,9 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 
       const tokRow = tokRows[0];
       const isExpired = new Date(tokRow.expires_at) < new Date();
+
+      // H-3 fix: block expired token di backend, jangan hanya informatif
+      if (isExpired) return res.status(401).json({ error: "Link portal sudah expired. Minta link baru ke AClean.", code: "TOKEN_EXPIRED" });
 
       // Update last_used (fire and forget)
       fetch(`${SU}/rest/v1/customer_tokens?id=eq.${tokRow.id}`, {
@@ -1937,7 +1970,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const customerName = orders[0]?.customer || tokRow.customer_name || "";
 
       return res.status(200).json({
-        expired: isExpired,
+        expired: false,
         phone,
         customer_name: customerName,
         orders,
@@ -1950,7 +1983,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
     // ── SUBMIT-RATING (PUBLIC — dari portal customer) ──
     if (route === "submit-rating") {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-      if (!checkRateLimit(req, "submit-rating", 10)) return res.status(429).json({ error: "Terlalu banyak request" });
+      if (!await checkRateLimit(req, res, 10, 60000)) return;
       const b = req.body || {};
       const token = String(b.token || "").trim();
       const rating = parseInt(b.rating);
@@ -2026,7 +2059,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
     // ── CUSTOMER-VOUCHERS (PUBLIC — dari portal customer) ──
     if (route === "customer-vouchers") {
       if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
-      if (!checkRateLimit(req, "customer-vouchers", 20)) return res.status(429).json({ error: "Terlalu banyak request" });
+      if (!await checkRateLimit(req, res, 20, 60000)) return;
       const token = String(req.query.token || "").trim();
       if (!token) return res.status(400).json({ error: "Token diperlukan" });
 
