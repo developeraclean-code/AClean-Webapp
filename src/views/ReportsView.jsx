@@ -90,8 +90,10 @@ const paidInv = allInv.filter(i => i.status === "PAID" && filterInvByPeriod(i));
 const unpaidInv = allInv.filter(i => i.status === "UNPAID");
 const overdueInv = allInv.filter(i => i.status === "OVERDUE");
 const pendingInv = allInv.filter(i => i.status === "PENDING_APPROVAL");
+// Passthrough unit AC: ac_unit_sale & quotation_converted (keduanya jual unit AC, harga unit tidak masuk omset AClean)
+const isAcSaleInvoice = (i) => i.invoice_type === "ac_unit_sale" || i.invoice_type === "quotation_converted";
 const totalRevenue = paidInv.reduce((a, b) => {
-  const passthrough = b.invoice_type === "ac_unit_sale" ? (b.unit_ac_amount || 0) : 0;
+  const passthrough = isAcSaleInvoice(b) ? (b.unit_ac_amount || 0) : 0;
   return a + (b.total || 0) - passthrough;
 }, 0);
 const totalLabor = paidInv.reduce((a, b) => a + (b.labor || 0), 0);
@@ -114,8 +116,8 @@ const completionRate = ordersAll > 0 ? Math.round(ordersDone / ordersAll * 100) 
 const avgOrderVal = paidInv.length > 0 ? Math.round(totalRevenue / paidInv.length) : 0;
 
 // ── Revenue per layanan (periode ini) ──
-// Untuk ac_unit_sale: kurangi unit_ac_amount (passthrough) agar revenue Install hanya hitung paket+addon
-const effRevenue = (i) => (i.total || 0) - (i.invoice_type === "ac_unit_sale" ? (i.unit_ac_amount || 0) : 0);
+// Untuk ac_unit_sale & quotation_converted: kurangi unit_ac_amount (passthrough) agar revenue Install hanya hitung paket+addon
+const effRevenue = (i) => (i.total || 0) - (isAcSaleInvoice(i) ? (i.unit_ac_amount || 0) : 0);
 const revBreakdown = [
   ["Cleaning", paidInv.filter(i => (i.service || "").toLowerCase().includes("cleaning")).reduce((a, b) => a + effRevenue(b), 0), cs.accent, paidInv.filter(i => (i.service || "").toLowerCase().includes("cleaning")).length],
   ["Install", paidInv.filter(i => (i.service || "").toLowerCase().includes("install")).reduce((a, b) => a + effRevenue(b), 0), cs.green, paidInv.filter(i => (i.service || "").toLowerCase().includes("install")).length],

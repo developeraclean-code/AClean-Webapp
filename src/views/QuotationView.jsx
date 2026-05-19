@@ -126,6 +126,7 @@ export default function QuotationView({
         qty:         item.qty || 1,
         unit_price:  item.unit_price || 0,
         subtotal:    item.subtotal || (item.qty * item.unit_price) || 0,
+        satuan:      item.satuan || (item.item_type === "unit_ac" ? "Unit" : null),
         is_passthrough: item.item_type === "unit_ac",
       }));
       if (items.length > 0) {

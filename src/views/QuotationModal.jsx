@@ -64,7 +64,8 @@ const emptyUnit = () => ({
   qty: 1, harga_satuan: 0, subtotal: 0,
 });
 
-const emptyJasa = () => ({ _id: Date.now() + Math.random(), nama: "", qty: 1, harga: 0 });
+const SATUAN_OPT = ["Unit", "Meter", "Roll", "Set", "Pcs", "Lot", "Hari", "Jam"];
+const emptyJasa = () => ({ _id: Date.now() + Math.random(), nama: "", qty: 1, harga: 0, satuan: "Unit" });
 const emptyMat  = () => ({ _id: Date.now() + Math.random(), nama: "", qty: 1, harga: 0, satuan: "Unit" });
 
 export default function QuotationModal({
@@ -109,7 +110,7 @@ export default function QuotationModal({
   const [jasaItems, setJasaItems] = useState(() => {
     if (isEdit) {
       const items = (editData.items || []).filter(i => i.item_type === "jasa");
-      return items.length > 0 ? items.map(j => ({ _id: Math.random(), nama: j.description, qty: j.qty, harga: j.unit_price })) : [];
+      return items.length > 0 ? items.map(j => ({ _id: Math.random(), nama: j.description, qty: j.qty, harga: j.unit_price, satuan: j.satuan || "Unit" })) : [];
     }
     return [];
   });
@@ -285,6 +286,7 @@ export default function QuotationModal({
         qty: Number(j.qty) || 1,
         unit_price: Number(j.harga) || 0,
         subtotal: (Number(j.qty) || 1) * (Number(j.harga) || 0),
+        satuan: j.satuan || "Unit",
       });
     });
     addonItems.forEach(a => {
@@ -578,7 +580,7 @@ export default function QuotationModal({
                         <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid " + cs.border, borderRadius: 8, background: cs.surface, marginBottom: 6 }}>
                           {filteredJasa.slice(0, 20).map((p, i) => (
                             <div key={i} onClick={() => {
-                              setJasaItems(prev => [...prev, { _id: Math.random(), nama: p.nama, qty: 1, harga: p.harga }]);
+                              setJasaItems(prev => [...prev, { _id: Math.random(), nama: p.nama, qty: 1, harga: p.harga, satuan: p.satuan || "Unit" }]);
                               setJasaSearch(""); setShowJasaPicker(false);
                             }} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, color: cs.text, borderBottom: "1px solid " + cs.border + "33" }}>
                               {p.nama} — {fmt(p.harga)}/{p.satuan}
@@ -591,11 +593,15 @@ export default function QuotationModal({
                       )}
                     </div>
                     {jasaItems.map((j, idx) => (
-                      <div key={j._id} style={{ display: "grid", gridTemplateColumns: "1fr 60px 120px auto", gap: 6, alignItems: "center" }}>
+                      <div key={j._id} style={{ display: "grid", gridTemplateColumns: "1fr 56px 78px 110px auto", gap: 6, alignItems: "center" }}>
                         <input value={j.nama} onChange={e => setJasaItems(p => p.map((x, i) => i === idx ? { ...x, nama: e.target.value } : x))}
                           style={inp} placeholder="Nama jasa..." />
                         <input type="number" min="1" value={j.qty} onChange={e => setJasaItems(p => p.map((x, i) => i === idx ? { ...x, qty: Number(e.target.value) } : x))}
                           style={inp} />
+                        <select value={j.satuan || "Unit"} onChange={e => setJasaItems(p => p.map((x, i) => i === idx ? { ...x, satuan: e.target.value } : x))}
+                          style={inp}>
+                          {SATUAN_OPT.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
                         <input type="number" min="0" value={j.harga || ""} onChange={e => setJasaItems(p => p.map((x, i) => i === idx ? { ...x, harga: Number(e.target.value) } : x))}
                           style={inp} placeholder="Harga" />
                         <button onClick={() => setJasaItems(p => p.filter((_, i) => i !== idx))}
@@ -636,11 +642,15 @@ export default function QuotationModal({
                 {/* Item rows */}
                 <div style={{ display: "grid", gap: 6 }}>
                   {addonItems.map((a, idx) => (
-                    <div key={a._id} style={{ display: "grid", gridTemplateColumns: "1fr 60px 120px auto", gap: 6, alignItems: "center" }}>
+                    <div key={a._id} style={{ display: "grid", gridTemplateColumns: "1fr 56px 78px 110px auto", gap: 6, alignItems: "center" }}>
                       <input value={a.nama} onChange={e => setAddonItems(p => p.map((x, i) => i === idx ? { ...x, nama: e.target.value } : x))}
                         style={inp} placeholder="Material..." />
                       <input type="number" min="1" value={a.qty} onChange={e => setAddonItems(p => p.map((x, i) => i === idx ? { ...x, qty: Number(e.target.value) } : x))}
                         style={inp} />
+                      <select value={a.satuan || "Unit"} onChange={e => setAddonItems(p => p.map((x, i) => i === idx ? { ...x, satuan: e.target.value } : x))}
+                        style={inp}>
+                        {SATUAN_OPT.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
                       <input type="number" min="0" value={a.harga || ""} onChange={e => setAddonItems(p => p.map((x, i) => i === idx ? { ...x, harga: Number(e.target.value) } : x))}
                         style={inp} placeholder="Harga" />
                       <button onClick={() => setAddonItems(p => p.filter((_, i) => i !== idx))}

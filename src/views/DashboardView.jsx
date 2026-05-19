@@ -83,8 +83,10 @@ function jobDate(inv) {
 
 const todayOrders = ordersData.filter(o => o.date === TODAY);
 const unpaidCount = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
+// Passthrough unit AC: ac_unit_sale & quotation_converted (keduanya jual unit AC, harga unit tidak masuk omset AClean)
+const isAcSaleInvoice = (i) => i.invoice_type === "ac_unit_sale" || i.invoice_type === "quotation_converted";
 const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(bulanIni)).reduce((a, b) => {
-  const passthrough = b.invoice_type === "ac_unit_sale" ? (b.unit_ac_amount || 0) : 0;
+  const passthrough = isAcSaleInvoice(b) ? (b.unit_ac_amount || 0) : 0;
   return a + (b.total || 0) - passthrough;
 }, 0);
 const lowStock = inventoryData.filter(i => i.status === "CRITICAL" || i.status === "OUT").length;
@@ -210,8 +212,8 @@ return (
       // Pendapatan berdasarkan tanggal PENGERJAAN (order.date), bukan tanggal bayar
       const paidInvoices = invoicesData.filter(i => i.status === "PAID" && jobDate(i));
 
-      // Helper: revenue efektif AClean — skip unit_ac_amount (passthrough) untuk ac_unit_sale
-      const effRev = (i) => (i.total || 0) - (i.invoice_type === "ac_unit_sale" ? (i.unit_ac_amount || 0) : 0);
+      // Helper: revenue efektif AClean — skip unit_ac_amount (passthrough) untuk ac_unit_sale & quotation_converted
+      const effRev = (i) => (i.total || 0) - (isAcSaleInvoice(i) ? (i.unit_ac_amount || 0) : 0);
 
       const buildData = (mode) => {
         const start = startOf(mode);
