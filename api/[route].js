@@ -488,6 +488,24 @@ export default async function handler(req, res) {
       if (isToolBagPhoto && mediaUrl && SU && SK) {
         const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
         if (AK && toolBagCaption.bagId) {
+          // CLAIM LOCK: cegah Fonnte retry paralel proses webhook yg sama
+          // dedup_key = hash sederhana dari (sender + caption + mediaUrl). INSERT dengan PRIMARY KEY
+          // akan gagal (409) untuk retry kedua dan seterusnya → kita skip semua proses.
+          const dedupKey = "tb_" + (sender || "") + "_" + toolBagCaption.bagId + "_" + toolBagCaption.sessionType + "_" + (mediaUrl || "").slice(-40);
+          let lockAcquired = false;
+          try {
+            const lockRes = await fetch(SU + "/rest/v1/wa_webhook_dedup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+              body: JSON.stringify({ dedup_key: dedupKey })
+            });
+            lockAcquired = lockRes.ok;
+            if (!lockAcquired) console.log("[TOOL_BAG_DEDUP] skip (already processed):", dedupKey.slice(0, 80));
+          } catch(lockErr) { console.warn("[TOOL_BAG_DEDUP] error:", lockErr.message); }
+          if (!lockAcquired) {
+            // Webhook ini adalah retry — sudah/sedang diproses oleh request lain. Skip semua.
+            return res.status(200).json({ ok: true, skipped: "duplicate-webhook" });
+          }
           try {
             const bagId = toolBagCaption.bagId;
             const sessionType = toolBagCaption.sessionType;
