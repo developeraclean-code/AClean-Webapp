@@ -26,9 +26,13 @@ CREATE TABLE IF NOT EXISTS tool_bag_checks (
   status          text NOT NULL DEFAULT 'OK'
                   CHECK (status IN ('OK','WARNING','CRITICAL','ERROR')),
   warning_sent    boolean DEFAULT false,
+  reply_sent      boolean DEFAULT false,
   notes           text,
   created_at      timestamptz DEFAULT now()
 );
+
+-- Migrasi tambahan: kolom reply_sent untuk cegah duplikat reply ke teknisi saat Fonnte retry webhook
+ALTER TABLE tool_bag_checks ADD COLUMN IF NOT EXISTS reply_sent boolean DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS idx_tbc_bag    ON tool_bag_checks(bag_id, checked_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tbc_status ON tool_bag_checks(status, checked_at DESC);

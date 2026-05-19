@@ -673,6 +673,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                     }
 
                     // Simpan record ke tool_bag_checks — UPDATE jika sudah ada hari ini, INSERT jika baru
+                    // checkRecordId = id yang dipakai untuk idempotency reply_sent / warning_sent
+                    let checkRecordId = existingId;
                     try {
                       const savePayload = {
                         photo_url: photoR2Path,
@@ -682,6 +684,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                         tools_missing: toolsMissing,
                         status: checkStatus,
                         warning_sent: false,
+                        reply_sent: false,
                         checked_at: new Date().toISOString(),
                         notes: analysisResult?.notes || (analysisResult?.photo_quality || null)
                       };
@@ -692,12 +695,16 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       if (!existingId) { savePayload.bag_id = bagId; savePayload.session_type = sessionType; }
                       const saveRes = await fetch(saveUrl, {
                         method: saveMethod,
-                        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=representation" },
                         body: JSON.stringify(savePayload)
                       });
                       if (!saveRes.ok) {
                         const errBody = await saveRes.text().catch(() => "");
                         console.error("[TOOL_BAG_SAVE] HTTP", saveRes.status, errBody.slice(0, 200));
+                      } else if (!existingId) {
+                        // INSERT baru — ambil id record agar bisa di-PATCH untuk idempotency
+                        const savedRows = await saveRes.json().catch(() => []);
+                        if (Array.isArray(savedRows) && savedRows[0]?.id) checkRecordId = savedRows[0].id;
                       }
                     } catch(saveErr) { console.error("[TOOL_BAG_SAVE]", saveErr.message); }
 
@@ -705,15 +712,15 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                     if ((checkStatus === "WARNING" || checkStatus === "CRITICAL") && FT && OP) {
                       // Cek apakah warning sudah pernah dikirim untuk record ini
                       const warnCheckRes = await fetch(
-                        SU + "/rest/v1/tool_bag_checks?id=eq." + (existingId || "none") + "&warning_sent=eq.true&select=id&limit=1",
+                        SU + "/rest/v1/tool_bag_checks?id=eq." + (checkRecordId || "none") + "&warning_sent=eq.true&select=id&limit=1",
                         { headers: { apikey: SK, Authorization: "Bearer " + SK } }
                       ).catch(() => null);
-                      const alreadyWarned = existingId && warnCheckRes?.ok && (await warnCheckRes.json()).length > 0;
+                      const alreadyWarned = checkRecordId && warnCheckRes?.ok && (await warnCheckRes.json()).length > 0;
 
                       if (!alreadyWarned) {
                         // Set warning_sent = true DULU sebelum kirim (cegah race condition retry)
-                        if (existingId) {
-                          await fetch(SU + "/rest/v1/tool_bag_checks?id=eq." + existingId, {
+                        if (checkRecordId) {
+                          await fetch(SU + "/rest/v1/tool_bag_checks?id=eq." + checkRecordId, {
                             method: "PATCH",
                             headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
                             body: JSON.stringify({ warning_sent: true })
@@ -738,40 +745,57 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       }
                     }
 
-                    // Konfirmasi balik ke teknisi
+                    // Konfirmasi balik ke teknisi — cek reply_sent agar tidak duplikat saat Fonnte retry
                     if (FT) {
-                      let konfirMsg;
-                      const updateLabel = existingId ? " _(diperbarui)_" : "";
-                      const sessionLabel = sessionType === "pagi" ? "Pagi" : "Pulang";
+                      const replyCheckRes = await fetch(
+                        SU + "/rest/v1/tool_bag_checks?id=eq." + (checkRecordId || "none") + "&reply_sent=eq.true&select=id&limit=1",
+                        { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+                      ).catch(() => null);
+                      const alreadyReplied = checkRecordId && replyCheckRes?.ok && (await replyCheckRes.json()).length > 0;
 
-                      // Bagian 1: List alat sesuai checklist (qty_min > 0 = ada di tas)
-                      const activeNames = new Set(checklist.map(t => t.tool_name.toLowerCase()));
-                      const checklistList = checklist.map(t => `${t.is_priority ? "🔴" : "⚪"} ${t.tool_name}${t.is_priority ? " (WAJIB)" : ""}`).join("\n");
+                      if (!alreadyReplied) {
+                        // Set reply_sent = true DULU sebelum kirim WA (cegah race condition retry)
+                        if (checkRecordId) {
+                          await fetch(SU + "/rest/v1/tool_bag_checks?id=eq." + checkRecordId, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                            body: JSON.stringify({ reply_sent: true })
+                          }).catch(() => {});
+                        }
 
-                      // Bagian 2: Alat terdeteksi AI — hanya yang ada di checklist aktif
-                      const foundInChecklist = toolsFound.filter(t => activeNames.has(t.name.toLowerCase()));
-                      const foundList = foundInChecklist.length > 0
-                        ? foundInChecklist.map(t => `✅ ${t.name}`).join("\n")
-                        : "_Tidak ada alat yang terdeteksi_";
+                        let konfirMsg;
+                        const updateLabel = existingId ? " _(diperbarui)_" : "";
+                        const sessionLabel = sessionType === "pagi" ? "Pagi" : "Pulang";
 
-                      // Bagian 3: Alat tidak terdeteksi — hanya yang ada di checklist aktif
-                      const missingInChecklist = toolsMissing.filter(t => activeNames.has(t.name.toLowerCase()));
-                      const priorityMissing = missingInChecklist.filter(t => t.is_priority).map(t => `🔴 ${t.name} (WAJIB)`).join("\n");
-                      const normalMissing = missingInChecklist.filter(t => !t.is_priority).map(t => `🟡 ${t.name}`).join("\n");
-                      const missingList = [priorityMissing, normalMissing].filter(Boolean).join("\n") || "_Semua alat lengkap!_";
+                        // Bagian 1: List alat sesuai checklist (qty_min > 0 = ada di tas)
+                        const activeNames = new Set(checklist.map(t => t.tool_name.toLowerCase()));
+                        const checklistList = checklist.map(t => `${t.is_priority ? "🔴" : "⚪"} ${t.tool_name}${t.is_priority ? " (WAJIB)" : ""}`).join("\n");
 
-                      if (checkStatus === "ERROR") {
-                        konfirMsg = `⚠️ Foto tas tidak bisa dianalisa (${analysisResult?.photo_quality || "blur/gelap"}).\n\n📝 *Note:* Foto ulang yang jelas agar terbaca dengan benar. Pastikan pencahayaan cukup, dekat, dan semua alat terlihat. Terima kasih!`;
-                      } else if (checkStatus === "OK") {
-                        konfirMsg = `✅ *${bagId} — ${sessionLabel}*${updateLabel}\nSemua alat lengkap! 👍\n\n📋 *List Alat ${bagId}:*\n${checklistList}\n\n🔍 *Alat Terdeteksi AI:*\n${foundList}`;
-                      } else {
-                        konfirMsg = `📸 *${bagId} — ${sessionLabel}*${updateLabel}\n\n📋 *List Alat ${bagId}:*\n${checklistList}\n\n🔍 *Alat Terdeteksi AI:*\n${foundList}\n\n❌ *Alat Tidak Terdeteksi AI:*\n${missingList}\n\n📝 *Note:* Foto ulang yang jelas agar terbaca dengan benar. Pastikan semua alat terlihat di foto.`;
+                        // Bagian 2: Alat terdeteksi AI — hanya yang ada di checklist aktif
+                        const foundInChecklist = toolsFound.filter(t => activeNames.has(t.name.toLowerCase()));
+                        const foundList = foundInChecklist.length > 0
+                          ? foundInChecklist.map(t => `✅ ${t.name}`).join("\n")
+                          : "_Tidak ada alat yang terdeteksi_";
+
+                        // Bagian 3: Alat tidak terdeteksi — hanya yang ada di checklist aktif
+                        const missingInChecklist = toolsMissing.filter(t => activeNames.has(t.name.toLowerCase()));
+                        const priorityMissing = missingInChecklist.filter(t => t.is_priority).map(t => `🔴 ${t.name} (WAJIB)`).join("\n");
+                        const normalMissing = missingInChecklist.filter(t => !t.is_priority).map(t => `🟡 ${t.name}`).join("\n");
+                        const missingList = [priorityMissing, normalMissing].filter(Boolean).join("\n") || "_Semua alat lengkap!_";
+
+                        if (checkStatus === "ERROR") {
+                          konfirMsg = `⚠️ Foto tas tidak bisa dianalisa (${analysisResult?.photo_quality || "blur/gelap"}).\n\n📝 *Note:* Foto ulang yang jelas agar terbaca dengan benar. Pastikan pencahayaan cukup, dekat, dan semua alat terlihat. Terima kasih!`;
+                        } else if (checkStatus === "OK") {
+                          konfirMsg = `✅ *${bagId} — ${sessionLabel}*${updateLabel}\nSemua alat lengkap! 👍\n\n📋 *List Alat ${bagId}:*\n${checklistList}\n\n🔍 *Alat Terdeteksi AI:*\n${foundList}`;
+                        } else {
+                          konfirMsg = `📸 *${bagId} — ${sessionLabel}*${updateLabel}\n\n📋 *List Alat ${bagId}:*\n${checklistList}\n\n🔍 *Alat Terdeteksi AI:*\n${foundList}\n\n❌ *Alat Tidak Terdeteksi AI:*\n${missingList}\n\n📝 *Note:* Foto ulang yang jelas agar terbaca dengan benar. Pastikan semua alat terlihat di foto.`;
+                        }
+                        await fetch("https://api.fonnte.com/send", {
+                          method: "POST",
+                          headers: { Authorization: FT, "Content-Type": "application/json" },
+                          body: JSON.stringify({ target: sender, message: konfirMsg, delay: "2", countryCode: "62" })
+                        }).catch(()=>{});
                       }
-                      await fetch("https://api.fonnte.com/send", {
-                        method: "POST",
-                        headers: { Authorization: FT, "Content-Type": "application/json" },
-                        body: JSON.stringify({ target: sender, message: konfirMsg, delay: "2", countryCode: "62" })
-                      }).catch(()=>{});
                     }
                   }
                 }
