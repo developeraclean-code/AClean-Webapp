@@ -1201,7 +1201,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
     // ── ARA-CHAT ──
     if (route === "ara-chat") {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-      const { messages, bizContext, brainMd, provider, model, ollamaUrl, imageData, imageType } = req.body || {};
+      const { messages, bizContext, brainMd, provider, model, imageData, imageType } = req.body || {};
       if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "messages array wajib" });
 
       console.log("[ROUTE.JS ara-chat] Received:", { provider, model, hasMessages: messages.length });
@@ -1271,7 +1271,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       }
 
       if (prov === "ollama") {
-        const bu = ollamaUrl || "http://localhost:11434";
+        const bu = "http://localhost:11434"; // H-5 fix: URL hardcoded, tidak dari client
         const om = model || "llama3.1";
         const or = await fetch(bu + "/api/chat", {
           method: "POST", headers: { "Content-Type": "application/json" },
