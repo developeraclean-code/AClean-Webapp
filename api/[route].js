@@ -701,24 +701,41 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       }
                     } catch(saveErr) { console.error("[TOOL_BAG_SAVE]", saveErr.message); }
 
-                    // Kirim WA Warning ke Owner jika ada masalah
+                    // Kirim WA Warning ke Owner jika ada masalah — cek warning_sent agar tidak duplikat
                     if ((checkStatus === "WARNING" || checkStatus === "CRITICAL") && FT && OP) {
-                      const sessionLabel = sessionType === "pagi" ? "🌅 Pagi" : "🌇 Pulang";
-                      const dateLabel = new Date().toLocaleDateString("id-ID", { day:"numeric", month:"long", year:"numeric" });
-                      const priorityList = toolsMissing.filter(t => t.is_priority).map(t => `🔴 *${t.name}* (WAJIB)`).join("\n");
-                      const normalList = toolsMissing.filter(t => !t.is_priority).map(t => `🟡 ${t.name}`).join("\n");
-                      let warnMsg = checkStatus === "CRITICAL"
-                        ? `🚨 *ALERT — ${bagId}*\n`
-                        : `⚠️ *Warning — ${bagId}*\n`;
-                      warnMsg += `${sessionLabel} | ${dateLabel}\n\n`;
-                      if (priorityList) warnMsg += `*Alat WAJIB tidak terdeteksi:*\n${priorityList}\n\n`;
-                      if (normalList) warnMsg += `*Alat lain tidak terdeteksi:*\n${normalList}\n\n`;
-                      warnMsg += `_Cek detail di webapp → Inventori → Tas Teknisi_`;
-                      await fetch("https://api.fonnte.com/send", {
-                        method: "POST",
-                        headers: { Authorization: FT, "Content-Type": "application/json" },
-                        body: JSON.stringify({ target: OP, message: warnMsg, delay: "1", countryCode: "62" })
-                      }).catch(()=>{});
+                      // Cek apakah warning sudah pernah dikirim untuk record ini
+                      const warnCheckRes = await fetch(
+                        SU + "/rest/v1/tool_bag_checks?id=eq." + (existingId || "none") + "&warning_sent=eq.true&select=id&limit=1",
+                        { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+                      ).catch(() => null);
+                      const alreadyWarned = existingId && warnCheckRes?.ok && (await warnCheckRes.json()).length > 0;
+
+                      if (!alreadyWarned) {
+                        // Set warning_sent = true DULU sebelum kirim (cegah race condition retry)
+                        if (existingId) {
+                          await fetch(SU + "/rest/v1/tool_bag_checks?id=eq." + existingId, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                            body: JSON.stringify({ warning_sent: true })
+                          }).catch(() => {});
+                        }
+                        const sessionLabel = sessionType === "pagi" ? "🌅 Pagi" : "🌇 Pulang";
+                        const dateLabel = new Date().toLocaleDateString("id-ID", { day:"numeric", month:"long", year:"numeric" });
+                        const priorityList = toolsMissing.filter(t => t.is_priority).map(t => `🔴 *${t.name}* (WAJIB)`).join("\n");
+                        const normalList = toolsMissing.filter(t => !t.is_priority).map(t => `🟡 ${t.name}`).join("\n");
+                        let warnMsg = checkStatus === "CRITICAL"
+                          ? `🚨 *ALERT — ${bagId}*\n`
+                          : `⚠️ *Warning — ${bagId}*\n`;
+                        warnMsg += `${sessionLabel} | ${dateLabel}\n\n`;
+                        if (priorityList) warnMsg += `*Alat WAJIB tidak terdeteksi:*\n${priorityList}\n\n`;
+                        if (normalList) warnMsg += `*Alat lain tidak terdeteksi:*\n${normalList}\n\n`;
+                        warnMsg += `_Cek detail di webapp → Inventori → Tas Teknisi_`;
+                        await fetch("https://api.fonnte.com/send", {
+                          method: "POST",
+                          headers: { Authorization: FT, "Content-Type": "application/json" },
+                          body: JSON.stringify({ target: OP, message: warnMsg, delay: "1", countryCode: "62" })
+                        }).catch(()=>{});
+                      }
                     }
 
                     // Konfirmasi balik ke teknisi
