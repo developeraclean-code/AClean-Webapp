@@ -18,6 +18,13 @@ const CustomerPortalView = lazy(() => import('./views/CustomerPortalView.jsx'))
 // Deteksi path /status/:token — render portal tanpa App shell
 const pathMatch = window.location.pathname.match(/^\/status\/([a-f0-9]{48})$/)
 
+// Jika dibuka di domain customer (status.aclean.id) tanpa token yang valid,
+// redirect ke landing page agar tidak tampil halaman login internal
+const isCustomerDomain = window.location.hostname === "status.aclean.id";
+if (isCustomerDomain && !pathMatch) {
+  window.location.replace("https://aclean.id");
+}
+
 function Root() {
   if (pathMatch) {
     // Inject token ke useParams-like via context sederhana — pakai window global
