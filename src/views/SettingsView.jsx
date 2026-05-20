@@ -791,8 +791,22 @@ function SettingsView({
                 </div>
               );
             })}
-            <div style={{ marginTop: 8, padding: "10px 12px", background: cs.surface, borderRadius: 8, fontSize: 11, color: cs.muted }}>
-              🔗 Customer buka: <b>aclean.id/status/TOKEN</b> — bisa lihat status tim, riwayat servis, dan invoice. Tidak perlu login.
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 5, fontWeight: 600 }}>🔗 URL Customer Portal</div>
+              <input
+                value={appSettings["customer_portal_url"] || ""}
+                onChange={e => setAppSettings(prev => ({ ...prev, customer_portal_url: e.target.value }))}
+                onBlur={async e => {
+                  const val = e.target.value.trim() || "https://a-clean-webapp.vercel.app";
+                  try { await supabase.from("app_settings").upsert({ key: "customer_portal_url", value: val }, { onConflict: "key" }); }
+                  catch (err) { console.warn("settings err:", err); }
+                }}
+                placeholder="https://a-clean-webapp.vercel.app"
+                style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+              />
+              <div style={{ marginTop: 6, fontSize: 11, color: cs.muted }}>
+                URL ini dipakai cron untuk generate link /status/TOKEN yang dikirim ke customer via WA
+              </div>
             </div>
 
             {/* Sub-fitur portal — hanya aktif jika portal ON */}

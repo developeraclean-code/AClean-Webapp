@@ -2672,6 +2672,7 @@ ${photoPageHTML}
               wa_cleanup_enabled: sMap.wa_cleanup_enabled ?? prev.wa_cleanup_enabled ?? "true",
               wa_monitor_enabled: sMap.wa_monitor_enabled ?? prev.wa_monitor_enabled ?? "false",
               ara_training_rules: sMap.ara_training_rules ?? prev.ara_training_rules,
+              customer_portal_url: sMap.customer_portal_url ?? prev.customer_portal_url ?? "https://a-clean-webapp.vercel.app",
             }));
             if (sMap.cron_jobs) {
               try {

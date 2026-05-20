@@ -571,7 +571,7 @@ async function taskBackupData() {
 // TASK 9: Rating Prompt H+1 — cek order COMPLETED kemarin, kirim WA minta rating
 // ══════════════════════════════════════════════════
 async function taskRatingPrompt() {
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["rating_prompt_enabled","cron_jobs","customer_portal_enabled","voucher_loyalty_enabled"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["rating_prompt_enabled","cron_jobs","customer_portal_enabled","voucher_loyalty_enabled","customer_portal_url"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
 
   if (togMap["rating_prompt_enabled"] !== "true") {
@@ -583,7 +583,7 @@ async function taskRatingPrompt() {
     return { skipped: true };
   }
 
-  const APP_URL = process.env.APP_URL || "https://aclean.id";
+  const APP_URL = togMap["customer_portal_url"] || process.env.APP_URL || "https://a-clean-webapp.vercel.app";
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0,10);
 
   // Order COMPLETED/INVOICE_APPROVED kemarin, ada phone, belum dapat rating
@@ -685,7 +685,7 @@ async function taskRatingPrompt() {
 // TASK 10: Servis Reminder — customer >90 hari tidak servis
 // ══════════════════════════════════════════════════
 async function taskServisReminder() {
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["servis_reminder_enabled","customer_portal_enabled","voucher_winback_enabled"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["servis_reminder_enabled","customer_portal_enabled","voucher_winback_enabled","customer_portal_url"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
 
   if (togMap["servis_reminder_enabled"] !== "true") {
@@ -697,7 +697,7 @@ async function taskServisReminder() {
     return { skipped: true };
   }
 
-  const APP_URL = process.env.APP_URL || "https://aclean.id";
+  const APP_URL = togMap["customer_portal_url"] || process.env.APP_URL || "https://a-clean-webapp.vercel.app";
   const today = new Date();
   const cutoff = new Date(today.getTime() - 90*24*60*60*1000).toISOString().slice(0,10);
 
@@ -797,7 +797,7 @@ async function taskServisReminder() {
 // TASK 11: Voucher Expiry Reminder — H-3 sebelum expired
 // ══════════════════════════════════════════════════
 async function taskVoucherExpiryReminder() {
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["voucher_expiry_reminder_enabled","customer_portal_enabled"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["voucher_expiry_reminder_enabled","customer_portal_enabled","customer_portal_url"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
 
   if (togMap["voucher_expiry_reminder_enabled"] !== "true") {
@@ -805,7 +805,7 @@ async function taskVoucherExpiryReminder() {
     return { skipped: true };
   }
 
-  const APP_URL = process.env.APP_URL || "https://aclean.id";
+  const APP_URL = togMap["customer_portal_url"] || process.env.APP_URL || "https://a-clean-webapp.vercel.app";
   const today = new Date();
   const in3days = new Date(today.getTime() + 3*24*60*60*1000).toISOString().slice(0,10);
   const todayStr = today.toISOString().slice(0,10);
