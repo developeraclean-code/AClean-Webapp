@@ -609,12 +609,18 @@ async function taskRatingPrompt() {
       .select("token,expires_at").eq("phone", o.phone).limit(1);
 
     let token = tokRows?.[0]?.token;
-    // Buat token baru jika belum ada
-    if (!token) {
+    const tokExpired = tokRows?.[0]?.expires_at && new Date(tokRows[0].expires_at) < new Date();
+    // Buat token baru jika belum ada atau sudah expired
+    if (!token || tokExpired) {
       const { randomBytes } = await import("crypto");
       token = randomBytes(24).toString("hex");
       const expiresAt = new Date(Date.now() + 7*24*60*60*1000).toISOString();
-      await sb.from("customer_tokens").insert({ phone: o.phone, token, expires_at: expiresAt, customer_name: o.customer });
+      if (tokRows?.length > 0) {
+        // Update token yang expired
+        await sb.from("customer_tokens").update({ token, expires_at: expiresAt, customer_name: o.customer }).eq("phone", o.phone);
+      } else {
+        await sb.from("customer_tokens").insert({ phone: o.phone, token, expires_at: expiresAt, customer_name: o.customer });
+      }
     }
 
     const link = `${APP_URL}/status/${token}#rating`;
@@ -719,13 +725,18 @@ async function taskServisReminder() {
 
     // Get portal token
     const { data: tokRows } = await sb.from("customer_tokens")
-      .select("token").eq("phone", c.phone).limit(1);
+      .select("token,expires_at").eq("phone", c.phone).limit(1);
     let token = tokRows?.[0]?.token;
-    if (!token) {
+    const tokExpired = tokRows?.[0]?.expires_at && new Date(tokRows[0].expires_at) < new Date();
+    if (!token || tokExpired) {
       const { randomBytes } = await import("crypto");
       token = randomBytes(24).toString("hex");
       const expiresAt = new Date(Date.now() + 7*24*60*60*1000).toISOString();
-      await sb.from("customer_tokens").insert({ phone: c.phone, token, expires_at: expiresAt, customer_name: c.name });
+      if (tokRows?.length > 0) {
+        await sb.from("customer_tokens").update({ token, expires_at: expiresAt, customer_name: c.name }).eq("phone", c.phone);
+      } else {
+        await sb.from("customer_tokens").insert({ phone: c.phone, token, expires_at: expiresAt, customer_name: c.name });
+      }
     }
 
     const lastServiceFmt = new Date(c.last_service).toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"});

@@ -69,7 +69,7 @@ export default function CustomerPortalView({ token: tokenProp }) {
     fetch(`${API_BASE}/customer-status?token=${encodeURIComponent(token)}`)
       .then(r => r.json())
       .then(d => {
-        if (d.error) setError(d.code === "NOT_FOUND" ? "not_found" : "error");
+        if (d.error) setError(d.code === "NOT_FOUND" ? "not_found" : d.code === "TOKEN_EXPIRED" ? "expired" : "error");
         else {
           setData(d);
           // Fetch vouchers paralel
@@ -88,6 +88,7 @@ export default function CustomerPortalView({ token: tokenProp }) {
 
   if (loading) return <LoadingScreen />;
   if (error === "not_found") return <NotFoundScreen />;
+  if (error === "expired") return <ExpiredScreen />;
   if (error) return <ErrorScreen />;
 
   // Job aktif hari ini (non-completed, non-cancelled)
@@ -593,6 +594,30 @@ function LoadingScreen() {
       <div style={{ textAlign: "center" }}>
         <div style={{ fontSize: 40, marginBottom: 12 }}>❄️</div>
         <div style={{ fontWeight: 700, color: "#0369a1" }}>Memuat...</div>
+      </div>
+    </div>
+  );
+}
+
+function ExpiredScreen() {
+  return (
+    <div style={s.page}>
+      <div style={s.topbar}>
+        <div style={s.logoBadge}>AC</div>
+        <div><div style={s.topbarTitle}>AClean</div></div>
+      </div>
+      <div style={{ ...s.wrapper, paddingTop: 40 }}>
+        <div style={s.expiredCard}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>⏰</div>
+          <div style={{ fontWeight: 800, fontSize: 18, color: "#1e293b" }}>Link Sudah Kedaluwarsa</div>
+          <div style={{ fontSize: 13, color: "#64748b", marginTop: 8, lineHeight: 1.6 }}>
+            Link portal ini sudah expired (berlaku 7 hari).<br />
+            Hubungi tim AClean untuk mendapatkan link baru.
+          </div>
+          <a href="https://wa.me/6281234567890" style={{ ...s.waBtn, marginTop: 20, display: "inline-flex", textDecoration: "none" }} target="_blank" rel="noreferrer">
+            💬 Chat AClean
+          </a>
+        </div>
       </div>
     </div>
   );
