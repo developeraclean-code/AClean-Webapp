@@ -1935,8 +1935,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 
       const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
 
-      // Lookup token
-      const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=*`, { headers });
+      // Lookup token — explicit select, jangan pakai select=*
+      const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=id,phone,customer_name,expires_at,created_at,last_used`, { headers });
       if (!tokRes.ok) return res.status(500).json({ error: "DB error" });
       const tokRows = await tokRes.json();
       if (!tokRows.length) return res.status(404).json({ error: "Token tidak ditemukan", code: "NOT_FOUND" });
@@ -1957,14 +1957,19 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const variants = buildPhoneVariants(phone);
       const phoneFilter = variants.map(v => `phone=eq.${encodeURIComponent(v)}`).join(",");
 
-      // Query orders & invoices berdasarkan phone (ambil 20 terbaru)
-      const [ordRes, invRes] = await Promise.all([
-        fetch(`${SU}/rest/v1/orders?or=(${phoneFilter})&order=date.desc,time.desc&limit=20&select=id,customer,phone,address,area,service,type,units,teknisi,helper,teknisi2,helper2,date,time,time_end,status,notes`, { headers }),
-        fetch(`${SU}/rest/v1/invoices?or=(${phoneFilter})&order=created_at.desc&limit=20&select=id,job_id,customer,phone,service,units,labor,material,total,status,due,paid_at,paid_amount,remaining_amount,garansi_days,garansi_expires,paid_method,invoice_type`, { headers }),
+      // Query orders, invoices, dan owner_phone paralel
+      // phone & notes dihapus dari orders — tidak perlu ditampilkan ke customer
+      // phone, paid_method, invoice_type, labor, material dihapus dari invoices
+      const [ordRes, invRes, ownerRes] = await Promise.all([
+        fetch(`${SU}/rest/v1/orders?or=(${phoneFilter})&order=date.desc,time.desc&limit=20&select=id,customer,address,area,service,type,units,teknisi,helper,teknisi2,helper2,date,time,time_end,status`, { headers }),
+        fetch(`${SU}/rest/v1/invoices?or=(${phoneFilter})&order=created_at.desc&limit=20&select=id,job_id,customer,service,units,total,status,due,paid_at,paid_amount,remaining_amount,garansi_days,garansi_expires`, { headers }),
+        fetch(`${SU}/rest/v1/app_settings?key=eq.owner_phone&select=value`, { headers }),
       ]);
 
       const orders = ordRes.ok ? await ordRes.json() : [];
       const invoices = invRes.ok ? await invRes.json() : [];
+      const ownerRows = ownerRes.ok ? await ownerRes.json() : [];
+      const contactPhone = ownerRows[0]?.value || process.env.OWNER_PHONE || "";
 
       // Ambil nama customer dari order pertama
       const customerName = orders[0]?.customer || tokRow.customer_name || "";
@@ -1973,6 +1978,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
         expired: false,
         phone,
         customer_name: customerName,
+        contact_phone: contactPhone,
         orders,
         invoices,
         token_created: tokRow.created_at,
@@ -1997,19 +2003,27 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
       const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json", "Prefer": "return=representation" };
 
-      // Validasi token → dapat phone
-      const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,customer_name`, { headers });
+      // Validasi token → dapat phone, cek expired
+      const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,customer_name,expires_at`, { headers });
       const tokRows = tokRes.ok ? await tokRes.json() : [];
       if (!tokRows.length) return res.status(404).json({ error: "Token tidak valid" });
+      if (new Date(tokRows[0].expires_at) < new Date()) return res.status(401).json({ error: "Link portal sudah expired", code: "TOKEN_EXPIRED" });
       const { phone, customer_name } = tokRows[0];
 
       // Cek order_id dari body atau ambil job terakhir
       const orderId = String(b.order_id || "").trim();
       let jobData = { order_id: orderId, service: "", teknisi: "" };
       if (orderId) {
-        const orRes = await fetch(`${SU}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=id,service,teknisi`, { headers });
+        // Validasi: order harus milik phone ini (IDOR fix) dan status COMPLETED/INVOICE_APPROVED
+        const variants = buildPhoneVariants(phone);
+        const phoneFilter = variants.map(v => `phone=eq.${encodeURIComponent(v)}`).join(",");
+        const orRes = await fetch(
+          `${SU}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&or=(${phoneFilter})&status=in.(COMPLETED,INVOICE_APPROVED)&select=id,service,teknisi`,
+          { headers }
+        );
         const orRows = orRes.ok ? await orRes.json() : [];
-        if (orRows[0]) jobData = { order_id: orRows[0].id, service: orRows[0].service, teknisi: orRows[0].teknisi };
+        if (!orRows[0]) return res.status(403).json({ error: "Order tidak ditemukan atau tidak dapat diberi rating" });
+        jobData = { order_id: orRows[0].id, service: orRows[0].service, teknisi: orRows[0].teknisi };
       }
 
       // Cek duplikasi rating untuk order yang sama
@@ -2068,10 +2082,11 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
       const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
 
-      // Validasi token
-      const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone`, { headers });
+      // Validasi token, cek expired
+      const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,expires_at`, { headers });
       const tokRows = tokRes.ok ? await tokRes.json() : [];
       if (!tokRows.length) return res.status(404).json({ error: "Token tidak valid" });
+      if (new Date(tokRows[0].expires_at) < new Date()) return res.status(401).json({ error: "Link portal sudah expired", code: "TOKEN_EXPIRED" });
       const { phone } = tokRows[0];
 
       const variants = buildPhoneVariants(phone);
@@ -2080,7 +2095,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       // Ambil voucher aktif (belum diklaim, belum expired)
       const today = new Date().toISOString().slice(0, 10);
       const vRes = await fetch(
-        `${SU}/rest/v1/customer_vouchers?or=(${phoneFilter})&claimed_at=is.null&order=created_at.desc&select=*`,
+        `${SU}/rest/v1/customer_vouchers?or=(${phoneFilter})&claimed_at=is.null&order=created_at.desc&select=id,code,type,value,description,expires_at,created_at`,
         { headers }
       );
       const vouchers = vRes.ok ? await vRes.json() : [];
@@ -2117,10 +2132,11 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       });
       if (!insRes.ok) {
         const e = await insRes.json().catch(() => ({}));
-        return res.status(500).json({ error: "Gagal simpan token", detail: e });
+        console.error("[generate-customer-token] DB error:", JSON.stringify(e));
+        return res.status(500).json({ error: "Gagal simpan token" });
       }
 
-      const appUrl = process.env.APP_URL || "https://aclean.id";
+      const appUrl = process.env.APP_URL || "https://a-clean-webapp.vercel.app";
       const link = `${appUrl}/status/${token}`;
       return res.status(200).json({ ok: true, token, link, expires_at: expiresAt });
     }

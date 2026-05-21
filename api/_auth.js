@@ -174,6 +174,7 @@ export function setCorsHeaders(req, res) {
   const allowed = [
     "https://a-clean-webapp.vercel.app",
     "https://aclean.vercel.app",
+    "https://status.aclean.id",
     process.env.ALLOWED_ORIGIN, // custom domain kalau ada
   ].filter(Boolean);
 
@@ -209,4 +210,7 @@ export function setCorsHeaders(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Internal-Token,X-Api-Key");
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Vary", "Origin");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
 }

@@ -56,7 +56,7 @@ const SERVICE_BG = (service = "") => {
 };
 
 export default function CustomerPortalView({ token: tokenProp }) {
-  const token = tokenProp || window.__portalToken || "";
+  const token = tokenProp || "";
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
@@ -86,10 +86,13 @@ export default function CustomerPortalView({ token: tokenProp }) {
       .finally(() => setLoading(false));
   }, [token]);
 
+  const contactPhone = data?.contact_phone || "";
+  const waHref = contactPhone ? `https://wa.me/${contactPhone.replace(/\D/g,"")}` : "https://wa.me/";
+
   if (loading) return <LoadingScreen />;
-  if (error === "not_found") return <NotFoundScreen />;
-  if (error === "expired") return <ExpiredScreen />;
-  if (error) return <ErrorScreen />;
+  if (error === "not_found") return <NotFoundScreen waHref={waHref} />;
+  if (error === "expired") return <ExpiredScreen waHref={waHref} />;
+  if (error) return <ErrorScreen waHref={waHref} />;
 
   // Job aktif hari ini (non-completed, non-cancelled)
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -116,9 +119,11 @@ export default function CustomerPortalView({ token: tokenProp }) {
           <div style={s.topbarTitle}>AClean</div>
           <div style={s.topbarSub}>Portal Status Servis</div>
         </div>
-        <a href="https://wa.me/6281234567890" style={s.waBtn} target="_blank" rel="noreferrer">
-          💬 Hubungi Kami
-        </a>
+        {contactPhone && (
+          <a href={waHref} style={s.waBtn} target="_blank" rel="noreferrer">
+            💬 Hubungi Kami
+          </a>
+        )}
       </div>
 
       <div style={s.wrapper}>
@@ -599,7 +604,7 @@ function LoadingScreen() {
   );
 }
 
-function ExpiredScreen() {
+function ExpiredScreen({ waHref }) {
   return (
     <div style={s.page}>
       <div style={s.topbar}>
@@ -614,16 +619,14 @@ function ExpiredScreen() {
             Link portal ini sudah expired (berlaku 7 hari).<br />
             Hubungi tim AClean untuk mendapatkan link baru.
           </div>
-          <a href="https://wa.me/6281234567890" style={{ ...s.waBtn, marginTop: 20, display: "inline-flex", textDecoration: "none" }} target="_blank" rel="noreferrer">
-            💬 Chat AClean
-          </a>
+          {waHref && <a href={waHref} style={{ ...s.waBtn, marginTop: 20, display: "inline-flex", textDecoration: "none" }} target="_blank" rel="noreferrer">💬 Chat AClean</a>}
         </div>
       </div>
     </div>
   );
 }
 
-function NotFoundScreen() {
+function NotFoundScreen({ waHref }) {
   return (
     <div style={s.page}>
       <div style={s.topbar}>
@@ -638,16 +641,14 @@ function NotFoundScreen() {
             Link ini tidak valid atau sudah kedaluwarsa.<br />
             Hubungi tim AClean untuk mendapatkan link baru.
           </div>
-          <a href="https://wa.me/6281234567890" style={{ ...s.waBtn, marginTop: 20, display: "inline-flex", textDecoration: "none" }} target="_blank" rel="noreferrer">
-            💬 Chat AClean
-          </a>
+          {waHref && <a href={waHref} style={{ ...s.waBtn, marginTop: 20, display: "inline-flex", textDecoration: "none" }} target="_blank" rel="noreferrer">💬 Chat AClean</a>}
         </div>
       </div>
     </div>
   );
 }
 
-function ErrorScreen() {
+function ErrorScreen({ waHref }) {
   return (
     <div style={s.page}>
       <div style={s.topbar}>

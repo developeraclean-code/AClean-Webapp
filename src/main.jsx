@@ -27,8 +27,6 @@ if (isCustomerDomain && !pathMatch) {
 
 function Root() {
   if (pathMatch) {
-    // Inject token ke useParams-like via context sederhana — pakai window global
-    window.__portalToken = pathMatch[1]
     return (
       <Suspense fallback={
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f0f4f8" }}>
