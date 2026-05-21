@@ -729,11 +729,11 @@ return (
       {[
         ["Semua", cs.muted],
         ["Hari Ini", "#f97316"],
+        ["PENDING_APPROVAL", cs.accent],
         ["UNPAID", cs.yellow],
         ["OVERDUE", cs.red],
         ["PARTIAL_PAID", "#06b6d4"],
         ["PAID", cs.green],
-        ["PENDING_APPROVAL", cs.accent],
         ["Garansi", "#22d3ee"],
         ["Tanpa Bukti", "#f43f5e"],
       ].map(([s, col]) => {
