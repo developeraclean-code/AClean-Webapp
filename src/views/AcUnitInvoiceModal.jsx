@@ -91,6 +91,9 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
   // ── Unit AC ──
   const [acUnits, setAcUnits]               = useState([emptyUnit()]);
   const [showBrandPicker, setShowBrandPicker] = useState(null);
+  const [unitSearch, setUnitSearch]           = useState("");
+  const [unitFilterBrand, setUnitFilterBrand] = useState("");
+  const [unitFilterPK, setUnitFilterPK]       = useState("");
 
   // ── Paket pemasangan — di-load dari app_settings ──
   const [paketList, setPaketList]           = useState(DEFAULT_PAKET);
@@ -632,117 +635,140 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
         {/* ══════════════════════════════════════════
             TAB 2 — UNIT AC
         ══════════════════════════════════════════ */}
-        {activeTab === "unit" && (
-          <div style={{ padding: "16px 20px", display: "grid", gap: 14 }}>
-            <div style={{ background: "#f59e0b15", border: "1px solid #f59e0b44", borderRadius: 10, padding: "10px 14px", fontSize: 12, color: "#f59e0b" }}>
-              Harga unit = passthrough toko (tidak masuk omset AClean). Isi harga sesuai harga toko kepada customer.
-            </div>
+        {activeTab === "unit" && (() => {
+          // Brand unik dari pricelist
+          const brandsAvail = [...new Set(acPriceList.map(p => p.brand))].sort();
+          const pksAvail    = [...new Set(acPriceList.map(p => p.kapasitas))].sort((a, b) => parseFloat(a) - parseFloat(b));
+          const filteredPL  = acPriceList.filter(p => {
+            const q = unitSearch.toLowerCase();
+            const matchQ = !q || p.brand.toLowerCase().includes(q) || (p.seri || "").toLowerCase().includes(q) || (p.nama_varian || "").toLowerCase().includes(q) || p.kapasitas.toLowerCase().includes(q);
+            const matchB  = !unitFilterBrand || p.brand === unitFilterBrand;
+            const matchPK = !unitFilterPK || p.kapasitas === unitFilterPK;
+            return matchQ && matchB && matchPK;
+          });
 
-            {acUnits.map((unit, idx) => (
-              <div key={unit._id} style={{ background: cs.card, border: "2px solid #f59e0b44", borderRadius: 12, padding: "14px 16px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b" }}>Unit #{idx + 1}</div>
-                  {acUnits.length > 1 && (
-                    <button onClick={() => setAcUnits(p => p.filter((_, i) => i !== idx))}
-                      style={{ background: "#ef444415", border: "none", color: "#ef4444", borderRadius: 5, padding: "3px 10px", cursor: "pointer", fontSize: 11 }}>Hapus</button>
-                  )}
-                </div>
-
-                <div style={{ marginBottom: 10 }}>
-                  <label style={{ fontSize: 11, color: cs.muted, display: "block", marginBottom: 4 }}>Brand *</label>
-                  <input value={unit.brand} onChange={e => updateUnit(idx, "brand", e.target.value)}
-                    onFocus={() => setShowBrandPicker(idx)}
-                    onBlur={() => setTimeout(() => setShowBrandPicker(null), 150)}
-                    placeholder="Ketik atau pilih brand..."
-                    style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
-                  {showBrandPicker === idx && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
-                      {BRAND_SHORTCUTS.map(b => (
-                        <button key={b} onMouseDown={() => updateUnit(idx, "brand", b)} style={{
-                          fontSize: 11, padding: "3px 10px", borderRadius: 99, cursor: "pointer",
-                          background: unit.brand === b ? "#f59e0b" : cs.surface,
-                          border: "1px solid " + (unit.brand === b ? "#f59e0b" : cs.border),
-                          color: unit.brand === b ? "#000" : cs.text,
-                        }}>{b}</button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
-                  <div>
-                    <label style={{ fontSize: 11, color: cs.muted, display: "block", marginBottom: 4 }}>Tipe</label>
-                    <select value={unit.tipe} onChange={e => updateUnit(idx, "tipe", e.target.value)}
-                      style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12 }}>
-                      {TIPE_UNIT.map(t => <option key={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 11, color: cs.muted, display: "block", marginBottom: 4 }}>Kapasitas</label>
-                    <select value={unit.kapasitas} onChange={e => updateUnit(idx, "kapasitas", e.target.value)}
-                      style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12 }}>
-                      {KAPASITAS_OPT.map(k => <option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ marginBottom: 10 }}>
-                  <label style={{ fontSize: 11, color: cs.muted, display: "block", marginBottom: 4 }}>Model / Seri <span style={{ fontWeight: 400 }}>(opsional)</span></label>
-                  <input value={unit.model} onChange={e => updateUnit(idx, "model", e.target.value)}
-                    placeholder="cth: FTNE25UAV4"
-                    style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 12, boxSizing: "border-box" }} />
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "75px 1fr", gap: 8 }}>
-                  <div>
-                    <label style={{ fontSize: 11, color: cs.muted, display: "block", marginBottom: 4 }}>Qty</label>
-                    <input type="number" min="1" value={unit.qty} onChange={e => updateUnit(idx, "qty", parseInt(e.target.value) || 1)}
-                      style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px", color: cs.text, fontSize: 13, textAlign: "center", boxSizing: "border-box" }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 11, color: cs.muted, display: "block", marginBottom: 4 }}>Harga Unit (dari toko) *</label>
-                    <input type="number" min="0" step="50000" value={unit.harga_satuan || ""}
-                      onChange={e => updateUnit(idx, "harga_satuan", parseInt(e.target.value) || 0)}
-                      placeholder="0"
-                      style={{ width: "100%", background: cs.surface, border: "1px solid #f59e0b55", borderRadius: 8, padding: "8px 12px", color: "#f59e0b", fontSize: 14, fontFamily: "monospace", fontWeight: 700, boxSizing: "border-box" }} />
-                  </div>
-                </div>
-
-                {/* Price hint dari ac_price_list */}
-                {unit._priceHint && (
-                  <div style={{ marginTop: 6, background: "#f59e0b0d", border: "1px solid #f59e0b33", borderRadius: 7, padding: "6px 10px", fontSize: 11, color: cs.muted, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <span>📋 <b style={{ color: cs.text }}>{unit._priceHint.seri || ""} {unit._priceHint.nama_varian || ""}</b></span>
-                    <span>Unit only: <b style={{ color: "#f59e0b", fontFamily: "monospace" }}>{fmt(unit._priceHint.harga_unit)}</b></span>
-                    {unit._priceHint.harga_inc_pasang > 0 && (
-                      <span>Inc. Pasang: <b style={{ color: "#22c55e", fontFamily: "monospace" }}>{fmt(unit._priceHint.harga_inc_pasang)}</b></span>
-                    )}
-                    <button onMouseDown={() => updateUnit(idx, "harga_satuan", unit._priceHint.harga_unit)}
-                      style={{ background: "#f59e0b22", border: "1px solid #f59e0b44", color: "#f59e0b", borderRadius: 5, padding: "2px 8px", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>
-                      Pakai Unit Only
-                    </button>
-                  </div>
-                )}
-
-                {unit.subtotal > 0 && (
-                  <div style={{ marginTop: 8, textAlign: "right", fontSize: 12, color: "#f59e0b" }}>
-                    Subtotal: <strong style={{ fontFamily: "monospace" }}>{fmt(unit.subtotal)}</strong>
-                    <span style={{ marginLeft: 6, fontSize: 10, color: cs.muted }}>(passthrough)</span>
-                  </div>
-                )}
+          return (
+            <div style={{ padding: "16px 20px", display: "grid", gap: 14 }}>
+              <div style={{ background: "#f59e0b15", border: "1px solid #f59e0b44", borderRadius: 10, padding: "10px 14px", fontSize: 12, color: "#f59e0b" }}>
+                Harga unit = passthrough toko (tidak masuk omset AClean). Pilih unit dari pricelist lalu sesuaikan qty jika perlu.
               </div>
-            ))}
 
-            <button onClick={() => setAcUnits(p => [...p, emptyUnit()])} style={{
-              padding: "10px", borderRadius: 10, background: "#f59e0b15",
-              border: "1px dashed #f59e0b88", color: "#f59e0b", cursor: "pointer", fontSize: 13, fontWeight: 700,
-            }}>+ Tambah Unit Lagi</button>
+              {/* ── Unit yang sudah dipilih ── */}
+              {acUnits.some(u => u.brand && u.harga_satuan > 0) && (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: 1 }}>Unit Dipilih</div>
+                  {acUnits.map((unit, idx) => unit.brand && unit.harga_satuan > 0 && (
+                    <div key={unit._id} style={{ background: cs.card, border: "2px solid #f59e0b66", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>{unit.brand} {unit.tipe} {unit.kapasitas}</div>
+                        <div style={{ fontSize: 11, color: cs.muted }}>{unit.model || unit._seri || ""} {unit._nama_varian ? `· ${unit._nama_varian}` : ""}</div>
+                        <div style={{ fontSize: 12, color: "#f59e0b", fontFamily: "monospace", fontWeight: 700 }}>{fmt(unit.harga_satuan)} / unit</div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <button onClick={() => updateUnit(idx, "qty", Math.max(1, unit.qty - 1))} style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid " + cs.border, background: cs.surface, color: cs.text, cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: cs.text, minWidth: 18, textAlign: "center" }}>{unit.qty}</span>
+                        <button onClick={() => updateUnit(idx, "qty", unit.qty + 1)} style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid " + cs.border, background: cs.surface, color: cs.text, cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#f59e0b", fontFamily: "monospace", fontWeight: 700, minWidth: 90, textAlign: "right" }}>{fmt(unit.subtotal)}</div>
+                      <button onClick={() => setAcUnits(p => p.filter((_, i) => i !== idx))} style={{ background: "#ef444415", border: "none", color: "#ef4444", borderRadius: 5, padding: "4px 8px", cursor: "pointer", fontSize: 11 }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={goPrev} style={{ flex: 1, padding: "11px", borderRadius: 10, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 13 }}>← Kembali</button>
-              <button onClick={goNext} style={{ flex: 2, padding: "11px", borderRadius: 10, background: cs.accent, border: "none", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Lanjut → Paket & Add-on</button>
+              {/* ── Search & Filter pricelist ── */}
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: 1 }}>Tambah Unit dari Pricelist</div>
+                <input
+                  value={unitSearch} onChange={e => setUnitSearch(e.target.value)}
+                  placeholder="🔍 Cari brand, seri, atau varian..."
+                  style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {/* Filter brand */}
+                  {["", ...brandsAvail].map(b => (
+                    <button key={b || "all"} onClick={() => setUnitFilterBrand(b)}
+                      style={{ fontSize: 11, padding: "3px 10px", borderRadius: 99, cursor: "pointer",
+                        background: unitFilterBrand === b ? "#f59e0b" : cs.surface,
+                        border: "1px solid " + (unitFilterBrand === b ? "#f59e0b" : cs.border),
+                        color: unitFilterBrand === b ? "#000" : cs.text }}>
+                      {b || "Semua Brand"}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {/* Filter PK */}
+                  {["", ...pksAvail].map(k => (
+                    <button key={k || "all"} onClick={() => setUnitFilterPK(k)}
+                      style={{ fontSize: 11, padding: "3px 10px", borderRadius: 99, cursor: "pointer",
+                        background: unitFilterPK === k ? "#f59e0b" : cs.surface,
+                        border: "1px solid " + (unitFilterPK === k ? "#f59e0b" : cs.border),
+                        color: unitFilterPK === k ? "#000" : cs.text }}>
+                      {k || "Semua PK"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── List item pricelist ── */}
+              <div style={{ display: "grid", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                {filteredPL.length === 0 && (
+                  <div style={{ textAlign: "center", color: cs.muted, fontSize: 12, padding: "20px 0" }}>Tidak ada unit ditemukan</div>
+                )}
+                {filteredPL.map((p, i) => {
+                  const alreadyAdded = acUnits.some(u => u._seri === p.seri && u.brand === p.brand);
+                  return (
+                    <div key={i} onClick={() => {
+                      if (alreadyAdded) return;
+                      const newUnit = {
+                        _id: Date.now() + Math.random(),
+                        brand: p.brand, tipe: p.tipe, kapasitas: p.kapasitas,
+                        model: p.seri || "", _seri: p.seri, _nama_varian: p.nama_varian,
+                        qty: 1, harga_satuan: p.harga_unit,
+                        subtotal: p.harga_unit, is_passthrough: true,
+                        _priceHint: p,
+                      };
+                      // Ganti slot kosong pertama, atau tambah baru
+                      setAcUnits(prev => {
+                        const emptyIdx = prev.findIndex(u => !u.brand || u.harga_satuan === 0);
+                        if (emptyIdx >= 0) return prev.map((u, i) => i === emptyIdx ? newUnit : u);
+                        return [...prev, newUnit];
+                      });
+                    }}
+                      style={{
+                        background: alreadyAdded ? "#16a34a10" : cs.card,
+                        border: "1px solid " + (alreadyAdded ? "#16a34a44" : cs.border),
+                        borderRadius: 9, padding: "10px 14px", cursor: alreadyAdded ? "default" : "pointer",
+                        display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                        opacity: alreadyAdded ? 0.7 : 1,
+                      }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>
+                          {p.brand} <span style={{ color: cs.muted, fontWeight: 400 }}>{p.tipe}</span> · {p.kapasitas}
+                        </div>
+                        <div style={{ fontSize: 11, color: cs.muted }}>{p.seri}{p.nama_varian ? ` · ${p.nama_varian}` : ""}</div>
+                      </div>
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b", fontFamily: "monospace" }}>{fmt(p.harga_unit)}</div>
+                        <div style={{ fontSize: 10, color: cs.muted }}>unit only</div>
+                      </div>
+                      <div style={{ fontSize: 18, color: alreadyAdded ? "#16a34a" : "#f59e0b", flexShrink: 0 }}>
+                        {alreadyAdded ? "✓" : "+"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={goPrev} style={{ flex: 1, padding: "11px", borderRadius: 10, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 13 }}>← Kembali</button>
+                <button onClick={goNext} disabled={!canNext.unit}
+                  style={{ flex: 2, padding: "11px", borderRadius: 10, background: canNext.unit ? cs.accent : cs.border, border: "none", color: canNext.unit ? "#fff" : cs.muted, fontWeight: 700, cursor: canNext.unit ? "pointer" : "default", fontSize: 13 }}>
+                  Lanjut → Paket & Add-on
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ══════════════════════════════════════════
             TAB 3 — PAKET & ADD-ON
