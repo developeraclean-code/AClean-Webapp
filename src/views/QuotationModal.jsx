@@ -5,7 +5,7 @@ import { normalizePhone } from "../lib/phone.js";
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
 
 const BRAND_SHORTCUTS = ["Daikin", "Panasonic", "Sharp", "Samsung", "LG", "Mitsubishi", "Gree", "Haier", "Midea", "Hisense"];
-const KAPASITAS_OPT   = ["0.5 PK", "0.75 PK", "1 PK", "1.5 PK", "2 PK", "2.5 PK", "3 PK", "4 PK", "5 PK"];
+const KAPASITAS_OPT   = ["0.5 PK", "0.75 PK", "1 PK", "1.5 PK", "2 PK", "2.5 PK", "3 PK", "3.5 PK", "4 PK", "5 PK", "6 PK"];
 const TIPE_UNIT       = ["Split Standard", "Split Inverter", "Cassette", "Split Duct", "Floor Standing"];
 const TRADE_IN_AMOUNT = 250000;
 
