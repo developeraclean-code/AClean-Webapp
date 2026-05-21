@@ -3,8 +3,8 @@
 // - Auto-prefix 62 untuk format Indonesia
 export const normalizePhone = (p) => {
   if (!p) return "";
-  // Strip semua selain digit (handle paste dari format lain seperti "+62 812-3456-7890")
-  const d = p.toString().replace(/\D/g, "");
+  // Strip semua selain digit — pakai [^\d] agar Unicode soft-hyphen (U+2011), invisible chars, dll ikut terhapus
+  const d = p.toString().replace(/[^\d]/g, "");
   if (!d) return "";
   if (d.startsWith("08")) return "62" + d.slice(1);
   if (d.startsWith("62")) return d;

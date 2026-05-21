@@ -6058,7 +6058,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const val = e.target.value;
                     if (key === "phone") {
                       const normVal = normalizePhone(val);
-                      const matches = customersData.filter(c => samePhone(c.phone, val));
+                      const matches = customersData.filter(c => samePhone(c.phone, normVal));
                       if (matches.length === 1) {
                         // 1 match → auto-fill langsung
                         setNewOrderForm(f => ({ ...f, phone: normVal, customer: matches[0].name, address: matches[0].address || f.address, area: matches[0].area || f.area }));
