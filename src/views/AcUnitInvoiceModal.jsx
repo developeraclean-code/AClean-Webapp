@@ -763,6 +763,67 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
                 })}
               </div>
 
+              {/* ── Input manual untuk unit tidak ada di pricelist ── */}
+              <button onClick={() => {
+                const newUnit = { _id: Date.now() + Math.random(), brand: "", tipe: "Split Standard", kapasitas: "1 PK", model: "", qty: 1, harga_satuan: 0, subtotal: 0, is_passthrough: true, _manual: true };
+                setAcUnits(prev => {
+                  const emptyIdx = prev.findIndex(u => !u.brand || u.harga_satuan === 0);
+                  if (emptyIdx >= 0) return prev.map((u, i) => i === emptyIdx ? newUnit : u);
+                  return [...prev, newUnit];
+                });
+              }} style={{ padding: "9px 14px", borderRadius: 9, background: cs.surface, border: "1px dashed " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 12, textAlign: "left" }}>
+                ✏️ Input manual — unit tidak ada di pricelist
+              </button>
+
+              {/* Form input manual untuk unit _manual */}
+              {acUnits.some(u => u._manual && (!u.brand || u.harga_satuan === 0)) && acUnits.filter(u => u._manual).map((unit, _) => {
+                const idx = acUnits.findIndex(u => u._id === unit._id);
+                return (
+                  <div key={unit._id} style={{ background: cs.card, border: "1px dashed #f59e0b66", borderRadius: 10, padding: "12px 14px", display: "grid", gap: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: cs.muted }}>Unit Manual</span>
+                      <button onClick={() => setAcUnits(p => p.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 12 }}>✕ Hapus</button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div style={{ gridColumn: "span 2" }}>
+                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Brand / Nama Unit *</div>
+                        <input value={unit.brand} onChange={e => updateUnit(idx, "brand", e.target.value)} placeholder="cth: LG, Samsung, Midea..."
+                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12, boxSizing: "border-box" }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Tipe</div>
+                        <select value={unit.tipe} onChange={e => updateUnit(idx, "tipe", e.target.value)}
+                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12 }}>
+                          {TIPE_UNIT.map(t => <option key={t}>{t}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Kapasitas</div>
+                        <select value={unit.kapasitas} onChange={e => updateUnit(idx, "kapasitas", e.target.value)}
+                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12 }}>
+                          {KAPASITAS_OPT.map(k => <option key={k}>{k}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Seri / Model</div>
+                        <input value={unit.model} onChange={e => updateUnit(idx, "model", e.target.value)} placeholder="opsional"
+                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12, boxSizing: "border-box" }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Qty</div>
+                        <input type="number" min="1" value={unit.qty} onChange={e => updateUnit(idx, "qty", parseInt(e.target.value) || 1)}
+                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px", color: cs.text, fontSize: 13, textAlign: "center", boxSizing: "border-box" }} />
+                      </div>
+                      <div style={{ gridColumn: "span 2" }}>
+                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Harga Unit (passthrough) *</div>
+                        <input type="number" min="0" step="50000" value={unit.harga_satuan || ""} onChange={e => updateUnit(idx, "harga_satuan", parseInt(e.target.value) || 0)} placeholder="0"
+                          style={{ width: "100%", background: cs.surface, border: "1px solid #f59e0b55", borderRadius: 7, padding: "8px 12px", color: "#f59e0b", fontSize: 14, fontFamily: "monospace", fontWeight: 700, boxSizing: "border-box" }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={goPrev} style={{ flex: 1, padding: "11px", borderRadius: 10, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 13 }}>← Kembali</button>
                 <button onClick={goNext} disabled={!canNext.unit}
