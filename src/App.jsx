@@ -3627,8 +3627,8 @@ ${photoPageHTML}
     if (!norm) return;
 
     try {
-      const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      // Cari semua payment_suggestions dari nomor ini, belum di-match ke invoice manapun, dalam 7 hari
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      // Cari semua payment_suggestions dari nomor ini, belum di-match ke invoice manapun, dalam 30 hari
       const { data: candidates, error } = await supabase
         .from("payment_suggestions")
         .select("id, amount, bank, transfer_date, image_url, source, created_at")
@@ -3919,6 +3919,10 @@ ${photoPageHTML}
     if (inv.phone) await supabase.from("customers").update({ last_service: paidAt.slice(0, 10) }).eq("phone", inv.phone);
     addAgentLog("PAYMENT_CONFIRMED", `Invoice ${inv.id} LUNAS — ${inv.customer} ${fmt(inv.total)} via ${method}`, "SUCCESS");
     showNotif(`💰 Invoice ${inv.id} LUNAS — ${fmt(inv.total)}`);
+    // Retro-match: cari bukti bayar yang belum ter-link jika belum ada proof dari parameter
+    if (!paymentProofUrl) {
+      retroMatchPayment({ ...inv, status: "PAID" }).catch(e => console.warn("[RETRO_MATCH] markPaid error:", e.message));
+    }
   };
 
   // ── Group Payment: 1 transfer cover beberapa invoice 1 customer ──
