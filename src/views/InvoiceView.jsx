@@ -1594,6 +1594,7 @@ return (
         showNotif={showNotif}
         setInvoicesData={setInvoicesData}
         getLocalDate={getLocalDate}
+        priceListData={priceListData || []}
       />
     )}
 

@@ -78,7 +78,7 @@ const emptyUnit = () => ({
   qty: 1, harga_satuan: 0, subtotal: 0, is_passthrough: true,
 });
 
-export default function AcUnitInvoiceModal({ onClose, supabase, customersData, ordersData, showNotif, setInvoicesData, setOrdersData, getLocalDate }) {
+export default function AcUnitInvoiceModal({ onClose, supabase, customersData, ordersData, showNotif, setInvoicesData, setOrdersData, getLocalDate, priceListData = [] }) {
   const [activeTab, setActiveTab] = useState("customer");
   const [saving, setSaving] = useState(false);
 
@@ -111,6 +111,10 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
   // Manual items (hanya aktif jika tanpa_paket)
   const [manualJasa, setManualJasa] = useState([]);
   const [manualMat, setManualMat]   = useState([]);
+  const [jasaSearch, setJasaSearch] = useState("");
+  const [matSearch, setMatSearch]   = useState("");
+  const [showJasaPicker, setShowJasaPicker] = useState(false);
+  const [showMatPicker, setShowMatPicker]   = useState(false);
 
   // ── Add-on material (post-install) ──
   const [addonItems, setAddonItems]       = useState([]);
@@ -877,59 +881,117 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
             </div>
 
             {/* ── UI untuk mode Tanpa Paket ── */}
-            {useTanpaPaket && (
-              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px", display: "grid", gap: 10 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent }}>🔧 Jasa & Material (input manual)</div>
+            {useTanpaPaket && (() => {
+              const jasaOpts = priceListData.filter(p => p.category === "Jasa" && p.price > 0 && (!jasaSearch || p.type.toLowerCase().includes(jasaSearch.toLowerCase()) || (p.service || "").toLowerCase().includes(jasaSearch.toLowerCase())));
+              const matOpts  = priceListData.filter(p => p.category === "Barang" && (!matSearch || p.type.toLowerCase().includes(matSearch.toLowerCase())));
+              return (
+                <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px", display: "grid", gap: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent }}>🔧 Jasa & Material</div>
 
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <span style={{ fontSize: 11, color: cs.muted }}>Item Jasa</span>
-                    <button onClick={() => setManualJasa(p => [...p, { _id: Date.now(), nama: "", subtotal: 0 }])}
-                      style={{ fontSize: 11, background: cs.accent + "20", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 6, padding: "3px 9px", cursor: "pointer" }}>+ Jasa</button>
-                  </div>
-                  {manualJasa.map((j, ji) => (
-                    <div key={j._id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 28px", gap: 5, marginBottom: 5, alignItems: "center" }}>
-                      <input value={j.nama} onChange={e => setManualJasa(p => p.map((x, xi) => xi === ji ? { ...x, nama: e.target.value } : x))}
-                        placeholder="Nama jasa..."
-                        style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 8px", color: cs.text, fontSize: 12 }} />
-                      <input type="number" min="0" value={j.subtotal || ""} placeholder="Harga"
-                        onChange={e => setManualJasa(p => p.map((x, xi) => xi === ji ? { ...x, subtotal: parseInt(e.target.value) || 0 } : x))}
-                        style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 8px", color: cs.accent, fontSize: 12, fontFamily: "monospace" }} />
-                      <button onClick={() => setManualJasa(p => p.filter((_, xi) => xi !== ji))}
-                        style={{ background: "#ef444415", border: "none", color: "#ef4444", borderRadius: 5, padding: "4px 6px", cursor: "pointer", fontSize: 12 }}>×</button>
+                  {/* ── Item Jasa ── */}
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, color: cs.muted }}>Item Jasa</span>
+                      <div style={{ display: "flex", gap: 5 }}>
+                        <button onClick={() => { setShowJasaPicker(p => !p); setShowMatPicker(false); }}
+                          style={{ fontSize: 11, background: cs.accent + "20", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 6, padding: "3px 9px", cursor: "pointer" }}>
+                          {showJasaPicker ? "✕ Tutup" : "+ Jasa"}
+                        </button>
+                        <button onClick={() => setManualJasa(p => [...p, { _id: Date.now(), nama: "", subtotal: 0 }])}
+                          style={{ fontSize: 11, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, borderRadius: 6, padding: "3px 9px", cursor: "pointer" }}>+ Manual</button>
+                      </div>
                     </div>
-                  ))}
-                  {manualJasa.length === 0 && <div style={{ fontSize: 11, color: cs.muted, padding: "4px 0" }}>Belum ada item jasa</div>}
-                </div>
-
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <span style={{ fontSize: 11, color: cs.muted }}>Item Material</span>
-                    <button onClick={() => setManualMat(p => [...p, { _id: Date.now(), nama: "", subtotal: 0 }])}
-                      style={{ fontSize: 11, background: cs.green + "20", border: "1px solid " + cs.green + "44", color: cs.green, borderRadius: 6, padding: "3px 9px", cursor: "pointer" }}>+ Material</button>
+                    {showJasaPicker && (
+                      <div style={{ marginBottom: 8 }}>
+                        <input value={jasaSearch} onChange={e => setJasaSearch(e.target.value)} placeholder="Cari jasa..." autoFocus
+                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12, marginBottom: 5, boxSizing: "border-box" }} />
+                        <div style={{ maxHeight: 170, overflowY: "auto", background: cs.surface, borderRadius: 8, border: "1px solid " + cs.border }}>
+                          {jasaOpts.length === 0 && <div style={{ padding: "10px 12px", fontSize: 11, color: cs.muted }}>Tidak ditemukan</div>}
+                          {jasaOpts.map((p, i) => (
+                            <div key={i} onClick={() => {
+                              setManualJasa(prev => [...prev, { _id: Date.now() + i, nama: p.type, subtotal: Number(p.price) }]);
+                              setShowJasaPicker(false); setJasaSearch("");
+                            }} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, color: cs.text, borderBottom: "1px solid " + cs.border + "33", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                              onMouseEnter={e => e.currentTarget.style.background = cs.accent + "12"}
+                              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                              <span>{p.type} <span style={{ color: cs.muted, fontSize: 10 }}>/{p.unit || "unit"}</span></span>
+                              <span style={{ color: cs.accent, fontFamily: "monospace", fontWeight: 700, flexShrink: 0 }}>{fmt(p.price)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {manualJasa.map((j, ji) => (
+                      <div key={j._id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 28px", gap: 5, marginBottom: 5, alignItems: "center" }}>
+                        <input value={j.nama} onChange={e => setManualJasa(p => p.map((x, xi) => xi === ji ? { ...x, nama: e.target.value } : x))}
+                          placeholder="Nama jasa..."
+                          style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 8px", color: cs.text, fontSize: 12 }} />
+                        <input type="number" min="0" value={j.subtotal || ""} placeholder="Harga"
+                          onChange={e => setManualJasa(p => p.map((x, xi) => xi === ji ? { ...x, subtotal: parseInt(e.target.value) || 0 } : x))}
+                          style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 8px", color: cs.accent, fontSize: 12, fontFamily: "monospace" }} />
+                        <button onClick={() => setManualJasa(p => p.filter((_, xi) => xi !== ji))}
+                          style={{ background: "#ef444415", border: "none", color: "#ef4444", borderRadius: 5, padding: "4px 6px", cursor: "pointer", fontSize: 12 }}>×</button>
+                      </div>
+                    ))}
+                    {manualJasa.length === 0 && <div style={{ fontSize: 11, color: cs.muted, padding: "2px 0" }}>Belum ada item jasa</div>}
                   </div>
-                  {manualMat.map((m, mi) => (
-                    <div key={m._id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 28px", gap: 5, marginBottom: 5, alignItems: "center" }}>
-                      <input value={m.nama} onChange={e => setManualMat(p => p.map((x, xi) => xi === mi ? { ...x, nama: e.target.value } : x))}
-                        placeholder="Nama material..."
-                        style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 8px", color: cs.text, fontSize: 12 }} />
-                      <input type="number" min="0" value={m.subtotal || ""} placeholder="Harga"
-                        onChange={e => setManualMat(p => p.map((x, xi) => xi === mi ? { ...x, subtotal: parseInt(e.target.value) || 0 } : x))}
-                        style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 8px", color: cs.green, fontSize: 12, fontFamily: "monospace" }} />
-                      <button onClick={() => setManualMat(p => p.filter((_, xi) => xi !== mi))}
-                        style={{ background: "#ef444415", border: "none", color: "#ef4444", borderRadius: 5, padding: "4px 6px", cursor: "pointer", fontSize: 12 }}>×</button>
+
+                  {/* ── Item Material ── */}
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, color: cs.muted }}>Item Material</span>
+                      <div style={{ display: "flex", gap: 5 }}>
+                        <button onClick={() => { setShowMatPicker(p => !p); setShowJasaPicker(false); }}
+                          style={{ fontSize: 11, background: cs.green + "20", border: "1px solid " + cs.green + "44", color: cs.green, borderRadius: 6, padding: "3px 9px", cursor: "pointer" }}>
+                          {showMatPicker ? "✕ Tutup" : "+ Material"}
+                        </button>
+                        <button onClick={() => setManualMat(p => [...p, { _id: Date.now(), nama: "", subtotal: 0 }])}
+                          style={{ fontSize: 11, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, borderRadius: 6, padding: "3px 9px", cursor: "pointer" }}>+ Manual</button>
+                      </div>
                     </div>
-                  ))}
-                  {manualMat.length === 0 && <div style={{ fontSize: 11, color: cs.muted, padding: "4px 0" }}>Belum ada item material</div>}
-                </div>
-
-                {totalPaket > 0 && (
-                  <div style={{ textAlign: "right", fontSize: 11, color: cs.muted }}>
-                    Total manual: <strong style={{ color: cs.accent, fontFamily: "monospace" }}>{fmt(totalPaket)}</strong>
+                    {showMatPicker && (
+                      <div style={{ marginBottom: 8 }}>
+                        <input value={matSearch} onChange={e => setMatSearch(e.target.value)} placeholder="Cari material..." autoFocus
+                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12, marginBottom: 5, boxSizing: "border-box" }} />
+                        <div style={{ maxHeight: 170, overflowY: "auto", background: cs.surface, borderRadius: 8, border: "1px solid " + cs.border }}>
+                          {matOpts.length === 0 && <div style={{ padding: "10px 12px", fontSize: 11, color: cs.muted }}>Tidak ditemukan</div>}
+                          {matOpts.map((p, i) => (
+                            <div key={i} onClick={() => {
+                              setManualMat(prev => [...prev, { _id: Date.now() + i, nama: p.type, subtotal: Number(p.price) }]);
+                              setShowMatPicker(false); setMatSearch("");
+                            }} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, color: cs.text, borderBottom: "1px solid " + cs.border + "33", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                              onMouseEnter={e => e.currentTarget.style.background = cs.green + "12"}
+                              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                              <span>{p.type} <span style={{ color: cs.muted, fontSize: 10 }}>/{p.unit || "pcs"}</span></span>
+                              <span style={{ color: cs.green, fontFamily: "monospace", fontWeight: 700, flexShrink: 0 }}>{fmt(p.price)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {manualMat.map((m, mi) => (
+                      <div key={m._id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 28px", gap: 5, marginBottom: 5, alignItems: "center" }}>
+                        <input value={m.nama} onChange={e => setManualMat(p => p.map((x, xi) => xi === mi ? { ...x, nama: e.target.value } : x))}
+                          placeholder="Nama material..."
+                          style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 8px", color: cs.text, fontSize: 12 }} />
+                        <input type="number" min="0" value={m.subtotal || ""} placeholder="Harga"
+                          onChange={e => setManualMat(p => p.map((x, xi) => xi === mi ? { ...x, subtotal: parseInt(e.target.value) || 0 } : x))}
+                          style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 8px", color: cs.green, fontSize: 12, fontFamily: "monospace" }} />
+                        <button onClick={() => setManualMat(p => p.filter((_, xi) => xi !== mi))}
+                          style={{ background: "#ef444415", border: "none", color: "#ef4444", borderRadius: 5, padding: "4px 6px", cursor: "pointer", fontSize: 12 }}>×</button>
+                      </div>
+                    ))}
+                    {manualMat.length === 0 && <div style={{ fontSize: 11, color: cs.muted, padding: "2px 0" }}>Belum ada item material</div>}
                   </div>
-                )}
-              </div>
-            )}
+
+                  {totalPaket > 0 && (
+                    <div style={{ textAlign: "right", fontSize: 11, color: cs.muted }}>
+                      Total: <strong style={{ color: cs.accent, fontFamily: "monospace" }}>{fmt(totalPaket)}</strong>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* ── Add-on Material (post-install) ── */}
             <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px" }}>
