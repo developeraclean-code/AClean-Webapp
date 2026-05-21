@@ -35,7 +35,7 @@ export default function QuotationView({
   quotationsData, setQuotationsData, customersData, showNotif, showConfirm,
   currentUser, supabase, getLocalDate, fmt: fmtProp, priceListData,
   invoicesData, setInvoicesData, ordersData, setOrdersData, sendWAFn,
-  onOpenPDF,
+  onOpenPDF, uploadQuotationPDFFn,
 }) {
   const fmtFn = fmtProp || fmt;
   const today = getLocalDate?.() || new Date().toISOString().slice(0, 10);
@@ -197,17 +197,39 @@ export default function QuotationView({
     showNotif?.(`Quotation ${quo.id} dibatalkan`);
   };
 
-  // ── Kirim WA ──
+  // ── Kirim WA + PDF attachment ──
+  const [sendingWAId, setSendingWAId] = useState(null);
   const handleSendWA = async (quo) => {
     if (!quo.phone) { showNotif?.("⚠️ Tidak ada nomor HP customer"); return; }
-    const msg = `Halo ${quo.customer},\n\nBerikut penawaran dari AClean:\n\n📋 *${quo.id}*\nTotal: *${fmt(quo.total)}*${quo.notes ? "\n\n" + quo.notes : ""}\n\nPenawaran berlaku hingga ${quo.valid_until || "-"}.\nHubungi kami untuk konfirmasi.\n\n— AClean Service`;
-    sendWAFn?.(quo.phone, msg);
-    // Update status ke SENT jika masih DRAFT
-    if (quo.status === "DRAFT") {
-      await supabase.from("quotations").update({ status: "SENT", updated_at: new Date().toISOString() }).eq("id", quo.id);
-      setQuotationsData?.(prev => prev.map(q => q.id === quo.id ? { ...q, status: "SENT" } : q));
+    setSendingWAId(quo.id);
+    try {
+      const msg =
+        `Halo ${quo.customer},\n\nBerikut penawaran dari AClean:\n\n` +
+        `📋 *${quo.id}*\nTotal: *${fmt(quo.total)}*` +
+        (quo.notes ? `\n\n${quo.notes}` : "") +
+        `\n\nPenawaran berlaku hingga ${quo.valid_until || "-"}.\nHubungi kami untuk konfirmasi.\n\n— AClean Service`;
+
+      // Upload PDF quotation ke R2 terlebih dahulu jika tersedia
+      let pdfAttachment = null;
+      if (uploadQuotationPDFFn) {
+        try {
+          pdfAttachment = await uploadQuotationPDFFn(quo);
+        } catch (pdfErr) {
+          console.warn("[QuotationWA] PDF upload gagal, fallback teks:", pdfErr.message);
+        }
+      }
+
+      await sendWAFn?.(quo.phone, msg, pdfAttachment ? { url: pdfAttachment.url, filename: pdfAttachment.filename } : {});
+
+      // Update status ke SENT jika masih DRAFT
+      if (quo.status === "DRAFT") {
+        await supabase.from("quotations").update({ status: "SENT", updated_at: new Date().toISOString() }).eq("id", quo.id);
+        setQuotationsData?.(prev => prev.map(q => q.id === quo.id ? { ...q, status: "SENT" } : q));
+      }
+      showNotif?.(`📱 WA dikirim ke ${quo.phone}${pdfAttachment ? " 📎 PDF terlampir" : ""}`);
+    } finally {
+      setSendingWAId(null);
     }
-    showNotif?.(`📱 WA dikirim ke ${quo.phone}`);
   };
 
   const FILTERS = ["Semua", "DRAFT", "SENT", "APPROVED", "EXPIRED"];
@@ -343,8 +365,10 @@ export default function QuotationView({
                   )}
 
                   {canEdit && quo.status !== "CANCELLED" && (
-                    <button onClick={() => handleSendWA(quo)}
-                      style={btnStyle("#25d366")}>📱 Kirim WA</button>
+                    <button onClick={() => handleSendWA(quo)} disabled={sendingWAId === quo.id}
+                      style={{ ...btnStyle("#25d366"), opacity: sendingWAId === quo.id ? 0.6 : 1, cursor: sendingWAId === quo.id ? "not-allowed" : "pointer" }}>
+                      {sendingWAId === quo.id ? "⏳ Mengirim..." : "📱 Kirim WA"}
+                    </button>
                   )}
 
                   {canEdit && (quo.status === "SENT" || quo.status === "DRAFT" || expired) && quo.status !== "CANCELLED" && (

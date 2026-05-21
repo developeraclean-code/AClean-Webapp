@@ -7,7 +7,7 @@ import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
 import QuotationPDF from "../components/QuotationPDF.jsx";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, previewMergedInvoicePDF, approveInvoice, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
@@ -87,6 +87,7 @@ const [mergeStage, setMergeStage]     = useState(null); // null | "picker" | "se
 const [mergePhone, setMergePhone]     = useState(null); // phone customer yang dipilih
 const [mergeSelectedIds, setMergeSelectedIds] = useState([]);
 const [mergeSending, setMergeSending] = useState(false);
+const [mergeApproving, setMergeApproving] = useState(false);
 const [mergePreviewing, setMergePreviewing] = useState(false);
 // Snapshot invoice list yang terakhir gagal kirim — agar bisa di-retry tanpa hilang state UI
 const [lastFailedMerge, setLastFailedMerge] = useState(null); // { invList, customer, phone, ts }
@@ -149,6 +150,35 @@ const handleSendMerged = async (retryInvList = null) => {
       ts: new Date(),
     });
   }
+};
+
+// Approve semua invoice yang dipilih ke UNPAID tanpa kirim WA
+const handleApproveMerged = async () => {
+  const invs = mergeSelectedInvs;
+  if (invs.length < 2) { showNotif("⚠️ Pilih minimal 2 invoice"); return; }
+  // Hanya approve yang masih PENDING/SUBMITTED (belum UNPAID)
+  const toApprove = invs.filter(i => i.status === "PENDING" || i.status === "SUBMITTED" || !i.status);
+  if (toApprove.length === 0) { showNotif("⚠️ Semua invoice yang dipilih sudah di-approve"); return; }
+  const customer = invs[0].customer || "customer";
+  const ok = await showConfirm({
+    title: "Approve & Simpan Invoice",
+    message: `Approve ${toApprove.length} invoice untuk ${customer} tanpa kirim WA?\n\n${toApprove.map(i => `• ${i.id} — ${fmt(i.total)}`).join("\n")}\n\nInvoice akan berstatus UNPAID. WA bisa dikirim terpisah.`,
+    confirmText: "Ya, Approve",
+  });
+  if (!ok) return;
+  setMergeApproving(true);
+  let successCount = 0;
+  for (const inv of toApprove) {
+    try {
+      await approveSaveOnly(inv);
+      successCount++;
+    } catch (e) {
+      console.warn("[handleApproveMerged] gagal approve", inv.id, e.message);
+    }
+  }
+  setMergeApproving(false);
+  showNotif(`✅ ${successCount} invoice di-approve — belum dikirim ke customer`);
+  exitMergeMode();
 };
 
 const handleRetryFailed = async () => {
@@ -386,6 +416,7 @@ return (
         setOrdersData={setOrdersData}
         sendWAFn={sendWAFn}
         onOpenPDF={(quo) => setQuoPDFData(quo)}
+        uploadQuotationPDFFn={uploadQuotationPDFFn}
       />
     )}
 
@@ -1677,14 +1708,27 @@ return (
           title="Buka PDF gabungan di tab baru untuk cek isi sebelum kirim">
           {mergePreviewing ? "⏳" : "👁 Preview"}
         </button>
-        <button onClick={() => handleSendMerged()}
-          disabled={mergeSending || mergePreviewing || mergeSelectedIds.length < 2}
+        <button onClick={handleApproveMerged}
+          disabled={mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2}
           style={{
-            background: (mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? cs.muted + "44" : "#25D366",
+            background: (mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? cs.muted + "33" : "#22c55e22",
+            border: "1px solid " + ((mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? cs.muted + "33" : "#22c55e66"),
+            color: (mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? cs.muted : "#4ade80",
+            padding: "8px 14px", borderRadius: 9,
+            cursor: (mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? "not-allowed" : "pointer",
+            fontWeight: 700, fontSize: 12,
+          }}
+          title="Approve semua invoice yang dipilih ke UNPAID tanpa kirim WA">
+          {mergeApproving ? "⏳ Approving..." : `✅ Approve & Simpan (${mergeSelectedIds.length})`}
+        </button>
+        <button onClick={() => handleSendMerged()}
+          disabled={mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2}
+          style={{
+            background: (mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2) ? cs.muted + "44" : "#25D366",
             border: "none",
-            color: (mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? cs.muted : "#fff",
+            color: (mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2) ? cs.muted : "#fff",
             padding: "8px 18px", borderRadius: 9,
-            cursor: (mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? "not-allowed" : "pointer",
+            cursor: (mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2) ? "not-allowed" : "pointer",
             fontWeight: 700, fontSize: 12,
           }}>
           {mergeSending ? "⏳ Mengirim..." : `📨 Gabung & Kirim (${mergeSelectedIds.length})`}

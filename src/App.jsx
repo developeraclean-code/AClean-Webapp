@@ -1727,6 +1727,49 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     }
   };
 
+  // ── Upload Quotation PDF ke R2 untuk WA attachment ──
+  const uploadQuotationPDFForWA = async (quo) => {
+    try {
+      const { BlobProvider } = await import("@react-pdf/renderer");
+      const { default: QuotationPDF } = await import("./components/QuotationPDF.jsx");
+      const { createElement } = await import("react");
+      const { renderToStream } = await import("@react-pdf/renderer");
+
+      // Gunakan pendekatan blob via dynamic render
+      const blob = await new Promise((resolve, reject) => {
+        let resolved = false;
+        const doc = createElement(QuotationPDF, { quo, appSettings: appSettings || {} });
+        // Render via BlobProvider — tapi kita butuh blob tanpa React DOM
+        // Pakai @react-pdf/renderer renderToBlob API
+        import("@react-pdf/renderer").then(({ pdf }) => {
+          pdf(doc).toBlob().then(b => { resolved = true; resolve(b); }).catch(reject);
+        }).catch(reject);
+        setTimeout(() => { if (!resolved) reject(new Error("PDF timeout")); }, 15000);
+      });
+      if (!blob) return null;
+      const filename = `Quotation_${quo.id}_${quo.customer?.replace(/\s+/g, "_") || "Customer"}.pdf`;
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const res = await fetch("/api/upload-foto", {
+        method: "POST", headers: await _apiHeaders(),
+        body: JSON.stringify({ base64, filename, folder: "quotations", mimeType: "application/pdf" })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.success && d.key) {
+        return { url: `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`, filename };
+      }
+      console.warn("[uploadQuotationPDFForWA] upload response:", d);
+      return null;
+    } catch (err) {
+      console.warn("[uploadQuotationPDFForWA] gagal:", err.message);
+      return null;
+    }
+  };
+
   const uploadMergedInvoicePDFForWA = async (invList, portalLink = null) => {
     try {
       const blob = await generateMergedInvoicePDFBlob(invList, portalLink);
@@ -5312,7 +5355,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
       apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx}
       customersData={customersData} priceListData={priceListData}
-      quotationsData={quotationsData} setQuotationsData={setQuotationsData} />
+      quotationsData={quotationsData} setQuotationsData={setQuotationsData}
+      uploadQuotationPDFFn={uploadQuotationPDFForWA}
+      approveSaveOnly={approveSaveOnly} />
   );
 
   // ============================================================
