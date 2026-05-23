@@ -574,7 +574,7 @@ async function taskRatingPrompt() {
   const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["rating_prompt_enabled","cron_jobs","customer_portal_enabled","voucher_loyalty_enabled","customer_portal_url"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
 
-  if (togMap["rating_prompt_enabled"] !== "true") {
+  if (!isCronJobEnabled(togMap, "rating_prompt_enabled") || togMap["rating_prompt_enabled"] !== "true") {
     await log("RATING_PROMPT","Dilewati — rating_prompt_enabled OFF","INFO");
     return { skipped: true };
   }
@@ -685,10 +685,10 @@ async function taskRatingPrompt() {
 // TASK 10: Servis Reminder — customer >90 hari tidak servis
 // ══════════════════════════════════════════════════
 async function taskServisReminder() {
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["servis_reminder_enabled","customer_portal_enabled","voucher_winback_enabled","customer_portal_url"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["servis_reminder_enabled","cron_jobs","customer_portal_enabled","voucher_winback_enabled","customer_portal_url"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
 
-  if (togMap["servis_reminder_enabled"] !== "true") {
+  if (!isCronJobEnabled(togMap, "servis_reminder_enabled") || togMap["servis_reminder_enabled"] !== "true") {
     await log("SERVIS_REMINDER","Dilewati — servis_reminder_enabled OFF","INFO");
     return { skipped: true };
   }

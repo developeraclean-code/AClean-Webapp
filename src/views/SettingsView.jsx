@@ -859,6 +859,12 @@ function SettingsView({
                           const newVal = isOn ? "false" : "true";
                           setAppSettings(prev => ({ ...prev, [key]: newVal }));
                           await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
+                          // Sync cron_jobs JSON entry so Cron Jobs card stays in sync
+                          const updCronJobs = cronJobs.map(j => j.backendKey === key ? { ...j, active: newVal === "true" } : j);
+                          if (updCronJobs.some(j => j.backendKey === key)) {
+                            setCronJobs(updCronJobs);
+                            await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(updCronJobs) }, { onConflict: "key" });
+                          }
                           showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
                         }}
                           style={{ width: 40, height: 22, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
