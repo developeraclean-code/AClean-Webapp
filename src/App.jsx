@@ -26,6 +26,7 @@ import {
   fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
   fetchWaConversations, fetchPriceList, fetchAraBrain,
+  lookupCustomersByPhone,
 } from "./data/reads.js";
 import {
   insertOrder, updateOrder, updateOrderStatus, deleteOrder,
@@ -881,6 +882,8 @@ export default function ACleanWebApp() {
   const [invUnitsData, setInvUnitsData] = useState([]); // unit fisik per item (tabung/roll)
   const [showAddStock, setShowAddStock] = useState(false);
   const [newOrderForm, setNewOrderForm] = useState({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", team_slot: "", date: "", time: "09:00", notes: "" });
+  // Server-side lookup customer by phone — anti miss customer di luar limit fetchCustomers
+  const [orderPhoneLookup, setOrderPhoneLookup] = useState({ phone: "", matches: [] });
   const [newStokForm, setNewStokForm] = useState({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" });
   const [newTeknisiForm, setNewTeknisiForm] = useState({ name: "", role: "Teknisi", phone: "", skills: [], email: "", password: "", buatAkun: false });
   const [modalAddCustomer, setModalAddCustomer] = useState(false);
@@ -2479,6 +2482,26 @@ ${photoPageHTML}
       } catch (e) { console.warn("[Settings] Failed to sync llmModel:", e.message); }
     })();
   }, [llmModel, isLoggedIn]);
+  // Server-side autolookup customer by phone (form Buat Order) — debounced.
+  // Menjamin customer existing terdeteksi walau di luar limit fetchCustomers.
+  useEffect(() => {
+    if (!modalOrder) return;
+    const raw = newOrderForm.phone || "";
+    if (raw.replace(/\D/g, "").length < 8) {
+      setOrderPhoneLookup(prev => (prev.phone || prev.matches.length) ? { phone: "", matches: [] } : prev);
+      return;
+    }
+    const norm = normalizePhone(raw);
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const { data, error } = await lookupCustomersByPhone(supabase, norm);
+        if (cancelled) return;
+        setOrderPhoneLookup({ phone: norm, matches: (!error && data) ? data : [] });
+      } catch (e) { if (!cancelled) setOrderPhoneLookup({ phone: norm, matches: [] }); }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [newOrderForm.phone, modalOrder, supabase]);
   // SECURITY: Never store API keys in localStorage — keys are managed on backend only
   useEffect(() => { _lsSave("llmModel", llmModel); }, [llmModel]);
   useEffect(() => { _lsSave("ollamaUrl", ollamaUrl); }, [ollamaUrl]);
@@ -4288,8 +4311,15 @@ ${photoPageHTML}
     // Higher entropy order ID to prevent collisions on simultaneous submissions
     const newId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
     const timeEnd = hitungJamSelesai(form.time || "09:00", form.service || "Cleaning", form.units || 1);
-    // Cek customer existing by phone ATAU name (untuk customer_id)
-    const preExistCust = findCustomer(customersData, form.phone, form.customer);
+    // Cek customer existing by phone ATAU name (untuk customer_id).
+    // Fallback ke server kalau tidak ketemu di array client (mungkin di luar limit fetchCustomers).
+    let preExistCust = findCustomer(customersData, form.phone, form.customer);
+    if (!preExistCust && form.phone && normalizePhone(form.phone).length >= 8) {
+      try {
+        const { data: srvMatches } = await lookupCustomersByPhone(supabase, normalizePhone(form.phone));
+        if (srvMatches && srvMatches.length) preExistCust = findCustomer(srvMatches, form.phone, form.customer);
+      } catch (e) { /* lookup server opsional */ }
+    }
     const newOrder = {
       id: newId,
       customer: form.customer, phone: normalizePhone(form.phone), address: form.address,
@@ -4391,7 +4421,8 @@ ${photoPageHTML}
     if (form.phone && form.customer) {
       const todayStr = new Date().toISOString().slice(0, 10);
       const orderDate = form.date || todayStr;
-      const existing = findCustomer(customersData, form.phone, form.customer);
+      // Reuse hasil lookup di atas (sudah termasuk fallback server) agar tidak miss customer di luar limit
+      const existing = preExistCust || findCustomer(customersData, form.phone, form.customer);
 
       if (!existing) {
         // ── Customer BARU ──
@@ -5305,11 +5336,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const renderOrderInbox = () => (
     <OrderInboxView
       ordersData={ordersData} setOrdersData={setOrdersData}
-      customersData={customersData} teknisiData={teknisiData}
+      customersData={customersData} setCustomersData={setCustomersData} teknisiData={teknisiData}
       currentUser={currentUser} supabase={supabase}
       showNotif={showNotif} showConfirm={showConfirm}
       auditUserName={auditUserName} TODAY={TODAY}
-      sendWA={sendWA} showUndoToast={showUndoToast} />
+      sendWA={sendWA} showUndoToast={showUndoToast}
+      apiHeaders={_apiHeaders} />
   );
 
   const renderOrders = () => (
@@ -6103,8 +6135,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               ))}
               {/* Customer auto-detect badge */}
               {newOrderForm.phone && newOrderForm.phone.length >= 6 && (() => {
-                const phoneMatches = customersData.filter(c => samePhone(c.phone, newOrderForm.phone));
-                const exactMatch = findCustomer(customersData, newOrderForm.phone, newOrderForm.customer);
+                // Gabungkan match dari array client + hasil lookup server (dedupe by id)
+                const clientMatches = customersData.filter(c => samePhone(c.phone, newOrderForm.phone));
+                const serverMatches = orderPhoneLookup.phone === normalizePhone(newOrderForm.phone) ? orderPhoneLookup.matches : [];
+                const _mergeById = new Map();
+                [...clientMatches, ...serverMatches].forEach(c => { if (c && c.id) _mergeById.set(c.id, c); });
+                const phoneMatches = Array.from(_mergeById.values());
+                const exactMatch = findCustomer(phoneMatches, newOrderForm.phone, newOrderForm.customer);
                 if (phoneMatches.length > 1) {
                   // Phone sama, beda nama/lokasi → tampilkan pilihan
                   return (

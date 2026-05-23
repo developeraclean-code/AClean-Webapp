@@ -566,7 +566,7 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
 // ══════════════════════════════════════════════════
 // Safety Net Panel — Deteksi tim confirmed dengan anggota ijin/absen
 // ══════════════════════════════════════════════════
-function SafetyNetPanel({ slotDate, dailySlots, availability, ordersData, teknisiData, supabase, showNotif, onReassigned }) {
+function SafetyNetPanel({ slotDate, dailySlots, availability, ordersData, teknisiData, supabase, showNotif, onReassigned, apiHeaders }) {
   const [reassignMap, setReassignMap] = useState({});   // orderId → newTeknisi
   const [notifSent, setNotifSent] = useState({});       // orderId → bool
   const [saving, setSaving] = useState(false);
@@ -607,11 +607,11 @@ function SafetyNetPanel({ slotDate, dailySlots, availability, ordersData, teknis
 
   async function handleNotifCustomer(order) {
     try {
-      const token = import.meta.env.VITE_INTERNAL_API_SECRET || "";
       const msg = `Halo *${order.customer}* 👋\n\nKami perlu informasikan bahwa jadwal service AC Anda hari ini mengalami perubahan jadwal karena teknisi kami berhalangan hadir.\n\nTim kami akan segera menghubungi Anda untuk penjadwalan ulang. Mohon maaf atas ketidaknyamanannya 🙏\n\n— AClean Service`;
+      const headers = apiHeaders ? await apiHeaders() : { "Content-Type": "application/json" };
       const r = await fetch("/api/send-wa", {
         method: "POST",
-        headers: { "x-internal-token": token, "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ phone: order.phone, message: msg }),
       });
       if (r.ok) {
@@ -723,7 +723,7 @@ const EMPTY_FORM = {
   customer_id: null,
 };
 
-export default function OrderInboxView({ ordersData, setOrdersData, customersData, teknisiData, currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY, sendWA, showUndoToast, insertOrder }) {
+export default function OrderInboxView({ ordersData, setOrdersData, customersData, setCustomersData, teknisiData, currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY, sendWA, showUndoToast, insertOrder, apiHeaders }) {
   const [form, setForm] = useState({ ...EMPTY_FORM, date: TODAY });
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -1005,27 +1005,59 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     [ordersData, form.teknisi, form.date, form.time, form.time_end, editId, form.service, form.units]
   );
 
+  // Server-side lookup by phone — anti miss customer di luar limit fetchCustomers
+  const [serverCustMatches, setServerCustMatches] = useState({ key: "", rows: [] });
+  useEffect(() => {
+    const rawPhone = (form.phone || "").replace(/\D/g, "");
+    const custIsNum = /^[0-9+]/.test(form.customer.trim());
+    const rawCustNum = custIsNum ? form.customer.replace(/\D/g, "") : "";
+    const candidate = rawPhone.length >= 8 ? form.phone : (rawCustNum.length >= 8 ? form.customer : "");
+    if (!candidate) { setServerCustMatches(prev => prev.rows.length ? { key: "", rows: [] } : prev); return; }
+    const norm = normalizePhone(candidate);
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const { data, error } = await supabase
+          .from("customers")
+          .select("id,name,phone,address,area,total_orders,last_service")
+          .eq("phone", norm).limit(20);
+        if (cancelled) return;
+        setServerCustMatches({ key: norm, rows: (!error && data) ? data : [] });
+      } catch (e) { if (!cancelled) setServerCustMatches({ key: norm, rows: [] }); }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [form.phone, form.customer, supabase]);
+
+  // Gabungkan match client + server (dedupe by id)
+  const mergeMatches = useCallback((clientRows, serverRows) => {
+    const m = new Map();
+    [...clientRows, ...serverRows].forEach(c => { if (c?.id) m.set(c.id, c); });
+    return Array.from(m.values());
+  }, []);
+
   // Autocomplete: cari by nama ATAU nomor WA
   const customerSuggest = useMemo(() => {
     const raw = form.customer.trim();
     if (raw.length < 2) return [];
     const q = raw.toLowerCase();
     const isPhone = /^[0-9+]/.test(raw);
-    return (customersData || []).filter(c =>
+    const client = (customersData || []).filter(c =>
       isPhone
         ? (c.phone || "").replace(/\D/g, "").includes(raw.replace(/\D/g, ""))
         : c.name?.toLowerCase().includes(q) || (c.phone || "").includes(q)
-    ).slice(0, 6);
-  }, [form.customer, customersData]);
+    );
+    const server = (isPhone && serverCustMatches.key === normalizePhone(raw)) ? serverCustMatches.rows : [];
+    return mergeMatches(client, server).slice(0, 6);
+  }, [form.customer, customersData, serverCustMatches, mergeMatches]);
 
   // Lookup nomor WA di field phone → suggest customer
   const phoneSuggest = useMemo(() => {
     const raw = form.phone.replace(/\D/g, "");
     if (raw.length < 5) return [];
-    return (customersData || []).filter(c =>
-      (c.phone || "").replace(/\D/g, "").includes(raw)
-    ).slice(0, 4);
-  }, [form.phone, customersData]);
+    const client = (customersData || []).filter(c => (c.phone || "").replace(/\D/g, "").includes(raw));
+    const server = serverCustMatches.key === normalizePhone(form.phone) ? serverCustMatches.rows : [];
+    return mergeMatches(client, server).slice(0, 4);
+  }, [form.phone, customersData, serverCustMatches, mergeMatches]);
 
   // Riwayat order terakhir customer yang dipilih (untuk autofill alamat)
   const customerLastOrder = useMemo(() => {
@@ -1163,15 +1195,45 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           setContinuationFrom(null);
         }
 
-        // Auto-save customer if not already linked
-        if (!form.customer_id && payload.customer) {
-          const { data: saved } = await supabase.from("customers").upsert(
-            { name: payload.customer, phone: payload.phone || null, address: payload.address || null },
-            { onConflict: "phone", ignoreDuplicates: false }
-          ).select("id").single();
+        // Auto-save customer if not already linked.
+        // Cek existing dulu (by phone+name) agar TIDAK overwrite stats customer lama.
+        if (!form.customer_id && payload.customer && payload.phone) {
+          const orderDate = payload.date || new Date().toISOString().slice(0, 10);
+          let saved = null;
+          // 1. Cari existing by (phone, name)
+          const { data: existRows } = await supabase.from("customers")
+            .select("id,name,phone,address,area,total_orders,last_service")
+            .eq("phone", payload.phone).eq("name", payload.customer).limit(1);
+          if (existRows && existRows.length) {
+            // Existing → hanya bump stats, jangan overwrite nama/alamat/joined
+            const ex = existRows[0];
+            const newTotal = (ex.total_orders || 0) + 1;
+            const { data: upd } = await supabase.from("customers")
+              .update({ total_orders: newTotal, last_service: orderDate })
+              .eq("id", ex.id).select().single();
+            saved = upd || { ...ex, total_orders: newTotal, last_service: orderDate };
+          } else {
+            // Baru → insert
+            const { data: ins } = await supabase.from("customers").insert({
+              name: payload.customer,
+              phone: payload.phone,
+              address: payload.address || null,
+              notes: "",
+              is_vip: false,
+              total_orders: 1,
+              joined_date: orderDate,
+              last_service: orderDate,
+            }).select().single();
+            saved = ins;
+          }
           if (saved?.id) {
             await supabase.from("orders").update({ customer_id: saved.id }).eq("id", id);
             setOrdersData(prev => prev.map(o => o.id === id ? { ...o, customer_id: saved.id } : o));
+            setCustomersData(prev => {
+              const exists = prev.find(c => c.id === saved.id);
+              if (exists) return prev.map(c => c.id === saved.id ? { ...c, ...saved } : c);
+              return [...prev, saved];
+            });
           }
         }
         setOrdersData(prev => [{ ...payload, id, created_at: new Date().toISOString() }, ...prev]);
@@ -1402,6 +1464,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         teknisiData={teknisiData}
         supabase={supabase}
         showNotif={showNotif}
+        apiHeaders={apiHeaders}
         onReassigned={(orderId, newTeknisi) => setOrdersData(prev =>
           prev.map(o => o.id === orderId ? { ...o, teknisi: newTeknisi } : o)
         )}
