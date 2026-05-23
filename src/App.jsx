@@ -1702,7 +1702,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      const res = await fetch("/api/upload-foto", {
+      const res = await _apiFetch("/api/upload-foto", {
         method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
           base64, filename,
@@ -1783,7 +1783,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      const res = await fetch("/api/upload-foto", {
+      const res = await _apiFetch("/api/upload-foto", {
         method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({ base64, filename, folder: "quotations", mimeType: "application/pdf" })
       });
@@ -1811,7 +1811,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      const res = await fetch("/api/upload-foto", {
+      const res = await _apiFetch("/api/upload-foto", {
         method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
           base64, filename,
@@ -2166,7 +2166,7 @@ ${photoPageHTML}
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      const res = await fetch("/api/upload-foto", {
+      const res = await _apiFetch("/api/upload-foto", {
         method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
           base64, filename: `ServiceReport_${laporan.job_id}.html`,
@@ -2210,7 +2210,7 @@ ${photoPageHTML}
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      const res = await fetch("/api/upload-foto", {
+      const res = await _apiFetch("/api/upload-foto", {
         method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
           base64, filename: `ServiceReport_${laporan.job_id}.pdf`,
@@ -9354,7 +9354,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             reader.onerror = rej;
                             reader.readAsDataURL(foto.file);
                           });
-                          const uploadRes = await fetch("/api/upload-foto", {
+                          const uploadRes = await _apiFetch("/api/upload-foto", {
                             method: "POST",
                             headers: await _apiHeaders(),
                             body: JSON.stringify({ base64, filename: foto.file.name || `foto_${Date.now()}.jpg`, reportId: selectedLaporan.job_id, mimeType: foto.file.type || "image/jpeg" }),
@@ -9728,7 +9728,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
           const uploadOne = async (ph) => {
             try {
-              const r = await fetch("/api/upload-foto", {
+              const r = await _apiFetch("/api/upload-foto", {
                 method: "POST",
                 headers: await _apiHeaders(),
                 body: JSON.stringify({
@@ -11770,7 +11770,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                     showNotif("⏳ Retry upload...");
                                     const reportId = laporanModal?.id || "tmp";
                                     try {
-                                      const r = await fetch("/api/upload-foto", {
+                                      const r = await _apiFetch("/api/upload-foto", {
                                         method: "POST", headers: await _apiHeaders(),
                                         body: JSON.stringify({
                                           base64: f.data_url,
