@@ -1006,29 +1006,55 @@ export default function ACleanWebApp() {
     } catch { return def; }
   };
   const _lsSave = (key, val) => { try { localStorage.setItem("aclean_" + key, JSON.stringify(val)); } catch { } };
-  // SEC-02: internal API token — di-exchange saat login, cached di memory (tidak di localStorage/bundle)
+  // SEC-02: internal API token — App Token JWT (15 menit expiry, per-user, role claim)
+  // Cached di memory, auto-refresh 1 menit sebelum expiry. Tidak di localStorage/bundle.
   const _internalTokenRef = useRef(null);
-  const _apiHeaders = async () => {
-    if (!_internalTokenRef.current) {
-      try {
-        const { data } = await supabase.auth.refreshSession();
-        const jwt = data?.session?.access_token;
-        if (jwt) {
-          const r = await fetch("/api/get-api-token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}` }
-          });
-          if (r.ok) {
-            const d = await r.json();
-            if (d.token) _internalTokenRef.current = d.token;
-          }
+  const _internalTokenExpRef = useRef(0); // epoch ms saat token harus di-refresh
+  const _exchangeApiToken = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      let jwt = data?.session?.access_token;
+      if (!jwt) {
+        const refreshed = await supabase.auth.refreshSession();
+        jwt = refreshed?.data?.session?.access_token;
+      }
+      if (!jwt) return;
+      const r = await fetch("/api/get-api-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}` }
+      });
+      if (r.ok) {
+        const d = await r.json();
+        if (d.token) {
+          _internalTokenRef.current = d.token;
+          // Refresh 1 menit sebelum expiry (default 15 menit → refresh setelah 14 menit)
+          const ttl = (d.expiresIn || 900) - 60;
+          _internalTokenExpRef.current = Date.now() + ttl * 1000;
         }
-      } catch { /* gagal silent — request tetap jalan tanpa token */ }
+      }
+    } catch { /* gagal silent — request tetap jalan tanpa token */ }
+  };
+  const _apiHeaders = async () => {
+    if (!_internalTokenRef.current || Date.now() >= _internalTokenExpRef.current) {
+      await _exchangeApiToken();
     }
     return {
       "Content-Type": "application/json",
       ...(_internalTokenRef.current ? { "X-Internal-Token": _internalTokenRef.current } : {})
     };
+  };
+  // Fetch wrapper: kalau 401, force-refresh token sekali lalu retry.
+  // Gunakan ini di tempat-tempat baru. Existing fetch() yang pakai _apiHeaders() tetap jalan.
+  const _apiFetch = async (url, opts = {}) => {
+    const headers = { ...(opts.headers || {}), ...(await _apiHeaders()) };
+    let r = await fetch(url, { ...opts, headers });
+    if (r.status === 401) {
+      _internalTokenRef.current = null;
+      _internalTokenExpRef.current = 0;
+      const fresh = { ...(opts.headers || {}), ...(await _apiHeaders()) };
+      r = await fetch(url, { ...opts, headers: fresh });
+    }
+    return r;
   };
   // SEC-07: brute force states — harus setelah _ls didefinisikan
   const [loginAttempts, setLoginAttempts] = useState(() => _ls("loginAttempts", 0));
@@ -2367,6 +2393,7 @@ ${photoPageHTML}
   const doLogout = async () => {
     invalidateCache();
     _internalTokenRef.current = null; // clear cached API token saat logout
+    _internalTokenExpRef.current = 0;
     await supabase.auth.signOut();
     _lsSave("localSession", null);
     addAgentLog("LOGOUT", `${currentUser?.name || "User"} (${currentUser?.role || ""}) keluar`, "SUCCESS");

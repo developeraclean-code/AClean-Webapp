@@ -1,5 +1,5 @@
 // api/[route].js - AClean Unified API Router
-import { setCorsHeaders, checkRateLimit, validateInternalToken } from "./_auth.js";
+import { setCorsHeaders, checkRateLimit, validateInternalToken, signAppToken } from "./_auth.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
 const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers"];
@@ -1634,7 +1634,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       });
     }
 
-    // ── GET-API-TOKEN — exchange Supabase JWT for internal API token (session-only) ──
+    // ── GET-API-TOKEN — issue App Token (HMAC-signed JWT, 15 menit, per-user) ──
+    // Replace pattern lama (echo master secret) dengan signed token per-user + role claim.
     if (route === "get-api-token") {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       const authH = req.headers["authorization"] || "";
@@ -1643,14 +1644,40 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
       const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
       if (!supabaseUrl || !supabaseAnonKey) return res.status(500).json({ error: "Supabase config missing" });
+      if (!process.env.INTERNAL_API_SECRET) return res.status(500).json({ error: "Server misconfiguration" });
       try {
+        // Verify Supabase session
         const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
           headers: { "Authorization": `Bearer ${jwt}`, "apikey": supabaseAnonKey }
         });
         if (!r.ok) return res.status(401).json({ error: "Invalid session" });
-        const secret = process.env.INTERNAL_API_SECRET;
-        if (!secret) return res.status(500).json({ error: "Server misconfiguration" });
-        return res.status(200).json({ token: secret });
+        const userData = await r.json();
+        const userId = userData?.id;
+        if (!userId) return res.status(401).json({ error: "Invalid session" });
+
+        // Resolve role dari user_profiles (single source of truth)
+        const SK = process.env.SUPABASE_SERVICE_KEY;
+        let role = "Helper";
+        let name = userData.email || "";
+        if (SK) {
+          try {
+            const profRes = await fetch(
+              `${supabaseUrl}/rest/v1/user_profiles?id=eq.${encodeURIComponent(userId)}&select=role,name&limit=1`,
+              { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+            );
+            if (profRes.ok) {
+              const arr = await profRes.json();
+              if (arr[0]) {
+                const rawRole = String(arr[0].role || "Helper");
+                role = rawRole.charAt(0).toUpperCase() + rawRole.slice(1).toLowerCase();
+                if (arr[0].name) name = arr[0].name;
+              }
+            }
+          } catch { /* default Helper */ }
+        }
+
+        const token = signAppToken({ userId, role, name });
+        return res.status(200).json({ token, expiresIn: 15 * 60, role });
       } catch (e) {
         return res.status(500).json({ error: "Auth check failed" });
       }
@@ -1800,30 +1827,34 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const SK = process.env.SUPABASE_SERVICE_KEY;
       if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
 
-      // ── Role check: verifikasi caller dari DB, bukan dari body (C-2 fix) ──
+      // ── Role check: verifikasi caller dari App Token claims atau DB ──
       const { action, userId, name, email, password, role, phone } = req.body || {};
 
-      // Ambil Supabase JWT dari Authorization header untuk identifikasi caller
-      const bearerToken = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
       let callerRole = "";
-      if (bearerToken) {
-        try {
-          // Decode JWT payload (tanpa verify — verify sudah dilakukan oleh validateInternalToken di atas via X-Internal-Token)
-          // Ambil sub (user ID) dari JWT lalu query user_profiles
-          const parts = bearerToken.split(".");
-          if (parts.length === 3) {
-            const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-            const callerId = payload.sub;
-            if (callerId) {
-              const profRes = await fetch(`${SU}/rest/v1/user_profiles?id=eq.${encodeURIComponent(callerId)}&select=role&limit=1`, {
-                headers: { apikey: SK, Authorization: "Bearer " + SK }
-              });
-              const profData = profRes.ok ? await profRes.json() : [];
-              callerRole = profData[0]?.role ? ((profData[0].role).charAt(0).toUpperCase() + (profData[0].role).slice(1).toLowerCase()) : "";
+
+      // Path A: kalau pakai App Token, role sudah ada di req.appClaims (signed, tidak bisa dipalsukan)
+      if (req.appClaims?.role) {
+        callerRole = req.appClaims.role;
+      } else {
+        // Path B: fallback — pakai Supabase Bearer JWT, decode sub lalu query user_profiles
+        const bearerToken = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+        if (bearerToken) {
+          try {
+            const parts = bearerToken.split(".");
+            if (parts.length === 3) {
+              const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+              const callerId = payload.sub;
+              if (callerId) {
+                const profRes = await fetch(`${SU}/rest/v1/user_profiles?id=eq.${encodeURIComponent(callerId)}&select=role&limit=1`, {
+                  headers: { apikey: SK, Authorization: "Bearer " + SK }
+                });
+                const profData = profRes.ok ? await profRes.json() : [];
+                callerRole = profData[0]?.role ? ((profData[0].role).charAt(0).toUpperCase() + (profData[0].role).slice(1).toLowerCase()) : "";
+              }
             }
+          } catch (jwtErr) {
+            console.warn("[manage-user] JWT decode error:", jwtErr.message);
           }
-        } catch (jwtErr) {
-          console.warn("[manage-user] JWT decode error:", jwtErr.message);
         }
       }
 

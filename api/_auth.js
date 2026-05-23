@@ -3,18 +3,21 @@
 // Simpan file ini di: api/_auth.js
 // Di-import oleh ara-chat.js, [route].js, send-wa.js
 // ============================================================
-// CARA KERJA:
-//   - Setiap request dari App harus bawa header: X-Internal-Token
-//   - Value-nya = INTERNAL_API_SECRET yang diset di Vercel env
-//   - Kalau tidak ada / salah → 401 Unauthorized
+// CARA KERJA (3 path auth, prioritas berurutan):
+//   1. App Token: HMAC-signed JWT per-user (15 menit expiry, ada role claim)
+//      → diissue oleh /api/get-api-token setelah verifikasi Supabase session
+//      → header: X-Internal-Token (format: header.payload.signature)
+//   2. Supabase Bearer JWT: dari session aktif user (header Authorization)
+//   3. Legacy X-Internal-Token === INTERNAL_API_SECRET (cron, server-to-server)
 // ============================================================
 // SETUP (1x):
 //   1. Buka Vercel Dashboard → Settings → Environment Variables
 //   2. Tambah: INTERNAL_API_SECRET = [random string 32+ karakter]
 //      contoh: openssl rand -hex 32
-//      contoh value: a7f3c9e2b4d81f0e5a2c7b3d9e4f1a6c8b2d5e7f3a1c4b9d2e8f0a5c3b7d1e4
 //   3. Redeploy Vercel
 // ============================================================
+
+import crypto from "crypto";
 
 // ── fetchWithTimeout: Fetch with timeout support ──
 export async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
@@ -39,12 +42,78 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   }
 }
 
+// ── App Token: HMAC-SHA256 signed JWT per-user (15 menit expiry) ──
+// Bukan Supabase JWT. Diissue oleh /api/get-api-token setelah Supabase session valid.
+// Payload: { userId, role, name, iat, exp } — signed pakai INTERNAL_API_SECRET sebagai HMAC key.
+
+const APP_TOKEN_TTL_SEC = 15 * 60; // 15 menit
+
+function b64urlJson(obj) {
+  return Buffer.from(JSON.stringify(obj)).toString("base64url");
+}
+
+export function signAppToken({ userId, role, name }) {
+  const secret = process.env.INTERNAL_API_SECRET;
+  if (!secret) throw new Error("INTERNAL_API_SECRET not configured");
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64urlJson({ alg: "HS256", typ: "AT" });
+  const payload = b64urlJson({ userId, role, name, iat: now, exp: now + APP_TOKEN_TTL_SEC });
+  const data = `${header}.${payload}`;
+  const sig = crypto.createHmac("sha256", secret).update(data).digest("base64url");
+  return `${data}.${sig}`;
+}
+
+export function verifyAppToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const secret = process.env.INTERNAL_API_SECRET;
+  if (!secret) return null;
+  const data = `${parts[0]}.${parts[1]}`;
+  const expectedSig = crypto.createHmac("sha256", secret).update(data).digest("base64url");
+  const a = Buffer.from(parts[2]);
+  const b = Buffer.from(expectedSig);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return payload; // { userId, role, name, iat, exp }
+  } catch { return null; }
+}
+
+// Helper untuk endpoint yang butuh role check
+// Pakai setelah validateInternalToken pass. Return true kalau caller pakai App Token & role match.
+// Kalau caller pakai Supabase Bearer / legacy secret (req.appClaims undefined), return true (caller harus cek role manual).
+export function requireRole(req, res, allowedRoles) {
+  const claims = req.appClaims;
+  if (!claims) return true; // legacy/Supabase Bearer — caller bertanggung jawab cek role sendiri
+  if (!allowedRoles.includes(claims.role)) {
+    res.status(403).json({ error: `Forbidden: butuh role ${allowedRoles.join("/")}` });
+    return false;
+  }
+  return true;
+}
+
 export async function validateInternalToken(req, res) {
   const secret = process.env.INTERNAL_API_SECRET;
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-  // Path 1: Supabase Bearer JWT (dari logged-in user — frontend baru)
+  // Path 1: App Token (HMAC-signed JWT per-user, format header.payload.sig)
+  // Cek pertama — kalau format JWT, hanya boleh divalidasi sebagai App Token,
+  // tidak fallback ke legacy compare untuk mencegah confusion attack.
+  const tokenHeader = req.headers["x-internal-token"] || req.headers["x-api-key"];
+  if (tokenHeader && typeof tokenHeader === "string" && tokenHeader.split(".").length === 3) {
+    const claims = verifyAppToken(tokenHeader);
+    if (claims) {
+      req.appClaims = claims; // handler bisa pakai req.appClaims.role
+      return true;
+    }
+    res.status(401).json({ error: "App token expired or invalid" });
+    return false;
+  }
+
+  // Path 2: Supabase Bearer JWT (dari logged-in user — direct session)
   const authHeader = req.headers["authorization"] || "";
   if (authHeader.startsWith("Bearer ") && supabaseUrl && supabaseAnonKey) {
     const jwt = authHeader.slice(7);
@@ -52,25 +121,21 @@ export async function validateInternalToken(req, res) {
       const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
         headers: { "Authorization": `Bearer ${jwt}`, "apikey": supabaseAnonKey }
       });
-      if (r.ok) return true; // valid Supabase session
-    } catch { /* fall through to next check */ }
+      if (r.ok) return true;
+    } catch { /* fall through */ }
   }
 
-  // Path 2: X-Internal-Token (legacy / cron / server-to-server)
-  if (secret) {
-    const token = req.headers["x-internal-token"] || req.headers["x-api-key"];
-    if (token) {
-      let match = false;
-      try {
-        const { timingSafeEqual } = require("crypto");
-        const tokenBuf  = Buffer.from(token,  "utf-8");
-        const secretBuf = Buffer.from(secret, "utf-8");
-        match = tokenBuf.length === secretBuf.length && timingSafeEqual(tokenBuf, secretBuf);
-      } catch {
-        match = token === secret;
-      }
-      if (match) return true;
+  // Path 3: Legacy X-Internal-Token === INTERNAL_API_SECRET (cron, server-to-server)
+  if (secret && tokenHeader) {
+    let match = false;
+    try {
+      const tokenBuf  = Buffer.from(tokenHeader, "utf-8");
+      const secretBuf = Buffer.from(secret,      "utf-8");
+      match = tokenBuf.length === secretBuf.length && crypto.timingSafeEqual(tokenBuf, secretBuf);
+    } catch {
+      match = tokenHeader === secret;
     }
+    if (match) return true;
   }
 
   // Kalau env belum diset sama sekali, izinkan di dev
