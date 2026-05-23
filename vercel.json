@@ -96,6 +96,10 @@
     {
       "path": "/api/cron-reminder?task=voucher-expiry",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron-reminder?task=laporan-stale",
+      "schedule": "0 3 * * *"
     }
   ],
   "functions": {

@@ -2244,7 +2244,7 @@ ${photoPageHTML}
         return;
       }
     }
-    const count = Math.min(order.units || 1, 10);
+    const count = Math.min(order.units || 1, 30);
     setLaporanUnits(Array.from({ length: count }, (_, i) => mkUnit(i + 1)));
     setLaporanMaterials([]);
     setLaporanJasaItems([]); setJasaManualText({});
@@ -2282,7 +2282,7 @@ ${photoPageHTML}
     // Auto-fill install items berdasarkan jumlah unit order
     const _installDefaults = {};
     if (order.service === "Install") {
-      const _u = Math.min(order.units || 1, 10);
+      const _u = Math.min(order.units || 1, 30);
       // Auto-fill pasang AC berdasarkan jumlah unit
       _installDefaults.pasang_05_1pk = String(_u);
       _installDefaults.vacum_unit = String(_u);
@@ -10939,7 +10939,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           </div>
                         ))}
                       </div>
-                      {laporanUnits.length < 10 && (
+                      {laporanUnits.length < 30 && (
                         <button onClick={() => { setLaporanUnits(p => [...p, mkUnit(p.length + 1)]); setActiveUnitIdx(laporanUnits.length); }}
                           style={{ marginTop: 10, width: "100%", background: cs.accent + "12", border: "1px dashed " + cs.accent + "44", color: cs.accent, borderRadius: 8, padding: "10px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
                           + Tambah Unit AC

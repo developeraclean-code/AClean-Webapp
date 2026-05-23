@@ -855,6 +855,56 @@ async function taskVoucherExpiryReminder() {
   return { sent, total: vouchers.length };
 }
 
+// ══════════════════════════════════════════════════
+// TASK 12: Laporan Stale Alert — Notif owner jika laporan >3 hari belum diverifikasi
+// ══════════════════════════════════════════════════
+async function taskLaporanStaleAlert() {
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["laporan_stale_alert_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togData||[]).map(s => [s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "laporan_stale_alert_enabled")) {
+    await log("LAPORAN_STALE", "Dilewati — laporan_stale_alert_enabled OFF", "INFO");
+    return { skipped: true };
+  }
+
+  // Cari laporan yang submitted > 3 hari lalu dan belum diverifikasi
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: stale } = await sb
+    .from("service_reports")
+    .select("id,job_id,teknisi,customer,date,submitted_at,status")
+    .in("status", ["SUBMITTED", "REVISION"])
+    .lte("submitted_at", threeDaysAgo)
+    .order("submitted_at", { ascending: true })
+    .limit(50);
+
+  if (!stale?.length) {
+    await log("LAPORAN_STALE", "Tidak ada laporan tertunda >3 hari", "INFO");
+    return { checked: true, staleCount: 0 };
+  }
+
+  const tgl = new Date(Date.now() + 7 * 60 * 60 * 1000).toLocaleDateString("id-ID", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  let msg = `⚠️ *LAPORAN BELUM DIVERIFIKASI*\n${tgl}\n\n`;
+  msg += `${stale.length} laporan sudah lebih dari 3 hari belum diverifikasi:\n\n`;
+
+  stale.forEach((r, i) => {
+    const submittedDate = r.submitted_at
+      ? new Date(r.submitted_at).toLocaleDateString("id-ID")
+      : (r.date || "?");
+    const hariLewat = r.submitted_at
+      ? Math.floor((Date.now() - new Date(r.submitted_at).getTime()) / (1000 * 60 * 60 * 24))
+      : "?";
+    msg += `${i + 1}. *${r.teknisi || "?"}* — ${r.customer || "?"}\n`;
+    msg += `   Job: ${r.job_id} · Submit: ${submittedDate} (${hariLewat} hari)\n`;
+    if (r.status === "REVISION") msg += `   Status: 🔄 Perlu Revisi dari teknisi\n`;
+    msg += `\n`;
+  });
+
+  msg += `_Segera verifikasi di menu Laporan Tim. — ARA AClean_`;
+
+  const waSent = await sendWA(OWNER_PHONE, msg);
+  await log("LAPORAN_STALE", `Alert: ${stale.length} laporan tertunda >3 hari`, waSent ? "SUCCESS" : "WARNING");
+  return { staleCount: stale.length, waSent };
+}
+
 // TASK 8: Weekly Report — Minggu 09:00 WIB (02:00 UTC)
 // Ringkasan 7 hari terakhir: order, revenue, laporan, top teknisi
 // ══════════════════════════════════════════════════
@@ -989,6 +1039,7 @@ export default async function handler(req, res) {
     else if (task === "rating-prompt")    result = await taskRatingPrompt();
     else if (task === "servis-reminder")  result = await taskServisReminder();
     else if (task === "voucher-expiry")   result = await taskVoucherExpiryReminder();
+    else if (task === "laporan-stale")    result = await taskLaporanStaleAlert();
     else                                  result = await taskReminder();
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });

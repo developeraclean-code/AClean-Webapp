@@ -306,20 +306,9 @@ return (
               <button onClick={() => { setEditTeknisi(t); setNewTeknisiForm({ ...t }); setModalTeknisi(true); }} style={{ flex: 1, background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>✏️ Edit</button>
               <button onClick={() => { if (t.phone) openWA(t.phone, "Halo " + (t.name || "Teknisi") + ", ada info dari AClean:"); else showNotif("❌ No. HP teknisi tidak ada"); }} style={{ flex: 1, background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "6px", borderRadius: 7, cursor: "pointer", fontSize: 11 }}>📱 WA</button>
               {currentUser?.role === "Owner" && (
-                <button onClick={async () => {
-                  if (!await showConfirm({
-                    icon: "👷", title: "Hapus dari Tim?", danger: true,
-                    message: "Hapus " + t.name + " dari tim? Data order tidak terpengaruh.",
-
-                    confirmText: "Hapus"
-                  })) return;
-                  setTeknisiData(prev => prev.filter(x => x.id !== t.id));
-                  if (!String(t.id).startsWith("Tech")) {
-                    await supabase.from("user_profiles").delete().eq("id", t.id);
-                  }
-                  addAgentLog("TEKNISI_DELETED", t.name + " dihapus dari tim", "WARNING");
-                  showNotif("🗑️ " + t.name + " dihapus");
-                }} style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "6px 8px", borderRadius: 7, cursor: "pointer", fontSize: 11 }}>🗑️</button>
+                <button onClick={() => { setEditTeknisi(t); setNewTeknisiForm({ ...t }); setModalTeknisi(true); }}
+                  title="Buka Edit untuk hapus anggota"
+                  style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "6px 8px", borderRadius: 7, cursor: "pointer", fontSize: 11 }}>🗑️</button>
               )}
             </div>
           </div>
