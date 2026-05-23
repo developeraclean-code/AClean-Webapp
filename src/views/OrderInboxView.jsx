@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { SERVICE_TYPES } from "../constants/services.js";
 import { statusColor, statusLabel } from "../constants/status.js";
-import { normalizePhone } from "../lib/phone.js";
+import { normalizePhone, samePhone } from "../lib/phone.js";
 import { getTechColor } from "../lib/techColor.js";
 
 // ── Durasi estimasi (jam) — sama dengan logic di App.jsx ──
@@ -898,6 +898,25 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // ── Multi-hari: state saat form diisi sebagai lanjutan order lain ──
   const [continuationFrom, setContinuationFrom] = useState(null); // order induk
+  const [continuationDismissed, setContinuationDismissed] = useState(false);
+
+  // Auto-detect pekerjaan lanjutan berdasarkan no HP
+  const autoDetectedJobs = useMemo(() => {
+    const norm = normalizePhone(form.phone || "");
+    if (norm.length < 8 || editId || continuationFrom) return [];
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 3);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const OPEN_STATUSES = ["PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "WORKING", "REPORT_SUBMITTED", "INVOICE_CREATED", "INVOICE_APPROVED"];
+    return ordersData.filter(o =>
+      samePhone(o.phone || "", norm) &&
+      OPEN_STATUSES.includes(o.status) &&
+      !o.parent_job_id &&
+      (o.date || "") >= cutoffStr
+    ).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  }, [form.phone, ordersData, editId, continuationFrom]);
+
+  // Reset dismissed state saat phone berubah
+  useEffect(() => { setContinuationDismissed(false); }, [form.phone]);
 
   // Buat order lanjutan — pre-fill form dari parent, tambah 1 hari, kosongkan tim
   function handleCreateContinuation(parentOrder) {
@@ -1271,6 +1290,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   function handleCancelEdit() {
     setEditId(null);
     setContinuationFrom(null);
+    setContinuationDismissed(false);
     setForm({ ...EMPTY_FORM, date: TODAY });
   }
 
@@ -1581,6 +1601,42 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
               </div>
             )}
           </div>
+
+          {/* Auto-detect pekerjaan lanjutan */}
+          {autoDetectedJobs.length > 0 && !continuationDismissed && (
+            <div style={{ background: "#f59e0b14", border: "1px solid #f59e0b44", borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ padding: "10px 14px", background: "#f59e0b1a", display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 15 }}>🔗</span>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#f59e0b" }}>Terdeteksi Pekerjaan Belum Selesai</div>
+                  <div style={{ fontSize: 11, color: "#fbbf24" }}>Customer ini punya {autoDetectedJobs.length} job aktif dalam 3 hari terakhir. Lanjutan?</div>
+                </div>
+              </div>
+              {autoDetectedJobs.map(o => (
+                <div key={o.id} style={{ padding: "9px 14px", borderTop: "1px solid #f59e0b22", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 12 }}>
+                    <span style={{ fontWeight: 700, color: "#fbbf24", fontFamily: "monospace" }}>{o.id}</span>
+                    <span style={{ color: "#94a3b8", marginLeft: 8 }}>{o.date} · {o.service} {o.units}u · {o.teknisi || "—"}</span>
+                    <span style={{ marginLeft: 8, fontSize: 11, padding: "1px 7px", borderRadius: 99, background: "#f59e0b22", color: "#fbbf24" }}>{o.status}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const existingDays = ordersData.filter(od => (od.parent_job_id === o.id && od.is_multi_day) || od.id === o.id).length;
+                      setContinuationFrom({ ...o, _dayNum: existingDays + 1 });
+                    }}
+                    style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#f59e0b", color: "#0a0f1e", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>
+                    Ya, Lanjutan
+                  </button>
+                </div>
+              ))}
+              <div style={{ padding: "8px 14px", borderTop: "1px solid #f59e0b22", display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={() => setContinuationDismissed(true)}
+                  style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #64748b44", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>
+                  Tidak, Job Baru
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Status */}
           <div>
