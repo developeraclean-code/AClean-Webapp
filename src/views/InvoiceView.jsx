@@ -1326,13 +1326,37 @@ return (
                   onClick={() => window.open(inv.payment_proof_url.startsWith("/api/") ? window.location.origin + inv.payment_proof_url : inv.payment_proof_url, "_blank")}
                   style={{ background: "#22c55e22", border: "1px solid #22c55e44", color: "#22c55e", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
                 >📷 Bukti Bayar ✓</button>
-              ) : (
-                (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#f43f5e18", border: "1px solid #f43f5e44", color: "#f43f5e", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
-                    ⚠️ Belum Ada Bukti Bayar
-                  </span>
-                )
-              )
+              ) : currentUser?.role === "Owner" ? (
+                <button
+                  onClick={async () => {
+                    const ok = await showConfirm({
+                      title: "Konfirmasi Lunas Tanpa Bukti",
+                      message: `Tandai invoice ${inv.id} (${inv.customer} · ${fmt(inv.total)}) sebagai lunas tanpa bukti bayar?\n\nTidak ada notifikasi WA yang dikirim. Invoice akan keluar dari daftar "Tanpa Bukti".`,
+                    });
+                    if (!ok) return;
+                    try {
+                      const { error } = await supabase.from("invoices")
+                        .update({ payment_proof_url: "verified-no-proof", notes: "Lunas paksa tanpa bukti oleh Owner" })
+                        .eq("id", inv.id);
+                      if (error) throw error;
+                      setInvoicesData(prev => prev.map(i => i.id === inv.id
+                        ? { ...i, payment_proof_url: "verified-no-proof", notes: "Lunas paksa tanpa bukti oleh Owner" }
+                        : i));
+                      addAgentLog("OWNER_CONFIRM_NO_PROOF", `Invoice ${inv.id} dikonfirmasi lunas tanpa bukti oleh Owner`, "SUCCESS");
+                      showNotif(`✅ ${inv.id} dikonfirmasi lunas tanpa bukti`);
+                    } catch (e) {
+                      showNotif("❌ Gagal konfirmasi: " + e.message);
+                    }
+                  }}
+                  title="Tandai lunas tanpa bukti bayar (tanpa kirim WA)"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#f43f5e18", border: "1px solid #f43f5e66", color: "#f43f5e", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                  ⚠️ Belum Ada Bukti — Klik Lunas Paksa
+                </button>
+              ) : currentUser?.role === "Admin" ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#f43f5e18", border: "1px solid #f43f5e44", color: "#f43f5e", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
+                  ⚠️ Belum Ada Bukti Bayar
+                </span>
+              ) : null
             )}
             <button
               onClick={() => setAuditModal({ tableName: "invoices", rowId: inv.id })}
