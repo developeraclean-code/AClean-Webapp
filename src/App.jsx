@@ -884,6 +884,9 @@ export default function ACleanWebApp() {
   const [newOrderForm, setNewOrderForm] = useState({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", team_slot: "", date: "", time: "09:00", notes: "" });
   // Server-side lookup customer by phone — anti miss customer di luar limit fetchCustomers
   const [orderPhoneLookup, setOrderPhoneLookup] = useState({ phone: "", matches: [] });
+  // Auto-detect pekerjaan lanjutan: order OPEN customer yg sama dalam H-3
+  const [continuationSuggestion, setContinuationSuggestion] = useState([]); // kandidat parent jobs
+  const [continuationParentId, setContinuationParentId] = useState(null);   // null=belum pilih, ""=decline, "JOB-x"=confirmed
   const [newStokForm, setNewStokForm] = useState({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" });
   const [newTeknisiForm, setNewTeknisiForm] = useState({ name: "", role: "Teknisi", phone: "", skills: [], email: "", password: "", buatAkun: false });
   const [modalAddCustomer, setModalAddCustomer] = useState(false);
@@ -2503,6 +2506,25 @@ ${photoPageHTML}
     }, 350);
     return () => { cancelled = true; clearTimeout(t); };
   }, [newOrderForm.phone, modalOrder, supabase]);
+
+  // Auto-detect pekerjaan lanjutan berdasarkan no HP customer
+  useEffect(() => {
+    if (!modalOrder) { setContinuationSuggestion([]); setContinuationParentId(null); return; }
+    const norm = normalizePhone(newOrderForm.phone || "");
+    if (norm.length < 8) { setContinuationSuggestion([]); setContinuationParentId(null); return; }
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 3);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const OPEN_STATUSES = ["PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "WORKING", "REPORT_SUBMITTED", "INVOICE_CREATED", "INVOICE_APPROVED"];
+    const candidates = ordersData.filter(o =>
+      samePhone(o.phone || "", norm) &&
+      OPEN_STATUSES.includes(o.status) &&
+      !o.parent_job_id &&            // hanya parent / standalone, bukan child
+      (o.date || "") >= cutoffStr
+    ).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    setContinuationSuggestion(candidates);
+    setContinuationParentId(null); // reset pilihan saat phone berubah
+  }, [newOrderForm.phone, modalOrder, ordersData]);
+
   // SECURITY: Never store API keys in localStorage — keys are managed on backend only
   useEffect(() => { _lsSave("llmModel", llmModel); }, [llmModel]);
   useEffect(() => { _lsSave("ollamaUrl", ollamaUrl); }, [ollamaUrl]);
@@ -4337,7 +4359,9 @@ ${photoPageHTML}
       teknisi3: form.teknisi3 || null, helper3: form.helper3 || null,
       date: form.date, time: form.time, time_end: timeEnd, status: "CONFIRMED",
       team_slot: form.team_slot || null,
-      invoice_id: null, dispatch: false, notes: form.notes || ""
+      invoice_id: null, dispatch: false, notes: form.notes || "",
+      parent_job_id: form.parent_job_id || null,
+      is_multi_day: form.is_multi_day || false,
     };
 
     // ── Fallback insert: coba full → minimal (BEFORE updating state) ──
@@ -6255,6 +6279,55 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                 );
               })()}
+              {/* ── Auto-detect Pekerjaan Lanjutan ── */}
+              {continuationSuggestion.length > 0 && continuationParentId === null && (
+                <div style={{ background: "#f59e0b14", border: "1px solid #f59e0b44", borderRadius: 12, overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px", background: "#f59e0b1a", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 15 }}>🔗</span>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: "#f59e0b" }}>Terdeteksi Pekerjaan Belum Selesai</div>
+                      <div style={{ fontSize: 11, color: "#fbbf24" }}>Customer ini punya {continuationSuggestion.length} job aktif dalam 3 hari terakhir. Lanjutan?</div>
+                    </div>
+                  </div>
+                  {continuationSuggestion.map(o => (
+                    <div key={o.id} style={{ padding: "9px 14px", borderTop: "1px solid #f59e0b22", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 12 }}>
+                        <span style={{ fontWeight: 700, color: "#fbbf24", fontFamily: "monospace" }}>{o.id}</span>
+                        <span style={{ color: "#94a3b8", marginLeft: 8 }}>{o.date} · {o.service} {o.units}u · {o.teknisi || "—"}</span>
+                        <span style={{ marginLeft: 8, fontSize: 11, padding: "1px 7px", borderRadius: 99, background: "#f59e0b22", color: "#fbbf24" }}>{o.status}</span>
+                      </div>
+                      <button
+                        onClick={() => setContinuationParentId(o.id)}
+                        style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#f59e0b", color: "#0a0f1e", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>
+                        Ya, Lanjutan
+                      </button>
+                    </div>
+                  ))}
+                  <div style={{ padding: "8px 14px", borderTop: "1px solid #f59e0b22", display: "flex", justifyContent: "flex-end" }}>
+                    <button onClick={() => setContinuationParentId("")}
+                      style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #64748b44", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>
+                      Tidak, Job Baru
+                    </button>
+                  </div>
+                </div>
+              )}
+              {continuationParentId && continuationParentId !== "" && (() => {
+                const parent = ordersData.find(o => o.id === continuationParentId);
+                return (
+                  <div style={{ background: "#22c55e14", border: "1px solid #22c55e44", borderRadius: 10, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <div style={{ fontSize: 12 }}>
+                      <span style={{ fontSize: 14 }}>🔗</span>
+                      <span style={{ fontWeight: 700, color: "#4ade80", marginLeft: 6 }}>Lanjutan dari {continuationParentId}</span>
+                      {parent && <span style={{ color: "#94a3b8", marginLeft: 6 }}>· {parent.date} · {parent.service}</span>}
+                    </div>
+                    <button onClick={() => setContinuationParentId(null)}
+                      style={{ padding: "4px 10px", borderRadius: 7, border: "1px solid #64748b44", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>
+                      Ubah
+                    </button>
+                  </div>
+                );
+              })()}
+
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Jenis Layanan</div>
@@ -6537,8 +6610,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               const dbOk = await cekTeknisiAvailableDB(newOrderForm.teknisi, newOrderForm.date, newOrderForm.time, newOrderForm.service, newOrderForm.units);
                               if (!dbOk.ok) { showNotif("🚫 " + (dbOk.reason || "Jadwal bentrok, cek ulang")); return; }
                             }
-                            const formCopy = { ...newOrderForm };
+                            const formCopy = {
+                              ...newOrderForm,
+                              parent_job_id: continuationParentId || null,
+                              is_multi_day: !!(continuationParentId && continuationParentId !== ""),
+                            };
                             setModalOrder(false);
+                            setContinuationSuggestion([]);
+                            setContinuationParentId(null);
                             setNewOrderForm({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", date: "", time: "09:00", notes: "" });
                             await createOrder(formCopy);
                           } finally { _orderSubmitLock.current = false; setIsSubmittingOrder(false); }
