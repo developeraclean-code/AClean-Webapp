@@ -66,11 +66,12 @@ export default function QuotationView({
   const counts = useMemo(() => {
     const all = quotationsData || [];
     return {
-      Semua:    all.length,
-      DRAFT:    all.filter(q => q.status === "DRAFT" && !isExpired(q)).length,
-      SENT:     all.filter(q => q.status === "SENT" && !isExpired(q)).length,
-      APPROVED: all.filter(q => q.status === "APPROVED").length,
-      EXPIRED:  all.filter(q => isExpired(q)).length,
+      Semua:     all.length,
+      DRAFT:     all.filter(q => q.status === "DRAFT" && !isExpired(q)).length,
+      SENT:      all.filter(q => q.status === "SENT" && !isExpired(q)).length,
+      APPROVED:  all.filter(q => q.status === "APPROVED").length,
+      EXPIRED:   all.filter(q => isExpired(q)).length,
+      CANCELLED: all.filter(q => q.status === "CANCELLED").length,
     };
   }, [quotationsData, today]);
 
@@ -183,6 +184,20 @@ export default function QuotationView({
     }
   };
 
+  // ── Delete quotation (Owner only, CANCELLED status) ──
+  const handleDelete = async (quo) => {
+    const ok = await showConfirm?.({
+      icon: "🗑️", title: "Hapus Quotation Permanent?", danger: true,
+      message: `Hapus permanent quotation ${quo.id} (${quo.customer})?\n\nTindakan ini tidak bisa dibatalkan.`,
+      confirmText: "Ya, Hapus Permanent"
+    });
+    if (!ok) return;
+    const { error } = await supabase.from("quotations").delete().eq("id", quo.id);
+    if (error) { showNotif?.("❌ Gagal hapus: " + error.message); return; }
+    setQuotationsData?.(prev => prev.filter(q => q.id !== quo.id));
+    showNotif?.(`🗑️ Quotation ${quo.id} dihapus`);
+  };
+
   // ── Cancel quotation ──
   const handleCancel = async (quo) => {
     const ok = await showConfirm?.({
@@ -232,7 +247,7 @@ export default function QuotationView({
     }
   };
 
-  const FILTERS = ["Semua", "DRAFT", "SENT", "APPROVED", "EXPIRED"];
+  const FILTERS = ["Semua", "DRAFT", "SENT", "APPROVED", "EXPIRED", "CANCELLED"];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -383,6 +398,11 @@ export default function QuotationView({
                   {canEdit && quo.status !== "APPROVED" && quo.status !== "CANCELLED" && (
                     <button onClick={() => handleCancel(quo)}
                       style={btnStyle("#ef4444")}>❌ Cancel</button>
+                  )}
+
+                  {currentUser?.role === "Owner" && quo.status === "CANCELLED" && (
+                    <button onClick={() => handleDelete(quo)}
+                      style={btnStyle("#dc2626")}>🗑️ Hapus</button>
                   )}
                 </div>
 
