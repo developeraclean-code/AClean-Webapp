@@ -3931,6 +3931,12 @@ ${photoPageHTML}
         }
       }
     }
+    // Sync order status ke DB — React state sudah update di atas, tapi DB perlu diupdate juga
+    if (inv.job_id) {
+      supabase.from("orders").update({ status: "PAID" }).eq("id", inv.job_id).then(() => {});
+    }
+    // Juga update order yang dilink via invoice_id (edge case AC unit sale)
+    supabase.from("orders").update({ status: "PAID" }).eq("invoice_id", inv.id).then(() => {});
     // Simpan bukti bayar URL ke invoice jika ada (dari WA payment detection)
     if (paymentProofUrl) {
       supabase.from("invoices").update({ payment_proof_url: paymentProofUrl }).eq("id", inv.id).then(() => {});

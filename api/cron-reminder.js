@@ -797,10 +797,10 @@ async function taskServisReminder() {
 // TASK 11: Voucher Expiry Reminder — H-3 sebelum expired
 // ══════════════════════════════════════════════════
 async function taskVoucherExpiryReminder() {
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["voucher_expiry_reminder_enabled","customer_portal_enabled","customer_portal_url"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["voucher_expiry_reminder_enabled","cron_jobs","customer_portal_enabled","customer_portal_url"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
 
-  if (togMap["voucher_expiry_reminder_enabled"] !== "true") {
+  if (!isCronJobEnabled(togMap, "voucher_expiry_reminder_enabled") || togMap["voucher_expiry_reminder_enabled"] !== "true") {
     await log("VOUCHER_EXPIRY","Dilewati — voucher_expiry_reminder_enabled OFF","INFO");
     return { skipped: true };
   }
