@@ -316,26 +316,46 @@ return (
             </div>
           </div>
 
-          {/* Bar chart omset — Owner only */}
-          {role === "Owner" && data.length > 0 && totalPeriod > 0 && (
-            <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 70, marginBottom: 12 }}>
-              {data.map((d, i) => (
-                <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                  <div style={{ fontSize: 8, color: cs.muted }}>{d.total > 0 ? fmt(d.total).replace("Rp ", "").replace(".000", "rb") : ""}</div>
-                  <div title={fmt(d.total) + " · " + d.count + " inv"}
-                    style={{
-                      width: "100%", background: d.total === maxVal ? cs.green : cs.accent + "77",
-                      height: Math.max(3, Math.round(d.total / maxVal * 55)) + "px",
-                      borderRadius: "3px 3px 0 0",
-                      border: d.date === todayStr ? "2px solid " + cs.green : "none"
-                    }} />
-                  <div style={{ fontSize: 8, color: d.date === todayStr ? cs.green : cs.muted, fontWeight: d.date === todayStr ? 700 : 400, textAlign: "center" }}>
-                    {d.label}
+          {/* Outstanding Invoice Widget — Owner only */}
+          {role === "Owner" && (() => {
+            const oPending  = invoicesData.filter(i => i.status === "PENDING_APPROVAL");
+            const oApproved = invoicesData.filter(i => i.status === "APPROVED");
+            const oUnpaid   = invoicesData.filter(i => i.status === "UNPAID");
+            const oOverdue  = invoicesData.filter(i => i.status === "OVERDUE");
+            const outstandingTotal = [...oPending, ...oApproved, ...oUnpaid, ...oOverdue].reduce((s, i) => s + (i.total || 0), 0);
+            const outstandingCount = oPending.length + oApproved.length + oUnpaid.length + oOverdue.length;
+            const chips = [
+              { label: "Pending Apv", val: oPending.length, amt: oPending.reduce((s,i)=>s+(i.total||0),0), color: cs.accent, filter: "PENDING_APPROVAL" },
+              { label: "Approved",    val: oApproved.length, amt: oApproved.reduce((s,i)=>s+(i.total||0),0), color: "#38bdf8", filter: "APPROVED" },
+              { label: "Unpaid",      val: oUnpaid.length, amt: oUnpaid.reduce((s,i)=>s+(i.total||0),0), color: cs.yellow, filter: "UNPAID" },
+              { label: "Overdue",     val: oOverdue.length, amt: oOverdue.reduce((s,i)=>s+(i.total||0),0), color: cs.red, filter: "OVERDUE" },
+            ];
+            return (
+              <div style={{ background: cs.surface, border: "1px solid " + cs.yellow + "44", borderRadius: 12, padding: "12px 14px", marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginBottom: 2 }}>⏳ Total Outstanding Invoice</div>
+                    <div style={{ fontWeight: 900, fontSize: 22, color: cs.yellow, lineHeight: 1 }}>{fmt(outstandingTotal)}</div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>{outstandingCount} invoice belum lunas</div>
                   </div>
+                  <button onClick={() => { setActiveMenu("invoice"); setInvoiceFilter("UNPAID"); }}
+                    style={{ fontSize: 10, fontWeight: 700, color: cs.accent, background: cs.accent + "18", border: "1px solid " + cs.accent + "33", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>
+                    Lihat →
+                  </button>
                 </div>
-              ))}
-            </div>
-          )}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
+                  {chips.map(c => (
+                    <button key={c.label} onClick={() => { setActiveMenu("invoice"); setInvoiceFilter(c.filter); }}
+                      style={{ background: c.color + "12", border: "1px solid " + c.color + "33", borderRadius: 8, padding: "6px 8px", cursor: "pointer", textAlign: "left" }}>
+                      <div style={{ fontWeight: 800, fontSize: 14, color: c.color }}>{c.val}</div>
+                      <div style={{ fontSize: 9, color: c.color, fontWeight: 700, marginBottom: 2 }}>{c.label}</div>
+                      <div style={{ fontSize: 9, color: cs.muted }}>{fmt(c.amt).replace("Rp ", "")}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Kartu per anggota tim hari ini */}
           <div style={{ borderTop: "1px solid " + cs.border, paddingTop: 12, marginBottom: 10 }}>
