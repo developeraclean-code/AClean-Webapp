@@ -1055,7 +1055,7 @@ return (
               const jobsBulan = ordersData.filter(o => o.teknisi === tek && (o.date || "").startsWith(bulanIniPfx));
               const selesai = jobsBulan.filter(o => ["COMPLETED", "PAID"].includes(o.status)).length;
               const pending = jobsBulan.filter(o => ["PENDING", "CONFIRMED", "IN_PROGRESS", "ON_SITE"].includes(o.status)).length;
-              const revInvTek = invoicesData.filter(i => i.teknisi === tek && i.status === "PAID" && String(i.created_at || "").startsWith(bulanIniPfx)).reduce((a, b) => a + (b.total || 0), 0);
+              const revInvTek = invoicesData.filter(i => i.teknisi === tek && i.status === "PAID" && jobDate(i).startsWith(bulanIniPfx)).reduce((a, b) => a + (b.total || 0), 0);
               const lapVerif = laporanReports.filter(r => r.teknisi === tek && r.status === "VERIFIED").length;
               const lapRevisi = laporanReports.filter(r => r.teknisi === tek && r.status === "REVISION").length;
               return (

@@ -18,7 +18,7 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
   const [addForm, setAddForm]     = useState({ brand: "Daikin", tipe: "Split Standard", kapasitas: "1 PK", seri: "", nama_varian: "", harga_unit: "", harga_inc_pasang: "" });
   const [saving, setSaving]       = useState(false);
 
-  const canEdit = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+  const canEdit = currentUser?.role === "Owner";
 
   const load = async () => {
     setLoading(true);
@@ -364,7 +364,7 @@ function PriceListView({ priceListData, setPriceListData, priceListSvcTab, setPr
             </span>
           </div>
         </div>
-        {mainTab === "jasa" && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+        {mainTab === "jasa" && currentUser?.role === "Owner" && (
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={async () => {
               const { data } = await fetchPriceList(supabase);
@@ -481,7 +481,7 @@ function PriceListView({ priceListData, setPriceListData, priceListSvcTab, setPr
                       </td>
                       <td style={{ padding: "10px 14px" }}>
                         <div style={{ display: "flex", gap: 6 }}>
-                          {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                          {currentUser?.role === "Owner" && (
                             isEdit ? (
                               <div style={{ display: "flex", gap: 6 }}>
                                 <button onClick={handleSavePrice}

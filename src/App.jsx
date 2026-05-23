@@ -2419,10 +2419,11 @@ ${photoPageHTML}
     const role = currentUser.role;
     // Owner: semua akses kecuali myreport
     if (role === "Owner") return menu !== "myreport";
-    // Admin: semua operasional + pricelist (kecuali settings & myreport)
-    // Rule: Admin = input & edit only (NO delete)
+    // Admin: semua operasional KECUALI pricelist (Owner only per SOP), settings, myreport
+    // SOP_ADMIN_ROLE.md: Admin = input & edit only, no delete, no price list, no settings
+    // deletedaudit & agentlog BISA diakses Admin (SOP: ✅ Log Audit)
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport", "deletedaudit", "monitoring", "agentlog", "finance"];
+      const adminBlocked = ["settings", "myreport", "monitoring", "finance", "pricelist"];
       return !adminBlocked.includes(menu);
     }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
@@ -5796,7 +5797,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     if (!currentUser) return;
     if (activeMenu === "agentlog") {
       fetchAgentLogs(supabase).then(({ data, error }) => { if (!error && data?.length > 0) setAgentLogs(data); });
-    } else if (activeMenu === "biaya") {
+    } else if (activeMenu === "biaya" || activeMenu === "dashboard") {
       fetchExpenses(supabase).then(({ data, error }) => { if (!error && data) setExpensesData(data); }).catch(() => {});
     } else if (activeMenu === "order-masuk") {
       supabase.from("quotations").select("*").order("created_at", { ascending: false }).limit(200)
