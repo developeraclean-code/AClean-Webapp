@@ -1061,7 +1061,10 @@ return (
     {/* ── SIM-9: Performa Tim per Teknisi ── */}
     {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (() => {
       const isOwner = currentUser?.role === "Owner";
-      const allTekNames2 = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
+      // Pakai teknisiData sebagai sumber — filter active saja, bukan dari ordersData
+      // (teknisi non-aktif tidak ditampilkan meski masih punya order lama)
+      const activeTek = teknisiData.filter(t => t.active !== false && ["Teknisi","Helper"].includes(t.role));
+      const allTekNames2 = activeTek.map(t => t.name).filter(Boolean);
       if (allTekNames2.length === 0) return null;
       const bulanIniPfx = new Date().toISOString().slice(0, 7);
       return (
@@ -1076,8 +1079,8 @@ return (
               const selesai = jobsBulan.filter(o => ["COMPLETED", "PAID"].includes(o.status)).length;
               const pending = jobsBulan.filter(o => ["PENDING", "CONFIRMED", "IN_PROGRESS", "ON_SITE"].includes(o.status)).length;
               const revInvTek = invoicesData.filter(i => i.teknisi === tek && i.status === "PAID" && jobDate(i).startsWith(bulanIniPfx)).reduce((a, b) => a + (b.total || 0), 0);
-              const lapVerif = laporanReports.filter(r => r.teknisi === tek && r.status === "VERIFIED").length;
-              const lapRevisi = laporanReports.filter(r => r.teknisi === tek && r.status === "REVISION").length;
+              const lapVerif = laporanReports.filter(r => r.teknisi === tek && r.status === "VERIFIED" && (r.date || r.submitted_at || "").startsWith(bulanIniPfx)).length;
+              const lapRevisi = laporanReports.filter(r => r.teknisi === tek && r.status === "REVISION" && (r.date || r.submitted_at || "").startsWith(bulanIniPfx)).length;
               return (
                 <div key={tek} style={{ background: cs.surface, border: "1px solid " + col + "33", borderRadius: 12, padding: "14px 16px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
