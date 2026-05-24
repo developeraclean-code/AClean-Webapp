@@ -550,9 +550,9 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
           </View>
         </View>
         <View style={s.headerSub}>
-          <Text style={s.headerSubTxt}>📍 {appSettings.company_addr || ""}</Text>
-          <Text style={s.headerSubTxt}>📞 {appSettings.wa_number || ""}</Text>
-          <Text style={s.headerSubTxt}>🏦 {appSettings.bank_name} {appSettings.bank_number} a.n. {appSettings.bank_holder}</Text>
+          <Text style={s.headerSubTxt}>{appSettings.company_addr || ""}</Text>
+          <Text style={s.headerSubTxt}>Telp: {appSettings.wa_number || ""}</Text>
+          <Text style={s.headerSubTxt}>Rek: {appSettings.bank_name} {appSettings.bank_number} a.n. {appSettings.bank_holder}</Text>
         </View>
       </View>
 
@@ -568,8 +568,8 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
         <View style={[s.box, s.boxWhite]}>
           <Text style={s.boxTitle}>Tagihan Kepada</Text>
           <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 12, marginBottom: 4 }}>{customer}</Text>
-          <Text style={{ color: "#64748b", fontSize: 9 }}>📱 {phone || "—"}</Text>
-          <Text style={{ color: "#64748b", fontSize: 9, marginTop: 3 }}>📋 {invList.length} pekerjaan servis</Text>
+          <Text style={{ color: "#64748b", fontSize: 9 }}>HP: {phone || "—"}</Text>
+          <Text style={{ color: "#64748b", fontSize: 9, marginTop: 3 }}>{invList.length} pekerjaan servis</Text>
         </View>
       </View>
 
@@ -599,7 +599,7 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
                   Pekerjaan #{idx + 1} — {inv.service || "Servis AC"}
                 </Text>
                 <Text style={{ color: "#cbd5e1", fontSize: 8, marginTop: 1 }}>
-                  📅 {tgl} · {inv.id} · {unitCount} unit
+                  {tgl} · {inv.id} · {unitCount} unit
                 </Text>
               </View>
               <Text style={{ color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 11 }}>
@@ -676,7 +676,7 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
             {/* Status per section (subtle) */}
             {inv.status === "PAID" ? (
               <View style={{ padding: "4 12", backgroundColor: "#f0fdf4", borderTop: "1px solid #86efac" }}>
-                <Text style={{ fontSize: 8, color: "#16a34a", fontFamily: "Helvetica-Bold" }}>✓ Lunas — {inv.paid_at ? fmtDate(inv.paid_at) : ""}</Text>
+                <Text style={{ fontSize: 8, color: "#16a34a", fontFamily: "Helvetica-Bold" }}>Lunas — {inv.paid_at ? fmtDate(inv.paid_at) : ""}</Text>
               </View>
             ) : (Number(inv.paid_amount) || 0) > 0 ? (
               <View style={{ padding: "4 12", backgroundColor: "#fef3c7", borderTop: "1px solid #fde68a" }}>
@@ -746,7 +746,7 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
         {portalLink ? (
           <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#e2e8f0", borderTopStyle: "solid" }}>
             <Text style={{ fontSize: 8, color: "#0369a1", fontFamily: "Helvetica-Bold" }}>
-              🔗 Portal Servis Anda (riwayat, foto & invoice):
+              Portal Servis Anda (riwayat, foto & invoice):
             </Text>
             <Text style={{ fontSize: 8, color: "#0369a1", marginTop: 2 }}>{portalLink}</Text>
           </View>

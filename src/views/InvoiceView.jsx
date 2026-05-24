@@ -7,7 +7,7 @@ import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
 import QuotationPDF from "../components/QuotationPDF.jsx";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
@@ -89,6 +89,7 @@ const [mergeSelectedIds, setMergeSelectedIds] = useState([]);
 const [mergeSending, setMergeSending] = useState(false);
 const [mergeApproving, setMergeApproving] = useState(false);
 const [mergePreviewing, setMergePreviewing] = useState(false);
+const [mergeConsolidating, setMergeConsolidating] = useState(false);
 // Snapshot invoice list yang terakhir gagal kirim — agar bisa di-retry tanpa hilang state UI
 const [lastFailedMerge, setLastFailedMerge] = useState(null); // { invList, customer, phone, ts }
 
@@ -183,6 +184,24 @@ const handleApproveMerged = async () => {
   setMergeApproving(false);
   showNotif(`✅ ${successCount} invoice di-approve — belum dikirim ke customer`);
   exitMergeMode();
+};
+
+// Buat 1 invoice baru di DB gabungan dari semua invoice yang dipilih
+const handleConsolidateInvoice = async () => {
+  const invs = mergeSelectedInvs;
+  if (invs.length < 2) { showNotif("⚠️ Pilih minimal 2 invoice"); return; }
+  const customer = invs[0].customer || "customer";
+  const total = invs.reduce((s, i) => s + (Number(i.total) || 0), 0);
+  const ok = await showConfirm({
+    title: "Gabungkan Jadi 1 Invoice Baru",
+    message: `Gabungkan ${invs.length} invoice untuk ${customer} menjadi 1 invoice baru?\n\n${invs.map(i => `• ${i.id} — ${fmt(i.total)}`).join("\n")}\n\nTotal: ${fmt(total)}\n\n⚠️ Invoice asli akan di-CANCELLED dan diganti invoice gabungan baru.`,
+    confirmText: "Ya, Gabungkan",
+  });
+  if (!ok) return;
+  setMergeConsolidating(true);
+  const res = await createConsolidatedInvoice(invs);
+  setMergeConsolidating(false);
+  if (res?.ok) exitMergeMode();
 };
 
 const handleRetryFailed = async () => {
@@ -1749,6 +1768,19 @@ return (
           }}
           title={allMergeAlreadyApproved ? "Semua sudah di-approve — langsung klik Gabung & Kirim" : "Approve semua invoice yang dipilih ke UNPAID tanpa kirim WA"}>
           {mergeApproving ? "⏳ Approving..." : allMergeAlreadyApproved ? "✓ Sudah Approved" : `✅ Approve & Simpan (${mergeSelectedIds.length})`}
+        </button>
+        <button onClick={handleConsolidateInvoice}
+          disabled={mergeConsolidating || mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2 || !allMergeAlreadyApproved}
+          title={allMergeAlreadyApproved ? "Buat 1 invoice baru gabungan di database — invoice asli di-cancel" : "Approve dulu semua invoice sebelum konsolidasi"}
+          style={{
+            background: (!allMergeAlreadyApproved || mergeConsolidating || mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2) ? cs.muted + "22" : "#f59e0b22",
+            border: "1px solid " + ((!allMergeAlreadyApproved || mergeConsolidating || mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2) ? cs.muted + "33" : "#f59e0b66"),
+            color: (!allMergeAlreadyApproved || mergeConsolidating || mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2) ? cs.muted : "#f59e0b",
+            padding: "8px 14px", borderRadius: 9,
+            cursor: (!allMergeAlreadyApproved || mergeConsolidating || mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2) ? "not-allowed" : "pointer",
+            fontWeight: 700, fontSize: 12,
+          }}>
+          {mergeConsolidating ? "⏳ Membuat..." : `💾 Simpan Jadi 1 Invoice`}
         </button>
         <button onClick={() => handleSendMerged()}
           disabled={mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2}

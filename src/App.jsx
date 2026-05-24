@@ -3544,6 +3544,86 @@ ${photoPageHTML}
     }
   };
 
+  // ── Buat 1 invoice baru gabungan dari beberapa invoice (untuk 1 customer) ──
+  const createConsolidatedInvoice = async (invList) => {
+    if (!Array.isArray(invList) || invList.length < 2) {
+      showNotif("⚠️ Pilih minimal 2 invoice"); return { ok: false };
+    }
+    const allSamePhone = invList.every(i => samePhone(i.phone, invList[0].phone));
+    if (!allSamePhone) { showNotif("⚠️ Semua invoice harus dari customer yang sama"); return { ok: false }; }
+
+    const sorted = [...invList].sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+    const first = sorted[0];
+    const sourceIds = sorted.map(i => i.id).join(", ");
+
+    // Gabungkan materials_detail dari semua invoice
+    const mergedMaterials = sorted.flatMap(inv => {
+      const md = inv.materials_detail;
+      if (!md) return [];
+      try { return Array.isArray(md) ? md : JSON.parse(md); } catch { return []; }
+    });
+
+    const totalLabor    = sorted.reduce((s, i) => s + (Number(i.labor) || 0), 0);
+    const totalMaterial = sorted.reduce((s, i) => s + (Number(i.material) || 0), 0);
+    const totalDiscount = sorted.reduce((s, i) => s + (Number(i.discount) || 0), 0);
+    const grandTotal    = sorted.reduce((s, i) => s + (Number(i.total) || 0), 0);
+    const dueDates      = sorted.map(i => i.due).filter(Boolean);
+    const dueLatest     = dueDates.length ? dueDates.sort((a, b) => new Date(b) - new Date(a))[0] : null;
+    const serviceNames  = [...new Set(sorted.map(i => i.service).filter(Boolean))].join(" + ");
+    const unitTotal     = sorted.reduce((s, i) => {
+      const u = Array.isArray(i.units) ? i.units.length : (Number(i.units) || 1);
+      return s + u;
+    }, 0);
+
+    const newInv = {
+      customer:        first.customer,
+      phone:           first.phone,
+      service:         `Invoice Gabungan (${sorted.length} pekerjaan)`,
+      job_id:          null,
+      units:           unitTotal,
+      labor:           totalLabor,
+      material:        totalMaterial,
+      discount:        totalDiscount,
+      total:           grandTotal,
+      status:          "UNPAID",
+      due:             dueLatest,
+      teknisi:         first.teknisi || null,
+      materials_detail: mergedMaterials.length > 0 ? JSON.stringify(mergedMaterials) : null,
+      sent:            false,
+    };
+
+    const { data: created, error } = await supabase.from("invoices").insert([newInv]).select().single();
+    if (error || !created) {
+      showNotif("⚠️ Gagal buat invoice gabungan: " + (error?.message || "unknown"));
+      return { ok: false };
+    }
+
+    // Tandai invoice sumber sebagai CANCELLED dengan keterangan
+    for (const inv of sorted) {
+      await supabase.from("invoices").update({
+        status: "CANCELLED",
+        service: (inv.service || "Servis AC") + ` [Digabung ke ${created.id}]`,
+      }).eq("id", inv.id);
+    }
+
+    // Update state lokal
+    setInvoicesData(prev => {
+      const updated = prev.map(i =>
+        sorted.some(s => s.id === i.id)
+          ? { ...i, status: "CANCELLED", service: i.service + ` [Digabung ke ${created.id}]` }
+          : i
+      );
+      return [created, ...updated];
+    });
+
+    addAgentLog("INVOICE_CONSOLIDATED",
+      `${sorted.length} invoice digabung jadi ${created.id} oleh ${currentUser?.name || "—"}: ${sourceIds}`,
+      "SUCCESS"
+    );
+    showNotif(`✅ Invoice gabungan ${created.id} berhasil dibuat — ${sorted.length} invoice sumber di-cancelled`);
+    return { ok: true, newInvoice: created };
+  };
+
   // ── SEC-01: HTML Escape helper untuk prevent XSS di PDF generator ──
   const escHtml = (str) => {
     if (!str) return "—";
@@ -5462,7 +5542,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setEditInvoiceData={setEditInvoiceData} setEditInvoiceForm={setEditInvoiceForm} setEditJasaItems={setEditJasaItems}
       setEditInvoiceItems={setEditInvoiceItems} setModalEditInvoice={setModalEditInvoice}
       ordersData={ordersData} setOrdersData={setOrdersData} setActiveMenu={setActiveMenu} setAuditModal={setAuditModal}
-      invoiceReminderWA={invoiceReminderWA} mergedInvoiceWA={mergedInvoiceWA} previewMergedInvoicePDF={previewMergedInvoicePDF} approveInvoice={approveInvoice} markPaid={markPaid}
+      invoiceReminderWA={invoiceReminderWA} mergedInvoiceWA={mergedInvoiceWA} createConsolidatedInvoice={createConsolidatedInvoice} previewMergedInvoicePDF={previewMergedInvoicePDF} approveInvoice={approveInvoice} markPaid={markPaid}
       showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog} auditUserName={auditUserName}
       markInvoicePaid={markInvoicePaid} updateOrderStatus={updateOrderStatus} deleteInvoice={deleteInvoice} updateInvoice={updateInvoice}
       getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
