@@ -3406,7 +3406,7 @@ ${photoPageHTML}
               `• Tim      : ${team || order.teknisi}\n` +
               `• Lokasi   : ${order.address || "-"}\n\n` +
               `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
-              `Link aktif 7 hari. Pertanyaan? Balas pesan ini.\n— AClean Service`;
+              `Link aktif 30 hari. Pertanyaan? Balas pesan ini.\n— AClean Service`;
             await sendWA(order.phone, portalMsg);
             addAgentLog("PORTAL_LINK_SENT", `Link portal terkirim ke ${order.customer} (${order.phone})`, "SUCCESS");
           }

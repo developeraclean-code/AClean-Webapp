@@ -2148,23 +2148,41 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 
       const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json", "Prefer": "return=representation" };
 
-      // Generate token 24 bytes hex
-      const { randomBytes } = await import("crypto");
-      const token = randomBytes(24).toString("hex");
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 hari
+      // ── Token: REUSE yang masih aktif, atau buat baru. Expiry 30 hari (cover garansi).
+      // Reuse = link customer STABIL (tidak berubah tiap dispatch) → customer bisa cek
+      // status pakai link yang sama selama masa garansi 30 hari. Expiry selalu di-refresh
+      // ke 30 hari dari dispatch terakhir.
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 hari
+      const custName = sanitizeName(b.customer_name || "");
 
-      // Upsert: satu token per phone (replace jika sudah ada)
-      const delRes = await fetch(`${SU}/rest/v1/customer_tokens?phone=eq.${encodeURIComponent(phone)}`, { method: "DELETE", headers });
-      if (!delRes.ok && delRes.status !== 404) return res.status(500).json({ error: "Gagal reset token lama" });
+      const existRes = await fetch(`${SU}/rest/v1/customer_tokens?phone=eq.${encodeURIComponent(phone)}&select=token,expires_at&order=created_at.desc&limit=1`, { headers });
+      const existRows = existRes.ok ? await existRes.json() : [];
+      let token = existRows[0]?.token;
+      const tokExpired = existRows[0]?.expires_at && new Date(existRows[0].expires_at) < new Date();
 
-      const insRes = await fetch(`${SU}/rest/v1/customer_tokens`, {
-        method: "POST", headers,
-        body: JSON.stringify({ phone, token, expires_at: expiresAt, customer_name: sanitizeName(b.customer_name || "") }),
-      });
-      if (!insRes.ok) {
-        const e = await insRes.json().catch(() => ({}));
-        console.error("[generate-customer-token] DB error:", JSON.stringify(e));
-        return res.status(500).json({ error: "Gagal simpan token" });
+      if (token && !tokExpired) {
+        // Reuse token aktif — extend expiry + update nama/last_used (token TIDAK berubah)
+        await fetch(`${SU}/rest/v1/customer_tokens?phone=eq.${encodeURIComponent(phone)}`, {
+          method: "PATCH", headers,
+          body: JSON.stringify({ expires_at: expiresAt, customer_name: custName, last_used: new Date().toISOString() }),
+        });
+      } else {
+        // Belum ada / sudah expired → buat token baru
+        const { randomBytes } = await import("crypto");
+        token = randomBytes(24).toString("hex");
+        if (existRows.length > 0) {
+          const upd = await fetch(`${SU}/rest/v1/customer_tokens?phone=eq.${encodeURIComponent(phone)}`, {
+            method: "PATCH", headers,
+            body: JSON.stringify({ token, expires_at: expiresAt, customer_name: custName }),
+          });
+          if (!upd.ok) { const e = await upd.json().catch(() => ({})); console.error("[generate-customer-token] update error:", JSON.stringify(e)); return res.status(500).json({ error: "Gagal simpan token" }); }
+        } else {
+          const insRes = await fetch(`${SU}/rest/v1/customer_tokens`, {
+            method: "POST", headers,
+            body: JSON.stringify({ phone, token, expires_at: expiresAt, customer_name: custName }),
+          });
+          if (!insRes.ok) { const e = await insRes.json().catch(() => ({})); console.error("[generate-customer-token] DB error:", JSON.stringify(e)); return res.status(500).json({ error: "Gagal simpan token" }); }
+        }
       }
 
       // Base URL: prioritas customer_portal_url (status.aclean.id) — konsisten dgn cron-reminder.

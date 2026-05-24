@@ -614,7 +614,7 @@ async function taskRatingPrompt() {
     if (!token || tokExpired) {
       const { randomBytes } = await import("crypto");
       token = randomBytes(24).toString("hex");
-      const expiresAt = new Date(Date.now() + 7*24*60*60*1000).toISOString();
+      const expiresAt = new Date(Date.now() + 30*24*60*60*1000).toISOString();
       if (tokRows?.length > 0) {
         // Update token yang expired
         await sb.from("customer_tokens").update({ token, expires_at: expiresAt, customer_name: o.customer }).eq("phone", o.phone);
@@ -731,7 +731,7 @@ async function taskServisReminder() {
     if (!token || tokExpired) {
       const { randomBytes } = await import("crypto");
       token = randomBytes(24).toString("hex");
-      const expiresAt = new Date(Date.now() + 7*24*60*60*1000).toISOString();
+      const expiresAt = new Date(Date.now() + 30*24*60*60*1000).toISOString();
       if (tokRows?.length > 0) {
         await sb.from("customer_tokens").update({ token, expires_at: expiresAt, customer_name: c.name }).eq("phone", c.phone);
       } else {
