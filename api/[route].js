@@ -1986,7 +1986,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 
       const phone = tokRow.phone;
       const variants = buildPhoneVariants(phone);
-      const phoneFilter = variants.map(v => `phone=eq.${encodeURIComponent(v)}`).join(",");
+      const phoneFilter = variants.map(v => `phone.eq.${encodeURIComponent(v)}`).join(",");
 
       // Query orders, invoices, dan owner_phone paralel
       // phone & notes dihapus dari orders — tidak perlu ditampilkan ke customer
@@ -2047,7 +2047,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       if (orderId) {
         // Validasi: order harus milik phone ini (IDOR fix) dan status COMPLETED/INVOICE_APPROVED
         const variants = buildPhoneVariants(phone);
-        const phoneFilter = variants.map(v => `phone=eq.${encodeURIComponent(v)}`).join(",");
+        const phoneFilter = variants.map(v => `phone.eq.${encodeURIComponent(v)}`).join(",");
         const orRes = await fetch(
           `${SU}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&or=(${phoneFilter})&status=in.(COMPLETED,INVOICE_APPROVED)&select=id,service,teknisi`,
           { headers }
@@ -2121,7 +2121,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const { phone } = tokRows[0];
 
       const variants = buildPhoneVariants(phone);
-      const phoneFilter = variants.map(v => `phone=eq.${encodeURIComponent(v)}`).join(",");
+      const phoneFilter = variants.map(v => `phone.eq.${encodeURIComponent(v)}`).join(",");
 
       // Ambil voucher aktif (belum diklaim, belum expired)
       const today = new Date().toISOString().slice(0, 10);

@@ -2788,7 +2788,13 @@ ${photoPageHTML}
               wa_cleanup_enabled: sMap.wa_cleanup_enabled ?? prev.wa_cleanup_enabled ?? "true",
               wa_monitor_enabled: sMap.wa_monitor_enabled ?? prev.wa_monitor_enabled ?? "false",
               ara_training_rules: sMap.ara_training_rules ?? prev.ara_training_rules,
+              customer_portal_enabled: sMap.customer_portal_enabled ?? prev.customer_portal_enabled ?? "false",
               customer_portal_url: sMap.customer_portal_url ?? prev.customer_portal_url ?? "https://a-clean-webapp.vercel.app",
+              rating_prompt_enabled: sMap.rating_prompt_enabled ?? prev.rating_prompt_enabled ?? "false",
+              servis_reminder_enabled: sMap.servis_reminder_enabled ?? prev.servis_reminder_enabled ?? "false",
+              voucher_loyalty_enabled: sMap.voucher_loyalty_enabled ?? prev.voucher_loyalty_enabled ?? "false",
+              voucher_winback_enabled: sMap.voucher_winback_enabled ?? prev.voucher_winback_enabled ?? "false",
+              voucher_expiry_reminder_enabled: sMap.voucher_expiry_reminder_enabled ?? prev.voucher_expiry_reminder_enabled ?? "false",
             }));
             if (sMap.cron_jobs) {
               try {
