@@ -858,13 +858,16 @@ function SettingsView({
                         <div onClick={async () => {
                           const newVal = isOn ? "false" : "true";
                           setAppSettings(prev => ({ ...prev, [key]: newVal }));
+                          // Wajib update KEDUANYA: standalone key + cron_jobs JSON (AND-logic di cron)
                           await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
-                          // Sync cron_jobs JSON entry so Cron Jobs card stays in sync
-                          const updCronJobs = cronJobs.map(j => j.backendKey === key ? { ...j, active: newVal === "true" } : j);
-                          if (updCronJobs.some(j => j.backendKey === key)) {
-                            setCronJobs(updCronJobs);
-                            await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(updCronJobs) }, { onConflict: "key" });
+                          let updCronJobs = cronJobs.map(j => j.backendKey === key ? { ...j, active: newVal === "true" } : j);
+                          if (!updCronJobs.some(j => j.backendKey === key)) {
+                            // Key belum ada di cron_jobs JSON — insert baru agar AND-logic cron bisa cek JSON
+                            const maxId = updCronJobs.reduce((m, j) => Math.max(m, j.id || 0), 0);
+                            updCronJobs = [...updCronJobs, { id: maxId + 1, backendKey: key, name: label, task: desc, active: newVal === "true", days: "Setiap Hari" }];
                           }
+                          setCronJobs(updCronJobs);
+                          await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(updCronJobs) }, { onConflict: "key" });
                           showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
                         }}
                           style={{ width: 40, height: 22, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
