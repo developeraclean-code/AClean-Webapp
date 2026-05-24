@@ -12,6 +12,7 @@ let filtered = ordersData.filter(o =>
   !(o.source === "whatsapp" && o.status === "PENDING")
 );
 if (orderFilter === "Hari Ini") filtered = filtered.filter(o => o.date === TODAY);
+else if (orderFilter === "Stuck") filtered = filtered.filter(o => ["DISPATCHED", "ON_SITE"].includes(o.status) && o.date < TODAY);
 else if (orderFilter !== "Semua") filtered = filtered.filter(o => o.status === (sMap2[orderFilter] || orderFilter));
 if (orderTekFilter !== "Semua") filtered = filtered.filter(o => o.teknisi === orderTekFilter || o.helper === orderTekFilter);
 if (orderDateFrom) filtered = filtered.filter(o => (o.date || "") >= orderDateFrom);
@@ -45,7 +46,7 @@ return (
           ).length;
           return stuck > 0 ? (
             <span title="Job belum ada laporan (sudah lewat hari)" style={{ fontSize: 11, background: cs.red + "22", color: cs.red, border: "1px solid " + cs.red + "44", borderRadius: 99, padding: "2px 8px", fontWeight: 700, cursor: "pointer" }}
-              onClick={() => { setOrderFilter("Semua"); setOrderTekFilter("Semua"); }}>
+              onClick={() => { setOrderFilter("Stuck"); setOrderPage(1); }}>
               ⚠️ {stuck} stuck
             </span>
           ) : null;
@@ -129,6 +130,18 @@ return (
             color: orderFilter === f ? "#0a0f1e" : cs.muted, padding: "6px 14px", borderRadius: 99, cursor: "pointer", fontSize: 12, fontWeight: 600
           }}>{f}</button>
       ))}
+      {(() => {
+        const stuckCount = ordersData.filter(o => ["DISPATCHED","ON_SITE"].includes(o.status) && o.date < TODAY).length;
+        return stuckCount > 0 ? (
+          <button onClick={() => { setOrderFilter("Stuck"); setOrderPage(1); }}
+            style={{
+              background: orderFilter === "Stuck" ? cs.red : cs.red + "18",
+              border: "1px solid " + cs.red + (orderFilter === "Stuck" ? "" : "44"),
+              color: orderFilter === "Stuck" ? "#fff" : cs.red,
+              padding: "6px 14px", borderRadius: 99, cursor: "pointer", fontSize: 12, fontWeight: 700
+            }}>⚠️ Stuck ({stuckCount})</button>
+        ) : null;
+      })()}
       <span style={{ width: 1, height: 16, background: cs.border, display: "inline-block", marginLeft: 4 }} />
       <select value={orderTekFilter} onChange={e => { setOrderTekFilter(e.target.value); setOrderPage(1); }}
         style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, color: cs.text, padding: "6px 10px", fontSize: 12, cursor: "pointer" }}>
