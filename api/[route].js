@@ -2005,6 +2005,18 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       // Ambil nama customer dari order pertama
       const customerName = orders[0]?.customer || tokRow.customer_name || "";
 
+      // Fetch service reports VERIFIED untuk order-order ini (hanya field customer-safe)
+      let reports = [];
+      const jobIds = orders.map(o => o.id).filter(Boolean);
+      if (jobIds.length > 0) {
+        const rptFilter = jobIds.map(id => `job_id.eq.${encodeURIComponent(id)}`).join(",");
+        const rptRes = await fetch(
+          `${SU}/rest/v1/service_reports?or=(${rptFilter})&status=eq.VERIFIED&select=id,job_id,date,service,total_units,rekomendasi,catatan_rekomendasi,units&order=date.desc&limit=20`,
+          { headers }
+        );
+        if (rptRes.ok) reports = await rptRes.json();
+      }
+
       return res.status(200).json({
         expired: false,
         phone,
@@ -2012,6 +2024,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
         contact_phone: contactPhone,
         orders,
         invoices,
+        reports,
         token_created: tokRow.created_at,
         token_expires: tokRow.expires_at,
       });

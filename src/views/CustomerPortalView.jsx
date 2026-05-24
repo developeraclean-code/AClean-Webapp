@@ -194,7 +194,8 @@ export default function CustomerPortalView({ token: tokenProp }) {
             <div style={{ display: "grid", gap: 10 }}>
               {data.orders.slice(0, 10).map(o => {
                 const inv = data.invoices?.find(i => i.job_id === o.id);
-                return <HistoryItem key={o.id} order={o} invoice={inv} />;
+                const rpt = data.reports?.find(r => r.job_id === o.id);
+                return <HistoryItem key={o.id} order={o} invoice={inv} report={rpt} />;
               })}
             </div>
           </>
@@ -432,31 +433,115 @@ function GaransiCard({ inv }) {
   );
 }
 
-function HistoryItem({ order, invoice }) {
+function HistoryItem({ order, invoice, report }) {
+  const [expanded, setExpanded] = useState(false);
   const inv = invoice;
   const invSt = inv ? (INV_STATUS_LABEL[inv.status] || null) : null;
   const stDone = ["COMPLETED","INVOICE_APPROVED"].includes(order.status);
+
+  // Parse units dari report — filter unit yang punya data berguna
+  const rptUnits = (() => {
+    if (!report?.units) return [];
+    try {
+      const arr = typeof report.units === "string" ? JSON.parse(report.units) : report.units;
+      return arr.filter(u =>
+        (u.kondisi_sebelum?.length > 0) ||
+        (u.kondisi_setelah?.length > 0) ||
+        (u.pekerjaan?.length > 0) ||
+        (u.catatan_unit?.trim())
+      );
+    } catch { return []; }
+  })();
+  const hasReport = report && (rptUnits.length > 0 || report.rekomendasi?.trim() || report.catatan_rekomendasi?.trim());
+
   return (
-    <div style={s.historyItem}>
-      <div style={{ ...s.historyIcon, background: SERVICE_BG(order.service) }}>
-        {SERVICE_ICON(order.service)}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, color: "#94a3b8" }}>{fmtDateShort(order.date)}</div>
-        <div style={{ fontWeight: 700, fontSize: 14, color: "#1e293b", marginTop: 1 }}>{order.service}</div>
-        <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-          {order.units} unit{order.teknisi ? ` · ${order.teknisi}` : ""}
+    <div style={{ ...s.historyItem, flexDirection: "column", alignItems: "stretch", padding: 0, overflow: "hidden" }}>
+      {/* Row utama */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px" }}>
+        <div style={{ ...s.historyIcon, background: SERVICE_BG(order.service) }}>
+          {SERVICE_ICON(order.service)}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: "#94a3b8" }}>{fmtDateShort(order.date)}</div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: "#1e293b", marginTop: 1 }}>{order.service}</div>
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+            {order.units} unit{order.teknisi ? ` · ${order.teknisi}` : ""}
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          {inv && <div style={{ fontSize: 13, fontWeight: 700, color: "#0369a1" }}>{fmtRp(inv.total)}</div>}
+          {invSt && (
+            <div style={{ ...s.historyStatus, ...(inv.status === "PAID" ? s.hsDone : inv.status === "PARTIAL_PAID" ? s.hsPartial : s.hsUnpaid) }}>
+              {invSt.label}
+            </div>
+          )}
+          {!inv && stDone && <div style={{ ...s.historyStatus, ...s.hsDone }}>Selesai</div>}
         </div>
       </div>
-      <div style={{ textAlign: "right", flexShrink: 0 }}>
-        {inv && <div style={{ fontSize: 13, fontWeight: 700, color: "#0369a1" }}>{fmtRp(inv.total)}</div>}
-        {invSt && (
-          <div style={{ ...s.historyStatus, ...(inv.status === "PAID" ? s.hsDone : inv.status === "PARTIAL_PAID" ? s.hsPartial : s.hsUnpaid) }}>
-            {invSt.label}
-          </div>
-        )}
-        {!inv && stDone && <div style={{ ...s.historyStatus, ...s.hsDone }}>Selesai</div>}
-      </div>
+
+      {/* Tombol laporan — hanya jika ada data */}
+      {hasReport && (
+        <div style={{ borderTop: "1px solid #f1f5f9", padding: "0 16px" }}>
+          <button onClick={() => setExpanded(e => !e)}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#0369a1", fontSize: 12, fontWeight: 600, padding: "10px 0", width: "100%" }}>
+            <span style={{ fontSize: 14 }}>{expanded ? "▲" : "▼"}</span>
+            {expanded ? "Sembunyikan Laporan" : "Lihat Laporan Servis"}
+          </button>
+
+          {expanded && (
+            <div style={{ paddingBottom: 14, display: "grid", gap: 10 }}>
+
+              {/* Rekomendasi global */}
+              {(report.rekomendasi?.trim() || report.catatan_rekomendasi?.trim()) && (
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#92400e", marginBottom: 4 }}>Rekomendasi Teknisi</div>
+                  <div style={{ fontSize: 12, color: "#78350f", lineHeight: 1.5 }}>
+                    {report.rekomendasi?.trim() || report.catatan_rekomendasi?.trim()}
+                  </div>
+                </div>
+              )}
+
+              {/* Per unit */}
+              {rptUnits.map((u, i) => (
+                <div key={i} style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, color: "#334155", marginBottom: 6 }}>
+                    {u.label || `Unit ${u.unit_no || i + 1}`}
+                    {u.merk ? <span style={{ fontWeight: 400, color: "#64748b" }}> · {u.merk} {u.tipe || ""}</span> : null}
+                  </div>
+                  <div style={{ display: "grid", gap: 5 }}>
+                    {u.pekerjaan?.length > 0 && (
+                      <div style={{ fontSize: 11 }}>
+                        <span style={{ color: "#64748b", fontWeight: 600 }}>Dikerjakan: </span>
+                        <span style={{ color: "#334155" }}>{u.pekerjaan.join(", ")}</span>
+                      </div>
+                    )}
+                    {u.kondisi_sebelum?.length > 0 && (
+                      <div style={{ fontSize: 11 }}>
+                        <span style={{ color: "#64748b", fontWeight: 600 }}>Kondisi awal: </span>
+                        <span style={{ color: "#334155" }}>{u.kondisi_sebelum.join(", ")}</span>
+                      </div>
+                    )}
+                    {u.kondisi_setelah?.length > 0 && (
+                      <div style={{ fontSize: 11 }}>
+                        <span style={{ color: "#64748b", fontWeight: 600 }}>Hasil: </span>
+                        <span style={{ color: u.kondisi_setelah.some(k => k.toLowerCase().includes("terkendala") || k.toLowerCase().includes("perlu")) ? "#b45309" : "#15803d", fontWeight: 600 }}>
+                          {u.kondisi_setelah.join(", ")}
+                        </span>
+                      </div>
+                    )}
+                    {u.catatan_unit?.trim() && (
+                      <div style={{ fontSize: 11, marginTop: 2, background: "#fffbeb", borderRadius: 6, padding: "5px 8px" }}>
+                        <span style={{ color: "#92400e", fontWeight: 600 }}>Catatan: </span>
+                        <span style={{ color: "#78350f" }}>{u.catatan_unit.trim()}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
