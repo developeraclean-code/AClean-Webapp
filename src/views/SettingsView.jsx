@@ -65,7 +65,7 @@ function UserManagementPanel({ userAccounts, setUserAccounts, setTeknisiData, cu
     const callerRole = currentUser?.role || (() => {
       try { return JSON.parse(localStorage.getItem("localSession") || "{}")?.role || ""; } catch { return ""; }
     })();
-    const res = await fetch("/api/manage-user", { method: "POST", headers: _apiHeaders(), body: JSON.stringify({ action: "toggle-active", userId: u.id, active: willActivate, callerRole }) });
+    const res = await fetch("/api/manage-user", { method: "POST", headers: await _apiHeaders(), body: JSON.stringify({ action: "toggle-active", userId: u.id, active: willActivate, callerRole }) });
     const data = await res.json();
     if (!data.ok) { showNotif("⚠️ " + (data.error || "Gagal")); return; }
     setUserAccounts(prev => prev.map(acc => acc.id === u.id ? { ...acc, active: willActivate } : acc));
@@ -374,8 +374,8 @@ function SettingsView({
     setLlmStatus("testing");
     try {
       const type = llmProvider === "minimax" ? "minimax" : "llm";
-      const r = await fetch("/api/test-connection?type=" + type, { headers: _apiHeaders() });
-      const d = await r.json();
+      const r = await fetch("/api/test-connection?type=" + type, { headers: await _apiHeaders() });
+const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || d.message || "Test gagal");
       setLlmStatus("connected");
       showNotif("✅ Koneksi " + activeLLM.label + (llmModel ? " (" + llmModel + ")" : "") + " berhasil!");
@@ -388,7 +388,7 @@ function SettingsView({
   const testWA = async () => {
     setWaStatus("testing");
     try {
-      const r = await fetch("/api/test-connection", { method: "POST", headers: _apiHeaders(), body: JSON.stringify({ type: "wa", provider: "fonnte", token: waToken, device: waDevice }) });
+      const r = await fetch("/api/test-connection", { method: "POST", headers: await _apiHeaders(), body: JSON.stringify({ type: "wa", provider: "fonnte", token: waToken, device: waDevice }) });
       const d = await r.json();
       setWaStatus(d.success ? "connected" : "not_connected");
       showNotif(d.message);
