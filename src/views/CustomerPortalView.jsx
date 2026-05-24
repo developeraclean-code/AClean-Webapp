@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 
 const API_BASE = "/api";
+const GOOGLE_REVIEW_URL = "https://g.page/r/Ce7qdwu8xHxoEAI/review";
 
 const STATUS_MAP = {
   PENDING:        { label: "Pesanan Diterima",           step: 0, emoji: "📋" },
@@ -463,16 +464,25 @@ function HistoryItem({ order, invoice }) {
 // ── RATING PROMPT ──
 function RatingPrompt({ job, onOpen }) {
   return (
-    <div style={{ background: "linear-gradient(135deg,#fef9c3,#fef3c7)", border: "1px solid #fcd34d", borderRadius: 16, padding: "16px 18px", display: "flex", alignItems: "center", gap: 12 }}>
-      <span style={{ fontSize: 28 }}>⭐</span>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: "#92400e" }}>Bagaimana servis kami?</div>
-        <div style={{ fontSize: 11, color: "#a16207", marginTop: 2 }}>{job.service} · {fmtDateShort(job.date)}</div>
+    <div style={{ background: "linear-gradient(135deg,#fef9c3,#fef3c7)", border: "1px solid #fcd34d", borderRadius: 16, padding: "16px 18px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+        <span style={{ fontSize: 28 }}>⭐</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: "#92400e" }}>Bagaimana servis kami?</div>
+          <div style={{ fontSize: 11, color: "#a16207", marginTop: 2 }}>{job.service} · {fmtDateShort(job.date)}</div>
+        </div>
       </div>
-      <button onClick={onOpen}
-        style={{ background: "#f59e0b", border: "none", color: "#fff", borderRadius: 10, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-        Beri Rating
-      </button>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <button onClick={onOpen}
+          style={{ background: "#f59e0b", border: "none", color: "#fff", borderRadius: 10, padding: "10px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer", textAlign: "center" }}>
+          ⭐ Rating Teknisi
+        </button>
+        <a href={GOOGLE_REVIEW_URL} target="_blank" rel="noopener noreferrer"
+          style={{ background: "#4285f4", border: "none", color: "#fff", borderRadius: 10, padding: "10px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer", textAlign: "center", textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M21.35 11.1H12.18V13.83H18.69C18.36 17.64 15.19 19.27 12.19 19.27C8.36 19.27 5 16.25 5 12C5 7.9 8.2 4.73 12.2 4.73C15.29 4.73 17.1 6.7 17.1 6.7L19 4.72C19 4.72 16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12C2.03 17.05 6.16 22 12.25 22C17.6 22 21.5 18.33 21.5 12.91C21.5 11.76 21.35 11.1 21.35 11.1Z"/></svg>
+          Review Google
+        </a>
+      </div>
     </div>
   );
 }
@@ -512,10 +522,15 @@ function RatingForm({ job, token, onDone, onCancel }) {
       </div>
       <div style={{ padding: "20px 18px", display: "grid", gap: 16 }}>
         {msg === "success" ? (
-          <div style={{ textAlign: "center", padding: "20px 0" }}>
+          <div style={{ textAlign: "center", padding: "16px 0 8px" }}>
             <div style={{ fontSize: 40, marginBottom: 8 }}>🙏</div>
             <div style={{ fontWeight: 700, color: "#16a34a", fontSize: 15 }}>Terima kasih atas rating Anda!</div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>Masukan Anda sangat berarti untuk AClean</div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 4, marginBottom: 16 }}>Masukan Anda sangat berarti untuk AClean</div>
+            <a href={GOOGLE_REVIEW_URL} target="_blank" rel="noopener noreferrer"
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#4285f4", color: "#fff", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, textDecoration: "none" }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="white"><path d="M21.35 11.1H12.18V13.83H18.69C18.36 17.64 15.19 19.27 12.19 19.27C8.36 19.27 5 16.25 5 12C5 7.9 8.2 4.73 12.2 4.73C15.29 4.73 17.1 6.7 17.1 6.7L19 4.72C19 4.72 16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12C2.03 17.05 6.16 22 12.25 22C17.6 22 21.5 18.33 21.5 12.91C21.5 11.76 21.35 11.1 21.35 11.1Z"/></svg>
+              Review kami di Google juga?
+            </a>
           </div>
         ) : (
           <>
