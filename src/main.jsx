@@ -15,8 +15,9 @@ setTimeout(() => sessionStorage.removeItem('chunk_reload'), 5000);
 
 const CustomerPortalView = lazy(() => import('./views/CustomerPortalView.jsx'))
 
-// Deteksi path /status/:token — render portal tanpa App shell
-const pathMatch = window.location.pathname.match(/^\/status\/([a-f0-9]{48})$/)
+// Deteksi path token portal — render portal tanpa App shell.
+// Terima dua format: /status/<token> (lama) DAN /<token> (status.aclean.id/<token>).
+const pathMatch = window.location.pathname.match(/^\/(?:status\/)?([a-f0-9]{48})$/)
 
 // Jika dibuka di domain customer (status.aclean.id) tanpa token yang valid,
 // redirect ke landing page agar tidak tampil halaman login internal

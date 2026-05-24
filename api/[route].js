@@ -2167,7 +2167,13 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
         return res.status(500).json({ error: "Gagal simpan token" });
       }
 
-      const appUrl = process.env.APP_URL || "https://a-clean-webapp.vercel.app";
+      // Base URL: prioritas customer_portal_url (status.aclean.id) — konsisten dgn cron-reminder.
+      // process.env.APP_URL bisa ke-set ke aclean.id (landing page) yang TIDAK punya portal → 404.
+      let appUrl = process.env.APP_URL || "https://a-clean-webapp.vercel.app";
+      try {
+        const setRes = await fetch(`${SU}/rest/v1/app_settings?key=eq.customer_portal_url&select=value`, { headers });
+        if (setRes.ok) { const rows = await setRes.json(); if (rows[0]?.value) appUrl = rows[0].value; }
+      } catch { /* fallback ke APP_URL */ }
       const link = `${appUrl}/status/${token}`;
       return res.status(200).json({ ok: true, token, link, expires_at: expiresAt });
     }
