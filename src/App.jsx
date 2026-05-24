@@ -3575,7 +3575,13 @@ ${photoPageHTML}
       return s + u;
     }, 0);
 
+    // Generate invoice ID — kolom id tabel invoices tidak punya default (format: INV-YYYYMMDD-XXXXX)
+    const todayStr = getLocalDate();
+    const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
+    const newId = "INV-" + todayStr.replace(/-/g, "").slice(0, 8) + "-" + invSeq;
+
     const newInv = {
+      id:              newId,
       customer:        first.customer,
       phone:           first.phone,
       service:         `Invoice Gabungan (${sorted.length} pekerjaan)`,
@@ -3590,6 +3596,7 @@ ${photoPageHTML}
       teknisi:         first.teknisi || null,
       materials_detail: mergedMaterials.length > 0 ? JSON.stringify(mergedMaterials) : null,
       sent:            false,
+      created_at:      new Date().toISOString(),
     };
 
     const { data: created, error } = await supabase.from("invoices").insert([newInv]).select().single();
