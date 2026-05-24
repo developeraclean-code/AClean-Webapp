@@ -2912,6 +2912,22 @@ ${photoPageHTML}
         // GAP-7: Jalankan check stuck jobs segera setelah data load, lalu setiap 15 menit
         setTimeout(() => checkStuckJobs(), 5000); // delay 5 detik agar state ready
         startStuckCheck();
+        // Auto-sync: order masih DISPATCHED/ON_SITE tapi laporannya sudah VERIFIED → set COMPLETED
+        setTimeout(async () => {
+          try {
+            const { data: verifiedLaporan } = await supabase
+              .from("service_reports").select("job_id").eq("status", "VERIFIED");
+            if (!verifiedLaporan?.length) return;
+            const verifiedJobIds = new Set(verifiedLaporan.map(r => r.job_id).filter(Boolean));
+            setOrdersData(prev => {
+              const toFix = prev.filter(o => ["DISPATCHED","ON_SITE"].includes(o.status) && verifiedJobIds.has(o.id));
+              if (!toFix.length) return prev;
+              toFix.forEach(o => supabase.from("orders").update({ status: "COMPLETED" }).eq("id", o.id).then(() => {}));
+              addAgentLog("AUTO_COMPLETE_SYNC", `${toFix.length} order di-sync ke COMPLETED karena laporan sudah VERIFIED`, "INFO");
+              return prev.map(o => toFix.some(f => f.id === o.id) ? { ...o, status: "COMPLETED" } : o);
+            });
+          } catch (e) { console.warn("Auto-complete sync skip:", e?.message); }
+        }, 10000); // 10 detik setelah data load
       });
     };
 
@@ -2943,11 +2959,16 @@ ${photoPageHTML}
             try {
               await updateServiceReport(supabase, r.id, { status: "VERIFIED" }, "system_auto_verify");
               setLaporanReports(prev => prev.map(x =>
-                x.id === r.id ? {
-                  ...x, status: "VERIFIED",
-                  verified_at: new Date().toISOString()
-                } : x
+                x.id === r.id ? { ...x, status: "VERIFIED", verified_at: new Date().toISOString() } : x
               ));
+              // Sync order status → COMPLETED jika masih DISPATCHED/ON_SITE
+              if (r.job_id) {
+                const ord = ordersData.find(o => o.id === r.job_id);
+                if (ord && ["DISPATCHED", "ON_SITE"].includes(ord.status)) {
+                  await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", r.job_id);
+                  setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+                }
+              }
               addAgentLog("AUTO_VERIFIED",
                 `Laporan ${r.job_id || r.id} auto-verified setelah 48 jam — ${r.teknisi || ""}`,
                 "INFO"
