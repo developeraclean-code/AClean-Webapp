@@ -224,9 +224,9 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
             </View>
           </View>
           <View style={s.headerSub}>
-            <Text style={s.headerSubTxt}>📍 {appSettings.company_addr || ""}</Text>
-            <Text style={s.headerSubTxt}>📞 {appSettings.wa_number || ""}</Text>
-            <Text style={s.headerSubTxt}>🏦 {appSettings.bank_name} {appSettings.bank_number} a.n. {appSettings.bank_holder}</Text>
+            <Text style={s.headerSubTxt}>{appSettings.company_addr || ""}</Text>
+            <Text style={s.headerSubTxt}>Telp: {appSettings.wa_number || ""}</Text>
+            <Text style={s.headerSubTxt}>Rek: {appSettings.bank_name} {appSettings.bank_number} a.n. {appSettings.bank_holder}</Text>
           </View>
         </View>
 
@@ -243,8 +243,8 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
           <View style={[s.box, s.boxWhite]}>
             <Text style={s.boxTitle}>Tagihan Kepada</Text>
             <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 12, marginBottom: 4 }}>{inv.customer || ""}</Text>
-            <Text style={{ color: "#64748b", fontSize: 9 }}>📱 {inv.phone || "—"}</Text>
-            <Text style={{ color: "#64748b", fontSize: 9, marginTop: 3 }}>🔧 {inv.service || "—"}</Text>
+            <Text style={{ color: "#64748b", fontSize: 9 }}>HP: {inv.phone || "—"}</Text>
+            <Text style={{ color: "#64748b", fontSize: 9, marginTop: 3 }}>Servis: {inv.service || "—"}</Text>
           </View>
         </View>
 
@@ -293,7 +293,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
                           {/* Sub-baris include items */}
                           {includeItems.map((inc, ii) => (
                             <View key={ii} style={[s.tr, { backgroundColor: ii % 2 === 0 ? "#f8faff" : "#f0f4ff" }]}>
-                              <Text style={[s.td, { flex: 1, paddingLeft: 18, color: "#475569", fontSize: 8.5 }]}>✓ {inc.nama}</Text>
+                              <Text style={[s.td, { flex: 1, paddingLeft: 18, color: "#475569", fontSize: 8.5 }]}>+ {inc.nama}</Text>
                               <Text style={[s.td, { width: 60, textAlign: "right", color: "#64748b", fontSize: 8.5 }]}>{inc.qty} {inc.satuan}</Text>
                               <Text style={[s.td, { width: 80, textAlign: "right", color: "#94a3b8", fontSize: 8 }]}>(include)</Text>
                               <Text style={[s.td, { width: 80 }]}></Text>

@@ -113,6 +113,10 @@ const mergeSelectedInvs = useMemo(
   [mergeSelectedIds, invoicesData]
 );
 
+// True jika semua invoice yang dipilih sudah di-approve (tidak perlu approve lagi)
+const allMergeAlreadyApproved = mergeSelectedInvs.length >= 2 &&
+  mergeSelectedInvs.every(i => i.status !== "PENDING_APPROVAL" && i.status !== "PENDING" && i.status);
+
 // Preview PDF gabungan tanpa kirim — buka di tab baru
 const handlePreviewMerged = async () => {
   if (mergeSelectedInvs.length < 2) { showNotif("⚠️ Pilih minimal 2 invoice"); return; }
@@ -156,9 +160,9 @@ const handleSendMerged = async (retryInvList = null) => {
 const handleApproveMerged = async () => {
   const invs = mergeSelectedInvs;
   if (invs.length < 2) { showNotif("⚠️ Pilih minimal 2 invoice"); return; }
-  // Hanya approve yang masih PENDING/SUBMITTED (belum UNPAID)
-  const toApprove = invs.filter(i => i.status === "PENDING" || i.status === "SUBMITTED" || !i.status);
-  if (toApprove.length === 0) { showNotif("⚠️ Semua invoice yang dipilih sudah di-approve"); return; }
+  // Hanya approve yang masih PENDING_APPROVAL (belum UNPAID)
+  const toApprove = invs.filter(i => i.status === "PENDING_APPROVAL" || i.status === "PENDING" || !i.status);
+  if (toApprove.length === 0) { showNotif("ℹ️ Semua sudah di-approve. Langsung klik Gabung & Kirim."); return; }
   const customer = invs[0].customer || "customer";
   const ok = await showConfirm({
     title: "Approve & Simpan Invoice",
@@ -1734,17 +1738,17 @@ return (
           {mergePreviewing ? "⏳" : "👁 Preview"}
         </button>
         <button onClick={handleApproveMerged}
-          disabled={mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2}
+          disabled={mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2 || allMergeAlreadyApproved}
           style={{
-            background: (mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? cs.muted + "33" : "#22c55e22",
-            border: "1px solid " + ((mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? cs.muted + "33" : "#22c55e66"),
-            color: (mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? cs.muted : "#4ade80",
+            background: (mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2 || allMergeAlreadyApproved) ? cs.muted + "22" : "#22c55e22",
+            border: "1px solid " + ((mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2 || allMergeAlreadyApproved) ? cs.muted + "33" : "#22c55e66"),
+            color: (mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2 || allMergeAlreadyApproved) ? cs.muted : "#4ade80",
             padding: "8px 14px", borderRadius: 9,
-            cursor: (mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2) ? "not-allowed" : "pointer",
+            cursor: (mergeApproving || mergeSending || mergePreviewing || mergeSelectedIds.length < 2 || allMergeAlreadyApproved) ? "not-allowed" : "pointer",
             fontWeight: 700, fontSize: 12,
           }}
-          title="Approve semua invoice yang dipilih ke UNPAID tanpa kirim WA">
-          {mergeApproving ? "⏳ Approving..." : `✅ Approve & Simpan (${mergeSelectedIds.length})`}
+          title={allMergeAlreadyApproved ? "Semua sudah di-approve — langsung klik Gabung & Kirim" : "Approve semua invoice yang dipilih ke UNPAID tanpa kirim WA"}>
+          {mergeApproving ? "⏳ Approving..." : allMergeAlreadyApproved ? "✓ Sudah Approved" : `✅ Approve & Simpan (${mergeSelectedIds.length})`}
         </button>
         <button onClick={() => handleSendMerged()}
           disabled={mergeSending || mergePreviewing || mergeApproving || mergeSelectedIds.length < 2}
