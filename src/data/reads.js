@@ -92,3 +92,66 @@ export const fetchPendingPaymentSuggestions = (supabase) =>
 export const fetchTechAvailability = (supabase, fromDate) =>
   supabase.from("technician_availability").select("*")
     .gte("date", fromDate).order("date").limit(200);
+
+// ───── PAYROLL ─────
+export const fetchWeeklyPayroll = (supabase, periodStart) =>
+  supabase.from("weekly_payroll")
+    .select("*")
+    .eq("period_start", periodStart)
+    .order("user_name");
+
+export const fetchWeeklyPayrollByUser = (supabase, userId, limit = 12) =>
+  supabase.from("weekly_payroll")
+    .select("*")
+    .eq("user_id", userId)
+    .order("period_start", { ascending: false })
+    .limit(limit);
+
+// Auto-hitung hari masuk dari orders untuk satu periode (Senin–Sabtu)
+export const fetchDaysWorkedFromOrders = (supabase, userName, periodStart, periodEnd) =>
+  supabase.from("orders")
+    .select("date,teknisi,teknisi2,teknisi3,helper,helper2,helper3")
+    .gte("date", periodStart)
+    .lte("date", periodEnd)
+    .or(`teknisi.eq.${userName},teknisi2.eq.${userName},teknisi3.eq.${userName},helper.eq.${userName},helper2.eq.${userName},helper3.eq.${userName}`);
+
+// Kasbon periode — sum dari expenses kasbon per orang
+export const fetchKasbonByPeriod = (supabase, userName, periodStart, periodEnd) =>
+  supabase.from("expenses")
+    .select("amount,date,description")
+    .eq("subcategory", "Kasbon Karyawan")
+    .eq("teknisi_name", userName)
+    .gte("date", periodStart)
+    .lte("date", periodEnd);
+
+// ───── ORDER BONUSES ─────
+export const fetchOrderBonuses = (supabase, { status, orderDate, limit = 100 } = {}) => {
+  let q = supabase.from("order_bonuses").select("*").order("order_date", { ascending: false }).limit(limit);
+  if (status) q = q.eq("status", status);
+  if (orderDate) q = q.eq("order_date", orderDate);
+  return q;
+};
+
+export const fetchOrderBonusesByPeriod = (supabase, from, to) =>
+  supabase.from("order_bonuses")
+    .select("*")
+    .gte("order_date", from)
+    .lte("order_date", to)
+    .order("order_date", { ascending: false });
+
+// Bonus milik satu user (by name dalam team_members array)
+export const fetchMyBonuses = (supabase, userName, limit = 50) =>
+  supabase.from("order_bonuses")
+    .select("*")
+    .contains("team_members", [userName])
+    .order("order_date", { ascending: false })
+    .limit(limit);
+
+// Orders minggu ini yang belum punya bonus entry (untuk admin review)
+export const fetchOrdersWithoutBonus = (supabase, periodStart, periodEnd) =>
+  supabase.from("orders")
+    .select("id,date,customer,service,units,teknisi,teknisi2,teknisi3,helper,helper2,helper3,invoice_id,status")
+    .gte("date", periodStart)
+    .lte("date", periodEnd)
+    .in("status", ["COMPLETED","PAID"])
+    .order("date");

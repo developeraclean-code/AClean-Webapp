@@ -109,3 +109,62 @@ export const resolvePaymentSuggestion = (supabase, id, status, resolvedBy) =>
     resolved_at: new Date(Date.now() + 7*3600000).toISOString(),
     resolved_by: resolvedBy
   }).eq("id", id);
+
+// ───── PAYROLL ─────
+export const updateUserDailyRate = (supabase, userId, dailyRate) =>
+  supabase.from("user_profiles").update({ daily_rate: dailyRate }).eq("id", userId);
+
+export const upsertWeeklyPayroll = (supabase, payload) =>
+  supabase.from("weekly_payroll")
+    .upsert(payload, { onConflict: "user_id,period_start" })
+    .select().single();
+
+export const updateWeeklyPayroll = (supabase, id, fields) =>
+  supabase.from("weekly_payroll")
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+export const markPayrollPaid = (supabase, id, paidBy) =>
+  supabase.from("weekly_payroll").update({
+    is_paid: true,
+    paid_at: new Date().toISOString(),
+    paid_by: paidBy,
+    updated_at: new Date().toISOString()
+  }).eq("id", id);
+
+export const markPayrollWaSent = (supabase, id) =>
+  supabase.from("weekly_payroll").update({
+    wa_sent_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }).eq("id", id);
+
+// ───── ORDER BONUSES ─────
+export const insertOrderBonus = (supabase, payload, createdBy) =>
+  supabase.from("order_bonuses")
+    .insert({ ...payload, created_by: createdBy })
+    .select().single();
+
+export const updateOrderBonus = (supabase, id, fields) =>
+  supabase.from("order_bonuses")
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+export const markBonusPaid = (supabase, id, paidBy) =>
+  supabase.from("order_bonuses").update({
+    status: "PAID",
+    paid_at: new Date().toISOString(),
+    paid_by: paidBy,
+    updated_at: new Date().toISOString()
+  }).eq("id", id);
+
+export const voidBonus = (supabase, id, reason, voidedBy) =>
+  supabase.from("order_bonuses").update({
+    status: "VOID",
+    void_reason: reason,
+    voided_at: new Date().toISOString(),
+    voided_by: voidedBy,
+    updated_at: new Date().toISOString()
+  }).eq("id", id);
+
+export const deleteOrderBonus = (supabase, id) =>
+  supabase.from("order_bonuses").delete().eq("id", id);

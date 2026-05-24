@@ -58,6 +58,7 @@ const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
 const OrderInboxView = lazy(() => import("./views/OrderInboxView.jsx"));
 const FinanceView = lazy(() => import("./views/FinanceView.jsx"));
 const TechMobileView = lazy(() => import("./views/TechMobileView.jsx"));
+const KomisiView = lazy(() => import("./views/KomisiView.jsx"));
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -2429,9 +2430,9 @@ ${photoPageHTML}
       const adminBlocked = ["settings", "myreport", "monitoring", "finance", "pricelist"];
       return !adminBlocked.includes(menu);
     }
-    // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri
+    // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri, komisi
     if (role === "Teknisi" || role === "Helper")
-      return menu === "dashboard" || menu === "schedule" || menu === "myreport";
+      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "komisi";
     // Finance: akses finance hub, invoice, biaya, statistik
     if (role === "Finance")
       return ["finance", "invoice", "biaya", "reports"].includes(menu);
@@ -5422,6 +5423,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id: "biaya", icon: "💸", label: "Biaya" },
     // Teknisi-only menu (not shown to Owner/Admin)
     { id: "myreport", icon: "📋", label: "Laporan Saya" },
+    { id: "komisi", icon: "💰", label: "Komisi Saya" },
   ];
   const menuItems = currentUser ? ALL_MENU.filter(m => canAccess(m.id)) : ALL_MENU;
 
@@ -5964,6 +5966,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       case "teknisi": return renderTeknisiAdmin();
       case "laporantim": return renderLaporanTim();
       case "myreport": return renderMyReport();
+      case "komisi": return (
+        <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
+          <KomisiView currentUser={currentUser} supabase={supabase} />
+        </Suspense>
+      );
       case "ara": return renderAra();
       case "reports": return renderReports();
       case "agentlog": return renderAgentLog();

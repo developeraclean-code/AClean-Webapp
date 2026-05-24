@@ -982,6 +982,78 @@ async function taskWeeklyReport() {
 }
 
 // ══════════════════════════════════════════════════
+// PAYROLL WA — Sabtu 18:00 WIB (11:00 UTC)
+// Kirim slip gaji ke semua aktif Teknisi & Helper
+// ══════════════════════════════════════════════════
+async function taskPayrollWA() {
+  const { data: togRows } = await sb.from("app_settings").select("key,value")
+    .in("key", ["payroll_wa_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togRows || []).map(r => [r.key, r.value]));
+  if (!isCronJobEnabled(togMap, "payroll_wa_enabled") || togMap["payroll_wa_enabled"] !== "true") {
+    return { skipped: true, reason: "payroll_wa_enabled=false" };
+  }
+
+  // Hitung periode minggu ini (Senin–Sabtu)
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0=Sun
+  const diffToMon = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday = new Date(now); monday.setDate(now.getDate() + diffToMon);
+  const saturday = new Date(monday); saturday.setDate(monday.getDate() + 5);
+  const periodStart = monday.toISOString().slice(0, 10);
+  const periodEnd   = saturday.toISOString().slice(0, 10);
+
+  // Ambil semua payroll minggu ini yang belum dikirim WA
+  const { data: rows } = await sb.from("weekly_payroll")
+    .select("*, user_profiles!weekly_payroll_user_id_fkey(phone)")
+    .eq("period_start", periodStart)
+    .is("wa_sent_at", null);
+
+  if (!rows || rows.length === 0) return { skipped: true, reason: "no_payroll_rows" };
+
+  const fmt = n => Number(n || 0).toLocaleString("id-ID");
+  const fmtD = d => d ? new Date(d + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short" }) : "-";
+
+  let sent = 0, failed = 0;
+  for (const row of rows) {
+    const phone = row.user_profiles?.phone;
+    if (!phone) { failed++; continue; }
+
+    const fullBonus = row.role === "Helper" ? 75000 : 100000;
+    const lateStr   = row.late_days > 0 ? `\nTelat Masuk : ${row.late_days} hr × -Rp 10.000 = -Rp ${fmt(row.late_days * 10000)}` : "";
+    const kasbonStr = row.kasbon_total > 0 ? `\nKasbon : -Rp ${fmt(row.kasbon_total)}` : "";
+    const fullStr   = row.full_week_bonus ? `\nBonus Full Week : +Rp ${fmt(fullBonus)}` : "";
+    const manStr    = row.manual_bonus > 0 ? `\nBonus Manual : +Rp ${fmt(row.manual_bonus)}${row.manual_bonus_note ? " (" + row.manual_bonus_note + ")" : ""}` : "";
+
+    // Ambil bonus PAID periode ini untuk orang ini
+    const { data: bonuses } = await sb.from("order_bonuses")
+      .select("bonus_type,total_amount,amount_per_person,order_id")
+      .eq("status", "PAID")
+      .gte("order_date", periodStart)
+      .lte("order_date", periodEnd)
+      .contains("team_members", [row.user_name]);
+
+    const totalKomisi = (bonuses || []).reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
+    const bonusLines  = (bonuses || []).length > 0
+      ? (bonuses || []).map(b => `[${b.order_id || "-"}] : +Rp ${fmt(b.amount_per_person)}`).join("\n")
+      : "Belum ada komisi dibayar minggu ini";
+
+    const msg = `📋 *SLIP GAJI MINGGUAN*\n━━━━━━━━━━━━━━━━━━━━━\n👷 *${row.user_name}* | ${row.role}\nPeriode: ${fmtD(row.period_start)} – ${fmtD(row.period_end)}\n━━━━━━━━━━━━━━━━━━━━━\n*GAJI POKOK*\nHari Masuk : ${row.days_worked} hari × Rp ${fmt(row.daily_rate)}\n             = Rp ${fmt(row.days_worked * row.daily_rate)}${fullStr}${lateStr}${kasbonStr}${manStr}\n━━━━━━━━━━━━━━━━━━━━━\n*KOMISI (Dibayar Minggu Ini)*\n${bonusLines}\nTotal Komisi: Rp ${fmt(totalKomisi)}\n━━━━━━━━━━━━━━━━━━━━━\n*TOTAL GAJI : Rp ${fmt(row.gross_salary)}*\nStatus : ${row.is_paid ? "✅ SUDAH DIBAYAR" : "⏳ BELUM DIBAYAR"}\n━━━━━━━━━━━━━━━━━━━━━`;
+
+    const ok = await sendWA(phone, msg);
+    if (ok) {
+      await sb.from("weekly_payroll").update({ wa_sent_at: new Date().toISOString() }).eq("id", row.id);
+      sent++;
+    } else { failed++; }
+  }
+
+  // Auto-update PENDING → ELIGIBLE bonuses yang sudah >30 hari
+  await sb.rpc("fn_auto_eligible_bonuses").catch(() => {});
+
+  await log("PAYROLL_WA", `Sent=${sent} Failed=${failed} period=${periodStart}`, sent > 0 ? "SUCCESS" : "WARN");
+  return { sent, failed, period: periodStart };
+}
+
+// ══════════════════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════════════════
 export default async function handler(req, res) {
@@ -1040,6 +1112,7 @@ export default async function handler(req, res) {
     else if (task === "servis-reminder")  result = await taskServisReminder();
     else if (task === "voucher-expiry")   result = await taskVoucherExpiryReminder();
     else if (task === "laporan-stale")    result = await taskLaporanStaleAlert();
+    else if (task === "payroll-wa")       result = await taskPayrollWA();
     else                                  result = await taskReminder();
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });
