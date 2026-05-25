@@ -1380,32 +1380,26 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
 }
 
 // ── Helpers: deteksi dari invoice + install kumulatif ──
-// Detect bonus material (freon, kapasitor) dan jasa (kuras vacum, tambah freon, pasang kapasitor)
+// Detect bonus material spesifik: freon (kuras vacum freon / tambah freon) dan kapasitor AC + pasang
 function detectBonusFromInvoice(materialsDetail, orderService = "") {
   const result = { freon: false, kapasitor: false, freonNames: [], kapasitorNames: [] };
   try {
     const items = JSON.parse(materialsDetail || "[]");
     for (const item of items) {
       const nama = (item.nama || "").toLowerCase();
-      // Freon material atau jasa freon (kuras vacum, tambah freon, repair freon)
-      if (nama.includes("freon") || nama.includes("r-32") || nama.includes("r-22") || nama.includes("r32") || nama.includes("r410") || nama.includes("vacum") || nama.includes("kuras")) {
+      // Freon: hanya "Kuras Vacum Freon R22/R32/R410" atau "Tambah Freon R-xx"
+      // Vacum AC / Kuras AC tanpa freon TIDAK termasuk
+      if (nama.includes("kuras vacum freon") || nama.includes("tambah freon")) {
         result.freon = true;
         result.freonNames.push(item.nama);
       }
-      // Kapasitor material atau jasa kapasitor
-      if (nama.includes("kapasitor") || nama.includes("pasang kapasitor")) {
+      // Kapasitor: hanya "Kapasitor AC x.xPK + Pasang" — bukan kapasitor umum
+      if (nama.includes("kapasitor ac") && nama.includes("pasang")) {
         result.kapasitor = true;
         result.kapasitorNames.push(item.nama);
       }
     }
   } catch {}
-
-  // Juga cek dari service type kalau ada repair/cleaning dengan konteks freon
-  const svc = (orderService || "").toLowerCase();
-  if ((svc.includes("repair") || svc.includes("cleaning")) && !result.freon) {
-    // Bisa extend di sini kalau ada additional service logic
-  }
-
   return result;
 }
 
