@@ -873,16 +873,27 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                   {ordersNoBonus.map(o => {
                     const team = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean);
                     const inv = invoicesData?.find(i => i.id === o.invoice_id);
+                    const isComplain = o.service === "Complain";
+                    const detected = detectBonusFromInvoice(inv?.materials_detail);
                     return (
-                      <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, background: cs.card, borderRadius: 8, padding: "8px 12px", flexWrap: "wrap" }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>[{o.id}] {o.customer}</div>
-                          <div style={{ fontSize: 11, color: cs.muted }}>{fmtDate(o.date)} · {o.service} · {o.units} unit · {team.join(", ")}</div>
-                          {inv && <div style={{ fontSize: 11, color: cs.accent }}>Invoice: {fmtRp(inv.total)}</div>}
+                      <div key={o.id} style={{ background: cs.card, borderRadius: 8, padding: "10px 12px", border: "1px solid " + (isComplain ? cs.red + "66" : cs.border) }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                              {isComplain && <span style={{ fontSize: 10, fontWeight: 700, background: cs.red, color: "#fff", borderRadius: 4, padding: "1px 6px" }}>🔴 COMPLAIN</span>}
+                              <span style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>[{o.id}] {o.customer}</span>
+                            </div>
+                            <div style={{ fontSize: 11, color: cs.muted }}>{fmtDate(o.date)} · {o.service} · {o.units} unit · {team.join(", ")}</div>
+                            <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                              {inv?.total > 0 && <span style={{ fontSize: 11, color: cs.accent }}>Invoice: {fmtRp(inv.total)}</span>}
+                              {detected.freon && <span style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>🧊 Freon</span>}
+                              {detected.kapasitor && <span style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>⚡ Kapasitor</span>}
+                            </div>
+                          </div>
+                          <button onClick={() => setBonusForm({ order: o, inv, team })} style={{ padding: "6px 14px", borderRadius: 7, background: isComplain ? "#6b7280" : cs.accent, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+                            + Input Bonus
+                          </button>
                         </div>
-                        <button onClick={() => setBonusForm({ order: o, inv, team })} style={{ padding: "6px 14px", borderRadius: 7, background: cs.accent, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-                          + Input Bonus
-                        </button>
                       </div>
                     );
                   })}
@@ -910,6 +921,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
               orderRow={bonusForm.order}
               inv={bonusForm.inv}
               team={bonusForm.team}
+              ordersData={ordersData}
               onSave={handleSaveBonus}
               onCancel={() => setBonusForm(null)}
             />}
@@ -971,82 +983,170 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   );
 }
 
-// Form input bonus per order
-function BonusInputForm({ orderRow, inv, team, onSave, onCancel }) {
-  const [bonusType, setBonusType]     = useState("margin_1jt");
-  const [grossRevenue, setGrossRevenue] = useState(inv?.total || "");
+// ── Helpers: deteksi dari invoice + install kumulatif ──
+function detectBonusFromInvoice(materialsDetail) {
+  const result = { freon: false, kapasitor: false, freonNames: [], kapasitorNames: [] };
+  try {
+    const items = JSON.parse(materialsDetail || "[]");
+    for (const item of items) {
+      const nama = (item.nama || "").toLowerCase();
+      if (nama.includes("freon") || nama.includes("r-32") || nama.includes("r-22") || nama.includes("r32") || nama.includes("r410") || nama.includes("vacum")) {
+        result.freon = true;
+        result.freonNames.push(item.nama);
+      }
+      if (nama.includes("kapasitor")) {
+        result.kapasitor = true;
+        result.kapasitorNames.push(item.nama);
+      }
+    }
+  } catch {}
+  return result;
+}
+
+function getInstallCumulative(ordersData, date, teamMembers) {
+  const sameDay = (ordersData || []).filter(o =>
+    o.date === date && o.service === "Install" && ["COMPLETED","PAID"].includes(o.status)
+  );
+  const relevant = sameDay.filter(o => {
+    const ot = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean);
+    return teamMembers.some(m => ot.includes(m));
+  });
+  const totalUnits = relevant.reduce((s, o) => s + (Number(o.units) || 0), 0);
+  const tier = totalUnits >= 4 ? "install_4" : totalUnits >= 3 ? "install_3" : totalUnits >= 2 ? "install_2" : null;
+  return { totalUnits, tier, orderIds: relevant.map(o => o.id) };
+}
+
+// Form input bonus per order — smart version
+function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel }) {
+  const isComplain = orderRow.service === "Complain";
+  const detected   = detectBonusFromInvoice(inv?.materials_detail);
+  const installInfo = orderRow.service === "Install"
+    ? getInstallCumulative(ordersData, orderRow.date, team) : null;
+
+  // Default bonus type: freon jika terdeteksi, kapasitor, install, lalu margin, lalu manual untuk complain
+  const defaultType = (() => {
+    if (isComplain) return "manual";
+    if (detected.freon) return "freon";
+    if (detected.kapasitor) return "kapasitor";
+    if (installInfo?.tier) return installInfo.tier;
+    return "margin_1jt";
+  })();
+
+  const [bonusType, setBonusType]       = useState(defaultType);
+  const [grossRevenue, setGrossRevenue] = useState(inv?.total ? String(inv.total) : "");
   const [materialCost, setMaterialCost] = useState("");
   const [customAmount, setCustomAmount] = useState("");
-  const [note, setNote]               = useState("");
+  const [note, setNote]                 = useState(isComplain ? "Order Complain — cek ada pekerjaan berbayar" : "");
   const [selectedTeam, setSelectedTeam] = useState(team);
 
   const profit = grossRevenue && materialCost ? Number(grossRevenue) - Number(materialCost) : null;
+
+  // Auto-suggest margin tier dari profit
+  useEffect(() => {
+    if (!bonusType.startsWith("margin") || profit === null) return;
+    const suggested = profit >= 3000000 ? "margin_3jt" : profit >= 2000000 ? "margin_2jt" : profit >= 1000000 ? "margin_1jt" : "margin_1jt";
+    if (suggested !== bonusType) setBonusType(suggested);
+  }, [profit]);
 
   const getAutoAmount = () => {
     if (bonusType === "manual") return Number(customAmount) || 0;
     return BONUS_DEFAULTS[bonusType] || 0;
   };
   const totalAmount = getAutoAmount();
-  const perPerson   = selectedTeam.length > 0 ? totalAmount / selectedTeam.length : 0;
-
-  const fmt = n => n ? Number(n).toLocaleString("id-ID") : "0";
+  const perPerson   = selectedTeam.length > 0 ? Math.round(totalAmount / selectedTeam.length) : 0;
+  const fmt = n => Number(n || 0).toLocaleString("id-ID");
 
   return (
-    <div style={{ background: "#0f2d4a", border: "1px solid #3b82f6", borderRadius: 12, padding: 16 }}>
-      <div style={{ fontWeight: 800, fontSize: 14, color: "#93c5fd", marginBottom: 12 }}>
+    <div style={{ background: "#0f2d4a", border: "1px solid " + (isComplain ? "#ef4444" : "#3b82f6"), borderRadius: 12, padding: 16 }}>
+      {/* Header */}
+      <div style={{ fontWeight: 800, fontSize: 14, color: isComplain ? "#fca5a5" : "#93c5fd", marginBottom: 4 }}>
         ➕ Input Bonus — [{orderRow.id}] {orderRow.customer}
       </div>
-      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
-        {orderRow.date} · {orderRow.service} · {orderRow.units} unit
+      <div style={{ fontSize: 12, color: "#64748b", marginBottom: isComplain ? 8 : 12 }}>
+        {fmtDate(orderRow.date)} · {orderRow.service} · {orderRow.units} unit
       </div>
 
-      {/* Tipe bonus */}
+      {/* Peringatan Complain */}
+      {isComplain && (
+        <div style={{ background: "#3f1515", border: "1px solid #ef4444", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#fca5a5", marginBottom: 12 }}>
+          🔴 <strong>Order Complain</strong> — defaultnya tidak ada bonus. Input hanya jika ada pekerjaan/part berbayar di dalamnya.
+        </div>
+      )}
+
+      {/* Deteksi dari invoice */}
+      {(detected.freon || detected.kapasitor || installInfo?.tier) && (
+        <div style={{ background: "#0c2d4a", border: "1px solid #1d4ed8", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: "#60a5fa", marginBottom: 6, fontWeight: 700 }}>✨ Terdeteksi dari Invoice</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {detected.freon && (
+              <button onClick={() => setBonusType("freon")} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid #3b82f6", background: bonusType === "freon" ? "#3b82f6" : "transparent", color: bonusType === "freon" ? "#fff" : "#93c5fd" }}>
+                🧊 Isi Freon · Rp {fmt(BONUS_DEFAULTS.freon)}/tim
+              </button>
+            )}
+            {detected.kapasitor && (
+              <button onClick={() => setBonusType("kapasitor")} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid #3b82f6", background: bonusType === "kapasitor" ? "#3b82f6" : "transparent", color: bonusType === "kapasitor" ? "#fff" : "#93c5fd" }}>
+                ⚡ Kapasitor · Rp {fmt(BONUS_DEFAULTS.kapasitor)}/tim
+              </button>
+            )}
+            {installInfo?.tier && (
+              <button onClick={() => setBonusType(installInfo.tier)} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid #3b82f6", background: bonusType === installInfo.tier ? "#3b82f6" : "transparent", color: bonusType === installInfo.tier ? "#fff" : "#93c5fd" }}>
+                🔩 Install {installInfo.totalUnits} unit/hari · Rp {fmt(BONUS_DEFAULTS[installInfo.tier])}/tim
+              </button>
+            )}
+          </div>
+          {detected.freonNames.length > 0 && <div style={{ fontSize: 10, color: "#475569", marginTop: 4 }}>Invoice: {detected.freonNames.join(", ")}</div>}
+          {installInfo?.tier && <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>Kumulatif tim hari ini: {installInfo.orderIds.join(", ")}</div>}
+        </div>
+      )}
+
+      {/* Tipe bonus — dropdown lengkap */}
       <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Tipe Bonus</div>
         <select value={bonusType} onChange={e => setBonusType(e.target.value)}
           style={{ width: "100%", padding: "7px 10px", borderRadius: 7, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13 }}>
           {Object.entries(BONUS_LABELS).map(([k, v]) => (
-            <option key={k} value={k}>{v} {BONUS_DEFAULTS[k] ? `— Rp ${BONUS_DEFAULTS[k].toLocaleString("id-ID")}/tim` : ""}</option>
+            <option key={k} value={k}>{v}{BONUS_DEFAULTS[k] ? ` — Rp ${BONUS_DEFAULTS[k].toLocaleString("id-ID")}/tim` : ""}</option>
           ))}
         </select>
       </div>
 
-      {/* Revenue & material (hanya untuk margin) */}
+      {/* Input margin */}
       {bonusType.startsWith("margin") && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
           <div>
-            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Omset (Rp)</div>
+            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Omset / Invoice (Rp) <span style={{ color: "#3b82f6" }}>auto</span></div>
             <input type="number" value={grossRevenue} onChange={e => setGrossRevenue(e.target.value)}
-              placeholder="dari invoice" style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
+              style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid " + (inv?.total ? "#3b82f6" : "#334155"), background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
           </div>
           <div>
-            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Biaya Material (Rp)</div>
+            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Biaya Material Aktual (Rp)</div>
             <input type="number" value={materialCost} onChange={e => setMaterialCost(e.target.value)}
-              placeholder="input manual" style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
+              placeholder="yg AClean bayar ke supplier" style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
           </div>
-          {profit != null && (
-            <div style={{ gridColumn: "1/-1", fontSize: 13, fontWeight: 700, color: profit > 0 ? "#22c55e" : "#ef4444" }}>
-              Profit: Rp {fmt(profit)} {profit >= 3000000 ? "→ Tier 3 (200rb)" : profit >= 2000000 ? "→ Tier 2 (100rb)" : profit >= 1000000 ? "→ Tier 1 (50rb)" : "→ Belum mencapai threshold"}
+          {profit !== null && (
+            <div style={{ gridColumn: "1/-1", padding: "6px 10px", borderRadius: 6, background: profit >= 1000000 ? "#052e16" : "#3f1515", fontSize: 13, fontWeight: 700, color: profit >= 1000000 ? "#22c55e" : "#fca5a5" }}>
+              Profit: Rp {fmt(profit)}
+              {profit >= 3000000 ? " → Tier 3 ✅ Rp 200rb/tim" : profit >= 2000000 ? " → Tier 2 ✅ Rp 100rb/tim" : profit >= 1000000 ? " → Tier 1 ✅ Rp 50rb/tim" : " → Belum mencapai Rp 1jt"}
             </div>
           )}
         </div>
       )}
 
-      {/* Custom amount untuk manual */}
+      {/* Input manual amount */}
       {bonusType === "manual" && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Nominal Bonus (Rp)</div>
           <input type="number" value={customAmount} onChange={e => setCustomAmount(e.target.value)}
-            style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
+            placeholder="Masukkan nominal" style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
         </div>
       )}
 
-      {/* Tim */}
+      {/* Tim checklist */}
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Tim (checklist siapa yang dapat)</div>
+        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Tim yang Dapat Bonus</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {team.map(name => (
-            <label key={name} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", background: "#1e293b", borderRadius: 6, padding: "4px 10px", border: "1px solid " + (selectedTeam.includes(name) ? "#3b82f6" : "#334155") }}>
+            <label key={name} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", background: "#1e293b", borderRadius: 6, padding: "5px 10px", border: "1px solid " + (selectedTeam.includes(name) ? "#3b82f6" : "#334155") }}>
               <input type="checkbox" checked={selectedTeam.includes(name)}
                 onChange={e => setSelectedTeam(prev => e.target.checked ? [...prev, name] : prev.filter(n => n !== name))}
               />
@@ -1056,25 +1156,35 @@ function BonusInputForm({ orderRow, inv, team, onSave, onCancel }) {
         </div>
       </div>
 
-      {/* Note */}
-      <div style={{ marginBottom: 14 }}>
+      {/* Catatan */}
+      <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Catatan (opsional)</div>
         <input value={note} onChange={e => setNote(e.target.value)}
           style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
       </div>
 
       {/* Preview */}
-      <div style={{ background: "#1e293b", borderRadius: 8, padding: 10, marginBottom: 14, fontSize: 13 }}>
-        <div style={{ color: "#64748b", marginBottom: 4 }}>Preview Bonus</div>
-        <div style={{ color: "#e2e8f0" }}>Total Tim: <strong style={{ color: "#22c55e" }}>Rp {fmt(totalAmount)}</strong></div>
-        <div style={{ color: "#e2e8f0" }}>Per Orang ({selectedTeam.length} org): <strong style={{ color: "#93c5fd" }}>Rp {fmt(perPerson)}</strong></div>
-        <div style={{ color: "#64748b", fontSize: 11, marginTop: 4 }}>Status: PENDING (warranty 30 hari)</div>
+      <div style={{ background: "#1e293b", borderRadius: 8, padding: 10, marginBottom: 14 }}>
+        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Preview</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>{BONUS_LABELS[bonusType]}</div>
+            <div style={{ fontSize: 11, color: "#64748b" }}>Dibagi {selectedTeam.length} orang: <strong style={{ color: "#93c5fd" }}>Rp {fmt(perPerson)}/orang</strong></div>
+            <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>Status: PENDING — cair setelah 30 hari</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 10, color: "#64748b" }}>Total Tim</div>
+            <div style={{ fontWeight: 800, fontSize: 18, color: "#22c55e" }}>Rp {fmt(totalAmount)}</div>
+          </div>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={() => onSave(orderRow, bonusType, grossRevenue, materialCost, selectedTeam, totalAmount, note)}
-          style={{ padding: "8px 18px", borderRadius: 7, background: "#3b82f6", border: "none", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-          Simpan Bonus
+        <button
+          onClick={() => totalAmount > 0 && selectedTeam.length > 0 && onSave(orderRow, bonusType, grossRevenue, materialCost, selectedTeam, totalAmount, note)}
+          disabled={totalAmount === 0 || selectedTeam.length === 0}
+          style={{ padding: "8px 18px", borderRadius: 7, background: (totalAmount === 0 || selectedTeam.length === 0) ? "#334155" : "#3b82f6", border: "none", color: "#fff", cursor: totalAmount > 0 ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 13 }}>
+          💾 Simpan Bonus
         </button>
         <button onClick={onCancel} style={{ padding: "8px 16px", borderRadius: 7, background: "transparent", border: "1px solid #334155", color: "#64748b", cursor: "pointer", fontSize: 13 }}>
           Batal
