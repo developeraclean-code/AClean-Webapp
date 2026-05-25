@@ -546,15 +546,20 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     ]);
     setBonuses(bonRes.data || []);
     // Filter orders: belum ada bonus entry + memenuhi kriteria bonus
+    // 3 kategori: 1) Omset > 1jt (bukan pemasangan), 2) Pemasangan >= 2 unit, 3) Freon/Kapasitor
     const existingOrderIds = new Set((bonRes.data || []).map(b => b.order_id));
     const eligible = (ordRes.data || []).filter(o => {
       if (existingOrderIds.has(o.id)) return false;
       const inv = invoicesData?.find(i => i.id === o.invoice_id);
       const invTotal = Number(inv?.total || 0);
       const det = detectBonusFromInvoice(inv?.materials_detail);
-      const isInstallMulti = o.service === "Install" && Number(o.units) > 1;
-      // Tampil jika: invoice >= 1jt, ATAU freon, ATAU kapasitor, ATAU install >1 unit
-      return invTotal >= 1000000 || det.freon || det.kapasitor || isInstallMulti;
+      // Kategori 1: Omset >= 1jt (EXCLUDING Pemasangan/Install)
+      const isOmsetBesar = o.service !== "Install" && invTotal >= 1000000;
+      // Kategori 2: Pemasangan >= 2 unit
+      const isInstallMulti = o.service === "Install" && Number(o.units) >= 2;
+      // Kategori 3: Ada freon atau kapasitor
+      const hasFreonKapasitor = det.freon || det.kapasitor;
+      return isOmsetBesar || isInstallMulti || hasFreonKapasitor;
     });
     setOrdersNoBonus(eligible);
     setLoadingBonus(false);
