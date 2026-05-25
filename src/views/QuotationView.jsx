@@ -221,7 +221,6 @@ export default function QuotationView({
       const msg =
         `Halo ${quo.customer},\n\nBerikut penawaran dari AClean:\n\n` +
         `📋 *${quo.id}*\nTotal: *${fmt(quo.total)}*` +
-        (quo.notes ? `\n\n${quo.notes}` : "") +
         `\n\nPenawaran berlaku hingga ${quo.valid_until || "-"}.\nHubungi kami untuk konfirmasi.\n\n— AClean Service`;
 
       // Upload PDF quotation ke R2 terlebih dahulu jika tersedia

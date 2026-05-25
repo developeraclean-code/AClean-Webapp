@@ -5955,7 +5955,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const renderContent = () => {
     switch (activeMenu) {
       case "dashboard": return renderDashboard();
-      case "finance": return <FinanceView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} expensesData={expensesData} supabase={supabase} />;
+      case "finance": return <FinanceView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} expensesData={expensesData} supabase={supabase} teknisiData={teknisiData} showNotif={showNotif} showConfirm={showConfirm} openWA={openWA} TODAY={TODAY} />;
       case "wa-inbox": return renderOrderInbox();
       case "orders": return renderOrders();
       case "schedule": return renderSchedule();

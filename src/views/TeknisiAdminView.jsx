@@ -26,22 +26,29 @@ const STATUS_COLORS = { PENDING: "#f59e0b", ELIGIBLE: "#3b82f6", PAID: "#22c55e"
 const STATUS_LABELS = { PENDING: "Dalam Warranty", ELIGIBLE: "Siap Cair", PAID: "Sudah Dibayar", VOID: "Void" };
 
 // Hitung Senin terdekat sebelum/sama dengan today
+// Selalu pakai local date — toISOString() return UTC dan geser hari di WIB (UTC+7)
+function localDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
 function getMondayOf(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
   const day = d.getDay(); // 0=Sun
   const diff = day === 0 ? -6 : 1 - day;
   d.setDate(d.getDate() + diff);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 function getSaturdayOf(mondayStr) {
   const d = new Date(mondayStr + "T00:00:00");
   d.setDate(d.getDate() + 5);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 function addWeeks(mondayStr, n) {
   const d = new Date(mondayStr + "T00:00:00");
   d.setDate(d.getDate() + n * 7);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 function fmtRp(n) {
   if (!n && n !== 0) return "-";
@@ -52,6 +59,27 @@ function fmtRp(n) {
 function fmtDate(d) {
   if (!d) return "-";
   return new Date(d + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+}
+function fullWeekBonusAmt(role) { return role === "Helper" ? 75000 : 100000; }
+// Hitung gross client-side (mirror formula GENERATED di DB) → total live tanpa nunggu reload
+function computeGross(row) {
+  return Number(row.days_worked || 0) * Number(row.daily_rate || 0)
+    + (row.full_week_bonus ? fullWeekBonusAmt(row.role) : 0)
+    - Number(row.late_days || 0) * 10000
+    - Number(row.kasbon_deduct || 0)
+    + Number(row.manual_bonus || 0);
+}
+// Total kasbon terutang minggu ini = kasbon baru + sisa minggu lalu
+function kasbonOwed(row) { return Number(row.kasbon_total || 0) + Number(row.kasbon_carryover || 0); }
+function kasbonSisa(row) { return Math.max(0, kasbonOwed(row) - Number(row.kasbon_deduct || 0)); }
+// Komisi PENDING → ELIGIBLE otomatis setelah 30 hari (derive, tanpa cron)
+function daysSinceDate(dateStr) {
+  if (!dateStr) return 0;
+  return Math.floor((Date.now() - new Date(dateStr + "T00:00:00").getTime()) / 86400000);
+}
+function effBonusStatus(b) {
+  if (b.status === "PENDING" && daysSinceDate(b.order_date) >= 30) return "ELIGIBLE";
+  return b.status;
 }
 
 function TeknisiAdminView({ teknisiData, setTeknisiData, ordersData, laporanReports, currentUser, supabase, setEditTeknisi, setNewTeknisiForm, setModalTeknisi, showConfirm, showNotif, addAgentLog, openWA, TODAY, invoicesData }) {
@@ -485,7 +513,11 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   // ── Payroll state ──
   const [payrollRows, setPayrollRows] = useState([]);
   const [loadingPayroll, setLoadingPayroll] = useState(false);
-  const [editingRate, setEditingRate] = useState({}); // { userId: newRate }
+  const [editingRate, setEditingRate] = useState({}); // { userId: draftValue }
+  const [localRates, setLocalRates]   = useState({}); // { userId: savedRate }
+  const [slipPreview, setSlipPreview] = useState(null);
+  // localBonus: { rowId: [{label, amount}] } — local buffer, no DB call on each keystroke
+  const [localBonus, setLocalBonus]   = useState({});
 
   // ── Komisi state ──
   const [bonuses, setBonuses]           = useState([]);
@@ -513,33 +545,66 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
       fetchOrdersWithoutBonus(supabase, periodStart, periodEnd),
     ]);
     setBonuses(bonRes.data || []);
-    // Filter orders yang belum punya bonus entry
+    // Filter orders: belum ada bonus entry + memenuhi kriteria bonus
     const existingOrderIds = new Set((bonRes.data || []).map(b => b.order_id));
-    setOrdersNoBonus((ordRes.data || []).filter(o => !existingOrderIds.has(o.id)));
+    const eligible = (ordRes.data || []).filter(o => {
+      if (existingOrderIds.has(o.id)) return false;
+      const inv = invoicesData?.find(i => i.id === o.invoice_id);
+      const invTotal = Number(inv?.total || 0);
+      const det = detectBonusFromInvoice(inv?.materials_detail);
+      const isInstallMulti = o.service === "Install" && Number(o.units) > 1;
+      // Tampil jika: invoice >= 1jt, ATAU freon, ATAU kapasitor, ATAU install >1 unit
+      return invTotal >= 1000000 || det.freon || det.kapasitor || isInstallMulti;
+    });
+    setOrdersNoBonus(eligible);
     setLoadingBonus(false);
   }, [supabase, periodStart, periodEnd]);
 
   useEffect(() => { if (subTab === "payroll") loadPayroll(); }, [subTab, loadPayroll]);
   useEffect(() => { if (subTab === "komisi") loadBonuses(); }, [subTab, loadBonuses]);
 
+  // Sync localBonus dari payrollRows setiap kali rows berubah
+  useEffect(() => {
+    const parsed = {};
+    payrollRows.forEach(row => {
+      try {
+        const arr = JSON.parse(row.manual_bonus_note || "[]");
+        if (Array.isArray(arr) && arr.length > 0 && arr[0] && typeof arr[0] === "object") {
+          parsed[row.id] = arr;
+        } else throw new Error();
+      } catch {
+        parsed[row.id] = Number(row.manual_bonus) > 0
+          ? [{ label: (row.manual_bonus_note && !row.manual_bonus_note.startsWith("[")) ? row.manual_bonus_note : "Bonus Manual", amount: Number(row.manual_bonus) }]
+          : [];
+      }
+    });
+    setLocalBonus(prev => ({ ...prev, ...parsed }));
+  }, [payrollRows]);
+
   // ── Generate payroll untuk semua aktif teknisi/helper ──
   const handleGenerate = async () => {
     setLoadingPayroll(true);
     const aktif = teknisiData.filter(t => t.active && ["Teknisi","Helper"].includes(t.role));
-    for (const t of aktif) {
-      // Hitung hari masuk dari orders
-      const { data: oData } = await fetchDaysWorkedFromOrders(supabase, t.name, periodStart, periodEnd);
-      const uniqueDays = new Set((oData || []).map(o => o.date));
-      const daysWorked = uniqueDays.size;
 
-      // Kasbon periode ini
-      const { data: kData } = await fetchKasbonByPeriod(supabase, t.name, periodStart, periodEnd);
-      const kasbonTotal = (kData || []).reduce((s, e) => s + Number(e.amount), 0);
+    // Ambil payroll minggu lalu → hitung sisa kasbon yang di-carry ke minggu ini
+    const { data: prevRows } = await fetchWeeklyPayroll(supabase, addWeeks(periodStart, -1));
+    const prevMap = Object.fromEntries((prevRows || []).map(r => [r.user_id, r]));
 
-      // Existing row untuk preserve checklist manual
+    const results = await Promise.all(aktif.map(async (t) => {
+      // Hari masuk dari orders + kasbon periode ini (paralel)
+      const [oRes, kRes] = await Promise.all([
+        fetchDaysWorkedFromOrders(supabase, t.name, periodStart, periodEnd),
+        fetchKasbonByPeriod(supabase, t.name, periodStart, periodEnd),
+      ]);
+      const daysWorked = new Set((oRes.data || []).map(o => o.date)).size;
+      const kasbonTotal = (kRes.data || []).reduce((s, e) => s + Number(e.amount), 0);
+
       const existing = payrollRows.find(r => r.user_id === t.id);
+      const prev = prevMap[t.id];
+      const carryIn = prev ? kasbonSisa(prev) : 0;        // sisa kasbon minggu lalu
+      const owed = kasbonTotal + carryIn;
 
-      await upsertWeeklyPayroll(supabase, {
+      return upsertWeeklyPayroll(supabase, {
         user_id:        t.id,
         user_name:      t.name,
         role:           t.role,
@@ -547,16 +612,22 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
         period_end:     periodEnd,
         days_worked:    existing?.days_override ? existing.days_worked : daysWorked,
         days_override:  existing?.days_override || false,
-        daily_rate:     t.daily_rate || 0,
+        daily_rate:     localRates[t.id] ?? t.daily_rate ?? 0,
         late_days:      existing?.late_days || 0,
         full_week_bonus: existing?.full_week_bonus || false,
         kasbon_total:   kasbonTotal,
+        kasbon_carryover: carryIn,
+        // Pertahankan keputusan potong admin kalau row sudah ada; default potong penuh
+        kasbon_deduct:  existing ? Number(existing.kasbon_deduct || 0) : owed,
         manual_bonus:   existing?.manual_bonus || 0,
         manual_bonus_note: existing?.manual_bonus_note || null,
         is_paid:        existing?.is_paid || false,
         created_by:     currentUser?.name,
       });
-    }
+    }));
+
+    const failed = results.find(r => r.error);
+    if (failed) { showNotif?.("❌ Gagal generate: " + failed.error.message); setLoadingPayroll(false); return; }
     await loadPayroll();
     showNotif?.("✅ Slip gaji minggu ini berhasil di-generate");
   };
@@ -570,50 +641,94 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     setPayrollRows(prev => prev.map(r => r.id === row.id ? { ...r, ...update } : r));
   };
 
+  // ── Simpan bonus manual ke DB (dipanggil onBlur / on add / on delete) ──
+  const saveManualBonus = async (rowId, entries) => {
+    const total = entries.reduce((s, e) => s + Number(e.amount || 0), 0);
+    const note  = JSON.stringify(entries);
+    const { error } = await updateWeeklyPayroll(supabase, rowId, { manual_bonus: total, manual_bonus_note: note });
+    if (error) { showNotif?.("❌ Gagal simpan bonus manual: " + error.message); return; }
+    setPayrollRows(prev => prev.map(r => r.id === rowId ? { ...r, manual_bonus: total, manual_bonus_note: note } : r));
+  };
+
   // ── Tandai bayar ──
   const handlePaid = async (row) => {
     showConfirm?.({
       message: `Tandai payroll ${row.user_name} (${fmtDate(row.period_start)} – ${fmtDate(row.period_end)}) sebagai DIBAYAR?`,
       confirmText: "Ya, Tandai Dibayar",
       onConfirm: async () => {
-        await markPayrollPaid(supabase, row.id, currentUser?.name);
+        const { error } = await markPayrollPaid(supabase, row.id, currentUser?.name);
+        if (error) { showNotif?.("❌ Gagal tandai bayar: " + error.message); return; }
         setPayrollRows(prev => prev.map(r => r.id === row.id ? { ...r, is_paid: true, paid_at: new Date().toISOString(), paid_by: currentUser?.name } : r));
         showNotif?.("✅ Payroll " + row.user_name + " ditandai dibayar");
       }
     });
   };
 
+  // ── Buka kunci slip yang sudah dibayar (Owner only) ──
+  const handleUnlock = async (row) => {
+    const { error } = await updateWeeklyPayroll(supabase, row.id, { is_paid: false, paid_at: null, paid_by: null });
+    if (error) { showNotif?.("❌ Gagal buka kunci: " + error.message); return; }
+    setPayrollRows(prev => prev.map(r => r.id === row.id ? { ...r, is_paid: false, paid_at: null, paid_by: null } : r));
+    showNotif?.("🔓 Slip " + row.user_name + " dibuka — bisa diedit lagi");
+  };
+
+  // ── Simpan satu field ke DB (dipanggil onBlur input bebas, anti-lag) ──
+  const saveField = async (rowId, fields) => {
+    const { error } = await updateWeeklyPayroll(supabase, rowId, fields);
+    if (error) showNotif?.("❌ Gagal simpan: " + error.message);
+  };
+
+  // ── Build slip message ──
+  const buildSlipMsg = (row, bonusMinggu = []) => {
+    const totalBonus = bonusMinggu.reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
+    const late     = row.late_days > 0 ? `\nTelat Masuk : ${row.late_days} hari × -Rp 10.000 = -Rp ${(row.late_days * 10000).toLocaleString("id-ID")}` : "";
+    const deducted = Number(row.kasbon_deduct || 0);
+    const sisa     = kasbonSisa(row);
+    const kasbon   = deducted > 0 ? `\nKasbon Dipotong : -${fmtRp(deducted)}` : "";
+    const kasbonSisaLine = sisa > 0 ? `\n_Sisa kasbon dikreditkan minggu depan: ${fmtRp(sisa)}_` : "";
+    const fullWeek = row.full_week_bonus ? `\nBonus Full Week : +${fmtRp(fullWeekBonusAmt(row.role))}` : "";
+    // Parse multi-entry bonus manual
+    let manualEntries = localBonus[row.id] || [];
+    if (manualEntries.length === 0 && Number(row.manual_bonus) > 0) {
+      manualEntries = [{ label: row.manual_bonus_note || "Bonus Manual", amount: Number(row.manual_bonus) }];
+    }
+    const manLines = manualEntries.filter(e => Number(e.amount) > 0)
+      .map(e => `\nBonus Manual : +${fmtRp(e.amount)}${e.label ? " (" + e.label + ")" : ""}`)
+      .join("");
+    const bonusLines = bonusMinggu.map(b => `[${b.order_id || "-"}] ${BONUS_LABELS[b.bonus_type] || b.bonus_type} : +${fmtRp(b.amount_per_person)}`).join("\n");
+    const gross = computeGross(row);
+    return `📋 *SLIP GAJI MINGGUAN*\n━━━━━━━━━━━━━━━━━━━━━\n👷 *${row.user_name}* | ${row.role}\nPeriode: ${fmtDate(row.period_start)} – ${fmtDate(row.period_end)}\n━━━━━━━━━━━━━━━━━━━━━\n*GAJI POKOK*\nHari Masuk : ${row.days_worked} hari × ${fmtRp(row.daily_rate)}\n             = ${fmtRp(row.days_worked * row.daily_rate)}${fullWeek}${late}${kasbon}${manLines}${kasbonSisaLine}\n━━━━━━━━━━━━━━━━━━━━━\n*KOMISI ORDER*\n${bonusLines || "Belum ada komisi dibayar minggu ini"}\nTotal Komisi : ${fmtRp(totalBonus)}\n━━━━━━━━━━━━━━━━━━━━━\n*TOTAL GAJI : ${fmtRp(gross)}*\nStatus : ${row.is_paid ? "✅ SUDAH DIBAYAR" : "⏳ BELUM DIBAYAR"}\n━━━━━━━━━━━━━━━━━━━━━`;
+  };
+
   // ── Kirim WA slip ──
   const handleSendWA = async (row) => {
     const t = teknisiData.find(x => x.id === row.user_id);
     if (!t?.phone) { showNotif?.("❌ Nomor HP " + row.user_name + " tidak ditemukan"); return; }
-
-    // Ambil bonus PAID periode ini untuk orang ini
     const bonusMinggu = bonuses.filter(b =>
       b.status === "PAID" && (b.team_members || []).includes(row.user_name) &&
       b.order_date >= periodStart && b.order_date <= periodEnd
     );
-    const totalBonus = bonusMinggu.reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
-
-    const late = row.late_days > 0 ? `\nTelat Masuk : ${row.late_days} hari × -Rp 10.000 = -Rp ${(row.late_days * 10000).toLocaleString("id-ID")}` : "";
-    const kasbon = row.kasbon_total > 0 ? `\nKasbon : -${fmtRp(row.kasbon_total)}` : "";
-    const fullWeek = row.full_week_bonus ? `\nBonus Full Week : +${fmtRp(row.role === "Helper" ? 75000 : 100000)}` : "";
-    const manBonus = row.manual_bonus > 0 ? `\nBonus Manual : +${fmtRp(row.manual_bonus)}${row.manual_bonus_note ? " (" + row.manual_bonus_note + ")" : ""}` : "";
-    const bonusLines = bonusMinggu.map(b => `[${b.order_id || "-"}] ${BONUS_LABELS[b.bonus_type] || b.bonus_type} : +${fmtRp(b.amount_per_person)}`).join("\n");
-
-    const msg = `📋 *SLIP GAJI MINGGUAN*\n━━━━━━━━━━━━━━━━━━━━━\n👷 *${row.user_name}* | ${row.role}\nPeriode: ${fmtDate(row.period_start)} – ${fmtDate(row.period_end)}\n━━━━━━━━━━━━━━━━━━━━━\n*GAJI POKOK*\nHari Masuk : ${row.days_worked} hari × ${fmtRp(row.daily_rate)}\n             = ${fmtRp(row.days_worked * row.daily_rate)}${fullWeek}${late}${kasbon}${manBonus}\n━━━━━━━━━━━━━━━━━━━━━\n*KOMISI ORDER*\n${bonusLines || "Belum ada komisi dibayar minggu ini"}\nTotal Komisi : ${fmtRp(totalBonus)}\n━━━━━━━━━━━━━━━━━━━━━\n*TOTAL GAJI : ${fmtRp(row.gross_salary)}*\nStatus : ${row.is_paid ? "✅ SUDAH DIBAYAR" : "⏳ BELUM DIBAYAR"}\n━━━━━━━━━━━━━━━━━━━━━`;
-
+    const msg = buildSlipMsg(row, bonusMinggu);
     openWA?.(t.phone, msg);
-    await markPayrollPaid.wa_sent_at || updateWeeklyPayroll(supabase, row.id, { wa_sent_at: new Date().toISOString() });
+    await updateWeeklyPayroll(supabase, row.id, { wa_sent_at: new Date().toISOString() });
     showNotif?.("📤 WA slip dikirim ke " + row.user_name);
   };
 
   // ── Update daily_rate dari UI ──
   const handleSaveRate = async (t) => {
-    const newRate = Number(editingRate[t.id] ?? t.daily_rate ?? 0);
-    await updateUserDailyRate(supabase, t.id, newRate);
+    const newRate = Number(editingRate[t.id] ?? localRates[t.id] ?? t.daily_rate ?? 0);
+    const { error } = await updateUserDailyRate(supabase, t.id, newRate);
+    if (error) { showNotif?.("❌ Gagal simpan: " + error.message); return; }
+    setLocalRates(prev => ({ ...prev, [t.id]: newRate }));
     setEditingRate(prev => { const p = { ...prev }; delete p[t.id]; return p; });
-    showNotif?.("✅ Gaji harian " + t.name + " diperbarui: " + fmtRp(newRate));
+    showNotif?.("✅ Gaji harian " + t.name + " disimpan: " + fmtRp(newRate));
+  };
+
+  const handleDeleteRate = async (t) => {
+    await updateUserDailyRate(supabase, t.id, 0);
+    setLocalRates(prev => ({ ...prev, [t.id]: 0 }));
+    setEditingRate(prev => { const p = { ...prev }; delete p[t.id]; return p; });
+    showNotif?.("🗑 Gaji harian " + t.name + " direset ke 0");
   };
 
   // ── Simpan bonus order ──
@@ -659,7 +774,50 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
 
   const fmt = n => Number(n || 0).toLocaleString("id-ID");
 
-  const filteredBonuses = bonusFilter === "ALL" ? bonuses : bonuses.filter(b => b.status === bonusFilter);
+  const filteredBonuses = bonusFilter === "ALL" ? bonuses : bonuses.filter(b => effBonusStatus(b) === bonusFilter);
+
+  // ── WA bubble renderer (shared) ──
+  const renderWABubble = (msg, row) => {
+    const lines = msg.split("\n").map((line, i) => {
+      const parts = line.split(/(\*[^*]+\*)/g);
+      return (
+        <div key={i} style={{ minHeight: "1.2em" }}>
+          {parts.map((p, j) =>
+            p.startsWith("*") && p.endsWith("*")
+              ? <strong key={j}>{p.slice(1, -1)}</strong>
+              : <span key={j}>{p}</span>
+          )}
+        </div>
+      );
+    });
+    return (
+      <div style={{ background: "#0b1c0b", borderRadius: 10, padding: "4px 8px 8px", marginTop: 4 }}>
+        {/* Chat header */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 6px 10px", borderBottom: "1px solid #1a3a1a" }}>
+          <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#25d366", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>
+            {row.role === "Teknisi" ? "🔧" : "🤝"}
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 12, color: "#e9edef" }}>{row.user_name}</div>
+            <div style={{ fontSize: 10, color: "#8696a0" }}>{row.role}</div>
+          </div>
+          <div style={{ marginLeft: "auto", fontSize: 10, color: "#8696a0" }}>AClean</div>
+        </div>
+        {/* Bubble */}
+        <div style={{ padding: "8px 8px 4px" }}>
+          <div style={{ background: "#025c4c", borderRadius: "0 10px 10px 10px", padding: "10px 12px", maxWidth: "90%", marginLeft: 6, position: "relative" }}>
+            <div style={{ position: "absolute", top: 0, left: -6, width: 0, height: 0, borderRight: "8px solid #025c4c", borderBottom: "8px solid transparent" }} />
+            <div style={{ fontFamily: "monospace", fontSize: 11.5, lineHeight: 1.6, color: "#e9edef", wordBreak: "break-word" }}>
+              {lines}
+            </div>
+            <div style={{ fontSize: 10, color: "#8696a0", textAlign: "right", marginTop: 6 }}>
+              {new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} ✓✓
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -695,25 +853,118 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
 
             {/* Konfigurasi gaji harian */}
             <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, padding: 14 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: cs.muted, marginBottom: 10 }}>⚙️ Konfigurasi Gaji Harian</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px,1fr))", gap: 10 }}>
-                {aktif.map(t => (
-                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, background: cs.card, borderRadius: 8, padding: "8px 12px" }}>
-                    <span style={{ fontSize: 11, color: cs.muted, width: 16, textAlign: "center" }}>{t.role === "Teknisi" ? "🔧" : "🤝"}</span>
-                    <span style={{ flex: 1, fontWeight: 600, fontSize: 13, color: cs.text }}>{t.name}</span>
-                    <input
-                      type="number"
-                      value={editingRate[t.id] ?? (t.daily_rate || 0)}
-                      onChange={e => setEditingRate(prev => ({ ...prev, [t.id]: e.target.value }))}
-                      style={{ width: 90, padding: "4px 6px", borderRadius: 6, border: "1px solid " + cs.border, background: cs.surface, color: cs.text, fontSize: 12, textAlign: "right" }}
-                    />
-                    {editingRate[t.id] !== undefined && (
-                      <button onClick={() => handleSaveRate(t)} style={{ padding: "3px 8px", borderRadius: 5, background: cs.accent, border: "none", color: "#fff", cursor: "pointer", fontSize: 11 }}>✓</button>
-                    )}
-                  </div>
-                ))}
+              <div style={{ fontWeight: 700, fontSize: 13, color: cs.muted, marginBottom: 4 }}>⚙️ Konfigurasi Gaji Harian</div>
+              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>Ketik nominal → klik ✓ Simpan untuk menyimpan. Klik nilai tersimpan untuk edit.</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px,1fr))", gap: 10 }}>
+                {aktif.map(t => {
+                  const savedRate = localRates[t.id] ?? t.daily_rate ?? 0;
+                  const isDirty   = editingRate[t.id] !== undefined;
+                  const isEditing = isDirty;
+                  return (
+                    <div key={t.id} style={{ background: cs.card, borderRadius: 8, padding: "10px 12px", border: "1px solid " + (isEditing ? cs.accent : savedRate > 0 ? cs.green + "55" : cs.border) }}>
+                      {/* Nama + role */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                        <span style={{ fontSize: 13 }}>{t.role === "Teknisi" ? "🔧" : "🤝"}</span>
+                        <span style={{ fontWeight: 700, fontSize: 13, color: cs.text, flex: 1 }}>{t.name}</span>
+                        <span style={{ fontSize: 10, color: cs.muted, background: cs.surface, borderRadius: 4, padding: "1px 5px" }}>{t.role}</span>
+                      </div>
+                      {/* Input + actions */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 11, color: cs.muted }}>Rp</span>
+                        <input
+                          type="number"
+                          value={isDirty ? editingRate[t.id] : savedRate}
+                          onChange={e => setEditingRate(prev => ({ ...prev, [t.id]: e.target.value }))}
+                          placeholder="0"
+                          style={{ flex: 1, padding: "5px 8px", borderRadius: 6, border: "1px solid " + (isEditing ? cs.accent : cs.border), background: cs.surface, color: cs.text, fontSize: 13, textAlign: "right" }}
+                        />
+                        {isDirty ? (
+                          <>
+                            <button onClick={() => handleSaveRate(t)} title="Simpan" style={{ padding: "4px 10px", borderRadius: 5, background: cs.accent, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✓ Simpan</button>
+                            <button onClick={() => setEditingRate(prev => { const p={...prev}; delete p[t.id]; return p; })} title="Batal" style={{ padding: "4px 8px", borderRadius: 5, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 11 }}>✕</button>
+                          </>
+                        ) : savedRate > 0 ? (
+                          <button onClick={() => handleDeleteRate(t)} title="Reset ke 0" style={{ padding: "4px 8px", borderRadius: 5, background: "transparent", border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 10 }}>🗑</button>
+                        ) : null}
+                      </div>
+                      {/* Saved indicator */}
+                      {savedRate > 0 && !isDirty && (
+                        <div style={{ fontSize: 10, color: cs.green, marginTop: 4 }}>✅ Tersimpan: Rp {Number(savedRate).toLocaleString("id-ID")}/hari</div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
+
+            {/* ── Ringkasan total payroll minggu ini ── */}
+            {payrollRows.length > 0 && (() => {
+              const totalGross   = payrollRows.reduce((s, r) => s + computeGross(r), 0);
+              const totalPokok   = payrollRows.reduce((s, r) => s + Number(r.days_worked || 0) * Number(r.daily_rate || 0), 0);
+              const totalFullWk  = payrollRows.reduce((s, r) => s + (r.full_week_bonus ? fullWeekBonusAmt(r.role) : 0), 0);
+              const totalPotongan= payrollRows.reduce((s, r) => s + Number(r.late_days || 0) * 10000 + Number(r.kasbon_deduct || 0), 0);
+              const totalManual  = payrollRows.reduce((s, r) => s + Number(r.manual_bonus || 0), 0);
+              const totalSisaKasbon = payrollRows.reduce((s, r) => s + kasbonSisa(r), 0);
+              const sudahBayar   = payrollRows.filter(r => r.is_paid);
+              const belumBayar   = payrollRows.filter(r => !r.is_paid);
+              const totalSudah   = sudahBayar.reduce((s, r) => s + computeGross(r), 0);
+              const totalBelum   = belumBayar.reduce((s, r) => s + computeGross(r), 0);
+              const teknisiRows  = payrollRows.filter(r => r.role === "Teknisi");
+              const helperRows   = payrollRows.filter(r => r.role === "Helper");
+              return (
+                <div style={{ background: cs.surface, border: "1px solid " + cs.accent + "55", borderRadius: 12, padding: 16 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14, color: cs.accent, marginBottom: 12 }}>
+                    📊 Ringkasan Payroll — {fmtDate(periodStart)} s/d {fmtDate(periodEnd)}
+                  </div>
+                  {/* Total besar */}
+                  <div style={{ display: "flex", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+                    <div style={{ flex: 1, minWidth: 140, background: cs.card, borderRadius: 10, padding: "12px 16px", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>TOTAL GAJI KESELURUHAN</div>
+                      <div style={{ fontWeight: 900, fontSize: 22, color: cs.accent }}>{fmtRp(totalGross)}</div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{payrollRows.length} orang</div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 120, background: cs.card, borderRadius: 10, padding: "12px 16px", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>✅ SUDAH DIBAYAR</div>
+                      <div style={{ fontWeight: 800, fontSize: 18, color: cs.green }}>{fmtRp(totalSudah)}</div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{sudahBayar.length} orang</div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 120, background: cs.card, borderRadius: 10, padding: "12px 16px", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>⏳ BELUM DIBAYAR</div>
+                      <div style={{ fontWeight: 800, fontSize: 18, color: cs.yellow }}>{fmtRp(totalBelum)}</div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{belumBayar.length} orang</div>
+                    </div>
+                  </div>
+                  {/* Breakdown komponen */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 8, marginBottom: 12 }}>
+                    {[
+                      { label: "Gaji Pokok", val: totalPokok, color: cs.text },
+                      { label: "Bonus Full Week", val: totalFullWk, color: cs.green },
+                      { label: "Bonus Manual", val: totalManual, color: cs.accent },
+                      { label: "Potongan (telat+kasbon)", val: -totalPotongan, color: cs.red },
+                      { label: "Sisa Kasbon → mgg depan", val: totalSisaKasbon, color: cs.yellow },
+                    ].map(item => (
+                      <div key={item.label} style={{ background: cs.card, borderRadius: 8, padding: "8px 12px" }}>
+                        <div style={{ fontSize: 10, color: cs.muted }}>{item.label}</div>
+                        <div style={{ fontWeight: 700, fontSize: 13, color: item.color }}>
+                          {item.val < 0 ? "-" : ""}{fmtRp(Math.abs(item.val))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Per role */}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <div style={{ flex: 1, background: cs.card, borderRadius: 8, padding: "8px 12px" }}>
+                      <div style={{ fontSize: 10, color: cs.muted, marginBottom: 2 }}>🔧 Teknisi ({teknisiRows.length})</div>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{fmtRp(teknisiRows.reduce((s,r)=>s+computeGross(r),0))}</div>
+                    </div>
+                    <div style={{ flex: 1, background: cs.card, borderRadius: 8, padding: "8px 12px" }}>
+                      <div style={{ fontSize: 10, color: cs.muted, marginBottom: 2 }}>🤝 Helper ({helperRows.length})</div>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{fmtRp(helperRows.reduce((s,r)=>s+computeGross(r),0))}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Slip cards */}
             {loadingPayroll ? (
@@ -725,10 +976,13 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                 <div style={{ color: cs.muted, fontSize: 12, marginTop: 4 }}>Klik "Generate / Refresh" untuk membuat otomatis dari data order.</div>
               </div>
             ) : payrollRows.map(row => {
-              const gross = Number(row.gross_salary || 0);
-              const fullBonus = row.role === "Helper" ? 75000 : 100000;
+              const gross = computeGross(row);
+              const fullBonus = fullWeekBonusAmt(row.role);
+              const locked = row.is_paid;          // slip dibayar → terkunci
+              const owed   = kasbonOwed(row);
+              const sisaKasbon = kasbonSisa(row);
               return (
-                <div key={row.id} style={{ background: cs.card, border: "1px solid " + (row.is_paid ? cs.green : cs.border), borderRadius: 12, padding: 16, position: "relative" }}>
+                <div key={row.id} style={{ background: cs.card, border: "1px solid " + (row.is_paid ? cs.green : cs.border), borderRadius: 12, padding: 16, position: "relative", opacity: locked ? 0.92 : 1 }}>
                   {row.is_paid && <span style={{ position: "absolute", top: 12, right: 12, background: cs.green, color: "#fff", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>✅ DIBAYAR</span>}
 
                   {/* Header */}
@@ -746,8 +1000,12 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     <div style={{ background: cs.surface, borderRadius: 8, padding: 10 }}>
                       <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Hari Masuk {row.days_override ? "✏️" : "(auto)"}</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <input type="number" min={0} max={6} value={row.days_worked}
-                          onChange={e => handleUpdateField(row, "days_worked", Number(e.target.value))}
+                        <input type="number" min={0} max={6} value={row.days_worked} disabled={locked}
+                          onChange={e => {
+                            const v = Math.max(0, Math.min(6, Number(e.target.value)));
+                            setPayrollRows(prev => prev.map(r => r.id === row.id ? { ...r, days_worked: v, days_override: true } : r));
+                          }}
+                          onBlur={e => saveField(row.id, { days_worked: Math.max(0, Math.min(6, Number(e.target.value))), days_override: true })}
                           style={{ width: 50, padding: "4px 6px", borderRadius: 6, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 14, fontWeight: 700, textAlign: "center" }}
                         />
                         <span style={{ fontSize: 12, color: cs.muted }}>hari = {fmtRp(row.days_worked * row.daily_rate)}</span>
@@ -759,8 +1017,8 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                       <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Telat Masuk (×-Rp 10.000)</div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         {[0,1,2,3,4,5].map(n => (
-                          <button key={n} onClick={() => handleUpdateField(row, "late_days", n)}
-                            style={{ padding: "3px 8px", borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "1px solid",
+                          <button key={n} disabled={locked} onClick={() => handleUpdateField(row, "late_days", n)}
+                            style={{ padding: "3px 8px", borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: locked ? "not-allowed" : "pointer", border: "1px solid",
                               background: row.late_days === n ? cs.red : cs.card,
                               borderColor: row.late_days === n ? cs.red : cs.border,
                               color: row.late_days === n ? "#fff" : cs.muted }}>
@@ -774,8 +1032,8 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     {/* Full week bonus */}
                     <div style={{ background: cs.surface, borderRadius: 8, padding: 10 }}>
                       <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Bonus Full Week (Senin–Sabtu)</div>
-                      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                        <input type="checkbox" checked={row.full_week_bonus}
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: locked ? "not-allowed" : "pointer" }}>
+                        <input type="checkbox" checked={row.full_week_bonus} disabled={locked}
                           onChange={e => handleUpdateField(row, "full_week_bonus", e.target.checked)}
                           style={{ width: 16, height: 16 }}
                         />
@@ -785,28 +1043,89 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                       </label>
                     </div>
 
-                    {/* Kasbon */}
+                    {/* Kasbon — bisa dipotong sebagian, sisa carryover */}
                     <div style={{ background: cs.surface, borderRadius: 8, padding: 10 }}>
-                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Kasbon (auto dari Biaya)</div>
-                      <div style={{ fontWeight: 700, fontSize: 13, color: row.kasbon_total > 0 ? cs.red : cs.muted }}>
-                        {row.kasbon_total > 0 ? "-" + fmtRp(row.kasbon_total) : "Rp 0"}
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>
+                        Kasbon Terutang: <strong style={{ color: owed > 0 ? cs.red : cs.muted }}>{fmtRp(owed)}</strong>
+                        {Number(row.kasbon_carryover) > 0 && <span style={{ color: cs.yellow }}> (incl. sisa lalu {fmtRp(row.kasbon_carryover)})</span>}
                       </div>
+                      {owed > 0 ? (
+                        <>
+                          <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 11, color: cs.muted }}>Potong:</span>
+                            <input type="number" min={0} max={owed} value={row.kasbon_deduct} disabled={locked}
+                              onChange={e => {
+                                const v = Math.max(0, Math.min(owed, Number(e.target.value)));
+                                setPayrollRows(prev => prev.map(r => r.id === row.id ? { ...r, kasbon_deduct: v } : r));
+                              }}
+                              onBlur={e => saveField(row.id, { kasbon_deduct: Math.max(0, Math.min(owed, Number(e.target.value))) })}
+                              style={{ width: 90, padding: "4px 6px", borderRadius: 6, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 13, fontWeight: 700, textAlign: "right" }}
+                            />
+                            {!locked && (
+                              <>
+                                <button onClick={() => { const v = Math.round(owed / 2); setPayrollRows(prev => prev.map(r => r.id === row.id ? { ...r, kasbon_deduct: v } : r)); saveField(row.id, { kasbon_deduct: v }); }}
+                                  style={{ padding: "3px 8px", borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid " + cs.border, background: cs.card, color: cs.muted }}>50%</button>
+                                <button onClick={() => { setPayrollRows(prev => prev.map(r => r.id === row.id ? { ...r, kasbon_deduct: owed } : r)); saveField(row.id, { kasbon_deduct: owed }); }}
+                                  style={{ padding: "3px 8px", borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid " + cs.border, background: cs.card, color: cs.muted }}>Penuh</button>
+                              </>
+                            )}
+                          </div>
+                          {sisaKasbon > 0 && (
+                            <div style={{ fontSize: 11, color: cs.yellow, marginTop: 4 }}>
+                              ↪ Sisa {fmtRp(sisaKasbon)} dikreditkan ke minggu depan
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div style={{ fontWeight: 700, fontSize: 13, color: cs.muted }}>Rp 0</div>
+                      )}
                     </div>
                   </div>
 
-                  {/* Bonus manual */}
+                  {/* Bonus manual — multi entry */}
                   <div style={{ background: cs.surface, borderRadius: 8, padding: 10, marginBottom: 14 }}>
-                    <div style={{ fontSize: 11, color: cs.muted, marginBottom: 6 }}>Bonus Manual (Lembur / Lainnya)</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <input type="number" placeholder="Nominal" value={row.manual_bonus || ""}
-                        onChange={e => handleUpdateField(row, "manual_bonus", Number(e.target.value))}
-                        style={{ flex: 1, padding: "5px 8px", borderRadius: 6, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12 }}
-                      />
-                      <input type="text" placeholder="Keterangan (opsional)" value={row.manual_bonus_note || ""}
-                        onChange={e => handleUpdateField(row, "manual_bonus_note", e.target.value)}
-                        style={{ flex: 2, padding: "5px 8px", borderRadius: 6, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12 }}
-                      />
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, color: cs.muted }}>Bonus Manual (Lembur / Lainnya)</div>
+                      {!locked && <button onClick={() => {
+                        const entries = [...(localBonus[row.id] || []), { label: "", amount: "" }];
+                        setLocalBonus(prev => ({ ...prev, [row.id]: entries }));
+                      }} style={{ padding: "2px 10px", borderRadius: 5, background: cs.accent, border: "none", color: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>+ Tambah</button>}
                     </div>
+                    {(localBonus[row.id] || []).length === 0 && (
+                      <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada — klik + Tambah</div>
+                    )}
+                    {(localBonus[row.id] || []).map((entry, idx) => (
+                      <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                        <input type="number" placeholder="Nominal" value={entry.amount} disabled={locked}
+                          onChange={e => {
+                            const entries = (localBonus[row.id] || []).map((en, i) => i === idx ? { ...en, amount: e.target.value } : en);
+                            setLocalBonus(prev => ({ ...prev, [row.id]: entries }));
+                          }}
+                          onBlur={() => saveManualBonus(row.id, localBonus[row.id] || [])}
+                          style={{ width: 110, padding: "5px 8px", borderRadius: 6, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12 }}
+                        />
+                        <input type="text" placeholder="Keterangan (mis: lembur)"
+                          value={entry.label} disabled={locked}
+                          onChange={e => {
+                            const entries = (localBonus[row.id] || []).map((en, i) => i === idx ? { ...en, label: e.target.value } : en);
+                            setLocalBonus(prev => ({ ...prev, [row.id]: entries }));
+                          }}
+                          onBlur={() => saveManualBonus(row.id, localBonus[row.id] || [])}
+                          style={{ flex: 1, padding: "5px 8px", borderRadius: 6, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12 }}
+                        />
+                        {!locked && <button onClick={() => {
+                          const entries = (localBonus[row.id] || []).filter((_, i) => i !== idx);
+                          setLocalBonus(prev => ({ ...prev, [row.id]: entries }));
+                          saveManualBonus(row.id, entries);
+                        }} title="Hapus" style={{ padding: "4px 8px", borderRadius: 5, background: "transparent", border: "1px solid " + cs.border, color: cs.red, cursor: "pointer", fontSize: 12 }}>✕</button>}
+                      </div>
+                    ))}
+                    {(localBonus[row.id] || []).some(e => Number(e.amount) > 0) && (
+                      <div style={{ fontSize: 11, color: cs.accent, marginTop: 4, fontWeight: 700 }}>
+                        Total: {fmtRp((localBonus[row.id] || []).reduce((s, e) => s + Number(e.amount || 0), 0))}
+                        <span style={{ color: cs.muted, fontWeight: 400, marginLeft: 8 }}>(tersimpan saat keluar dari kolom)</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Total + Actions */}
@@ -815,10 +1134,18 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                       <div style={{ fontSize: 11, color: cs.muted }}>TOTAL GAJI</div>
                       <div style={{ fontWeight: 800, fontSize: 20, color: cs.accent }}>{fmtRp(gross)}</div>
                     </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {!row.is_paid && (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={() => setSlipPreview(prev => prev === row.user_id ? null : row.user_id)}
+                        style={{ padding: "7px 14px", borderRadius: 8, background: slipPreview === row.user_id ? cs.accent : cs.surface, border: "1px solid " + (slipPreview === row.user_id ? cs.accent : cs.border), color: slipPreview === row.user_id ? "#fff" : cs.text, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                        {slipPreview === row.user_id ? "▲ Tutup Preview" : "👁 Preview Slip"}
+                      </button>
+                      {!row.is_paid ? (
                         <button onClick={() => handlePaid(row)} style={{ padding: "7px 14px", borderRadius: 8, background: cs.green, border: "none", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
                           ✓ Tandai Dibayar
+                        </button>
+                      ) : isOwner && (
+                        <button onClick={() => handleUnlock(row)} style={{ padding: "7px 14px", borderRadius: 8, background: cs.surface, border: "1px solid " + cs.yellow, color: cs.yellow, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                          🔓 Buka Kunci
                         </button>
                       )}
                       <button onClick={() => handleSendWA(row)} style={{ padding: "7px 14px", borderRadius: 8, background: "#25d366", border: "none", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
@@ -827,6 +1154,33 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     </div>
                   </div>
                   {row.is_paid && <div style={{ fontSize: 11, color: cs.muted, marginTop: 6 }}>Dibayar oleh {row.paid_by} · {row.paid_at ? new Date(row.paid_at).toLocaleString("id-ID") : "-"}</div>}
+
+                  {/* ── Inline slip preview ── */}
+                  {slipPreview === row.user_id && (() => {
+                    const bonusMinggu = bonuses.filter(b =>
+                      b.status === "PAID" && (b.team_members || []).includes(row.user_name) &&
+                      b.order_date >= periodStart && b.order_date <= periodEnd
+                    );
+                    const msg = buildSlipMsg(row, bonusMinggu);
+                    return (
+                      <div style={{ marginTop: 14, borderTop: "1px solid " + cs.border, paddingTop: 14 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 8 }}>
+                          📱 Preview WA Slip — {row.user_name}
+                        </div>
+                        {renderWABubble(msg, row)}
+                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                          <button onClick={() => handleSendWA(row)}
+                            style={{ flex: 1, padding: "9px 0", borderRadius: 8, background: "#25d366", border: "none", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+                            📤 Kirim Slip via WA
+                          </button>
+                          <button onClick={() => { navigator.clipboard?.writeText(msg); showNotif?.("📋 Teks slip disalin"); }}
+                            style={{ padding: "9px 14px", borderRadius: 8, background: cs.surface, border: "1px solid " + cs.border, color: cs.text, cursor: "pointer", fontSize: 12 }}>
+                            📋 Copy Teks
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -860,7 +1214,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                   borderColor: bonusFilter === s ? (STATUS_COLORS[s] || cs.accent) : cs.border,
                   color: bonusFilter === s ? "#fff" : cs.muted,
                 }}>
-                  {s === "ALL" ? "Semua" : STATUS_LABELS[s]} {s !== "ALL" && `(${bonuses.filter(b => b.status === s).length})`}
+                  {s === "ALL" ? "Semua" : STATUS_LABELS[s]} {s !== "ALL" && `(${bonuses.filter(b => effBonusStatus(b) === s).length})`}
                 </button>
               ))}
             </div>
@@ -934,12 +1288,12 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                 <div style={{ fontSize: 32, marginBottom: 8 }}>🎯</div>
                 <div style={{ color: cs.muted, fontSize: 14 }}>Belum ada komisi di filter ini.</div>
               </div>
-            ) : filteredBonuses.map(b => (
-              <div key={b.id} style={{ background: cs.card, borderRadius: 12, padding: 14, border: "1px solid " + (STATUS_COLORS[b.status] || cs.border), opacity: b.status === "VOID" ? 0.6 : 1 }}>
+            ) : filteredBonuses.map(b => { const est = effBonusStatus(b); return (
+              <div key={b.id} style={{ background: cs.card, borderRadius: 12, padding: 14, border: "1px solid " + (STATUS_COLORS[est] || cs.border), opacity: est === "VOID" ? 0.6 : 1 }}>
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                      <span style={{ background: STATUS_COLORS[b.status], color: "#fff", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>{STATUS_LABELS[b.status]}</span>
+                      <span style={{ background: STATUS_COLORS[est], color: "#fff", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>{STATUS_LABELS[est]}</span>
                       <span style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>{BONUS_LABELS[b.bonus_type] || b.bonus_type}</span>
                     </div>
                     <div style={{ fontSize: 12, color: cs.muted }}>
@@ -960,22 +1314,22 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                   </div>
                 </div>
                 {/* Actions */}
-                {(b.status === "PENDING" || b.status === "ELIGIBLE") && (
-                  <div style={{ display: "flex", gap: 8, marginTop: 10, borderTop: "1px solid " + cs.border, paddingTop: 10 }}>
-                    {b.status === "ELIGIBLE" && (
+                {(est === "PENDING" || est === "ELIGIBLE") && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 10, borderTop: "1px solid " + cs.border, paddingTop: 10, alignItems: "center" }}>
+                    {est === "ELIGIBLE" && (
                       <button onClick={() => handleMarkBonusPaid(b)} style={{ padding: "6px 14px", borderRadius: 7, background: cs.green, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                         ✓ Tandai Dibayar
                       </button>
                     )}
-                    {b.status === "PENDING" && <span style={{ fontSize: 11, color: cs.yellow, padding: "6px 0" }}>⏳ Dalam masa warranty</span>}
+                    {est === "PENDING" && <span style={{ fontSize: 11, color: cs.yellow, padding: "6px 0" }}>⏳ Warranty — siap cair {30 - daysSinceDate(b.order_date)} hari lagi</span>}
                     <button onClick={() => setVoidForm({ id: b.id, reason: "" })} style={{ padding: "6px 14px", borderRadius: 7, background: "transparent", border: "1px solid " + cs.red, color: cs.red, cursor: "pointer", fontSize: 12 }}>
                       🚫 Void
                     </button>
                   </div>
                 )}
-                {b.status === "PAID" && <div style={{ fontSize: 11, color: cs.muted, marginTop: 6 }}>Dibayar oleh {b.paid_by} · {b.paid_at ? new Date(b.paid_at).toLocaleString("id-ID") : "-"}</div>}
+                {est === "PAID" && <div style={{ fontSize: 11, color: cs.muted, marginTop: 6 }}>Dibayar oleh {b.paid_by} · {b.paid_at ? new Date(b.paid_at).toLocaleString("id-ID") : "-"}</div>}
               </div>
-            ))}
+            ); })}
           </div>
         );
       })()}
@@ -1194,4 +1548,5 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel }) {
   );
 }
 
+export { GajiTab };
 export default memo(TeknisiAdminView);

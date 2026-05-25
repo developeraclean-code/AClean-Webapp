@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import { getLocalDate } from "../lib/dateTime.js";
+import { GajiTab } from "./TeknisiAdminView.jsx";
 
 // WIB offset helper — konsisten dengan getLocalDate dari dateTime.js
 const OFFSET_MS = 7 * 60 * 60 * 1000;
@@ -24,6 +25,7 @@ const saveTarget = (v) => { try { localStorage.setItem(LS_KEY, String(v)); } cat
 const TABS = [
   { id: "dashboard", label: "Dashboard", icon: "📊" },
   { id: "planning", label: "Financial Planning", icon: "🎯" },
+  { id: "payroll", label: "Pengelolaan Gaji", icon: "💵" },
 ];
 
 const fmtRp = (n) =>
@@ -551,7 +553,7 @@ const ProofModal = ({ modal, onClose }) => {
 };
 
 // ─── Main FinanceView ─────────────────────────────────────────────
-export default function FinanceView({ currentUser, ordersData, invoicesData, expensesData, supabase }) {
+export default function FinanceView({ currentUser, ordersData, invoicesData, expensesData, supabase, teknisiData, showNotif, showConfirm, openWA, TODAY }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [paymentProofModal, setPaymentProofModal] = useState(null);
   const [dateOffset, setDateOffset] = useState(0);
@@ -625,6 +627,20 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
         <PlanningTab
           allInvoices={invoicesData}
           allExpenses={expensesData}
+        />
+      )}
+
+      {activeTab === "payroll" && (
+        <GajiTab
+          teknisiData={teknisiData || []}
+          ordersData={ordersData || []}
+          invoicesData={invoicesData || []}
+          currentUser={currentUser}
+          supabase={supabase}
+          showNotif={showNotif}
+          showConfirm={showConfirm}
+          openWA={openWA}
+          TODAY={TODAY || getLocalDate()}
         />
       )}
 
