@@ -588,8 +588,9 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
       const inv = fetchedInvMap[o.invoice_id];
       const invTotal = Number(inv?.total || 0);
       const det = detectBonusFromInvoice(inv?.materials_detail, o.service);
-      // Kategori 1: Omset >= 1jt (EXCLUDING Pemasangan/Install)
-      const isOmsetBesar = o.service !== "Install" && invTotal >= 1000000;
+      // Kategori 1: Omset >= 1jt (non-Install), atau Install >= 1,5jt
+      const isOmsetBesar = (o.service !== "Install" && invTotal >= 1000000) ||
+                           (o.service === "Install" && invTotal >= 1500000);
       // Kategori 2: Pemasangan >= 2 unit
       const isInstallMulti = o.service === "Install" && Number(o.units) >= 2;
       // Kategori 3: Ada freon atau kapasitor
