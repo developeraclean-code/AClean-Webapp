@@ -552,7 +552,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
       if (existingOrderIds.has(o.id)) return false;
       const inv = invoicesData?.find(i => i.id === o.invoice_id);
       const invTotal = Number(inv?.total || 0);
-      const det = detectBonusFromInvoice(inv?.materials_detail);
+      const det = detectBonusFromInvoice(inv?.materials_detail, o.service);
       // Kategori 1: Omset >= 1jt (EXCLUDING Pemasangan/Install)
       const isOmsetBesar = o.service !== "Install" && invTotal >= 1000000;
       // Kategori 2: Pemasangan >= 2 unit
@@ -1233,7 +1233,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     const team = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean);
                     const inv = invoicesData?.find(i => i.id === o.invoice_id);
                     const isComplain = o.service === "Complain";
-                    const detected = detectBonusFromInvoice(inv?.materials_detail);
+                    const detected = detectBonusFromInvoice(inv?.materials_detail, o.service);
                     return (
                       <div key={o.id} style={{ background: cs.card, borderRadius: 8, padding: "10px 12px", border: "1px solid " + (isComplain ? cs.red + "66" : cs.border) }}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
@@ -1343,22 +1343,32 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
 }
 
 // ── Helpers: deteksi dari invoice + install kumulatif ──
-function detectBonusFromInvoice(materialsDetail) {
+// Detect bonus material (freon, kapasitor) dan jasa (kuras vacum, tambah freon, pasang kapasitor)
+function detectBonusFromInvoice(materialsDetail, orderService = "") {
   const result = { freon: false, kapasitor: false, freonNames: [], kapasitorNames: [] };
   try {
     const items = JSON.parse(materialsDetail || "[]");
     for (const item of items) {
       const nama = (item.nama || "").toLowerCase();
-      if (nama.includes("freon") || nama.includes("r-32") || nama.includes("r-22") || nama.includes("r32") || nama.includes("r410") || nama.includes("vacum")) {
+      // Freon material atau jasa freon (kuras vacum, tambah freon, repair freon)
+      if (nama.includes("freon") || nama.includes("r-32") || nama.includes("r-22") || nama.includes("r32") || nama.includes("r410") || nama.includes("vacum") || nama.includes("kuras")) {
         result.freon = true;
         result.freonNames.push(item.nama);
       }
-      if (nama.includes("kapasitor")) {
+      // Kapasitor material atau jasa kapasitor
+      if (nama.includes("kapasitor") || nama.includes("pasang kapasitor")) {
         result.kapasitor = true;
         result.kapasitorNames.push(item.nama);
       }
     }
   } catch {}
+
+  // Juga cek dari service type kalau ada repair/cleaning dengan konteks freon
+  const svc = (orderService || "").toLowerCase();
+  if ((svc.includes("repair") || svc.includes("cleaning")) && !result.freon) {
+    // Bisa extend di sini kalau ada additional service logic
+  }
+
   return result;
 }
 
@@ -1378,7 +1388,7 @@ function getInstallCumulative(ordersData, date, teamMembers) {
 // Form input bonus per order — smart version
 function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel }) {
   const isComplain = orderRow.service === "Complain";
-  const detected   = detectBonusFromInvoice(inv?.materials_detail);
+  const detected   = detectBonusFromInvoice(inv?.materials_detail, orderRow.service);
   const installInfo = orderRow.service === "Install"
     ? getInstallCumulative(ordersData, orderRow.date, team) : null;
 
