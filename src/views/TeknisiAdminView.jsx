@@ -12,13 +12,13 @@ import {
 // ── Payroll helpers ──
 const BONUS_LABELS = {
   margin_1jt: "Margin >1jt", margin_2jt: "Margin >2jt", margin_3jt: "Margin >3jt",
-  freon: "Isi Freon", kapasitor: "Kapasitor",
+  freon: "Isi Freon", kapasitor: "Kapasitor", thermis: "Sparepart Thermis",
   install_2: "Pasang >2 Unit/hari", install_3: "Pasang >3 Unit/hari", install_4: "Pasang >4 Unit/hari",
   manual: "Bonus Manual",
 };
 const BONUS_DEFAULTS = {
   margin_1jt: 50000, margin_2jt: 100000, margin_3jt: 200000,
-  freon: 25000, kapasitor: 35000,
+  freon: 25000, kapasitor: 35000, thermis: 35000,
   install_2: 100000, install_3: 200000, install_4: 300000,
   manual: 0,
 };
@@ -593,9 +593,9 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                            (o.service === "Install" && invTotal >= 1500000);
       // Kategori 2: Pemasangan >= 2 unit
       const isInstallMulti = o.service === "Install" && Number(o.units) >= 2;
-      // Kategori 3: Ada freon atau kapasitor
-      const hasFreonKapasitor = det.freon || det.kapasitor;
-      return isOmsetBesar || isInstallMulti || hasFreonKapasitor;
+      // Kategori 3: Ada freon, kapasitor, atau thermis (tidak perlu threshold nilai invoice)
+      const hasSpecialService = det.freon || det.kapasitor || det.thermis;
+      return isOmsetBesar || isInstallMulti || hasSpecialService;
     });
     setPeriodInvMap(fetchedInvMap);
     setOrdersNoBonus(eligible);
@@ -1380,23 +1380,27 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
 }
 
 // ── Helpers: deteksi dari invoice + install kumulatif ──
-// Detect bonus material spesifik: freon (kuras vacum freon / tambah freon) dan kapasitor AC + pasang
+// Detect bonus material spesifik: freon (kuras vacum + isi freon / tambah freon), kapasitor AC, thermis
 function detectBonusFromInvoice(materialsDetail, orderService = "") {
-  const result = { freon: false, kapasitor: false, freonNames: [], kapasitorNames: [] };
+  const result = { freon: false, kapasitor: false, thermis: false, freonNames: [], kapasitorNames: [], thermisNames: [] };
   try {
     const items = JSON.parse(materialsDetail || "[]");
     for (const item of items) {
       const nama = (item.nama || "").toLowerCase();
-      // Freon: hanya "Kuras Vacum Freon R22/R32/R410" atau "Tambah Freon R-xx"
-      // Vacum AC / Kuras AC tanpa freon TIDAK termasuk
-      if (nama.includes("kuras vacum freon") || nama.includes("tambah freon")) {
+      // Freon: "Kuras Vacum + Isi Freon" atau "Kuras Vacum Freon" atau "Tambah Freon"
+      if ((nama.includes("kuras vacum") && nama.includes("freon")) || nama.includes("tambah freon")) {
         result.freon = true;
         result.freonNames.push(item.nama);
       }
-      // Kapasitor: hanya "Kapasitor AC x.xPK + Pasang" — bukan kapasitor umum
-      if (nama.includes("kapasitor ac") && nama.includes("pasang")) {
+      // Kapasitor: any item dengan "kapasitor ac" (tidak perlu "pasang")
+      if (nama.includes("kapasitor ac")) {
         result.kapasitor = true;
         result.kapasitorNames.push(item.nama);
+      }
+      // Thermis: sparepart thermis
+      if (nama.includes("thermis")) {
+        result.thermis = true;
+        result.thermisNames.push(item.nama);
       }
     }
   } catch {}
@@ -1423,11 +1427,12 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel }) {
   const installInfo = orderRow.service === "Install"
     ? getInstallCumulative(ordersData, orderRow.date, team) : null;
 
-  // Default bonus type: freon jika terdeteksi, kapasitor, install, lalu margin, lalu manual untuk complain
+  // Default bonus type: freon jika terdeteksi, kapasitor, thermis, install, lalu margin, lalu manual untuk complain
   const defaultType = (() => {
     if (isComplain) return "manual";
     if (detected.freon) return "freon";
     if (detected.kapasitor) return "kapasitor";
+    if (detected.thermis) return "thermis";
     if (installInfo?.tier) return installInfo.tier;
     return "margin_1jt";
   })();
@@ -1474,7 +1479,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel }) {
       )}
 
       {/* Deteksi dari invoice */}
-      {(detected.freon || detected.kapasitor || installInfo?.tier) && (
+      {(detected.freon || detected.kapasitor || detected.thermis || installInfo?.tier) && (
         <div style={{ background: "#0c2d4a", border: "1px solid #1d4ed8", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
           <div style={{ fontSize: 11, color: "#60a5fa", marginBottom: 6, fontWeight: 700 }}>✨ Terdeteksi dari Invoice</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1488,13 +1493,20 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel }) {
                 ⚡ Kapasitor · Rp {fmt(BONUS_DEFAULTS.kapasitor)}/tim
               </button>
             )}
+            {detected.thermis && (
+              <button onClick={() => setBonusType("thermis")} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid #3b82f6", background: bonusType === "thermis" ? "#3b82f6" : "transparent", color: bonusType === "thermis" ? "#fff" : "#93c5fd" }}>
+                🌡️ Thermis · Rp {fmt(BONUS_DEFAULTS.thermis)}/tim
+              </button>
+            )}
             {installInfo?.tier && (
               <button onClick={() => setBonusType(installInfo.tier)} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid #3b82f6", background: bonusType === installInfo.tier ? "#3b82f6" : "transparent", color: bonusType === installInfo.tier ? "#fff" : "#93c5fd" }}>
                 🔩 Install {installInfo.totalUnits} unit/hari · Rp {fmt(BONUS_DEFAULTS[installInfo.tier])}/tim
               </button>
             )}
           </div>
-          {detected.freonNames.length > 0 && <div style={{ fontSize: 10, color: "#475569", marginTop: 4 }}>Invoice: {detected.freonNames.join(", ")}</div>}
+          {detected.freonNames.length > 0 && <div style={{ fontSize: 10, color: "#475569", marginTop: 4 }}>Freon: {detected.freonNames.join(", ")}</div>}
+          {detected.kapasitorNames.length > 0 && <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>Kapasitor: {detected.kapasitorNames.join(", ")}</div>}
+          {detected.thermisNames.length > 0 && <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>Thermis: {detected.thermisNames.join(", ")}</div>}
           {installInfo?.tier && <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>Kumulatif tim hari ini: {installInfo.orderIds.join(", ")}</div>}
         </div>
       )}
