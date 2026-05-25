@@ -563,7 +563,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     });
     setOrdersNoBonus(eligible);
     setLoadingBonus(false);
-  }, [supabase, periodStart, periodEnd]);
+  }, [supabase, periodStart, periodEnd, invoicesData]);
 
   useEffect(() => { if (subTab === "payroll") loadPayroll(); }, [subTab, loadPayroll]);
   useEffect(() => { if (subTab === "komisi") loadBonuses(); }, [subTab, loadBonuses]);
