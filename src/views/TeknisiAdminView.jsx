@@ -522,6 +522,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   // ── Komisi state ──
   const [bonuses, setBonuses]           = useState([]);
   const [ordersNoBonus, setOrdersNoBonus] = useState([]);
+  const [periodInvMap, setPeriodInvMap] = useState({}); // { invoiceId: { id, total, materials_detail } }
   const [loadingBonus, setLoadingBonus] = useState(false);
   const [bonusForm, setBonusForm]       = useState(null); // order sedang direview
   const [voidForm, setVoidForm]         = useState(null); // { id, reason }
@@ -545,12 +546,24 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
       fetchOrdersWithoutBonus(supabase, periodStart, periodEnd),
     ]);
     setBonuses(bonRes.data || []);
+
+    const orders = ordRes.data || [];
+    // Ambil invoice_id dari orders yang ada, lalu fetch langsung — tidak bergantung prop invoicesData global
+    const invoiceIds = [...new Set(orders.map(o => o.invoice_id).filter(Boolean))];
+    let fetchedInvMap = {};
+    if (invoiceIds.length > 0) {
+      const { data: invRows } = await supabase.from("invoices")
+        .select("id,total,materials_detail")
+        .in("id", invoiceIds);
+      fetchedInvMap = Object.fromEntries((invRows || []).map(i => [i.id, i]));
+    }
+
     // Filter orders: belum ada bonus entry + memenuhi kriteria bonus
     // 3 kategori: 1) Omset > 1jt (bukan pemasangan), 2) Pemasangan >= 2 unit, 3) Freon/Kapasitor
     const existingOrderIds = new Set((bonRes.data || []).map(b => b.order_id));
-    const eligible = (ordRes.data || []).filter(o => {
+    const eligible = orders.filter(o => {
       if (existingOrderIds.has(o.id)) return false;
-      const inv = invoicesData?.find(i => i.id === o.invoice_id);
+      const inv = fetchedInvMap[o.invoice_id];
       const invTotal = Number(inv?.total || 0);
       const det = detectBonusFromInvoice(inv?.materials_detail, o.service);
       // Kategori 1: Omset >= 1jt (EXCLUDING Pemasangan/Install)
@@ -561,9 +574,10 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
       const hasFreonKapasitor = det.freon || det.kapasitor;
       return isOmsetBesar || isInstallMulti || hasFreonKapasitor;
     });
+    setPeriodInvMap(fetchedInvMap);
     setOrdersNoBonus(eligible);
     setLoadingBonus(false);
-  }, [supabase, periodStart, periodEnd, invoicesData]);
+  }, [supabase, periodStart, periodEnd]);
 
   useEffect(() => { if (subTab === "payroll") loadPayroll(); }, [subTab, loadPayroll]);
   useEffect(() => { if (subTab === "komisi") loadBonuses(); }, [subTab, loadBonuses]);
@@ -1231,7 +1245,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                 <div style={{ display: "grid", gap: 8 }}>
                   {ordersNoBonus.map(o => {
                     const team = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean);
-                    const inv = invoicesData?.find(i => i.id === o.invoice_id);
+                    const inv = periodInvMap[o.invoice_id];
                     const isComplain = o.service === "Complain";
                     const detected = detectBonusFromInvoice(inv?.materials_detail, o.service);
                     return (
