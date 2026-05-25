@@ -50,6 +50,25 @@ function addWeeks(mondayStr, n) {
   d.setDate(d.getDate() + n * 7);
   return localDateStr(d);
 }
+// Helper bulan untuk komisi — "2026-05"
+function getMonthStart(ym) { return ym + "-01"; } // "2026-05" → "2026-05-01"
+function getMonthEnd(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  return localDateStr(new Date(y, m, 0)); // hari terakhir bulan
+}
+function addMonths(ym, n) {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function fmtMonth(ym) {
+  const [y, m] = ym.split("-");
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+}
+function todayYearMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 function fmtRp(n) {
   if (!n && n !== 0) return "-";
   const abs = Math.abs(Number(n));
@@ -519,7 +538,10 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   // localBonus: { rowId: [{label, amount}] } — local buffer, no DB call on each keystroke
   const [localBonus, setLocalBonus]   = useState({});
 
-  // ── Komisi state ──
+  // ── Komisi state (periode BULANAN — terpisah dari payroll mingguan) ──
+  const [bonusMonth, setBonusMonth]     = useState(() => todayYearMonth()); // "2026-05"
+  const bonusStart = getMonthStart(bonusMonth);
+  const bonusEnd   = getMonthEnd(bonusMonth);
   const [bonuses, setBonuses]           = useState([]);
   const [ordersNoBonus, setOrdersNoBonus] = useState([]);
   const [periodInvMap, setPeriodInvMap] = useState({}); // { invoiceId: { id, total, materials_detail } }
@@ -538,12 +560,12 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     setLoadingPayroll(false);
   }, [supabase, periodStart]);
 
-  // ── Load bonuses ──
+  // ── Load bonuses (periode BULANAN) ──
   const loadBonuses = useCallback(async () => {
     setLoadingBonus(true);
     const [bonRes, ordRes] = await Promise.all([
-      fetchOrderBonusesByPeriod(supabase, addWeeks(periodStart, -8), getSaturdayOf(addWeeks(periodStart, 1))),
-      fetchOrdersWithoutBonus(supabase, periodStart, periodEnd),
+      fetchOrderBonusesByPeriod(supabase, bonusStart, bonusEnd),
+      fetchOrdersWithoutBonus(supabase, bonusStart, bonusEnd),
     ]);
     setBonuses(bonRes.data || []);
 
@@ -577,7 +599,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     setPeriodInvMap(fetchedInvMap);
     setOrdersNoBonus(eligible);
     setLoadingBonus(false);
-  }, [supabase, periodStart, periodEnd]);
+  }, [supabase, bonusStart, bonusEnd]);
 
   useEffect(() => { if (subTab === "payroll") loadPayroll(); }, [subTab, loadPayroll]);
   useEffect(() => { if (subTab === "komisi") loadBonuses(); }, [subTab, loadBonuses]);
@@ -725,7 +747,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     if (!t?.phone) { showNotif?.("❌ Nomor HP " + row.user_name + " tidak ditemukan"); return; }
     const bonusMinggu = bonuses.filter(b =>
       b.status === "PAID" && (b.team_members || []).includes(row.user_name) &&
-      b.order_date >= periodStart && b.order_date <= periodEnd
+      b.order_date >= bonusStart && b.order_date <= bonusEnd
     );
     const msg = buildSlipMsg(row, bonusMinggu);
     openWA?.(t.phone, msg);
@@ -1178,7 +1200,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                   {slipPreview === row.user_id && (() => {
                     const bonusMinggu = bonuses.filter(b =>
                       b.status === "PAID" && (b.team_members || []).includes(row.user_name) &&
-                      b.order_date >= periodStart && b.order_date <= periodEnd
+                      b.order_date >= bonusStart && b.order_date <= bonusEnd
                     );
                     const msg = buildSlipMsg(row, bonusMinggu);
                     return (
@@ -1218,10 +1240,10 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
 
             {/* Period selector */}
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <button onClick={() => setPeriodStart(addWeeks(periodStart, -1))} style={{ padding: "6px 12px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.text, cursor: "pointer", fontSize: 13 }}>← Minggu Lalu</button>
-              <div style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>📅 {fmtDate(periodStart)} — {fmtDate(periodEnd)}</div>
-              <button onClick={() => setPeriodStart(addWeeks(periodStart, 1))} style={{ padding: "6px 12px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.text, cursor: "pointer", fontSize: 13 }}>Minggu Depan →</button>
-              <button onClick={() => setPeriodStart(getMondayOf(TODAY))} style={{ padding: "6px 12px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.accent, cursor: "pointer", fontSize: 13 }}>Minggu Ini</button>
+              <button onClick={() => setBonusMonth(addMonths(bonusMonth, -1))} style={{ padding: "6px 12px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.text, cursor: "pointer", fontSize: 13 }}>← Bulan Lalu</button>
+              <div style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>📅 {fmtMonth(bonusMonth)}</div>
+              <button onClick={() => setBonusMonth(addMonths(bonusMonth, 1))} style={{ padding: "6px 12px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.text, cursor: "pointer", fontSize: 13 }}>Bulan Depan →</button>
+              <button onClick={() => setBonusMonth(todayYearMonth())} style={{ padding: "6px 12px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.accent, cursor: "pointer", fontSize: 13 }}>Bulan Ini</button>
             </div>
 
             {/* Filter status */}
@@ -1241,7 +1263,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
             {/* Orders belum di-review */}
             {ordersNoBonus.length > 0 && (
               <div style={{ background: cs.surface, borderRadius: 10, padding: 14, border: "1px solid " + cs.yellow }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: cs.yellow, marginBottom: 10 }}>⚠️ {ordersNoBonus.length} Order Minggu Ini Belum Di-review Bonus</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: cs.yellow, marginBottom: 10 }}>⚠️ {ordersNoBonus.length} Order Bulan {fmtMonth(bonusMonth)} Belum Di-review Bonus</div>
                 <div style={{ display: "grid", gap: 8 }}>
                   {ordersNoBonus.map(o => {
                     const team = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean);
