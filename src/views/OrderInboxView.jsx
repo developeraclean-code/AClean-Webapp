@@ -1650,7 +1650,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           <div>
             <label style={labelStyle}>Layanan *</label>
             <select style={inputStyle} value={form.service} onChange={e => setField("service", e.target.value)}>
-              {[...SERVICE_TYPES, "Maintenance"].map(s => <option key={s} value={s}>{s}</option>)}
+              {SERVICE_TYPES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
 
