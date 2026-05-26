@@ -1271,6 +1271,10 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     const inv = periodInvMap[o.invoice_id];
                     const isComplain = o.service === "Complain";
                     const detected = detectBonusFromInvoice(inv?.materials_detail, o.service);
+                    const invTotal = Number(inv?.total || 0);
+                    const isOmsetBesar = (o.service !== "Install" && invTotal >= 1000000) ||
+                                         (o.service === "Install" && invTotal >= 1500000);
+                    const isInstallMulti = o.service === "Install" && Number(o.units) >= 2;
                     return (
                       <div key={o.id} style={{ background: cs.card, borderRadius: 8, padding: "10px 12px", border: "1px solid " + (isComplain ? cs.red + "66" : cs.border) }}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
@@ -1284,6 +1288,9 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                               {inv?.total > 0 && <span style={{ fontSize: 11, color: cs.accent }}>Invoice: {fmtRp(inv.total)}</span>}
                               {detected.freon && <span style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>🧊 Freon</span>}
                               {detected.kapasitor && <span style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>⚡ Kapasitor</span>}
+                              {detected.thermis && <span style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>🌡️ Thermis</span>}
+                              {isOmsetBesar && <span style={{ fontSize: 10, background: "#14532d", color: "#86efac", borderRadius: 4, padding: "1px 6px" }}>💰 Omset {o.service === "Install" ? "≥1,5jt" : "≥1jt"}</span>}
+                              {isInstallMulti && <span style={{ fontSize: 10, background: "#422006", color: "#fcd34d", borderRadius: 4, padding: "1px 6px" }}>🔩 Install {o.units} unit</span>}
                             </div>
                           </div>
                           <button onClick={() => setBonusForm({ order: o, inv, team })} style={{ padding: "6px 14px", borderRadius: 7, background: isComplain ? "#6b7280" : cs.accent, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
