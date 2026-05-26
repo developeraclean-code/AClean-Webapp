@@ -1,6 +1,23 @@
 import React, { lazy, Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import * as Sentry from "@sentry/react"
+
+// Initialize Sentry for error tracking
+if (import.meta.env.VITE_SENTRY_DSN) {
+  Sentry.init({
+    dsn: import.meta.env.VITE_SENTRY_DSN,
+    environment: import.meta.env.MODE,
+    tracesSampleRate: 1.0,
+    beforeSend(event, hint) {
+      // Skip noisy errors (optional)
+      if (event.exception?.values?.[0]?.type === "ChunkLoadError") {
+        return null; // Chunk load errors sudah ditangani dengan reload
+      }
+      return event;
+    }
+  });
+}
 
 // Auto-reload saat dynamic import gagal (deploy baru di Vercel — asset hash lama hilang).
 // Cek flag agar tidak infinite reload loop.
@@ -29,19 +46,41 @@ if (isCustomerDomain && !pathMatch) {
 function Root() {
   if (pathMatch) {
     return (
-      <Suspense fallback={
+      <Sentry.ErrorBoundary fallback={
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f0f4f8" }}>
           <div style={{ textAlign: "center", fontFamily: "sans-serif" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>❄️</div>
-            <div style={{ fontWeight: 700, color: "#0369a1" }}>Memuat...</div>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+            <div style={{ fontWeight: 700, color: "#dc2626" }}>Ada kesalahan</div>
+            <div style={{ fontSize: 14, color: "#666", marginTop: 8 }}>Silakan refresh halaman</div>
           </div>
         </div>
       }>
-        <CustomerPortalView token={pathMatch[1]} />
-      </Suspense>
+        <Suspense fallback={
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f0f4f8" }}>
+            <div style={{ textAlign: "center", fontFamily: "sans-serif" }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>❄️</div>
+              <div style={{ fontWeight: 700, color: "#0369a1" }}>Memuat...</div>
+            </div>
+          </div>
+        }>
+          <CustomerPortalView token={pathMatch[1]} />
+        </Suspense>
+      </Sentry.ErrorBoundary>
     )
   }
-  return <App />
+  return (
+    <Sentry.ErrorBoundary fallback={
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f0f4f8" }}>
+        <div style={{ textAlign: "center", fontFamily: "sans-serif" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+          <div style={{ fontWeight: 700, color: "#dc2626" }}>Ada kesalahan</div>
+          <div style={{ fontSize: 14, color: "#666", marginTop: 8 }}>Silakan refresh halaman</div>
+        </div>
+      </div>
+    }>
+      <App />
+    </Sentry.ErrorBoundary>
+  )
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(

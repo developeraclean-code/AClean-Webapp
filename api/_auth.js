@@ -18,6 +18,10 @@
 // ============================================================
 
 import crypto from "crypto";
+import { initSentry } from "./sentry-init.js";
+
+// Initialize Sentry once per serverless instance
+initSentry();
 
 // ── fetchWithTimeout: Fetch with timeout support ──
 export async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {

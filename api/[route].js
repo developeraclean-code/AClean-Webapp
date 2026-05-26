@@ -1,5 +1,6 @@
 // api/[route].js - AClean Unified API Router
 import { setCorsHeaders, checkRateLimit, validateInternalToken, signAppToken } from "./_auth.js";
+import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
 const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers"];
@@ -2348,6 +2349,19 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 
   } catch(err) {
     console.error("[api/" + route + "] Error:", err.message);
+
+    // Capture error to Sentry
+    Sentry.captureException(err, {
+      tags: {
+        route,
+        method: req.method,
+      },
+      extra: {
+        url: req.url,
+        // Don't log sensitive data like phone numbers
+      },
+    });
+
     return res.status(500).json({ error: "Internal server error", detail: err.message });
   }
 }

@@ -10,6 +10,11 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import * as Sentry from "@sentry/node";
+import { initSentry, setCronContext } from "./sentry-init.js";
+
+// Initialize Sentry
+initSentry();
 
 const sb = createClient(
   process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
@@ -1100,6 +1105,9 @@ export default async function handler(req, res) {
   const task = req.query.task || "reminder";
 
   try {
+    // Set Sentry context for cron job
+    setCronContext(task);
+
     let result;
     if (task === "daily")              result = await taskDaily();
     else if (task === "stock")         result = await taskStock();
@@ -1118,6 +1126,17 @@ export default async function handler(req, res) {
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });
   } catch(err) {
     await log("CRON_ERROR", `task=${task}: ${err.message}`, "ERROR");
-    return res.status(500).json({ ok:false, error:err.message });
+
+    // Capture cron error to Sentry
+    Sentry.captureException(err, {
+      tags: {
+        type: "cron",
+        task: task,
+        timestamp: new Date().toISOString(),
+      },
+    });
+
+    // Return 200 (not 500) so Vercel doesn't retry the cron job
+    return res.status(200).json({ ok:false, error:err.message, task });
   }
 }
