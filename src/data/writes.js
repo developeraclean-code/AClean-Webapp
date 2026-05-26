@@ -27,8 +27,17 @@ export const deleteOrder = async (supabase, id, userName) => {
 export const insertInvoice = (supabase, payload) =>
   supabase.from("invoices").insert(payload);
 
-export const updateInvoice = (supabase, id, fields, userName) =>
-  supabase.from("invoices").update({ ...fields, last_changed_by: userName }).eq("id", id);
+// updateInvoice auto-invalidate PDF cache: setiap edit invoice, pdf_url di-NULL kan
+// supaya next generate pakai data terbaru. Lihat src/lib/pdfCache.js + generateInvoicePDFBlob di App.jsx.
+// Caller bisa override dengan fields.pdf_url eksplisit (mis. saat cache flow set ulang URL baru).
+export const updateInvoice = (supabase, id, fields, userName) => {
+  const hasExplicitPdfUrl = Object.prototype.hasOwnProperty.call(fields || {}, "pdf_url");
+  const invalidation = hasExplicitPdfUrl ? {} : { pdf_url: null, pdf_generated_at: null };
+  return supabase
+    .from("invoices")
+    .update({ ...fields, ...invalidation, last_changed_by: userName })
+    .eq("id", id);
+};
 
 export const markInvoicePaid = async (supabase, id, paidAt, userName) => {
   const { data: inv } = await supabase
