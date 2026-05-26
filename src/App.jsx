@@ -1686,17 +1686,82 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
 
 
   // Generate Invoice PDF blob via @react-pdf/renderer (reliable, no rasterization)
+  // 3-layer cache: memory (LRU) → DB pdf_url (R2) → fresh generation
   const generateInvoicePDFBlob = async (inv, portalLink = null) => {
+    const { getCachedPDF, setCachedPDF } = await import("./lib/pdfCache.js");
+    const variant = portalLink ? "wpl" : "nopl";
+    const version = `${inv.updated_at || inv.created_at || "v0"}:${variant}`;
+
+    // Layer 1: memory cache (fastest, <10ms)
+    const memCached = getCachedPDF("invoice", inv.id, version);
+    if (memCached) return memCached;
+
+    // Layer 2: DB cache (R2 fetch, ~200-500ms) — hanya untuk variant tanpa portalLink
+    if (!portalLink && inv.pdf_url) {
+      try {
+        const r = await fetch(inv.pdf_url);
+        if (r.ok) {
+          const blob = await r.blob();
+          setCachedPDF("invoice", inv.id, version, blob);
+          return blob;
+        }
+      } catch (err) {
+        console.warn("[generateInvoicePDFBlob] fetch cached pdf_url failed:", err.message);
+      }
+    }
+
+    // Layer 3: generate fresh (~3-5s)
     const { pdf } = await import("@react-pdf/renderer");
     const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
     const logoUrl = await fetchInvoiceLogoUrl();
-    return await pdf(
+    const blob = await pdf(
       <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} portalLink={portalLink} />
     ).toBlob();
+    setCachedPDF("invoice", inv.id, version, blob);
+
+    // Async upload ke R2 + simpan ke DB (non-blocking) — hanya variant tanpa portalLink
+    if (!portalLink && blob) {
+      cacheInvoicePDFToR2(inv.id, blob).catch(err =>
+        console.warn("[generateInvoicePDFBlob] background R2 cache failed:", err.message)
+      );
+    }
+    return blob;
+  };
+
+  // Upload PDF blob ke R2 + update invoices.pdf_url di DB. Non-blocking.
+  const cacheInvoicePDFToR2 = async (invoiceId, blob) => {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    const res = await _apiFetch("/api/upload-foto", {
+      method: "POST", headers: await _apiHeaders(),
+      body: JSON.stringify({
+        base64, filename: `Invoice_${invoiceId}.pdf`,
+        folder: "invoices", mimeType: "application/pdf"
+      })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.success || !d.key) {
+      throw new Error(d.error || "upload-foto failed");
+    }
+    const pdfUrl = `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+    // Simpan URL di DB — kalau gagal, cache memory tetap valid (degraded mode)
+    const { error: upErr } = await supabase
+      .from("invoices")
+      .update({ pdf_url: pdfUrl, pdf_generated_at: new Date().toISOString() })
+      .eq("id", invoiceId);
+    if (upErr) console.warn("[cacheInvoicePDFToR2] DB update failed:", upErr.message);
+    return pdfUrl;
   };
 
   const uploadInvoicePDFForWA = async (inv, portalLink = null) => {
     try {
+      // Fast path: kalau sudah ada pdf_url di DB & tidak butuh portalLink → langsung pakai
+      if (!portalLink && inv.pdf_url) return inv.pdf_url;
+
       const blob = await generateInvoicePDFBlob(inv, portalLink);
       if (!blob) return null;
       const filename = `Invoice_${inv.id}.pdf`;
@@ -1715,7 +1780,15 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok && d.success && d.key) {
-        return `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+        const pdfUrl = `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+        // Simpan ke DB juga (kalau variant tanpa portalLink)
+        if (!portalLink) {
+          supabase.from("invoices")
+            .update({ pdf_url: pdfUrl, pdf_generated_at: new Date().toISOString() })
+            .eq("id", inv.id)
+            .then(({ error }) => error && console.warn("[uploadInvoicePDFForWA] DB cache update failed:", error.message));
+        }
+        return pdfUrl;
       }
       console.warn("[uploadInvoicePDFForWA] upload response:", d);
       return null;
