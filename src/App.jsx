@@ -1798,16 +1798,113 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     }
   };
 
+  // Compute deterministic cache key untuk sekumpulan invoice + variant.
+  // Format: merge:{sorted_ids_csv}:{max_updated_at}:{variant}
+  // Variant berubah kalau invoice di-update (trigger updated_at di DB).
+  const computeMergedCacheKey = (invList, portalLink) => {
+    const sortedIds = [...invList].map(i => i.id).sort();
+    const maxUpdated = invList.reduce((max, i) => {
+      const u = i.updated_at || i.created_at || "v0";
+      return u > max ? u : max;
+    }, "");
+    const variant = portalLink ? "wpl" : "nopl";
+    return {
+      sortedIds,
+      cacheKey: `merge:${sortedIds.join(",")}:${maxUpdated}:${variant}`,
+      memVersion: `${maxUpdated}:${variant}`,
+    };
+  };
+
   // ── Multi-invoice merged PDF (1 dokumen tagihan gabungan: section per pekerjaan, total agregat) ──
+  // 3-layer cache: memory LRU → DB merged_pdf_cache (R2 fetch) → generate fresh + async cache
   const generateMergedInvoicePDFBlob = async (invList, portalLink = null) => {
     if (!Array.isArray(invList) || invList.length === 0) return null;
+    const { getCachedPDF, setCachedPDF } = await import("./lib/pdfCache.js");
+    const { sortedIds, cacheKey, memVersion } = computeMergedCacheKey(invList, portalLink);
+    const memId = sortedIds.join(",");
+
+    // Layer 1: memory cache
+    const memCached = getCachedPDF("merged", memId, memVersion);
+    if (memCached) return memCached;
+
+    // Layer 2: DB cache (R2 fetch) — hanya variant tanpa portalLink
+    if (!portalLink) {
+      try {
+        const { data } = await supabase
+          .from("merged_pdf_cache")
+          .select("pdf_url")
+          .eq("cache_key", cacheKey)
+          .maybeSingle();
+        if (data?.pdf_url) {
+          const r = await fetch(data.pdf_url);
+          if (r.ok) {
+            const blob = await r.blob();
+            setCachedPDF("merged", memId, memVersion, blob);
+            // Touch last_used (non-blocking)
+            supabase.from("merged_pdf_cache")
+              .update({ last_used: new Date().toISOString() })
+              .eq("cache_key", cacheKey)
+              .then(() => {});
+            return blob;
+          }
+        }
+      } catch (err) {
+        console.warn("[generateMergedInvoicePDFBlob] DB cache fetch failed:", err.message);
+      }
+    }
+
+    // Layer 3: generate fresh
     const { pdf } = await import("@react-pdf/renderer");
     const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
     const logoUrl = await fetchInvoiceLogoUrl();
     const entries = invList.map(inv => ({ inv, invoiceItems: [] }));
-    return await pdf(
+    const blob = await pdf(
       <InvoicePDF invList={entries} unified={true} logoUrl={logoUrl} appSettings={appSettings} portalLink={portalLink} />
     ).toBlob();
+    setCachedPDF("merged", memId, memVersion, blob);
+
+    // Async upload R2 + insert DB cache (non-blocking) — hanya variant nopl
+    if (!portalLink && blob) {
+      cacheMergedPDFToR2(cacheKey, sortedIds, blob).catch(err =>
+        console.warn("[generateMergedInvoicePDFBlob] background cache failed:", err.message)
+      );
+    }
+    return blob;
+  };
+
+  // Upload merged PDF ke R2 + insert ke merged_pdf_cache table. Non-blocking helper.
+  const cacheMergedPDFToR2 = async (cacheKey, invoiceIds, blob) => {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    const first = invoiceIds[0] || "merge";
+    const filename = `Merge_${first}_x${invoiceIds.length}_${Date.now()}.pdf`;
+    const res = await _apiFetch("/api/upload-foto", {
+      method: "POST", headers: await _apiHeaders(),
+      body: JSON.stringify({ base64, filename, folder: "invoices/merged", mimeType: "application/pdf" })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.success || !d.key) {
+      throw new Error(d.error || "upload-foto failed");
+    }
+    const pdfUrl = `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+    const { error: upErr } = await supabase
+      .from("merged_pdf_cache")
+      .upsert(
+        {
+          cache_key: cacheKey,
+          invoice_ids: invoiceIds,
+          pdf_url: pdfUrl,
+          generated_at: new Date().toISOString(),
+          last_used: new Date().toISOString(),
+        },
+        { onConflict: "cache_key" }
+      );
+    if (upErr) console.warn("[cacheMergedPDFToR2] DB upsert failed:", upErr.message);
+    return pdfUrl;
   };
 
   // Preview tanpa upload — buka di tab baru agar user bisa cek isi PDF sebelum kirim
@@ -1878,10 +1975,35 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
 
   const uploadMergedInvoicePDFForWA = async (invList, portalLink = null) => {
     try {
+      if (!Array.isArray(invList) || invList.length === 0) return null;
+      const { sortedIds, cacheKey } = computeMergedCacheKey(invList, portalLink);
+      const first = sortedIds[0] || "merge";
+      const filename = `Invoice_Gabungan_${first}_x${sortedIds.length}.pdf`;
+
+      // Fast path: DB cache lookup (hanya variant nopl)
+      if (!portalLink) {
+        try {
+          const { data } = await supabase
+            .from("merged_pdf_cache")
+            .select("pdf_url")
+            .eq("cache_key", cacheKey)
+            .maybeSingle();
+          if (data?.pdf_url) {
+            // Touch last_used (non-blocking)
+            supabase.from("merged_pdf_cache")
+              .update({ last_used: new Date().toISOString() })
+              .eq("cache_key", cacheKey)
+              .then(() => {});
+            return { url: data.pdf_url, filename };
+          }
+        } catch (err) {
+          console.warn("[uploadMergedInvoicePDFForWA] DB cache lookup failed:", err.message);
+        }
+      }
+
+      // Generate + upload sync (return URL synchronously untuk WA send)
       const blob = await generateMergedInvoicePDFBlob(invList, portalLink);
       if (!blob) return null;
-      const first = invList[0]?.id || "merge";
-      const filename = `Invoice_Gabungan_${first}_x${invList.length}.pdf`;
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result.split(",")[1]);
@@ -1896,11 +2018,28 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
         })
       });
       const d = await res.json().catch(() => ({}));
-      if (res.ok && d.success && d.key) {
-        return { url: `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`, filename };
+      if (!res.ok || !d.success || !d.key) {
+        console.warn("[uploadMergedInvoicePDFForWA] upload response:", d);
+        return null;
       }
-      console.warn("[uploadMergedInvoicePDFForWA] upload response:", d);
-      return null;
+      const pdfUrl = `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
+
+      // Save ke DB cache (hanya variant nopl) — non-blocking
+      if (!portalLink) {
+        supabase.from("merged_pdf_cache")
+          .upsert(
+            {
+              cache_key: cacheKey,
+              invoice_ids: sortedIds,
+              pdf_url: pdfUrl,
+              generated_at: new Date().toISOString(),
+              last_used: new Date().toISOString(),
+            },
+            { onConflict: "cache_key" }
+          )
+          .then(({ error }) => error && console.warn("[uploadMergedInvoicePDFForWA] DB cache upsert failed:", error.message));
+      }
+      return { url: pdfUrl, filename };
     } catch (err) {
       console.warn("[uploadMergedInvoicePDFForWA] gagal:", err.message);
       return null;
