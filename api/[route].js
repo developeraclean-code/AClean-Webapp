@@ -1577,7 +1577,9 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 
       if (process.env.FONNTE_TOKEN) {
         try {
+          // Fonnte /validate butuh POST, tidak GET
           const r = await fetch("https://api.fonnte.com/validate", {
+            method: "POST",
             headers: { Authorization: process.env.FONNTE_TOKEN }
           });
           checks.fonnte = r.ok ? "ok" : "fail:" + r.status;
