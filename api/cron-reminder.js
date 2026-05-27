@@ -576,6 +576,90 @@ async function taskBackupData() {
 
 // ══════════════════════════════════════════════════
 // ══════════════════════════════════════════════════
+// TASK: Morning Dispatch — kirim WA konfirmasi + link portal ke customer hari ini (09:30 WIB)
+// Hanya order yang punya teknisi + phone customer + belum dapat WA (portal_wa_sent_at IS NULL)
+// ══════════════════════════════════════════════════
+async function taskMorningDispatch() {
+  const { data: togData } = await sb.from("app_settings").select("key,value")
+    .in("key", ["morning_dispatch_enabled", "cron_jobs", "customer_portal_enabled", "customer_portal_url"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+
+  if (!isCronJobEnabled(togMap, "morning_dispatch_enabled") || togMap["morning_dispatch_enabled"] !== "true") {
+    await log("MORNING_DISPATCH", "Dilewati — morning_dispatch_enabled OFF", "INFO");
+    return { skipped: true };
+  }
+  if (togMap["customer_portal_enabled"] !== "true") {
+    await log("MORNING_DISPATCH", "Dilewati — customer_portal_enabled OFF", "INFO");
+    return { skipped: true };
+  }
+
+  const APP_URL = togMap["customer_portal_url"] || process.env.APP_URL || "https://a-clean-webapp.vercel.app";
+  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" }); // YYYY-MM-DD WIB
+
+  // Ambil order hari ini: ada teknisi, ada phone, belum dapat portal WA
+  const { data: orders } = await sb.from("orders")
+    .select("id,customer,phone,service,date,time,teknisi,helper,address")
+    .eq("date", today)
+    .not("teknisi", "is", null)
+    .not("phone", "is", null)
+    .is("portal_wa_sent_at", null)
+    .not("status", "in", "(CANCELLED,REJECTED)")
+    .limit(100);
+
+  if (!orders?.length) return { sent: 0, reason: "Tidak ada order hari ini yang perlu dispatch WA" };
+
+  let sent = 0, failed = 0;
+  for (const order of orders) {
+    try {
+      // Generate / refresh customer token
+      const { data: tokRows } = await sb.from("customer_tokens")
+        .select("token,expires_at").eq("phone", order.phone).limit(1);
+      let token = tokRows?.[0]?.token;
+      const tokExpired = tokRows?.[0]?.expires_at && new Date(tokRows[0].expires_at) < new Date();
+      if (!token || tokExpired) {
+        const { randomBytes } = await import("crypto");
+        token = randomBytes(24).toString("hex");
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        if (tokRows?.length > 0) {
+          await sb.from("customer_tokens").update({ token, expires_at: expiresAt, customer_name: order.customer }).eq("phone", order.phone);
+        } else {
+          await sb.from("customer_tokens").insert({ phone: order.phone, token, expires_at: expiresAt, customer_name: order.customer });
+        }
+      }
+
+      const link = `${APP_URL}/status/${token}`;
+      const tgl = new Date(order.date).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
+      const team = [order.teknisi, order.helper].filter(Boolean).join(" & ");
+      const msg =
+        `Halo ${order.customer}! 👋\n` +
+        `Ini adalah Pesan Otomatis Konfirmasi Pesanan Anda 😊\n` +
+        `Tim AClean sedang menuju lokasi Anda sekarang 🚗\n\n` +
+        `📋 Detail Servis:\n` +
+        `• Layanan  : ${order.service}\n` +
+        `• Jadwal   : ${tgl} · ${order.time || "--:--"}\n` +
+        `• Tim      : ${team}\n` +
+        `• Lokasi   : ${order.address || "-"}\n\n` +
+        `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
+        `Link aktif 30 hari sejak Pemesanan Anda. Detail Service, Pembayaran, Complain dan History Pengerjaan Di Lokasi. Jika Ada Pertanyaan? Balas pesan ini.\n— AClean Service`;
+
+      const ok = await sendWA(order.phone, msg);
+      if (ok) {
+        // Tandai sudah dikirim agar tidak dobel
+        await sb.from("orders").update({ portal_wa_sent_at: new Date().toISOString() }).eq("id", order.id);
+        sent++;
+        await log("MORNING_DISPATCH_SENT", `WA dispatch → ${order.customer} (${order.id})`, "SUCCESS");
+      } else {
+        failed++;
+      }
+    } catch (e) {
+      failed++;
+      await log("MORNING_DISPATCH_ERR", `Gagal dispatch → ${order.id}: ${e.message}`, "ERROR");
+    }
+  }
+
+  return { sent, failed, total: orders.length };
+}
+
 // TASK 9: Rating Prompt H+1 — cek order COMPLETED kemarin, kirim WA minta rating
 // ══════════════════════════════════════════════════
 async function taskRatingPrompt() {
@@ -1155,6 +1239,7 @@ export default async function handler(req, res) {
       "bukti-bayar":      taskScanBuktiBayar,
       "backup":           taskBackupData,
       "weekly":           taskWeeklyReport,
+      "morning-dispatch": taskMorningDispatch,
       "rating-prompt":    taskRatingPrompt,
       "servis-reminder":  taskServisReminder,
       "voucher-expiry":   taskVoucherExpiryReminder,

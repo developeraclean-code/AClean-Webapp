@@ -815,6 +815,12 @@ const d = await r.json();
                 <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8, fontWeight: 600 }}>Fitur Tambahan Portal (Phase 2 & 3)</div>
                 {[
                   {
+                    key: "morning_dispatch_enabled",
+                    label: "Dispatch WA Pagi Otomatis (09:30 WIB)",
+                    desc: "Kirim WA konfirmasi + link portal ke semua customer yang punya jadwal hari ini & sudah ada teknisi. Jalan tiap hari jam 09:30 WIB. Order yang sudah di-dispatch manual tidak akan dikirim ulang.",
+                    icon: "🚗",
+                  },
+                  {
                     key: "rating_prompt_enabled",
                     label: "Rating Pasca-Servis (H+1)",
                     desc: "Kirim WA otomatis H+1 setelah job selesai, minta customer beri rating ⭐. Rating ≤2 → alert langsung ke Owner.",

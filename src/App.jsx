@@ -3608,7 +3608,8 @@ ${photoPageHTML}
             const tgl = new Date(order.date).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
             const team = [order.teknisi, order.helper].filter(Boolean).join(" & ");
             const portalMsg =
-              `Halo ${order.customer}! 👋\n\n` +
+              `Halo ${order.customer}! 👋\n` +
+              `Ini adalah Pesan Otomatis Konfirmasi Pesanan Anda 😊\n` +
               `Tim AClean sedang menuju lokasi Anda sekarang 🚗\n\n` +
               `📋 Detail Servis:\n` +
               `• Layanan  : ${order.service}\n` +
@@ -3616,8 +3617,10 @@ ${photoPageHTML}
               `• Tim      : ${team || order.teknisi}\n` +
               `• Lokasi   : ${order.address || "-"}\n\n` +
               `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
-              `Link aktif 30 hari. Pertanyaan? Balas pesan ini.\n— AClean Service`;
+              `Link aktif 30 hari sejak Pemesanan Anda. Detail Service, Pembayaran, Complain dan History Pengerjaan Di Lokasi. Jika Ada Pertanyaan? Balas pesan ini.\n— AClean Service`;
             await sendWA(order.phone, portalMsg);
+            // Tandai portal WA sudah dikirim agar cron morning-dispatch tidak kirim dobel
+            await supabase.from("orders").update({ portal_wa_sent_at: new Date().toISOString() }).eq("id", order.id);
             addAgentLog("PORTAL_LINK_SENT", `Link portal terkirim ke ${order.customer} (${order.phone})`, "SUCCESS");
           }
         } catch (e) { /* portal link opsional — tidak blok dispatch */ }
