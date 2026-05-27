@@ -2,7 +2,7 @@ import { memo, useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import {
   fetchWeeklyPayroll, fetchDaysWorkedFromOrders, fetchKasbonByPeriod,
-  fetchOrderBonusesByPeriod, fetchOrdersWithoutBonus,
+  fetchOrderBonusesByPeriod, fetchOrdersWithoutBonus, fetchAvailabilityByUserPeriod,
 } from "../data/reads.js";
 import {
   updateUserDailyRate, upsertWeeklyPayroll, updateWeeklyPayroll,
@@ -633,12 +633,19 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     const prevMap = Object.fromEntries((prevRows || []).map(r => [r.user_id, r]));
 
     const results = await Promise.all(aktif.map(async (t) => {
-      // Hari masuk dari orders + kasbon periode ini (paralel)
-      const [oRes, kRes] = await Promise.all([
+      // Hari masuk dari orders + kasbon + availability override (paralel)
+      const [oRes, kRes, aRes] = await Promise.all([
         fetchDaysWorkedFromOrders(supabase, t.name, periodStart, periodEnd),
         fetchKasbonByPeriod(supabase, t.name, periodStart, periodEnd),
+        fetchAvailabilityByUserPeriod(supabase, t.name, periodStart, periodEnd),
       ]);
-      const daysWorked = new Set((oRes.data || []).map(o => o.date)).size;
+      // Hybrid: auto dari orders, +STANDBY, −IJIN/SAKIT/ALPA
+      const orderDates = new Set((oRes.data || []).map(o => o.date));
+      for (const a of (aRes.data || [])) {
+        if (a.status === "STANDBY") orderDates.add(a.date);
+        else if (["IJIN","SAKIT","ALPA"].includes(a.status)) orderDates.delete(a.date);
+      }
+      const daysWorked = orderDates.size;
       const kasbonTotal = (kRes.data || []).reduce((s, e) => s + Number(e.amount), 0);
 
       const existing = payrollRows.find(r => r.user_id === t.id);

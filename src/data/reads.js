@@ -93,6 +93,15 @@ export const fetchTechAvailability = (supabase, fromDate) =>
   supabase.from("technician_availability").select("*")
     .gte("date", fromDate).order("date").limit(200);
 
+// Availability override per orang per periode (payroll) — hanya yang punya status non-null
+export const fetchAvailabilityByUserPeriod = (supabase, userName, periodStart, periodEnd) =>
+  supabase.from("technician_availability")
+    .select("date,status,reason")
+    .eq("teknisi", userName)
+    .gte("date", periodStart)
+    .lte("date", periodEnd)
+    .not("status", "is", null);
+
 // ───── PAYROLL ─────
 export const fetchWeeklyPayroll = (supabase, periodStart) =>
   supabase.from("weekly_payroll")

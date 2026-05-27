@@ -2643,9 +2643,9 @@ ${photoPageHTML}
       const adminBlocked = ["settings", "myreport", "monitoring", "finance", "pricelist"];
       return !adminBlocked.includes(menu);
     }
-    // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri, komisi
+    // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri (komisi disembunyikan — password shared)
     if (role === "Teknisi" || role === "Helper")
-      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "komisi";
+      return menu === "dashboard" || menu === "schedule" || menu === "myreport";
     // Finance: akses finance hub, invoice, biaya, statistik
     if (role === "Finance")
       return ["finance", "invoice", "biaya", "reports"].includes(menu);
