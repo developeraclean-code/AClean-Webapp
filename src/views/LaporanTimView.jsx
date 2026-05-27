@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
+import { normalizePhone } from "../lib/phone.js";
 
 function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData }) {
 const sMap = { SUBMITTED: [cs.accent, "Submitted"], VERIFIED: [cs.green, "Terverifikasi"], REVISION: [cs.yellow, "Perlu Revisi"], REJECTED: [cs.red, "Ditolak"] };
@@ -280,6 +281,24 @@ const verifyLaporan = async (r) => {
         }
       }
       setInvoicesData(prev => prev.filter(inv => inv.job_id !== r.job_id));
+    }
+    // Auto-discount membership tier (Gold: jasa 5%, Platinum: jasa 5% + material 5%)
+    if (customersData) {
+      const custPhone2 = r.phone || ord?.phone || customersData.find(c => c.name === r.customer)?.phone;
+      const custData2 = custPhone2
+        ? customersData.find(c => c.phone === custPhone2 || c.phone === normalizePhone(custPhone2))
+        : null;
+      const custTier2 = custData2?.membership_tier;
+      if ((custTier2 === "gold" || custTier2 === "platinum") && newInv.status === "PENDING_APPROVAL" && newInv.total > 0) {
+        const laborDisc2 = Math.round((newInv.labor || 0) * 0.05);
+        const matDisc2 = custTier2 === "platinum" ? Math.round((newInv.material || 0) * 0.05) : 0;
+        const memberDisc2 = laborDisc2 + matDisc2;
+        if (memberDisc2 > 0) {
+          newInv.discount = (newInv.discount || 0) + memberDisc2;
+          newInv.member_discount = memberDisc2;
+          newInv.total = Math.max(0, newInv.total - memberDisc2);
+        }
+      }
     }
     setInvoicesData(prev => [...prev, newInv]);
     const { error: iErr } = await insertInvoice(supabase, newInv);
