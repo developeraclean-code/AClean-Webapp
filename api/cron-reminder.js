@@ -13,6 +13,7 @@ import { createClient } from "@supabase/supabase-js";
 import * as Sentry from "@sentry/node";
 import { initSentry, setCronContext } from "./sentry-init.js";
 import { runWithCronLogging, logStructured } from "./_logger.js";
+import { verifyAppToken } from "./_auth.js";
 
 // Initialize Sentry
 initSentry();
@@ -1125,9 +1126,15 @@ export default async function handler(req, res) {
     if (!authorized && internalSecret) {
       const iToken = req.headers["x-internal-token"] || req.headers["x-api-key"] || "";
       if (iToken.length > 0) {
-        const tBuf = Buffer.from(iToken, "utf-8");
-        const sBuf = Buffer.from(internalSecret, "utf-8");
-        if (tBuf.length === sBuf.length) authorized = timingSafeEqual(tBuf, sBuf);
+        // Accept App Token (HMAC-signed JWT dari _auth.js signAppToken)
+        if (iToken.split(".").length === 3) {
+          const claims = verifyAppToken(iToken);
+          if (claims) authorized = true;
+        } else {
+          const tBuf = Buffer.from(iToken, "utf-8");
+          const sBuf = Buffer.from(internalSecret, "utf-8");
+          if (tBuf.length === sBuf.length) authorized = timingSafeEqual(tBuf, sBuf);
+        }
       }
     }
   } catch {
