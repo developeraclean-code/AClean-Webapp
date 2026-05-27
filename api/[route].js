@@ -2153,19 +2153,24 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const variants = buildPhoneVariants(phone);
       const phoneFilter = variants.map(v => `phone.eq.${encodeURIComponent(v)}`).join(",");
 
-      // Query orders, invoices, dan owner_phone paralel
+      // Query orders, invoices, owner_phone, dan customer membership paralel
       // phone & notes dihapus dari orders — tidak perlu ditampilkan ke customer
       // phone, paid_method, invoice_type, labor, material dihapus dari invoices
-      const [ordRes, invRes, ownerRes] = await Promise.all([
+      const phoneVariantsFilter = variants.map(v => `phone.eq.${encodeURIComponent(v)}`).join(",");
+      const [ordRes, invRes, ownerRes, custRes] = await Promise.all([
         fetch(`${SU}/rest/v1/orders?or=(${phoneFilter})&order=date.desc,time.desc&limit=20&select=id,customer,address,area,service,type,units,teknisi,helper,teknisi2,helper2,date,time,time_end,status`, { headers }),
         fetch(`${SU}/rest/v1/invoices?or=(${phoneFilter})&order=created_at.desc&limit=20&select=id,job_id,customer,service,units,total,status,due,paid_at,paid_amount,remaining_amount,garansi_days,garansi_expires`, { headers }),
         fetch(`${SU}/rest/v1/app_settings?key=eq.owner_phone&select=value`, { headers }),
+        fetch(`${SU}/rest/v1/customers?or=(${phoneVariantsFilter})&select=membership_tier,total_units_serviced&limit=1`, { headers }),
       ]);
 
       const orders = ordRes.ok ? await ordRes.json() : [];
       const invoices = invRes.ok ? await invRes.json() : [];
       const ownerRows = ownerRes.ok ? await ownerRes.json() : [];
+      const custRows = custRes.ok ? await custRes.json() : [];
       const contactPhone = ownerRows[0]?.value || process.env.OWNER_PHONE || "";
+      const membershipTier = custRows[0]?.membership_tier || "silver";
+      const totalUnitsServiced = custRows[0]?.total_units_serviced || 0;
 
       // Ambil nama customer dari order pertama
       const customerName = orders[0]?.customer || tokRow.customer_name || "";
@@ -2190,6 +2195,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
         orders,
         invoices,
         reports,
+        membership_tier: membershipTier,
+        total_units_serviced: totalUnitsServiced,
         token_created: tokRow.created_at,
         token_expires: tokRow.expires_at,
       });

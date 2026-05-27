@@ -1031,7 +1031,17 @@ return (
           {((inv.discount || 0) > 0 || inv.trade_in) && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6, marginBottom: 6, fontSize: 11 }}>
               {(inv.discount || 0) > 0 && (
-                <div style={{ background: "#be123c18", borderRadius: 6, padding: "6px 10px", border: "1px solid #be123c33" }}><div style={{ color: cs.muted }}>Discount</div><div style={{ color: "#f43f5e", fontWeight: 700 }}>-{fmt(inv.discount)}</div></div>
+                <div style={{ background: "#be123c18", borderRadius: 6, padding: "6px 10px", border: "1px solid #be123c33" }}>
+                  <div style={{ color: cs.muted }}>
+                    {(inv.member_discount || 0) > 0
+                      ? `Diskon Member ${inv.member_discount === inv.discount ? "" : "(+manual)"}`
+                      : "Discount"}
+                  </div>
+                  <div style={{ color: "#f43f5e", fontWeight: 700 }}>-{fmt(inv.discount)}</div>
+                  {(inv.member_discount || 0) > 0 && (
+                    <div style={{ fontSize: 9, color: "#f43f5e99", marginTop: 1 }}>Dari tier: -{fmt(inv.member_discount)}</div>
+                  )}
+                </div>
               )}
               {inv.trade_in && (inv.trade_in_amount || 0) > 0 && (
                 <div style={{ background: "#be123c18", borderRadius: 6, padding: "6px 10px", border: "1px solid #be123c33" }}><div style={{ color: cs.muted }}>Trade-In AC</div><div style={{ color: "#f43f5e", fontWeight: 700 }}>-{fmt(inv.trade_in_amount)}</div></div>

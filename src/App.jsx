@@ -1540,6 +1540,26 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     }
   };
 
+  // ── Update membership tier customer setelah order Cleaning/Install selesai ──
+  const updateCustomerTierAfterOrder = async (order) => {
+    if (!["Cleaning", "Install"].includes(order?.service)) return;
+    const custPhone = order.phone || customersData.find(c => c.name === order.customer)?.phone;
+    if (!custPhone) return;
+    const cust = customersData.find(c => c.phone === custPhone || c.phone === normalizePhone(custPhone));
+    if (!cust?.id) return;
+    const addUnits = order.units || 1;
+    const newTotal = (cust.total_units_serviced || 0) + addUnits;
+    const newTier = newTotal >= 50 ? "platinum" : newTotal >= 30 ? "gold" : "silver";
+    if (newTier === (cust.membership_tier || "silver") && newTotal === (cust.total_units_serviced || 0)) return;
+    await supabase.from("customers").update({ total_units_serviced: newTotal, membership_tier: newTier }).eq("id", cust.id);
+    setCustomersData(prev => prev.map(c => c.id === cust.id ? { ...c, total_units_serviced: newTotal, membership_tier: newTier } : c));
+    if (newTier !== (cust.membership_tier || "silver")) {
+      const tierLabel = { gold: "🥇 Gold", platinum: "💎 Platinum" }[newTier] || newTier;
+      showNotif(`🎉 ${cust.name} naik ke Member ${tierLabel}!`);
+      addAgentLog("MEMBER_TIER_UP", `${cust.name} → ${newTier} (${newTotal} unit)`, "SUCCESS");
+    }
+  };
+
   const downloadRekapHarian = (targetDate) => {
     const tgl = targetDate || TODAY;
     const fmt2 = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
@@ -3177,6 +3197,7 @@ ${photoPageHTML}
                 if (ord && ["DISPATCHED", "ON_SITE"].includes(ord.status)) {
                   await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", r.job_id);
                   setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+                  updateCustomerTierAfterOrder(ord).catch(() => {});
                 }
               }
               addAgentLog("AUTO_VERIFIED",
@@ -6050,7 +6071,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       lookupHargaGlobal={lookupHargaGlobal} hargaPerUnitFromTipe={hargaPerUnitFromTipe} getBracketKey={getBracketKey} hitungLabor={hitungLabor}
       sendWA={sendWA} supabase={supabase} LAP_PAGE_SIZE={LAP_PAGE_SIZE} INSTALL_ITEMS={INSTALL_ITEMS}
       downloadServiceReportPDF={downloadServiceReportPDF}
-      setInvTxData={setInvTxData} setInventoryData={setInventoryData} />
+      setInvTxData={setInvTxData} setInventoryData={setInventoryData}
+      updateCustomerTierAfterOrder={updateCustomerTierAfterOrder} customersData={customersData} setCustomersData={setCustomersData} />
   );
 
   // ============================================================
@@ -10913,6 +10935,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               addAgentLog("GARANSI_EXPIRED_FEE",
                 `Invoice ${invId} — garansi expired (ref: ${prevGaransiExpired.id}) → biaya cek Rp ${BIAYA_CEK.toLocaleString("id-ID")}`,
                 "WARNING");
+            }
+
+            // ── Auto-discount membership tier (Gold: jasa 5%, Platinum: jasa 5% + material 5%) ──
+            {
+              const custPhone = laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone;
+              const custData = custPhone ? customersData.find(c => c.phone === custPhone || c.phone === normalizePhone(custPhone)) : null;
+              const custTier = custData?.membership_tier;
+              if (custTier === "gold" || custTier === "platinum") {
+                const laborDisc = Math.round((newInvoice.labor || 0) * 0.05);
+                const matDisc = custTier === "platinum" ? Math.round((newInvoice.material || 0) * 0.05) : 0;
+                const memberDisc = laborDisc + matDisc;
+                if (memberDisc > 0 && newInvoice.total > 0 && newInvoice.status === "PENDING_APPROVAL") {
+                  newInvoice.discount = (newInvoice.discount || 0) + memberDisc;
+                  newInvoice.member_discount = memberDisc;
+                  newInvoice.total = Math.max(0, newInvoice.total - memberDisc);
+                }
+              }
             }
 
             // Simpan invoice ke Supabase — exclude fields yang tidak ada di DB schema

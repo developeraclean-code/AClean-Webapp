@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData }) {
+function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData }) {
 const sMap = { SUBMITTED: [cs.accent, "Submitted"], VERIFIED: [cs.green, "Terverifikasi"], REVISION: [cs.yellow, "Perlu Revisi"], REJECTED: [cs.red, "Ditolak"] };
 const badge = (s) => {
   // Case insensitive status lookup
@@ -120,6 +120,7 @@ const verifyLaporan = async (r) => {
     if (ord0 && ["DISPATCHED","ON_SITE"].includes(ord0.status)) {
       await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
       setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+      if (updateCustomerTierAfterOrder) updateCustomerTierAfterOrder(ord0).catch(() => {});
     }
     showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
   } else {

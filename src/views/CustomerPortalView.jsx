@@ -218,59 +218,91 @@ export default function CustomerPortalView({ token: tokenProp }) {
 // ── SUB-COMPONENTS ──
 
 const TIERS = [
-  { label: "Bronze",   min: 1,  max: 4,  badge: "🥉", color: "#a16207", bg: "#fef9c3", border: "#fde047" },
-  { label: "Silver",   min: 5,  max: 9,  badge: "🥈", color: "#475569", bg: "#f1f5f9", border: "#94a3b8" },
-  { label: "Gold",     min: 10, max: 14, badge: "🥇", color: "#b45309", bg: "#fffbeb", border: "#fbbf24" },
-  { label: "Platinum", min: 15, max: Infinity, badge: "💎", color: "#6d28d9", bg: "#f5f3ff", border: "#a78bfa" },
+  {
+    key: "silver", label: "Silver", badge: "🥈", minUnits: 0, maxUnits: 29,
+    color: "#475569", bg: "#f1f5f9", border: "#94a3b8",
+    benefit: null,
+  },
+  {
+    key: "gold", label: "Gold", badge: "🥇", minUnits: 30, maxUnits: 49,
+    color: "#b45309", bg: "#fffbeb", border: "#fbbf24",
+    benefit: "Diskon Jasa 5%",
+    benefitBg: "linear-gradient(135deg,#fffbeb,#fef3c7)",
+    benefitColor: "#b45309",
+  },
+  {
+    key: "platinum", label: "Platinum", badge: "💎", minUnits: 50, maxUnits: Infinity,
+    color: "#6d28d9", bg: "#f5f3ff", border: "#a78bfa",
+    benefit: "Diskon Jasa 5% + Material 5%",
+    benefitBg: "linear-gradient(135deg,#f5f3ff,#ede9fe)",
+    benefitColor: "#6d28d9",
+  },
 ];
 
-function getTier(count) {
-  return TIERS.find(t => count >= t.min && count <= t.max) || TIERS[0];
+function getTierByKey(key) {
+  return TIERS.find(t => t.key === key) || TIERS[0];
 }
 
 function CustomerCard({ data }) {
-  const totalOrders = data.orders?.length || 0;
-  const tier = getTier(totalOrders);
+  const tier = getTierByKey(data.membership_tier || "silver");
+  const totalUnits = data.total_units_serviced || 0;
   const nextTier = TIERS[TIERS.indexOf(tier) + 1] || null;
   const progressPct = nextTier
-    ? Math.min(100, Math.round(((totalOrders - tier.min) / (nextTier.min - tier.min)) * 100))
+    ? Math.min(100, Math.round(((totalUnits - tier.minUnits) / (nextTier.minUnits - tier.minUnits)) * 100))
     : 100;
+  const totalOrders = data.orders?.length || 0;
+  const isGoldPlus = tier.key === "gold" || tier.key === "platinum";
 
   return (
     <div style={s.customerCard}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div style={s.customerLabel}>Portal Servis</div>
-        {totalOrders >= 1 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 5, background: tier.bg, border: "1px solid " + tier.border, borderRadius: 20, padding: "3px 10px" }}>
-            <span style={{ fontSize: 14 }}>{tier.badge}</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: tier.color }}>{tier.label}</span>
-          </div>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 5, background: tier.bg, border: "1px solid " + tier.border, borderRadius: 20, padding: "3px 10px" }}>
+          <span style={{ fontSize: 14 }}>{tier.badge}</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: tier.color }}>Member {tier.label}</span>
+        </div>
       </div>
       <div style={s.customerName}>{data.customer_name || "Pelanggan AClean"}</div>
       <div style={s.customerPhone}>📱 {data.phone}</div>
       <div style={s.customerMeta}>
         <span style={s.badge}>{totalOrders} kali servis</span>
+        <span style={s.badge}>{totalUnits} unit AC</span>
         {data.orders?.length > 0 && (
           <span style={s.badge}>Servis terakhir {fmtDateShort(data.orders[0]?.date)}</span>
         )}
       </div>
-      {nextTier && totalOrders >= 1 && (
+
+      {/* Benefit banner untuk Gold & Platinum */}
+      {isGoldPlus && (
+        <div style={{ marginTop: 10, background: tier.benefitBg, border: "1px solid " + tier.border, borderRadius: 10, padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 16 }}>{tier.badge}</span>
+          <div>
+            <div style={{ fontSize: 10, color: tier.color, fontWeight: 800 }}>BENEFIT AKTIF — {tier.label.toUpperCase()}</div>
+            <div style={{ fontSize: 11, color: tier.color, fontWeight: 600 }}>{tier.benefit}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Progress bar menuju tier berikutnya */}
+      {nextTier && (
         <div style={{ marginTop: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
             <span style={{ fontSize: 10, color: "#64748b" }}>
-              {nextTier.min - totalOrders} servis lagi menuju {nextTier.badge} {nextTier.label}
+              {nextTier.minUnits - totalUnits} unit lagi menuju {nextTier.badge} {nextTier.label}
             </span>
             <span style={{ fontSize: 10, color: "#64748b" }}>{progressPct}%</span>
           </div>
           <div style={{ height: 6, background: "#e2e8f0", borderRadius: 99, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: progressPct + "%", background: "linear-gradient(90deg,#38bdf8,#0369a1)", borderRadius: 99, transition: "width 0.5s" }} />
+            <div style={{ height: "100%", width: progressPct + "%", background: tier.key === "silver" ? "linear-gradient(90deg,#94a3b8,#fbbf24)" : "linear-gradient(90deg,#fbbf24,#a78bfa)", borderRadius: 99, transition: "width 0.5s" }} />
+          </div>
+          <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
+            Benefit {nextTier.label}: {nextTier.benefit}
           </div>
         </div>
       )}
-      {!nextTier && totalOrders >= 1 && (
+      {!nextTier && (
         <div style={{ marginTop: 8, fontSize: 11, color: "#6d28d9", fontWeight: 600 }}>
-          💎 Anda adalah Pelanggan Platinum kami! Terima kasih atas kepercayaan Anda.
+          💎 Anda adalah Member Platinum kami! Terima kasih atas kepercayaan Anda.
         </div>
       )}
     </div>

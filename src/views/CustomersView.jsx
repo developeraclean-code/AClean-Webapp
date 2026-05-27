@@ -1,4 +1,4 @@
-import { memo } from "react";
+import React, { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 import { normalizePhone, smartSearchNormalize } from "../lib/phone.js";
@@ -15,12 +15,20 @@ function avatarColor(name) {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
+const MEMBER_TIER_INFO = {
+  silver: { label: "Silver", badge: "🥈", color: "#475569", bg: "#f1f5f9", border: "#94a3b8", benefit: null },
+  gold:   { label: "Gold",   badge: "🥇", color: "#b45309", bg: "#fffbeb", border: "#fbbf24", benefit: "Diskon Jasa 5%" },
+  platinum: { label: "Platinum", badge: "💎", color: "#6d28d9", bg: "#f5f3ff", border: "#a78bfa", benefit: "Diskon Jasa 5% + Material 5%" },
+};
+
 function CustomersView({ selectedCustomer, setSelectedCustomer, ordersData, laporanReports, invoicesData, customersData, setCustomersData, searchCustomer, setSearchCustomer, customerPage, setCustomerPage, customerTab, setCustomerTab, currentUser, isMobile, setNewCustomerForm, setModalAddCustomer, setNewOrderForm, setModalOrder, setSelectedInvoice, setModalPDF, buildCustomerHistory, openWA, showConfirm, showNotif, deleteCustomer, addAgentLog, updateCustomer, fotoSrc, safeArr, fmt, supabase, CUST_PAGE_SIZE, downloadServiceReportPDF }) {
+const [tierFilter, setTierFilter] = React.useState("all");
 const history = selectedCustomer
   ? buildCustomerHistory(selectedCustomer, ordersData, laporanReports, invoicesData)
   : [];
 const _scq = searchCustomer.trim().toLowerCase();
 const filteredCusts = customersData.filter(cu => {
+  if (tierFilter !== "all" && (cu.membership_tier || "silver") !== tierFilter) return false;
   if (!_scq) return true;
   return (
     (cu.name || "").toLowerCase().includes(_scq) ||
@@ -81,6 +89,20 @@ return (
           <div style={{ fontSize: 12, color: cs.muted }}>Ditemukan <b style={{ color: cs.accent }}>{filteredCusts.length}</b> dari {customersData.length} customer</div>
         )}
 
+        {/* ── Filter Tier Member ── */}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {[
+            { key: "all", label: "Semua", count: customersData.length },
+            { key: "gold", label: "🥇 Gold", count: customersData.filter(c => c.membership_tier === "gold").length },
+            { key: "platinum", label: "💎 Platinum", count: customersData.filter(c => c.membership_tier === "platinum").length },
+          ].map(f => (
+            <button key={f.key} onClick={() => { setTierFilter(f.key); setCustomerPage(1); }}
+              style={{ background: tierFilter === f.key ? cs.accent : cs.surface, border: "1px solid " + (tierFilter === f.key ? cs.accent : cs.border), color: tierFilter === f.key ? "#0a0f1e" : cs.muted, padding: "5px 14px", borderRadius: 20, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+              {f.label} <span style={{ opacity: .7 }}>({f.count})</span>
+            </button>
+          ))}
+        </div>
+
         {/* ── Daftar customer card ── */}
         <div style={{ display: "grid", gap: 10 }}>
           {pageCusts.map(cu => {
@@ -110,17 +132,28 @@ return (
 
                 {/* Info utama */}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
-                    <span style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>{cu.name}</span>
-                    {cu.is_vip && (
-                      <span style={{ fontSize: 9, background: "#f59e0b22", color: "#f59e0b", padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid #f59e0b33" }}>VIP</span>
-                    )}
-                    {cHist.length > 0 && (
-                      <span style={{ fontSize: 10, background: cs.accent + "15", color: cs.accent, padding: "1px 7px", borderRadius: 99, fontWeight: 600 }}>
-                        {cHist.length}x servis
-                      </span>
-                    )}
-                  </div>
+                  {(() => {
+                    const cuTier = MEMBER_TIER_INFO[cu.membership_tier || "silver"];
+                    const showTier = cu.membership_tier === "gold" || cu.membership_tier === "platinum";
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>{cu.name}</span>
+                        {showTier && (
+                          <span style={{ fontSize: 9, background: cuTier.bg, color: cuTier.color, padding: "2px 8px", borderRadius: 99, fontWeight: 800, border: "1px solid " + cuTier.border }}>
+                            {cuTier.badge} {cuTier.label}
+                          </span>
+                        )}
+                        {cu.is_vip && (
+                          <span style={{ fontSize: 9, background: "#f59e0b22", color: "#f59e0b", padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid #f59e0b33" }}>VIP</span>
+                        )}
+                        {cHist.length > 0 && (
+                          <span style={{ fontSize: 10, background: cs.accent + "15", color: cs.accent, padding: "1px 7px", borderRadius: 99, fontWeight: 600 }}>
+                            {cHist.length}x servis
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: cs.muted }}>
                     {cu.phone && <span>{cu.phone}</span>}
                     {(cu.area || cu.address) && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>{cu.area || cu.address}</span>}
@@ -276,6 +309,45 @@ return (
                     </div>
                   ))}
                 </div>
+
+                {/* ── Status Member ── */}
+                {(() => {
+                  const t = MEMBER_TIER_INFO[selectedCustomer.membership_tier || "silver"];
+                  const totalUnits = selectedCustomer.total_units_serviced || 0;
+                  const NEXT = { silver: { label: "Gold", badge: "🥇", minUnits: 30 }, gold: { label: "Platinum", badge: "💎", minUnits: 50 } };
+                  const next = NEXT[selectedCustomer.membership_tier || "silver"];
+                  const pct = next ? Math.min(100, Math.round((totalUnits / next.minUnits) * 100)) : 100;
+                  return (
+                    <div style={{ marginTop: 12, background: t.bg, border: "1px solid " + t.border, borderRadius: 12, padding: "12px 14px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 18 }}>{t.badge}</span>
+                          <div>
+                            <div style={{ fontWeight: 800, fontSize: 12, color: t.color }}>Member {t.label}</div>
+                            {t.benefit && <div style={{ fontSize: 10, color: t.color, fontWeight: 600 }}>{t.benefit}</div>}
+                            {!t.benefit && <div style={{ fontSize: 10, color: t.color }}>Belum ada benefit</div>}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 18, fontWeight: 900, color: t.color }}>{totalUnits}</div>
+                          <div style={{ fontSize: 9, color: t.color, fontWeight: 600 }}>unit AC</div>
+                        </div>
+                      </div>
+                      {next && (
+                        <>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: t.color, marginBottom: 3 }}>
+                            <span>{next.minUnits - totalUnits} unit lagi → {next.badge} {next.label}</span>
+                            <span>{pct}%</span>
+                          </div>
+                          <div style={{ height: 5, background: "#00000015", borderRadius: 99, overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: pct + "%", background: t.color, borderRadius: 99, transition: "width .4s" }} />
+                          </div>
+                        </>
+                      )}
+                      {!next && <div style={{ fontSize: 10, color: t.color, fontWeight: 700 }}>Tier tertinggi 💎</div>}
+                    </div>
+                  );
+                })()}
 
                 {selectedCustomer.notes && (
                   <div style={{ marginTop: 12, background: "#0ea5e910", border: "1px solid #0ea5e930", borderRadius: 10, padding: "10px 14px", fontSize: 12, color: "#7dd3fc" }}>
