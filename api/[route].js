@@ -169,6 +169,70 @@ export default async function handler(req, res) {
 
       const wb = req.body || {};
 
+      // ── DELIVERY STATUS CALLBACK (Fonnte "Webhook Message Status") ──
+      // Status payload format Fonnte (status update untuk outgoing msg):
+      //   { device: "62...", target: "62...", id: "msgId", status: "delivered|read|sent|failed", ... }
+      // Bedanya dgn inbound: tidak ada wb.message konten + ada wb.status.
+      // Sebelumnya callback ini di-reject 400 → sekarang detect & log untuk observability.
+      const isStatusCallback = wb.status && (wb.target || wb.id || wb.device) && !wb.message && !wb.sender;
+      if (isStatusCallback) {
+        const SU_s = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+        const SK_s = process.env.SUPABASE_SERVICE_KEY;
+        if (SU_s && SK_s) {
+          try {
+            const target = String(wb.target || wb.device || "").replace(/[^0-9]/g, "");
+            const fonnteStatus = String(wb.status || "").toLowerCase();
+            // Map Fonnte status → severity di agent_logs
+            const sev = (fonnteStatus === "failed" || fonnteStatus === "error") ? "warn" : "info";
+            await fetch(SU_s + "/rest/v1/agent_logs", {
+              method: "POST",
+              headers: { apikey: SK_s, Authorization: "Bearer " + SK_s, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "WA_DELIVERY_STATUS",
+                severity: sev,
+                category: "wa",
+                status: sev === "warn" ? "WARNING" : "SUCCESS",
+                detail: `status=${fonnteStatus} target=${target} id=${wb.id || "?"}`,
+                metadata: wb,
+                time: new Date().toISOString(),
+              }),
+            });
+
+            // Best-effort: update dispatch_logs jika status delivered/read & ada match phone+recent
+            // NOTE: dispatch_logs.teknisi simpan NAMA teknisi bukan phone. Untuk fase 1, kita match
+            // via wa_message pattern (kalau ada di dispatch_logs) atau skip total. Phase 2: tambah
+            // kolom fonnte_message_id ke dispatch_logs untuk matching presisi.
+            if (target && (fonnteStatus === "delivered" || fonnteStatus === "read") && wb.id) {
+              // Match by fonnte_message_id kalau kolom ini sudah ada (Phase 2 future-proof)
+              try {
+                await fetch(
+                  SU_s + "/rest/v1/dispatch_logs?fonnte_message_id=eq." + encodeURIComponent(wb.id),
+                  {
+                    method: "PATCH",
+                    headers: { apikey: SK_s, Authorization: "Bearer " + SK_s, "Content-Type": "application/json", Prefer: "return=minimal" },
+                    body: JSON.stringify({ delivered_at: new Date().toISOString() }),
+                  }
+                ).catch(() => {}); // ignore — kolom mungkin belum ada
+              } catch (_) {}
+            } else if (target && (fonnteStatus === "failed" || fonnteStatus === "error") && wb.id) {
+              try {
+                await fetch(
+                  SU_s + "/rest/v1/dispatch_logs?fonnte_message_id=eq." + encodeURIComponent(wb.id),
+                  {
+                    method: "PATCH",
+                    headers: { apikey: SK_s, Authorization: "Bearer " + SK_s, "Content-Type": "application/json", Prefer: "return=minimal" },
+                    body: JSON.stringify({ failed_reason: String(wb.reason || wb.error || "Fonnte: " + fonnteStatus).slice(0, 300) }),
+                  }
+                ).catch(() => {});
+              } catch (_) {}
+            }
+          } catch (logErr) {
+            console.warn("[receive-wa] status callback log failed:", logErr.message);
+          }
+        }
+        return res.status(200).json({ ok: true, type: "status_callback", processed: true });
+      }
+
       // ── VALIDATION: Phone number ──
       const sender = validateAndNormalizePhone(wb.sender);
       if (!sender) return res.status(400).json({ error: "Invalid phone number format" });
