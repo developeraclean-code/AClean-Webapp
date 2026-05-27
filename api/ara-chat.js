@@ -4,6 +4,7 @@
 
 import { createClient }                                 from "@supabase/supabase-js";
 import { validateInternalToken, checkRateLimit, setCorsHeaders, fetchWithTimeout } from "./_auth.js";
+import { logAiUsage, extractAnthropicUsage, extractOpenAIUsage, logStructured } from "./_logger.js";
 
 const sb = createClient(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
@@ -104,19 +105,21 @@ async function callClaude(msgs, sys, model) {
   }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message||"Claude error");
-  return d.content?.map(c=>c.text||"").join("")||"";
+  const text = d.content?.map(c=>c.text||"").join("")||"";
+  return { text, usage: extractAnthropicUsage(d), model: safeModel };
 }
 
 async function callOpenAI(msgs, sys, model) {
-  // LLM calls can take up to 30 seconds
+  const safeModel = model || "gpt-4o";
   const r = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+process.env.OPENAI_API_KEY},
-    body: JSON.stringify({model:model||"gpt-4o", max_tokens:1024, messages:[{role:"system",content:sys},...msgs]})
+    body: JSON.stringify({model:safeModel, max_tokens:1024, messages:[{role:"system",content:sys},...msgs]})
   }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message||"OpenAI error");
-  return d.choices?.[0]?.message?.content||"";
+  const text = d.choices?.[0]?.message?.content||"";
+  return { text, usage: extractOpenAIUsage(d), model: safeModel };
 }
 
 async function callMinimax(msgs, sys, model) {
@@ -124,7 +127,6 @@ async function callMinimax(msgs, sys, model) {
   const groupId  = process.env.MINIMAX_GROUP_ID || "";
   const ALLOWED_MINIMAX = ["MiniMax-M2.5"];
   const safeModel = ALLOWED_MINIMAX.includes(model) ? model : "MiniMax-M2.5";
-  // LLM calls can take up to 30 seconds
   const r = await fetchWithTimeout("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
@@ -137,19 +139,21 @@ async function callMinimax(msgs, sys, model) {
   }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.base_resp?.status_msg || d.error?.message || "Minimax error");
-  return d.choices?.[0]?.message?.content||"";
+  const text = d.choices?.[0]?.message?.content||"";
+  return { text, usage: extractOpenAIUsage(d), model: safeModel };
 }
 
 async function callGroq(msgs, sys, model) {
-  // LLM calls can take up to 30 seconds
+  const safeModel = model || "llama-3.3-70b-versatile";
   const r = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+process.env.GROQ_API_KEY},
-    body: JSON.stringify({model:model||"llama-3.3-70b-versatile", max_tokens:1024, messages:[{role:"system",content:sys},...msgs]})
+    body: JSON.stringify({model:safeModel, max_tokens:1024, messages:[{role:"system",content:sys},...msgs]})
   }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message||"Groq error");
-  return d.choices?.[0]?.message?.content||"";
+  const text = d.choices?.[0]?.message?.content||"";
+  return { text, usage: extractOpenAIUsage(d), model: safeModel };
 }
 
 export default async function handler(req, res) {
@@ -208,31 +212,30 @@ export default async function handler(req, res) {
 
   const sys = buildSystem(bizContext, brainMd);
 
+  const callStart = Date.now();
   try {
-    let reply = "";
+    let callResult = null;
     let usedProvider = provider;
 
-    try {
-      switch(provider) {
-        case "openai":  reply = await callOpenAI(messages, sys, model);  break;
-        case "minimax": reply = await callMinimax(messages, sys, model); break;
-        case "groq":    reply = await callGroq(messages, sys, model);    break;
-        default:        reply = await callClaude(messages, sys, model);  break;
+    const runCall = async (p) => {
+      switch(p) {
+        case "openai":  return await callOpenAI(messages, sys, model);
+        case "minimax": return await callMinimax(messages, sys, model);
+        case "groq":    return await callGroq(messages, sys, model);
+        default:        return await callClaude(messages, sys, model);
       }
+    };
+
+    try {
+      callResult = await runCall(provider);
     } catch(primErr) {
       console.warn(`⚠️ ${provider} failed, trying fallback...`, primErr.message);
-      // Fallback chain: try other providers if primary fails
       const fallbackOrder = provider==="claude" ? ["minimax","openai","groq"] : ["claude","minimax","openai","groq"];
       for (const fbProvider of fallbackOrder) {
-        if (fbProvider === provider) continue; // skip primary
+        if (fbProvider === provider) continue;
         try {
+          callResult = await runCall(fbProvider);
           usedProvider = fbProvider;
-          switch(fbProvider) {
-            case "openai":  reply = await callOpenAI(messages, sys, model);  break;
-            case "minimax": reply = await callMinimax(messages, sys, model); break;
-            case "groq":    reply = await callGroq(messages, sys, model);    break;
-            default:        reply = await callClaude(messages, sys, model);  break;
-          }
           console.log(`✅ Fallback to ${fbProvider} success`);
           break;
         } catch(fbErr) {
@@ -240,31 +243,50 @@ export default async function handler(req, res) {
           continue;
         }
       }
-      if (!reply) throw primErr; // re-throw if all fallbacks fail
+      if (!callResult) throw primErr;
     }
 
-    const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-    // Log ke agent_logs (tidak critical — fail silently jika RLS error)
-    try {
-      await sb.from("agent_logs").insert({
-        time: now, action:"ARA_CHAT",
-        detail:`ARA (${usedProvider}${usedProvider!==provider?" [fallback dr "+provider+"]":""}) — "${messages.at(-1)?.content?.slice(0,50)}..."`,
-        status:"SUCCESS"
-      });
-    } catch(logErr) {
-      console.warn("[ARA-CHAT] agent_logs insert failed (RLS?):", logErr.message);
-      // Continue anyway — logging bukan critical
-    }
+    const reply = callResult?.text || "";
+    const aiUsage = callResult?.usage || { input_tokens: 0, output_tokens: 0 };
+    const actualModel = callResult?.model || model;
+    const durationMs = Date.now() - callStart;
 
-    return res.status(200).json({reply, provider: usedProvider, primaryProvider: provider});
+    // Log AI usage untuk cost tracking
+    await logAiUsage(sb, {
+      provider: usedProvider,
+      model: actualModel,
+      feature: "ara-chat",
+      input_tokens: aiUsage.input_tokens,
+      output_tokens: aiUsage.output_tokens,
+      duration_ms: durationMs,
+      metadata: usedProvider !== provider ? { fallback_from: provider } : null,
+    });
+
+    // Log structured agent_logs
+    await logStructured(sb, {
+      action: "ARA_CHAT",
+      severity: "info",
+      category: "ai",
+      detail: `ARA (${usedProvider}${usedProvider!==provider?" [fallback dr "+provider+"]":""}) — "${messages.at(-1)?.content?.slice(0,50)}..."`,
+      metadata: { input_tokens: aiUsage.input_tokens, output_tokens: aiUsage.output_tokens, duration_ms: durationMs, model: actualModel },
+    });
+
+    return res.status(200).json({reply, provider: usedProvider, primaryProvider: provider, usage: aiUsage});
   } catch(err) {
-    const now = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-    // Log error (tidak critical — fail silently jika RLS error)
-    try {
-      await sb.from("agent_logs").insert({time:now,action:"ARA_ERROR",detail:err.message.slice(0,100),status:"ERROR"});
-    } catch(logErr) {
-      console.warn("[ARA-CHAT] agent_logs insert failed on error (RLS?):", logErr.message);
-    }
+    // Log error usage + agent_logs
+    await logAiUsage(sb, {
+      provider,
+      model,
+      feature: "ara-chat",
+      error: err.message,
+      duration_ms: Date.now() - callStart,
+    });
+    await logStructured(sb, {
+      action: "ARA_ERROR",
+      severity: "error",
+      category: "ai",
+      detail: err.message.slice(0, 200),
+    });
     const friendlyErr = err.message.includes("quota") || err.message.includes("429")
       ? `Rate limit / quota habis untuk semua provider. Tunggu beberapa menit dan coba lagi.`
       : err.message.includes("401") || err.message.includes("403") || err.message.includes("API key")
