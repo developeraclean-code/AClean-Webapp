@@ -4,6 +4,7 @@ import { SERVICE_TYPES } from "../constants/services.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { normalizePhone, samePhone } from "../lib/phone.js";
 import { getTechColor } from "../lib/techColor.js";
+import { detectContinuationCandidates, calcContinuationDayNum } from "../lib/orders.js";
 
 // ── Durasi estimasi (jam) — sama dengan logic di App.jsx ──
 function hitungDurasi(service, units) {
@@ -354,7 +355,7 @@ const DAY_NAMES  = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
 // ─────────────────────────────────────────────
 // Panel Isi Tim Harian (Team 01–10)
 // ─────────────────────────────────────────────
-function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, toggleAvailability, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData, teamPresets, onBulkDispatch, bulkDispatching }) {
+function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, setAvailabilityStatus, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData, teamPresets, onBulkDispatch, bulkDispatching }) {
 
   // Berapa row yang ditampilkan per slot (2 default, bisa expand ke 4)
   const [expandedSlots, setExpandedSlots] = useState({});
@@ -370,6 +371,17 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
     const rec = availability.find(a => a.teknisi === name && a.date === date);
     return rec ? rec.is_available : true;
   }
+  function availRec(name, date) {
+    return availability.find(a => a.teknisi === name && a.date === date);
+  }
+  const STATUS_META = {
+    AUTO:    { label: "Auto",    color: "#64748b", emoji: "⚪" },
+    STANDBY: { label: "Standby", color: "#3b82f6", emoji: "🔵" },
+    IJIN:    { label: "Ijin",    color: "#f59e0b", emoji: "🟡" },
+    SAKIT:   { label: "Sakit",   color: "#fb923c", emoji: "🟠" },
+    ALPA:    { label: "Alpa",    color: "#ef4444", emoji: "🔴" },
+  };
+  const [availEditor, setAvailEditor] = useState(null);
 
   const memberFields = ["member1","member2","member3","member4"];
   const roleFields   = ["member1_role","member2_role","member3_role","member4_role"];
@@ -411,28 +423,84 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
         </div>
       </div>
 
-      {/* Toggle kehadiran individu */}
+      {/* Kehadiran individu — hybrid: auto dari orders + override per status */}
       <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 11, color: cs.muted, marginBottom: 6, fontWeight: 600 }}>
-          Kehadiran {slotDate} — toggle siapa yang hadir:
+          Kehadiran {slotDate} — klik nama untuk set status:
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {activeTeknisi.map(t => {
-            const avail = isAvail(t.name, slotDate);
+            const rec = availRec(t.name, slotDate);
+            const status = rec?.status || "AUTO";
+            const meta = STATUS_META[status] || STATUS_META.AUTO;
             const color = getTechColor(t.name, teknisiData);
+            const isOverride = status !== "AUTO";
             return (
-              <button key={t.name} onClick={() => toggleAvailability(t.name, slotDate, avail)}
-                style={{ display: "flex", alignItems: "center", gap: 6, background: avail ? color + "18" : cs.card, border: "2px solid " + (avail ? color : cs.border), borderRadius: 8, padding: "5px 10px", cursor: "pointer", transition: "all 0.15s" }}>
-                <div style={{ width: 28, height: 16, borderRadius: 8, background: avail ? color : cs.border, position: "relative" }}>
-                  <div style={{ position: "absolute", top: 2, left: avail ? 14 : 2, width: 12, height: 12, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
-                </div>
-                <span style={{ color: avail ? color : cs.muted, fontWeight: 700, fontSize: 11 }}>{t.name}</span>
-                <span style={{ fontSize: 9, color: avail ? cs.green : cs.red }}>{avail ? "Hadir" : "Ijin"}</span>
+              <button key={t.name}
+                title={rec?.reason ? `${meta.label} — ${rec.reason}` : meta.label}
+                onClick={() => setAvailEditor({ name: t.name, date: slotDate, status, reason: rec?.reason || "" })}
+                style={{ display: "flex", alignItems: "center", gap: 6, background: isOverride ? meta.color + "22" : color + "18", border: "2px solid " + (isOverride ? meta.color : color), borderRadius: 8, padding: "5px 10px", cursor: "pointer", transition: "all 0.15s" }}>
+                <span style={{ fontSize: 12 }}>{meta.emoji}</span>
+                <span style={{ color: isOverride ? meta.color : color, fontWeight: 700, fontSize: 11 }}>{t.name}</span>
+                <span style={{ fontSize: 9, color: meta.color, fontWeight: 600 }}>{meta.label}</span>
               </button>
             );
           })}
         </div>
+        <div style={{ fontSize: 10, color: cs.muted, marginTop: 5 }}>
+          ⚪ Auto (ikut order) · 🔵 Standby +1 hari · 🟡 Ijin / 🟠 Sakit / 🔴 Alpa = −1 hari payroll
+        </div>
       </div>
+
+      {/* Popover editor status kehadiran */}
+      {availEditor && (
+        <div onClick={() => setAvailEditor(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 12, padding: 20, width: 340 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: cs.text, marginBottom: 2 }}>
+              Status Kehadiran — {availEditor.name}
+            </div>
+            <div style={{ fontSize: 11, color: cs.muted, marginBottom: 14 }}>{availEditor.date}</div>
+            <div style={{ display: "grid", gap: 6, marginBottom: 14 }}>
+              {["AUTO","STANDBY","IJIN","SAKIT","ALPA"].map(s => {
+                const m = STATUS_META[s];
+                const sel = availEditor.status === s;
+                return (
+                  <button key={s} onClick={() => setAvailEditor(p => ({ ...p, status: s }))}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 7, border: "2px solid " + (sel ? m.color : cs.border), background: sel ? m.color + "22" : cs.card, color: cs.text, cursor: "pointer", textAlign: "left", fontSize: 12, fontWeight: sel ? 700 : 400 }}>
+                    <span style={{ fontSize: 14 }}>{m.emoji}</span>
+                    <span style={{ flex: 1 }}>{m.label}</span>
+                    <span style={{ fontSize: 10, color: m.color }}>
+                      {s === "AUTO" ? "ikut count order" : s === "STANDBY" ? "+1 hari kerja" : "−1 hari kerja"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Catatan (opsional)</div>
+              <input value={availEditor.reason}
+                onChange={e => setAvailEditor(p => ({ ...p, reason: e.target.value }))}
+                placeholder="contoh: izin acara keluarga"
+                style={{ width: "100%", padding: "7px 9px", borderRadius: 6, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12, boxSizing: "border-box" }} />
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setAvailEditor(null)}
+                style={{ padding: "7px 14px", borderRadius: 6, background: "transparent", border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 12 }}>
+                Batal
+              </button>
+              <button onClick={async () => {
+                  await setAvailabilityStatus(availEditor.name, availEditor.date, availEditor.status, availEditor.reason);
+                  setAvailEditor(null);
+                }}
+                style={{ padding: "7px 18px", borderRadius: 6, background: cs.accent, border: "none", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                Simpan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
 
       {/* Bulk WA ke semua Teknisi & Helper hari ini */}
@@ -881,18 +949,21 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   }
 
 
-  // Toggle hadir/tidak individu
-  async function toggleAvailability(name, date, current) {
-    const newVal = !current;
+  // Set status kehadiran individu — hybrid attendance
+  // status: "AUTO"|null = auto (dari orders), "STANDBY" = +1 hari, "IJIN"|"SAKIT"|"ALPA" = −1 hari
+  async function setAvailabilityStatus(name, date, status, reason) {
+    const dbStatus = (!status || status === "AUTO") ? null : status;
+    const is_available = !["IJIN","SAKIT","ALPA"].includes(dbStatus);
     const { error } = await supabase.from("technician_availability")
-      .upsert({ date, teknisi: name, is_available: newVal, updated_at: new Date().toISOString() },
+      .upsert({ date, teknisi: name, status: dbStatus, reason: reason || null, is_available, updated_at: new Date().toISOString() },
         { onConflict: "date,teknisi" });
     if (error) return showNotif("Gagal: " + error.message);
     setAvailability(prev => {
       const idx = prev.findIndex(a => a.teknisi === name && a.date === date);
+      const row = { teknisi: name, date, status: dbStatus, reason: reason || null, is_available };
       return idx >= 0
-        ? prev.map((a, i) => i === idx ? { ...a, is_available: newVal } : a)
-        : [...prev, { teknisi: name, date, is_available: newVal }];
+        ? prev.map((a, i) => i === idx ? { ...a, ...row } : a)
+        : [...prev, row];
     });
   }
 
@@ -902,17 +973,8 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // Auto-detect pekerjaan lanjutan berdasarkan no HP
   const autoDetectedJobs = useMemo(() => {
-    const norm = normalizePhone(form.phone || "");
-    if (norm.length < 8 || editId || continuationFrom) return [];
-    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 3);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-    const OPEN_STATUSES = ["PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "WORKING", "REPORT_SUBMITTED", "INVOICE_CREATED", "INVOICE_APPROVED"];
-    return ordersData.filter(o =>
-      samePhone(o.phone || "", norm) &&
-      OPEN_STATUSES.includes(o.status) &&
-      !o.parent_job_id &&
-      (o.date || "") >= cutoffStr
-    ).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    if (editId || continuationFrom) return [];
+    return detectContinuationCandidates(ordersData, form.phone);
   }, [form.phone, ordersData, editId, continuationFrom]);
 
   // Reset dismissed state saat phone berubah
@@ -1467,7 +1529,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         slotDate={slotDate} setSlotDate={setSlotDate}
         TODAY={TODAY} TEAM_SLOTS={TEAM_SLOTS}
         activeTeknisi={activeTeknisi} teknisiData={teknisiData}
-        availability={availability} toggleAvailability={toggleAvailability}
+        availability={availability} setAvailabilityStatus={setAvailabilityStatus}
         getSlotData={getSlotData} slotMembers={slotMembers} slotMemberRoles={slotMemberRoles}
         saveSlot={saveSlot} confirmSlot={confirmSlot}
         slotLoading={slotLoading} dailySlots={dailySlots}
@@ -1621,8 +1683,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                   </div>
                   <button
                     onClick={() => {
-                      const existingDays = ordersData.filter(od => (od.parent_job_id === o.id && od.is_multi_day) || od.id === o.id).length;
-                      setContinuationFrom({ ...o, _dayNum: existingDays + 1 });
+                      setContinuationFrom({ ...o, _dayNum: calcContinuationDayNum(ordersData, o.id) });
                     }}
                     style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#f59e0b", color: "#0a0f1e", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>
                     Ya, Lanjutan
