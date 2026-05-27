@@ -36,7 +36,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        # Pakai npm install --omit=optional supaya tahan terhadap optional deps
+        # platform-spesifik (@esbuild/netbsd-arm64 dll) yg trigger EBADPLATFORM
+        # di Linux runner. --no-audit --no-fund untuk speed.
+        run: npm install --no-audit --no-fund --omit=optional
 
       # Cache Playwright browsers untuk speed-up runs berikutnya (~90MB Chromium)
       - name: Get Playwright version
