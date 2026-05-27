@@ -266,6 +266,7 @@ const verifyLaporan = async (r) => {
       if (ord0 && ["DISPATCHED","ON_SITE"].includes(ord0.status)) {
         await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
         setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+        if (updateCustomerTierAfterOrder) updateCustomerTierAfterOrder(ord0).catch(() => {});
       }
       return;
     }
@@ -286,6 +287,10 @@ const verifyLaporan = async (r) => {
     else {
       await updateOrder(supabase, r.job_id, { invoice_id: invId, status: "COMPLETED" }, auditUserName());
       setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, invoice_id: invId, status: "COMPLETED" } : o));
+      if (updateCustomerTierAfterOrder) {
+        const ord = ordersData.find(o => o.id === r.job_id);
+        if (ord) updateCustomerTierAfterOrder(ord).catch(() => {});
+      }
       addAgentLog("AUTO_INVOICE", `Invoice ${invId} auto-dibuat dari laporan ${r.job_id}`, "SUCCESS");
       const invMsg = totalInv === 0
         ? `✅ Invoice ${invId} GRATIS — langsung LUNAS`
