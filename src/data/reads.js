@@ -39,6 +39,56 @@ export const fetchServiceReports = (supabase) =>
 export const fetchAgentLogs = (supabase) =>
   supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(100);
 
+// ───── OBSERVABILITY (Mission Control) ─────
+// Filter agent_logs by severity/category — untuk audit log viewer
+export const fetchAgentLogsFiltered = (supabase, { severity, category, since, limit = 100 } = {}) => {
+  let q = supabase.from("agent_logs")
+    .select("id,action,severity,category,status,detail,metadata,user_name,created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (severity) q = q.eq("severity", severity);
+  if (category) q = q.eq("category", category);
+  if (since) q = q.gte("created_at", since);
+  return q;
+};
+
+// Cron runs — last N executions, optionally per task
+export const fetchCronRuns = (supabase, { taskName, since, limit = 100 } = {}) => {
+  let q = supabase.from("cron_runs")
+    .select("id,task_name,status,duration_ms,items_processed,error_message,metadata,started_at,finished_at")
+    .order("started_at", { ascending: false })
+    .limit(limit);
+  if (taskName) q = q.eq("task_name", taskName);
+  if (since) q = q.gte("started_at", since);
+  return q;
+};
+
+// AI usage — untuk cost tracking dashboard
+export const fetchAiUsage = (supabase, { since, provider, feature, limit = 200 } = {}) => {
+  let q = supabase.from("ai_usage")
+    .select("id,provider,model,feature,input_tokens,output_tokens,cost_usd,duration_ms,error,user_name,created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (since) q = q.gte("created_at", since);
+  if (provider) q = q.eq("provider", provider);
+  if (feature) q = q.eq("feature", feature);
+  return q;
+};
+
+// WA delivery summary view — 30 hari last
+export const fetchWaDeliverySummary = (supabase) =>
+  supabase.from("wa_delivery_summary").select("*").order("day", { ascending: false }).limit(30);
+
+// Dispatch logs detail dengan delivery status
+export const fetchDispatchLogsDetailed = (supabase, { since, limit = 100 } = {}) => {
+  let q = supabase.from("dispatch_logs")
+    .select("id,order_id,teknisi,assigned_by_name,status,delivered_at,failed_reason,retry_count,sent_at")
+    .order("sent_at", { ascending: false })
+    .limit(limit);
+  if (since) q = q.gte("sent_at", since);
+  return q;
+};
+
 export const fetchInventoryTransactions = (supabase) =>
   supabase.from("inventory_transactions")
     .select("id,inventory_code,inventory_name,qty,qty_actual,type,order_id,report_id,notes,created_at,customer_name,teknisi_name,job_date,unit_label,unit_id")

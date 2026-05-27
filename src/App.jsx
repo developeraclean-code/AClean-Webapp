@@ -6149,7 +6149,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   }, [activeMenu, currentUser]);
 
   const renderMonitoring = () => (
-    <MonitoringView monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} _apiHeaders={_apiHeaders} />
+    <MonitoringView monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} _apiHeaders={_apiHeaders} supabase={supabase} />
   );
 
   // ============================================================

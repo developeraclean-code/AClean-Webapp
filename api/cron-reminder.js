@@ -12,6 +12,7 @@
 import { createClient } from "@supabase/supabase-js";
 import * as Sentry from "@sentry/node";
 import { initSentry, setCronContext } from "./sentry-init.js";
+import { runWithCronLogging, logStructured } from "./_logger.js";
 
 // Initialize Sentry
 initSentry();
@@ -1059,6 +1060,42 @@ async function taskPayrollWA() {
 }
 
 // ══════════════════════════════════════════════════
+// TASK 14: Log Cleanup — retention agent_logs, cron_runs, ai_usage (90 hari)
+// Dipanggil weekly via vercel.json cron (lihat juga task=cleanup untuk audit_log + R2)
+// ══════════════════════════════════════════════════
+async function taskLogCleanup() {
+  try {
+    const { data, error } = await sb.rpc("cleanup_observability_logs", { retention_days: 90 });
+    if (error) {
+      await logStructured(sb, {
+        action: "LOG_CLEANUP",
+        severity: "error",
+        category: "cron",
+        detail: "RPC cleanup_observability_logs failed: " + error.message,
+      });
+      return { error: error.message };
+    }
+    const summary = (data || []).map(r => `${r.table_name}=${r.deleted_count}`).join(", ");
+    await logStructured(sb, {
+      action: "LOG_CLEANUP",
+      severity: "info",
+      category: "cron",
+      detail: summary || "Tidak ada log yang perlu dihapus",
+      metadata: { deleted: data },
+    });
+    return { deleted: data, summary };
+  } catch (err) {
+    await logStructured(sb, {
+      action: "LOG_CLEANUP",
+      severity: "error",
+      category: "cron",
+      detail: err.message,
+    });
+    return { error: err.message };
+  }
+}
+
+// ══════════════════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════════════════
 export default async function handler(req, res) {
@@ -1108,20 +1145,27 @@ export default async function handler(req, res) {
     // Set Sentry context for cron job
     setCronContext(task);
 
-    let result;
-    if (task === "daily")              result = await taskDaily();
-    else if (task === "stock")         result = await taskStock();
-    else if (task === "cleanup")       result = await taskCleanup();
-    else if (task === "wa-cleanup")    result = await taskWaCleanup();
-    else if (task === "bukti-bayar")   result = await taskScanBuktiBayar();
-    else if (task === "backup")        result = await taskBackupData();
-    else if (task === "weekly")        result = await taskWeeklyReport();
-    else if (task === "rating-prompt")    result = await taskRatingPrompt();
-    else if (task === "servis-reminder")  result = await taskServisReminder();
-    else if (task === "voucher-expiry")   result = await taskVoucherExpiryReminder();
-    else if (task === "laporan-stale")    result = await taskLaporanStaleAlert();
-    else if (task === "payroll-wa")       result = await taskPayrollWA();
-    else                                  result = await taskReminder();
+    // Map task name → handler. Pakai runWithCronLogging untuk auto-track cron_runs.
+    const taskMap = {
+      "daily":            taskDaily,
+      "stock":            taskStock,
+      "cleanup":          taskCleanup,
+      "wa-cleanup":       taskWaCleanup,
+      "bukti-bayar":      taskScanBuktiBayar,
+      "backup":           taskBackupData,
+      "weekly":           taskWeeklyReport,
+      "rating-prompt":    taskRatingPrompt,
+      "servis-reminder":  taskServisReminder,
+      "voucher-expiry":   taskVoucherExpiryReminder,
+      "laporan-stale":    taskLaporanStaleAlert,
+      "payroll-wa":       taskPayrollWA,
+      "log-cleanup":      taskLogCleanup,
+      "reminder":         taskReminder,
+    };
+    const handler = taskMap[task] || taskReminder;
+    const taskKey = taskMap[task] ? task : "reminder";
+
+    const result = await runWithCronLogging(sb, taskKey, () => handler());
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });
   } catch(err) {

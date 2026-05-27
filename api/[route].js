@@ -3,7 +3,7 @@ import { setCorsHeaders, checkRateLimit, validateInternalToken, signAppToken } f
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers"];
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health"];
 
 // ── VALIDATION HELPERS ──
 function validateAndNormalizePhone(phone) {
@@ -1557,42 +1557,140 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       }
     }
 
-        // ── MONITORING: Get health metrics and recent errors ──
+        // ── HEALTH: Public lightweight health check (untuk uptime monitor eksternal) ──
+    // PUBLIC_ROUTES — tidak butuh auth. UptimeRobot dll bisa ping ini.
+    if (route === "health") {
+      if (req.method !== "GET" && req.method !== "HEAD") return res.status(405).json({error: "Method not allowed"});
+      const checks = { supabase: "unknown", fonnte: "unknown", ai: "unknown" };
+      const start = Date.now();
+
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (SU && SK) {
+        try {
+          const r = await fetch(SU + "/rest/v1/agent_logs?select=id&limit=1", {
+            headers: { apikey: SK, Authorization: "Bearer " + SK }
+          });
+          checks.supabase = r.ok ? "ok" : "fail:" + r.status;
+        } catch (e) { checks.supabase = "fail:" + (e.message || "unknown").slice(0, 40); }
+      } else { checks.supabase = "not_configured"; }
+
+      if (process.env.FONNTE_TOKEN) {
+        try {
+          const r = await fetch("https://api.fonnte.com/validate", {
+            headers: { Authorization: process.env.FONNTE_TOKEN }
+          });
+          checks.fonnte = r.ok ? "ok" : "fail:" + r.status;
+        } catch (e) { checks.fonnte = "fail:" + (e.message || "unknown").slice(0, 40); }
+      } else { checks.fonnte = "not_configured"; }
+
+      const aiProviders = [];
+      if (process.env.ANTHROPIC_API_KEY) aiProviders.push("claude");
+      if (process.env.OPENAI_API_KEY) aiProviders.push("openai");
+      if (process.env.GROQ_API_KEY) aiProviders.push("groq");
+      if (process.env.GEMINI_API_KEY) aiProviders.push("gemini");
+      checks.ai = aiProviders.length > 0 ? "ok:" + aiProviders.join(",") : "not_configured";
+
+      const isHealthy = checks.supabase === "ok";
+      return res.status(isHealthy ? 200 : 503).json({
+        status: isHealthy ? "healthy" : "unhealthy",
+        timestamp: new Date().toISOString(),
+        duration_ms: Date.now() - start,
+        checks,
+        version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "dev",
+      });
+    }
+
+        // ── MONITORING: Enhanced — agent_logs + cron_runs + ai_usage (24h) ──
     if (route === "monitor") {
       if (req.method !== "GET") return res.status(405).json({error: "Method not allowed"});
       const SU=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL, SK=process.env.SUPABASE_SERVICE_KEY;
       if (!SU||!SK) return res.status(200).json({ status: "limited", message: "Supabase not configured" });
 
       try {
-        // Get recent errors and warnings from agent_logs (last 24 hours)
         const since24h = new Date(Date.now() - 24*60*60*1000).toISOString();
-        // Status values: SUCCESS, WARNING, ERROR
-        const response = await fetch(SU+"/rest/v1/agent_logs?select=action,status,detail,created_at&or=(status.eq.ERROR,status.eq.WARNING)&created_at=gte."+encodeURIComponent(since24h)+"&order=created_at.desc&limit=100", {
-          headers: { apikey: SK, Authorization: "Bearer " + SK }
-        });
-        const logs = response.ok ? await response.json() : [];
+        const sinceParam = encodeURIComponent(since24h);
+        const sbHeaders = { apikey: SK, Authorization: "Bearer " + SK };
 
-        // Calculate metrics
+        const [errResponse, countResponse, cronResponse, aiResponse] = await Promise.all([
+          fetch(SU+"/rest/v1/agent_logs?select=action,status,severity,category,detail,created_at&or=(status.eq.ERROR,status.eq.WARNING,severity.eq.error,severity.eq.warn,severity.eq.critical)&created_at=gte."+sinceParam+"&order=created_at.desc&limit=100", { headers: sbHeaders }),
+          fetch(SU+"/rest/v1/agent_logs?select=id&created_at=gte."+sinceParam+"&limit=1", { headers: { ...sbHeaders, Prefer: "count=exact" } }),
+          fetch(SU+"/rest/v1/cron_runs?select=task_name,status,duration_ms,error_message,items_processed,started_at,finished_at&started_at=gte."+sinceParam+"&order=started_at.desc&limit=100", { headers: sbHeaders }),
+          fetch(SU+"/rest/v1/ai_usage?select=provider,model,feature,input_tokens,output_tokens,cost_usd,duration_ms,error,created_at&created_at=gte."+sinceParam+"&order=created_at.desc&limit=200", { headers: sbHeaders }),
+        ]);
+        const logs = errResponse.ok ? await errResponse.json() : [];
+        const totalLogsIn24h = parseInt(countResponse.headers?.get?.("content-range")?.split("/")?.[1] || "0") || 0;
+        const crons = cronResponse.ok ? await cronResponse.json() : [];
+        const aiUsage = aiResponse.ok ? await aiResponse.json() : [];
+
         const logsArray = Array.isArray(logs) ? logs : [];
-        const errorCount = logsArray.filter(l => l.status === "ERROR").length;
-        const warningCount = logsArray.filter(l => l.status === "WARNING").length;
+        const cronArray = Array.isArray(crons) ? crons : [];
+        const aiArray = Array.isArray(aiUsage) ? aiUsage : [];
+
+        const errorCount = logsArray.filter(l => l.status === "ERROR" || l.severity === "error" || l.severity === "critical").length;
+        const warningCount = logsArray.filter(l => l.status === "WARNING" || l.severity === "warn").length;
+
+        const cronFailed = cronArray.filter(c => c.status === "FAILED").length;
+        const cronSuccess = cronArray.filter(c => c.status === "SUCCESS").length;
+        const cronSkipped = cronArray.filter(c => c.status === "SKIPPED").length;
+        const cronRunning = cronArray.filter(c => c.status === "RUNNING").length;
+
+        const aiTotalCost = aiArray.reduce((s, a) => s + (Number(a.cost_usd) || 0), 0);
+        const aiByProvider = aiArray.reduce((m, a) => {
+          const p = a.provider || "unknown";
+          if (!m[p]) m[p] = { calls: 0, cost: 0, input_tokens: 0, output_tokens: 0 };
+          m[p].calls++;
+          m[p].cost += Number(a.cost_usd) || 0;
+          m[p].input_tokens += Number(a.input_tokens) || 0;
+          m[p].output_tokens += Number(a.output_tokens) || 0;
+          return m;
+        }, {});
+        Object.keys(aiByProvider).forEach(k => { aiByProvider[k].cost = Number(aiByProvider[k].cost.toFixed(4)); });
+
         const metrics = {
           totalErrors: errorCount,
           totalWarnings: warningCount,
-          errorRate: logsArray.length > 0 ? errorCount / logsArray.length : 0,
-          totalLogsChecked: logsArray.length,
+          errorRate: totalLogsIn24h > 0 ? errorCount / totalLogsIn24h : 0,
+          totalLogsChecked: totalLogsIn24h,
           recentErrors: logsArray.slice(0, 10).map(l => ({
             action: l.action || "UNKNOWN",
-            status: l.status || "UNKNOWN",
-            detail: (l.detail || "").slice(0, 100),
+            status: l.status || (l.severity ? l.severity.toUpperCase() : "UNKNOWN"),
+            severity: l.severity || null,
+            category: l.category || null,
+            detail: (l.detail || "").slice(0, 200),
             time: l.created_at || new Date().toISOString()
-          }))
+          })),
+          cron: {
+            total: cronArray.length,
+            success: cronSuccess,
+            failed: cronFailed,
+            skipped: cronSkipped,
+            running: cronRunning,
+            recent: cronArray.slice(0, 20).map(c => ({
+              task: c.task_name,
+              status: c.status,
+              duration_ms: c.duration_ms,
+              items: c.items_processed,
+              error: c.error_message,
+              started_at: c.started_at,
+            })),
+          },
+          ai: {
+            totalCalls: aiArray.length,
+            totalCostUsd: Number(aiTotalCost.toFixed(4)),
+            errorCount: aiArray.filter(a => a.error).length,
+            byProvider: aiByProvider,
+          },
         };
+
+        const health = (errorCount === 0 && cronFailed === 0)
+          ? "healthy"
+          : (metrics.errorRate < 0.1 && cronFailed < 3) ? "degraded" : "unhealthy";
 
         return res.status(200).json({
           status: "ok",
           timestamp: new Date().toISOString(),
-          health: metrics.errorRate < 0.05 ? "healthy" : metrics.errorRate < 0.1 ? "degraded" : "unhealthy",
+          health,
           metrics
         });
       } catch(err) {
