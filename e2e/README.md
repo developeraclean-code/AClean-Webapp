@@ -130,9 +130,48 @@ test.describe("My Feature", () => {
 });
 ```
 
-## CI Integration (Future)
+## CI Integration
 
-Belum diintegrasikan dengan GitHub Actions / Vercel preview deploy. Saat siap:
-- Set `E2E_OWNER_EMAIL` & `E2E_OWNER_PASSWORD` sebagai GitHub Secrets
-- Run `npm run test:e2e` di workflow setelah build success
-- Block merge ke main kalau tests fail
+Workflow file: [`.github/workflows/e2e.yml`](../.github/workflows/e2e.yml)
+
+### Trigger
+- Push ke `main`
+- Pull request ke `main`
+- Manual via GitHub UI (workflow_dispatch)
+
+### Setup GitHub Secrets
+
+Buka **GitHub repo → Settings → Secrets and variables → Actions → New repository secret**.
+
+**Required** (untuk app boot di CI):
+```
+VITE_SUPABASE_URL=https://apsbeppcmsxeldnejibz.supabase.co
+VITE_SUPABASE_ANON_KEY=<your-anon-key>
+```
+
+**Optional** (untuk authenticated tests, kalau tidak set → auth tests skip):
+```
+E2E_OWNER_EMAIL=<owner-email>
+E2E_OWNER_PASSWORD=<owner-password>
+E2E_ADMIN_EMAIL=<admin-email>
+E2E_ADMIN_PASSWORD=<admin-password>
+```
+
+### Behavior
+- Smoke tests SELALU jalan (4 tests, ~4 detik)
+- Authenticated tests jalan KALAU secrets diset (auto-skip kalau tidak)
+- Browser cache: Chromium di-cache antar runs (hemat ~90MB download)
+- Pada failure: HTML report + traces di-upload sebagai artifact (retention 7 hari)
+- Job timeout: 15 menit
+- Concurrency: cancel previous run kalau ada push baru di branch sama (hemat compute)
+
+### Skip CI Manual
+
+Commit dengan `[skip ci]` atau `[ci skip]` di message untuk bypass workflow.
+
+### Branch Protection (Recommended)
+
+Setelah workflow stable beberapa run, set branch protection di GitHub:
+- Settings → Branches → Add rule untuk `main`
+- ✅ Require status checks to pass before merging
+- ✅ Pilih "Playwright E2E (Chromium)" sebagai required check

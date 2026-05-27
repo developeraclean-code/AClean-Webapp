@@ -11,6 +11,7 @@ import {
 import { isFreonItem, displayStock, computeStockStatus } from "./lib/inventory.js";
 import { TECH_PALETTE, getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
+import { detectContinuationCandidates, calcContinuationDayNum } from "./lib/orders.js";
 import {
   PRICE_LIST_DEFAULT, tipeToPkNumber, getBracketKey,
   hargaPerUnitFromTipe as hargaPerUnitFromTipeLib,
@@ -2723,19 +2724,9 @@ ${photoPageHTML}
   // Auto-detect pekerjaan lanjutan berdasarkan no HP customer
   useEffect(() => {
     if (!modalOrder) { setContinuationSuggestion([]); setContinuationParentId(null); return; }
-    const norm = normalizePhone(newOrderForm.phone || "");
-    if (norm.length < 8) { setContinuationSuggestion([]); setContinuationParentId(null); return; }
-    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 3);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-    const OPEN_STATUSES = ["PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "WORKING", "REPORT_SUBMITTED", "INVOICE_CREATED", "INVOICE_APPROVED"];
-    const candidates = ordersData.filter(o =>
-      samePhone(o.phone || "", norm) &&
-      OPEN_STATUSES.includes(o.status) &&
-      !o.parent_job_id &&            // hanya parent / standalone, bukan child
-      (o.date || "") >= cutoffStr
-    ).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    const candidates = detectContinuationCandidates(ordersData, newOrderForm.phone);
     setContinuationSuggestion(candidates);
-    setContinuationParentId(null); // reset pilihan saat phone berubah
+    setContinuationParentId(null);
   }, [newOrderForm.phone, modalOrder, ordersData]);
 
   // SECURITY: Never store API keys in localStorage — keys are managed on backend only
