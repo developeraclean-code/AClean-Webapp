@@ -21,7 +21,7 @@ if (role === "Teknisi" || role === "Helper") {
   const getCustomerHistory = (order) => {
     const sameCustomerIds = new Set(
       ordersData
-        .filter(ord => ord.id !== order.id && (ord.phone === order.phone || ord.customer === order.customer))
+        .filter(ord => ord.id !== order.id && ord.customer === order.customer && ord.address === order.address)
         .map(ord => ord.id)
     );
     return laporanReports
