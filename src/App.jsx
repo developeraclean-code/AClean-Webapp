@@ -7714,8 +7714,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           <div style={{ fontSize: 10, color: cs.muted, marginBottom: 5, fontWeight: 600 }}>📸 Foto ({h.foto_urls.length})</div>
                           <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
                             {(h.foto_urls || []).map((url, fi) => (
-                              <img key={fi} src={url} alt={"Foto " + (fi + 1)}
-                                onClick={() => window.open(url, "_blank")}
+                              <img key={fi} src={fotoSrc(url)} alt={"Foto " + (fi + 1)}
+                                onClick={() => window.open(fotoSrc(url), "_blank")}
                                 onError={e => { e.target.style.display = "none"; }}
                                 style={{
                                   width: 90, height: 90, objectFit: "cover", flexShrink: 0,
