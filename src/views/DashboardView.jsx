@@ -16,6 +16,23 @@ if (role === "Teknisi" || role === "Helper") {
   const myJobs = ordersData.filter(o => o.teknisi === myName);
   const todayJobs = myJobs.filter(o => o.date === TODAY);
   const doneCount = myJobs.filter(o => o.status === "COMPLETED").length;
+  const [historyOpen, setHistoryOpen] = useState(null);
+
+  const getCustomerHistory = (order) => {
+    const sameCustomerIds = new Set(
+      ordersData
+        .filter(ord => ord.id !== order.id && (ord.phone === order.phone || ord.customer === order.customer))
+        .map(ord => ord.id)
+    );
+    return laporanReports
+      .filter(r => sameCustomerIds.has(r.job_id) && (r.status === "VERIFIED" || r.status === "SUBMITTED"))
+      .map(r => {
+        const ord = ordersData.find(o => o.id === r.job_id);
+        return { ...r, orderDate: ord?.date || "", orderService: ord?.service || r.service || "", orderUnits: ord?.units || 1 };
+      })
+      .sort((a, b) => (b.orderDate > a.orderDate ? 1 : -1))
+      .slice(0, 3);
+  };
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -47,26 +64,64 @@ if (role === "Teknisi" || role === "Helper") {
         <div style={{ fontWeight: 700, color: cs.text, fontSize: 14, marginBottom: 12 }}>📅 Jadwal Hari Ini</div>
         {todayJobs.length === 0
           ? <div style={{ color: cs.muted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Tidak ada jadwal hari ini</div>
-          : todayJobs.map(o => (
-            <div key={o.id} style={{ background: cs.surface, border: "1px solid " + myColor + "33", borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <span style={{ fontWeight: 800, color: myColor, fontSize: 16 }}>{o.time}</span>
-                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: (statusColor[o.status] || cs.muted) + "22", color: statusColor[o.status] || cs.muted, border: "1px solid " + (statusColor[o.status] || cs.muted) + "33", fontWeight: 700 }}>{statusLabel[o.status] || o.status.replace("_", " ")}</span>
+          : todayJobs.map(o => {
+            const isHistOpen = historyOpen === o.id;
+            const history = isHistOpen ? getCustomerHistory(o) : [];
+            return (
+              <div key={o.id} style={{ background: cs.surface, border: "1px solid " + myColor + "33", borderRadius: 10, marginBottom: 8, overflow: "hidden" }}>
+                <div style={{ padding: "12px 14px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontWeight: 800, color: myColor, fontSize: 16 }}>{o.time}</span>
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: (statusColor[o.status] || cs.muted) + "22", color: statusColor[o.status] || cs.muted, border: "1px solid " + (statusColor[o.status] || cs.muted) + "33", fontWeight: 700 }}>{statusLabel[o.status] || o.status.replace("_", " ")}</span>
+                  </div>
+                  <div style={{ fontWeight: 700, color: cs.text, fontSize: 13, marginBottom: 3 }}>{o.customer}</div>
+                  <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>🔧 {o.service} · {o.units} unit</div>
+                  <div style={{ fontSize: 11, color: cs.muted }}>📍 {o.address}</div>
+                  {o.helper && <div style={{ fontSize: 11, color: cs.accent, marginTop: 3 }}>🤝 Helper: {o.helper}</div>}
+                  <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                    <button onClick={() => { setWaTekTarget({ phone: o.phone, customer: o.customer, service: o.service, time: o.time, address: o.address }); setModalWaTek(true); }}
+                      style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>💬 Chat WA</button>
+                    <button onClick={() => { const url = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(o.address); window.open(url, "_blank"); }}
+                      style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🗺 Maps</button>
+                    <button onClick={() => openLaporanModal(o)}
+                      style={{ background: cs.ara + "22", border: "1px solid " + cs.ara + "44", color: cs.ara, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📝 Laporan</button>
+                    <button onClick={() => setHistoryOpen(isHistOpen ? null : o.id)}
+                      style={{ background: isHistOpen ? cs.accent + "22" : cs.card, border: "1px solid " + (isHistOpen ? cs.accent + "66" : cs.border), color: isHistOpen ? cs.accent : cs.muted, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🕐 Riwayat</button>
+                  </div>
+                </div>
+
+                {/* History panel — inline expand */}
+                {isHistOpen && (
+                  <div style={{ borderTop: "1px solid " + cs.border + "44", background: cs.card + "88", padding: "12px 14px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>📋 Riwayat Pekerjaan Sebelumnya</div>
+                    {history.length === 0
+                      ? <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada riwayat — customer baru.</div>
+                      : history.map((h, hi) => {
+                        const hasNote = !!(h.rekomendasi || h.catatan_global);
+                        const tgl = h.orderDate ? new Date(h.orderDate + "T00:00:00+07:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "-";
+                        return (
+                          <div key={hi} style={{ background: cs.surface, border: "1px solid " + (hasNote ? "#f59e0b33" : cs.border + "44"), borderRadius: 8, padding: "9px 11px", marginBottom: hi < history.length - 1 ? 6 : 0 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                              <div>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: cs.text }}>{h.orderService} · {h.orderUnits} unit</div>
+                                <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>📅 {tgl} · 👤 {h.teknisi || "-"}</div>
+                              </div>
+                              {hasNote && <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 99, background: "#f59e0b22", color: "#f59e0b", border: "1px solid #f59e0b44", fontWeight: 700, whiteSpace: "nowrap" }}>⚠ Ada Catatan</span>}
+                            </div>
+                            {hasNote && (
+                              <div style={{ marginTop: 6, fontSize: 10, color: "#f59e0b", background: "#f59e0b0d", borderRadius: 5, padding: "5px 8px", lineHeight: 1.5 }}>
+                                {h.rekomendasi || h.catatan_global}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    }
+                  </div>
+                )}
               </div>
-              <div style={{ fontWeight: 700, color: cs.text, fontSize: 13, marginBottom: 3 }}>{o.customer}</div>
-              <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>🔧 {o.service} · {o.units} unit</div>
-              <div style={{ fontSize: 11, color: cs.muted }}>📍 {o.address}</div>
-              {o.helper && <div style={{ fontSize: 11, color: cs.accent, marginTop: 3 }}>🤝 Helper: {o.helper}</div>}
-              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                <button onClick={() => { setWaTekTarget({ phone: o.phone, customer: o.customer, service: o.service, time: o.time, address: o.address }); setModalWaTek(true); }}
-                  style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>💬 Chat WA</button>
-                <button onClick={() => { const url = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(o.address); window.open(url, "_blank"); }}
-                  style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🗺 Maps</button>
-                <button onClick={() => openLaporanModal(o)}
-                  style={{ background: cs.ara + "22", border: "1px solid " + cs.ara + "44", color: cs.ara, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📝 Laporan</button>
-              </div>
-            </div>
-          ))
+            );
+          })
         }
       </div>
 
