@@ -11337,8 +11337,36 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                               {/* Nama Ruangan — Required */}
                               <div style={{ display: "grid", gap: 4 }}>
                                 <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Nama Ruangan *</span>
-                                <input value={u.label} onChange={e => updateUnit(idx, { ...u, label: e.target.value })} placeholder="Contoh: Kamar Utama, Ruang Tamu, Dapur"
+                                <input value={u.label} onChange={e => updateUnit(idx, { ...u, label: e.target.value })} placeholder="Pilih atau tulis nama ruangan"
+                                  list="ruangan-preset"
                                   style={{ background: cs.card, border: "1px solid " + (u.label && u.label.trim() ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: cs.text, fontSize: 11, outline: "none", boxSizing: "border-box" }} />
+                                <datalist id="ruangan-preset">
+                                  <option value="Lantai 1 : Ruangan Depan" />
+                                  <option value="Lantai 1 : Ruangan Tamu 1" />
+                                  <option value="Lantai 1 : Ruangan Tamu 2" />
+                                  <option value="Lantai 1 : Ruangan Kamar" />
+                                  <option value="Lantai 1 : Ruang Makan" />
+                                  <option value="Lantai 1 : Dapur" />
+                                  <option value="Lantai 2 : Kamar Utama" />
+                                  <option value="Lantai 2 : Ruangan Ganti Baju Utama" />
+                                  <option value="Lantai 2 : Kamar Tidur 1" />
+                                  <option value="Lantai 2 : Kamar Tidur 2" />
+                                  <option value="Lantai 2 : Kamar Tidur 3" />
+                                  <option value="Lantai 2 : Ruang Tamu" />
+                                  <option value="Lantai 2 : Ruang Keluarga" />
+                                  <option value="Lantai 2 : Ruangan Gym" />
+                                  <option value="Lantai 2 : Ruangan Serbaguna" />
+                                  <option value="Lantai 1 - Ruangan Depan" />
+                                  <option value="Lantai 1 - Ruangan Belakang" />
+                                  <option value="Lantai 2 - Ruangan Depan" />
+                                  <option value="Lantai 2 - Ruangan Belakang" />
+                                  <option value="Lantai 3 - Ruangan Depan" />
+                                  <option value="Lantai 3 - Ruangan Belakang" />
+                                  <option value="Ruang Kantor" />
+                                  <option value="Ruang Rapat" />
+                                  <option value="Lobby / Resepsionis" />
+                                  <option value="Gudang" />
+                                </datalist>
                               </div>
 
                               {/* Delete button */}
