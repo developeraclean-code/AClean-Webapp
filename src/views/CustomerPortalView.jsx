@@ -287,21 +287,21 @@ function CustomerCard({ data }) {
       {nextTier && (
         <div style={{ marginTop: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <span style={{ fontSize: 10, color: "#64748b" }}>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.9)", fontWeight: 600 }}>
               {nextTier.minUnits - totalUnits} unit lagi menuju {nextTier.badge} {nextTier.label}
             </span>
-            <span style={{ fontSize: 10, color: "#64748b" }}>{progressPct}%</span>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.9)", fontWeight: 600 }}>{progressPct}%</span>
           </div>
-          <div style={{ height: 6, background: "#e2e8f0", borderRadius: 99, overflow: "hidden" }}>
+          <div style={{ height: 6, background: "rgba(255,255,255,0.25)", borderRadius: 99, overflow: "hidden" }}>
             <div style={{ height: "100%", width: progressPct + "%", background: tier.key === "silver" ? "linear-gradient(90deg,#94a3b8,#fbbf24)" : "linear-gradient(90deg,#fbbf24,#a78bfa)", borderRadius: 99, transition: "width 0.5s" }} />
           </div>
-          <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.75)", marginTop: 4 }}>
             Benefit {nextTier.label}: {nextTier.benefit}
           </div>
         </div>
       )}
       {!nextTier && (
-        <div style={{ marginTop: 8, fontSize: 11, color: "#6d28d9", fontWeight: 600 }}>
+        <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.9)", fontWeight: 600 }}>
           💎 Anda adalah Member Platinum kami! Terima kasih atas kepercayaan Anda.
         </div>
       )}
