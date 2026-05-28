@@ -38,9 +38,17 @@ const filteredCusts = customersData.filter(cu => {
     (cu.notes || "").toLowerCase().includes(_scq)
   );
 });
-const totPgCust = Math.ceil(filteredCusts.length / CUST_PAGE_SIZE) || 1;
+// Group by normalized phone so multi-location customers appear together
+const phoneGrouped = [];
+const _phoneMap = {};
+filteredCusts.forEach(cu => {
+  const key = normalizePhone(cu.phone) || cu.phone || ("__nophone__" + cu.id);
+  if (!_phoneMap[key]) { _phoneMap[key] = []; phoneGrouped.push(_phoneMap[key]); }
+  _phoneMap[key].push(cu);
+});
+const totPgCust = Math.ceil(phoneGrouped.length / CUST_PAGE_SIZE) || 1;
 const curPgCust = Math.min(customerPage, totPgCust);
-const pageCusts = filteredCusts.slice((curPgCust - 1) * CUST_PAGE_SIZE, curPgCust * CUST_PAGE_SIZE);
+const pageGroups = phoneGrouped.slice((curPgCust - 1) * CUST_PAGE_SIZE, curPgCust * CUST_PAGE_SIZE);
 const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
 const isTekHelper = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
 
@@ -105,97 +113,119 @@ return (
 
         {/* ── Daftar customer card ── */}
         <div style={{ display: "grid", gap: 10 }}>
-          {pageCusts.map(cu => {
-            const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
-            const lastSvc = cHist[0];
-            const [grad1, grad2] = avatarColor(cu.name);
-            const totalSpend = cHist.reduce((a, b) => a + (b.invoice_total || 0), 0);
-            return (
-              <div key={cu.id} style={{
-                background: cs.card,
-                border: "1px solid " + cs.border,
-                borderRadius: 14,
-                padding: "14px 16px",
-                display: "flex", alignItems: "center", gap: 14,
-                transition: "border-color .15s",
-              }}>
-                {/* Avatar */}
-                <div style={{
-                  width: 48, height: 48, borderRadius: 14, flexShrink: 0,
-                  background: "linear-gradient(135deg," + grad1 + "," + grad2 + ")",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 18, fontWeight: 800, color: "#fff",
-                  boxShadow: "0 2px 8px " + grad1 + "55",
-                }}>
-                  {(cu.name || "?").charAt(0).toUpperCase()}
-                </div>
+          {pageGroups.map((group, gi) => {
+            const isMulti = group.length > 1;
+            const [grad1, grad2] = avatarColor(group[0].name);
 
-                {/* Info utama */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {(() => {
-                    const cuTier = MEMBER_TIER_INFO[cu.membership_tier || "silver"];
-                    const showTier = cu.membership_tier === "gold" || cu.membership_tier === "platinum";
-                    return (
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
-                        <span style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>{cu.name}</span>
-                        {showTier && (
-                          <span style={{ fontSize: 9, background: cuTier.bg, color: cuTier.color, padding: "2px 8px", borderRadius: 99, fontWeight: 800, border: "1px solid " + cuTier.border }}>
-                            {cuTier.badge} {cuTier.label}
-                          </span>
-                        )}
-                        {cu.is_vip && (
-                          <span style={{ fontSize: 9, background: "#f59e0b22", color: "#f59e0b", padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid #f59e0b33" }}>VIP</span>
-                        )}
-                        {cHist.length > 0 && (
-                          <span style={{ fontSize: 10, background: cs.accent + "15", color: cs.accent, padding: "1px 7px", borderRadius: 99, fontWeight: 600 }}>
-                            {cHist.length}x servis
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })()}
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: cs.muted }}>
-                    {cu.phone && <span>{cu.phone}</span>}
-                    {(cu.area || cu.address) && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>{cu.area || cu.address}</span>}
-                    {lastSvc && <span style={{ color: cs.muted }}>Terakhir: {lastSvc.date}</span>}
+            // Single-location: render kartu seperti semula
+            if (!isMulti) {
+              const cu = group[0];
+              const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
+              const lastSvc = cHist[0];
+              const totalSpend = cHist.reduce((a, b) => a + (b.invoice_total || 0), 0);
+              return (
+                <div key={cu.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: "14px 16px", display: "flex", alignItems: "center", gap: 14 }}>
+                  <div style={{ width: 48, height: 48, borderRadius: 14, flexShrink: 0, background: "linear-gradient(135deg," + grad1 + "," + grad2 + ")", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: "#fff", boxShadow: "0 2px 8px " + grad1 + "55" }}>
+                    {(cu.name || "?").charAt(0).toUpperCase()}
                   </div>
-                  {isOwnerAdmin && totalSpend > 0 && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: cs.green, fontWeight: 600 }}>{fmt(totalSpend)} total</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {(() => {
+                      const cuTier = MEMBER_TIER_INFO[cu.membership_tier || "silver"];
+                      const showTier = cu.membership_tier === "gold" || cu.membership_tier === "platinum";
+                      return (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
+                          <span style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>{cu.name}</span>
+                          {showTier && <span style={{ fontSize: 9, background: cuTier.bg, color: cuTier.color, padding: "2px 8px", borderRadius: 99, fontWeight: 800, border: "1px solid " + cuTier.border }}>{cuTier.badge} {cuTier.label}</span>}
+                          {cu.is_vip && <span style={{ fontSize: 9, background: "#f59e0b22", color: "#f59e0b", padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid #f59e0b33" }}>VIP</span>}
+                          {cHist.length > 0 && <span style={{ fontSize: 10, background: cs.accent + "15", color: cs.accent, padding: "1px 7px", borderRadius: 99, fontWeight: 600 }}>{cHist.length}x servis</span>}
+                        </div>
+                      );
+                    })()}
+                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: cs.muted }}>
+                      {cu.phone && <span>{cu.phone}</span>}
+                      {(cu.area || cu.address) && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>{cu.area || cu.address}</span>}
+                      {lastSvc && <span>Terakhir: {lastSvc.date}</span>}
+                    </div>
+                    {isOwnerAdmin && totalSpend > 0 && <div style={{ marginTop: 4, fontSize: 11, color: cs.green, fontWeight: 600 }}>{fmt(totalSpend)} total</div>}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5, flexShrink: 0 }}>
+                    <button onClick={() => { setSelectedCustomer(cu); setCustomerTab("history"); }} style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "33", color: cs.accent, borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>Riwayat</button>
+                    <div style={{ display: "flex", gap: 5 }}>
+                      {cu.phone && <button onClick={() => openWA(cu.phone, "")} style={{ flex: 1, background: "#25D36615", border: "1px solid #25D36633", color: "#25D366", borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>WA</button>}
+                      {!isTekHelper && <button onClick={() => { setNewOrderForm(f => ({ ...f, customer: cu.name, phone: normalizePhone(cu.phone) || cu.phone, address: cu.address || "", service: "Cleaning" })); setModalOrder(true); }} style={{ flex: 1, background: cs.green + "15", border: "1px solid " + cs.green + "33", color: cs.green, borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>Order</button>}
+                      {currentUser?.role === "Owner" && (
+                        <button onClick={async () => {
+                          if (!await showConfirm({ icon: "🗑️", title: "Hapus Customer?", danger: true, message: `Hapus "${cu.name}"?\nHistory order tetap ada.`, confirmText: "Hapus" })) return;
+                          setCustomersData(prev => prev.filter(c => c.id !== cu.id));
+                          const { error } = await deleteCustomer(supabase, cu.id);
+                          if (error) showNotif("❌ Gagal hapus customer: " + error.message);
+                          else { addAgentLog("CUSTOMER_DELETED", cu.name + " dihapus", "WARNING"); showNotif(`🗑️ Customer ${cu.name} berhasil dihapus`); }
+                        }} style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11 }}>Hapus</button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            // Multi-lokasi: grup kartu dengan header phone + sub-kartu per lokasi
+            return (
+              <div key={gi + "_multi"} style={{ background: cs.card, border: "1px solid " + cs.accent + "33", borderRadius: 14, overflow: "hidden" }}>
+                {/* Header grup */}
+                <div style={{ padding: "10px 16px", background: cs.accent + "0d", borderBottom: "1px solid " + cs.border + "44", display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: "linear-gradient(135deg," + grad1 + "," + grad2 + ")", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 800, color: "#fff" }}>
+                    {(group[0].name || "?").charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>📱 {group[0].phone}</div>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 1 }}>{group.length} Lokasi</div>
+                  </div>
+                  {group[0].phone && (
+                    <button onClick={() => openWA(group[0].phone, "")} style={{ background: "#25D36615", border: "1px solid #25D36633", color: "#25D366", borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 11, fontWeight: 600, flexShrink: 0 }}>WA</button>
                   )}
                 </div>
 
-                {/* Aksi */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 5, flexShrink: 0 }}>
-                  <button onClick={() => { setSelectedCustomer(cu); setCustomerTab("history"); }}
-                    style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "33", color: cs.accent, borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
-                    Riwayat
-                  </button>
-                  <div style={{ display: "flex", gap: 5 }}>
-                    {cu.phone && (
-                      <button onClick={() => openWA(cu.phone, "")}
-                        style={{ flex: 1, background: "#25D36615", border: "1px solid #25D36633", color: "#25D366", borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
-                        WA
-                      </button>
-                    )}
-                    {!isTekHelper && (
-                      <button onClick={() => { setNewOrderForm(f => ({ ...f, customer: cu.name, phone: normalizePhone(cu.phone) || cu.phone, address: cu.address || "", service: "Cleaning" })); setModalOrder(true); }}
-                        style={{ flex: 1, background: cs.green + "15", border: "1px solid " + cs.green + "33", color: cs.green, borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
-                        Order
-                      </button>
-                    )}
-                    {currentUser?.role === "Owner" && (
-                      <button onClick={async () => {
-                        if (!await showConfirm({ icon: "🗑️", title: "Hapus Customer?", danger: true, message: `Hapus "${cu.name}"?\nHistory order tetap ada.`, confirmText: "Hapus" })) return;
-                        setCustomersData(prev => prev.filter(c => c.id !== cu.id));
-                        const { error } = await deleteCustomer(supabase, cu.id);
-                        if (error) showNotif("❌ Gagal hapus customer: " + error.message);
-                        else { addAgentLog("CUSTOMER_DELETED", cu.name + " dihapus", "WARNING"); showNotif(`🗑️ Customer ${cu.name} berhasil dihapus`); }
-                      }} style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11 }}>
-                        Hapus
-                      </button>
-                    )}
-                  </div>
-                </div>
+                {/* Sub-kartu per lokasi */}
+                {group.map((cu, li) => {
+                  const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
+                  const lastSvc = cHist[0];
+                  const totalSpend = cHist.reduce((a, b) => a + (b.invoice_total || 0), 0);
+                  const cuTier = MEMBER_TIER_INFO[cu.membership_tier || "silver"];
+                  const showTier = cu.membership_tier === "gold" || cu.membership_tier === "platinum";
+                  return (
+                    <div key={cu.id} style={{ padding: "12px 16px", borderTop: li === 0 ? "none" : "1px solid " + cs.border + "33", display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ fontSize: 16, flexShrink: 0 }}>📍</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 2 }}>
+                          <span style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{cu.name}</span>
+                          {showTier && <span style={{ fontSize: 9, background: cuTier.bg, color: cuTier.color, padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid " + cuTier.border }}>{cuTier.badge} {cuTier.label}</span>}
+                          {cu.is_vip && <span style={{ fontSize: 9, background: "#f59e0b22", color: "#f59e0b", padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid #f59e0b33" }}>VIP</span>}
+                          {cHist.length > 0 && <span style={{ fontSize: 10, background: cs.accent + "15", color: cs.accent, padding: "1px 7px", borderRadius: 99, fontWeight: 600 }}>{cHist.length}x servis</span>}
+                        </div>
+                        <div style={{ fontSize: 11, color: cs.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cu.area || cu.address || "-"}</div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11, color: cs.muted, marginTop: 1 }}>
+                          {lastSvc && <span>Terakhir: {lastSvc.date}</span>}
+                          {isOwnerAdmin && totalSpend > 0 && <span style={{ color: cs.green, fontWeight: 600 }}>{fmt(totalSpend)}</span>}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+                        <button onClick={() => { setSelectedCustomer(cu); setCustomerTab("history"); }} style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "33", color: cs.accent, borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>Riwayat</button>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          {!isTekHelper && <button onClick={() => { setNewOrderForm(f => ({ ...f, customer: cu.name, phone: normalizePhone(cu.phone) || cu.phone, address: cu.address || "", service: "Cleaning" })); setModalOrder(true); }} style={{ flex: 1, background: cs.green + "15", border: "1px solid " + cs.green + "33", color: cs.green, borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>Order</button>}
+                          {currentUser?.role === "Owner" && (
+                            <button onClick={async () => {
+                              if (!await showConfirm({ icon: "🗑️", title: "Hapus Lokasi?", danger: true, message: `Hapus "${cu.name}"?\nHistory order tetap ada.`, confirmText: "Hapus" })) return;
+                              setCustomersData(prev => prev.filter(c => c.id !== cu.id));
+                              const { error } = await deleteCustomer(supabase, cu.id);
+                              if (error) showNotif("❌ Gagal hapus: " + error.message);
+                              else { addAgentLog("CUSTOMER_DELETED", cu.name + " dihapus", "WARNING"); showNotif(`🗑️ ${cu.name} berhasil dihapus`); }
+                            }} style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 11 }}>Hapus</button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
@@ -218,7 +248,7 @@ return (
             })}
             <button onClick={() => setCustomerPage(p => Math.min(totPgCust, p + 1))} disabled={curPgCust === totPgCust}
               style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid " + cs.border, background: curPgCust === totPgCust ? cs.surface : cs.card, color: curPgCust === totPgCust ? cs.muted : cs.text, cursor: curPgCust === totPgCust ? "default" : "pointer" }}>›</button>
-            <span style={{ fontSize: 11, color: cs.muted }}>hal {curPgCust}/{totPgCust} · {filteredCusts.length} customer</span>
+            <span style={{ fontSize: 11, color: cs.muted }}>hal {curPgCust}/{totPgCust} · {filteredCusts.length} customer ({phoneGrouped.length} no. HP)</span>
           </div>
         )}
       </div>
