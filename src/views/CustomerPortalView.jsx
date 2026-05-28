@@ -64,6 +64,7 @@ export default function CustomerPortalView({ token: tokenProp }) {
   const [vouchers, setVouchers] = useState([]);
   const [ratingTarget, setRatingTarget] = useState(null); // order yang mau di-rating
   const [ratedOrders, setRatedOrders]   = useState({}); // { order_id: true }
+  const [activeLocation, setActiveLocation] = useState(null); // null = lokasi pertama
 
   useEffect(() => {
     if (!token) { setError("not_found"); setLoading(false); return; }
@@ -95,19 +96,31 @@ export default function CustomerPortalView({ token: tokenProp }) {
   if (error === "expired") return <ExpiredScreen waHref={waHref} />;
   if (error) return <ErrorScreen waHref={waHref} />;
 
-  // Job aktif hari ini (non-completed, non-cancelled)
+  // Deteksi multi-lokasi: group orders by customer name
+  const allOrders = data.orders || [];
+  const locationNames = [...new Set(allOrders.map(o => o.customer).filter(Boolean))];
+  const isMultiLokasi = locationNames.length > 1;
+  const currentLocation = activeLocation || locationNames[0] || null;
+  const filteredOrders = isMultiLokasi && currentLocation
+    ? allOrders.filter(o => o.customer === currentLocation)
+    : allOrders;
+
+  // Job aktif hari ini (dari lokasi aktif)
   const todayStr = new Date().toISOString().slice(0, 10);
-  const activeJob = data.orders?.find(o =>
+  const activeJob = filteredOrders.find(o =>
     !["COMPLETED","INVOICE_APPROVED","CANCELLED"].includes(o.status) && o.date >= todayStr
   ) || null;
 
-  // Job selesai terbaru (untuk garansi + rating)
-  const lastDoneJob = data.orders?.find(o => ["COMPLETED","INVOICE_APPROVED"].includes(o.status));
-  const lastInvoice = data.invoices?.[0] || null;
+  // Job selesai terbaru (untuk garansi + rating) — dari lokasi aktif
+  const lastDoneJob = filteredOrders.find(o => ["COMPLETED","INVOICE_APPROVED"].includes(o.status));
+  const lastInvoice = (() => {
+    const jobIds = new Set(filteredOrders.map(o => o.id));
+    return (data.invoices || []).find(i => jobIds.has(i.job_id)) || null;
+  })();
   const garansiInvoice = lastInvoice?.garansi_expires ? lastInvoice : null;
 
-  // Job selesai yang belum di-rating (hanya tampilkan tombol jika ada)
-  const unratedJob = data.orders?.find(o =>
+  // Job selesai yang belum di-rating (dari lokasi aktif)
+  const unratedJob = filteredOrders.find(o =>
     ["COMPLETED","INVOICE_APPROVED"].includes(o.status) && !ratedOrders[o.id]
   ) || null;
 
@@ -129,7 +142,34 @@ export default function CustomerPortalView({ token: tokenProp }) {
 
       <div style={s.wrapper}>
         {/* CUSTOMER CARD */}
-        <CustomerCard data={data} />
+        <CustomerCard data={data} locationNames={locationNames} />
+
+        {/* MULTI-LOKASI TABS */}
+        {isMultiLokasi && (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", padding: "12px 14px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              📍 Pilih Lokasi
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {locationNames.map(name => {
+                const locOrders = allOrders.filter(o => o.customer === name);
+                const locAddr = locOrders[0]?.address || "";
+                const isActive = name === currentLocation;
+                const locCount = locOrders.length;
+                return (
+                  <button key={name} onClick={() => setActiveLocation(name)}
+                    style={{ textAlign: "left", background: isActive ? "linear-gradient(135deg,#eff6ff,#dbeafe)" : "#f8fafc", border: "1px solid " + (isActive ? "#93c5fd" : "#e2e8f0"), borderRadius: 10, padding: "10px 12px", cursor: "pointer", transition: "all .15s" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontWeight: 700, fontSize: 13, color: isActive ? "#1d4ed8" : "#1e293b" }}>{name}</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: isActive ? "#bfdbfe" : "#e2e8f0", color: isActive ? "#1d4ed8" : "#64748b" }}>{locCount}x servis</span>
+                    </div>
+                    {locAddr && <div style={{ fontSize: 11, color: "#64748b", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{locAddr}</div>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* EXPIRED NOTICE — data tetap tampil tapi ada banner */}
         {data.expired && (
@@ -141,7 +181,7 @@ export default function CustomerPortalView({ token: tokenProp }) {
         {/* ACTIVE JOB */}
         {activeJob && !data.expired && (
           <>
-            <div style={s.sectionLabel}>Job Hari Ini</div>
+            <div style={s.sectionLabel}>Job Hari Ini{isMultiLokasi ? ` — ${currentLocation}` : ""}</div>
             <ActiveJobCard job={activeJob} />
           </>
         )}
@@ -188,11 +228,11 @@ export default function CustomerPortalView({ token: tokenProp }) {
         )}
 
         {/* RIWAYAT */}
-        {data.orders?.length > 0 && (
+        {filteredOrders.length > 0 && (
           <>
-            <div style={s.sectionLabel}>Riwayat Servis</div>
+            <div style={s.sectionLabel}>Riwayat Servis{isMultiLokasi ? ` — ${currentLocation}` : ""}</div>
             <div style={{ display: "grid", gap: 10 }}>
-              {data.orders.slice(0, 10).map(o => {
+              {filteredOrders.slice(0, 10).map(o => {
                 const inv = data.invoices?.find(i => i.job_id === o.id);
                 const rpt = data.reports?.find(r => r.job_id === o.id);
                 return <HistoryItem key={o.id} order={o} invoice={inv} report={rpt} />;
@@ -243,7 +283,7 @@ function getTierByKey(key) {
   return TIERS.find(t => t.key === key) || TIERS[0];
 }
 
-function CustomerCard({ data }) {
+function CustomerCard({ data, locationNames = [] }) {
   const tier = getTierByKey(data.membership_tier || "silver");
   const totalUnits = data.total_units_serviced || 0;
   const nextTier = TIERS[TIERS.indexOf(tier) + 1] || null;
@@ -252,6 +292,7 @@ function CustomerCard({ data }) {
     : 100;
   const totalOrders = data.orders?.length || 0;
   const isGoldPlus = tier.key === "gold" || tier.key === "platinum";
+  const isMulti = locationNames.length > 1;
 
   return (
     <div style={s.customerCard}>
@@ -262,11 +303,19 @@ function CustomerCard({ data }) {
           <span style={{ fontSize: 11, fontWeight: 700, color: tier.color }}>Member {tier.label}</span>
         </div>
       </div>
-      <div style={s.customerName}>{data.customer_name || "Pelanggan AClean"}</div>
-      <div style={s.customerPhone}>📱 {data.phone}</div>
+      <div style={s.customerName}>
+        {isMulti ? "📱 " + data.phone : (data.customer_name || "Pelanggan AClean")}
+      </div>
+      {isMulti && (
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.85)", marginTop: 4 }}>
+          {locationNames.length} Lokasi Terdaftar
+        </div>
+      )}
+      {!isMulti && <div style={s.customerPhone}>📱 {data.phone}</div>}
       <div style={s.customerMeta}>
         <span style={s.badge}>{totalOrders} kali servis</span>
         <span style={s.badge}>{totalUnits} unit AC</span>
+        {isMulti && <span style={s.badge}>📍 {locationNames.length} lokasi</span>}
         {data.orders?.length > 0 && (
           <span style={s.badge}>Servis terakhir {fmtDateShort(data.orders[0]?.date)}</span>
         )}
