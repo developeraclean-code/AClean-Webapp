@@ -98,11 +98,11 @@ export default function CustomerPortalView({ token: tokenProp }) {
 
   // Deteksi multi-lokasi: group orders by customer name
   const allOrders = data.orders || [];
-  const locationNames = [...new Set(allOrders.map(o => o.customer).filter(Boolean))];
+  const locationNames = [...new Set(allOrders.map(o => (o.customer || "").trim()).filter(Boolean))];
   const isMultiLokasi = locationNames.length > 1;
   const currentLocation = activeLocation || locationNames[0] || null;
   const filteredOrders = isMultiLokasi && currentLocation
-    ? allOrders.filter(o => o.customer === currentLocation)
+    ? allOrders.filter(o => (o.customer || "").trim() === currentLocation)
     : allOrders;
 
   // Job aktif hari ini (dari lokasi aktif)
@@ -152,7 +152,7 @@ export default function CustomerPortalView({ token: tokenProp }) {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {locationNames.map(name => {
-                const locOrders = allOrders.filter(o => o.customer === name);
+                const locOrders = allOrders.filter(o => (o.customer || "").trim() === name);
                 const locAddr = locOrders[0]?.address || "";
                 const isActive = name === currentLocation;
                 const locCount = locOrders.length;
