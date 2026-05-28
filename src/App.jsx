@@ -1432,7 +1432,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       // Preset dari history: copy tipe, merk, pk, model dari unit history
       return {
         unit_no: no,
-        label: hist.label || `Unit ${no}`,
+        label: hist.label || "",
         tipe: TIPE_AC_OPT.includes(hist.tipe) ? hist.tipe : "",
         merk: hist.merk || "",
         pk: hist.pk || "1PK",
@@ -1448,7 +1448,7 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
     }
     return {
       unit_no: no,
-      label: `Unit ${no}`,
+      label: "",
       tipe: "",
       merk: "",
       pk: "1PK",
