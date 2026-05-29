@@ -75,7 +75,8 @@ export default function QuotationView({
     };
   }, [quotationsData, today]);
 
-  // ── Approve: convert quotation → invoice + order (ke Planning Order) ──
+  // ── Approve: convert quotation → order saja (masuk Planning Order) ──
+  // Invoice TIDAK dibuat di sini. Flow: order → teknisi report → invoice (flow normal) → sent
   const handleApprove = async (quo, scheduledDate) => {
     setApprovingId(quo.id);
     setApproveTargetId(null);
@@ -83,14 +84,9 @@ export default function QuotationView({
     try {
       const todayStr = getLocalDate?.() || new Date().toISOString().slice(0, 10);
       const orderDate = scheduledDate || todayStr;
-      const invoiceId = "INV-" + todayStr.replace(/-/g, "") + "-" + Math.random().toString(36).toUpperCase().slice(2, 7);
       const jobId     = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
 
-      // Garansi 30 hari
-      const garansiD = new Date(); garansiD.setDate(garansiD.getDate() + 30);
-      const garansiExpires = garansiD.toISOString().slice(0, 10);
-
-      // 1. Buat order DULU (invoice_job_id_fkey constraint: order harus ada sebelum invoice)
+      // 1. Buat order → masuk Planning Order (status PENDING, teknisi kosong)
       const totalUnits = (quo.items || []).filter(i => i.item_type === "unit_ac").reduce((s, i) => s + (i.qty || 1), 0) || 1;
       const orderPayload = {
         id:         jobId,
@@ -105,7 +101,6 @@ export default function QuotationView({
         time:       "09:00",
         time_end:   "11:00",
         status:     "PENDING",
-        invoice_id: invoiceId,
         dispatch:   false,
         source:     "quotation",
         notes:      `Auto dari Quotation ${quo.id}${quo.notes ? " · " + quo.notes : ""}`,
@@ -113,71 +108,24 @@ export default function QuotationView({
       const { error: orderErr } = await supabase.from("orders").insert(orderPayload);
       if (orderErr) throw new Error("Gagal buat order: " + orderErr.message);
 
-      // 2. Buat invoice (job_id sekarang sudah ada di orders)
-      const invoicePayload = {
-        id:               invoiceId,
-        customer:         quo.customer,
-        phone:            quo.phone || null,
-        invoice_type:     "quotation_converted",
-        quotation_id:     quo.id,
-        status:           "UNPAID",
-        total:            quo.total || 0,
-        material:         quo.material || 0,
-        labor:            quo.labor || 0,
-        unit_ac_amount:   quo.unit_ac_amount || 0,
-        discount:         quo.discount || 0,
-        trade_in_amount:  quo.trade_in_amount || 0,
-        paid_amount:      0,
-        remaining_amount: quo.total || 0,
-        garansi_days:     30,
-        garansi_expires:  garansiExpires,
-        sent:             true,
-        job_id:           jobId,
-        notes:            quo.notes || null,
-        created_at:       new Date().toISOString(),
-      };
-      const { error: invErr } = await supabase.from("invoices").insert(invoicePayload);
-      if (invErr) {
+      // 2. Update quotation: status APPROVED + link ke order (job_id). Invoice belum ada.
+      const { error: quoErr } = await supabase.from("quotations").update({
+        status: "APPROVED", job_id: jobId, updated_at: new Date().toISOString()
+      }).eq("id", quo.id);
+      if (quoErr) {
         // Rollback: hapus order yang sudah terbuat
         await supabase.from("orders").delete().eq("id", jobId);
-        throw new Error("Gagal buat invoice: " + invErr.message);
+        throw new Error("Gagal update quotation: " + quoErr.message);
       }
 
-      // 3. Insert invoice_items dari items jsonb quotation
-      const items = (quo.items || []).map(item => ({
-        invoice_id:  invoiceId,
-        item_type:   item.item_type,
-        description: item.description,
-        qty:         item.qty || 1,
-        unit_price:  item.unit_price || 0,
-        satuan:      item.satuan || (item.item_type === "unit_ac" ? "Unit" : null),
-        is_passthrough: item.item_type === "unit_ac",
-      }));
-      if (items.length > 0) {
-        const { error: itemErr } = await supabase.from("invoice_items").insert(items);
-        if (itemErr) {
-          // Rollback: hapus invoice + order
-          await supabase.from("invoices").delete().eq("id", invoiceId);
-          await supabase.from("orders").delete().eq("id", jobId);
-          throw new Error("Gagal simpan items invoice: " + itemErr.message);
-        }
-      }
-
-      // 4. Update quotation: status APPROVED + isi invoice_id + job_id
-      const { error: quoErr } = await supabase.from("quotations").update({
-        status: "APPROVED", invoice_id: invoiceId, job_id: jobId, updated_at: new Date().toISOString()
-      }).eq("id", quo.id);
-      if (quoErr) throw new Error("Gagal update quotation: " + quoErr.message);
-
-      // 5. Update local state
+      // 3. Update local state
       setQuotationsData?.(prev => prev.map(q => q.id === quo.id
-        ? { ...q, status: "APPROVED", invoice_id: invoiceId, job_id: jobId }
+        ? { ...q, status: "APPROVED", job_id: jobId }
         : q
       ));
       setOrdersData?.(prev => [orderPayload, ...prev]);
-      setInvoicesData?.(prev => [invoicePayload, ...prev]);
 
-      showNotif?.(`✅ ${quo.id} approved — Invoice ${invoiceId} & Order dibuat`);
+      showNotif?.(`✅ ${quo.id} approved — Order ${jobId} masuk Planning Order. Invoice dibuat setelah laporan teknisi.`);
     } catch (err) {
       showNotif?.("❌ " + (err.message || err));
     } finally {
@@ -353,10 +301,11 @@ export default function QuotationView({
                   </div>
                 )}
 
-                {/* Approved: link ke invoice + order */}
-                {quo.status === "APPROVED" && quo.invoice_id && (
+                {/* Approved: link ke order (invoice dibuat setelah laporan teknisi) */}
+                {quo.status === "APPROVED" && quo.job_id && (
                   <div style={{ fontSize: 12, color: "#4ade80", marginBottom: 8 }}>
-                    ✅ Invoice: {quo.invoice_id} · Order: {quo.job_id || "—"}
+                    ✅ Order: {quo.job_id} · masuk Planning Order
+                    {quo.invoice_id && ` · Invoice: ${quo.invoice_id}`}
                   </div>
                 )}
 
