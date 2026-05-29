@@ -123,7 +123,7 @@ export default function QuotationView({
         ? { ...q, status: "APPROVED", job_id: jobId }
         : q
       ));
-      setOrdersData?.(prev => [orderPayload, ...prev]);
+      setOrdersData?.(prev => prev.some(o => o.id === jobId) ? prev : [orderPayload, ...prev]);
 
       showNotif?.(`✅ ${quo.id} approved — Order ${jobId} masuk Planning Order. Invoice dibuat setelah laporan teknisi.`);
     } catch (err) {
