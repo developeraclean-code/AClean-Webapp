@@ -6,6 +6,24 @@ const fmtDate = (d) => {
   return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
 };
 
+// T&C standar — selalu tampil di PDF tanpa perlu klik preset
+const TERMS_PEKERJAAN = [
+  "Jasa Kami tidak termasuk Jasa Perapian Tembok / Plafon / Dan Sebagainya.",
+  "Penambahan Material / Jasa diluar Pekerjaan Quotation ini.",
+  "Apabila ditemukan kerusakan Sparepart lain / Pekerjaan lain Maka akan diberikan penawaran tambahan.",
+];
+const TERMS_PAYMENT = [
+  "Payment : Cash / Bank Transfer 100%",
+  "Instalation : 1~14 Days, After Payment",
+  "Price Include Shipment",
+  "Validation : 15 Days",
+  "Transfer BCA : 8830-8830-11 ( Malda Retta )",
+];
+
+// Normalisasi untuk deteksi apakah quo.notes hanya berisi preset (hindari duplikat di PDF)
+const _norm = (t) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+const _PRESET_SIGNATURE = _norm(TERMS_PEKERJAAN.join(" ") + TERMS_PAYMENT.join(" "));
+
 const s = StyleSheet.create({
   page:       { padding: 36, fontFamily: "Helvetica", fontSize: 10, color: "#1e293b", backgroundColor: "#fff" },
   header:     { borderRadius: 6, border: "2px solid #1E5BA8", marginBottom: 14, overflow: "hidden" },
@@ -41,6 +59,10 @@ const s = StyleSheet.create({
   noteBox:    { border: "1px solid #e2e8f0", borderRadius: 6, padding: "10 12", marginBottom: 12 },
   noteTitle:  { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#64748b", marginBottom: 4, textTransform: "uppercase" },
   noteText:   { fontSize: 9, color: "#1e293b", lineHeight: 1.5 },
+  termsBox:   { border: "1px solid #e2e8f0", borderRadius: 6, padding: "10 12", marginBottom: 12 },
+  termsTitle: { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5 },
+  termsItem:  { fontSize: 8.5, color: "#1e293b", lineHeight: 1.4, marginBottom: 2, flexDirection: "row" },
+  termsNum:   { width: 14, color: "#64748b", fontFamily: "Helvetica-Bold" },
   validBox:   { backgroundColor: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, padding: "8 12", marginBottom: 12 },
   validText:  { fontSize: 9, color: "#c2410c" },
   footer:     { borderTop: "1px solid #e2e8f0", paddingTop: 10, marginTop: 8 },
@@ -251,13 +273,31 @@ export default function QuotationPDF({ quo, appSettings }) {
           </Text>
         </View>
 
-        {/* Notes */}
-        {quo.notes && (
+        {/* Catatan tambahan custom — hanya tampil jika notes BUKAN sekadar preset T&C */}
+        {quo.notes && !_norm(quo.notes).includes(_PRESET_SIGNATURE) && (
           <View style={s.noteBox}>
             <Text style={s.noteTitle}>Catatan / Scope Pekerjaan</Text>
             <Text style={s.noteText}>{quo.notes}</Text>
           </View>
         )}
+
+        {/* Syarat & Ketentuan — selalu embed di PDF (tidak perlu klik preset) */}
+        <View style={s.termsBox}>
+          <Text style={s.termsTitle}>Catatan Pekerjaan</Text>
+          {TERMS_PEKERJAAN.map((t, i) => (
+            <View key={i} style={s.termsItem}>
+              <Text style={s.termsNum}>{i + 1}.</Text>
+              <Text style={{ flex: 1 }}>{t}</Text>
+            </View>
+          ))}
+          <Text style={[s.termsTitle, { marginTop: 8 }]}>Term Of Payment</Text>
+          {TERMS_PAYMENT.map((t, i) => (
+            <View key={i} style={s.termsItem}>
+              <Text style={s.termsNum}>{i + 1}.</Text>
+              <Text style={{ flex: 1 }}>{t}</Text>
+            </View>
+          ))}
+        </View>
 
         {/* Footer */}
         <View style={s.footer}>
