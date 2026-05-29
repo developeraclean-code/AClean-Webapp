@@ -9,18 +9,6 @@ const KAPASITAS_OPT   = ["0.5 PK", "0.75 PK", "1 PK", "1.5 PK", "2 PK", "2.5 PK"
 const TIPE_UNIT       = ["Split Standard", "Split Inverter", "Cassette", "Split Duct", "Floor Standing"];
 const TRADE_IN_AMOUNT = 250000;
 
-const PRESET_NOTES = `Catatan Pekerjaan :
-1. Jasa Kami tidak termasuk Jasa Perapian Tembok / Plafon / Dan Sebagainya.
-2. Penambahan Material / Jasa diluar Pekerjaan Quotation ini.
-3. Apabila ditemukan kerusakan Sparepart lain / Pekerjaan lain Maka akan diberikan penawaran tambahan
-
-Catatan Term Of Payment:
-1. Payment : Cash / Bank Transfer 100%
-2. Instalation : 1~14 Days, After Payment
-3. Price Include Shipment
-4. Validation : 15 Days
-5. Transfer BCA : 8830-8830-11 ( Malda Retta )`;
-
 const DEFAULT_PAKET = [
   { key: "paket_05_1pk", label: "Paket Pemasangan 0,5PK – 1PK", harga: 1400000,
     include: [
@@ -746,17 +734,11 @@ export default function QuotationModal({
                 </div>
               </div>
 
-              {/* Notes */}
+              {/* Notes — opsional, untuk catatan khusus saja. T&C standar otomatis di PDF */}
               <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                  <div style={{ fontSize: 11, color: cs.muted }}>Catatan / Scope Pekerjaan</div>
-                  <button onClick={() => setNotes(PRESET_NOTES)}
-                    style={{ fontSize: 11, color: cs.accent, background: cs.accent + "11", border: "1px solid " + cs.accent + "33", borderRadius: 6, padding: "2px 10px", cursor: "pointer", fontWeight: 600 }}>
-                    📋 Isi Preset
-                  </button>
-                </div>
-                <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={6}
-                  style={{ ...inp, resize: "vertical" }} placeholder="Deskripsi pekerjaan, syarat & ketentuan..." />
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Catatan Khusus (opsional)</div>
+                <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={4}
+                  style={{ ...inp, resize: "vertical" }} placeholder="Catatan khusus untuk quotation ini saja. Syarat & Ketentuan standar sudah otomatis tampil di PDF." />
               </div>
             </>
           )}

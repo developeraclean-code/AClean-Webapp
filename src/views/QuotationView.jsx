@@ -88,6 +88,10 @@ export default function QuotationView({
 
       // 1. Buat order → masuk Planning Order (status PENDING, teknisi kosong)
       const totalUnits = (quo.items || []).filter(i => i.item_type === "unit_ac").reduce((s, i) => s + (i.qty || 1), 0) || 1;
+      // Skip T&C standar dari catatan order (sudah otomatis di PDF) — cegah card Planning Order membengkak
+      const _nLow = (quo.notes || "").toLowerCase();
+      const isPresetNote = _nLow.includes("jasa perapian tembok") && _nLow.includes("term of payment");
+      const customNote = quo.notes && !isPresetNote ? quo.notes : "";
       const orderPayload = {
         id:         jobId,
         customer:   quo.customer,
@@ -103,7 +107,7 @@ export default function QuotationView({
         status:     "PENDING",
         dispatch:   false,
         source:     "quotation",
-        notes:      `Auto dari Quotation ${quo.id}${quo.notes ? " · " + quo.notes : ""}`,
+        notes:      `Auto dari Quotation ${quo.id}${customNote ? " · " + customNote : ""}`,
       };
       const { error: orderErr } = await supabase.from("orders").insert(orderPayload);
       if (orderErr) throw new Error("Gagal buat order: " + orderErr.message);
