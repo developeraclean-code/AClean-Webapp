@@ -79,7 +79,8 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
   const addonItems = items.filter(i => i.item_type === "addon");
 
   const companyName  = appSettings?.company_name  || "AClean Service";
-  const companyPhone = appSettings?.wa_number || appSettings?.company_phone || "6281289898937";
+  const _rawPhone    = appSettings?.wa_number || appSettings?.company_phone || "6281289898937";
+  const companyPhone = String(_rawPhone).replace(/[^\d]/g, "") || "6281289898937";
   const companyAddr  = appSettings?.company_addr || appSettings?.company_address || "Jakarta";
   const bankInfo     = (appSettings?.bank_name || appSettings?.bank_number)
     ? `Transfer ${appSettings.bank_name || ""} ${appSettings.bank_number || ""}${appSettings.bank_holder ? " a.n " + appSettings.bank_holder : ""}`.trim()

@@ -5795,6 +5795,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       customersData={customersData} priceListData={priceListData}
       quotationsData={quotationsData} setQuotationsData={setQuotationsData}
       uploadQuotationPDFFn={uploadQuotationPDFForWA}
+      appSettings={appSettings}
       approveSaveOnly={approveSaveOnly} />
   );
 

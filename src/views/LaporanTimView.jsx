@@ -10,7 +10,7 @@ const [rekapDate, setRekapDate]     = useState(_todayLap);
 // Toggle tampilan — dipakai di mode rekap & detail
 const _viewToggle = (
   <div style={{ display: "flex", gap: 6, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 12, padding: 4, width: "fit-content" }}>
-    {[["rekap", "📊 Rekap Harian"], ["detail", "📋 Detail Laporan"]].map(([m, lbl]) => (
+    {[["detail", "📋 Detail Laporan"], ["rekap", "📊 Rekap Harian"]].map(([m, lbl]) => (
       <button key={m} onClick={() => setLapViewMode(m)}
         style={{ padding: "7px 15px", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
           background: lapViewMode === m ? cs.accent : "transparent",
