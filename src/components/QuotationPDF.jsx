@@ -1,4 +1,4 @@
-import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
 
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
 const fmtDate = (d) => {
@@ -69,7 +69,7 @@ const s = StyleSheet.create({
   footerText: { fontSize: 8, color: "#94a3b8", textAlign: "center" },
 });
 
-export default function QuotationPDF({ quo, appSettings }) {
+export default function QuotationPDF({ quo, appSettings, logoUrl }) {
   if (!quo) return null;
 
   const items      = quo.items || [];
@@ -79,9 +79,11 @@ export default function QuotationPDF({ quo, appSettings }) {
   const addonItems = items.filter(i => i.item_type === "addon");
 
   const companyName  = appSettings?.company_name  || "AClean Service";
-  const companyPhone = appSettings?.company_phone  || "628xxxxxxxx";
-  const companyAddr  = appSettings?.company_address || "Jakarta";
-  const bankInfo     = appSettings?.bank_info      || "Transfer Bank BCA 8330883011 a.n Malda Retta";
+  const companyPhone = appSettings?.wa_number || appSettings?.company_phone || "6281289898937";
+  const companyAddr  = appSettings?.company_addr || appSettings?.company_address || "Jakarta";
+  const bankInfo     = (appSettings?.bank_name || appSettings?.bank_number)
+    ? `Transfer ${appSettings.bank_name || ""} ${appSettings.bank_number || ""}${appSettings.bank_holder ? " a.n " + appSettings.bank_holder : ""}`.trim()
+    : (appSettings?.bank_info || "Transfer Bank BCA 8330883011 a.n Malda Retta");
 
   const STATUS_LABEL = {
     DRAFT:     "DRAFT",
@@ -98,10 +100,15 @@ export default function QuotationPDF({ quo, appSettings }) {
         {/* Header */}
         <View style={s.header}>
           <View style={s.headerTop}>
-            <View>
-              <Text style={s.brand}>{companyName}</Text>
-              <Text style={s.brandSub}>AC Installation & Service Professional</Text>
-              <Text style={s.brandSub}>{companyAddr} · {companyPhone}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              {logoUrl ? (
+                <Image src={logoUrl} style={{ width: 46, height: 46, objectFit: "contain" }} />
+              ) : null}
+              <View>
+                <Text style={s.brand}>{companyName}</Text>
+                <Text style={s.brandSub}>AC Installation & Service Professional</Text>
+                <Text style={s.brandSub}>{companyAddr} · {companyPhone}</Text>
+              </View>
             </View>
             <View style={{ alignItems: "flex-end" }}>
               <Text style={s.quoLabel}>SURAT PENAWARAN HARGA</Text>

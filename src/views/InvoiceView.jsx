@@ -1,4 +1,4 @@
-import { memo, useState, useMemo } from "react";
+import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 import { smartSearchNormalize, samePhone } from "../lib/phone.js";
@@ -241,6 +241,17 @@ const loadVouchers = async (filter = voucherFilter, search = voucherSearch) => {
   finally { setVoucherLoading(false); }
 };
 const [quoPDFData, setQuoPDFData] = useState(null); // quotation untuk preview PDF
+const [quoLogoUrl, setQuoLogoUrl] = useState(null);  // logo AClean (data URL) untuk PDF quotation
+useEffect(() => {
+  let alive = true;
+  fetch("/aclean-logo.png").then(r => r.ok ? r.blob() : null).then(blob => {
+    if (!blob || !alive) return;
+    const reader = new FileReader();
+    reader.onload = () => { if (alive) setQuoLogoUrl(reader.result); };
+    reader.readAsDataURL(blob);
+  }).catch(() => {});
+  return () => { alive = false; };
+}, []);
 const [addonModalInvId, setAddonModalInvId] = useState(null);
 const [addonItems, setAddonItems] = useState([]);
 const [existingAddons, setExistingAddons] = useState([]); // addon yg sudah tersimpan di DB
@@ -452,7 +463,7 @@ return (
             <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>👁 Preview PDF — {quoPDFData.id}</div>
             <button onClick={() => setQuoPDFData(null)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
           </div>
-          <BlobProvider document={<QuotationPDF quo={quoPDFData} appSettings={{}} />}>
+          <BlobProvider document={<QuotationPDF quo={quoPDFData} appSettings={{}} logoUrl={quoLogoUrl} />}>
             {({ url, loading, error }) => {
               if (loading) return <div style={{ textAlign: "center", padding: 24, color: cs.muted }}>Membuat PDF...</div>;
               if (error) return <div style={{ textAlign: "center", padding: 24, color: "#f87171" }}>Gagal buat PDF</div>;

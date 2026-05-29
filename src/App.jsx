@@ -1959,10 +1959,11 @@ Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
       const { createElement } = await import("react");
       const { renderToStream } = await import("@react-pdf/renderer");
 
+      const logoUrl = await fetchInvoiceLogoUrl();
       // Gunakan pendekatan blob via dynamic render
       const blob = await new Promise((resolve, reject) => {
         let resolved = false;
-        const doc = createElement(QuotationPDF, { quo, appSettings: appSettings || {} });
+        const doc = createElement(QuotationPDF, { quo, appSettings: appSettings || {}, logoUrl });
         // Render via BlobProvider — tapi kita butuh blob tanpa React DOM
         // Pakai @react-pdf/renderer renderToBlob API
         import("@react-pdf/renderer").then(({ pdf }) => {
