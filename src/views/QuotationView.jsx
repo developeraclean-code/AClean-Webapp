@@ -90,7 +90,30 @@ export default function QuotationView({
       const garansiD = new Date(); garansiD.setDate(garansiD.getDate() + 30);
       const garansiExpires = garansiD.toISOString().slice(0, 10);
 
-      // 1. Buat invoice dari quotation
+      // 1. Buat order DULU (invoice_job_id_fkey constraint: order harus ada sebelum invoice)
+      const totalUnits = (quo.items || []).filter(i => i.item_type === "unit_ac").reduce((s, i) => s + (i.qty || 1), 0) || 1;
+      const orderPayload = {
+        id:         jobId,
+        customer:   quo.customer,
+        phone:      quo.phone || null,
+        address:    quo.address || "",
+        area:       quo.area || "",
+        service:    "Install",
+        type:       "Install",
+        units:      totalUnits,
+        date:       orderDate,
+        time:       "09:00",
+        time_end:   "11:00",
+        status:     "PENDING",
+        invoice_id: invoiceId,
+        dispatch:   false,
+        source:     "quotation",
+        notes:      `Auto dari Quotation ${quo.id}${quo.notes ? " · " + quo.notes : ""}`,
+      };
+      const { error: orderErr } = await supabase.from("orders").insert(orderPayload);
+      if (orderErr) throw new Error("Gagal buat order: " + orderErr.message);
+
+      // 2. Buat invoice (job_id sekarang sudah ada di orders)
       const invoicePayload = {
         id:               invoiceId,
         customer:         quo.customer,
@@ -113,11 +136,14 @@ export default function QuotationView({
         notes:            quo.notes || null,
         created_at:       new Date().toISOString(),
       };
-
       const { error: invErr } = await supabase.from("invoices").insert(invoicePayload);
-      if (invErr) throw new Error("Gagal buat invoice: " + invErr.message);
+      if (invErr) {
+        // Rollback: hapus order yang sudah terbuat
+        await supabase.from("orders").delete().eq("id", jobId);
+        throw new Error("Gagal buat invoice: " + invErr.message);
+      }
 
-      // 2. Insert invoice_items dari items jsonb quotation
+      // 3. Insert invoice_items dari items jsonb quotation
       const items = (quo.items || []).map(item => ({
         invoice_id:  invoiceId,
         item_type:   item.item_type,
@@ -131,34 +157,12 @@ export default function QuotationView({
       if (items.length > 0) {
         const { error: itemErr } = await supabase.from("invoice_items").insert(items);
         if (itemErr) {
-          // Rollback: hapus invoice yang sudah terbuat
+          // Rollback: hapus invoice + order
           await supabase.from("invoices").delete().eq("id", invoiceId);
+          await supabase.from("orders").delete().eq("id", jobId);
           throw new Error("Gagal simpan items invoice: " + itemErr.message);
         }
       }
-
-      // 3. Buat order → masuk Planning Order (status PENDING, teknisi kosong)
-      const totalUnits = (quo.items || []).filter(i => i.item_type === "unit_ac").reduce((s, i) => s + (i.qty || 1), 0) || 1;
-      const orderPayload = {
-        id:         jobId,
-        customer:   quo.customer,
-        phone:      quo.phone || null,
-        address:    quo.address || "",
-        area:       quo.area || "",
-        service:    "Install",
-        type:       "Install",
-        units:      totalUnits,
-        date:       orderDate,
-        time:       "09:00",
-        time_end:   "11:00",
-        status:     "PENDING",
-        invoice_id: invoiceId,
-        dispatch:   false,
-        source:     "quotation",
-        notes:      `Auto dari Quotation ${quo.id}${quo.notes ? " · " + quo.notes : ""}`,
-      };
-      const { error: orderErr } = await supabase.from("orders").insert(orderPayload);
-      if (orderErr) console.warn("Gagal buat order:", orderErr.message);
 
       // 4. Update quotation: status APPROVED + isi invoice_id + job_id
       const { error: quoErr } = await supabase.from("quotations").update({
@@ -171,8 +175,8 @@ export default function QuotationView({
         ? { ...q, status: "APPROVED", invoice_id: invoiceId, job_id: jobId }
         : q
       ));
+      setOrdersData?.(prev => [orderPayload, ...prev]);
       setInvoicesData?.(prev => [invoicePayload, ...prev]);
-      if (!orderErr) setOrdersData?.(prev => [orderPayload, ...prev]);
 
       showNotif?.(`✅ ${quo.id} approved — Invoice ${invoiceId} & Order dibuat`);
     } catch (err) {
