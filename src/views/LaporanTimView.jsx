@@ -1,8 +1,144 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
 
 function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData }) {
+const _todayLap = getLocalDate?.() || new Date().toISOString().slice(0, 10);
+const [lapViewMode, setLapViewMode] = useState("rekap"); // "rekap" | "detail"
+const [rekapDate, setRekapDate]     = useState(_todayLap);
+
+// Toggle tampilan — dipakai di mode rekap & detail
+const _viewToggle = (
+  <div style={{ display: "flex", gap: 6, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 12, padding: 4, width: "fit-content" }}>
+    {[["rekap", "📊 Rekap Harian"], ["detail", "📋 Detail Laporan"]].map(([m, lbl]) => (
+      <button key={m} onClick={() => setLapViewMode(m)}
+        style={{ padding: "7px 15px", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
+          background: lapViewMode === m ? cs.accent : "transparent",
+          color: lapViewMode === m ? "#fff" : cs.muted }}>
+        {lbl}
+      </button>
+    ))}
+  </div>
+);
+
+// ─── REKAP HARIAN: ringkasan per hari (customer, telp, laporan/invoice/approved checklist) ───
+if (lapViewMode === "rekap") {
+  const orderDatesR = [...new Set(ordersData.map(o => o.date).filter(Boolean))].sort();
+  const navR = (cur, dir) => {
+    if (dir === -1) { const p = orderDatesR.filter(d => d < cur); return p.length ? p[p.length - 1] : cur; }
+    const n = orderDatesR.filter(d => d > cur); return n.length ? n[0] : cur;
+  };
+  const hasPrevR = orderDatesR.some(d => d < rekapDate);
+  const hasNextR = orderDatesR.some(d => d > rekapDate);
+  const rekapOrders = ordersData.filter(o => o.date === rekapDate)
+    .sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+
+  const lapByJob = {}; laporanReports.forEach(r => { if (r.job_id) lapByJob[r.job_id] = r; });
+  const invByJob = {}; invoicesData.forEach(i => { if (i.job_id) invByJob[i.job_id] = i; });
+  const isApproved = (inv) => !!inv && !["DRAFT", "PENDING_APPROVAL"].includes((inv.status || "").toUpperCase());
+
+  const dateLabel = new Date(rekapDate + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const isToday   = rekapDate === _todayLap;
+  const cLaporan  = rekapOrders.filter(o => lapByJob[o.id]).length;
+  const cInvoice  = rekapOrders.filter(o => invByJob[o.id]).length;
+  const cApproved = rekapOrders.filter(o => isApproved(invByJob[o.id])).length;
+
+  const chk = (ok) => (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, padding: "5px 12px", borderRadius: 20,
+      color: ok ? cs.green : cs.muted, background: (ok ? cs.green : cs.muted) + "18", border: "1px solid " + (ok ? cs.green : cs.muted) + "40" }}>
+      {ok ? "✓ Ya" : "✕ Belum"}
+    </span>
+  );
+  const navBtn = (enabled) => ({ background: cs.surface, border: "1px solid " + cs.border, color: enabled ? cs.text : cs.border, padding: "8px 13px", borderRadius: 9, cursor: enabled ? "pointer" : "default", fontSize: 13, fontWeight: 700, opacity: enabled ? 1 : 0.35 });
+  const hdr = { fontSize: 10, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: "0.5px" };
+  const COLS = "2.2fr 1.3fr 1fr 1fr 1fr";
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 18, color: cs.text }}>📋 Rekap Laporan Tim Harian</div>
+          <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>Ringkasan status per hari — geser tanggal untuk cek hari lain</div>
+        </div>
+        {_viewToggle}
+      </div>
+
+      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
+        {/* Navigasi tanggal */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid " + cs.border, flexWrap: "wrap" }}>
+          <button onClick={() => hasPrevR && setRekapDate(navR(rekapDate, -1))} style={navBtn(hasPrevR)}>◀</button>
+          <div style={{ flex: 1, textAlign: "center", minWidth: 180 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>
+              📋 {dateLabel}
+              {isToday && <span style={{ marginLeft: 8, fontSize: 10, background: cs.accent + "22", color: cs.accent, border: "1px solid " + cs.accent + "44", borderRadius: 99, padding: "2px 8px", fontWeight: 700 }}>Hari Ini</span>}
+            </div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>
+              {rekapOrders.length} job · {cLaporan} laporan masuk · {cInvoice} invoice
+            </div>
+          </div>
+          {!isToday && orderDatesR.includes(_todayLap) && (
+            <button onClick={() => setRekapDate(_todayLap)} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "8px 13px", borderRadius: 9, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Hari Ini</button>
+          )}
+          <button onClick={() => hasNextR && setRekapDate(navR(rekapDate, 1))} style={navBtn(hasNextR)}>▶</button>
+        </div>
+
+        {/* Ringkasan */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", borderBottom: "1px solid " + cs.border }}>
+          {[
+            { v: rekapOrders.length, l: "Total Job",      c: cs.accent },
+            { v: cLaporan,           l: "Laporan Masuk",   c: cs.green },
+            { v: cInvoice,           l: "Invoice Dibuat",  c: cs.yellow },
+            { v: cApproved,          l: "Sudah Approved",  c: cs.green },
+          ].map((s, i) => (
+            <div key={s.l} style={{ padding: "12px 14px", borderRight: i < 3 ? "1px solid " + cs.border : "none" }}>
+              <div style={{ fontWeight: 800, fontSize: 22, color: s.c }}>{s.v}</div>
+              <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{s.l}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Header tabel */}
+        <div style={{ display: "grid", gridTemplateColumns: COLS, background: cs.surface, borderBottom: "1px solid " + cs.border, padding: "11px 16px" }}>
+          <div style={hdr}>Customer</div>
+          <div style={hdr}>No. Telp</div>
+          <div style={{ ...hdr, textAlign: "center" }}>Laporan</div>
+          <div style={{ ...hdr, textAlign: "center" }}>Invoice Dibuat</div>
+          <div style={{ ...hdr, textAlign: "center" }}>Approved</div>
+        </div>
+
+        {/* Baris */}
+        {rekapOrders.length === 0 ? (
+          <div style={{ padding: "44px 0", textAlign: "center", color: cs.muted, fontSize: 13 }}>Tidak ada job pada tanggal ini</div>
+        ) : rekapOrders.map(o => {
+          const lap = lapByJob[o.id]; const inv = invByJob[o.id];
+          return (
+            <div key={o.id} style={{ display: "grid", gridTemplateColumns: COLS, padding: "14px 16px", borderBottom: "1px solid " + cs.border + "88", alignItems: "center" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{o.customer}</div>
+                <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>
+                  {o.service} · {o.units || 1} unit · {o.time || "—"}{o.teknisi ? " · " + o.teknisi : ""}{o.helper ? " + " + o.helper : ""}
+                </div>
+              </div>
+              <div style={{ fontSize: 13, color: cs.text, fontFamily: "ui-monospace, monospace" }}>{normalizePhone(o.phone || "") || "—"}</div>
+              <div style={{ textAlign: "center" }}>{chk(!!lap)}</div>
+              <div style={{ textAlign: "center" }}>{chk(!!inv)}</div>
+              <div style={{ textAlign: "center" }}>{chk(isApproved(inv))}</div>
+            </div>
+          );
+        })}
+
+        {/* Footer */}
+        <div style={{ display: "flex", gap: 20, padding: "14px 16px", background: cs.surface, fontSize: 13, color: cs.muted, flexWrap: "wrap" }}>
+          <div>Total: <b style={{ color: cs.text }}>{rekapOrders.length}</b> job</div>
+          <div>Laporan: <b style={{ color: cs.green }}>{cLaporan}</b></div>
+          <div>Invoice: <b style={{ color: cs.yellow }}>{cInvoice}</b></div>
+          <div>Approved: <b style={{ color: cs.green }}>{cApproved}</b></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const sMap = { SUBMITTED: [cs.accent, "Submitted"], VERIFIED: [cs.green, "Terverifikasi"], REVISION: [cs.yellow, "Perlu Revisi"], REJECTED: [cs.red, "Ditolak"] };
 const badge = (s) => {
   // Case insensitive status lookup
@@ -323,6 +459,7 @@ const verifyLaporan = async (r) => {
 
 return (
   <div style={{ display: "grid", gap: 16 }}>
+    {_viewToggle}
     {/* Header */}
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
       <div>
