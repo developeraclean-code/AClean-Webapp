@@ -95,8 +95,6 @@ export default function QuotationView({
         id:               invoiceId,
         customer:         quo.customer,
         phone:            quo.phone || null,
-        address:          quo.address || null,
-        area:             quo.area || null,
         invoice_type:     "quotation_converted",
         quotation_id:     quo.id,
         status:           "UNPAID",

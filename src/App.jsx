@@ -6167,7 +6167,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       fetchAgentLogs(supabase).then(({ data, error }) => { if (!error && data?.length > 0) setAgentLogs(data); });
     } else if (activeMenu === "biaya" || activeMenu === "dashboard") {
       fetchExpenses(supabase).then(({ data, error }) => { if (!error && data) setExpensesData(data); }).catch(() => {});
-    } else if (activeMenu === "order-masuk") {
+    } else if (activeMenu === "invoice") {
       supabase.from("quotations").select("*").order("created_at", { ascending: false }).limit(200)
         .then(({ data, error }) => { if (!error && data) setQuotationsData(data); });
     }

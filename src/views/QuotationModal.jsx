@@ -322,7 +322,7 @@ export default function QuotationModal({
         const phoneNorm = normalizePhone(newCust.phone || "");
         const row = { name: newCust.name.trim(), phone: phoneNorm || null, area: newCust.area || null, address: newCust.alamat || null };
         if (phoneNorm) {
-          await supabase.from("customers").upsert(row, { onConflict: "phone", ignoreDuplicates: false });
+          await supabase.from("customers").upsert(row, { onConflict: "phone,name", ignoreDuplicates: true });
         } else {
           await supabase.from("customers").insert(row);
         }
