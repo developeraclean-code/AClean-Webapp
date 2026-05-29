@@ -2659,9 +2659,9 @@ ${photoPageHTML}
     if (role === "Owner") return menu !== "myreport";
     // Admin: semua operasional KECUALI pricelist (Owner only per SOP), settings, myreport
     // SOP_ADMIN_ROLE.md: Admin = input & edit only, no delete, no price list, no settings
-    // deletedaudit & agentlog BISA diakses Admin (SOP: ✅ Log Audit)
+    // Statistik (reports), ARA Log (agentlog), Deleted Audit (deletedaudit) → Owner only
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport", "monitoring", "finance", "pricelist"];
+      const adminBlocked = ["settings", "myreport", "monitoring", "finance", "pricelist", "reports", "agentlog", "deletedaudit"];
       return !adminBlocked.includes(menu);
     }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri (komisi disembunyikan — password shared)
@@ -6183,6 +6183,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // RENDER CONTENT ROUTER
   // ============================================================
   const renderContent = () => {
+    // Guard: blokir render menu yang tidak diizinkan untuk role (defense-in-depth)
+    if (currentUser && !canAccess(activeMenu)) {
+      return (
+        <div style={{ padding: 48, textAlign: "center", color: cs.muted }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
+          <div style={{ fontWeight: 700, color: cs.text, marginBottom: 4 }}>Akses Ditolak</div>
+          <div style={{ fontSize: 13 }}>Anda tidak memiliki akses ke menu ini.</div>
+        </div>
+      );
+    }
     switch (activeMenu) {
       case "dashboard": return renderDashboard();
       case "finance": return <FinanceView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} expensesData={expensesData} supabase={supabase} teknisiData={teknisiData} showNotif={showNotif} showConfirm={showConfirm} openWA={openWA} TODAY={TODAY} />;
