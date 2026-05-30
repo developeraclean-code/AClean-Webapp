@@ -41,10 +41,6 @@ export const searchInvoicesServer = (supabase, query) => {
       `phone.ilike.${p}`,
       `job_id.ilike.${p}`,
       `teknisi.ilike.${p}`,
-      `service.ilike.${p}`,
-      `paid_method.ilike.${p}`,
-      `invoice_type.ilike.${p}`,
-      `status.ilike.${p}`,
     ].join(","))
     .order("created_at", { ascending: false })
     .limit(100);

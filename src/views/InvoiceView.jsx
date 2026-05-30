@@ -754,7 +754,7 @@ return (
     <div style={{ position: "relative" }}>
       <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: cs.muted, pointerEvents: "none" }}>🔍</span>
       <input id="searchInvoice" value={searchInvoice} onChange={e => { setSearchInvoice(smartSearchNormalize(e.target.value)); setInvoicePage(1); }}
-        placeholder="Cari customer, telp, ID, teknisi, layanan, metode bayar..."
+        placeholder="Cari customer, telp, ID invoice, Job ID, atau teknisi..."
         style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px 10px 36px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
       {searchInvoice && <button onClick={() => { setSearchInvoice(""); setInvoicePage(1); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16 }}>✕</button>}
     </div>

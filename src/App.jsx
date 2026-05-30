@@ -5889,11 +5889,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         (inv.phone || "").includes(searchInvoice.trim()) ||
         (inv.id || "").toLowerCase().includes(q) ||
         (inv.job_id || "").toLowerCase().includes(q) ||
-        (inv.teknisi || "").toLowerCase().includes(q) ||
-        (inv.service || "").toLowerCase().includes(q) ||
-        (inv.paid_method || "").toLowerCase().includes(q) ||
-        (inv.invoice_type || "").toLowerCase().includes(q) ||
-        (inv.status || "").toLowerCase().includes(q)
+        (inv.teknisi || "").toLowerCase().includes(q)
       );
     }
     filteredInv.sort((a, b) => (b.created_at || b.sent || "").localeCompare(a.created_at || a.sent || ""));
