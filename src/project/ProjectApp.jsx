@@ -1,8 +1,9 @@
-import React, { useState, lazy, Suspense } from "react";
+import React, { lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
+import { ProjectProvider, useProject } from "./context/ProjectContext.jsx";
+import { ModalProvider, useModal } from "./context/ModalContext.jsx";
+import FormFields from "./components/FormFields.jsx";
 
-// Sub-app standalone untuk modul Project. App.jsx hanya melakukan lazy import +
-// memasang route case. Semua logic project hidup di folder ini.
 const ProjectDashboard    = lazy(() => import("./views/ProjectDashboard.jsx"));
 const ProjectListView     = lazy(() => import("./views/ProjectListView.jsx"));
 const ProjectDetailView   = lazy(() => import("./views/ProjectDetailView.jsx"));
@@ -30,28 +31,30 @@ const MENU = [
 ];
 
 const VIEWS = {
-  dashboard: ProjectDashboard,
-  list:      ProjectListView,
-  detail:    ProjectDetailView,
-  harian:    ProjectHarianView,
-  material:  ProjectMaterialView,
-  usage:     ProjectUsageView,
-  tools:     ProjectToolsView,
-  expense:   ProjectExpenseView,
-  purchase:  ProjectPurchaseView,
-  finance:   ProjectFinanceView,
-  docs:      ProjectDocsView,
+  dashboard: ProjectDashboard, list: ProjectListView, detail: ProjectDetailView,
+  harian: ProjectHarianView, material: ProjectMaterialView, usage: ProjectUsageView,
+  tools: ProjectToolsView, expense: ProjectExpenseView, purchase: ProjectPurchaseView,
+  finance: ProjectFinanceView, docs: ProjectDocsView,
 };
 
 export default function ProjectApp({ currentUser, onBack }) {
-  const [active, setActive] = useState("dashboard");
-  const role = currentUser?.role || "Owner";
+  return (
+    <ProjectProvider currentUser={currentUser}>
+      <ModalProvider>
+        <Shell onBack={onBack} />
+        <ModalHost />
+      </ModalProvider>
+    </ProjectProvider>
+  );
+}
+
+function Shell({ onBack }) {
+  const { role, activeView, setActiveView } = useProject();
   const isOwner = role === "Owner";
-
-  const allowed = MENU.filter(m => !m.ownerOnly || isOwner);
-  const View = VIEWS[active] || ProjectDashboard;
-
+  const allowed = MENU.filter((m) => !m.ownerOnly || isOwner);
+  const View = VIEWS[activeView] || ProjectDashboard;
   let lastGroup = null;
+
   return (
     <div style={{ display: "flex", minHeight: "calc(100vh - 60px)", background: cs.bg, margin: -20 }}>
       <aside style={{ width: 235, background: cs.surface, borderRight: `1px solid ${cs.border}`, padding: "16px 10px", flexShrink: 0 }}>
@@ -60,18 +63,16 @@ export default function ProjectApp({ currentUser, onBack }) {
           <div style={{ fontSize: 11, color: cs.muted }}>Standalone · {role}</div>
         </div>
         <nav>
-          {allowed.map(m => {
+          {allowed.map((m) => {
             const showGroup = m.group && m.group !== lastGroup;
             if (m.group) lastGroup = m.group;
-            const isActive = active === m.id;
+            const isActive = activeView === m.id;
             return (
               <React.Fragment key={m.id}>
                 {showGroup && (
-                  <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: cs.muted, padding: "12px 12px 4px" }}>
-                    {m.group}
-                  </div>
+                  <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: cs.muted, padding: "12px 12px 4px" }}>{m.group}</div>
                 )}
-                <button onClick={() => setActive(m.id)}
+                <button onClick={() => setActiveView(m.id)}
                   style={{
                     width: "100%", textAlign: "left",
                     background: isActive ? "#15233f" : "transparent",
@@ -87,21 +88,33 @@ export default function ProjectApp({ currentUser, onBack }) {
           })}
           <div style={{ marginTop: 14, borderTop: `1px solid ${cs.border}`, paddingTop: 12 }}>
             <button onClick={onBack}
-              style={{
-                width: "100%", textAlign: "left", background: "transparent", border: "none",
-                color: cs.muted, padding: "9px 12px", borderRadius: 10, cursor: "pointer",
-                display: "flex", alignItems: "center", gap: 10, fontSize: 13,
-              }}>
+              style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", color: cs.muted, padding: "9px 12px", borderRadius: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
               <span style={{ width: 18, textAlign: "center" }}>←</span> Kembali ke App Utama
             </button>
           </div>
         </nav>
       </aside>
-      <main style={{ flex: 1, minWidth: 0 }}>
+      <main style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
         <Suspense fallback={<div style={{ padding: 22, color: cs.muted }}>Memuat…</div>}>
-          <View currentUser={currentUser} />
+          <View />
         </Suspense>
       </main>
     </div>
   );
+}
+
+// Renders the active modal (form or custom content) from ModalContext.
+function ModalHost() {
+  const { modal, close } = useModal();
+  const { today } = useProject();
+  if (!modal) return null;
+  if (modal.kind === "form") {
+    return (
+      <FormFields title={modal.title} fields={modal.fields}
+        today={today} gps={modal.gps || "-6.2,106.9"}
+        onSubmit={(d) => { close(); modal.onSubmit?.(d); }}
+        onClose={close} />
+    );
+  }
+  return modal.content;
 }
