@@ -175,11 +175,13 @@ export const fetchDaysWorkedFromOrders = (supabase, userName, periodStart, perio
     .or(`teknisi.eq.${userName},teknisi2.eq.${userName},teknisi3.eq.${userName},helper.eq.${userName},helper2.eq.${userName},helper3.eq.${userName}`);
 
 // Kasbon periode — sum dari expenses kasbon per orang
+// PENTING: ilike untuk match case-insensitive (mitigasi data lama "putra" / "Putra" / dll)
+// Trailing space dimitigasi di entry point ExpensesView (trim saat insert)
 export const fetchKasbonByPeriod = (supabase, userName, periodStart, periodEnd) =>
   supabase.from("expenses")
     .select("amount,date,description")
     .eq("subcategory", "Kasbon Karyawan")
-    .eq("teknisi_name", userName)
+    .ilike("teknisi_name", (userName || "").trim())
     .gte("date", periodStart)
     .lte("date", periodEnd);
 

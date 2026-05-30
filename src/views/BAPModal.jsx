@@ -134,6 +134,13 @@ export default function BAPModal({ order, onClose, onSubmitted, supabase, showNo
     if (skipped && !skipReason.trim()) {
       showNotif?.("⚠ Wajib isi alasan kenapa customer tidak TTD"); return;
     }
+    // PK (kapasitas) WAJIB di tiap unit — pricing invoice bergantung di sini.
+    // Brand & ruangan tetap opsional supaya cepat di lokasi.
+    const missPK = units.findIndex(u => !u.kapasitas);
+    if (missPK !== -1) {
+      showNotif?.(`⚠ Unit ${missPK + 1}: PK (kapasitas) wajib diisi — invoice akan salah kalau dikosongkan`);
+      return;
+    }
     setSaving(true);
     try {
       // Upload TTD kalau tidak di-skip
@@ -272,8 +279,9 @@ export default function BAPModal({ order, onClose, onSubmitted, supabase, showNo
                       <option value="">Brand</option>
                       {BRAND_OPT.map(b => <option key={b} value={b}>{b}</option>)}
                     </select>
-                    <select value={u.kapasitas} onChange={e => updateUnit(idx, "kapasitas", e.target.value)} style={inp}>
-                      <option value="">PK</option>
+                    <select value={u.kapasitas} onChange={e => updateUnit(idx, "kapasitas", e.target.value)}
+                      style={{ ...inp, borderColor: u.kapasitas ? cs.border : cs.red, background: u.kapasitas ? cs.surface : cs.red + "10" }}>
+                      <option value="">PK wajib *</option>
                       {KAPASITAS_OPT.map(k => <option key={k} value={k}>{k}</option>)}
                     </select>
                   </div>

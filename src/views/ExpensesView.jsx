@@ -119,7 +119,9 @@ const saveExpense = async () => {
   if (!f.subcategory || !f.amount || !f.date) { alert("Isi subkategori, jumlah, dan tanggal."); return; }
   const payload = {
     category: f.category, subcategory: f.subcategory, amount: Number(f.amount),
-    date: f.date, description: f.description, teknisi_name: f.teknisi_name || null,
+    date: f.date, description: f.description,
+    // PENTING: trim teknisi_name — case mismatch / trailing space bikin kasbon tidak ke-deduct di payroll
+    teknisi_name: f.teknisi_name ? f.teknisi_name.trim() : null,
     item_name: f.item_name || null, freon_type: f.freon_type || null,
     created_by: currentUser?.name || currentUser?.email || "unknown",
   };
