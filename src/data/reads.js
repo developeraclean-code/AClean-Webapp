@@ -16,7 +16,7 @@ export const searchOrdersServer = (supabase, query) => {
   const p = `%${term}%`;
   return supabase.from("orders")
     .select(ORDER_COLS)
-    .or(`customer.ilike.${p},id.ilike.${p},phone.ilike.${p},teknisi.ilike.${p},helper.ilike.${p},address.ilike.${p},service.ilike.${p},notes.ilike.${p}`)
+    .or(`customer.ilike.${p},id.ilike.${p},phone.ilike.${p},teknisi.ilike.${p},helper.ilike.${p},address.ilike.${p},service.ilike.${p}`)
     .order("date", { ascending: false })
     .limit(100);
 };
@@ -42,7 +42,6 @@ export const searchInvoicesServer = (supabase, query) => {
       `job_id.ilike.${p}`,
       `teknisi.ilike.${p}`,
       `service.ilike.${p}`,
-      `materials_detail.ilike.${p}`,
       `paid_method.ilike.${p}`,
       `invoice_type.ilike.${p}`,
       `status.ilike.${p}`,

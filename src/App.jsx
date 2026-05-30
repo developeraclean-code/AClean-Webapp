@@ -5891,7 +5891,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         (inv.job_id || "").toLowerCase().includes(q) ||
         (inv.teknisi || "").toLowerCase().includes(q) ||
         (inv.service || "").toLowerCase().includes(q) ||
-        (inv.materials_detail || "").toLowerCase().includes(q) ||
         (inv.paid_method || "").toLowerCase().includes(q) ||
         (inv.invoice_type || "").toLowerCase().includes(q) ||
         (inv.status || "").toLowerCase().includes(q)

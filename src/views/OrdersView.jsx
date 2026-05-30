@@ -27,8 +27,7 @@ if (searchOrder.trim()) {
     (o.teknisi || "").toLowerCase().includes(q) ||
     (o.helper || "").toLowerCase().includes(q) ||
     (o.address || "").toLowerCase().includes(q) ||
-    (o.service || "").toLowerCase().includes(q) ||
-    (o.notes || "").toLowerCase().includes(q)
+    (o.service || "").toLowerCase().includes(q)
   );
 }
 filtered.sort((a, b) => (b.date + (b.time || "")).localeCompare(a.date + (a.time || "")));
@@ -117,7 +116,7 @@ return (
     <div style={{ position: "relative" }}>
       <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: cs.muted, fontSize: 14, pointerEvents: "none" }}>🔍</span>
       <input id="searchOrder" value={searchOrder} onChange={e => { setSearchOrder(smartSearchNormalize(e.target.value)); setOrderPage(1); }}
-        placeholder="Cari customer, Job ID, telp, teknisi, helper, alamat, layanan, catatan..."
+        placeholder="Cari customer, Job ID, telp, teknisi, helper, alamat, layanan..."
         style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px 10px 36px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
       {searchOrder && <button onClick={() => { setSearchOrder(""); setOrderPage(1); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16 }}>✕</button>}
     </div>
