@@ -61,6 +61,7 @@ const OrderInboxView = lazy(() => import("./views/OrderInboxView.jsx"));
 const FinanceView = lazy(() => import("./views/FinanceView.jsx"));
 const TechMobileView = lazy(() => import("./views/TechMobileView.jsx"));
 const KomisiView = lazy(() => import("./views/KomisiView.jsx"));
+const ProjectApp = lazy(() => import("./project/ProjectApp.jsx"));
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -5650,6 +5651,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id: "pricelist", icon: "💰", label: "Price List" },
     { id: "teknisi", icon: "👷", label: "Tim Teknisi" },
     { id: "laporantim", icon: "📝", label: "Laporan Tim" },
+    { id: "project", icon: "🏗", label: "Project" },
     { id: "ara", icon: "🤖", label: "ARA Chat" },
     { id: "reports", icon: "📊", label: "Statistik" },
     { id: "agentlog", icon: "📡", label: "ARA Log" },
@@ -6214,6 +6216,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       case "pricelist": return renderPriceList();
       case "teknisi": return renderTeknisiAdmin();
       case "laporantim": return renderLaporanTim();
+      case "project": return (
+        <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
+          <ProjectApp currentUser={currentUser} onBack={() => setActiveMenu("dashboard")} />
+        </Suspense>
+      );
       case "myreport": return renderMyReport();
       case "komisi": return (
         <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
