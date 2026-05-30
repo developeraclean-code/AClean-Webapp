@@ -3,7 +3,7 @@ import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { displayStock } from "../lib/inventory.js";
 
-function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData }) {
+function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData }) {
 const role = currentUser?.role || "Admin";
 const [gridDate, setGridDate] = useState(TODAY);
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -83,8 +83,19 @@ if (role === "Teknisi" || role === "Helper") {
                       style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>💬 Chat WA</button>
                     <button onClick={() => { const url = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(o.address); window.open(url, "_blank"); }}
                       style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🗺 Maps</button>
-                    <button onClick={() => openLaporanModal(o)}
-                      style={{ background: cs.ara + "22", border: "1px solid " + cs.ara + "44", color: cs.ara, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📝 Laporan</button>
+                    {(() => {
+                      const existingLap = laporanReports.find(lr => lr.job_id === o.id && lr.status !== "PENDING");
+                      if (!existingLap) {
+                        return (
+                          <button onClick={() => openBAPModal?.(o)}
+                            style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>📋 Buat BAP</button>
+                        );
+                      }
+                      return (
+                        <button onClick={() => openLaporanModal(o)}
+                          style={{ background: cs.ara + "22", border: "1px solid " + cs.ara + "44", color: cs.ara, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📝 Detail Laporan</button>
+                      );
+                    })()}
                     <button onClick={() => setHistoryOpen(isHistOpen ? null : o.id)}
                       style={{ background: isHistOpen ? cs.accent + "22" : cs.card, border: "1px solid " + (isHistOpen ? cs.accent + "66" : cs.border), color: isHistOpen ? cs.accent : cs.muted, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🕐 Riwayat</button>
                   </div>

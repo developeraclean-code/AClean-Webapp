@@ -53,6 +53,7 @@ const TeknisiAdminView = lazy(() => import("./views/TeknisiAdminView.jsx"));
 const ReportsView = lazy(() => import("./views/ReportsView.jsx"));
 const LaporanTimView = lazy(() => import("./views/LaporanTimView.jsx"));
 const MyReportView = lazy(() => import("./views/MyReportView.jsx"));
+const BAPModal = lazy(() => import("./views/BAPModal.jsx"));
 const MatTrackView = lazy(() => import("./views/MatTrackView.jsx"));
 const ExpensesView = lazy(() => import("./views/ExpensesView.jsx"));
 const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
@@ -905,6 +906,13 @@ export default function ACleanWebApp() {
 
   // Quotation state
   const [quotationsData, setQuotationsData] = useState([]);
+  // BAP modal state — order/job yang sedang dibuat BAP-nya
+  const [bapModalOrder, setBapModalOrder] = useState(null);
+  const openBAPModal = (order) => setBapModalOrder(order);
+  const onBAPSubmitted = (newReport) => {
+    setLaporanReports(prev => [newReport, ...prev.filter(r => r.id !== newReport.id)]);
+    setBapModalOrder(null);
+  };
 
   // GAP 3 — State untuk edit invoice
   const [modalEditInvoice, setModalEditInvoice] = useState(false);
@@ -3006,6 +3014,7 @@ ${photoPageHTML}
               company_name: sMap.company_name || prev.company_name,
               company_addr: sMap.company_addr || prev.company_addr,
               wa_number: sMap.wa_number || prev.wa_number,
+              bap_statement_default: sMap.bap_statement_default || prev.bap_statement_default,
               wa_autoreply_enabled: sMap.wa_autoreply_enabled ?? prev.wa_autoreply_enabled,
               wa_forward_to_owner: sMap.wa_forward_to_owner ?? prev.wa_forward_to_owner,
               wa_chatbot_enabled: sMap.wa_chatbot_enabled ?? prev.wa_chatbot_enabled ?? "false",
@@ -5681,7 +5690,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       teknisiData={teknisiData} omsetView={omsetView} setOmsetView={setOmsetView} isMobile={isMobile} waConversations={waConversations}
       bulanIni={bulanIni} setActiveMenu={setActiveMenu} setInvoiceFilter={setInvoiceFilter} setModalOrder={setModalOrder}
       setWaPanel={setWaPanel} setWaTekTarget={setWaTekTarget} setModalWaTek={setModalWaTek}
-      fmt={fmt} getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} showNotif={showNotif} TODAY={TODAY}
+      fmt={fmt} getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} showNotif={showNotif} TODAY={TODAY}
       sendWA={sendWA} dispatchWA={dispatchWA} addAgentLog={addAgentLog}
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       customersData={customersData} laporanReports={laporanReports} findCustomer={findCustomer}
@@ -6086,7 +6095,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setModalLaporanDetail={setModalLaporanDetail} setEditLaporanForm={setEditLaporanForm} setLaporanBarangItems={setLaporanBarangItems}
       setEditRepairType={setEditRepairType} setEditGratisAlasan={setEditGratisAlasan} setActiveEditUnitIdx={setActiveEditUnitIdx}
       setEditPhotoMode={setEditPhotoMode} setEditLaporanFotos={setEditLaporanFotos} setEditStockMats={setEditStockMats} setLaporanInstallItems={setLaporanInstallItems}
-      openLaporanModal={openLaporanModal} safeArr={safeArr} TODAY={TODAY} INSTALL_ITEMS={INSTALL_ITEMS}
+      openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} safeArr={safeArr} TODAY={TODAY} INSTALL_ITEMS={INSTALL_ITEMS}
       downloadServiceReportPDF={downloadServiceReportPDF} />
   );
 
@@ -12506,6 +12515,24 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             </div>
           </div>
         </div>
+      )}
+
+      {/* BAP Modal — TTD customer di HP teknisi sebelum laporan */}
+      {bapModalOrder && (
+        <Suspense fallback={<div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>Memuat BAP...</div>}>
+          <BAPModal
+            order={bapModalOrder}
+            onClose={() => setBapModalOrder(null)}
+            onSubmitted={onBAPSubmitted}
+            supabase={supabase}
+            showNotif={showNotif}
+            currentUser={currentUser}
+            apiHeaders={_apiHeaders}
+            appSettings={appSettings}
+            getLocalDate={getLocalDate}
+            fotoSrc={fotoSrc}
+          />
+        </Suspense>
       )}
 
       {/* Toast Notification */}

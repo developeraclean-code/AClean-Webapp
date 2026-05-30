@@ -489,6 +489,26 @@ const d = await r.json();
           </button>
         </Card>
 
+        {/* BAP — Pernyataan Default */}
+        <Card>
+          <CardHeader icon="📋" title="BAP (Berita Acara Pengerjaan)" subtitle="Teks pernyataan default yang muncul di BAP saat teknisi minta TTD customer" />
+          <div style={{ fontSize: 11, color: cs.muted, marginBottom: 6, fontWeight: 600 }}>📝 Teks Pernyataan Default</div>
+          <textarea
+            value={appSettings.bap_statement_default || ""}
+            onChange={e => setAppSettings(prev => ({ ...prev, bap_statement_default: e.target.value }))}
+            onBlur={async e => {
+              try { await supabase.from("app_settings").upsert({ key: "bap_statement_default", value: e.target.value.trim() }, { onConflict: "key" }); }
+              catch (err) { console.warn("bap settings err:", err); }
+            }}
+            placeholder="Dengan ditandatanganinya Berita Acara ini..."
+            rows={5}
+            style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "10px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit", lineHeight: 1.6, resize: "vertical" }}
+          />
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 6 }}>
+            Teknisi bisa mengedit teks ini per BAP di lokasi kalau perlu. Yang di sini cuma default-nya.
+          </div>
+        </Card>
+
         {/* WhatsApp — Fonnte only */}
         <Card>
           <CardHeader icon="📱" title="WhatsApp Gateway — Fonnte" subtitle="Gateway WA untuk kirim & terima pesan ARA"
