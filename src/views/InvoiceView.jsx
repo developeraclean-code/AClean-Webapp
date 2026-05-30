@@ -7,7 +7,7 @@ import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
 import QuotationPDF from "../components/QuotationPDF.jsx";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
@@ -758,6 +758,11 @@ return (
         style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px 10px 36px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
       {searchInvoice && <button onClick={() => { setSearchInvoice(""); setInvoicePage(1); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16 }}>✕</button>}
     </div>
+    {searchInvoice && searchInvoice.length >= 2 && (
+      <div style={{ fontSize: 11, color: cs.muted, marginTop: -8, paddingLeft: 4 }}>
+        {searchLoading ? "🔎 Mencari di seluruh database..." : "📂 Termasuk hasil dari arsip lama (server search aktif)"}
+      </div>
+    )}
     {/* Status filter pills — SIM-3 */}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
       {[

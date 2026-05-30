@@ -3,15 +3,42 @@
 // LIMIT di-tune supaya page load cepat; reference tables tanpa limit.
 // Kolom di-seleksi eksplisit (bukan SELECT *) untuk hemat egress.
 
+const ORDER_COLS = "id,customer,customer_id,phone,address,area,service,type,units,teknisi,helper,date,time,time_end,status,notes,dispatch,dispatch_at,invoice_id,created_at,teknisi_id,helper_id,teknisi2,helper2,teknisi3,helper3,source,team_slot,on_site_at,parent_job_id,is_multi_day,day_number";
 export const fetchOrders = (supabase) =>
   supabase.from("orders")
-    .select("id,customer,customer_id,phone,address,area,service,type,units,teknisi,helper,date,time,time_end,status,notes,dispatch,dispatch_at,invoice_id,created_at,teknisi_id,helper_id,teknisi2,helper2,teknisi3,helper3,source,team_slot,on_site_at,parent_job_id,is_multi_day,day_number")
+    .select(ORDER_COLS)
     .order("date", { ascending: false }).limit(500);
 
+// Server-side search order — ilike di kolom yang relevan, batas 100 hasil.
+export const searchOrdersServer = (supabase, query) => {
+  const term = (query || "").trim().replace(/[(),]/g, " ").trim();
+  if (term.length < 2) return Promise.resolve({ data: [], error: null });
+  const p = `%${term}%`;
+  return supabase.from("orders")
+    .select(ORDER_COLS)
+    .or(`customer.ilike.${p},id.ilike.${p},phone.ilike.${p},teknisi.ilike.${p},helper.ilike.${p},address.ilike.${p},service.ilike.${p},notes.ilike.${p}`)
+    .order("date", { ascending: false })
+    .limit(100);
+};
+
+const INVOICE_COLS = "id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent,sent_at,created_at,updated_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url,repair_gratis,invoice_type,unit_ac_amount,paket_pasang,paid_amount,remaining_amount,wa_sent_count,wa_last_sent_at,wa_last_sent_mode,pdf_url,pdf_generated_at";
 export const fetchInvoices = (supabase) =>
   supabase.from("invoices")
-    .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent,sent_at,created_at,updated_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url,repair_gratis,invoice_type,unit_ac_amount,paket_pasang,paid_amount,remaining_amount,wa_sent_count,wa_last_sent_at,wa_last_sent_mode,pdf_url,pdf_generated_at")
+    .select(INVOICE_COLS)
     .order("created_at", { ascending: false }).limit(300);
+
+// Server-side search invoice — ilike di kolom customer/id/phone/job_id, batas 100 hasil.
+// Karakter spesial (koma, kurung) di-strip untuk hindari masalah parser .or() Supabase.
+export const searchInvoicesServer = (supabase, query) => {
+  const term = (query || "").trim().replace(/[(),]/g, " ").trim();
+  if (term.length < 2) return Promise.resolve({ data: [], error: null });
+  const p = `%${term}%`;
+  return supabase.from("invoices")
+    .select(INVOICE_COLS)
+    .or(`customer.ilike.${p},id.ilike.${p},phone.ilike.${p},job_id.ilike.${p}`)
+    .order("created_at", { ascending: false })
+    .limit(100);
+};
 
 export const fetchCustomers = (supabase) =>
   supabase.from("customers")

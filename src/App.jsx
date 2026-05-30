@@ -25,6 +25,7 @@ import { SERVICE_TYPES } from "./constants/services.js";
 import {
   fetchOrders, fetchInvoices, fetchCustomers, fetchInventory,
   fetchServiceReports, fetchAgentLogs, fetchInventoryTransactions,
+  searchInvoicesServer, searchOrdersServer,
   fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
   fetchWaConversations, fetchPriceList, fetchAraBrain,
@@ -921,6 +922,12 @@ export default function ACleanWebApp() {
   const [pendingBAPCount, setPendingBAPCount] = useState(0);
   const [bapSyncing, setBapSyncing] = useState(false);
 
+  // Server-side search (Opsi B) — extra hasil dari DB di luar window 300/500 default
+  const [searchInvExt, setSearchInvExt] = useState([]);
+  const [searchOrdExt, setSearchOrdExt] = useState([]);
+  const [searchInvLoading, setSearchInvLoading] = useState(false);
+  const [searchOrdLoading, setSearchOrdLoading] = useState(false);
+
   // GAP 3 — State untuk edit invoice
   const [modalEditInvoice, setModalEditInvoice] = useState(false);
   const [editInvoiceData, setEditInvoiceData] = useState(null);
@@ -1079,6 +1086,55 @@ export default function ACleanWebApp() {
     }
     return r;
   };
+
+  // Server-side search Invoice — debounce 350ms; reset hasil saat search dibersihkan
+  useEffect(() => {
+    const q = (searchInvoice || "").trim();
+    if (q.length < 2) { setSearchInvExt([]); setSearchInvLoading(false); return; }
+    let cancelled = false;
+    setSearchInvLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await searchInvoicesServer(supabase, q);
+        if (!cancelled) setSearchInvExt(data || []);
+      } catch (_) { if (!cancelled) setSearchInvExt([]); }
+      finally { if (!cancelled) setSearchInvLoading(false); }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); setSearchInvLoading(false); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInvoice]);
+
+  // Server-side search Order — pola sama
+  useEffect(() => {
+    const q = (searchOrder || "").trim();
+    if (q.length < 2) { setSearchOrdExt([]); setSearchOrdLoading(false); return; }
+    let cancelled = false;
+    setSearchOrdLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await searchOrdersServer(supabase, q);
+        if (!cancelled) setSearchOrdExt(data || []);
+      } catch (_) { if (!cancelled) setSearchOrdExt([]); }
+      finally { if (!cancelled) setSearchOrdLoading(false); }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); setSearchOrdLoading(false); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchOrder]);
+
+  // Merge local + server (dedup by id) — hanya untuk filter & display, bukan state global
+  const invoicesDataMerged = useMemo(() => {
+    if (!searchInvExt.length) return invoicesData;
+    const ids = new Set(invoicesData.map(i => i.id));
+    const extras = searchInvExt.filter(i => !ids.has(i.id));
+    return extras.length ? [...invoicesData, ...extras] : invoicesData;
+  }, [invoicesData, searchInvExt]);
+
+  const ordersDataMerged = useMemo(() => {
+    if (!searchOrdExt.length) return ordersData;
+    const ids = new Set(ordersData.map(o => o.id));
+    const extras = searchOrdExt.filter(o => !ids.has(o.id));
+    return extras.length ? [...ordersData, ...extras] : ordersData;
+  }, [ordersData, searchOrdExt]);
 
   // BAP offline sync worker — trigger flush + refresh counter
   const triggerBAPSync = async () => {
@@ -5779,7 +5835,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   );
 
   const renderOrders = () => (
-    <OrdersView ordersData={ordersData} setOrdersData={setOrdersData} orderFilter={orderFilter} setOrderFilter={setOrderFilter}
+    <OrdersView ordersData={searchOrder.trim() ? ordersDataMerged : ordersData} setOrdersData={setOrdersData} searchLoading={searchOrdLoading} orderFilter={orderFilter} setOrderFilter={setOrderFilter}
       orderTekFilter={orderTekFilter} setOrderTekFilter={setOrderTekFilter} orderDateFrom={orderDateFrom} setOrderDateFrom={setOrderDateFrom}
       orderDateTo={orderDateTo} setOrderDateTo={setOrderDateTo} searchOrder={searchOrder} setSearchOrder={setSearchOrder}
       orderPage={orderPage} setOrderPage={setOrderPage} orderServiceFilter={orderServiceFilter} setOrderServiceFilter={setOrderServiceFilter}
@@ -5808,7 +5864,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       return d <= 7;
     });
 
-    let filteredInv = [...invoicesData];
+    // Saat search aktif, gunakan invoicesDataMerged (sudah include hasil server search).
+    // Saat tidak search, pakai invoicesData biasa supaya perilaku non-search tidak berubah.
+    const sourceInv = searchInvoice.trim() ? invoicesDataMerged : invoicesData;
+    let filteredInv = [...sourceInv];
     const todayDateStr = getLocalDate();
     if (invoiceFilter === "Garansi") {
       filteredInv = garansiAktif;
@@ -5834,10 +5893,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     const unpaidCnt = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE" || i.status === "PARTIAL_PAID").length;
 
     return { filteredInv, garansiAktif, garansiKritis, unpaidCnt };
-  }, [invoicesData, invoiceFilter, invoiceDateFrom, invoiceDateTo, searchInvoice]);
+  }, [invoicesData, invoicesDataMerged, invoiceFilter, invoiceDateFrom, invoiceDateTo, searchInvoice]);
 
   const renderInvoice = () => (
-    <InvoiceView invoiceFilterMemo={invoiceFilterMemo} invoicesData={invoicesData} setInvoicesData={setInvoicesData}
+    <InvoiceView invoiceFilterMemo={invoiceFilterMemo} invoicesData={invoicesData} setInvoicesData={setInvoicesData} searchLoading={searchInvLoading}
       invoicePage={invoicePage} setInvoicePage={setInvoicePage} currentUser={currentUser} isMobile={isMobile}
       invoiceFilter={invoiceFilter} setInvoiceFilter={setInvoiceFilter} searchInvoice={searchInvoice} invoiceDateFrom={invoiceDateFrom} setInvoiceDateFrom={setInvoiceDateFrom} invoiceDateTo={invoiceDateTo} setInvoiceDateTo={setInvoiceDateTo}
       setSearchInvoice={setSearchInvoice} setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}

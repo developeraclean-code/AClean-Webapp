@@ -3,7 +3,7 @@ import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { smartSearchNormalize } from "../lib/phone.js";
 
-function OrdersView({ ordersData, setOrdersData, orderFilter, setOrderFilter, orderTekFilter, setOrderTekFilter, orderDateFrom, setOrderDateFrom, orderDateTo, setOrderDateTo, searchOrder, setSearchOrder, orderPage, setOrderPage, orderServiceFilter, setOrderServiceFilter, currentUser, customersData, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setModalOrder, showConfirm, showNotif, dispatchStatus, sendDispatchWA, deleteOrder, addAgentLog, auditUserName, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, ORDER_PAGE_SIZE, showUndoToast, insertOrder }) {
+function OrdersView({ ordersData, setOrdersData, searchLoading, orderFilter, setOrderFilter, orderTekFilter, setOrderTekFilter, orderDateFrom, setOrderDateFrom, orderDateTo, setOrderDateTo, searchOrder, setSearchOrder, orderPage, setOrderPage, orderServiceFilter, setOrderServiceFilter, currentUser, customersData, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setModalOrder, showConfirm, showNotif, dispatchStatus, sendDispatchWA, deleteOrder, addAgentLog, auditUserName, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, ORDER_PAGE_SIZE, showUndoToast, insertOrder }) {
 // ── SIM-1+2: search + teknisi filter + pagination ──
 const allTekOrd = ["Semua", ...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
 const sMap2 = { "Pending": "PENDING", "Confirmed": "CONFIRMED", "In Progress": "IN_PROGRESS", "Completed": "COMPLETED", "Cancelled": "CANCELLED" };
@@ -121,6 +121,11 @@ return (
         style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px 10px 36px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
       {searchOrder && <button onClick={() => { setSearchOrder(""); setOrderPage(1); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16 }}>✕</button>}
     </div>
+    {searchOrder && searchOrder.length >= 2 && (
+      <div style={{ fontSize: 11, color: cs.muted, paddingLeft: 4, marginTop: -8 }}>
+        {searchLoading ? "🔎 Mencari di seluruh database..." : "📂 Termasuk hasil dari arsip lama (server search aktif)"}
+      </div>
+    )}
     {/* Filter pills + teknisi dropdown */}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
       {["Semua", "Hari Ini", "Pending", "Confirmed", "In Progress", "Completed"].map(f => (
