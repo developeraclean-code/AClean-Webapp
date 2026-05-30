@@ -337,16 +337,22 @@ function TabAudit({ supabase }) {
   const [severity, setSeverity] = useState("");
   const [category, setCategory] = useState("");
   const [days, setDays] = useState(1);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 20;
 
   const load = async () => {
     setLoading(true);
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-    const { data, error } = await fetchAgentLogsFiltered(supabase, { severity: severity || undefined, category: category || undefined, since, limit: 200 });
+    const { data, error } = await fetchAgentLogsFiltered(supabase, { severity: severity || undefined, category: category || undefined, since, limit: days >= 90 ? 1000 : 300 });
     if (!error && data) setLogs(data);
     setLoading(false);
   };
 
-  useEffect(() => { if (supabase) load(); }, [supabase, severity, category, days]);
+  useEffect(() => { setPage(1); if (supabase) load(); }, [supabase, severity, category, days]);
+
+  const totalPages = Math.ceil(logs.length / PAGE_SIZE) || 1;
+  const curPage = Math.min(page, totalPages);
+  const pageLogs = logs.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -365,16 +371,18 @@ function TabAudit({ supabase }) {
           <option value={3}>3 hari</option>
           <option value={7}>7 hari</option>
           <option value={30}>30 hari</option>
+          <option value={90}>90 hari (semua)</option>
         </select>
         <button onClick={load} disabled={loading} style={{ padding: "6px 12px", borderRadius: 8, background: cs.accent + "22", border: `1px solid ${cs.accent}33`, color: cs.accent, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
           {loading ? "⏳" : "🔄"}
         </button>
+        <span style={{ fontSize: 11, color: cs.muted, marginLeft: "auto" }}>{logs.length} log • retensi 90 hari</span>
       </div>
 
       <div style={{ display: "grid", gap: 6, maxHeight: 600, overflowY: "auto" }}>
         {logs.length === 0 ? (
           <Empty msg="Tidak ada log untuk filter ini." />
-        ) : logs.map(l => {
+        ) : pageLogs.map(l => {
           const sev = l.severity || (l.status === "ERROR" ? "error" : l.status === "WARNING" ? "warn" : "info");
           const sevConfig = SEVERITY_COLOR[sev] || SEVERITY_COLOR.info;
           return (
@@ -388,6 +396,16 @@ function TabAudit({ supabase }) {
           );
         })}
       </div>
+
+      {totalPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, paddingTop: 4 }}>
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={curPage === 1}
+            style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${cs.border}`, background: curPage === 1 ? cs.surface : cs.card, color: curPage === 1 ? cs.muted : cs.text, cursor: curPage === 1 ? "not-allowed" : "pointer", fontSize: 12 }}>← Prev</button>
+          <span style={{ fontSize: 12, color: cs.text }}>Hal {curPage}/{totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={curPage === totalPages}
+            style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${cs.border}`, background: curPage === totalPages ? cs.surface : cs.card, color: curPage === totalPages ? cs.muted : cs.text, cursor: curPage === totalPages ? "not-allowed" : "pointer", fontSize: 12 }}>Next →</button>
+        </div>
+      )}
     </div>
   );
 }

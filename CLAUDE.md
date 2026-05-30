@@ -55,7 +55,6 @@ Role hierarchy: **Owner > Admin > Teknisi > Helper**. Enforced in `canAccess()` 
 | Laporan Tim | ✅ | ✅ | ❌ | ❌ |
 | ARA Chat | ✅ | ✅ | ❌ | ❌ |
 | **Statistik** | ✅ | ❌ Blocked | ❌ | ❌ |
-| **ARA Log** | ✅ | ❌ Blocked | ❌ | ❌ |
 | **Deleted Audit** | ✅ | ❌ Blocked | ❌ | ❌ |
 | **Settings** | ✅ | ❌ Blocked | ❌ | ❌ |
 | **Monitoring** | ✅ | ❌ Blocked | ❌ | ❌ |
@@ -67,7 +66,8 @@ Role hierarchy: **Owner > Admin > Teknisi > Helper**. Enforced in `canAccess()` 
 **Critical rules (DO NOT violate):**
 - `pricelist` menu dan edit buttons → Owner only. Admin diblok di `canAccess()` dan di `canEdit` PriceListView.
 - `settings` → Owner only. Admin tidak bisa ubah toggle WA/AI/cron.
-- `reports` (Statistik), `agentlog` (ARA Log), `deletedaudit` (Deleted Audit) → Owner only. Admin diblok di `canAccess()`.
+- `reports` (Statistik), `deletedaudit` (Deleted Audit) → Owner only. Admin diblok di `canAccess()`.
+- ARA Log (menu standalone) sudah **dihapus** — audit/agent log kini diakses lewat Monitoring → tab "Audit Log" (sumber sama: tabel `agent_logs`).
 - Delete operations dalam view (order, invoice, customer) → umumnya Owner only. Admin = input & edit only, NO delete.
 - Supabase `user_profiles` DELETE tidak punya RLS policy untuk anon key → pakai `/api/manage-user` endpoint untuk delete user.
 

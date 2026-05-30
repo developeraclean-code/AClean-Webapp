@@ -24,7 +24,7 @@ import { statusColor, statusLabel } from "./constants/status.js";
 import { SERVICE_TYPES } from "./constants/services.js";
 import {
   fetchOrders, fetchInvoices, fetchCustomers, fetchInventory,
-  fetchServiceReports, fetchAgentLogs, fetchInventoryTransactions,
+  fetchServiceReports, fetchInventoryTransactions,
   searchInvoicesServer, searchOrdersServer,
   fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
@@ -41,7 +41,6 @@ import {
 import DashboardView from "./views/DashboardView.jsx";
 import ViewErrorBoundary from "./components/ViewErrorBoundary.jsx";
 import { AppContext } from "./context/AppContext.js";
-const AgentLogView = lazy(() => import("./views/AgentLogView.jsx"));
 const DeletedAuditView = lazy(() => import("./views/DeletedAuditView.jsx"));
 const MonitoringView = lazy(() => import("./views/MonitoringView.jsx"));
 const InventoryView = lazy(() => import("./views/InventoryView.jsx"));
@@ -768,7 +767,6 @@ export default function ACleanWebApp() {
   const [laporanDateFrom, setLaporanDateFrom] = useState(""); // date range: dari
   const [laporanDateTo, setLaporanDateTo] = useState(""); // date range: sampai
   const [laporanPage, setLaporanPage] = useState(1);
-  const [agentLogPage, setAgentLogPage] = useState(1);
   const LAP_PAGE_SIZE = 10;
   const AGENT_LOG_PAGE_SIZE = 20;
 
@@ -882,9 +880,6 @@ export default function ACleanWebApp() {
   }));
   const EXPENSE_PAGE_SIZE = 20;
 
-  // ── ARA Log filters ──
-  const [logDateFilter, setLogDateFilter] = useState("Semua");
-  const [logActionFilter, setLogActionFilter] = useState("Semua");
   const [schedListFilter, setSchedListFilter] = useState("minggu_ini"); // "hari_ini" | "minggu_ini" | "semua"
   const [invUnitsData, setInvUnitsData] = useState([]); // unit fisik per item (tabung/roll)
   const [showAddStock, setShowAddStock] = useState(false);
@@ -2773,9 +2768,9 @@ ${photoPageHTML}
     if (role === "Owner") return menu !== "myreport";
     // Admin: semua operasional KECUALI pricelist (Owner only per SOP), settings, myreport
     // SOP_ADMIN_ROLE.md: Admin = input & edit only, no delete, no price list, no settings
-    // Statistik (reports), ARA Log (agentlog), Deleted Audit (deletedaudit) → Owner only
+    // Statistik (reports), Deleted Audit (deletedaudit) → Owner only
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport", "monitoring", "finance", "pricelist", "reports", "agentlog", "deletedaudit"];
+      const adminBlocked = ["settings", "myreport", "monitoring", "finance", "pricelist", "reports", "deletedaudit"];
       return !adminBlocked.includes(menu);
     }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri (komisi disembunyikan — password shared)
@@ -3066,7 +3061,7 @@ ${photoPageHTML}
           setLaporanReports(Array.from(dedupedMap.values()));
         }
         // Jika DB error total, keep demo data (already in useState init)
-        // agent_logs: load on-demand di renderAgentLog()
+        // agent_logs: diakses lewat Monitoring → tab Audit Log (server-side)
 
         // ── Expenses & agent_logs: load on-demand (opsi-A, bukan di sini) ──
 
@@ -5759,7 +5754,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id: "project", icon: "🏗", label: "Project" },
     { id: "ara", icon: "🤖", label: "ARA Chat" },
     { id: "reports", icon: "📊", label: "Statistik" },
-    { id: "agentlog", icon: "📡", label: "ARA Log" },
     { id: "deletedaudit", icon: "🗑", label: "Deleted Audit" },
     { id: "monitoring", icon: "🔍", label: "Monitoring" },
     { id: "settings", icon: "⚙️", label: "Pengaturan" },
@@ -6154,12 +6148,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       sendToARA={sendToARA} forceReloadPriceList={forceReloadPriceList} connectAraBrain={connectAraBrain} />
   );
 
-  const renderAgentLog = () => (
-    <AgentLogView agentLogs={agentLogs} logDateFilter={logDateFilter} setLogDateFilter={setLogDateFilter}
-      logActionFilter={logActionFilter} setLogActionFilter={setLogActionFilter}
-      agentLogPage={agentLogPage} setAgentLogPage={setAgentLogPage} />
-  );
-
   const renderDeletedAudit = () => <DeletedAuditView supabase={supabase} currentUser={currentUser} showNotif={showNotif} setOrdersData={setOrdersData} setInvoicesData={setInvoicesData} />;
 
   // ============================================================
@@ -6285,12 +6273,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     return () => clearInterval(interval);
   }, [activeMenu, currentUser]);
 
-  // Opsi-A: on-demand load untuk agent_logs, expenses, quotations — tidak masuk loadAll
+  // Opsi-A: on-demand load untuk expenses, quotations — tidak masuk loadAll
+  // (agent_logs kini diakses lewat Monitoring → tab Audit Log, server-side)
   useEffect(() => {
     if (!currentUser) return;
-    if (activeMenu === "agentlog") {
-      fetchAgentLogs(supabase).then(({ data, error }) => { if (!error && data?.length > 0) setAgentLogs(data); });
-    } else if (activeMenu === "biaya" || activeMenu === "dashboard") {
+    if (activeMenu === "biaya" || activeMenu === "dashboard") {
       fetchExpenses(supabase).then(({ data, error }) => { if (!error && data) setExpensesData(data); }).catch(() => {});
     } else if (activeMenu === "invoice") {
       supabase.from("quotations").select("*").order("created_at", { ascending: false }).limit(200)
@@ -6341,7 +6328,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       );
       case "ara": return renderAra();
       case "reports": return renderReports();
-      case "agentlog": return renderAgentLog();
       case "deletedaudit": return renderDeletedAudit();
       case "mattrack": return renderMatTrack();
       case "biaya": return renderExpenses();
