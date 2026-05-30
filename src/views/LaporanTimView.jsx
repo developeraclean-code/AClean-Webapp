@@ -4,7 +4,7 @@ import { normalizePhone } from "../lib/phone.js";
 
 function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData }) {
 const _todayLap = getLocalDate?.() || new Date().toISOString().slice(0, 10);
-const [lapViewMode, setLapViewMode] = useState("rekap"); // "rekap" | "detail"
+const [lapViewMode, setLapViewMode] = useState("detail"); // "rekap" | "detail" — default detail
 const [rekapDate, setRekapDate]     = useState(_todayLap);
 
 // Toggle tampilan — dipakai di mode rekap & detail
