@@ -37,9 +37,9 @@ const VIEWS = {
   finance: ProjectFinanceView, docs: ProjectDocsView,
 };
 
-export default function ProjectApp({ currentUser, onBack }) {
+export default function ProjectApp({ currentUser, apiFetch, onBack }) {
   return (
-    <ProjectProvider currentUser={currentUser}>
+    <ProjectProvider currentUser={currentUser} apiFetch={apiFetch}>
       <ModalProvider>
         <Shell onBack={onBack} />
         <ModalHost />

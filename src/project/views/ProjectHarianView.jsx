@@ -8,7 +8,7 @@ import { StatusPill } from "../components/Bits.jsx";
 import Modal from "../components/Modal.jsx";
 
 export default function ProjectHarianView() {
-  const { db, can, today, upsertHarian, patchRow } = useProject();
+  const { db, can, today, upsertHarian, patchRow, uploadPhotos, deleteRow } = useProject();
   const { openForm, openContent, close, toast } = useModal();
 
   const findHarian = (pid, tgl) => db.harian.find((h) => h.projectId === pid && h.tanggal === tgl);
@@ -29,21 +29,23 @@ export default function ProjectHarianView() {
         options: db.tools.filter((t) => t.lokasi === "" && t.status === "tersedia").map((t) => t.nama) },
       { name: "foto", label: "Foto kondisi berangkat", type: "photo" },
     ],
-    onSubmit: (d) => {
+    onSubmit: async (d) => {
       const pid = pidByName(d.projectId); const proj = db.projects.find((p) => p.id === pid) || {};
       if (proj.status === "HOLD") return toast("⏸ Project HOLD — laporan dijeda");
       if (proj.status === "SELESAI") return toast("Project sudah SELESAI");
       if (isLocked(db, pid, today)) return toast("🔒 Hari terkunci — sudah diverifikasi");
       const matStr = (d.materialRows || []).map((r) => `${r.nama || ""} ${r.qty || ""} ${r.satuan || ""}`.replace(/\s+/g, " ").trim()).filter(Boolean).join(", ") || "-";
       const chosen = d.alat || [];
-      const pagi = { jam: d.jam, material: matStr, alat: chosen.join(", ") || "-", foto: d._photos };
+      let fotos = [];
+      if ((d.foto || []).length) { toast("⏳ Mengupload foto…"); try { fotos = await uploadPhotos(d.foto, `project/${pid}/${today.slice(0, 7)}/pagi`); } catch (e) { toast("⚠️ Foto gagal diupload — laporan tetap disimpan"); } }
+      const pagi = { jam: d.jam, material: matStr, alat: chosen.join(", ") || "-", foto: fotos.length, fotos };
       const existing = db.harian.find((x) => x.projectId === pid && x.tanggal === today);
       const row = existing
         ? { ...existing, oleh: d.oleh, pagi }
         : { id: "h" + Date.now(), tanggal: today, projectId: pid, oleh: d.oleh, pagi, sore: null, status: "DRAFT" };
       const toolChanges = chosen.map((nm) => { const t = db.tools.find((x) => x.nama === nm); return t ? { id: t.id, lokasi: pid, status: "di lokasi" } : null; }).filter(Boolean);
       upsertHarian(row, toolChanges);
-      toast(`Laporan Pagi disimpan · ${chosen.length} alat → ${d.projectId}`);
+      toast(`Laporan Pagi disimpan · ${fotos.length} foto · ${chosen.length} alat`);
     },
   });
   };
@@ -63,21 +65,23 @@ export default function ProjectHarianView() {
         options: db.tools.filter((t) => t.status === "di lokasi").map((t) => t.nama) },
       { name: "foto", label: "Foto pekerjaan / kondisi pulang", type: "photo" },
     ],
-    onSubmit: (d) => {
+    onSubmit: async (d) => {
       const pid = pidByName(d.projectId); const proj = db.projects.find((p) => p.id === pid) || {};
       if (proj.status === "HOLD") return toast("⏸ Project HOLD — laporan dijeda");
       if (proj.status === "SELESAI") return toast("Project sudah SELESAI");
       if (isLocked(db, pid, today)) return toast("🔒 Hari terkunci — sudah diverifikasi");
       const matStr = (d.materialRows || []).map((r) => `${r.nama || ""} ${r.qty || ""} ${r.satuan || ""}`.replace(/\s+/g, " ").trim()).filter(Boolean).join(", ") || "-";
       const chosen = d.alat || [];
-      const sore = { jam: d.jam, progress: d.progress, material: matStr, alat: chosen.join(", ") || "-", foto: d._photos };
+      let fotos = [];
+      if ((d.foto || []).length) { toast("⏳ Mengupload foto…"); try { fotos = await uploadPhotos(d.foto, `project/${pid}/${today.slice(0, 7)}/sore`); } catch (e) { toast("⚠️ Foto gagal diupload — laporan tetap disimpan"); } }
+      const sore = { jam: d.jam, progress: d.progress, material: matStr, alat: chosen.join(", ") || "-", foto: fotos.length, fotos };
       const existing = db.harian.find((x) => x.projectId === pid && x.tanggal === today);
       const row = existing
         ? { ...existing, oleh: d.oleh, sore, status: "SUBMITTED" }
         : { id: "h" + Date.now(), tanggal: today, projectId: pid, oleh: d.oleh, pagi: null, sore, status: "SUBMITTED" };
       const toolChanges = chosen.map((nm) => { const t = db.tools.find((x) => x.nama === nm); return t ? { id: t.id, lokasi: "", status: "tersedia" } : null; }).filter(Boolean);
       upsertHarian(row, toolChanges);
-      toast(`Laporan Sore terkirim · ${chosen.length} alat → gudang`);
+      toast(`Laporan Sore terkirim · ${fotos.length} foto · ${chosen.length} alat → gudang`);
     },
   });
   };
@@ -112,16 +116,15 @@ export default function ProjectHarianView() {
                 </>
               )}
               <div style={{ margin: "10px 0 4px", color: cs.muted, fontSize: 12 }}>
-                Foto ({s.foto}) · auto timestamp + GPS — R2: project/{h.projectId}/{h.tanggal.slice(0, 7)}/{sesi}/
+                Foto ({s.foto || 0}) · timestamp + GPS ter-stamp · R2: project/{h.projectId}/{h.tanggal.slice(0, 7)}/{sesi}/
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 8 }}>
-                {Array.from({ length: Math.min(8, s.foto) }).map((_, i) => (
-                  <div key={i} style={{ position: "relative", aspectRatio: 1, background: "linear-gradient(135deg,#1b2740,#0f1b30)", border: `1px solid ${cs.border}`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted, fontSize: 11, overflow: "hidden" }}>
-                    foto
-                    <span style={{ position: "absolute", left: 3, right: 3, bottom: 3, fontSize: 7.5, lineHeight: 1.25, background: "rgba(0,0,0,.6)", color: "#e2e8f0", borderRadius: 3, padding: "1px 3px", textAlign: "left" }}>
-                      {h.tanggal.slice(5)} {s.jam}<br />📍-6.2,106.9
-                    </span>
-                  </div>
+                {(s.fotos && s.fotos.length) ? s.fotos.map((url, i) => (
+                  <a key={i} href={url} target="_blank" rel="noreferrer" style={{ aspectRatio: 1, borderRadius: 10, overflow: "hidden", border: `1px solid ${cs.border}`, display: "block" }}>
+                    <img alt={`foto ${i + 1}`} src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  </a>
+                )) : Array.from({ length: Math.min(8, s.foto || 0) }).map((_, i) => (
+                  <div key={i} style={{ position: "relative", aspectRatio: 1, background: "linear-gradient(135deg,#1b2740,#0f1b30)", border: `1px solid ${cs.border}`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted, fontSize: 11, overflow: "hidden" }}>foto</div>
                 ))}
               </div>
             </>
@@ -168,6 +171,9 @@ export default function ProjectHarianView() {
                     <button style={S.btnSm("ghost")} onClick={() => viewSession(h, "sore")}>Detail Sore</button>
                     {h.status === "SUBMITTED" && can.verify && (
                       <button style={S.btnSm("green")} onClick={() => setStatus(h.id, "VERIFIED")}>Verify</button>
+                    )}
+                    {can.delete && (
+                      <button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus laporan harian ini?")) deleteRow("harian", h.id); }}>🗑</button>
                     )}
                   </div>
                 </td>

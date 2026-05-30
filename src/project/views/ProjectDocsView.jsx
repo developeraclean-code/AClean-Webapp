@@ -8,9 +8,11 @@ import { DOC_TYPES, DOC_PRESETS, BA_CHECK_PRESET } from "../utils/constants.js";
 import Modal from "../components/Modal.jsx";
 import DocPaper from "../components/DocPaper.jsx";
 import SignaturePad from "../components/SignaturePad.jsx";
+import ProjectDocPDF from "../components/ProjectDocPDF.jsx";
+import { pdf } from "@react-pdf/renderer";
 
 export default function ProjectDocsView() {
-  const { db, can, today, addRows, patchRow } = useProject();
+  const { db, can, today, addRows, patchRow, deleteRow } = useProject();
   const { openForm, openContent, close, toast } = useModal();
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
 
@@ -105,6 +107,9 @@ export default function ProjectDocsView() {
                     {ttdStatus(d) === "belum" && can.manage && (
                       <button style={S.btnSm("green")} onClick={() => signDoc(d.id)}>Tanda Tangani</button>
                     )}
+                    {can.delete && (
+                      <button style={S.btnSm("ghost")} onClick={() => { if (window.confirm(`Hapus dokumen ${d.nomor}?`)) deleteRow("documents", d.id); }}>🗑</button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -122,16 +127,28 @@ function DocViewer({ docId }) {
   const { close, toast } = useModal();
   const d = db.documents.find((x) => x.id === docId);
   const p = db.projects.find((x) => x.id === d.projectId);
+  const cetak = async () => {
+    try {
+      toast("⏳ Membuat PDF…");
+      const blob = await pdf(<ProjectDocPDF doc={d} project={p} />).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${(d.nomor || "dokumen").replace(/[^a-zA-Z0-9._-]/g, "_")}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast("PDF terunduh");
+    } catch (e) { toast("Gagal membuat PDF: " + (e.message || e)); }
+  };
   return (
     <Modal wide onClose={close}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h3 style={{ fontSize: 16, fontWeight: 800, color: cs.text, margin: 0 }}>{d.jenis}</h3>
-        <span style={S.tag}>format bisa disesuaikan</span>
+        <span style={S.tag}>TTD virtual ter-embed di PDF</span>
       </div>
       <DocPaper doc={d} project={p} />
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 12 }}>
         <button style={S.btn("ghost")} onClick={close}>Tutup</button>
-        <button style={S.btn()} onClick={() => toast("(demo) export PDF ke R2")}>Cetak / PDF</button>
+        <button style={S.btn()} onClick={cetak}>Cetak / PDF</button>
       </div>
     </Modal>
   );

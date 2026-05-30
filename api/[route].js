@@ -1984,6 +1984,48 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
     }
 
     // ── MANAGE-USER: Create/Update/Deactivate/Reset-Password via Admin API ──
+    // ── PROJECT MODULE: hapus baris (Owner only) — RLS anon sengaja tanpa DELETE ──
+    if (route === "project-delete") {
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      if (!await checkRateLimit(req, res, 30, 60000)) return;
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
+
+      // Role check: Owner only (App Token claims, atau fallback Supabase Bearer → user_profiles)
+      let callerRole = "";
+      if (req.appClaims?.role) {
+        callerRole = req.appClaims.role;
+      } else {
+        const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+        if (bearer) {
+          try {
+            const parts = bearer.split(".");
+            if (parts.length === 3) {
+              const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+              if (payload.sub) {
+                const pr = await fetch(`${SU}/rest/v1/user_profiles?id=eq.${encodeURIComponent(payload.sub)}&select=role&limit=1`, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+                const pd = pr.ok ? await pr.json() : [];
+                callerRole = pd[0]?.role ? (pd[0].role.charAt(0).toUpperCase() + pd[0].role.slice(1).toLowerCase()) : "";
+              }
+            }
+          } catch (e) { console.warn("[project-delete] JWT decode:", e.message); }
+        }
+      }
+      if (callerRole !== "Owner") return res.status(403).json({ error: "Forbidden: hanya Owner yang bisa hapus data Project" });
+
+      const { table, id } = req.body || {};
+      const ALLOWED = ["project_projects", "project_dp", "project_materials", "project_alokasi", "project_usage", "project_tools", "project_expenses", "project_purchases", "project_harian", "project_documents"];
+      if (!ALLOWED.includes(table) || !id) return res.status(400).json({ error: "table/id tidak valid" });
+
+      const delRes = await fetch(`${SU}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: { apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+      });
+      if (!delRes.ok) { const t = await delRes.text(); console.error("[project-delete] gagal:", delRes.status, t); return res.status(502).json({ error: "Hapus gagal: " + t.slice(0, 200) }); }
+      return res.status(200).json({ success: true });
+    }
+
     if (route === "manage-user") {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       // M-04: Rate limiting — max 20 req/menit per IP untuk endpoint sensitif ini

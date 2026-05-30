@@ -8,7 +8,7 @@ import { fmtRp } from "../utils/constants.js";
 import { StatusPill, Tag, Bar } from "../components/Bits.jsx";
 
 export default function ProjectFinanceView() {
-  const { db, can, activeProject, setActiveProject, addRows } = useProject();
+  const { db, can, activeProject, setActiveProject, addRows, deleteRow } = useProject();
   const { openForm, toast } = useModal();
 
   if (!can.finance) {
@@ -76,12 +76,15 @@ export default function ProjectFinanceView() {
           <table style={{ ...S.tableStyles.table, marginTop: 8 }}>
             <thead><tr>
               <th style={S.tableStyles.th}>Tgl</th><th style={S.tableStyles.th}>Keterangan</th><th style={S.tableStyles.th}>Jumlah</th>
+              {can.delete && <th style={S.tableStyles.th}></th>}
             </tr></thead>
             <tbody>
               {k.dpList.map((d, i) => (
-                <tr key={i}><td style={S.tableStyles.td}>{d.tanggal}</td><td style={S.tableStyles.td}>{d.ket}</td><td style={S.tableStyles.td}>{fmtRp(d.jumlah)}</td></tr>
+                <tr key={i}><td style={S.tableStyles.td}>{d.tanggal}</td><td style={S.tableStyles.td}>{d.ket}</td><td style={S.tableStyles.td}>{fmtRp(d.jumlah)}</td>
+                {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus DP/termin ini?")) deleteRow("dp", d.id); }}>🗑</button></td>}
+                </tr>
               ))}
-              <tr><td style={S.tableStyles.td}></td><td style={S.tableStyles.td}><b>Total diterima</b></td><td style={S.tableStyles.td}><b style={{ color: cs.green }}>{fmtRp(k.dpTotal)}</b></td></tr>
+              <tr><td style={S.tableStyles.td}></td><td style={S.tableStyles.td}><b>Total diterima</b></td><td style={S.tableStyles.td}><b style={{ color: cs.green }}>{fmtRp(k.dpTotal)}</b></td>{can.delete && <td style={S.tableStyles.td}></td>}</tr>
             </tbody>
           </table>
         </div>
