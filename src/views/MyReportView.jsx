@@ -33,12 +33,8 @@ if (isTeknisiOrHelper) {
   myReps = myReps.filter(r => (r.status || "").toUpperCase() !== "VERIFIED");
 }
 
-// ── HIDE laporan & pending job sebelum 25 April 2026 (untuk tampilan bersih) ──
-const CUTOFF_DATE = "2026-04-25";
-myReps = myReps.filter(r => {
-  const d = (r.date || r.submitted?.slice(0, 10) || "").slice(0, 10);
-  return d >= CUTOFF_DATE;
-});
+// CUTOFF_DATE dihapus — tampilkan semua belum-laporan yang real, tanpa filter tanggal.
+// Auto-hide VERIFIED untuk teknisi/helper tetap berlaku (laporan selesai tidak menumpuk).
 
 const filtReps = myReps.filter(r =>
   !searchLaporan ||

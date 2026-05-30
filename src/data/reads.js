@@ -33,8 +33,8 @@ export const fetchInventory = (supabase) =>
 
 export const fetchServiceReports = (supabase) =>
   supabase.from("service_reports")
-    .select("id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,units_json,materials_json,submitted,unit_mismatch,created_at,is_substitute,is_install")
-    .order("submitted_at", { ascending: false }).limit(200);
+    .select("id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,units_json,materials_json,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at")
+    .order("submitted_at", { ascending: false }).limit(5000);
 
 export const fetchAgentLogs = (supabase) =>
   supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(100);
