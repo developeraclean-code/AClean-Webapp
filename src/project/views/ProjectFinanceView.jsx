@@ -8,7 +8,7 @@ import { fmtRp } from "../utils/constants.js";
 import { StatusPill, Tag, Bar } from "../components/Bits.jsx";
 
 export default function ProjectFinanceView() {
-  const { db, can, activeProject, setActiveProject, update } = useProject();
+  const { db, can, activeProject, setActiveProject, addRows } = useProject();
   const { openForm, toast } = useModal();
 
   if (!can.finance) {
@@ -32,7 +32,7 @@ export default function ProjectFinanceView() {
     onSubmit: (d) => {
       const rr = (d.rows || []).filter((r) => r.jumlah);
       if (!rr.length) return toast("Isi minimal 1 baris bernominal");
-      update((cur) => { rr.forEach((r) => cur.dp.push({ projectId: p.id, tanggal: r.tanggal || new Date().toISOString().slice(0, 10), jumlah: +r.jumlah, ket: r.ket })); });
+      addRows("dp", rr.map((r) => ({ projectId: p.id, tanggal: r.tanggal || new Date().toISOString().slice(0, 10), jumlah: +r.jumlah, ket: r.ket })));
       toast(`${rr.length} DP/termin dicatat`);
     },
   });

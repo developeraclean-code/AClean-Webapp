@@ -8,7 +8,7 @@ import { fmtRp } from "../utils/constants.js";
 import { Bar } from "../components/Bits.jsx";
 
 export default function ProjectDashboard() {
-  const { db, can, today, update } = useProject();
+  const { db, can, today, patchRow } = useProject();
   const { toast } = useModal();
 
   const active = db.projects.filter((p) => p.status === "BERJALAN" || p.status === "FINISHING");
@@ -22,7 +22,7 @@ export default function ProjectDashboard() {
   const telat = db.projects.filter((p) => daysLate(p, today) > 0);
   const unver = db.harian.filter((h) => h.status === "SUBMITTED");
 
-  const verify = (id) => { update((d) => { d.harian = d.harian.map((h) => (h.id === id ? { ...h, status: "VERIFIED" } : h)); }); toast("Diverifikasi 🔒 hari ini terkunci"); };
+  const verify = (id) => { patchRow("harian", id, { status: "VERIFIED" }); toast("Diverifikasi 🔒 hari ini terkunci"); };
 
   return (
     <div style={{ padding: 22, maxWidth: 1200 }}>

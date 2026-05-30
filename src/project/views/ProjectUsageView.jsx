@@ -6,7 +6,7 @@ import { useModal } from "../context/ModalContext.jsx";
 import { isLocked, pName } from "../utils/finance.js";
 
 export default function ProjectUsageView() {
-  const { db, today, update } = useProject();
+  const { db, today, addRows } = useProject();
   const { openForm, toast } = useModal();
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
 
@@ -26,7 +26,7 @@ export default function ProjectUsageView() {
       if (isLocked(db, pid, today)) return toast("🔒 Hari terkunci");
       const rows = (d.rows || []).filter((r) => r.qty);
       if (!rows.length) return toast("Isi minimal 1 baris");
-      update((cur) => { rows.forEach((r) => cur.usage = [{ tanggal: today, projectId: pid, material: r.material, qty: `${r.qty} ${r.satuan || ""}`.trim(), oleh: d.oleh }, ...cur.usage]); });
+      addRows("usage", rows.map((r) => ({ tanggal: today, projectId: pid, material: r.material, qty: `${r.qty} ${r.satuan || ""}`.trim(), oleh: d.oleh })));
       toast(`${rows.length} pemakaian tercatat`);
     },
   });

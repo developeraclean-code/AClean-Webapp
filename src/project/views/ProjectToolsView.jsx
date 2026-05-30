@@ -6,7 +6,7 @@ import { useModal } from "../context/ModalContext.jsx";
 import { pName } from "../utils/finance.js";
 
 export default function ProjectToolsView() {
-  const { db, can, update } = useProject();
+  const { db, can, addRows } = useProject();
   const { openForm, toast } = useModal();
 
   const addTool = () => openForm({
@@ -16,7 +16,7 @@ export default function ProjectToolsView() {
     onSubmit: (d) => {
       const rows = (d.rows || []).filter((r) => r.nama);
       if (!rows.length) return toast("Isi minimal 1 baris");
-      update((cur) => { rows.forEach((r, i) => cur.tools.push({ id: "t" + Date.now() + i, nama: r.nama, jumlah: +r.jumlah || 1, status: "tersedia", lokasi: "" })); });
+      addRows("tools", rows.map((r, i) => ({ id: "t" + Date.now() + i, nama: r.nama, jumlah: +r.jumlah || 1, status: "tersedia", lokasi: "" })));
       toast(`${rows.length} alat ditambah`);
     },
   });
