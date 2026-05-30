@@ -163,7 +163,7 @@ return (
       <span style={{ width: 1, height: 16, background: cs.border, display: "inline-block", marginLeft: 4 }} />
       <select value={orderServiceFilter} onChange={e => { setOrderServiceFilter(e.target.value); setOrderPage(1); }}
         style={{ background: cs.card, border: "1px solid " + (orderServiceFilter != "Semua" ? cs.yellow : cs.border), borderRadius: 8, color: orderServiceFilter != "Semua" ? cs.yellow : cs.text, padding: "6px 10px", fontSize: 12, cursor: "pointer" }}>
-        {["Semua", "Cleaning", "Install", "Repair", "Complain"].map(s => <option key={s} value={s}>🔧 {s}</option>)}
+        {["Semua", "Cleaning", "Install", "Repair", "Complain", "Project"].map(s => <option key={s} value={s}>🔧 {s}</option>)}
       </select>
       {/* GAP-9: Reset Semua filter */}
       {(orderFilter !== "Semua" || orderTekFilter !== "Semua" || orderDateFrom || orderDateTo || orderServiceFilter !== "Semua" || searchOrder) && (

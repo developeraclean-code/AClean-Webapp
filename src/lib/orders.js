@@ -7,7 +7,7 @@ export const VALID_ORDER_STATUSES = [
 ];
 
 export const VALID_ORDER_SERVICES = [
-  "Cleaning", "Install", "Repair", "Complain", "Survey",
+  "Cleaning", "Install", "Repair", "Complain", "Survey", "Project",
 ];
 
 const CONTINUATION_OPEN_STATUSES = [

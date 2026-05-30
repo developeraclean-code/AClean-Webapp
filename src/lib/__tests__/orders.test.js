@@ -195,7 +195,7 @@ describe("VALID_ORDER_STATUSES — sync dengan DB constraint", () => {
 // ── VALID_ORDER_SERVICES ──────────────────────────────────────────────────────
 
 describe("VALID_ORDER_SERVICES — sync dengan DB constraint", () => {
-  const DB_SERVICES = ["Cleaning", "Install", "Repair", "Complain", "Survey"];
+  const DB_SERVICES = ["Cleaning", "Install", "Repair", "Complain", "Survey", "Project"];
 
   it("mencakup semua service yang diizinkan DB", () => {
     for (const s of DB_SERVICES) {
