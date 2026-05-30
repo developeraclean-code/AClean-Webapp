@@ -8,7 +8,7 @@ import { CATS, fmtRp } from "../utils/constants.js";
 import { Bar, StatusPill, Tag } from "../components/Bits.jsx";
 
 export default function ProjectListView() {
-  const { db, can, addRows, setActiveView, setActiveProject } = useProject();
+  const { db, can, addRows, deleteRow, setActiveView, setActiveProject } = useProject();
   const { openForm, toast } = useModal();
   const [cats, setCats] = useState(CATS);
   const [filter, setFilter] = useState("Semua");
@@ -67,6 +67,7 @@ export default function ProjectListView() {
             <th style={S.tableStyles.th}>Lokasi</th><th style={S.tableStyles.th}>Tim</th>
             {can.finance && <th style={S.tableStyles.th}>Nilai</th>}
             <th style={S.tableStyles.th}>Progress</th><th style={S.tableStyles.th}>Status</th>
+            {can.delete && <th style={S.tableStyles.th}></th>}
           </tr></thead>
           <tbody>
             {rows.map((p) => {
@@ -88,6 +89,11 @@ export default function ProjectListView() {
                     <div style={{ width: 90 }}><Bar pct={p.progress} color={fill} /></div>
                   </td>
                   <td style={S.tableStyles.td}><StatusPill s={p.status} /></td>
+                  {can.delete && (
+                    <td style={S.tableStyles.td}>
+                      <button style={S.btnSm("ghost")} onClick={(e) => { e.stopPropagation(); if (window.confirm(`Hapus project "${p.nama}" beserta semua data terkait (DP, laporan, dll)?`)) deleteRow("projects", p.id); }}>🗑</button>
+                    </td>
+                  )}
                 </tr>
               );
             })}

@@ -6,7 +6,7 @@ import { useModal } from "../context/ModalContext.jsx";
 import { pName } from "../utils/finance.js";
 
 export default function ProjectToolsView() {
-  const { db, can, addRows } = useProject();
+  const { db, can, addRows, deleteRow } = useProject();
   const { openForm, toast } = useModal();
 
   const addTool = () => openForm({
@@ -33,6 +33,7 @@ export default function ProjectToolsView() {
           <thead><tr>
             <th style={S.tableStyles.th}>Alat</th><th style={S.tableStyles.th}>Jumlah</th>
             <th style={S.tableStyles.th}>Status</th><th style={S.tableStyles.th}>Posisi</th>
+            {can.delete && <th style={S.tableStyles.th}></th>}
           </tr></thead>
           <tbody>
             {db.tools.map((t) => (
@@ -43,6 +44,7 @@ export default function ProjectToolsView() {
                   <span style={S.pill(t.status === "servis" ? "yellow" : t.status === "di lokasi" ? "accent" : "green")}>{t.status}</span>
                 </td>
                 <td style={S.tableStyles.td}>{t.lokasi ? pName(db, t.lokasi) : "gudang"}</td>
+                {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm(`Hapus alat "${t.nama}"?`)) deleteRow("tools", t.id); }}>🗑</button></td>}
               </tr>
             ))}
           </tbody>

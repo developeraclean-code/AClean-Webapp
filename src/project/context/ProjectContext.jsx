@@ -5,7 +5,7 @@ import { loadAll, api, genId, ASC } from "../data/projectApi.js";
 const Ctx = createContext(null);
 export const useProject = () => useContext(Ctx);
 
-export function ProjectProvider({ currentUser, children }) {
+export function ProjectProvider({ currentUser, apiFetch, children }) {
   const [db, setDb] = useState(() => initialData());
   const [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState(null);
@@ -17,6 +17,7 @@ export function ProjectProvider({ currentUser, children }) {
     manage: role === "Owner" || role === "Admin",
     expenseInput: role === "Owner" || role === "Admin",
     verify: role === "Owner" || role === "Admin",
+    delete: role === "Owner",  // hapus data Project = Owner only (lewat endpoint service-key)
   };
   const today = new Date().toISOString().slice(0, 10);
 
@@ -106,11 +107,50 @@ export function ProjectProvider({ currentUser, children }) {
     ]));
   }, [update, guard]);
 
+  // ── hapus baris (lewat endpoint service-key; RLS anon tak punya hak DELETE) ──
+  const deleteRow = useCallback(async (key, id) => {
+    const prev = db[key];
+    update((cur) => { cur[key] = cur[key].filter((r) => r.id !== id); });
+    try {
+      if (!apiFetch) throw new Error("apiFetch tidak tersedia");
+      const res = await apiFetch("/api/project-delete", {
+        method: "POST",
+        body: JSON.stringify({ table: `project_${key}`, id }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
+      setSyncError(null);
+      // hapus project/material → DB cascade (dp/harian/alokasi/dst) → muat ulang biar konsisten
+      if (key === "projects" || key === "materials") await reload();
+    } catch (e) {
+      console.error("[Project] hapus gagal:", e);
+      setSyncError("Gagal menghapus: " + (e.message || e));
+      update((cur) => { cur[key] = prev; });  // revert
+    }
+  }, [db, update, apiFetch, reload]);
+
+  // ── upload foto ke R2 (lewat /api/upload-foto). files: [{name, dataUrl}] ──
+  // return array URL proxy (/api/foto?key=...). Gagal upload → lempar error.
+  const uploadPhotos = useCallback(async (files, folder) => {
+    if (!files?.length) return [];
+    if (!apiFetch) throw new Error("apiFetch tidak tersedia");
+    const urls = [];
+    for (const f of files) {
+      const res = await apiFetch("/api/upload-foto", {
+        method: "POST",
+        body: JSON.stringify({ base64: f.dataUrl, filename: f.name || `foto_${Date.now()}.jpg`, folder, mimeType: "image/jpeg" }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.key) throw new Error(d.error || `upload gagal HTTP ${res.status}`);
+      urls.push(`/api/foto?key=${encodeURIComponent(d.key)}`);
+    }
+    return urls;
+  }, [apiFetch]);
+
   const value = {
     db, loading, syncError, reload,
     update, addRows, patchRow, patchRows,
     updateProject, toggleHold, allocateMaterials, upsertHarian,
-    genId,
+    deleteRow, uploadPhotos, genId,
     role, can, today,
     activeView, setActiveView,
     activeProject, setActiveProject,

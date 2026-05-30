@@ -12,7 +12,7 @@ export default function FormFields({ title, fields, onSubmit, onClose, today, gp
     fields.forEach((f) => {
       if (f.type === "grid") r[f.name] = (f.rows && f.rows.length ? f.rows : [{}, {}, {}]).map((x) => ({ ...x }));
       else if (f.type === "checks") r[f.name] = [];
-      else if (f.type === "photo") r[f.name + "_n"] = 0;
+      else if (f.type === "photo") r[f.name + "_files"] = [];
       else r[f.name] = f.val ?? "";
     });
     return r;
@@ -27,12 +27,12 @@ export default function FormFields({ title, fields, onSubmit, onClose, today, gp
       if (f.type === "grid") {
         out[f.name] = (data[f.name] || []).map((r) => ({ ...r })).filter((r) => Object.values(r).some((v) => v !== "" && v !== undefined && v !== null));
       } else if (f.type === "photo") {
-        out[f.name] = data[f.name + "_n"] || 0;
+        out[f.name] = data[f.name + "_files"] || [];  // [{name, dataUrl}]
       } else {
         out[f.name] = data[f.name];
       }
     });
-    out._photos = Object.keys(data).filter((k) => k.endsWith("_n")).reduce((s, k) => s + (data[k] || 0), 0);
+    out._photos = fields.filter((f) => f.type === "photo").reduce((s, f) => s + (data[f.name + "_files"]?.length || 0), 0);
     onSubmit?.(out);
   };
 
@@ -90,22 +90,7 @@ function Field({ f, data, set, today, gps }) {
     );
   }
   if (f.type === "photo") {
-    const n = data[f.name + "_n"] || 0;
-    const add = () => { if (n < 30) set(f.name + "_n", n + 1); };
-    return (
-      <div style={{ marginBottom: 12 }}>
-        <label style={{ display: "block", fontSize: 12, color: cs.muted, marginBottom: 5 }}>{f.label}</label>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 8 }}>
-          {Array.from({ length: n }).map((_, i) => (
-            <PhotoCell key={i} stamp={`${today.slice(5)} ${String(8 + Math.floor(i / 4)).padStart(2, "0")}:${String((i * 7) % 60).padStart(2, "0")}`} gps={gps} mark="✓" />
-          ))}
-          {n < 30 && (
-            <div onClick={add} style={{ position: "relative", aspectRatio: 1, background: "linear-gradient(135deg,#1b2740,#0f1b30)", border: `1px dashed ${cs.border}`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: cs.accent, fontSize: 11, cursor: "pointer" }}>+ foto</div>
-          )}
-        </div>
-        <div style={{ fontSize: 11, color: cs.muted, marginTop: 10 }}>{n} / 30 foto · auto timestamp + GPS (anti foto lama) · R2</div>
-      </div>
-    );
+    return <PhotoField f={f} files={data[f.name + "_files"] || []} setFiles={(v) => set(f.name + "_files", v)} gps={gps} />;
   }
   if (f.type === "grid") {
     const rows = data[f.name] || [];
@@ -164,13 +149,66 @@ function Field({ f, data, set, today, gps }) {
 
 const cellInput = { width: "100%", background: cs.surface, border: `1px solid ${cs.border}`, color: cs.text, borderRadius: 6, padding: "6px 7px", fontSize: 12, fontFamily: "inherit" };
 
-function PhotoCell({ stamp, gps, mark }) {
+// Burn timestamp + GPS ke gambar (anti foto lama) lalu kompres → dataURL jpeg.
+async function stampPhoto(file, stampText) {
+  const dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file); });
+  try {
+    const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = dataUrl; });
+    const maxW = 1280;
+    const scale = Math.min(1, maxW / img.width);
+    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(img, 0, 0, w, h);
+    const lines = stampText.split("\n");
+    const fs = Math.max(13, Math.round(w * 0.024));
+    ctx.font = `bold ${fs}px sans-serif`;
+    const pad = Math.round(fs * 0.5);
+    const stripH = fs * lines.length + pad * 2.4;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, h - stripH, w, stripH);
+    ctx.fillStyle = "#fff"; ctx.textBaseline = "top";
+    lines.forEach((ln, i) => ctx.fillText(ln, pad, h - stripH + pad + i * (fs + 2)));
+    return c.toDataURL("image/jpeg", 0.82);
+  } catch { return dataUrl; }  // fallback: gambar asli tanpa stamp
+}
+
+function PhotoField({ f, files, setFiles, gps }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+
+  const onPick = async (e) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!picked.length) return;
+    const take = picked.slice(0, 30 - files.length);
+    setBusy(true);
+    const stamp = `${new Date().toLocaleString("id-ID")}\nLok: ${gps}`;
+    const stamped = [];
+    for (const file of take) { try { stamped.push({ name: file.name, dataUrl: await stampPhoto(file, stamp) }); } catch { /* skip file rusak */ } }
+    setFiles([...files, ...stamped]);
+    setBusy(false);
+  };
+
   return (
-    <div style={{ position: "relative", aspectRatio: 1, background: "linear-gradient(135deg,#1b2740,#0f1b30)", border: `1px solid ${cs.border}`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted, fontSize: 11, overflow: "hidden" }}>
-      {mark}
-      <span style={{ position: "absolute", left: 3, right: 3, bottom: 3, fontSize: 7.5, lineHeight: 1.25, background: "rgba(0,0,0,.6)", color: "#e2e8f0", borderRadius: 3, padding: "1px 3px", textAlign: "left" }}>
-        {stamp}<br />📍{gps}
-      </span>
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ display: "block", fontSize: 12, color: cs.muted, marginBottom: 5 }}>{f.label}</label>
+      <input ref={inputRef} type="file" accept="image/*" capture="environment" multiple style={{ display: "none" }} onChange={onPick} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 8 }}>
+        {files.map((p, i) => (
+          <div key={i} style={{ position: "relative", aspectRatio: 1, borderRadius: 10, overflow: "hidden", border: `1px solid ${cs.border}` }}>
+            <img alt="" src={p.dataUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))}
+              style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 9, border: "none", background: "rgba(0,0,0,.6)", color: "#fff", fontSize: 11, cursor: "pointer", lineHeight: 1 }}>×</button>
+          </div>
+        ))}
+        {files.length < 30 && (
+          <div onClick={() => !busy && inputRef.current?.click()} style={{ position: "relative", aspectRatio: 1, background: "linear-gradient(135deg,#1b2740,#0f1b30)", border: `1px dashed ${cs.border}`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: cs.accent, fontSize: 11, cursor: busy ? "wait" : "pointer", textAlign: "center" }}>
+            {busy ? "…" : "+ foto"}
+          </div>
+        )}
+      </div>
+      <div style={{ fontSize: 11, color: cs.muted, marginTop: 10 }}>{files.length} / 30 foto · timestamp + GPS otomatis di-stamp · diupload ke R2</div>
     </div>
   );
 }

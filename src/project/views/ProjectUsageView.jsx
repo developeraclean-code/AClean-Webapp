@@ -6,7 +6,7 @@ import { useModal } from "../context/ModalContext.jsx";
 import { isLocked, pName } from "../utils/finance.js";
 
 export default function ProjectUsageView() {
-  const { db, today, addRows } = useProject();
+  const { db, can, today, addRows, deleteRow } = useProject();
   const { openForm, toast } = useModal();
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
 
@@ -44,6 +44,7 @@ export default function ProjectUsageView() {
           <thead><tr>
             <th style={S.tableStyles.th}>Tgl</th><th style={S.tableStyles.th}>Project</th>
             <th style={S.tableStyles.th}>Material</th><th style={S.tableStyles.th}>Qty</th><th style={S.tableStyles.th}>Oleh</th>
+            {can.delete && <th style={S.tableStyles.th}></th>}
           </tr></thead>
           <tbody>
             {db.usage.map((u, i) => (
@@ -53,6 +54,7 @@ export default function ProjectUsageView() {
                 <td style={S.tableStyles.td}>{u.material}</td>
                 <td style={S.tableStyles.td}>{u.qty}</td>
                 <td style={S.tableStyles.td}>{u.oleh}</td>
+                {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus catatan pemakaian ini?")) deleteRow("usage", u.id); }}>🗑</button></td>}
               </tr>
             ))}
           </tbody>

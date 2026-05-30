@@ -7,7 +7,7 @@ import { matTotal, matAlloc, pName } from "../utils/finance.js";
 import { MAT_SUBS, fmtRp } from "../utils/constants.js";
 
 export default function ProjectMaterialView() {
-  const { db, can, addRows, patchRows, allocateMaterials } = useProject();
+  const { db, can, addRows, patchRows, allocateMaterials, deleteRow } = useProject();
   const { openForm, toast } = useModal();
 
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
@@ -118,11 +118,12 @@ export default function ProjectMaterialView() {
             <th style={S.tableStyles.th}>Gudang</th><th style={S.tableStyles.th}>Alokasi Project</th>
             <th style={S.tableStyles.th}>Min</th><th style={S.tableStyles.th}>Status</th>
             {can.finance && <th style={S.tableStyles.th}>Nilai (total)</th>}
+            {can.delete && <th style={S.tableStyles.th}></th>}
           </tr></thead>
           <tbody>
             {MAT_SUBS.map((sub) => rowsBySub[sub].length ? (
               <React.Fragment key={sub}>
-                <tr><td colSpan={can.finance ? 7 : 6} style={{ background: "#0f1b30", color: cs.ara, fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", padding: "9px 12px" }}>{sub}</td></tr>
+                <tr><td colSpan={(can.finance ? 7 : 6) + (can.delete ? 1 : 0)} style={{ background: "#0f1b30", color: cs.ara, fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", padding: "9px 12px" }}>{sub}</td></tr>
                 {rowsBySub[sub].map((m) => {
                   const al = matAlloc(db, m); const tot = matTotal(db, m);
                   const st = m.gudang <= m.min ? (m.gudang < m.min * 0.5 ? "red" : "yellow") : "green";
@@ -136,6 +137,7 @@ export default function ProjectMaterialView() {
                       <td style={S.tableStyles.td}>{m.min}</td>
                       <td style={S.tableStyles.td}><span style={S.pill(st)}>{lbl}</span></td>
                       {can.finance && <td style={S.tableStyles.td}>{fmtRp(tot * m.harga)}</td>}
+                      {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm(`Hapus material "${m.nama}" beserta alokasinya?`)) deleteRow("materials", m.id); }}>🗑</button></td>}
                     </tr>
                   );
                 })}

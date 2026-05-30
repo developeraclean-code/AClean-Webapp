@@ -8,7 +8,7 @@ import { EXP_CATS, fmtRp } from "../utils/constants.js";
 import { MiniCard, Tag } from "../components/Bits.jsx";
 
 export default function ProjectExpenseView() {
-  const { db, role, can, today, addRows } = useProject();
+  const { db, role, can, today, addRows, deleteRow } = useProject();
   const { openForm, toast } = useModal();
   const [filterProj, setFilterProj] = useState("Semua");
   const [filterCat, setFilterCat] = useState("Semua");
@@ -71,6 +71,7 @@ export default function ProjectExpenseView() {
             <th style={S.tableStyles.th}>Tgl</th><th style={S.tableStyles.th}>Project</th>
             <th style={S.tableStyles.th}>Kategori</th><th style={S.tableStyles.th}>Keterangan</th>
             <th style={S.tableStyles.th}>Nominal</th><th style={S.tableStyles.th}>Oleh</th>
+            {can.delete && <th style={S.tableStyles.th}></th>}
           </tr></thead>
           <tbody>
             {rows.length ? rows.map((e, i) => (
@@ -81,8 +82,9 @@ export default function ProjectExpenseView() {
                 <td style={S.tableStyles.td}>{e.ket}</td>
                 <td style={S.tableStyles.td}>{fmtRp(e.nominal)}</td>
                 <td style={S.tableStyles.td}>{e.oleh}</td>
+                {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus pengeluaran ini?")) deleteRow("expenses", e.id); }}>🗑</button></td>}
               </tr>
-            )) : <tr><td colSpan={6} style={{ ...S.tableStyles.td, ...S.muted, textAlign: "center", padding: 18 }}>Tidak ada data untuk filter ini</td></tr>}
+            )) : <tr><td colSpan={can.delete ? 7 : 6} style={{ ...S.tableStyles.td, ...S.muted, textAlign: "center", padding: 18 }}>Tidak ada data untuk filter ini</td></tr>}
           </tbody>
         </table>
       </div>
