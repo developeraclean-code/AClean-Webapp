@@ -117,7 +117,7 @@ return (
     <div style={{ position: "relative" }}>
       <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: cs.muted, fontSize: 14, pointerEvents: "none" }}>🔍</span>
       <input id="searchOrder" value={searchOrder} onChange={e => { setSearchOrder(smartSearchNormalize(e.target.value)); setOrderPage(1); }}
-        placeholder="Cari nama customer, Job ID, telepon, atau teknisi..."
+        placeholder="Cari customer, Job ID, telp, teknisi, helper, alamat, layanan, catatan..."
         style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px 10px 36px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
       {searchOrder && <button onClick={() => { setSearchOrder(""); setOrderPage(1); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16 }}>✕</button>}
     </div>

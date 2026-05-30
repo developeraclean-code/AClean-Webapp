@@ -5883,10 +5883,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     if (invoiceDateTo) filteredInv = filteredInv.filter(inv => (inv.created_at || "").slice(0, 10) <= invoiceDateTo);
     if (searchInvoice.trim()) {
       const q = searchInvoice.trim().toLowerCase();
+      // Multi-kolom — match cakupan server search (reads.js searchInvoicesServer)
       filteredInv = filteredInv.filter(inv =>
         (inv.customer || "").toLowerCase().includes(q) ||
         (inv.phone || "").includes(searchInvoice.trim()) ||
-        (inv.id || "").toLowerCase().includes(q)
+        (inv.id || "").toLowerCase().includes(q) ||
+        (inv.job_id || "").toLowerCase().includes(q) ||
+        (inv.teknisi || "").toLowerCase().includes(q) ||
+        (inv.service || "").toLowerCase().includes(q) ||
+        (inv.materials_detail || "").toLowerCase().includes(q) ||
+        (inv.paid_method || "").toLowerCase().includes(q) ||
+        (inv.invoice_type || "").toLowerCase().includes(q) ||
+        (inv.status || "").toLowerCase().includes(q)
       );
     }
     filteredInv.sort((a, b) => (b.created_at || b.sent || "").localeCompare(a.created_at || a.sent || ""));
@@ -6422,6 +6430,987 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const appContextValue = {
     currentUser, supabase, showNotif, showConfirm, addAgentLog,
     fmt, TODAY, isMobile, auditUserName,
+  };
+
+  // ── Laporan modal handlers (diekstrak dari IIFE render — Tahap 1 refactor) ──
+  // Logika murni level-komponen; incompleteUnits dihitung ulang di dalam submitLaporan.
+  const handleFotoUpload = async (e) => {
+    const MAX_PHOTOS = 20;
+    const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+
+    // ── Validasi format file — reject video ──
+    const rawFiles = Array.from(e.target.files || []);
+    const invalidFiles = rawFiles.filter(f => !ALLOWED_TYPES.includes(f.type));
+
+    if (invalidFiles.length > 0) {
+      showNotif(`❌ Format tidak didukung: ${invalidFiles.map(f => f.name.split(".").pop().toUpperCase()).join(", ")}. Hanya JPG, PNG, WEBP.`);
+      e.target.value = "";
+      return;
+    }
+
+    // ── Cek max 20 foto ──
+    if (laporanFotos.length >= MAX_PHOTOS) {
+      showNotif(`❌ Maksimal ${MAX_PHOTOS} foto per job. Hapus foto lain untuk upload baru.`);
+      e.target.value = "";
+      return;
+    }
+
+    const validFiles = rawFiles.slice(0, MAX_PHOTOS - laporanFotos.length);
+    if (validFiles.length === 0) return;
+    const reportId = laporanModal?.id || "tmp";
+
+    // ── LAYER 1: Hash setiap file SEBELUM compress ──
+    // Fungsi hash SHA-256 sederhana via SubtleCrypto (tersedia di semua browser modern)
+    const hashFile = async (file) => {
+      const buf = await file.arrayBuffer();
+      const hashBuf = await crypto.subtle.digest("SHA-256", buf);
+      return Array.from(new Uint8Array(hashBuf))
+        .map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16); // 16 char = cukup unik
+    };
+
+    // Hitung hash semua file sebelum compress
+    const fileHashes = await Promise.all(validFiles.map(hashFile));
+
+    // ── Get compression quality dari settings (default 0.70) ──
+    const fotoQualityValue = parseFloat(appSettings?.foto_compression_quality) || 0.70;
+    const fotoQuality = Math.max(0.3, Math.min(1, fotoQualityValue)); // Clamp: 30% - 100%
+
+    // ── LAYER 2: Cek duplikat vs foto yang sudah ada di state (per sesi) ──
+    const existingHashes = new Set(laporanFotos.map(f => f.hash).filter(Boolean));
+    const files = [];
+    const hashes = [];
+    let skippedCount = 0;
+    validFiles.forEach((file, i) => {
+      if (existingHashes.has(fileHashes[i])) {
+        skippedCount++;
+      } else {
+        files.push(file);
+        hashes.push(fileHashes[i]);
+      }
+    });
+
+    if (skippedCount > 0) {
+      showNotif(`⚠️ ${skippedCount} foto sudah ada (duplikat diabaikan).`);
+    }
+    if (files.length === 0) { e.target.value = ""; return; }
+
+    showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2 (quality: ${Math.round(fotoQuality * 100)}%)...`);
+    let compressed = [];
+    try {
+      compressed = await Promise.all(files.map(f => compressImg(f, fotoQuality)));
+    } catch (compErr) {
+      console.error("[COMPRESS_ERROR]", compErr.message);
+      showNotif(`❌ Gagal kompresi foto: ${compErr.message}. Pastikan file adalah gambar valid.`);
+      e.target.value = "";
+      return;
+    }
+
+    // ✨ FIX #1: Parallel upload dengan batch 3 (3-5x lebih cepat)
+    //   - Foto placeholder langsung muncul dengan flag `uploading:true`
+    //   - Tombol "Next" di Step 3 di-gate selama ada yang `uploading`
+    //   - Upload batch 3 concurrent → balance speed vs bandwidth HP teknisi
+    const BATCH_SIZE = 3;
+    const placeholders = compressed.map((dataUrl, i) => ({
+      id: Date.now() + i,
+      label: `Foto ${laporanFotos.length + i + 1}`,
+      data_url: dataUrl,
+      url: null,
+      errMsg: "",
+      hash: hashes[i],
+      uploading: true,
+    }));
+    // Push placeholders ke state supaya user lihat progress langsung
+    setLaporanFotos(prev => [...prev, ...placeholders]);
+
+    const uploadOne = async (ph) => {
+      try {
+        const r = await _apiFetch("/api/upload-foto", {
+          method: "POST",
+          headers: await _apiHeaders(),
+          body: JSON.stringify({
+            base64: ph.data_url,
+            filename: `${ph.hash}.jpg`,
+            reportId,
+            mimeType: "image/jpeg",
+            hash: ph.hash,
+            currentUserRole: currentUser?.role || "Unknown",
+          }),
+        });
+        const d = await r.json();
+        if (d.success && d.url) {
+          return { id: ph.id, url: d.url, errMsg: "", uploading: false };
+        }
+        return { id: ph.id, url: null, errMsg: d.error || "Upload gagal", uploading: false };
+      } catch (err) {
+        return { id: ph.id, url: null, errMsg: err.message || "Network error", uploading: false };
+      }
+    };
+
+    let savedCount = 0, failedCount = 0;
+    for (let i = 0; i < placeholders.length; i += BATCH_SIZE) {
+      const batch = placeholders.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(batch.map(uploadOne));
+      // Update state incremental per-batch
+      setLaporanFotos(prev => prev.map(foto => {
+        const res = results.find(r => r.id === foto.id);
+        return res ? { ...foto, ...res } : foto;
+      }));
+      results.forEach(r => r.url ? savedCount++ : failedCount++);
+    }
+
+    if (savedCount === placeholders.length) {
+      showNotif(`✅ ${savedCount} foto tersimpan di R2!`);
+    } else if (savedCount > 0) {
+      showNotif(`⚠️ ${savedCount} berhasil, ${failedCount} gagal. Tap ⏳ untuk retry.`);
+    } else {
+      showNotif(`❌ Upload gagal. Cek koneksi & coba lagi.`);
+    }
+    e.target.value = "";
+  };
+
+  const submitLaporan = async () => {
+    if (submitLaporanLock.current) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
+    submitLaporanLock.current = true;
+    try {
+    // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
+    const isInstall = laporanModal?.service === "Install";
+    const isSurvey = laporanModal?.service === "Survey";
+    const incompleteUnits = laporanUnits.filter(u => !isUnitDone(u));
+
+    // ── Survey: submit langsung, bypass 4-step wizard ──
+    if (isSurvey) {
+      if (!laporanSurveyHasil.trim()) {
+        showNotif("⚠️ Hasil Survey wajib diisi");
+        submitLaporanLock.current = false;
+        return;
+      }
+      const now = new Date().toLocaleString("id-ID", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+      const reportId = "LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase();
+      const surveyReport = {
+        id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
+        helper: laporanModal.helper || null, customer: laporanModal.customer,
+        service: "Survey", date: laporanModal.date, submitted: now,
+        status: "SUBMITTED", total_units: 0, units: [], materials: [], fotos: [],
+        total_freon: 0, rekomendasi: "", catatan_global: "",
+        hasil_survey: laporanSurveyHasil.trim(),
+        catatan_rekomendasi: laporanSurveyCatatan.trim(),
+        editLog: [],
+      };
+      setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), surveyReport]);
+      showNotif("⏳ Menyimpan laporan survey...");
+      try {
+        await supabase.from("service_reports").delete().eq("job_id", reportId).neq("id", reportId);
+      } catch (_) {}
+      const { error: sErr } = await supabase.from("service_reports").upsert({
+        id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
+        helper: laporanModal.helper || null, customer: laporanModal.customer,
+        service: "Survey", date: laporanModal.date, status: "SUBMITTED",
+        total_units: 0, total_freon: 0, submitted_at: new Date().toISOString(),
+        foto_urls: [], rekomendasi: "", catatan_global: "",
+        hasil_survey: laporanSurveyHasil.trim(),
+        catatan_rekomendasi: laporanSurveyCatatan.trim(),
+        submitted: now,
+      }, { onConflict: "id" });
+      if (sErr) { showNotif("⚠️ Tersimpan lokal, sync gagal: " + sErr.message); }
+      else { showNotif("✅ Laporan Survey terkirim!"); }
+      const admR2 = userAccounts.filter(u => u.role === "Admin" || u.role === "Owner");
+      admR2.forEach(u => { if (u.phone) sendWA(u.phone, "Laporan Survey\nJob: " + laporanModal.id + "\nCustomer: " + laporanModal.customer + "\nTeknisi: " + laporanModal.teknisi + "\n\nHasil: " + laporanSurveyHasil.trim().slice(0, 200)); });
+      setLaporanSubmitted(true);
+      submitLaporanLock.current = false;
+      return;
+    }
+
+    // ── 2. Validasi unit untuk non-Install ──
+    if (!isInstall && incompleteUnits.length > 0) {
+      showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);
+      return;
+    }
+
+    // ── 3. Cek foto gagal upload ──
+    const fotoGagal = laporanFotos.filter(f => !f.url).length;
+    if (fotoGagal > 0) {
+      const lanjut = await showConfirm({
+        icon: "⚠️", title: "Ada Foto Belum Tersimpan",
+        message: `${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).\n\nLanjutkan submit laporan tanpa foto tersebut?`,
+        confirmText: "Lanjutkan Submit"
+      });
+      if (!lanjut) return;
+    }
+
+    // ── 4. Siapkan materials yang efektif ──
+    // Install: pakai laporanInstallItems, lainnya: pakai laporanMaterials
+    // Only jasa items here — barang items are now consolidated into laporanBarangItems
+    const jasaAsMaterials = [
+      ...laporanJasaItems.map(j => ({
+        id: "jasa_" + j.id, nama: j.nama, jumlah: j.jumlah || 1,
+        satuan: j.satuan || "pcs", harga_satuan: j.harga_satuan || 0, keterangan: "jasa"
+      })),
+    ];
+    // Mapping INSTALL_ITEMS key → inventory code untuk deduct stok spesifik
+    const INSTALL_INV_MAP = {
+      "pipa_1pk": "SKU022",  // Pipa AC Hoda 1PK
+      "pipa_2pk": "SKU023",  // Pipa AC Hoda 2PK
+      "pipa_25pk": "SKU024",  // Pipa AC Hoda 2,5PK
+      "pipa_3pk": "SKU057",  // Pipa AC Hoda 3PK
+      "kabel_15": "SKU025",  // Kabel Listrik 3x1,5
+      "kabel_25": "SKU026",  // Kabel Listrik 3x2,5
+      "ducttape_biasa": "SKU031",
+      "ducttape_lem": "SKU030",
+      "dinabolt": "SKU058",
+      "karet_mounting": "SKU059",
+      "breket_outdoor": "SKU041",
+    };
+
+    // ✨ CHANGE: tambah laporanBarangItems ke effectiveMaterials dengan keterangan="barang"
+    const barangAsMaterials = laporanBarangItems
+      .filter(b => b.nama)
+      .map(b => ({
+        id: b.id,
+        nama: b.nama,
+        jumlah: b.jumlah || 1,
+        satuan: b.satuan || "pcs",
+        harga_satuan: b.harga_satuan || 0,
+        subtotal: (b.harga_satuan || 0) * (b.jumlah || 1),
+        keterangan: "barang" // marking barang dari price_list, bukan material stok
+      }));
+
+    const effectiveMaterials = isInstall
+      ? INSTALL_ITEMS
+        .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
+        .map(item => {
+          const hargaSat = lookupHargaGlobal(item.label, item.satuan);
+          const qty = parseFloat(laporanInstallItems[item.key] || 0);
+          return {
+            id: item.key, nama: item.label, jumlah: qty, satuan: item.satuan,
+            harga_satuan: hargaSat, subtotal: hargaSat * qty, keterangan: "",
+            // _useCode: untuk deduct stok by kode inventori yang spesifik
+            _useCode: INSTALL_INV_MAP[item.key] || null,
+          };
+        })
+      : [...jasaAsMaterials, ...barangAsMaterials, ...laporanMaterials];
+
+    const now = new Date().toLocaleString("id-ID", {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit"
+    });
+    const totalFreonLocal = laporanUnits.reduce((s, u) => s + (parseFloat(u.freon_ditambah) || 0), 0);
+
+    // ── 5. Buat objek laporan ──
+    const newReport = {
+      id: laporanModal._rewriteId || ("LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase()),
+      job_id: laporanModal.id,
+      teknisi: laporanModal.teknisi,
+      helper: laporanModal.helper || null,
+      is_substitute: (currentUser?.role === "Helper" &&
+        currentUser?.name === laporanModal.helper &&
+        !teknisiData.find(t => t.role === "Teknisi" && t.name === laporanModal.helper)),
+      customer: laporanModal.customer,
+      service: laporanModal?.service,
+      date: laporanModal.date,
+      submitted: now,
+      status: "SUBMITTED",
+      total_units: laporanUnits.length,
+      units: laporanUnits,
+      materials: effectiveMaterials,
+      fotos: laporanFotos.map(f => ({ id: f.id, label: f.label })),
+      total_freon: totalFreonLocal,
+      rekomendasi: laporanRekomendasi,
+      catatan_global: laporanCatatan,
+      unit_mismatch: laporanUnits.length !== (laporanModal.units || 1),
+      editLog: laporanModal._rewriteId ? [{
+        by: currentUser?.name || "Teknisi",
+        at: new Date().toLocaleString("id-ID"),
+        field: "full_rewrite",
+        old: "(laporan lama)",
+        new: "Laporan ditulis ulang dari awal",
+      }] : [],
+    };
+
+    setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), newReport]);
+
+    // ── 6. WA notif ke Admin/Owner ──
+    const adminUsers = userAccounts.filter(u => u.role === "Owner");
+    const matCount = isInstall
+      ? INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length
+      : laporanMaterials.length;
+    const notifMsg =
+      "Laporan Selesai\nJob: " + laporanModal.id
+      + "\nCustomer: " + laporanModal.customer
+      + "\nTeknisi: " + laporanModal.teknisi + (laporanModal.helper ? " + " + laporanModal.helper : "")
+      + "\nLayanan: " + laporanModal?.service + " - " + laporanUnits.length + " unit"
+      + "\nMaterial: " + matCount + " item  Foto: " + laporanFotos.filter(f => f.url).length + " foto"
+      + "\n\nSilakan cek invoice di menu Invoice.";
+    adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
+
+    // ── 7. Simpan laporan ke Supabase (multi-attempt with fallback fields) ──
+    showNotif("⏳ Menyimpan laporan ke server...");
+    // ✨ DEDUP: hapus ghost rows dgn job_id yg sama tapi id berbeda (prevent double laporan)
+    try {
+      await supabase.from("service_reports")
+        .delete()
+        .eq("job_id", newReport.job_id)
+        .neq("id", newReport.id);
+    } catch (dx) { console.warn("[LAPORAN_DEDUP] cleanup ghost rows failed:", dx.message); }
+    const basePayload = {
+      id: newReport.id,
+      job_id: newReport.job_id,
+      teknisi: newReport.teknisi,
+      helper: newReport.helper || null,
+      customer: newReport.customer,
+      service: newReport.service,
+      date: newReport.date,
+      status: "SUBMITTED",
+      total_units: newReport.total_units,
+      total_freon: newReport.total_freon,
+      submitted_at: new Date().toISOString(),
+      foto_urls: laporanFotos.filter(f => f.url).map(f => f.url) || [],
+      rekomendasi: newReport.rekomendasi || "",
+      catatan_global: newReport.catatan_global || "",
+      submitted: new Date().toLocaleString("id-ID"),
+    };
+
+    let savedOk = false;
+    let lastError = null;
+    { // Attempt 1: dengan materials_json & units_json & units (jsonb)
+      try {
+        const { error: e1 } = await supabase.from("service_reports").upsert({
+          ...basePayload,
+          materials_json: JSON.stringify(effectiveMaterials),
+          units_json: JSON.stringify(laporanUnits),
+          units: laporanUnits,
+        }, { onConflict: "id" });
+        if (!e1) { savedOk = true; }
+        else { lastError = e1; console.warn("❌ Attempt 1 failed:", e1.message); }
+      } catch (ex) { lastError = ex; console.warn("❌ Attempt 1 error:", ex.message); }
+    }
+    if (!savedOk) { // Attempt 2: dengan units_json & materials_json (skip units jsonb)
+      try {
+        const { error: e2 } = await supabase.from("service_reports").upsert({
+          ...basePayload,
+          units_json: JSON.stringify(laporanUnits),
+          materials_json: JSON.stringify(effectiveMaterials),
+        }, { onConflict: "id" });
+        if (!e2) { savedOk = true; }
+        else { lastError = e2; console.warn("❌ Attempt 2 failed:", e2.message); }
+      } catch (ex) { lastError = ex; console.warn("❌ Attempt 2 error:", ex.message); }
+    }
+    if (!savedOk) { // Attempt 3: minimal
+      try {
+        const { error: e3 } = await supabase.from("service_reports").upsert({
+          id: newReport.id, job_id: newReport.job_id,
+          teknisi: newReport.teknisi, customer: newReport.customer,
+          service: newReport.service, date: newReport.date,
+          status: "SUBMITTED", total_units: newReport.total_units,
+          submitted_at: new Date().toISOString(),
+        }, { onConflict: "id" });
+        if (!e3) { savedOk = true; }
+        else { lastError = e3; console.warn("❌ Attempt 3 failed:", e3.message); }
+      } catch (ex) { lastError = ex; console.warn("❌ Attempt 3 error:", ex.message); }
+    }
+
+    // Fallback: If upsert failed, explicitly DELETE old laporan (if rewriting) then try INSERT
+    if (!savedOk && laporanModal._rewriteId) {
+      console.warn("🔄 Upsert failed, trying DELETE + INSERT fallback for rewrite:", newReport.id);
+      try {
+        // First, try to delete the old laporan
+        await supabase.from("service_reports").delete().eq("id", newReport.id).select();
+        // Then insert the new one
+        const { error: insertErr } = await supabase.from("service_reports").insert(basePayload).select().single();
+        if (!insertErr) {
+          savedOk = true;
+          } else {
+          lastError = insertErr;
+          console.error("❌ DELETE+INSERT fallback failed:", insertErr.message);
+        }
+      } catch (fx) {
+        lastError = fx;
+        console.error("❌ Fallback error:", fx.message);
+      }
+    }
+
+    // Final error handling
+    if (!savedOk) {
+      const errMsg = lastError?.message || "Unknown error";
+      console.error("❌ All save attempts failed:", errMsg);
+      showNotif("❌ Gagal simpan laporan: " + errMsg + ". Coba lagi atau hubungi admin.");
+      return; // Don't proceed to reload/notify if save failed
+    }
+
+    // ── 8. Reload laporan (backup, realtime juga akan trigger) ──
+    const reloadLaporan = async () => {
+      const { data } = await supabase.from("service_reports")
+        .select("*").order("submitted_at", { ascending: false });
+      if (data?.length > 0) {
+        setLaporanReports(data.map(r => ({
+          ...r,
+          units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return r.units || []; } })() : (r.units || []),
+          materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return r.materials_used || []; } })() : (r.materials_used || []),
+          fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
+          editLog: safeArr(r.edit_log ?? r.editLog),
+        })));
+      }
+    };
+    setTimeout(reloadLaporan, 800);
+    setTimeout(reloadLaporan, 3000);
+
+    // ── 9. Update order status ──
+    setOrdersData(prev => prev.map(o =>
+      o.id === laporanModal.id ? { ...o, status: "REPORT_SUBMITTED" } : o
+    ));
+    {
+      const { error: ordErr } = await supabase.from("orders")
+        .update({ status: "REPORT_SUBMITTED" }).eq("id", laporanModal.id);
+      if (ordErr) {
+        console.warn("REPORT_SUBMITTED rejected — fallback COMPLETED:", ordErr.message);
+        await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName());
+      }
+    }
+
+    // ── 10. Update status teknisi & helper → active ──
+    ["teknisi", "helper"].forEach(role => {
+      const name = role === "teknisi" ? laporanModal.teknisi : laporanModal.helper;
+      if (!name) return;
+      const tek = teknisiData.find(t => t.name === name);
+      if (!tek?.id) return;
+      setTeknisiData(prev => prev.map(t => t.name === name ? { ...t, status: "active" } : t));
+      if (/^[0-9a-f-]{36}$/.test(tek.id)) {
+        supabase.from("user_profiles").update({ status: "active" }).eq("id", tek.id);
+      }
+    });
+
+    // ── 10b. Notif WA ke helper — laporan otomatis tercatat atas namanya ──
+    if (laporanModal.helper && currentUser?.name !== laporanModal.helper) {
+      const helperData = teknisiData.find(t => t.name === laporanModal.helper);
+      if (helperData?.phone) {
+        sendWA(helperData.phone,
+          `✅ *Laporan ${laporanModal.id} Selesai*\n`
+          + `Customer: ${laporanModal.customer}\n`
+          + `Teknisi: ${laporanModal.teknisi}\n\n`
+          + `Laporan pekerjaan sudah disubmit oleh ${currentUser?.name || laporanModal.teknisi}. `
+          + `Kamu tercatat sebagai helper. Cek di menu Laporan Saya. — AClean`
+        );
+      }
+    }
+
+    // ── 11. Stok material tracked (pipa/freon): idempotent sync ──
+    // syncTrackedStock: hapus usage lama → insert baru → recalculate dari DB.
+    // Berlaku submit pertama DAN rewrite — input terakhir selalu yang menang.
+    const isRewriteLaporan = !!laporanModal._rewriteId;
+    const syncReportId = newReport.id; // selalu pakai ID laporan final (sama untuk rewrite)
+    const materialsForSync = isInstall ? effectiveMaterials : laporanMaterials;
+    await syncTrackedStock(
+      syncReportId,
+      laporanModal.id,
+      materialsForSync,
+      laporanModal?.customer || null,
+      laporanModal?.teknisi || null,
+      laporanModal?.date || null
+    );
+
+    // ── 11b. Material non-tracked: deduct via deductInventory (lama, hanya sekali saat submit baru) ──
+    const barangAsDeducts = laporanBarangItems.filter(b => b.nama && parseFloat(b.jumlah || 0) > 0)
+      .map(b => ({ nama: b.nama, jumlah: parseFloat(b.jumlah) || 1, satuan: b.satuan || "pcs", keterangan: "barang" }));
+    const materialsToDeduct = isInstall ? effectiveMaterials : [...laporanMaterials, ...barangAsDeducts];
+    const nonTrackedToDeduct = materialsToDeduct.filter(m =>
+      !isTrackedByCode(m.inv_code || m._useCode) && !isTrackedByName(m.nama) && !m.freon_tabung_code
+    );
+
+    if (!isRewriteLaporan && nonTrackedToDeduct.length > 0) {
+      deductInventory(
+        nonTrackedToDeduct,
+        laporanModal?.id || null,
+        null,
+        laporanModal?.customer || null,
+        laporanModal?.teknisi || null,
+        laporanModal?.date || null
+      );
+      setTimeout(() => {
+        const kritisItems = inventoryData.filter(i =>
+          nonTrackedToDeduct.some(m => i.name.toLowerCase().includes((m.nama || "").toLowerCase())) &&
+          (i.status === "CRITICAL" || i.status === "OUT")
+        );
+        if (kritisItems.length > 0) {
+          const warnings = kritisItems.map(i => `${i.name} sisa ${i.stock} ${i.unit}`);
+          showNotif("⚠️ Stok kritis: " + warnings.join(", "));
+          const ownerAccs = userAccounts.filter(u => u.role === "Owner");
+          const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n` + warnings.map(w => "• " + w).join("\n");
+          ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
+        }
+      }, 800);
+    }
+
+    // ── 12. Auto-generate invoice ──
+    // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST
+    // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
+    // Untuk service lain: hitung dari PRICE_LIST
+    const isInstallSvc = laporanModal.service === "Install";
+    const jasaNamesSet2 = new Set(
+      priceListData.filter(r => r.service !== "Material").map(r => r.type && r.type.trim())
+    );
+    const repairNamesInMat = new Set(laporanRepairItems.map(r => r.nama));
+    const jasaFromMat = laporanMaterials.filter(m =>
+      m.nama && jasaNamesSet2.has(m.nama.trim())
+    );
+    const matOnly = laporanMaterials.filter(m =>
+      m.nama && !jasaNamesSet2.has(m.nama.trim()) &&
+      !repairNamesInMat.has(m.nama) && parseFloat(m.jumlah || 0) > 0
+    );
+    // ✨ NEW: Cleaning-in-Repair — hitung total tambahan cleaning saat job Repair
+    const cleaningInRepairTotal = (laporanModal?.service === "Repair" && Array.isArray(laporanCleaningInRepair) && laporanCleaningInRepair.length > 0)
+      ? (laporanUnits || [])
+        .filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no))
+        .reduce((s, u) => s + hargaPerUnitFromTipe("Cleaning", u.tipe, priceListData), 0)
+      : 0;
+
+    const laborTotalInv = isInstallSvc ? 0 : (() => {
+      const svc = laporanModal?.service;
+      const jasaSumForm = laporanJasaItems.filter(j => j.nama)
+        .reduce((s, j) => s + ((j.harga_satuan || 0) * (parseFloat(j.jumlah) || 1)), 0);
+
+      // Base labor per service type:
+      // - Cleaning/Maintenance: service fee baseline per-unit dari Card 1/4 tipe PK
+      // - Repair: NO baseline — hanya dari form jasa + cleaning-in-repair
+      // - Complain: handle via garansi logic (skip baseline)
+      const isCleaningMaint = svc === "Cleaning" || svc === "Maintenance";
+      // Skip baseline hanya jika jasa items sudah mengandung cleaning/maintenance jasa.
+      // Bug lama: transport/biaya-cek jadi jasa → baseline Cleaning ke-skip → total = transport saja.
+      const hasCleaningJasa = laporanJasaItems.some(j => {
+        const n = (j.nama || "").toLowerCase();
+        return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
+      });
+      let svcFeeBaseline = 0;
+      if (isCleaningMaint && !hasCleaningJasa) {
+        const unitsWithTipe = (laporanUnits || []).filter(u => u && u.tipe);
+        svcFeeBaseline = unitsWithTipe.length > 0
+          ? unitsWithTipe.reduce((s, u) => s + hargaPerUnitFromTipe(svc, u.tipe, priceListData), 0)
+          : hitungLabor(svc, laporanModal.type, laporanUnits.length);
+      }
+
+      return svcFeeBaseline + jasaSumForm + cleaningInRepairTotal;
+    })();
+    // ✨ CHANGE: matTotalInv dari laporanBarangItems (price_list category=Barang), bukan dari laporanMaterials
+    const barangTotalInv = laporanBarangItems
+      .filter(b => b.nama)
+      .reduce((s, b) => s + ((b.harga_satuan || 0) * (b.jumlah || 1)), 0);
+    const matTotalInv = isInstallSvc
+      ? hitungMaterialTotal(effectiveMaterials)
+      : barangTotalInv; // gunakan barangTotal, bukan material total
+    const invoiceTotal = laborTotalInv + matTotalInv;
+    const todayInv = new Date().toISOString().slice(0, 10);
+    const isComplainSvc = laporanModal.service === "Complain";
+    const isZeroTotal = invoiceTotal === 0;
+
+    // ── GARANSI CHECK: selalu cek untuk Complain, terlepas dari total ──
+    // Cek apakah customer punya garansi AKTIF (belum expired)
+    const prevGaransiActive = isComplainSvc
+      ? invoicesData
+        .filter(inv =>
+          inv.customer === laporanModal.customer &&
+          inv.service !== "Complain" &&
+          inv.garansi_expires &&
+          inv.garansi_expires >= todayInv &&
+          ["PAID", "UNPAID", "APPROVED", "PENDING_APPROVAL"].includes(inv.status)
+        )
+        .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
+      : null;
+
+    // Cek garansi EXPIRED (pernah punya garansi tapi sudah habis)
+    const prevGaransiExpired = isComplainSvc && !prevGaransiActive
+      ? invoicesData
+        .filter(inv =>
+          inv.customer === laporanModal.customer &&
+          inv.service !== "Complain" &&
+          inv.garansi_expires &&
+          inv.garansi_expires < todayInv &&
+          ["PAID", "UNPAID", "APPROVED", "PENDING_APPROVAL"].includes(inv.status)
+        )
+        .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
+      : null;
+
+    const BIAYA_CEK = (() => {
+      const pl = priceListData.find(r => r.service === "Repair" && r.type === "Biaya Pengecekan AC");
+      return (pl && pl.price > 0) ? pl.price : 0;
+    })();
+
+    // ── FINAL LABOR/TOTAL untuk Complain ──────────────────────────────
+    // Garansi AKTIF → jasa gratis (labor=0), material tetap dicharge
+    // Garansi EXPIRED + tidak ada input → biaya cek 100rb
+    // Tidak ada garansi + tidak ada input → biaya cek 100rb
+    // Ada input jasa/material → harga normal (garansi hanya cover jasa)
+    const noGaransiComplain = isComplainSvc && !prevGaransiActive && !prevGaransiExpired;
+    let finalLabor = laborTotalInv;
+    let finalTotal = invoiceTotal;
+
+    // ✨ FIX #1 (CORRECTED): Repair service tanpa items → conditional BIAYA_CEK based on repair type
+    const isRepairServiceNoItems = laporanModal?.service === "Repair" &&
+      laporanBarangItems.filter(b => b.nama).length === 0 &&
+      laporanJasaItems.filter(j => j.nama).length === 0 &&
+      laporanMaterials.filter(m => m.nama).length === 0 &&
+      cleaningInRepairTotal === 0;
+    let isRepairGratis = false;
+
+    if (isRepairServiceNoItems) {
+      // If teknisi selected "Berbayar" (standard paid repair) → inject BIAYA_CEK
+      if (laporanRepairType === "berbayar" && (!finalLabor || finalLabor === 0)) {
+        finalLabor = BIAYA_CEK;
+        finalTotal = BIAYA_CEK;
+        addAgentLog("REPAIR_BIAYA_CEK_INJECTED", `Repair ${laporanModal.id} (berbayar) tanpa items → inject BIAYA_CEK ${BIAYA_CEK}`, "INFO");
+      }
+      // If teknisi selected "Gratis" (garansi atau customer arrangement) → allow Rp 0
+      else if ((laporanRepairType === "gratis-garansi" || laporanRepairType === "gratis-customer") && invoiceTotal === 0) {
+        isRepairGratis = true;
+        finalLabor = 0;
+        finalTotal = 0;
+        const alasan = laporanRepairType === "gratis-garansi" ? "garansi aktif" : "arrangement customer";
+        addAgentLog("REPAIR_GRATIS_CREATED", `Repair ${laporanModal.id} (${alasan}) tanpa items/material → invoice Rp 0, awaiting approval`, "INFO");
+      }
+    }
+
+    if (isComplainSvc) {
+      if (prevGaransiActive) {
+        // Garansi aktif: jasa gratis, material tetap bayar
+        finalLabor = 0;
+        finalTotal = matTotalInv; // hanya material
+      } else if (isZeroTotal) {
+        // Tidak ada garansi aktif DAN teknisi tidak input apapun → biaya cek
+        finalLabor = BIAYA_CEK;
+        finalTotal = BIAYA_CEK;
+      }
+      // Jika ada input (isZeroTotal=false) tapi garansi expired/no-garansi → harga normal
+    }
+
+    if (isComplainSvc && prevGaransiActive && finalTotal === 0) {
+      // SKIP invoice — dalam garansi
+      setOrdersData(prev => prev.map(o =>
+        o.id === laporanModal.id ? { ...o, status: "COMPLETED" } : o
+      ));
+      try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName()); } catch (_) { }
+      addAgentLog("GARANSI_SKIP_INVOICE",
+        `Complain ${laporanModal.id} — dalam garansi s/d ${prevGaransiActive.garansi_expires} ` +
+        `(ref: ${prevGaransiActive.id}) → invoice di-skip`, "SUCCESS");
+
+    } else {
+      // BUAT invoice
+      // Multi-hari: jika ini order anak (child) MULTI-DAY, cek apakah parent sudah punya invoice aktif
+      // Penting: jangan trigger untuk Complain→Repair (parent_job_id ada tapi is_multi_day=false)
+      const isMultiDayChild = !!laporanModal.parent_job_id && laporanModal.is_multi_day === true;
+      const parentInvoice = isMultiDayChild
+        ? invoicesData.find(i => i.job_id === laporanModal.parent_job_id)
+        : null;
+      if (isMultiDayChild && parentInvoice && !["CANCELLED", "PAID"].includes(parentInvoice.status)) {
+        // Invoice parent sudah ada & masih aktif — notif saja, jangan buat invoice baru
+        showNotif(`ℹ️ Laporan hari ke-${laporanModal.day_number || "?"} terkirim. Invoice induk ${parentInvoice.id} sudah ada — minta Admin/Owner update total jika ada tambahan.`);
+        addAgentLog("MULTI_DAY_CHILD_LAPORAN",
+          `Laporan child ${laporanModal.id} (hari ${laporanModal.day_number || "?"}) — invoice parent ${parentInvoice.id} sudah ada, skip buat invoice baru`,
+          "INFO");
+        setLaporanModal(null);
+        return;
+      }
+
+      const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
+      const invId = "INV-" + todayInv.replace(/-/g, "").slice(0, 8) + "-" + invSeq;
+      const gDays = 30; // Semua service: garansi 30 hari dari terbit invoice
+      const gExpires = new Date(Date.now() + gDays * 86400000).toISOString().slice(0, 10);
+
+      // ── BUILD mDetail — BREAKDOWN 1-1, SINGLE SOURCE OF TRUTH ──────────────
+      // Helper: lookup harga dari inventory/pricelist jika tidak ada di item
+      const lookupHarga = (nama, satuanHint) => lookupHargaGlobal(nama, satuanHint);
+      const mkRow = (nama, jumlah, satuan, hSat, ket) => {
+        const nama2 = (nama || "").toLowerCase();
+        const isF = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => nama2.includes(k));
+        const rawQ = parseFloat(jumlah) || 0;
+        const qty = isF ? Math.max(1, Math.ceil(rawQ)) : rawQ;
+        const h = parseFloat(hSat) || 0 || lookupHarga(nama, satuan);
+        const ketFin = ket || (isF && rawQ !== qty ? `Aktual: ${rawQ} kg → dibulatkan ${qty} kg` : "");
+        return { nama, jumlah: qty, satuan: satuan || (isF ? "kg" : "pcs"), harga_satuan: h, subtotal: h * qty, keterangan: ketFin };
+      };
+
+      const mDetail = [];
+
+      // A. Jasa rows (dari [+] Tambah Jasa form) — keterangan: "jasa"
+      laporanJasaItems.filter(j => j.nama && j.nama !== "__manual__" && parseFloat(j.jumlah || 0) > 0).forEach(j => {
+        mDetail.push(mkRow(j.nama, j.jumlah || 1, j.satuan || "pcs", j.harga_satuan || 0, "jasa"));
+      });
+
+      // B. Repair rows (dari [+] Tambah Repair form) — keterangan: "repair"
+      laporanRepairItems.filter(r => r.nama && parseFloat(r.jumlah || 0) > 0).forEach(r => {
+        mDetail.push(mkRow(r.nama, r.jumlah || 1, r.satuan || "pcs", r.harga_satuan || 0, "repair"));
+      });
+
+      // C. Material rows — laporanMaterials adalah stok tracking saja (TIDAK masuk invoice).
+      // Freon/vacum yang ditagih diinput via laporanJasaItems (Jasa section), bukan di sini.
+
+      // D. Install rows — build dari laporanInstallItems dengan keterangan yang benar
+      if (isInstallSvc) {
+        mDetail.length = 0;
+        // Jasa Install (pasang, vacum, kuras) → keterangan:"jasa"
+        const INSTALL_JASA_KEYS = ["pasang", "vacum", "bongkar", "kuras"];
+        effectiveMaterials.filter(m => m.nama && parseFloat(m.jumlah || 0) > 0).forEach(m => {
+          const n = (m.nama || "").toLowerCase();
+          const isJasa = INSTALL_JASA_KEYS.some(k => n.includes(k));
+          const isFreon = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => n.includes(k));
+          const ket = m.keterangan || (isJasa ? "jasa" : isFreon ? "freon" : "");
+          mDetail.push(mkRow(m.nama, m.jumlah, m.satuan || "pcs", m.harga_satuan || 0, ket));
+        });
+      }
+
+      // E. AUTO-INJECT per-service (planning final 2026-04-14):
+      //    - Cleaning/Maintenance: inject per-unit dari Card 1/4 tipe PK (base labor)
+      //    - Repair: NO auto-inject base. Inject "Biaya Pengecekan" jika card 3/4 kosong.
+      //             Checkbox "Cleaning in Repair" → inject Cleaning rows untuk unit yg dicentang.
+      //    - Install: semua dari Card 3/4 (handled di branch D di atas)
+      //    - Complain: inject biaya cek hanya jika tanpa-garansi & finalLabor > 0
+      if (!isInstallSvc) {
+        const svc = laporanModal?.service;
+        const hasRepairItems = mDetail.some(m => m.keterangan === "repair");
+        const isRepairSvc = svc === "Repair";
+        const isComplainSvc2 = svc === "Complain";
+        const isCleaningOrMaint = svc === "Cleaning" || svc === "Maintenance";
+
+        // ── Cleaning & Maintenance: per-unit base labor dari Card 1/4 tipe ──
+        // Skip hanya jika mDetail sudah ada row jasa cleaning/maintenance/cuci.
+        // Bug lama: transport jasa bikin baseline ter-skip → laporan Cleaning hilang.
+        const alreadyHasCleaningRow = mDetail.some(m => {
+          if (m.keterangan !== "jasa") return false;
+          const n = (m.nama || "").toLowerCase();
+          return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
+        });
+        if (isCleaningOrMaint && !alreadyHasCleaningRow) {
+          const unitsWithTipe = (laporanUnits || []).filter(u => u && u.tipe);
+          if (unitsWithTipe.length > 0) {
+            [...unitsWithTipe].reverse().forEach((u) => {
+              const hargaUnit = hargaPerUnitFromTipe(svc, u.tipe, priceListData);
+              if (hargaUnit > 0) {
+                const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
+                const bracketLabel = getBracketKey(svc, u.tipe) || u.tipe;
+                const namaJasa = (svc || "") + " " + bracketLabel + " (" + unitLabel + ")";
+                mDetail.unshift({
+                  nama: namaJasa, jumlah: 1, satuan: "unit",
+                  harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
+                });
+              }
+            });
+          } else {
+            const svcFee = hitungLabor(svc, laporanModal.type, laporanUnits.length);
+            if (svcFee > 0) {
+              const unitCount = laporanUnits.length || 1;
+              const hPerUnit = Math.round(svcFee / unitCount);
+              [...laporanUnits].reverse().forEach((u, idx) => {
+                const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || (unitCount - idx)));
+                const namaJasa = (svc || "") + (laporanModal.type ? " - " + laporanModal.type : "") + " (" + unitLabel + ")";
+                mDetail.unshift({ nama: namaJasa, jumlah: 1, satuan: "unit", harga_satuan: hPerUnit, subtotal: hPerUnit, keterangan: "jasa" });
+              });
+            }
+          }
+        }
+
+        // ── Cleaning 1 unit: inject "Biaya Transport Bila 1 Unit" otomatis ──
+        if (svc === "Cleaning" && (laporanUnits || []).length === 1) {
+          const transportItem = priceListData.find(
+            r => r.service === "Cleaning" && r.type === "Biaya Transport Bila 1 Unit" && r.is_active !== false
+          );
+          if (transportItem && transportItem.price > 0) {
+            mDetail.push({
+              nama: "Biaya Transport Bila 1 Unit", jumlah: 1, satuan: "unit",
+              harga_satuan: transportItem.price, subtotal: transportItem.price, keterangan: "jasa"
+            });
+          }
+        }
+
+        // ── Repair: Cleaning-in-Repair checkbox → append per unit yg dicentang ──
+        if (isRepairSvc && Array.isArray(laporanCleaningInRepair) && laporanCleaningInRepair.length > 0) {
+          const checkedUnits = (laporanUnits || []).filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no));
+          checkedUnits.forEach((u) => {
+            const hargaUnit = hargaPerUnitFromTipe("Cleaning", u.tipe, priceListData);
+            if (hargaUnit > 0) {
+              const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
+              const bracketLabel = getBracketKey("Cleaning", u.tipe) || u.tipe;
+              mDetail.push({
+                nama: "Cleaning " + bracketLabel + " (" + unitLabel + ") [+Repair]",
+                jumlah: 1, satuan: "unit",
+                harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
+              });
+            }
+          });
+        }
+
+        // ── Repair card 3/4 kosong: inject "Biaya Pengecekan" ──
+        // Kondisi: tidak ada repair item DAN tidak ada jasa apapun (card 3/4 benar-benar kosong)
+        // ✨ FIX: skip jika isRepairGratis=true — repair gratis tidak boleh kena biaya cek
+        if (isRepairSvc && !isRepairGratis && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa")) {
+          const biayaCekItem = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
+          const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 0;
+          mDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek, keterangan: "jasa" });
+        }
+
+        // ── Complain biaya cek: inject dari finalLabor (tanpa garansi) ──
+        if (isComplainSvc2 && finalLabor > 0 && finalLabor <= 200000 && !mDetail.some(m => m.keterangan === "jasa")) {
+          mDetail.unshift({ nama: "Biaya Pengecekan (Tanpa Garansi)", jumlah: 1, satuan: "unit", harga_satuan: finalLabor, subtotal: finalLabor, keterangan: "jasa" });
+        }
+      }
+
+      // garansi_status: hanya untuk state lokal (tidak ada kolom ini di DB)
+      const garansiStatusLocal = isComplainSvc
+        ? (prevGaransiActive ? (matTotalInv > 0 ? 'GARANSI_DENGAN_MATERIAL' : 'GARANSI_AKTIF')
+          : prevGaransiExpired ? 'GARANSI_EXPIRED' : 'NO_GARANSI')
+        : null;
+      // Recalculate total dari mDetail (menangkap inject transport fee dll yang bisa merubah total)
+      const finalTotalFromDetail = mDetail.reduce((s, r) => s + (r.subtotal || 0), 0);
+      const newInvoice = {
+        id: invId,
+        // Multi-hari: jika child MULTI-DAY, invoice di-link ke parent (hari pertama)
+        // Bukan multi-day (mis. Complain→Repair) → invoice tetap pakai ID order sendiri
+        job_id: (laporanModal.parent_job_id && laporanModal.is_multi_day === true)
+          ? laporanModal.parent_job_id
+          : laporanModal.id,
+        customer: laporanModal.customer,
+        phone: laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
+        service: laporanModal.service + (laporanModal.type ? " - " + laporanModal.type : ""),
+        units: laporanUnits.length,
+        labor: finalLabor,
+        material: matTotalInv,
+        materials_detail: mDetail,           // array untuk state/display
+        garansi_status: garansiStatusLocal,  // hanya state, tidak ke DB
+        repair_gratis: isRepairGratis ? laporanRepairType : undefined,  // NEW: store repair type (gratis-garansi/gratis-customer)
+        discount: 0,
+        trade_in: false,
+        trade_in_amount: 0,
+        total: finalTotalFromDetail || finalTotal,
+        status: "PENDING_APPROVAL",
+        garansi_days: gDays,
+        garansi_expires: gExpires,
+        created_at: new Date().toISOString(),
+      };
+
+      // Status override
+      if (isRepairGratis && finalTotal === 0) {
+        // FREE REPAIR (garansi atau arrangement) → stays PENDING_APPROVAL (requires Owner/Admin approval)
+        newInvoice.status = "PENDING_APPROVAL";
+        addAgentLog("REPAIR_GRATIS_APPROVAL_NEEDED",
+          `Invoice ${invId} Repair Rp 0 (${laporanRepairType}) — PENDING_APPROVAL (awaiting Owner/Admin approval)`,
+          "WARNING");
+      } else if (isComplainSvc && finalTotal === 0) {
+        newInvoice.status = "PAID";
+        newInvoice.paid_at = new Date().toISOString();
+        addAgentLog("GARANSI_AUTO_PAID", `Invoice ${invId} Rp 0 → auto PAID`, "SUCCESS");
+      } else if (isComplainSvc && prevGaransiExpired) {
+        addAgentLog("GARANSI_EXPIRED_FEE",
+          `Invoice ${invId} — garansi expired (ref: ${prevGaransiExpired.id}) → biaya cek Rp ${BIAYA_CEK.toLocaleString("id-ID")}`,
+          "WARNING");
+      }
+
+      // ── Auto-discount membership tier (Gold: jasa 5%, Platinum: jasa 5% + material 5%) ──
+      {
+        const custPhone = laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone;
+        const custData = custPhone ? customersData.find(c => c.phone === custPhone || c.phone === normalizePhone(custPhone)) : null;
+        const custTier = custData?.membership_tier;
+        if (custTier === "gold" || custTier === "platinum") {
+          const laborDisc = Math.round((newInvoice.labor || 0) * 0.05);
+          const matDisc = custTier === "platinum" ? Math.round((newInvoice.material || 0) * 0.05) : 0;
+          const memberDisc = laborDisc + matDisc;
+          if (memberDisc > 0 && newInvoice.total > 0 && newInvoice.status === "PENDING_APPROVAL") {
+            newInvoice.discount = (newInvoice.discount || 0) + memberDisc;
+            newInvoice.member_discount = memberDisc;
+            newInvoice.total = Math.max(0, newInvoice.total - memberDisc);
+          }
+        }
+      }
+
+      // Simpan invoice ke Supabase — exclude fields yang tidak ada di DB schema
+      const { garansi_status: _gs, ...invBase } = newInvoice;
+      const invPayload = {
+        ...invBase,
+        materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
+        repair_gratis: invBase.repair_gratis || undefined,
+      };
+      // ── 1 invoice per job: query DB langsung untuk cegah race condition ──
+      const { data: existingDB, error: fetchExistingErr } = await supabase
+        .from("invoices").select("id").eq("job_id", laporanModal.id);
+      if (fetchExistingErr) {
+        console.error("[INVOICE_PRECHECK] gagal cek existing:", fetchExistingErr.message);
+        showNotif("❌ Gagal verifikasi invoice existing — submit dibatalkan. Coba lagi.");
+        return;
+      }
+      if (existingDB && existingDB.length > 0) {
+        // Hapus semua dulu — update local state HANYA setelah semua delete sukses
+        for (const old of existingDB) {
+          const { error: delErr } = await deleteInvoice(supabase, old.id, auditUserName(), "TEKNISI_REWRITE_LAPORAN");
+          if (delErr) {
+            console.error("[INVOICE_REWRITE] gagal hapus", old.id, delErr.message);
+            showNotif("❌ Gagal hapus invoice lama — submit dibatalkan. Coba lagi.");
+            return;
+          }
+        }
+        // Semua delete sukses baru update local state
+        setInvoicesData(prev => prev.filter(i => i.job_id !== laporanModal.id));
+        addAgentLog("INVOICE_REWRITE", `${existingDB.length} invoice lama dihapus untuk ${laporanModal.id} (rewrite)`, "INFO");
+      }
+      const { error: invErr } = await insertInvoice(supabase, invPayload);
+      if (invErr) {
+        console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
+        let retryOk = false;
+        for (const st of ["PENDING_APPROVAL", "UNPAID"]) {
+          const { error: e2 } = await insertInvoice(supabase, {
+            id: newInvoice.id, job_id: newInvoice.job_id,
+            customer: newInvoice.customer, service: newInvoice.service,
+            units: newInvoice.units, labor: newInvoice.labor,
+            material: newInvoice.material, total: newInvoice.total,
+            status: st,
+          });
+          if (!e2) { retryOk = true; break; }
+        }
+        if (!retryOk) {
+          showNotif("❌ Gagal simpan invoice — laporan tersimpan, cek menu Invoice manual.");
+          addAgentLog("INVOICE_INSERT_FAILED", `Invoice ${newInvoice.id} gagal disimpan setelah retry`, "ERROR");
+        }
+      }
+      // Update local state SETELAH DB insert sukses (atau retry sukses)
+      setInvoicesData(prev => [...prev, newInvoice]);
+
+      addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
+
+      // WA notif ke Owner
+      const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
+      const ownerMsg =
+        "Invoice Menunggu Approval\n"
+        + "Job: " + laporanModal.id + "\n"
+        + "Customer: " + laporanModal.customer + "\n"
+        + "Layanan: " + laporanModal.service + " - " + laporanUnits.length + " unit\n"
+        + "Teknisi: " + laporanModal.teknisi + (laporanModal.helper ? " + " + laporanModal.helper : "") + "\n"
+        + "Total: " + fmt(newInvoice.total) + " Jasa: " + fmt(newInvoice.labor) + " Mat: " + fmt(newInvoice.material) + "\n"
+        + "Invoice: " + invId + " Silakan approve di menu Invoice. — ARA";
+      // Notify owner accounts
+      await Promise.all(ownerAccounts.map(u => {
+        if (u.phone) return sendWA(u.phone, ownerMsg);
+        return Promise.resolve();
+      }));
+
+      // Fallback if no owner accounts (notify default phone)
+      if (ownerAccounts.length === 0) {
+        try {
+          const r = await fetch("/api/send-wa", {
+            method: "POST", headers: await _apiHeaders(),
+            body: JSON.stringify({ phone: "6281299898937", message: ownerMsg, currentUserRole: currentUser?.role || "Unknown" })
+          });
+          if (!r.ok) {
+            const d = await r.json().catch(() => ({}));
+            console.warn("[ARA_NOTIFY_OWNER_FAILED]", d.error || r.status);
+          }
+        } catch (err) {
+          console.warn("[ARA_NOTIFY_OWNER_FAILED]", err.message);
+        }
+      }
+    }
+
+    setLaporanSubmitted(true);
+    pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
+    showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan dikirim ke Owner/Admin untuk verifikasi.`);
+    } catch (err) {
+      console.error("submitLaporan fatal:", err);
+      showNotif("❌ Submit error: " + (err?.message || String(err)));
+    } finally {
+      submitLaporanLock.current = false;
+    }
   };
 
   return (
@@ -10208,984 +11197,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
         const updateUnit = (idx, updated) => setLaporanUnits(prev => prev.map((u, i) => i === idx ? updated : u));
         const toggleArr = (arr, val) => arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val];
-
-        const handleFotoUpload = async (e) => {
-          const MAX_PHOTOS = 20;
-          const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
-
-          // ── Validasi format file — reject video ──
-          const rawFiles = Array.from(e.target.files || []);
-          const invalidFiles = rawFiles.filter(f => !ALLOWED_TYPES.includes(f.type));
-
-          if (invalidFiles.length > 0) {
-            showNotif(`❌ Format tidak didukung: ${invalidFiles.map(f => f.name.split(".").pop().toUpperCase()).join(", ")}. Hanya JPG, PNG, WEBP.`);
-            e.target.value = "";
-            return;
-          }
-
-          // ── Cek max 20 foto ──
-          if (laporanFotos.length >= MAX_PHOTOS) {
-            showNotif(`❌ Maksimal ${MAX_PHOTOS} foto per job. Hapus foto lain untuk upload baru.`);
-            e.target.value = "";
-            return;
-          }
-
-          const validFiles = rawFiles.slice(0, MAX_PHOTOS - laporanFotos.length);
-          if (validFiles.length === 0) return;
-          const reportId = laporanModal?.id || "tmp";
-
-          // ── LAYER 1: Hash setiap file SEBELUM compress ──
-          // Fungsi hash SHA-256 sederhana via SubtleCrypto (tersedia di semua browser modern)
-          const hashFile = async (file) => {
-            const buf = await file.arrayBuffer();
-            const hashBuf = await crypto.subtle.digest("SHA-256", buf);
-            return Array.from(new Uint8Array(hashBuf))
-              .map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16); // 16 char = cukup unik
-          };
-
-          // Hitung hash semua file sebelum compress
-          const fileHashes = await Promise.all(validFiles.map(hashFile));
-
-          // ── Get compression quality dari settings (default 0.70) ──
-          const fotoQualityValue = parseFloat(appSettings?.foto_compression_quality) || 0.70;
-          const fotoQuality = Math.max(0.3, Math.min(1, fotoQualityValue)); // Clamp: 30% - 100%
-
-          // ── LAYER 2: Cek duplikat vs foto yang sudah ada di state (per sesi) ──
-          const existingHashes = new Set(laporanFotos.map(f => f.hash).filter(Boolean));
-          const files = [];
-          const hashes = [];
-          let skippedCount = 0;
-          validFiles.forEach((file, i) => {
-            if (existingHashes.has(fileHashes[i])) {
-              skippedCount++;
-            } else {
-              files.push(file);
-              hashes.push(fileHashes[i]);
-            }
-          });
-
-          if (skippedCount > 0) {
-            showNotif(`⚠️ ${skippedCount} foto sudah ada (duplikat diabaikan).`);
-          }
-          if (files.length === 0) { e.target.value = ""; return; }
-
-          showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2 (quality: ${Math.round(fotoQuality * 100)}%)...`);
-          let compressed = [];
-          try {
-            compressed = await Promise.all(files.map(f => compressImg(f, fotoQuality)));
-          } catch (compErr) {
-            console.error("[COMPRESS_ERROR]", compErr.message);
-            showNotif(`❌ Gagal kompresi foto: ${compErr.message}. Pastikan file adalah gambar valid.`);
-            e.target.value = "";
-            return;
-          }
-
-          // ✨ FIX #1: Parallel upload dengan batch 3 (3-5x lebih cepat)
-          //   - Foto placeholder langsung muncul dengan flag `uploading:true`
-          //   - Tombol "Next" di Step 3 di-gate selama ada yang `uploading`
-          //   - Upload batch 3 concurrent → balance speed vs bandwidth HP teknisi
-          const BATCH_SIZE = 3;
-          const placeholders = compressed.map((dataUrl, i) => ({
-            id: Date.now() + i,
-            label: `Foto ${laporanFotos.length + i + 1}`,
-            data_url: dataUrl,
-            url: null,
-            errMsg: "",
-            hash: hashes[i],
-            uploading: true,
-          }));
-          // Push placeholders ke state supaya user lihat progress langsung
-          setLaporanFotos(prev => [...prev, ...placeholders]);
-
-          const uploadOne = async (ph) => {
-            try {
-              const r = await _apiFetch("/api/upload-foto", {
-                method: "POST",
-                headers: await _apiHeaders(),
-                body: JSON.stringify({
-                  base64: ph.data_url,
-                  filename: `${ph.hash}.jpg`,
-                  reportId,
-                  mimeType: "image/jpeg",
-                  hash: ph.hash,
-                  currentUserRole: currentUser?.role || "Unknown",
-                }),
-              });
-              const d = await r.json();
-              if (d.success && d.url) {
-                return { id: ph.id, url: d.url, errMsg: "", uploading: false };
-              }
-              return { id: ph.id, url: null, errMsg: d.error || "Upload gagal", uploading: false };
-            } catch (err) {
-              return { id: ph.id, url: null, errMsg: err.message || "Network error", uploading: false };
-            }
-          };
-
-          let savedCount = 0, failedCount = 0;
-          for (let i = 0; i < placeholders.length; i += BATCH_SIZE) {
-            const batch = placeholders.slice(i, i + BATCH_SIZE);
-            const results = await Promise.all(batch.map(uploadOne));
-            // Update state incremental per-batch
-            setLaporanFotos(prev => prev.map(foto => {
-              const res = results.find(r => r.id === foto.id);
-              return res ? { ...foto, ...res } : foto;
-            }));
-            results.forEach(r => r.url ? savedCount++ : failedCount++);
-          }
-
-          if (savedCount === placeholders.length) {
-            showNotif(`✅ ${savedCount} foto tersimpan di R2!`);
-          } else if (savedCount > 0) {
-            showNotif(`⚠️ ${savedCount} berhasil, ${failedCount} gagal. Tap ⏳ untuk retry.`);
-          } else {
-            showNotif(`❌ Upload gagal. Cek koneksi & coba lagi.`);
-          }
-          e.target.value = "";
-        };
-
-        const submitLaporan = async () => {
-          if (submitLaporanLock.current) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
-          submitLaporanLock.current = true;
-          try {
-          // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
-          const isInstall = laporanModal?.service === "Install";
-          const isSurvey = laporanModal?.service === "Survey";
-
-          // ── Survey: submit langsung, bypass 4-step wizard ──
-          if (isSurvey) {
-            if (!laporanSurveyHasil.trim()) {
-              showNotif("⚠️ Hasil Survey wajib diisi");
-              submitLaporanLock.current = false;
-              return;
-            }
-            const now = new Date().toLocaleString("id-ID", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-            const reportId = "LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase();
-            const surveyReport = {
-              id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
-              helper: laporanModal.helper || null, customer: laporanModal.customer,
-              service: "Survey", date: laporanModal.date, submitted: now,
-              status: "SUBMITTED", total_units: 0, units: [], materials: [], fotos: [],
-              total_freon: 0, rekomendasi: "", catatan_global: "",
-              hasil_survey: laporanSurveyHasil.trim(),
-              catatan_rekomendasi: laporanSurveyCatatan.trim(),
-              editLog: [],
-            };
-            setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), surveyReport]);
-            showNotif("⏳ Menyimpan laporan survey...");
-            try {
-              await supabase.from("service_reports").delete().eq("job_id", reportId).neq("id", reportId);
-            } catch (_) {}
-            const { error: sErr } = await supabase.from("service_reports").upsert({
-              id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
-              helper: laporanModal.helper || null, customer: laporanModal.customer,
-              service: "Survey", date: laporanModal.date, status: "SUBMITTED",
-              total_units: 0, total_freon: 0, submitted_at: new Date().toISOString(),
-              foto_urls: [], rekomendasi: "", catatan_global: "",
-              hasil_survey: laporanSurveyHasil.trim(),
-              catatan_rekomendasi: laporanSurveyCatatan.trim(),
-              submitted: now,
-            }, { onConflict: "id" });
-            if (sErr) { showNotif("⚠️ Tersimpan lokal, sync gagal: " + sErr.message); }
-            else { showNotif("✅ Laporan Survey terkirim!"); }
-            const admR2 = userAccounts.filter(u => u.role === "Admin" || u.role === "Owner");
-            admR2.forEach(u => { if (u.phone) sendWA(u.phone, "Laporan Survey\nJob: " + laporanModal.id + "\nCustomer: " + laporanModal.customer + "\nTeknisi: " + laporanModal.teknisi + "\n\nHasil: " + laporanSurveyHasil.trim().slice(0, 200)); });
-            setLaporanSubmitted(true);
-            submitLaporanLock.current = false;
-            return;
-          }
-
-          // ── 2. Validasi unit untuk non-Install ──
-          if (!isInstall && incompleteUnits.length > 0) {
-            showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);
-            return;
-          }
-
-          // ── 3. Cek foto gagal upload ──
-          const fotoGagal = laporanFotos.filter(f => !f.url).length;
-          if (fotoGagal > 0) {
-            const lanjut = await showConfirm({
-              icon: "⚠️", title: "Ada Foto Belum Tersimpan",
-              message: `${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).\n\nLanjutkan submit laporan tanpa foto tersebut?`,
-              confirmText: "Lanjutkan Submit"
-            });
-            if (!lanjut) return;
-          }
-
-          // ── 4. Siapkan materials yang efektif ──
-          // Install: pakai laporanInstallItems, lainnya: pakai laporanMaterials
-          // Only jasa items here — barang items are now consolidated into laporanBarangItems
-          const jasaAsMaterials = [
-            ...laporanJasaItems.map(j => ({
-              id: "jasa_" + j.id, nama: j.nama, jumlah: j.jumlah || 1,
-              satuan: j.satuan || "pcs", harga_satuan: j.harga_satuan || 0, keterangan: "jasa"
-            })),
-          ];
-          // Mapping INSTALL_ITEMS key → inventory code untuk deduct stok spesifik
-          const INSTALL_INV_MAP = {
-            "pipa_1pk": "SKU022",  // Pipa AC Hoda 1PK
-            "pipa_2pk": "SKU023",  // Pipa AC Hoda 2PK
-            "pipa_25pk": "SKU024",  // Pipa AC Hoda 2,5PK
-            "pipa_3pk": "SKU057",  // Pipa AC Hoda 3PK
-            "kabel_15": "SKU025",  // Kabel Listrik 3x1,5
-            "kabel_25": "SKU026",  // Kabel Listrik 3x2,5
-            "ducttape_biasa": "SKU031",
-            "ducttape_lem": "SKU030",
-            "dinabolt": "SKU058",
-            "karet_mounting": "SKU059",
-            "breket_outdoor": "SKU041",
-          };
-
-          // ✨ CHANGE: tambah laporanBarangItems ke effectiveMaterials dengan keterangan="barang"
-          const barangAsMaterials = laporanBarangItems
-            .filter(b => b.nama)
-            .map(b => ({
-              id: b.id,
-              nama: b.nama,
-              jumlah: b.jumlah || 1,
-              satuan: b.satuan || "pcs",
-              harga_satuan: b.harga_satuan || 0,
-              subtotal: (b.harga_satuan || 0) * (b.jumlah || 1),
-              keterangan: "barang" // marking barang dari price_list, bukan material stok
-            }));
-
-          const effectiveMaterials = isInstall
-            ? INSTALL_ITEMS
-              .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
-              .map(item => {
-                const hargaSat = lookupHargaGlobal(item.label, item.satuan);
-                const qty = parseFloat(laporanInstallItems[item.key] || 0);
-                return {
-                  id: item.key, nama: item.label, jumlah: qty, satuan: item.satuan,
-                  harga_satuan: hargaSat, subtotal: hargaSat * qty, keterangan: "",
-                  // _useCode: untuk deduct stok by kode inventori yang spesifik
-                  _useCode: INSTALL_INV_MAP[item.key] || null,
-                };
-              })
-            : [...jasaAsMaterials, ...barangAsMaterials, ...laporanMaterials];
-
-          const now = new Date().toLocaleString("id-ID", {
-            year: "numeric", month: "2-digit", day: "2-digit",
-            hour: "2-digit", minute: "2-digit"
-          });
-          const totalFreonLocal = laporanUnits.reduce((s, u) => s + (parseFloat(u.freon_ditambah) || 0), 0);
-
-          // ── 5. Buat objek laporan ──
-          const newReport = {
-            id: laporanModal._rewriteId || ("LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase()),
-            job_id: laporanModal.id,
-            teknisi: laporanModal.teknisi,
-            helper: laporanModal.helper || null,
-            is_substitute: (currentUser?.role === "Helper" &&
-              currentUser?.name === laporanModal.helper &&
-              !teknisiData.find(t => t.role === "Teknisi" && t.name === laporanModal.helper)),
-            customer: laporanModal.customer,
-            service: laporanModal?.service,
-            date: laporanModal.date,
-            submitted: now,
-            status: "SUBMITTED",
-            total_units: laporanUnits.length,
-            units: laporanUnits,
-            materials: effectiveMaterials,
-            fotos: laporanFotos.map(f => ({ id: f.id, label: f.label })),
-            total_freon: totalFreonLocal,
-            rekomendasi: laporanRekomendasi,
-            catatan_global: laporanCatatan,
-            unit_mismatch: laporanUnits.length !== (laporanModal.units || 1),
-            editLog: laporanModal._rewriteId ? [{
-              by: currentUser?.name || "Teknisi",
-              at: new Date().toLocaleString("id-ID"),
-              field: "full_rewrite",
-              old: "(laporan lama)",
-              new: "Laporan ditulis ulang dari awal",
-            }] : [],
-          };
-
-          setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), newReport]);
-
-          // ── 6. WA notif ke Admin/Owner ──
-          const adminUsers = userAccounts.filter(u => u.role === "Owner");
-          const matCount = isInstall
-            ? INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length
-            : laporanMaterials.length;
-          const notifMsg =
-            "Laporan Selesai\nJob: " + laporanModal.id
-            + "\nCustomer: " + laporanModal.customer
-            + "\nTeknisi: " + laporanModal.teknisi + (laporanModal.helper ? " + " + laporanModal.helper : "")
-            + "\nLayanan: " + laporanModal?.service + " - " + laporanUnits.length + " unit"
-            + "\nMaterial: " + matCount + " item  Foto: " + laporanFotos.filter(f => f.url).length + " foto"
-            + "\n\nSilakan cek invoice di menu Invoice.";
-          adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
-
-          // ── 7. Simpan laporan ke Supabase (multi-attempt with fallback fields) ──
-          showNotif("⏳ Menyimpan laporan ke server...");
-          // ✨ DEDUP: hapus ghost rows dgn job_id yg sama tapi id berbeda (prevent double laporan)
-          try {
-            await supabase.from("service_reports")
-              .delete()
-              .eq("job_id", newReport.job_id)
-              .neq("id", newReport.id);
-          } catch (dx) { console.warn("[LAPORAN_DEDUP] cleanup ghost rows failed:", dx.message); }
-          const basePayload = {
-            id: newReport.id,
-            job_id: newReport.job_id,
-            teknisi: newReport.teknisi,
-            helper: newReport.helper || null,
-            customer: newReport.customer,
-            service: newReport.service,
-            date: newReport.date,
-            status: "SUBMITTED",
-            total_units: newReport.total_units,
-            total_freon: newReport.total_freon,
-            submitted_at: new Date().toISOString(),
-            foto_urls: laporanFotos.filter(f => f.url).map(f => f.url) || [],
-            rekomendasi: newReport.rekomendasi || "",
-            catatan_global: newReport.catatan_global || "",
-            submitted: new Date().toLocaleString("id-ID"),
-          };
-
-          let savedOk = false;
-          let lastError = null;
-          { // Attempt 1: dengan materials_json & units_json & units (jsonb)
-            try {
-              const { error: e1 } = await supabase.from("service_reports").upsert({
-                ...basePayload,
-                materials_json: JSON.stringify(effectiveMaterials),
-                units_json: JSON.stringify(laporanUnits),
-                units: laporanUnits,
-              }, { onConflict: "id" });
-              if (!e1) { savedOk = true; }
-              else { lastError = e1; console.warn("❌ Attempt 1 failed:", e1.message); }
-            } catch (ex) { lastError = ex; console.warn("❌ Attempt 1 error:", ex.message); }
-          }
-          if (!savedOk) { // Attempt 2: dengan units_json & materials_json (skip units jsonb)
-            try {
-              const { error: e2 } = await supabase.from("service_reports").upsert({
-                ...basePayload,
-                units_json: JSON.stringify(laporanUnits),
-                materials_json: JSON.stringify(effectiveMaterials),
-              }, { onConflict: "id" });
-              if (!e2) { savedOk = true; }
-              else { lastError = e2; console.warn("❌ Attempt 2 failed:", e2.message); }
-            } catch (ex) { lastError = ex; console.warn("❌ Attempt 2 error:", ex.message); }
-          }
-          if (!savedOk) { // Attempt 3: minimal
-            try {
-              const { error: e3 } = await supabase.from("service_reports").upsert({
-                id: newReport.id, job_id: newReport.job_id,
-                teknisi: newReport.teknisi, customer: newReport.customer,
-                service: newReport.service, date: newReport.date,
-                status: "SUBMITTED", total_units: newReport.total_units,
-                submitted_at: new Date().toISOString(),
-              }, { onConflict: "id" });
-              if (!e3) { savedOk = true; }
-              else { lastError = e3; console.warn("❌ Attempt 3 failed:", e3.message); }
-            } catch (ex) { lastError = ex; console.warn("❌ Attempt 3 error:", ex.message); }
-          }
-
-          // Fallback: If upsert failed, explicitly DELETE old laporan (if rewriting) then try INSERT
-          if (!savedOk && laporanModal._rewriteId) {
-            console.warn("🔄 Upsert failed, trying DELETE + INSERT fallback for rewrite:", newReport.id);
-            try {
-              // First, try to delete the old laporan
-              await supabase.from("service_reports").delete().eq("id", newReport.id).select();
-              // Then insert the new one
-              const { error: insertErr } = await supabase.from("service_reports").insert(basePayload).select().single();
-              if (!insertErr) {
-                savedOk = true;
-                } else {
-                lastError = insertErr;
-                console.error("❌ DELETE+INSERT fallback failed:", insertErr.message);
-              }
-            } catch (fx) {
-              lastError = fx;
-              console.error("❌ Fallback error:", fx.message);
-            }
-          }
-
-          // Final error handling
-          if (!savedOk) {
-            const errMsg = lastError?.message || "Unknown error";
-            console.error("❌ All save attempts failed:", errMsg);
-            showNotif("❌ Gagal simpan laporan: " + errMsg + ". Coba lagi atau hubungi admin.");
-            return; // Don't proceed to reload/notify if save failed
-          }
-
-          // ── 8. Reload laporan (backup, realtime juga akan trigger) ──
-          const reloadLaporan = async () => {
-            const { data } = await supabase.from("service_reports")
-              .select("*").order("submitted_at", { ascending: false });
-            if (data?.length > 0) {
-              setLaporanReports(data.map(r => ({
-                ...r,
-                units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return r.units || []; } })() : (r.units || []),
-                materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return r.materials_used || []; } })() : (r.materials_used || []),
-                fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
-                editLog: safeArr(r.edit_log ?? r.editLog),
-              })));
-            }
-          };
-          setTimeout(reloadLaporan, 800);
-          setTimeout(reloadLaporan, 3000);
-
-          // ── 9. Update order status ──
-          setOrdersData(prev => prev.map(o =>
-            o.id === laporanModal.id ? { ...o, status: "REPORT_SUBMITTED" } : o
-          ));
-          {
-            const { error: ordErr } = await supabase.from("orders")
-              .update({ status: "REPORT_SUBMITTED" }).eq("id", laporanModal.id);
-            if (ordErr) {
-              console.warn("REPORT_SUBMITTED rejected — fallback COMPLETED:", ordErr.message);
-              await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName());
-            }
-          }
-
-          // ── 10. Update status teknisi & helper → active ──
-          ["teknisi", "helper"].forEach(role => {
-            const name = role === "teknisi" ? laporanModal.teknisi : laporanModal.helper;
-            if (!name) return;
-            const tek = teknisiData.find(t => t.name === name);
-            if (!tek?.id) return;
-            setTeknisiData(prev => prev.map(t => t.name === name ? { ...t, status: "active" } : t));
-            if (/^[0-9a-f-]{36}$/.test(tek.id)) {
-              supabase.from("user_profiles").update({ status: "active" }).eq("id", tek.id);
-            }
-          });
-
-          // ── 10b. Notif WA ke helper — laporan otomatis tercatat atas namanya ──
-          if (laporanModal.helper && currentUser?.name !== laporanModal.helper) {
-            const helperData = teknisiData.find(t => t.name === laporanModal.helper);
-            if (helperData?.phone) {
-              sendWA(helperData.phone,
-                `✅ *Laporan ${laporanModal.id} Selesai*\n`
-                + `Customer: ${laporanModal.customer}\n`
-                + `Teknisi: ${laporanModal.teknisi}\n\n`
-                + `Laporan pekerjaan sudah disubmit oleh ${currentUser?.name || laporanModal.teknisi}. `
-                + `Kamu tercatat sebagai helper. Cek di menu Laporan Saya. — AClean`
-              );
-            }
-          }
-
-          // ── 11. Stok material tracked (pipa/freon): idempotent sync ──
-          // syncTrackedStock: hapus usage lama → insert baru → recalculate dari DB.
-          // Berlaku submit pertama DAN rewrite — input terakhir selalu yang menang.
-          const isRewriteLaporan = !!laporanModal._rewriteId;
-          const syncReportId = newReport.id; // selalu pakai ID laporan final (sama untuk rewrite)
-          const materialsForSync = isInstall ? effectiveMaterials : laporanMaterials;
-          await syncTrackedStock(
-            syncReportId,
-            laporanModal.id,
-            materialsForSync,
-            laporanModal?.customer || null,
-            laporanModal?.teknisi || null,
-            laporanModal?.date || null
-          );
-
-          // ── 11b. Material non-tracked: deduct via deductInventory (lama, hanya sekali saat submit baru) ──
-          const barangAsDeducts = laporanBarangItems.filter(b => b.nama && parseFloat(b.jumlah || 0) > 0)
-            .map(b => ({ nama: b.nama, jumlah: parseFloat(b.jumlah) || 1, satuan: b.satuan || "pcs", keterangan: "barang" }));
-          const materialsToDeduct = isInstall ? effectiveMaterials : [...laporanMaterials, ...barangAsDeducts];
-          const nonTrackedToDeduct = materialsToDeduct.filter(m =>
-            !isTrackedByCode(m.inv_code || m._useCode) && !isTrackedByName(m.nama) && !m.freon_tabung_code
-          );
-
-          if (!isRewriteLaporan && nonTrackedToDeduct.length > 0) {
-            deductInventory(
-              nonTrackedToDeduct,
-              laporanModal?.id || null,
-              null,
-              laporanModal?.customer || null,
-              laporanModal?.teknisi || null,
-              laporanModal?.date || null
-            );
-            setTimeout(() => {
-              const kritisItems = inventoryData.filter(i =>
-                nonTrackedToDeduct.some(m => i.name.toLowerCase().includes((m.nama || "").toLowerCase())) &&
-                (i.status === "CRITICAL" || i.status === "OUT")
-              );
-              if (kritisItems.length > 0) {
-                const warnings = kritisItems.map(i => `${i.name} sisa ${i.stock} ${i.unit}`);
-                showNotif("⚠️ Stok kritis: " + warnings.join(", "));
-                const ownerAccs = userAccounts.filter(u => u.role === "Owner");
-                const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n` + warnings.map(w => "• " + w).join("\n");
-                ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
-              }
-            }, 800);
-          }
-
-          // ── 12. Auto-generate invoice ──
-          // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST
-          // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
-          // Untuk service lain: hitung dari PRICE_LIST
-          const isInstallSvc = laporanModal.service === "Install";
-          const jasaNamesSet2 = new Set(
-            priceListData.filter(r => r.service !== "Material").map(r => r.type && r.type.trim())
-          );
-          const repairNamesInMat = new Set(laporanRepairItems.map(r => r.nama));
-          const jasaFromMat = laporanMaterials.filter(m =>
-            m.nama && jasaNamesSet2.has(m.nama.trim())
-          );
-          const matOnly = laporanMaterials.filter(m =>
-            m.nama && !jasaNamesSet2.has(m.nama.trim()) &&
-            !repairNamesInMat.has(m.nama) && parseFloat(m.jumlah || 0) > 0
-          );
-          // ✨ NEW: Cleaning-in-Repair — hitung total tambahan cleaning saat job Repair
-          const cleaningInRepairTotal = (laporanModal?.service === "Repair" && Array.isArray(laporanCleaningInRepair) && laporanCleaningInRepair.length > 0)
-            ? (laporanUnits || [])
-              .filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no))
-              .reduce((s, u) => s + hargaPerUnitFromTipe("Cleaning", u.tipe, priceListData), 0)
-            : 0;
-
-          const laborTotalInv = isInstallSvc ? 0 : (() => {
-            const svc = laporanModal?.service;
-            const jasaSumForm = laporanJasaItems.filter(j => j.nama)
-              .reduce((s, j) => s + ((j.harga_satuan || 0) * (parseFloat(j.jumlah) || 1)), 0);
-
-            // Base labor per service type:
-            // - Cleaning/Maintenance: service fee baseline per-unit dari Card 1/4 tipe PK
-            // - Repair: NO baseline — hanya dari form jasa + cleaning-in-repair
-            // - Complain: handle via garansi logic (skip baseline)
-            const isCleaningMaint = svc === "Cleaning" || svc === "Maintenance";
-            // Skip baseline hanya jika jasa items sudah mengandung cleaning/maintenance jasa.
-            // Bug lama: transport/biaya-cek jadi jasa → baseline Cleaning ke-skip → total = transport saja.
-            const hasCleaningJasa = laporanJasaItems.some(j => {
-              const n = (j.nama || "").toLowerCase();
-              return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
-            });
-            let svcFeeBaseline = 0;
-            if (isCleaningMaint && !hasCleaningJasa) {
-              const unitsWithTipe = (laporanUnits || []).filter(u => u && u.tipe);
-              svcFeeBaseline = unitsWithTipe.length > 0
-                ? unitsWithTipe.reduce((s, u) => s + hargaPerUnitFromTipe(svc, u.tipe, priceListData), 0)
-                : hitungLabor(svc, laporanModal.type, laporanUnits.length);
-            }
-
-            return svcFeeBaseline + jasaSumForm + cleaningInRepairTotal;
-          })();
-          // ✨ CHANGE: matTotalInv dari laporanBarangItems (price_list category=Barang), bukan dari laporanMaterials
-          const barangTotalInv = laporanBarangItems
-            .filter(b => b.nama)
-            .reduce((s, b) => s + ((b.harga_satuan || 0) * (b.jumlah || 1)), 0);
-          const matTotalInv = isInstallSvc
-            ? hitungMaterialTotal(effectiveMaterials)
-            : barangTotalInv; // gunakan barangTotal, bukan material total
-          const invoiceTotal = laborTotalInv + matTotalInv;
-          const todayInv = new Date().toISOString().slice(0, 10);
-          const isComplainSvc = laporanModal.service === "Complain";
-          const isZeroTotal = invoiceTotal === 0;
-
-          // ── GARANSI CHECK: selalu cek untuk Complain, terlepas dari total ──
-          // Cek apakah customer punya garansi AKTIF (belum expired)
-          const prevGaransiActive = isComplainSvc
-            ? invoicesData
-              .filter(inv =>
-                inv.customer === laporanModal.customer &&
-                inv.service !== "Complain" &&
-                inv.garansi_expires &&
-                inv.garansi_expires >= todayInv &&
-                ["PAID", "UNPAID", "APPROVED", "PENDING_APPROVAL"].includes(inv.status)
-              )
-              .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
-            : null;
-
-          // Cek garansi EXPIRED (pernah punya garansi tapi sudah habis)
-          const prevGaransiExpired = isComplainSvc && !prevGaransiActive
-            ? invoicesData
-              .filter(inv =>
-                inv.customer === laporanModal.customer &&
-                inv.service !== "Complain" &&
-                inv.garansi_expires &&
-                inv.garansi_expires < todayInv &&
-                ["PAID", "UNPAID", "APPROVED", "PENDING_APPROVAL"].includes(inv.status)
-              )
-              .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
-            : null;
-
-          const BIAYA_CEK = (() => {
-            const pl = priceListData.find(r => r.service === "Repair" && r.type === "Biaya Pengecekan AC");
-            return (pl && pl.price > 0) ? pl.price : 0;
-          })();
-
-          // ── FINAL LABOR/TOTAL untuk Complain ──────────────────────────────
-          // Garansi AKTIF → jasa gratis (labor=0), material tetap dicharge
-          // Garansi EXPIRED + tidak ada input → biaya cek 100rb
-          // Tidak ada garansi + tidak ada input → biaya cek 100rb
-          // Ada input jasa/material → harga normal (garansi hanya cover jasa)
-          const noGaransiComplain = isComplainSvc && !prevGaransiActive && !prevGaransiExpired;
-          let finalLabor = laborTotalInv;
-          let finalTotal = invoiceTotal;
-
-          // ✨ FIX #1 (CORRECTED): Repair service tanpa items → conditional BIAYA_CEK based on repair type
-          const isRepairServiceNoItems = laporanModal?.service === "Repair" &&
-            laporanBarangItems.filter(b => b.nama).length === 0 &&
-            laporanJasaItems.filter(j => j.nama).length === 0 &&
-            laporanMaterials.filter(m => m.nama).length === 0 &&
-            cleaningInRepairTotal === 0;
-          let isRepairGratis = false;
-
-          if (isRepairServiceNoItems) {
-            // If teknisi selected "Berbayar" (standard paid repair) → inject BIAYA_CEK
-            if (laporanRepairType === "berbayar" && (!finalLabor || finalLabor === 0)) {
-              finalLabor = BIAYA_CEK;
-              finalTotal = BIAYA_CEK;
-              addAgentLog("REPAIR_BIAYA_CEK_INJECTED", `Repair ${laporanModal.id} (berbayar) tanpa items → inject BIAYA_CEK ${BIAYA_CEK}`, "INFO");
-            }
-            // If teknisi selected "Gratis" (garansi atau customer arrangement) → allow Rp 0
-            else if ((laporanRepairType === "gratis-garansi" || laporanRepairType === "gratis-customer") && invoiceTotal === 0) {
-              isRepairGratis = true;
-              finalLabor = 0;
-              finalTotal = 0;
-              const alasan = laporanRepairType === "gratis-garansi" ? "garansi aktif" : "arrangement customer";
-              addAgentLog("REPAIR_GRATIS_CREATED", `Repair ${laporanModal.id} (${alasan}) tanpa items/material → invoice Rp 0, awaiting approval`, "INFO");
-            }
-          }
-
-          if (isComplainSvc) {
-            if (prevGaransiActive) {
-              // Garansi aktif: jasa gratis, material tetap bayar
-              finalLabor = 0;
-              finalTotal = matTotalInv; // hanya material
-            } else if (isZeroTotal) {
-              // Tidak ada garansi aktif DAN teknisi tidak input apapun → biaya cek
-              finalLabor = BIAYA_CEK;
-              finalTotal = BIAYA_CEK;
-            }
-            // Jika ada input (isZeroTotal=false) tapi garansi expired/no-garansi → harga normal
-          }
-
-          if (isComplainSvc && prevGaransiActive && finalTotal === 0) {
-            // SKIP invoice — dalam garansi
-            setOrdersData(prev => prev.map(o =>
-              o.id === laporanModal.id ? { ...o, status: "COMPLETED" } : o
-            ));
-            try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName()); } catch (_) { }
-            addAgentLog("GARANSI_SKIP_INVOICE",
-              `Complain ${laporanModal.id} — dalam garansi s/d ${prevGaransiActive.garansi_expires} ` +
-              `(ref: ${prevGaransiActive.id}) → invoice di-skip`, "SUCCESS");
-
-          } else {
-            // BUAT invoice
-            // Multi-hari: jika ini order anak (child) MULTI-DAY, cek apakah parent sudah punya invoice aktif
-            // Penting: jangan trigger untuk Complain→Repair (parent_job_id ada tapi is_multi_day=false)
-            const isMultiDayChild = !!laporanModal.parent_job_id && laporanModal.is_multi_day === true;
-            const parentInvoice = isMultiDayChild
-              ? invoicesData.find(i => i.job_id === laporanModal.parent_job_id)
-              : null;
-            if (isMultiDayChild && parentInvoice && !["CANCELLED", "PAID"].includes(parentInvoice.status)) {
-              // Invoice parent sudah ada & masih aktif — notif saja, jangan buat invoice baru
-              showNotif(`ℹ️ Laporan hari ke-${laporanModal.day_number || "?"} terkirim. Invoice induk ${parentInvoice.id} sudah ada — minta Admin/Owner update total jika ada tambahan.`);
-              addAgentLog("MULTI_DAY_CHILD_LAPORAN",
-                `Laporan child ${laporanModal.id} (hari ${laporanModal.day_number || "?"}) — invoice parent ${parentInvoice.id} sudah ada, skip buat invoice baru`,
-                "INFO");
-              setLaporanModal(null);
-              return;
-            }
-
-            const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
-            const invId = "INV-" + todayInv.replace(/-/g, "").slice(0, 8) + "-" + invSeq;
-            const gDays = 30; // Semua service: garansi 30 hari dari terbit invoice
-            const gExpires = new Date(Date.now() + gDays * 86400000).toISOString().slice(0, 10);
-
-            // ── BUILD mDetail — BREAKDOWN 1-1, SINGLE SOURCE OF TRUTH ──────────────
-            // Helper: lookup harga dari inventory/pricelist jika tidak ada di item
-            const lookupHarga = (nama, satuanHint) => lookupHargaGlobal(nama, satuanHint);
-            const mkRow = (nama, jumlah, satuan, hSat, ket) => {
-              const nama2 = (nama || "").toLowerCase();
-              const isF = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => nama2.includes(k));
-              const rawQ = parseFloat(jumlah) || 0;
-              const qty = isF ? Math.max(1, Math.ceil(rawQ)) : rawQ;
-              const h = parseFloat(hSat) || 0 || lookupHarga(nama, satuan);
-              const ketFin = ket || (isF && rawQ !== qty ? `Aktual: ${rawQ} kg → dibulatkan ${qty} kg` : "");
-              return { nama, jumlah: qty, satuan: satuan || (isF ? "kg" : "pcs"), harga_satuan: h, subtotal: h * qty, keterangan: ketFin };
-            };
-
-            const mDetail = [];
-
-            // A. Jasa rows (dari [+] Tambah Jasa form) — keterangan: "jasa"
-            laporanJasaItems.filter(j => j.nama && j.nama !== "__manual__" && parseFloat(j.jumlah || 0) > 0).forEach(j => {
-              mDetail.push(mkRow(j.nama, j.jumlah || 1, j.satuan || "pcs", j.harga_satuan || 0, "jasa"));
-            });
-
-            // B. Repair rows (dari [+] Tambah Repair form) — keterangan: "repair"
-            laporanRepairItems.filter(r => r.nama && parseFloat(r.jumlah || 0) > 0).forEach(r => {
-              mDetail.push(mkRow(r.nama, r.jumlah || 1, r.satuan || "pcs", r.harga_satuan || 0, "repair"));
-            });
-
-            // C. Material rows — laporanMaterials adalah stok tracking saja (TIDAK masuk invoice).
-            // Freon/vacum yang ditagih diinput via laporanJasaItems (Jasa section), bukan di sini.
-
-            // D. Install rows — build dari laporanInstallItems dengan keterangan yang benar
-            if (isInstallSvc) {
-              mDetail.length = 0;
-              // Jasa Install (pasang, vacum, kuras) → keterangan:"jasa"
-              const INSTALL_JASA_KEYS = ["pasang", "vacum", "bongkar", "kuras"];
-              effectiveMaterials.filter(m => m.nama && parseFloat(m.jumlah || 0) > 0).forEach(m => {
-                const n = (m.nama || "").toLowerCase();
-                const isJasa = INSTALL_JASA_KEYS.some(k => n.includes(k));
-                const isFreon = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => n.includes(k));
-                const ket = m.keterangan || (isJasa ? "jasa" : isFreon ? "freon" : "");
-                mDetail.push(mkRow(m.nama, m.jumlah, m.satuan || "pcs", m.harga_satuan || 0, ket));
-              });
-            }
-
-            // E. AUTO-INJECT per-service (planning final 2026-04-14):
-            //    - Cleaning/Maintenance: inject per-unit dari Card 1/4 tipe PK (base labor)
-            //    - Repair: NO auto-inject base. Inject "Biaya Pengecekan" jika card 3/4 kosong.
-            //             Checkbox "Cleaning in Repair" → inject Cleaning rows untuk unit yg dicentang.
-            //    - Install: semua dari Card 3/4 (handled di branch D di atas)
-            //    - Complain: inject biaya cek hanya jika tanpa-garansi & finalLabor > 0
-            if (!isInstallSvc) {
-              const svc = laporanModal?.service;
-              const hasRepairItems = mDetail.some(m => m.keterangan === "repair");
-              const isRepairSvc = svc === "Repair";
-              const isComplainSvc2 = svc === "Complain";
-              const isCleaningOrMaint = svc === "Cleaning" || svc === "Maintenance";
-
-              // ── Cleaning & Maintenance: per-unit base labor dari Card 1/4 tipe ──
-              // Skip hanya jika mDetail sudah ada row jasa cleaning/maintenance/cuci.
-              // Bug lama: transport jasa bikin baseline ter-skip → laporan Cleaning hilang.
-              const alreadyHasCleaningRow = mDetail.some(m => {
-                if (m.keterangan !== "jasa") return false;
-                const n = (m.nama || "").toLowerCase();
-                return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
-              });
-              if (isCleaningOrMaint && !alreadyHasCleaningRow) {
-                const unitsWithTipe = (laporanUnits || []).filter(u => u && u.tipe);
-                if (unitsWithTipe.length > 0) {
-                  [...unitsWithTipe].reverse().forEach((u) => {
-                    const hargaUnit = hargaPerUnitFromTipe(svc, u.tipe, priceListData);
-                    if (hargaUnit > 0) {
-                      const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
-                      const bracketLabel = getBracketKey(svc, u.tipe) || u.tipe;
-                      const namaJasa = (svc || "") + " " + bracketLabel + " (" + unitLabel + ")";
-                      mDetail.unshift({
-                        nama: namaJasa, jumlah: 1, satuan: "unit",
-                        harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
-                      });
-                    }
-                  });
-                } else {
-                  const svcFee = hitungLabor(svc, laporanModal.type, laporanUnits.length);
-                  if (svcFee > 0) {
-                    const unitCount = laporanUnits.length || 1;
-                    const hPerUnit = Math.round(svcFee / unitCount);
-                    [...laporanUnits].reverse().forEach((u, idx) => {
-                      const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || (unitCount - idx)));
-                      const namaJasa = (svc || "") + (laporanModal.type ? " - " + laporanModal.type : "") + " (" + unitLabel + ")";
-                      mDetail.unshift({ nama: namaJasa, jumlah: 1, satuan: "unit", harga_satuan: hPerUnit, subtotal: hPerUnit, keterangan: "jasa" });
-                    });
-                  }
-                }
-              }
-
-              // ── Cleaning 1 unit: inject "Biaya Transport Bila 1 Unit" otomatis ──
-              if (svc === "Cleaning" && (laporanUnits || []).length === 1) {
-                const transportItem = priceListData.find(
-                  r => r.service === "Cleaning" && r.type === "Biaya Transport Bila 1 Unit" && r.is_active !== false
-                );
-                if (transportItem && transportItem.price > 0) {
-                  mDetail.push({
-                    nama: "Biaya Transport Bila 1 Unit", jumlah: 1, satuan: "unit",
-                    harga_satuan: transportItem.price, subtotal: transportItem.price, keterangan: "jasa"
-                  });
-                }
-              }
-
-              // ── Repair: Cleaning-in-Repair checkbox → append per unit yg dicentang ──
-              if (isRepairSvc && Array.isArray(laporanCleaningInRepair) && laporanCleaningInRepair.length > 0) {
-                const checkedUnits = (laporanUnits || []).filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no));
-                checkedUnits.forEach((u) => {
-                  const hargaUnit = hargaPerUnitFromTipe("Cleaning", u.tipe, priceListData);
-                  if (hargaUnit > 0) {
-                    const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
-                    const bracketLabel = getBracketKey("Cleaning", u.tipe) || u.tipe;
-                    mDetail.push({
-                      nama: "Cleaning " + bracketLabel + " (" + unitLabel + ") [+Repair]",
-                      jumlah: 1, satuan: "unit",
-                      harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
-                    });
-                  }
-                });
-              }
-
-              // ── Repair card 3/4 kosong: inject "Biaya Pengecekan" ──
-              // Kondisi: tidak ada repair item DAN tidak ada jasa apapun (card 3/4 benar-benar kosong)
-              // ✨ FIX: skip jika isRepairGratis=true — repair gratis tidak boleh kena biaya cek
-              if (isRepairSvc && !isRepairGratis && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa")) {
-                const biayaCekItem = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
-                const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 0;
-                mDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek, keterangan: "jasa" });
-              }
-
-              // ── Complain biaya cek: inject dari finalLabor (tanpa garansi) ──
-              if (isComplainSvc2 && finalLabor > 0 && finalLabor <= 200000 && !mDetail.some(m => m.keterangan === "jasa")) {
-                mDetail.unshift({ nama: "Biaya Pengecekan (Tanpa Garansi)", jumlah: 1, satuan: "unit", harga_satuan: finalLabor, subtotal: finalLabor, keterangan: "jasa" });
-              }
-            }
-
-            // garansi_status: hanya untuk state lokal (tidak ada kolom ini di DB)
-            const garansiStatusLocal = isComplainSvc
-              ? (prevGaransiActive ? (matTotalInv > 0 ? 'GARANSI_DENGAN_MATERIAL' : 'GARANSI_AKTIF')
-                : prevGaransiExpired ? 'GARANSI_EXPIRED' : 'NO_GARANSI')
-              : null;
-            // Recalculate total dari mDetail (menangkap inject transport fee dll yang bisa merubah total)
-            const finalTotalFromDetail = mDetail.reduce((s, r) => s + (r.subtotal || 0), 0);
-            const newInvoice = {
-              id: invId,
-              // Multi-hari: jika child MULTI-DAY, invoice di-link ke parent (hari pertama)
-              // Bukan multi-day (mis. Complain→Repair) → invoice tetap pakai ID order sendiri
-              job_id: (laporanModal.parent_job_id && laporanModal.is_multi_day === true)
-                ? laporanModal.parent_job_id
-                : laporanModal.id,
-              customer: laporanModal.customer,
-              phone: laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
-              service: laporanModal.service + (laporanModal.type ? " - " + laporanModal.type : ""),
-              units: laporanUnits.length,
-              labor: finalLabor,
-              material: matTotalInv,
-              materials_detail: mDetail,           // array untuk state/display
-              garansi_status: garansiStatusLocal,  // hanya state, tidak ke DB
-              repair_gratis: isRepairGratis ? laporanRepairType : undefined,  // NEW: store repair type (gratis-garansi/gratis-customer)
-              discount: 0,
-              trade_in: false,
-              trade_in_amount: 0,
-              total: finalTotalFromDetail || finalTotal,
-              status: "PENDING_APPROVAL",
-              garansi_days: gDays,
-              garansi_expires: gExpires,
-              created_at: new Date().toISOString(),
-            };
-
-            // Status override
-            if (isRepairGratis && finalTotal === 0) {
-              // FREE REPAIR (garansi atau arrangement) → stays PENDING_APPROVAL (requires Owner/Admin approval)
-              newInvoice.status = "PENDING_APPROVAL";
-              addAgentLog("REPAIR_GRATIS_APPROVAL_NEEDED",
-                `Invoice ${invId} Repair Rp 0 (${laporanRepairType}) — PENDING_APPROVAL (awaiting Owner/Admin approval)`,
-                "WARNING");
-            } else if (isComplainSvc && finalTotal === 0) {
-              newInvoice.status = "PAID";
-              newInvoice.paid_at = new Date().toISOString();
-              addAgentLog("GARANSI_AUTO_PAID", `Invoice ${invId} Rp 0 → auto PAID`, "SUCCESS");
-            } else if (isComplainSvc && prevGaransiExpired) {
-              addAgentLog("GARANSI_EXPIRED_FEE",
-                `Invoice ${invId} — garansi expired (ref: ${prevGaransiExpired.id}) → biaya cek Rp ${BIAYA_CEK.toLocaleString("id-ID")}`,
-                "WARNING");
-            }
-
-            // ── Auto-discount membership tier (Gold: jasa 5%, Platinum: jasa 5% + material 5%) ──
-            {
-              const custPhone = laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone;
-              const custData = custPhone ? customersData.find(c => c.phone === custPhone || c.phone === normalizePhone(custPhone)) : null;
-              const custTier = custData?.membership_tier;
-              if (custTier === "gold" || custTier === "platinum") {
-                const laborDisc = Math.round((newInvoice.labor || 0) * 0.05);
-                const matDisc = custTier === "platinum" ? Math.round((newInvoice.material || 0) * 0.05) : 0;
-                const memberDisc = laborDisc + matDisc;
-                if (memberDisc > 0 && newInvoice.total > 0 && newInvoice.status === "PENDING_APPROVAL") {
-                  newInvoice.discount = (newInvoice.discount || 0) + memberDisc;
-                  newInvoice.member_discount = memberDisc;
-                  newInvoice.total = Math.max(0, newInvoice.total - memberDisc);
-                }
-              }
-            }
-
-            // Simpan invoice ke Supabase — exclude fields yang tidak ada di DB schema
-            const { garansi_status: _gs, ...invBase } = newInvoice;
-            const invPayload = {
-              ...invBase,
-              materials_detail: mDetail.length > 0 ? JSON.stringify(mDetail) : null,
-              repair_gratis: invBase.repair_gratis || undefined,
-            };
-            // ── 1 invoice per job: query DB langsung untuk cegah race condition ──
-            const { data: existingDB, error: fetchExistingErr } = await supabase
-              .from("invoices").select("id").eq("job_id", laporanModal.id);
-            if (fetchExistingErr) {
-              console.error("[INVOICE_PRECHECK] gagal cek existing:", fetchExistingErr.message);
-              showNotif("❌ Gagal verifikasi invoice existing — submit dibatalkan. Coba lagi.");
-              return;
-            }
-            if (existingDB && existingDB.length > 0) {
-              // Hapus semua dulu — update local state HANYA setelah semua delete sukses
-              for (const old of existingDB) {
-                const { error: delErr } = await deleteInvoice(supabase, old.id, auditUserName(), "TEKNISI_REWRITE_LAPORAN");
-                if (delErr) {
-                  console.error("[INVOICE_REWRITE] gagal hapus", old.id, delErr.message);
-                  showNotif("❌ Gagal hapus invoice lama — submit dibatalkan. Coba lagi.");
-                  return;
-                }
-              }
-              // Semua delete sukses baru update local state
-              setInvoicesData(prev => prev.filter(i => i.job_id !== laporanModal.id));
-              addAgentLog("INVOICE_REWRITE", `${existingDB.length} invoice lama dihapus untuk ${laporanModal.id} (rewrite)`, "INFO");
-            }
-            const { error: invErr } = await insertInvoice(supabase, invPayload);
-            if (invErr) {
-              console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
-              let retryOk = false;
-              for (const st of ["PENDING_APPROVAL", "UNPAID"]) {
-                const { error: e2 } = await insertInvoice(supabase, {
-                  id: newInvoice.id, job_id: newInvoice.job_id,
-                  customer: newInvoice.customer, service: newInvoice.service,
-                  units: newInvoice.units, labor: newInvoice.labor,
-                  material: newInvoice.material, total: newInvoice.total,
-                  status: st,
-                });
-                if (!e2) { retryOk = true; break; }
-              }
-              if (!retryOk) {
-                showNotif("❌ Gagal simpan invoice — laporan tersimpan, cek menu Invoice manual.");
-                addAgentLog("INVOICE_INSERT_FAILED", `Invoice ${newInvoice.id} gagal disimpan setelah retry`, "ERROR");
-              }
-            }
-            // Update local state SETELAH DB insert sukses (atau retry sukses)
-            setInvoicesData(prev => [...prev, newInvoice]);
-
-            addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
-
-            // WA notif ke Owner
-            const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
-            const ownerMsg =
-              "Invoice Menunggu Approval\n"
-              + "Job: " + laporanModal.id + "\n"
-              + "Customer: " + laporanModal.customer + "\n"
-              + "Layanan: " + laporanModal.service + " - " + laporanUnits.length + " unit\n"
-              + "Teknisi: " + laporanModal.teknisi + (laporanModal.helper ? " + " + laporanModal.helper : "") + "\n"
-              + "Total: " + fmt(newInvoice.total) + " Jasa: " + fmt(newInvoice.labor) + " Mat: " + fmt(newInvoice.material) + "\n"
-              + "Invoice: " + invId + " Silakan approve di menu Invoice. — ARA";
-            // Notify owner accounts
-            await Promise.all(ownerAccounts.map(u => {
-              if (u.phone) return sendWA(u.phone, ownerMsg);
-              return Promise.resolve();
-            }));
-
-            // Fallback if no owner accounts (notify default phone)
-            if (ownerAccounts.length === 0) {
-              try {
-                const r = await fetch("/api/send-wa", {
-                  method: "POST", headers: await _apiHeaders(),
-                  body: JSON.stringify({ phone: "6281299898937", message: ownerMsg, currentUserRole: currentUser?.role || "Unknown" })
-                });
-                if (!r.ok) {
-                  const d = await r.json().catch(() => ({}));
-                  console.warn("[ARA_NOTIFY_OWNER_FAILED]", d.error || r.status);
-                }
-              } catch (err) {
-                console.warn("[ARA_NOTIFY_OWNER_FAILED]", err.message);
-              }
-            }
-          }
-
-          setLaporanSubmitted(true);
-          pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
-          showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan dikirim ke Owner/Admin untuk verifikasi.`);
-          } catch (err) {
-            console.error("submitLaporan fatal:", err);
-            showNotif("❌ Submit error: " + (err?.message || String(err)));
-          } finally {
-            submitLaporanLock.current = false;
-          }
-        };
 
         const tagStyle = (active, color) => ({
           display: "flex", alignItems: "center", gap: 6, background: cs.card,

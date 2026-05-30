@@ -27,7 +27,7 @@ export const fetchInvoices = (supabase) =>
     .select(INVOICE_COLS)
     .order("created_at", { ascending: false }).limit(300);
 
-// Server-side search invoice — ilike di kolom customer/id/phone/job_id, batas 100 hasil.
+// Server-side search invoice — multi-kolom: identitas + tim + layanan + bayar + status.
 // Karakter spesial (koma, kurung) di-strip untuk hindari masalah parser .or() Supabase.
 export const searchInvoicesServer = (supabase, query) => {
   const term = (query || "").trim().replace(/[(),]/g, " ").trim();
@@ -35,7 +35,18 @@ export const searchInvoicesServer = (supabase, query) => {
   const p = `%${term}%`;
   return supabase.from("invoices")
     .select(INVOICE_COLS)
-    .or(`customer.ilike.${p},id.ilike.${p},phone.ilike.${p},job_id.ilike.${p}`)
+    .or([
+      `customer.ilike.${p}`,
+      `id.ilike.${p}`,
+      `phone.ilike.${p}`,
+      `job_id.ilike.${p}`,
+      `teknisi.ilike.${p}`,
+      `service.ilike.${p}`,
+      `materials_detail.ilike.${p}`,
+      `paid_method.ilike.${p}`,
+      `invoice_type.ilike.${p}`,
+      `status.ilike.${p}`,
+    ].join(","))
     .order("created_at", { ascending: false })
     .limit(100);
 };
