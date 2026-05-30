@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { cs } from "../theme/cs.js";
+import { enqueueBAP, flushBAPQueue } from "../lib/bapOfflineQueue.js";
 
 // Preset ruangan (sama dengan datalist di laporan)
 const RUANGAN_PRESET = [
@@ -61,9 +62,15 @@ export default function BAPModal({ order, onClose, onSubmitted, supabase, showNo
   const [saving, setSaving] = useState(false);
   const [bapNumber, setBapNumber] = useState("");
 
-  // Generate BAP number sekali saat modal dibuka
+  // Generate BAP number sekali saat modal dibuka. Kalau offline, pakai placeholder bertanda "T"
+  // yang akan di-regenerate jadi nomor proper saat sync ke server.
   useEffect(() => {
-    nextBapNumber(supabase, todayStr).then(setBapNumber);
+    nextBapNumber(supabase, todayStr)
+      .then(setBapNumber)
+      .catch(() => {
+        const rand = String(Math.floor(Math.random() * 900) + 100);
+        setBapNumber(`BAP-${todayStr.replace(/-/g, "")}-T${rand}`);
+      });
   }, []);
 
   // ─── Signature pad ───
@@ -100,33 +107,18 @@ export default function BAPModal({ order, onClose, onSubmitted, supabase, showNo
     setHasSig(false);
   };
 
-  // ─── Upload TTD ke R2 ───
-  const uploadTtd = async () => {
+  // Capture TTD canvas → PNG data URL (background putih solid biar enak ditempel di PDF nanti)
+  const captureTtdDataUrl = () => {
     const canvas = canvasRef.current;
-    // Bikin PNG putih solid (tidak transparan) supaya enak ditempel di invoice/PDF nanti
     const out = document.createElement("canvas");
     out.width = canvas.width; out.height = canvas.height;
     const octx = out.getContext("2d");
     octx.fillStyle = "#ffffff"; octx.fillRect(0, 0, out.width, out.height);
     octx.drawImage(canvas, 0, 0);
-    const dataUrl = out.toDataURL("image/png");
-    const base64 = dataUrl.split(",")[1];
-    const filename = `${bapNumber}_customer_${Date.now()}.png`;
-    const res = await fetch("/api/upload-foto", {
-      method: "POST",
-      headers: await apiHeaders(),
-      body: JSON.stringify({
-        base64, filename,
-        folder: `signatures/${order.id}`,
-        mimeType: "image/png",
-      }),
-    });
-    const d = await res.json().catch(() => ({}));
-    if (!res.ok || !d.success || !d.key) throw new Error(d.error || "Upload TTD gagal");
-    return d.key; // simpan key, akses via /api/foto?key=...
+    return out.toDataURL("image/png");
   };
 
-  // ─── Submit BAP ───
+  // ─── Submit BAP (offline-aware via IndexedDB queue) ───
   const handleSubmit = async ({ skipped = false }) => {
     if (!skipped && (!hasSig || !custName.trim())) {
       showNotif?.("⚠ TTD customer & nama wajib diisi"); return;
@@ -134,35 +126,25 @@ export default function BAPModal({ order, onClose, onSubmitted, supabase, showNo
     if (skipped && !skipReason.trim()) {
       showNotif?.("⚠ Wajib isi alasan kenapa customer tidak TTD"); return;
     }
-    // PK (kapasitas) WAJIB di tiap unit — pricing invoice bergantung di sini.
-    // Brand & ruangan tetap opsional supaya cepat di lokasi.
     const missPK = units.findIndex(u => !u.kapasitas);
     if (missPK !== -1) {
       showNotif?.(`⚠ Unit ${missPK + 1}: PK (kapasitas) wajib diisi — invoice akan salah kalau dikosongkan`);
       return;
     }
+
     setSaving(true);
     try {
-      // Upload TTD kalau tidak di-skip
-      let ttdKey = null;
-      if (!skipped) {
-        ttdKey = await uploadTtd();
-      }
+      const ttdDataUrl = skipped ? null : captureTtdDataUrl();
 
-      // Bangun units_json untuk laporan minimal — teknisi lengkapi material/foto nanti di kantor
       const unitsForReport = units.map((u, i) => ({
-        no: i + 1,
-        label: u.ruangan || `Unit ${i + 1}`,
-        ruangan: u.ruangan || "",
-        brand: u.brand || "",
-        kapasitas: u.kapasitas || "",
-        // Field detail lainnya dikosongkan — dilengkapi nanti
+        no: i + 1, label: u.ruangan || `Unit ${i + 1}`,
+        ruangan: u.ruangan || "", brand: u.brand || "", kapasitas: u.kapasitas || "",
         kondisi_sebelum: "", kondisi_setelah: "",
         material_ids: [], freon_kg: 0, fotos: [],
       }));
 
       const reportId = "REP-" + Date.now().toString(36).toUpperCase() + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
-      const payload = {
+      const report = {
         id: reportId,
         job_id: order.id,
         teknisi: order.teknisi || currentUser?.name || "",
@@ -173,28 +155,50 @@ export default function BAPModal({ order, onClose, onSubmitted, supabase, showNo
         date: order.date || todayStr,
         total_units: unitCount,
         units: unitsForReport,
-        materials_used: [],
-        foto_urls: [],
+        materials_used: [], foto_urls: [],
         rekomendasi: rekomendasi || null,
         catatan_global: null,
         status: "SUBMITTED",
         submitted_at: new Date().toISOString(),
-        // ── Fields BAP ──
         bap_number:         bapNumber,
         bap_statement:      statement,
         bap_recommendation: rekomendasi || null,
-        ttd_customer_url:   ttdKey || null,
+        ttd_customer_url:   null, // diisi server-side setelah upload
         ttd_customer_name:  skipped ? null : custName.trim(),
         bap_skipped_reason: skipped ? skipReason.trim() : null,
         bap_signed_at:      new Date().toISOString(),
         last_changed_by:    currentUser?.name || "Teknisi",
       };
 
-      const { error } = await supabase.from("service_reports").insert(payload);
-      if (error) throw new Error(error.message);
+      // 1. Selalu enqueue dulu (durable — kalau HP mati setelah ini, data tetap aman)
+      await enqueueBAP({
+        id: reportId,
+        report,
+        ttdDataUrl,
+        createdAt: Date.now(),
+        attempts: 0,
+      });
 
-      showNotif?.(`✅ BAP ${bapNumber} tersimpan — laporan SUBMITTED. Lengkapi detail di kantor.`);
-      onSubmitted?.(payload);
+      // 2. Coba flush langsung — kalau online, BAP langsung tersinkronisasi
+      let synced = false;
+      if (navigator.onLine !== false) {
+        try {
+          const res = await flushBAPQueue({
+            supabase, apiHeaders,
+            onSynced: (finalReport) => { onSubmitted?.(finalReport); },
+          });
+          synced = res.syncedReports.some(r => r.id === reportId);
+        } catch (_) { /* gagal sync — biar worker yang retry */ }
+      }
+
+      if (synced) {
+        showNotif?.(`✅ BAP ${bapNumber} tersimpan — laporan SUBMITTED`);
+      } else {
+        // Offline atau sync gagal — sudah masuk antrian, akan auto-sync nanti
+        showNotif?.(`📡 BAP ${bapNumber} disimpan offline — akan auto-sync saat online`);
+        // Tampilkan ke list lokal sebagai SUBMITTED supaya teknisi lihat
+        onSubmitted?.({ ...report, _pendingSync: true });
+      }
       onClose?.();
     } catch (err) {
       showNotif?.("❌ " + (err.message || err));

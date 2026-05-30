@@ -12,6 +12,7 @@ import { isFreonItem, displayStock, computeStockStatus } from "./lib/inventory.j
 import { TECH_PALETTE, getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
 import { detectContinuationCandidates, calcContinuationDayNum } from "./lib/orders.js";
+import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
 import {
   PRICE_LIST_DEFAULT, tipeToPkNumber, getBracketKey,
   hargaPerUnitFromTipe as hargaPerUnitFromTipeLib,
@@ -913,7 +914,12 @@ export default function ACleanWebApp() {
   const onBAPSubmitted = (newReport) => {
     setLaporanReports(prev => [newReport, ...prev.filter(r => r.id !== newReport.id)]);
     setBapModalOrder(null);
+    // Refresh pending count — bisa naik (kalau offline) atau turun (kalau langsung sync)
+    listPendingBAP().then(items => setPendingBAPCount(items.length)).catch(() => {});
   };
+  // BAP offline queue — count untuk indikator, auto-sync periodic & on online
+  const [pendingBAPCount, setPendingBAPCount] = useState(0);
+  const [bapSyncing, setBapSyncing] = useState(false);
 
   // GAP 3 — State untuk edit invoice
   const [modalEditInvoice, setModalEditInvoice] = useState(false);
@@ -1073,6 +1079,48 @@ export default function ACleanWebApp() {
     }
     return r;
   };
+
+  // BAP offline sync worker — trigger flush + refresh counter
+  const triggerBAPSync = async () => {
+    if (bapSyncing) return;
+    try {
+      setBapSyncing(true);
+      const res = await flushBAPQueue({
+        supabase, apiHeaders: _apiHeaders,
+        onSynced: (finalReport) => {
+          setLaporanReports(prev => {
+            const exists = prev.some(r => r.id === finalReport.id);
+            const next = { ...finalReport, _pendingSync: undefined };
+            return exists ? prev.map(r => r.id === finalReport.id ? next : r) : [next, ...prev];
+          });
+        },
+      });
+      setPendingBAPCount(res.remaining);
+      if (res.synced > 0) showNotif?.(`☁️ ${res.synced} BAP berhasil di-sync`);
+    } catch (e) {
+      console.warn("[BAP sync]", e?.message);
+    } finally {
+      setBapSyncing(false);
+    }
+  };
+
+  // Mount: load initial pending count + listener online + periodic
+  useEffect(() => {
+    let stopped = false;
+    listPendingBAP().then(items => { if (!stopped) setPendingBAPCount(items.length); }).catch(() => {});
+    const onOnline = () => triggerBAPSync();
+    window.addEventListener("online", onOnline);
+    const iv = setInterval(() => {
+      if (navigator.onLine !== false) {
+        listPendingBAP().then(items => {
+          if (items.length > 0) triggerBAPSync();
+          setPendingBAPCount(items.length);
+        }).catch(() => {});
+      }
+    }, 30_000);
+    return () => { stopped = true; window.removeEventListener("online", onOnline); clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // SEC-07: brute force states — harus setelah _ls didefinisikan
   const [loginAttempts, setLoginAttempts] = useState(() => _ls("loginAttempts", 0));
   const [lockoutUntil, setLockoutUntil] = useState(() => _ls("lockoutUntil", 0));
@@ -12522,6 +12570,22 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* BAP Offline Sync Indicator — muncul untuk Teknisi/Helper kalau ada BAP menunggu sync */}
+      {pendingBAPCount > 0 && currentUser && ["Teknisi", "Helper"].includes(currentUser.role) && (
+        <div onClick={triggerBAPSync}
+          style={{
+            position: "fixed", bottom: 18, left: 18, zIndex: 590,
+            background: bapSyncing ? cs.accent + "33" : cs.yellow + "22",
+            border: "1px solid " + (bapSyncing ? cs.accent : cs.yellow) + "66",
+            color: bapSyncing ? cs.accent : cs.yellow,
+            borderRadius: 99, padding: "9px 16px", fontSize: 12, fontWeight: 700,
+            cursor: "pointer", boxShadow: "0 6px 20px #0007", display: "flex", alignItems: "center", gap: 8,
+          }}
+          title="Klik untuk sync sekarang">
+          {bapSyncing ? "☁️ Syncing..." : `📡 ${pendingBAPCount} BAP menunggu sync`}
         </div>
       )}
 
