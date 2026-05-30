@@ -6123,7 +6123,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       editExpenseItem={editExpenseItem} setEditExpenseItem={setEditExpenseItem} newExpenseForm={newExpenseForm} setNewExpenseForm={setNewExpenseForm}
       currentUser={currentUser} supabase={supabase} insertExpense={insertExpense} updateExpense={updateExpense} deleteExpense={deleteExpense}
       auditUserName={auditUserName} setAuditModal={setAuditModal} TODAY={TODAY} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE} fmt={fmt}
-      showNotif={showNotif} showConfirm={showConfirm} appSettings={appSettings} setAppSettings={setAppSettings} />
+      showNotif={showNotif} showConfirm={showConfirm} appSettings={appSettings} setAppSettings={setAppSettings}
+      teknisiData={teknisiData} userAccounts={userAccounts} />
   );
 
   // ============================================================

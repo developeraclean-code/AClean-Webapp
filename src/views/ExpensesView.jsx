@@ -1,7 +1,7 @@
 import { memo, useState, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 
-function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, currentUser, supabase, insertExpense, updateExpense, deleteExpense, auditUserName, setAuditModal, TODAY, EXPENSE_PAGE_SIZE, fmt, showNotif, showConfirm, appSettings, setAppSettings }) {
+function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, currentUser, supabase, insertExpense, updateExpense, deleteExpense, auditUserName, setAuditModal, TODAY, EXPENSE_PAGE_SIZE, fmt, showNotif, showConfirm, appSettings, setAppSettings, teknisiData, userAccounts }) {
 const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin" || currentUser?.role === "Finance";
 const isOwner = currentUser?.role === "Owner";
 
@@ -484,18 +484,31 @@ return (
               }} />
           </div>
           {/* Teknisi name (for petty_cash like Kasbon/Lembur/Bonus) */}
-          {newExpenseForm.category === "petty_cash" && ["Kasbon Karyawan", "Lembur", "Bonus"].includes(newExpenseForm.subcategory) && (
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Nama Karyawan</label>
-              <input value={newExpenseForm.teknisi_name}
-                onChange={e => setNewExpenseForm(p => ({ ...p, teknisi_name: e.target.value }))}
-                placeholder="Nama teknisi/helper..."
-                style={{
-                  width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
-                  color: cs.text, padding: "9px 12px", fontSize: 13, boxSizing: "border-box"
-                }} />
-            </div>
-          )}
+          {newExpenseForm.category === "petty_cash" && ["Kasbon Karyawan", "Lembur", "Bonus"].includes(newExpenseForm.subcategory) && (() => {
+            // Gabung teknisiData + userAccounts (Teknisi/Helper), dedupe by canonical name
+            const namesSet = new Set();
+            [...(teknisiData || []), ...(userAccounts || [])]
+              .filter(u => ["Teknisi", "Helper"].includes(u.role))
+              .forEach(u => { if (u.name) namesSet.add(u.name.trim()); });
+            const nameOptions = [...namesSet].sort((a, b) => a.localeCompare(b));
+            return (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Nama Karyawan</label>
+                <select value={newExpenseForm.teknisi_name}
+                  onChange={e => setNewExpenseForm(p => ({ ...p, teknisi_name: e.target.value }))}
+                  style={{
+                    width: "100%", background: cs.card, border: "1px solid " + (newExpenseForm.teknisi_name ? cs.border : cs.red + "55"),
+                    borderRadius: 8, color: cs.text, padding: "9px 12px", fontSize: 13, boxSizing: "border-box"
+                  }}>
+                  <option value="">— Pilih teknisi/helper —</option>
+                  {nameOptions.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>
+                  Pilih dari preset — supaya kasbon otomatis terhitung di payroll mingguan.
+                </div>
+              </div>
+            );
+          })()}
           {/* Item name + freon type for material */}
           {newExpenseForm.category === "material_purchase" && (
             <>
