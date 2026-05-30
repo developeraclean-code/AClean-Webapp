@@ -782,6 +782,43 @@ return (
             })()}
           </div>
 
+          {/* ── BAP highlight — info kunci dari teknisi untuk admin bikin invoice ── */}
+          {r.bap_number && (
+            <div style={{
+              background: cs.yellow + "12",
+              border: "1px solid " + cs.yellow + "44",
+              borderRadius: 10,
+              padding: "11px 14px",
+              marginBottom: 12,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: r.rekomendasi ? 9 : 0 }}>
+                <span style={{ fontSize: 10, fontWeight: 800, color: cs.yellow, padding: "3px 10px", background: cs.yellow + "22", border: "1px solid " + cs.yellow + "55", borderRadius: 99, whiteSpace: "nowrap" }}>
+                  📋 dari BAP · {r.bap_number}
+                </span>
+                <span style={{ fontSize: 11, color: cs.muted }}>
+                  {r.bap_skipped_reason
+                    ? <span style={{ color: cs.red }}>⚠ TTD di-skip: {r.bap_skipped_reason}</span>
+                    : <span>✍️ TTD oleh: <b style={{ color: cs.text }}>{r.ttd_customer_name || "—"}</b></span>
+                  }
+                </span>
+              </div>
+              {r.rekomendasi && (
+                <div style={{ background: cs.bg, border: "1px solid " + cs.yellow + "33", borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, color: cs.yellow, fontWeight: 800, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.5px" }}>📌 Rekomendasi Teknisi (buat invoice dari sini)</div>
+                  <div style={{ fontSize: 13, color: cs.text, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{r.rekomendasi}</div>
+                </div>
+              )}
+              {r.ttd_customer_url && (
+                <div style={{ marginTop: 8 }}>
+                  <a href={fotoSrc(r.ttd_customer_url)} target="_blank" rel="noreferrer"
+                    style={{ fontSize: 11, color: cs.accent, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    🖼 Lihat TTD customer
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Per-unit accordion — compact mobile layout */}
           {(r.units || []).map((u, ui) => (
             <div key={ui} style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", marginBottom: 6, fontSize: 11 }}>
@@ -867,7 +904,7 @@ return (
               </div>
             ) : null;
           })()}
-          {r.rekomendasi && <div style={{ fontSize: 11, marginBottom: 6 }}><span style={{ color: cs.muted }}>Rekomendasi: </span><span style={{ color: cs.text }}>{r.rekomendasi}</span></div>}
+          {r.rekomendasi && !r.bap_number && <div style={{ fontSize: 11, marginBottom: 6 }}><span style={{ color: cs.muted }}>Rekomendasi: </span><span style={{ color: cs.text }}>{r.rekomendasi}</span></div>}
           {r.catatan_global && <div style={{ fontSize: 11, marginBottom: 8 }}><span style={{ color: cs.muted }}>Catatan: </span><span style={{ color: cs.text }}>{r.catatan_global}</span></div>}
 
           {/* Edit log */}
