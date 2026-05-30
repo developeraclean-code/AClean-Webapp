@@ -22,7 +22,9 @@ export default function ProjectPurchaseView() {
   const totMat = rows.filter((x) => x.jenis === "Material").reduce((s, x) => s + x.total, 0);
   const totAlat = rows.filter((x) => x.jenis === "Alat").reduce((s, x) => s + x.total, 0);
 
-  const addPurchase = () => openForm({
+  const addPurchase = () => {
+    if (!db.projects.length) { toast("Buat project dulu di Daftar Project (atau pilih '(umum)' kalau pembelian tidak terkait project)"); return; }
+    openForm({
     title: "Catat Pembelian (isi beberapa sekaligus)",
     fields: [
       { name: "projectId", label: "Project", type: "select", options: ["(umum)", ...db.projects.map((p) => p.nama)] },
@@ -41,6 +43,7 @@ export default function ProjectPurchaseView() {
       toast(`${rr.length} pembelian tercatat`);
     },
   });
+  };
 
   return (
     <div style={{ padding: 22, maxWidth: 1200 }}>

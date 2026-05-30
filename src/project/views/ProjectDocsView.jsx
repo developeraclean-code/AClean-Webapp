@@ -14,7 +14,9 @@ export default function ProjectDocsView() {
   const { openForm, openContent, close, toast } = useModal();
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
 
-  const addDoc = () => openForm({
+  const addDoc = () => {
+    if (!db.projects.length) { toast("Buat project dulu di Daftar Project"); return; }
+    openForm({
     title: "Buat Dokumen",
     fields: [
       { name: "jenis", label: "Jenis dokumen", type: "select", options: DOC_TYPES },
@@ -40,6 +42,7 @@ export default function ProjectDocsView() {
       setTimeout(() => viewDoc(id), 50);
     },
   });
+  };
 
   const viewDoc = (id) => {
     openContent({

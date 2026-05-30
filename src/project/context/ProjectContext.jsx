@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback } from "react";
-import { initialData, TODAY } from "../data/sampleData.js";
+import { initialData } from "../data/sampleData.js";
 
 const Ctx = createContext(null);
 export const useProject = () => useContext(Ctx);
@@ -7,7 +7,7 @@ export const useProject = () => useContext(Ctx);
 export function ProjectProvider({ currentUser, children }) {
   const [db, setDb] = useState(() => initialData());
   const [activeView, setActiveView] = useState("dashboard");
-  const [activeProject, setActiveProject] = useState("p1");
+  const [activeProject, setActiveProject] = useState(null);
   const role = currentUser?.role || "Owner";
   const can = {
     finance: role === "Owner",
@@ -15,7 +15,7 @@ export function ProjectProvider({ currentUser, children }) {
     expenseInput: role === "Owner" || role === "Admin",
     verify: role === "Owner" || role === "Admin",
   };
-  const today = TODAY;
+  const today = new Date().toISOString().slice(0, 10);
 
   // helpers (functional setters supaya tidak stale)
   const update = useCallback((fn) => setDb((cur) => { const next = { ...cur }; fn(next); return next; }), []);

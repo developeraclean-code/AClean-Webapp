@@ -29,14 +29,17 @@ export default function ProjectListView() {
       { name: "target", label: "Target selesai", type: "date" },
     ],
     onSubmit: (d) => {
+      if (!d.nama) { toast("Nama project wajib diisi"); return; }
+      const newId = "p" + Date.now();
       update((cur) => {
         cur.projects = [...cur.projects, {
-          id: "p" + Date.now(), nama: d.nama, kategori: d.kategori, lokasi: d.lokasi,
+          id: newId, nama: d.nama, kategori: d.kategori, lokasi: d.lokasi,
           status: "BERJALAN", progress: 0, mulai: d.mulai, target: d.target,
           nilai: +d.nilai || 0, rab: +d.rab || 0, pic: d.pic, tim: [d.pic],
         }];
       });
-      toast("Project ditambah");
+      setActiveProject(newId);
+      toast("Project ditambah — buka Detail untuk lihat");
     },
   });
   const addCategory = () => openForm({

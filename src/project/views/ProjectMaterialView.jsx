@@ -37,7 +37,9 @@ export default function ProjectMaterialView() {
     },
   });
 
-  const restock = () => openForm({
+  const restock = () => {
+    if (!db.materials.length) { toast("Tambah item material dulu"); return; }
+    openForm({
     title: "Restock Gudang (isi beberapa sekaligus)",
     fields: [{ name: "rows", label: "Restock", type: "grid", hint: "pilih material & tambahan qty",
       columns: [{ key: "material", label: "Material", type: "select", options: db.materials.map((m) => m.nama) }, { key: "qty", label: "Tambah Qty", type: "number" }] }],
@@ -48,8 +50,12 @@ export default function ProjectMaterialView() {
       toast(`${rows.length} material di-restock`);
     },
   });
+  };
 
-  const allocate = () => openForm({
+  const allocate = () => {
+    if (!db.materials.length) { toast("Tambah item material dulu"); return; }
+    if (!db.projects.length) { toast("Buat project dulu di Daftar Project"); return; }
+    openForm({
     title: "Alokasi Material ke Project (isi beberapa sekaligus)",
     fields: [
       { name: "projectId", label: "Project", type: "select", options: projOptions },
@@ -75,6 +81,7 @@ export default function ProjectMaterialView() {
       toast(`${ok} dialokasikan${gagal ? `, ${gagal} gagal (stok kurang)` : ""}`);
     },
   });
+  };
 
   const rowsBySub = {};
   MAT_SUBS.forEach((s) => (rowsBySub[s] = db.materials.filter((m) => m.sub === s)));

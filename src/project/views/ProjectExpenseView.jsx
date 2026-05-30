@@ -21,7 +21,9 @@ export default function ProjectExpenseView() {
   const total = rows.reduce((s, e) => s + e.nominal, 0);
   const byCat = {}; rows.forEach((e) => byCat[e.kategori] = (byCat[e.kategori] || 0) + e.nominal);
 
-  const addExpense = () => openForm({
+  const addExpense = () => {
+    if (!db.projects.length) { toast("Buat project dulu di Daftar Project"); return; }
+    openForm({
     title: "Catat Pengeluaran (isi beberapa sekaligus)",
     fields: [
       { name: "projectId", label: "Project", type: "select", options: db.projects.map((p) => p.nama) },
@@ -37,6 +39,7 @@ export default function ProjectExpenseView() {
       toast(`${rr.length} pengeluaran tercatat`);
     },
   });
+  };
 
   return (
     <div style={{ padding: 22, maxWidth: 1200 }}>

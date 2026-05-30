@@ -15,7 +15,9 @@ export default function ProjectHarianView() {
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
   const projOptions = db.projects.map((p) => p.nama);
 
-  const addPagi = () => openForm({
+  const addPagi = () => {
+    if (!db.projects.length) { toast("Buat project dulu di Daftar Project"); return; }
+    openForm({
     title: "🌅 Laporan Pagi (Berangkat)",
     fields: [
       { name: "projectId", label: "Project", type: "select", options: projOptions },
@@ -45,8 +47,11 @@ export default function ProjectHarianView() {
       toast(`Laporan Pagi disimpan · ${chosen.length} alat → ${d.projectId}`);
     },
   });
+  };
 
-  const addSore = () => openForm({
+  const addSore = () => {
+    if (!db.projects.length) { toast("Buat project dulu di Daftar Project"); return; }
+    openForm({
     title: "🌇 Laporan Sore (Pulang)",
     fields: [
       { name: "projectId", label: "Project", type: "select", options: projOptions },
@@ -75,6 +80,7 @@ export default function ProjectHarianView() {
       toast(`Laporan Sore terkirim · ${chosen.length} alat → gudang`);
     },
   });
+  };
 
   const setStatus = (id, st) => {
     update((cur) => { cur.harian = cur.harian.map((h) => (h.id === id ? { ...h, status: st } : h)); });

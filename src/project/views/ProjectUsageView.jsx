@@ -10,7 +10,10 @@ export default function ProjectUsageView() {
   const { openForm, toast } = useModal();
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
 
-  const addUsage = () => openForm({
+  const addUsage = () => {
+    if (!db.projects.length) { toast("Buat project dulu di Daftar Project"); return; }
+    if (!db.materials.length) { toast("Buat material dulu di Stok Material"); return; }
+    openForm({
     title: "Catat Pemakaian Material (isi beberapa sekaligus)",
     fields: [
       { name: "projectId", label: "Project", type: "select", options: db.projects.map((p) => p.nama) },
@@ -27,6 +30,7 @@ export default function ProjectUsageView() {
       toast(`${rows.length} pemakaian tercatat`);
     },
   });
+  };
 
   return (
     <div style={{ padding: 22, maxWidth: 1200 }}>
