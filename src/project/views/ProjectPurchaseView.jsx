@@ -8,7 +8,7 @@ import { fmtRp } from "../utils/constants.js";
 import { MiniCard, Tag } from "../components/Bits.jsx";
 
 export default function ProjectPurchaseView() {
-  const { db, can, today, update } = useProject();
+  const { db, can, today, addRows } = useProject();
   const { openForm, toast } = useModal();
   const [filterProj, setFilterProj] = useState("Semua");
   const [filterJenis, setFilterJenis] = useState("Semua");
@@ -39,7 +39,7 @@ export default function ProjectPurchaseView() {
       const pid = d.projectId === "(umum)" ? "" : pidByName(d.projectId);
       const rr = (d.rows || []).filter((r) => r.item);
       if (!rr.length) return toast("Isi minimal 1 baris ber-item");
-      update((cur) => { rr.forEach((r) => cur.purchases = [{ tanggal: today, projectId: pid, jenis: r.jenis || "Material", item: r.item, qty: `${r.qty || ""} ${r.satuan || ""}`.trim(), total: +r.total, nota: true }, ...cur.purchases]); });
+      addRows("purchases", rr.map((r) => ({ tanggal: today, projectId: pid, jenis: r.jenis || "Material", item: r.item, qty: `${r.qty || ""} ${r.satuan || ""}`.trim(), total: +r.total, nota: true })));
       toast(`${rr.length} pembelian tercatat`);
     },
   });

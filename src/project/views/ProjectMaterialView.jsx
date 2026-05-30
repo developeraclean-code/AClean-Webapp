@@ -7,7 +7,7 @@ import { matTotal, matAlloc, pName } from "../utils/finance.js";
 import { MAT_SUBS, fmtRp } from "../utils/constants.js";
 
 export default function ProjectMaterialView() {
-  const { db, can, update } = useProject();
+  const { db, can, addRows, patchRows, allocateMaterials } = useProject();
   const { openForm, toast } = useModal();
 
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
@@ -27,12 +27,10 @@ export default function ProjectMaterialView() {
     onSubmit: (d) => {
       const rows = (d.rows || []).filter((r) => r.nama);
       if (!rows.length) return toast("Isi minimal 1 baris");
-      update((cur) => {
-        rows.forEach((r, i) => cur.materials.push({
-          id: "m" + Date.now() + i, nama: r.nama, sub: r.sub || MAT_SUBS[0], satuan: r.satuan,
-          gudang: +r.gudang || 0, min: +r.min || 0, harga: +r.harga || 0,
-        }));
-      });
+      addRows("materials", rows.map((r, i) => ({
+        id: "m" + Date.now() + i, nama: r.nama, sub: r.sub || MAT_SUBS[0], satuan: r.satuan,
+        gudang: +r.gudang || 0, min: +r.min || 0, harga: +r.harga || 0,
+      })));
       toast(`${rows.length} material ditambah`);
     },
   });
@@ -46,7 +44,11 @@ export default function ProjectMaterialView() {
     onSubmit: (d) => {
       const rows = (d.rows || []).filter((r) => r.qty);
       if (!rows.length) return toast("Isi minimal 1 baris");
-      update((cur) => { rows.forEach((r) => { const m = cur.materials.find((x) => x.nama === r.material); if (m) m.gudang += +r.qty; }); });
+      const add = {}; // materialId → total tambahan qty
+      rows.forEach((r) => { const m = db.materials.find((x) => x.nama === r.material); if (m) add[m.id] = (add[m.id] || 0) + (+r.qty || 0); });
+      const updates = Object.entries(add).map(([id, q]) => { const m = db.materials.find((x) => x.id === id); return { id, gudang: (m.gudang || 0) + q }; });
+      if (!updates.length) return toast("Material tidak ditemukan");
+      patchRows("materials", updates);
       toast(`${rows.length} material di-restock`);
     },
   });
@@ -67,17 +69,25 @@ export default function ProjectMaterialView() {
       const rows = (d.rows || []).filter((r) => r.qty);
       if (!rows.length) return toast("Isi minimal 1 baris");
       let ok = 0, gagal = 0;
-      update((cur) => {
-        rows.forEach((r) => {
-          const m = cur.materials.find((x) => x.nama === r.material); const q = +r.qty;
-          if (!m || q <= 0) return;
-          if (q > m.gudang) { gagal++; return; }
-          m.gudang -= q;
-          const ex = cur.alokasi.find((a) => a.materialId === m.id && a.projectId === pid);
-          if (ex) ex.qty += q; else cur.alokasi.push({ materialId: m.id, projectId: pid, qty: q });
-          ok++;
-        });
+      const matWork = {}; // id → sisa gudang (working copy)
+      const alWork = {};  // materialId → baris alokasi (working copy)
+      rows.forEach((r) => {
+        const base = db.materials.find((x) => x.nama === r.material); const q = +r.qty;
+        if (!base || q <= 0) return;
+        if (!(base.id in matWork)) matWork[base.id] = base.gudang;
+        if (q > matWork[base.id]) { gagal++; return; }
+        matWork[base.id] -= q;
+        if (!alWork[base.id]) {
+          const ex = db.alokasi.find((a) => a.materialId === base.id && a.projectId === pid);
+          alWork[base.id] = ex ? { id: ex.id, materialId: base.id, projectId: pid, qty: ex.qty } : { materialId: base.id, projectId: pid, qty: 0 };
+        }
+        alWork[base.id].qty += q;
+        ok++;
       });
+      if (ok) {
+        const materialUpdates = Object.keys(alWork).map((id) => ({ id, gudang: matWork[id] }));
+        allocateMaterials(materialUpdates, Object.values(alWork));
+      }
       toast(`${ok} dialokasikan${gagal ? `, ${gagal} gagal (stok kurang)` : ""}`);
     },
   });

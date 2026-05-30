@@ -8,7 +8,7 @@ import { StatusPill } from "../components/Bits.jsx";
 import Modal from "../components/Modal.jsx";
 
 export default function ProjectHarianView() {
-  const { db, can, today, update } = useProject();
+  const { db, can, today, upsertHarian, patchRow } = useProject();
   const { openForm, openContent, close, toast } = useModal();
 
   const findHarian = (pid, tgl) => db.harian.find((h) => h.projectId === pid && h.tanggal === tgl);
@@ -36,14 +36,13 @@ export default function ProjectHarianView() {
       if (isLocked(db, pid, today)) return toast("🔒 Hari terkunci — sudah diverifikasi");
       const matStr = (d.materialRows || []).map((r) => `${r.nama || ""} ${r.qty || ""} ${r.satuan || ""}`.replace(/\s+/g, " ").trim()).filter(Boolean).join(", ") || "-";
       const chosen = d.alat || [];
-      update((cur) => {
-        chosen.forEach((nm) => { const t = cur.tools.find((x) => x.nama === nm); if (t) { t.lokasi = pid; t.status = "di lokasi"; } });
-        let h = cur.harian.find((x) => x.projectId === pid && x.tanggal === today);
-        if (!h) { h = { id: "h" + Date.now(), tanggal: today, projectId: pid, oleh: d.oleh, pagi: null, sore: null, status: "DRAFT" }; cur.harian = [h, ...cur.harian]; }
-        else cur.harian = cur.harian.map((x) => x === h ? { ...x, pagi: { jam: d.jam, material: matStr, alat: chosen.join(", ") || "-", foto: d._photos }, oleh: d.oleh } : x);
-        // ensure update (in case h was new, set pagi inline)
-        cur.harian = cur.harian.map((x) => x.projectId === pid && x.tanggal === today ? { ...x, pagi: { jam: d.jam, material: matStr, alat: chosen.join(", ") || "-", foto: d._photos }, oleh: d.oleh } : x);
-      });
+      const pagi = { jam: d.jam, material: matStr, alat: chosen.join(", ") || "-", foto: d._photos };
+      const existing = db.harian.find((x) => x.projectId === pid && x.tanggal === today);
+      const row = existing
+        ? { ...existing, oleh: d.oleh, pagi }
+        : { id: "h" + Date.now(), tanggal: today, projectId: pid, oleh: d.oleh, pagi, sore: null, status: "DRAFT" };
+      const toolChanges = chosen.map((nm) => { const t = db.tools.find((x) => x.nama === nm); return t ? { id: t.id, lokasi: pid, status: "di lokasi" } : null; }).filter(Boolean);
+      upsertHarian(row, toolChanges);
       toast(`Laporan Pagi disimpan · ${chosen.length} alat → ${d.projectId}`);
     },
   });
@@ -71,19 +70,20 @@ export default function ProjectHarianView() {
       if (isLocked(db, pid, today)) return toast("🔒 Hari terkunci — sudah diverifikasi");
       const matStr = (d.materialRows || []).map((r) => `${r.nama || ""} ${r.qty || ""} ${r.satuan || ""}`.replace(/\s+/g, " ").trim()).filter(Boolean).join(", ") || "-";
       const chosen = d.alat || [];
-      update((cur) => {
-        chosen.forEach((nm) => { const t = cur.tools.find((x) => x.nama === nm); if (t) { t.lokasi = ""; t.status = "tersedia"; } });
-        let h = cur.harian.find((x) => x.projectId === pid && x.tanggal === today);
-        if (!h) { cur.harian = [{ id: "h" + Date.now(), tanggal: today, projectId: pid, oleh: d.oleh, pagi: null, sore: { jam: d.jam, progress: d.progress, material: matStr, alat: chosen.join(", ") || "-", foto: d._photos }, status: "SUBMITTED" }, ...cur.harian]; }
-        else cur.harian = cur.harian.map((x) => x === h ? { ...x, oleh: d.oleh, sore: { jam: d.jam, progress: d.progress, material: matStr, alat: chosen.join(", ") || "-", foto: d._photos }, status: "SUBMITTED" } : x);
-      });
+      const sore = { jam: d.jam, progress: d.progress, material: matStr, alat: chosen.join(", ") || "-", foto: d._photos };
+      const existing = db.harian.find((x) => x.projectId === pid && x.tanggal === today);
+      const row = existing
+        ? { ...existing, oleh: d.oleh, sore, status: "SUBMITTED" }
+        : { id: "h" + Date.now(), tanggal: today, projectId: pid, oleh: d.oleh, pagi: null, sore, status: "SUBMITTED" };
+      const toolChanges = chosen.map((nm) => { const t = db.tools.find((x) => x.nama === nm); return t ? { id: t.id, lokasi: "", status: "tersedia" } : null; }).filter(Boolean);
+      upsertHarian(row, toolChanges);
       toast(`Laporan Sore terkirim · ${chosen.length} alat → gudang`);
     },
   });
   };
 
   const setStatus = (id, st) => {
-    update((cur) => { cur.harian = cur.harian.map((h) => (h.id === id ? { ...h, status: st } : h)); });
+    patchRow("harian", id, { status: st });
     toast(st === "VERIFIED" ? "Diverifikasi 🔒 hari ini terkunci" : "Laporan " + st);
   };
 

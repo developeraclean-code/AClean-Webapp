@@ -8,7 +8,7 @@ import { EXP_CATS, fmtRp } from "../utils/constants.js";
 import { MiniCard, Tag } from "../components/Bits.jsx";
 
 export default function ProjectExpenseView() {
-  const { db, role, can, today, update } = useProject();
+  const { db, role, can, today, addRows } = useProject();
   const { openForm, toast } = useModal();
   const [filterProj, setFilterProj] = useState("Semua");
   const [filterCat, setFilterCat] = useState("Semua");
@@ -35,7 +35,7 @@ export default function ProjectExpenseView() {
       if (isLocked(db, pid, today)) return toast("🔒 Hari terkunci");
       const rr = (d.rows || []).filter((r) => r.nominal);
       if (!rr.length) return toast("Isi minimal 1 baris bernominal");
-      update((cur) => { rr.forEach((r) => cur.expenses = [{ tanggal: today, projectId: pid, kategori: r.kategori || EXP_CATS[0], ket: r.ket, nominal: +r.nominal, oleh: role }, ...cur.expenses]); });
+      addRows("expenses", rr.map((r) => ({ tanggal: today, projectId: pid, kategori: r.kategori || EXP_CATS[0], ket: r.ket, nominal: +r.nominal, oleh: role })));
       toast(`${rr.length} pengeluaran tercatat`);
     },
   });

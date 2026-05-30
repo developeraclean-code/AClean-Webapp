@@ -49,7 +49,7 @@ export default function ProjectApp({ currentUser, onBack }) {
 }
 
 function Shell({ onBack }) {
-  const { role, activeView, setActiveView } = useProject();
+  const { role, activeView, setActiveView, loading, syncError } = useProject();
   const isOwner = role === "Owner";
   const allowed = MENU.filter((m) => !m.ownerOnly || isOwner);
   const View = VIEWS[activeView] || ProjectDashboard;
@@ -95,9 +95,18 @@ function Shell({ onBack }) {
         </nav>
       </aside>
       <main style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
-        <Suspense fallback={<div style={{ padding: 22, color: cs.muted }}>Memuat…</div>}>
-          <View />
-        </Suspense>
+        {syncError && (
+          <div style={{ background: "rgba(239,68,68,.1)", borderBottom: "1px solid rgba(239,68,68,.35)", color: cs.red, padding: "8px 16px", fontSize: 12.5 }}>
+            ⚠️ {syncError}
+          </div>
+        )}
+        {loading ? (
+          <div style={{ padding: 22, color: cs.muted }}>Memuat data Project…</div>
+        ) : (
+          <Suspense fallback={<div style={{ padding: 22, color: cs.muted }}>Memuat…</div>}>
+            <View />
+          </Suspense>
+        )}
       </main>
     </div>
   );

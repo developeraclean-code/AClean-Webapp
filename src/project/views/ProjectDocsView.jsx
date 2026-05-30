@@ -10,7 +10,7 @@ import DocPaper from "../components/DocPaper.jsx";
 import SignaturePad from "../components/SignaturePad.jsx";
 
 export default function ProjectDocsView() {
-  const { db, can, today, update } = useProject();
+  const { db, can, today, addRows, patchRow } = useProject();
   const { openForm, openContent, close, toast } = useModal();
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
 
@@ -28,16 +28,13 @@ export default function ProjectDocsView() {
       const pre = d.jenis.includes("Berita") ? "BA" : d.jenis.includes("Pengiriman") ? "SJ" : "TT";
       const isBA = d.jenis.includes("Berita");
       const id = "d" + Date.now();
-      let nomor = "";
-      update((cur) => {
-        nomor = docSeqNext(cur, pre);
-        cur.documents = [{
-          id, jenis: d.jenis, projectId: pidByName(d.projectId), tanggal: d.tanggal || today,
-          nomor, kepada: d.kepada, periode: "", uraian: "", items: [], foto: 0,
-          ttdTeknisi: "(teknisi)", ttdCustomer: "(belum)", ttdCustomerImg: null,
-          checklist: isBA ? [{ item: "Pekerjaan sesuai spesifikasi", done: false }, { item: "Uji fungsi / tes", done: false }, { item: "Area kerja bersih", done: false }] : [],
-        }, ...cur.documents];
-      });
+      const nomor = docSeqNext(db, pre);
+      addRows("documents", [{
+        id, jenis: d.jenis, projectId: pidByName(d.projectId), tanggal: d.tanggal || today,
+        nomor, kepada: d.kepada, periode: "", uraian: "", items: [], foto: 0,
+        ttdTeknisi: "(teknisi)", ttdCustomer: "(belum)", ttdCustomerImg: null,
+        checklist: isBA ? [{ item: "Pekerjaan sesuai spesifikasi", done: false }, { item: "Uji fungsi / tes", done: false }, { item: "Area kerja bersih", done: false }] : [],
+      }]);
       toast(`Dokumen dibuat · ${nomor}`);
       setTimeout(() => viewDoc(id), 50);
     },
@@ -63,7 +60,7 @@ export default function ProjectDocsView() {
           initialName={d.ttdCustomer}
           onClose={close}
           onSave={({ name, img }) => {
-            update((cur) => { cur.documents = cur.documents.map((x) => (x.id === id ? { ...x, ttdCustomer: name, ttdCustomerImg: img } : x)); });
+            patchRow("documents", id, { ttdCustomer: name, ttdCustomerImg: img });
             close();
             toast("TTD virtual tersimpan → embed di PDF + R2");
             setTimeout(() => viewDoc(id), 50);
@@ -142,7 +139,7 @@ function DocViewer({ docId }) {
 
 // ============ DocEditor — grid Excel ============
 function DocEditor({ docId }) {
-  const { db, update } = useProject();
+  const { db, patchRow } = useProject();
   const { close, toast } = useModal();
   const original = db.documents.find((x) => x.id === docId);
   const isBA = original.jenis.includes("Berita");
@@ -160,13 +157,10 @@ function DocEditor({ docId }) {
     toast("Preset dimuat");
   };
   const save = () => {
-    update((cur) => {
-      cur.documents = cur.documents.map((x) => x.id === docId ? {
-        ...x, kepada, nomor, tanggal, periode, uraian,
-        items: isBA ? x.items : items.filter((it) => it.nama),
-        checklist: isBA ? checklist.filter((c) => c.item) : x.checklist,
-      } : x);
-    });
+    const patch = { kepada, nomor, tanggal, periode, uraian };
+    if (isBA) patch.checklist = checklist.filter((c) => c.item);
+    else patch.items = items.filter((it) => it.nama);
+    patchRow("documents", docId, patch);
     close();
     toast("Dokumen tersimpan rapi");
   };

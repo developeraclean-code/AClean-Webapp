@@ -1,5 +1,6 @@
-// Initial state kosong. User mengisi sendiri lewat tombol di tiap view.
-// (Akan diganti dengan fetch dari Supabase di fase berikutnya.)
+// Bentuk state awal kosong — dipakai sebelum loadAll() dari Supabase selesai.
+// Data sebenarnya di-fetch di ProjectContext via src/project/data/projectApi.js
+// (tabel project_* — lihat migrations/051_project_module.sql).
 export const initialData = () => ({
   projects: [],
   dp: [],
