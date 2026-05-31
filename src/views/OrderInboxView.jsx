@@ -1175,6 +1175,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     if (!form.customer.trim()) return showNotif("Nama customer wajib diisi", "error");
     if (!form.date) return showNotif("Tanggal wajib diisi", "error");
     if (!form.service) return showNotif("Layanan wajib diisi", "error");
+    // Phone WAJIB — tanpa phone, customer baru tidak bisa dibuat & invoice/penagihan
+    // tidak bisa di-track. Lebih baik blok di sini daripada bikin orphan data.
+    const phoneNorm = normalizePhone(form.phone || "");
+    if (!phoneNorm || phoneNorm.length < 10) {
+      return showNotif("⚠ No. HP customer wajib diisi (min 10 digit). Tanpa nomor, customer baru tidak bisa dibuat & invoice/penagihan tidak bisa di-track.", "error");
+    }
 
     setSaving(true);
 
