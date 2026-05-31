@@ -10191,20 +10191,41 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     else {
                       const newName = newCustomerForm.name.trim();
                       const oldName = selectedCustomer.name;
-                      // Cascade nama ke orders, invoices, service_reports jika nama berubah
+                      const newPhone = normalizePhone(newCustomerForm.phone);
+                      const oldPhone = (selectedCustomer.phone || "").trim();
+                      const linkedJobIds = ordersData
+                        .filter(o => o.customer_id === selectedCustomer.id)
+                        .map(o => o.id);
+
+                      // Cascade NAMA — orders, invoices, service_reports
                       if (newName !== oldName) {
                         await supabase.from("orders").update({ customer: newName }).eq("customer_id", selectedCustomer.id);
-                        const linkedJobIds = ordersData
-                          .filter(o => o.customer_id === selectedCustomer.id)
-                          .map(o => o.id);
                         if (linkedJobIds.length > 0) {
                           await supabase.from("invoices").update({ customer: newName }).in("job_id", linkedJobIds);
                           await supabase.from("service_reports").update({ customer: newName }).in("job_id", linkedJobIds);
                         }
                         setOrdersData(prev => prev.map(o => o.customer_id === selectedCustomer.id ? { ...o, customer: newName } : o));
                       }
-                      addAgentLog("CUSTOMER_UPDATED", "Customer " + newName + " diupdate oleh " + auditUserName(), "SUCCESS");
-                      showNotif("✅ Data " + newName + " berhasil diupdate");
+
+                      // Cascade PHONE + invalidate PDF cache invoice
+                      // Tanpa ini: PDF lama tetap pakai phone lama, payment match & WA reminder rusak.
+                      if (newPhone && newPhone !== oldPhone) {
+                        await supabase.from("orders").update({ phone: newPhone }).eq("customer_id", selectedCustomer.id);
+                        if (linkedJobIds.length > 0) {
+                          await supabase.from("invoices").update({
+                            phone: newPhone,
+                            pdf_url: null,            // invalidate cached PDF → auto-regenerate
+                            pdf_generated_at: null,
+                          }).in("job_id", linkedJobIds);
+                          await supabase.from("service_reports").update({ phone: newPhone }).in("job_id", linkedJobIds);
+                        }
+                        setOrdersData(prev => prev.map(o => o.customer_id === selectedCustomer.id ? { ...o, phone: newPhone } : o));
+                        setInvoicesData(prev => prev.map(i => linkedJobIds.includes(i.job_id) ? { ...i, phone: newPhone, pdf_url: null, pdf_generated_at: null } : i));
+                        showNotif("✅ Phone customer diupdate — " + linkedJobIds.length + " order/invoice ikut ter-sync, PDF akan regenerate otomatis");
+                      } else {
+                        showNotif("✅ Data " + newName + " berhasil diupdate");
+                      }
+                      addAgentLog("CUSTOMER_UPDATED", "Customer " + newName + " diupdate oleh " + auditUserName() + (newPhone !== oldPhone ? " (phone cascaded ke " + linkedJobIds.length + " order/invoice)" : ""), "SUCCESS");
                     }
                   } else {
                     // INSERT new customer — tanpa kirim `id`, biarkan DB generate
