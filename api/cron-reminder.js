@@ -446,35 +446,94 @@ async function taskScanBuktiBayar() {
 
   // Build phone → suggestions map (sorted oldest→newest, sudah di-sort dari query)
   const phoneMap = {};
+  // Suffix-6-digit map: untuk fallback kalau phone customer typo (e.g. 1 digit hilang)
+  // Contoh: invoice phone "62856976881" (typo) cocok dengan bukti dari "628567976881"
+  // karena last 6 digit sama: "976881"
+  const suffixMap = {};
+  // All suggestions list (untuk fuzzy amount fallback)
+  const allEntries = [];
   for (const s of suggestions) {
     const phone = (s.phone || "").replace(/[^0-9]/g, "");
     if (!phone || phone.length < 8 || !s.image_url) continue;
+    const entry = { ...s, phone, ts: new Date(s.created_at).getTime(), amountNum: Number(s.amount) || 0 };
     if (!phoneMap[phone]) phoneMap[phone] = [];
-    phoneMap[phone].push({ ...s, phone, ts: new Date(s.created_at).getTime() });
+    phoneMap[phone].push(entry);
+    if (phone.length >= 9) {
+      const suf = phone.slice(-6);
+      if (!suffixMap[suf]) suffixMap[suf] = [];
+      suffixMap[suf].push(entry);
+    }
+    allEntries.push(entry);
   }
 
   let updated = 0;
+  let fuzzyMatched = 0;
   const updateLog = [];
+  const fuzzyReview = []; // bukti yang match by amount tapi phone beda — perlu owner verify
+
+  const before3d = 3 * 24 * 60 * 60 * 1000;
+  const after30d = 30 * 24 * 60 * 60 * 1000;
+  const inWindowFn = (entries, invTs) => entries.filter(e => e.ts >= invTs - before3d && e.ts <= invTs + after30d);
+  const pickBestFn = (entries, invTs) => {
+    const afterInv = entries.filter(e => e.ts >= invTs).sort((a, b) => a.ts - b.ts);
+    const beforeInv = entries.filter(e => e.ts < invTs).sort((a, b) => a.ts - b.ts);
+    return afterInv.length > 0 ? afterInv[0]
+         : beforeInv.length > 0 ? beforeInv[beforeInv.length - 1]
+         : null;
+  };
 
   for (const inv of invs) {
     const rawPhone = (inv.phone || "").replace(/[^0-9]/g, "");
     if (!rawPhone || rawPhone.length < 8) continue;
-
-    const entries = phoneMap[rawPhone];
-    if (!entries || entries.length === 0) continue;
-
-    // Cari bukti dalam window ±30 hari dari invoice created_at:
-    // - 3 hari SEBELUM: customer bayar dulu, invoice dibuat belakangan
-    // - 30 hari SESUDAH: customer terlambat kirim bukti
     const invTs = new Date(inv.created_at).getTime();
-    const before3d = 3 * 24 * 60 * 60 * 1000;
-    const after30d  = 30 * 24 * 60 * 60 * 1000;
-    const inWindow = entries.filter(e => e.ts >= invTs - before3d && e.ts <= invTs + after30d);
-    const afterInv  = inWindow.filter(e => e.ts >= invTs);
-    const beforeInv = inWindow.filter(e => e.ts < invTs);
-    const best = afterInv.length > 0 ? afterInv[0]
-               : beforeInv.length > 0 ? beforeInv[beforeInv.length - 1]
-               : null;
+    const invTotal = Number(inv.total) || 0;
+
+    // ── TIER 1: Exact phone match (existing logic) ──
+    let best = null;
+    let matchMode = "exact_phone";
+    const entries = phoneMap[rawPhone];
+    if (entries && entries.length > 0) {
+      best = pickBestFn(inWindowFn(entries, invTs), invTs);
+    }
+
+    // ── TIER 2: Suffix-6 match (fallback kalau phone typo 1 digit) ──
+    // Hanya jika TIER 1 gagal & amount match (toleransi 5% atau Rp 5.000)
+    if (!best && rawPhone.length >= 9 && invTotal > 0) {
+      const suf = rawPhone.slice(-6);
+      const sufCands = suffixMap[suf] || [];
+      const inWin = inWindowFn(sufCands, invTs).filter(e => {
+        if (!e.amountNum) return false;
+        const diff = Math.abs(e.amountNum - invTotal);
+        return diff <= Math.max(5000, invTotal * 0.05);
+      });
+      if (inWin.length > 0) {
+        best = pickBestFn(inWin, invTs);
+        matchMode = "suffix6_amount";
+      }
+    }
+
+    // ── TIER 3: Amount-only fuzzy match (toleransi ketat: ≤1% atau Rp 1.000) ──
+    // Untuk kasus customer bayar dari rekening keluarga (phone beda total).
+    // Tier 3 hanya AUTO-LINK kalau amount exact match (toleransi Rp 1.000) AND ada exactly 1 kandidat.
+    // Kalau ambigu (>1 match) → log ke fuzzyReview untuk owner verify, jangan auto-link.
+    if (!best && invTotal > 0) {
+      const inWin = inWindowFn(allEntries, invTs).filter(e => {
+        if (!e.amountNum) return false;
+        return Math.abs(e.amountNum - invTotal) <= 1000;
+      });
+      if (inWin.length === 1) {
+        best = inWin[0];
+        matchMode = "amount_exact_unique";
+      } else if (inWin.length > 1) {
+        fuzzyReview.push({
+          invoice_id: inv.id,
+          customer: inv.customer,
+          total: invTotal,
+          candidates: inWin.map(e => ({ phone: e.phone, sender: e.sender_name, amount: e.amountNum, ts: e.created_at })),
+        });
+      }
+    }
+
     if (!best) continue;
 
     const { error: upErr } = await sb
@@ -484,11 +543,20 @@ async function taskScanBuktiBayar() {
 
     if (!upErr) {
       updated++;
-      updateLog.push(inv.id + " ← " + inv.customer + " (" + (best.amount ? "Rp " + Number(best.amount).toLocaleString("id") : "?") + ")");
+      if (matchMode !== "exact_phone") fuzzyMatched++;
+      const tag = matchMode === "exact_phone" ? "" : ` [${matchMode}]`;
+      updateLog.push(inv.id + " ← " + inv.customer + " (" + (best.amount ? "Rp " + Number(best.amount).toLocaleString("id") : "?") + ")" + tag);
     }
   }
 
-  const summary = `Dicek: ${invs.length} invoice, ${suggestions.length} bukti WA | Diupdate: ${updated}`;
+  // Log kandidat ambigu untuk owner review
+  if (fuzzyReview.length > 0) {
+    await log("SCAN_BUKTI_FUZZY", "Ambiguous matches (amount sama, multi-kandidat — perlu verify owner):\n" +
+      fuzzyReview.map(r => `${r.invoice_id} ${r.customer} Rp${r.total.toLocaleString("id")} → ${r.candidates.length} kandidat: ${r.candidates.map(c => c.phone).join(", ")}`).join("\n"),
+      "WARNING");
+  }
+
+  const summary = `Dicek: ${invs.length} invoice, ${suggestions.length} bukti WA | Diupdate: ${updated} (fuzzy: ${fuzzyMatched}, ambigu: ${fuzzyReview.length})`;
   await log("SCAN_BUKTI", summary + (updateLog.length ? "\n" + updateLog.join("\n") : ""), updated > 0 ? "SUCCESS" : "INFO");
 
   // Notif owner jika ada yang terupdate

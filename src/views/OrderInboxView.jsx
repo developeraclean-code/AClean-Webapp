@@ -1088,6 +1088,51 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // Server-side lookup by phone — anti miss customer di luar limit fetchCustomers
   const [serverCustMatches, setServerCustMatches] = useState({ key: "", rows: [] });
+  // WA phone validation — warning kalau phone tidak ada riwayat chat tapi ada nomor mirip
+  const [phoneCheck, setPhoneCheck] = useState(null);
+  // shape: { inputPhone, similar: [{phone, name, last_chat, msg_count}], onProceed, onPickSuggestion }
+
+  async function checkWAPhone(phoneNorm) {
+    if (!phoneNorm || phoneNorm.length < 9) return { exact: { found: false }, similar: [] };
+    const ninetyAgo = new Date(Date.now() - 90 * 86400000).toISOString();
+    // Exact
+    const exactRes = await supabase.from("wa_messages")
+      .select("phone,name,created_at", { count: "exact" })
+      .eq("phone", phoneNorm)
+      .gte("created_at", ninetyAgo)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const exactFound = (exactRes.count || 0) > 0;
+    const exactInfo = exactFound
+      ? { found: true, name: exactRes.data?.[0]?.name || null, last_chat: exactRes.data?.[0]?.created_at, msg_count: exactRes.count }
+      : { found: false };
+    // Similar — last 6 digit substring match, exclude phone itself
+    let similar = [];
+    if (!exactFound) {
+      const last6 = phoneNorm.slice(-6);
+      const candRes = await supabase.from("wa_messages")
+        .select("phone,name,created_at")
+        .ilike("phone", `%${last6}%`)
+        .neq("phone", phoneNorm)
+        .gte("created_at", ninetyAgo)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      const cands = candRes.data || [];
+      const map = {};
+      for (const m of cands) {
+        const p = m.phone;
+        if (!map[p]) map[p] = { phone: p, name: m.name || null, last_chat: m.created_at, msg_count: 0 };
+        map[p].msg_count++;
+        if (m.created_at > map[p].last_chat) map[p].last_chat = m.created_at;
+        if (m.name && !map[p].name) map[p].name = m.name;
+      }
+      similar = Object.values(map)
+        .filter(p => p.msg_count >= 3)
+        .sort((a, b) => b.msg_count - a.msg_count)
+        .slice(0, 5);
+    }
+    return { exact: exactInfo, similar };
+  }
   useEffect(() => {
     const rawPhone = (form.phone || "").replace(/\D/g, "");
     const custIsNum = /^[0-9+]/.test(form.customer.trim());
@@ -1171,7 +1216,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     }));
   }
 
-  async function handleSave() {
+  async function handleSave(opts = {}) {
     if (!form.customer.trim()) return showNotif("Nama customer wajib diisi", "error");
     if (!form.date) return showNotif("Tanggal wajib diisi", "error");
     if (!form.service) return showNotif("Layanan wajib diisi", "error");
@@ -1180,6 +1225,34 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     const phoneNorm = normalizePhone(form.phone || "");
     if (!phoneNorm || phoneNorm.length < 10) {
       return showNotif("⚠ No. HP customer wajib diisi (min 10 digit). Tanpa nomor, customer baru tidak bisa dibuat & invoice/penagihan tidak bisa di-track.", "error");
+    }
+
+    // WA phone validation — soft warning kalau phone tidak ada chat WA tapi ada no mirip
+    // Skip kalau user sudah konfirmasi "Lanjutkan dengan no ini" atau saat edit
+    if (!opts.skipWAValidate && !editId) {
+      try {
+        const waCheck = await checkWAPhone(phoneNorm);
+        if (!waCheck.exact.found && waCheck.similar.length > 0) {
+          setPhoneCheck({
+            inputPhone: phoneNorm,
+            similar: waCheck.similar,
+            onProceed: () => { setPhoneCheck(null); handleSave({ skipWAValidate: true }); },
+            onPickSuggestion: (sugPhone, sugName) => {
+              setForm(f => ({
+                ...f,
+                phone: sugPhone,
+                ...(sugName && !f.customer.trim() ? { customer: sugName } : {}),
+              }));
+              setPhoneCheck(null);
+            },
+            onCancel: () => setPhoneCheck(null),
+          });
+          return;
+        }
+      } catch (e) {
+        console.warn("[WA_PHONE_VALIDATE]", e?.message || e);
+        // gagal validasi — jangan blok save
+      }
     }
 
     setSaving(true);
@@ -2143,6 +2216,59 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           </table>
         </div>
       </div>
+
+      {/* ── Modal: WA Phone Validation Warning ── */}
+      {phoneCheck && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+        }} onClick={phoneCheck.onCancel}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: cs.surface, border: "1px solid " + cs.border, borderRadius: 12,
+            padding: 20, maxWidth: 480, width: "100%", maxHeight: "90vh", overflowY: "auto",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 22 }}>⚠️</span>
+              <div style={{ fontSize: 16, fontWeight: 700, color: cs.text }}>Cek Nomor HP — Mungkin Typo?</div>
+            </div>
+            <div style={{ fontSize: 13, color: cs.muted, marginBottom: 14, lineHeight: 1.5 }}>
+              Nomor <b style={{ color: cs.text, fontFamily: "monospace" }}>{phoneCheck.inputPhone}</b> belum
+              pernah chat dengan WA bisnis AClean. Tapi nomor mirip di bawah punya riwayat chat aktif —
+              kemungkinan typo:
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+              {phoneCheck.similar.map(s => (
+                <button key={s.phone} onClick={() => phoneCheck.onPickSuggestion(s.phone, s.name)} style={{
+                  background: cs.accent + "12", border: "1px solid " + cs.accent + "55",
+                  borderRadius: 8, padding: "10px 12px", cursor: "pointer", textAlign: "left",
+                  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: cs.accent, fontSize: 14 }}>
+                      {s.phone}
+                    </span>
+                    <span style={{ fontSize: 11, color: cs.text }}>
+                      {s.name || "(tanpa nama)"} · {s.msg_count} pesan · last: {(s.last_chat || "").slice(0, 10)}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 11, color: cs.muted, whiteSpace: "nowrap" }}>Pakai ini ↗</span>
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={phoneCheck.onCancel} style={{
+                background: "transparent", border: "1px solid " + cs.border, color: cs.muted,
+                borderRadius: 6, padding: "8px 14px", fontSize: 12, cursor: "pointer", fontWeight: 600,
+              }}>Batal</button>
+              <button onClick={phoneCheck.onProceed} style={{
+                background: cs.yellow + "22", border: "1px solid " + cs.yellow + "66", color: cs.yellow,
+                borderRadius: 6, padding: "8px 14px", fontSize: 12, cursor: "pointer", fontWeight: 700,
+              }}>Lanjutkan dengan {phoneCheck.inputPhone}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

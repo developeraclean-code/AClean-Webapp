@@ -1092,19 +1092,53 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       console.warn("[PAY_AUTO_PATCH] Bukti transfer tersimpan di R2 tapi invoice tidak ditemukan untuk", sender, savedImageUrl);
                     }
 
-                    // Simpan ke payment_suggestions
-                    fetch(SU + "/rest/v1/payment_suggestions", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-                      body: JSON.stringify({
-                        phone: sender, sender_name: senderName, raw_message: "(gambar bukti transfer)",
-                        amount: classified.amount || null, bank: classified.bank || null,
-                        transfer_date: classified.transfer_date || null,
-                        invoice_id: matchedInvoiceId, order_id: matchedOrderId,
-                        status: "PENDING", source: "image",
-                        image_url: savedImageUrl || mediaUrl, created_at: nowIso
-                      })
-                    }).catch(e => console.error("[PAY_SUGGEST_IMG_SAVE]", e.message));
+                    // Simpan ke payment_suggestions — await + log error supaya tidak silent fail
+                    try {
+                      const psRes = await fetch(SU + "/rest/v1/payment_suggestions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                        body: JSON.stringify({
+                          phone: sender, sender_name: senderName, raw_message: "(gambar bukti transfer)",
+                          amount: classified.amount || null, bank: classified.bank || null,
+                          transfer_date: classified.transfer_date || null,
+                          invoice_id: matchedInvoiceId, order_id: matchedOrderId,
+                          status: "PENDING", source: "image",
+                          image_url: savedImageUrl || mediaUrl, created_at: nowIso
+                        })
+                      });
+                      if (!psRes.ok) {
+                        const errBody = await psRes.text().catch(() => "(no body)");
+                        console.error("[PAY_SUGGEST_IMG_SAVE]", psRes.status, errBody);
+                        // Log ke agent_logs supaya bisa di-trace via Monitoring
+                        fetch(SU + "/rest/v1/agent_logs", {
+                          method: "POST",
+                          headers: { apikey: SK, Authorization: "Bearer " + SK, "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            action: "PAY_SUGGEST_INSERT_FAIL",
+                            severity: "warn", category: "wa", status: "WARNING",
+                            detail: `Gagal insert payment_suggestions phone=${sender} status=${psRes.status}: ${errBody.slice(0, 200)}`,
+                            metadata: { phone: sender, image_url: savedImageUrl, amount: classified.amount, invoice_id: matchedInvoiceId },
+                            time: new Date().toISOString(),
+                          })
+                        }).catch(() => {});
+                        // Alert owner kalau bukti ada tapi gagal disimpan — biar tidak hilang
+                        if (FT && OP && savedImageUrl) {
+                          fetch("https://api.fonnte.com/send", {
+                            method: "POST",
+                            headers: { Authorization: FT, "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              target: OP,
+                              message: "⚠️ *Bukti Bayar GAGAL Tersimpan*\nDari: " + senderName + " (" + sender + ")\n"
+                                + (classified.amount ? "Nominal: Rp" + Number(classified.amount).toLocaleString("id-ID") + "\n" : "")
+                                + "Bukti tetap aman di R2 tapi tidak ke-link ke invoice otomatis. Cek manual di menu Invoice.",
+                              delay: "1", countryCode: "62"
+                            })
+                          }).catch(() => {});
+                        }
+                      }
+                    } catch (psErr) {
+                      console.error("[PAY_SUGGEST_IMG_SAVE_EXC]", psErr?.message || psErr);
+                    }
 
                     // Notif WA ke owner — selalu konfirmasi manual
                     if (FT && OP) {
