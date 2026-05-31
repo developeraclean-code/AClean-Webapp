@@ -5796,7 +5796,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       customersData={customersData} laporanReports={laporanReports} findCustomer={findCustomer}
       setSelectedCustomer={setSelectedCustomer} setCustomerTab={setCustomerTab}
-      expensesData={expensesData} />
+      expensesData={expensesData} supabase={supabase} />
     );
   };
 
