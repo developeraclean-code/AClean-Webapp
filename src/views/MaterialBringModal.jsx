@@ -22,6 +22,7 @@ export default function MaterialBringModal({
   const [existing, setExisting] = useState([]); // existing brought rows for this job
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showLowStock, setShowLowStock] = useState(false); // toggle: tampilkan stok rendah/kosong
 
   // Fetch existing brought rows untuk job ini
   useEffect(() => {
@@ -51,6 +52,23 @@ export default function MaterialBringModal({
     return () => { cancelled = true; };
   }, [open, job?.id, supabase]);
 
+  // Threshold fallback per material_type kalau min_visible null/0
+  const fallbackMinStock = (mt) => {
+    if (mt === "freon") return 0.5;     // < 0.5 kg = stub, gak useful
+    if (mt === "pipa") return 3;        // < 3 m = stub
+    if (mt === "kabel") return 3;       // < 3 m = stub
+    return 0;
+  };
+
+  // Apakah unit ini "stok rendah" (di bawah threshold)?
+  const isLowStock = (u) => {
+    const stock = Number(u.stock || 0);
+    if (stock <= 0) return true;
+    const minVis = Number(u.min_visible || 0);
+    if (minVis > 0) return stock <= minVis;
+    return stock < fallbackMinStock(u._materialType);
+  };
+
   // Build list units per material_type
   const unitsByType = useMemo(() => {
     const groups = { freon: [], pipa: [], kabel: [] };
@@ -64,6 +82,7 @@ export default function MaterialBringModal({
         ...u,
         inv_name: inv.name,
         inv_unit: inv.unit || (mt === "freon" ? "kg" : "m"),
+        _materialType: mt,
       });
     });
     // Sort by stock DESC dalam tiap group
@@ -72,6 +91,16 @@ export default function MaterialBringModal({
     });
     return groups;
   }, [invUnitsData, inventoryData]);
+
+  // Hitung berapa unit yang ke-hide per tab (untuk badge toggle)
+  const hiddenCountByType = useMemo(() => {
+    const m = { freon: 0, pipa: 0, kabel: 0 };
+    Object.keys(unitsByType).forEach(k => {
+      m[k] = unitsByType[k].filter(u => isLowStock(u) && !picked[u.id]).length;
+    });
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unitsByType, picked]);
 
   // Reserved count per unit (untuk warning kalau unit sudah dibawa job lain hari ini)
   const [reservedMap, setReservedMap] = useState({});
@@ -201,7 +230,10 @@ export default function MaterialBringModal({
     }).length;
   };
 
-  const list = unitsByType[activeTab] || [];
+  const allList = unitsByType[activeTab] || [];
+  // Apply filter: hide low-stock units kecuali sudah dipilih (preserve picked items)
+  const list = showLowStock ? allList : allList.filter(u => picked[u.id] || !isLowStock(u));
+  const hiddenInThisTab = hiddenCountByType[activeTab] || 0;
 
   return (
     <div style={{
@@ -258,13 +290,34 @@ export default function MaterialBringModal({
           Unit yang dipilih akan ter-reserve sementara biar tidak rebutan dengan tim lain.
         </div>
 
+        {/* Toggle stok rendah */}
+        {hiddenInThisTab > 0 && (
+          <div style={{ padding: "6px 14px", background: cs.card, borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: cs.muted }}>
+              {showLowStock ? "Menampilkan semua unit termasuk stok rendah" : `${hiddenInThisTab} unit stok rendah disembunyikan`}
+            </span>
+            <button onClick={() => setShowLowStock(s => !s)} style={{
+              background: showLowStock ? cs.accent + "22" : "transparent",
+              border: "1px solid " + (showLowStock ? cs.accent + "55" : cs.border),
+              color: showLowStock ? cs.accent : cs.muted,
+              borderRadius: 6, padding: "4px 10px", fontSize: 10, cursor: "pointer", fontWeight: 700,
+            }}>
+              {showLowStock ? "Sembunyikan" : "Lihat semua"}
+            </button>
+          </div>
+        )}
+
         {/* List */}
         <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
           {loading ? (
             <div style={{ textAlign: "center", color: cs.muted, padding: 30, fontSize: 12 }}>Memuat...</div>
           ) : list.length === 0 ? (
             <div style={{ textAlign: "center", color: cs.muted, padding: 30, fontSize: 12 }}>
-              Tidak ada unit aktif kategori ini di inventory.
+              {allList.length === 0
+                ? "Tidak ada unit aktif kategori ini di inventory."
+                : hiddenInThisTab > 0
+                  ? <>⚠ Semua {tabs.find(t => t.key === activeTab)?.label} stok rendah/kosong.<br/>Hubungi admin untuk restock.<br/><br/><button onClick={() => setShowLowStock(true)} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 6, padding: "6px 12px", fontSize: 11, cursor: "pointer", fontWeight: 700, marginTop: 4 }}>Tampilkan tetap (stok rendah)</button></>
+                  : "Tidak ada unit aktif kategori ini di inventory."}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -281,6 +334,7 @@ export default function MaterialBringModal({
                 const effectiveStock = Math.max(0, stockNum - reservedTotal);
                 const displayStock = activeTab === "freon" ? stockNum.toFixed(1) : Math.floor(stockNum);
                 const effDisplay = activeTab === "freon" ? effectiveStock.toFixed(1) : Math.floor(effectiveStock);
+                const lowStock = isLowStock(u);
                 return (
                   <div key={u.id} style={{
                     border: "1px solid " + (isPicked ? cs.accent + "88" : cs.border),
@@ -299,6 +353,12 @@ export default function MaterialBringModal({
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                           {u.unit_label}
+                          {lowStock && (
+                            <span title="Stok rendah / hampir habis" style={{
+                              fontSize: 9, background: "#ef444422", color: "#ef4444",
+                              padding: "1px 6px", borderRadius: 99, fontWeight: 700,
+                            }}>⚠ stub</span>
+                          )}
                           {reservedByOther && (
                             <span title={reservedRows.map(r => `${r.by} (${r.customer || r.job_id})`).join("\n")}
                               style={{
