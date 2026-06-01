@@ -331,6 +331,20 @@ return (
                     style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
                     📱 WA
                   </button>
+                  {/* Bawa Material — selalu tampil (juga sebelum dispatch) supaya teknisi bisa siap-siap */}
+                  {openMaterialBringModal && !["COMPLETED", "CANCELLED", "PAID"].includes(o.status) && (() => {
+                    const bCount = (materialsBroughtMap || {})[o.id] || 0;
+                    return (
+                      <button onClick={() => openMaterialBringModal(o)}
+                        style={{ background: "#a855f722", border: "1px solid #a855f744", color: "#a855f7", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, position: "relative" }}>
+                        📦 Bawa Material
+                        {bCount > 0 && <span style={{
+                          position: "absolute", top: -5, right: -5, background: "#a855f7", color: "#fff",
+                          fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 99,
+                        }}>{bCount}</span>}
+                      </button>
+                    );
+                  })()}
                   {o.dispatch && !["COMPLETED", "CANCELLED", "PAID"].includes(o.status) && (
                     <>
                       {o.status !== "ON_SITE" && (
@@ -349,19 +363,6 @@ return (
                           ✅ On Site
                         </button>
                       )}
-                      {openMaterialBringModal && (() => {
-                        const bCount = (materialsBroughtMap || {})[o.id] || 0;
-                        return (
-                          <button onClick={() => openMaterialBringModal(o)}
-                            style={{ background: "#a855f722", border: "1px solid #a855f744", color: "#a855f7", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, position: "relative" }}>
-                            📦 Bawa Material
-                            {bCount > 0 && <span style={{
-                              position: "absolute", top: -5, right: -5, background: "#a855f7", color: "#fff",
-                              fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 99,
-                            }}>{bCount}</span>}
-                          </button>
-                        );
-                      })()}
                       <button onClick={() => openLaporanModal(o)}
                         style={{ background: cs.ara + "22", border: "1px solid " + cs.ara + "44", color: cs.ara, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
                         📝 Laporan
