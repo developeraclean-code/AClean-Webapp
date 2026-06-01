@@ -7,8 +7,23 @@ const isOwner = currentUser?.role === "Owner";
 
 const PETTY_CASH_SUBS = ["Bensin Motor", "Perbaikan Motor", "Parkir", "Kasbon Karyawan", "Lembur", "Bonus", "Lain-lain"];
 const MATERIAL_SUBS = ["Pipa AC", "Kabel", "Freon", "Material Lain"];
-// Quick-filter chips (for petty_cash tab only)
-const QUICK_FILTERS = ["Semua", "Bensin Motor", "Parkir", "Kasbon Karyawan"];
+// Quick-filter chips (for petty_cash tab only) — semua subcategory
+const QUICK_FILTERS = ["Semua", "Bensin Motor", "Perbaikan Motor", "Parkir", "Kasbon Karyawan", "Lembur", "Bonus", "Lain-lain"];
+
+// Month quick-select: 5 bulan terakhir dinamis
+const MONTH_QUICK = useMemo(() => {
+  const now = new Date();
+  return Array.from({ length: 5 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (4 - i), 1);
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const from = `${y}-${String(m).padStart(2, "0")}-01`;
+    const lastDay = new Date(y, m, 0).getDate();
+    const to = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    const label = d.toLocaleDateString("id-ID", { month: "short", year: "numeric" });
+    return { label, from, to };
+  });
+}, []);
 
 // ── Budget state ──
 const [showBudgetPanel, setShowBudgetPanel] = useState(false);
@@ -313,22 +328,50 @@ return (
       ))}
     </div>
 
-    {/* Quick-filter chips (petty_cash only) */}
-    {expenseTab === "petty_cash" && (
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {QUICK_FILTERS.map(f => (
-          <button key={f} onClick={() => { setExpenseFilter(f); setExpensePage(1); }}
+    {/* Filter row: subcategory chips + month quick-select dalam satu baris */}
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      {/* Subcategory chips — petty_cash only */}
+      {expenseTab === "petty_cash" && QUICK_FILTERS.map(f => (
+        <button key={f} onClick={() => { setExpenseFilter(f); setExpensePage(1); }}
+          style={{
+            padding: "5px 12px", borderRadius: 20, cursor: "pointer", fontSize: 12,
+            border: "1px solid " + (expenseFilter === f ? cs.accent : cs.border),
+            background: expenseFilter === f ? cs.accent + "22" : "transparent",
+            color: expenseFilter === f ? cs.accent : cs.muted,
+            fontWeight: expenseFilter === f ? 700 : 400
+          }}>
+          {f}
+        </button>
+      ))}
+
+      {/* Separator */}
+      <span style={{ color: cs.border, fontSize: 16, userSelect: "none", margin: "0 4px" }}>|</span>
+
+      {/* Month quick-select */}
+      <span style={{ fontSize: 11, color: cs.muted }}>📅</span>
+      {MONTH_QUICK.map(({ label, from, to }) => {
+        const isActive = expenseDateFrom === from && expenseDateTo === to;
+        return (
+          <button key={from}
+            onClick={() => { setExpenseDateFrom(from); setExpenseDateTo(to); setExpensePage(1); }}
             style={{
-              padding: "5px 12px", borderRadius: 20, border: "1px solid " + (expenseFilter === f ? cs.accent : cs.border),
-              background: expenseFilter === f ? cs.accent + "22" : "transparent",
-              color: expenseFilter === f ? cs.accent : cs.muted,
-              cursor: "pointer", fontSize: 12, fontWeight: expenseFilter === f ? 700 : 400
+              padding: "5px 12px", borderRadius: 20, cursor: "pointer", fontSize: 12,
+              border: "1px solid " + (isActive ? "#a855f7" : cs.border),
+              background: isActive ? "#a855f722" : "transparent",
+              color: isActive ? "#a855f7" : cs.muted,
+              fontWeight: isActive ? 700 : 400
             }}>
-            {f}
+            {label}
           </button>
-        ))}
-      </div>
-    )}
+        );
+      })}
+      {(expenseDateFrom || expenseDateTo) && (
+        <button onClick={() => { setExpenseDateFrom(""); setExpenseDateTo(""); setExpensePage(1); }}
+          style={{ background: "transparent", border: "none", color: cs.muted, fontSize: 11, cursor: "pointer", padding: "4px 4px" }}>
+          ✕
+        </button>
+      )}
+    </div>
 
     {/* Search + date range */}
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
