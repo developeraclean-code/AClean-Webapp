@@ -5864,7 +5864,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       teknisiData={teknisiData} omsetView={omsetView} setOmsetView={setOmsetView} isMobile={isMobile} waConversations={waConversations}
       bulanIni={bulanIni} setActiveMenu={setActiveMenu} setInvoiceFilter={setInvoiceFilter} setModalOrder={setModalOrder}
       setWaPanel={setWaPanel} setWaTekTarget={setWaTekTarget} setModalWaTek={setModalWaTek}
-      fmt={fmt} getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} showNotif={showNotif} TODAY={TODAY}
+      fmt={fmt} getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} openBAPModal={openBAPModal}
+      openMaterialBringModal={openMaterialBringModal} materialsBroughtMap={materialsBroughtMap} showNotif={showNotif} TODAY={TODAY}
       sendWA={sendWA} dispatchWA={dispatchWA} addAgentLog={addAgentLog}
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       customersData={customersData} laporanReports={laporanReports} findCustomer={findCustomer}
