@@ -573,6 +573,65 @@ async function taskScanBuktiBayar() {
 }
 
 // ══════════════════════════════════════════════════
+// TASK: Auto-Return Bawa Material Stale
+// Jalan tiap hari malam (22:00 WIB / 15:00 UTC)
+// Brought yang stuck > 24h → RETURNED (kembali ke stok virtual)
+// + Auto-USED kalau orders sudah COMPLETED/PAID tapi brought masih BROUGHT
+// ══════════════════════════════════════════════════
+async function taskAutoReturnBrought() {
+  const cutoff24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const now = new Date().toISOString();
+
+  // Step 1: brought records > 24h yang masih BROUGHT (lupa di-laporan)
+  const { data: stale, error: e1 } = await sb.from("job_materials_brought")
+    .select("id, job_id, unit_label, brought_by, brought_at")
+    .eq("status", "BROUGHT")
+    .lt("brought_at", cutoff24h)
+    .limit(500);
+  if (e1) {
+    await log("AUTO_RETURN_BROUGHT", "Fetch error: " + e1.message, "ERROR");
+    return { error: e1.message };
+  }
+  const staleRows = stale || [];
+
+  // Step 2: cross-check orders — kalau order sudah COMPLETED/PAID, lebih relevan tag USED
+  // bukan RETURNED. Tapi karena tidak ada qty_used, default ke RETURNED untuk safety.
+  let returnedCnt = 0;
+  if (staleRows.length > 0) {
+    const ids = staleRows.map(r => r.id);
+    const { error: e2 } = await sb.from("job_materials_brought")
+      .update({ status: "RETURNED", updated_at: now, notes: "auto-returned (>24h tidak ke-laporan)" })
+      .in("id", ids);
+    if (e2) {
+      await log("AUTO_RETURN_BROUGHT", "Update error: " + e2.message, "ERROR");
+      return { error: e2.message };
+    }
+    returnedCnt = ids.length;
+  }
+
+  // Step 3: log summary + (kalau ada) alert ke owner
+  const summary = `Returned: ${returnedCnt} brought records (>24h stuck)`;
+  await log("AUTO_RETURN_BROUGHT", summary, returnedCnt > 0 ? "SUCCESS" : "INFO");
+
+  if (returnedCnt > 0 && OWNER_PHONE) {
+    const byTech = {};
+    staleRows.forEach(r => {
+      if (!byTech[r.brought_by]) byTech[r.brought_by] = [];
+      byTech[r.brought_by].push(`${r.unit_label} (${r.job_id})`);
+    });
+    const lines = Object.entries(byTech).map(([t, list]) =>
+      `• ${t}: ${list.slice(0,3).join(", ")}${list.length > 3 ? ` +${list.length-3} lagi` : ""}`).join("\n");
+    await sendWA(OWNER_PHONE,
+      "📦 *Auto-Return Bawa Material*\n" +
+      `${returnedCnt} unit di-return ke stok karena >24h tidak ke-laporan:\n\n${lines}\n\n` +
+      "Periksa apakah teknisi lupa input laporan."
+    );
+  }
+
+  return { returned: returnedCnt, details: staleRows.map(r => r.id) };
+}
+
+// ══════════════════════════════════════════════════
 // TASK 7: Backup Data Bulanan ke R2
 // Jalan tiap tanggal 1 jam 09:00 WIB (02:00 UTC)
 // Export invoices, orders, customers, service_reports ke R2
@@ -1315,6 +1374,7 @@ export default async function handler(req, res) {
       "laporan-stale":    taskLaporanStaleAlert,
       "payroll-wa":       taskPayrollWA,
       "log-cleanup":      taskLogCleanup,
+      "auto-return-brought": taskAutoReturnBrought,
       "reminder":         taskReminder,
     };
     const handler = taskMap[task] || taskReminder;

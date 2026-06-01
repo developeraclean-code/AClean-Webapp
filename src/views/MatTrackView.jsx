@@ -1,4 +1,4 @@
-import { memo, useState, useMemo } from "react";
+import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
 
@@ -151,6 +151,35 @@ const [editUnitId, setEditUnitId]   = useState(null); // unit.id sedang diedit s
 const [editUnitVal, setEditUnitVal] = useState("");   // nilai stok baru
 const [showArchived, setShowArchived] = useState(false); // tampilkan unit archived
 const [archiveReason, setArchiveReason] = useState(""); // alasan archive (optional)
+
+// ── Soft-reserve: unit yang sedang dibawa teknisi (status=BROUGHT) ──
+// Map: unit_id → [{job_id, brought_by, qty_estimate, customer}]
+const [reservedMap, setReservedMap] = useState({});
+useEffect(() => {
+  let cancelled = false;
+  (async () => {
+    try {
+      const { data } = await supabase.from("job_materials_brought")
+        .select("unit_id, job_id, brought_by, qty_estimate, brought_at, orders:job_id(customer)")
+        .eq("status", "BROUGHT")
+        .order("brought_at", { ascending: false });
+      if (cancelled) return;
+      const m = {};
+      (data || []).forEach(r => {
+        if (!r.unit_id) return;
+        if (!m[r.unit_id]) m[r.unit_id] = [];
+        m[r.unit_id].push({
+          job_id: r.job_id,
+          brought_by: r.brought_by,
+          qty_estimate: Number(r.qty_estimate) || 0,
+          customer: r.orders?.customer || null,
+        });
+      });
+      setReservedMap(m);
+    } catch (_) { /* ignore */ }
+  })();
+  return () => { cancelled = true; };
+}, [supabase, invUnitsData]);
 const [confirmArchiveId, setConfirmArchiveId] = useState(null); // unit.id yang menunggu konfirmasi archive
 const [archiveTabFilter, setArchiveTabFilter] = useState("aktif"); // "aktif" | "diarsipkan" | "semua"
 
@@ -906,13 +935,45 @@ return (
                     </div>
                     {/* Progress bar */}
                     <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: cs.muted, marginBottom: 5 }}>
-                        <span style={{ fontWeight: 700, color: col, fontSize: 13 }}>{parseFloat((unit.stock || 0).toFixed(1))} {item.unit}</span>
-                        <span>{unit.capacity || "?"} {item.unit} kapasitas · {pct}%</span>
-                      </div>
-                      <div style={{ height: 8, background: cs.card, borderRadius: 99, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: pct + "%", background: col, borderRadius: 99, transition: "width .3s" }} />
-                      </div>
+                      {(() => {
+                        const reserved = reservedMap[unit.id] || [];
+                        const reservedQty = reserved.reduce((s, r) => s + (r.qty_estimate || 0), 0);
+                        const effectiveStock = Math.max(0, (unit.stock || 0) - reservedQty);
+                        return (
+                          <>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: cs.muted, marginBottom: 5 }}>
+                              <span style={{ fontWeight: 700, color: col, fontSize: 13 }}>
+                                {parseFloat((unit.stock || 0).toFixed(1))} {item.unit}
+                                {reserved.length > 0 && (
+                                  <span style={{ marginLeft: 6, fontSize: 10, color: "#a855f7", fontWeight: 600 }}>
+                                    📦 -{reservedQty > 0 ? parseFloat(reservedQty.toFixed(1)) : "?"} dibawa
+                                  </span>
+                                )}
+                              </span>
+                              <span>{unit.capacity || "?"} {item.unit} · {pct}%</span>
+                            </div>
+                            <div style={{ height: 8, background: cs.card, borderRadius: 99, overflow: "hidden", position: "relative" }}>
+                              <div style={{ height: "100%", width: pct + "%", background: col, borderRadius: 99, transition: "width .3s" }} />
+                              {reservedQty > 0 && unit.capacity > 0 && (
+                                <div title={`Dibawa: ${reserved.map(r => `${r.brought_by} (${r.customer || r.job_id})`).join(", ")}`}
+                                  style={{
+                                    position: "absolute", top: 0, right: 0,
+                                    height: "100%",
+                                    width: Math.min(100, (reservedQty / unit.capacity) * 100) + "%",
+                                    background: "repeating-linear-gradient(45deg, #a855f7aa, #a855f7aa 4px, transparent 4px, transparent 8px)",
+                                    borderRadius: 99,
+                                  }} />
+                              )}
+                            </div>
+                            {reserved.length > 0 && (
+                              <div style={{ fontSize: 10, color: "#a855f7", marginTop: 4 }}>
+                                Reserved oleh: {reserved.slice(0, 2).map(r => `${r.brought_by} (${r.customer || r.job_id})`).join(", ")}
+                                {reserved.length > 2 && ` +${reserved.length - 2} lain`}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                     {/* Tombol aksi */}
                     {isOwnerAdmin && (

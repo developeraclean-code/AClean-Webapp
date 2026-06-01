@@ -79,14 +79,19 @@ export default function MaterialBringModal({
     if (!open || !job?.id || !job?.date) return;
     (async () => {
       const { data } = await supabase.from("job_materials_brought")
-        .select("unit_id, job_id, brought_by, status")
+        .select("unit_id, job_id, brought_by, qty_estimate, status, orders:job_id(customer,date)")
         .eq("status", "BROUGHT")
         .neq("job_id", job.id);
       const map = {};
       (data || []).forEach(r => {
         if (!r.unit_id) return;
         if (!map[r.unit_id]) map[r.unit_id] = [];
-        map[r.unit_id].push({ job_id: r.job_id, by: r.brought_by });
+        map[r.unit_id].push({
+          job_id: r.job_id, by: r.brought_by,
+          qty: Number(r.qty_estimate) || 0,
+          customer: r.orders?.customer || null,
+          date: r.orders?.date || null,
+        });
       });
       setReservedMap(map);
     })();
@@ -270,8 +275,12 @@ export default function MaterialBringModal({
                 const ratio = cap > 0 ? Math.min(1, stockNum / cap) : 0.5;
                 const stockColor = stockNum <= Number(u.min_visible || 0) ? "#ef4444"
                   : ratio < 0.3 ? "#f59e0b" : "#10b981";
-                const reservedByOther = (reservedMap[u.id] || []).length > 0;
+                const reservedRows = reservedMap[u.id] || [];
+                const reservedByOther = reservedRows.length > 0;
+                const reservedTotal = reservedRows.reduce((s, r) => s + (r.qty || 0), 0);
+                const effectiveStock = Math.max(0, stockNum - reservedTotal);
                 const displayStock = activeTab === "freon" ? stockNum.toFixed(1) : Math.floor(stockNum);
+                const effDisplay = activeTab === "freon" ? effectiveStock.toFixed(1) : Math.floor(effectiveStock);
                 return (
                   <div key={u.id} style={{
                     border: "1px solid " + (isPicked ? cs.accent + "88" : cs.border),
@@ -288,17 +297,23 @@ export default function MaterialBringModal({
                         color: "#fff", fontSize: 13, fontWeight: 800,
                       }}>{isPicked ? "✓" : ""}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                           {u.unit_label}
                           {reservedByOther && (
-                            <span title="Dibawa tim lain hari ini" style={{
-                              fontSize: 9, background: "#f59e0b22", color: "#f59e0b",
-                              padding: "1px 6px", borderRadius: 99, fontWeight: 700,
-                            }}>⚠ dipakai tim lain</span>
+                            <span title={reservedRows.map(r => `${r.by} (${r.customer || r.job_id})`).join("\n")}
+                              style={{
+                                fontSize: 9, background: "#f59e0b22", color: "#f59e0b",
+                                padding: "1px 6px", borderRadius: 99, fontWeight: 700,
+                              }}>📦 dibawa {reservedRows[0].by.split(" ")[0]}{reservedRows.length > 1 ? ` +${reservedRows.length-1}` : ""}</span>
                           )}
                         </div>
                         <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>
                           {u.inv_name} · {u.inventory_code}
+                          {reservedByOther && (
+                            <span style={{ marginLeft: 6, color: "#a855f7" }}>
+                              · effective: {effDisplay} {u.inv_unit}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div style={{ textAlign: "right", flexShrink: 0 }}>
