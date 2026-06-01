@@ -937,8 +937,6 @@ return (
                     <div style={{ flex: 1 }}>
                       {(() => {
                         const reserved = reservedMap[unit.id] || [];
-                        const reservedQty = reserved.reduce((s, r) => s + (r.qty_estimate || 0), 0);
-                        const effectiveStock = Math.max(0, (unit.stock || 0) - reservedQty);
                         return (
                           <>
                             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: cs.muted, marginBottom: 5 }}>
@@ -946,7 +944,7 @@ return (
                                 {parseFloat((unit.stock || 0).toFixed(1))} {item.unit}
                                 {reserved.length > 0 && (
                                   <span style={{ marginLeft: 6, fontSize: 10, color: "#a855f7", fontWeight: 600 }}>
-                                    📦 -{reservedQty > 0 ? parseFloat(reservedQty.toFixed(1)) : "?"} dibawa
+                                    📦 dibawa oleh {reserved.length} job
                                   </span>
                                 )}
                               </span>
@@ -954,20 +952,18 @@ return (
                             </div>
                             <div style={{ height: 8, background: cs.card, borderRadius: 99, overflow: "hidden", position: "relative" }}>
                               <div style={{ height: "100%", width: pct + "%", background: col, borderRadius: 99, transition: "width .3s" }} />
-                              {reservedQty > 0 && unit.capacity > 0 && (
-                                <div title={`Dibawa: ${reserved.map(r => `${r.brought_by} (${r.customer || r.job_id})`).join(", ")}`}
+                              {reserved.length > 0 && (
+                                <div title={`Dibawa: ${reserved.map(r => `${r.brought_by} (${r.customer || r.job_id})`).join("\n")}`}
                                   style={{
-                                    position: "absolute", top: 0, right: 0,
-                                    height: "100%",
-                                    width: Math.min(100, (reservedQty / unit.capacity) * 100) + "%",
-                                    background: "repeating-linear-gradient(45deg, #a855f7aa, #a855f7aa 4px, transparent 4px, transparent 8px)",
+                                    position: "absolute", top: 0, left: 0, height: "100%", width: "100%",
+                                    background: "repeating-linear-gradient(45deg, transparent, transparent 4px, #a855f755 4px, #a855f755 8px)",
                                     borderRadius: 99,
                                   }} />
                               )}
                             </div>
                             {reserved.length > 0 && (
                               <div style={{ fontSize: 10, color: "#a855f7", marginTop: 4 }}>
-                                Reserved oleh: {reserved.slice(0, 2).map(r => `${r.brought_by} (${r.customer || r.job_id})`).join(", ")}
+                                Dibawa: {reserved.slice(0, 2).map(r => `${r.brought_by} (${r.customer || r.job_id})`).join(", ")}
                                 {reserved.length > 2 && ` +${reserved.length - 2} lain`}
                               </div>
                             )}

@@ -134,19 +134,15 @@ export default function MaterialBringModal({
     { key: "kabel", label: "Kabel", icon: "🔌" },
   ];
 
-  const togglePick = (unitId, defaultQty) => {
+  const togglePick = (unitId) => {
     setPicked(p => {
       if (p[unitId]) {
         const n = { ...p };
         delete n[unitId];
         return n;
       }
-      return { ...p, [unitId]: { qty_estimate: defaultQty || null, notes: "" } };
+      return { ...p, [unitId]: { qty_estimate: null, notes: "" } };
     });
-  };
-
-  const updatePick = (unitId, patch) => {
-    setPicked(p => ({ ...p, [unitId]: { ...(p[unitId] || {}), ...patch } }));
   };
 
   const handleSave = async () => {
@@ -330,10 +326,7 @@ export default function MaterialBringModal({
                   : ratio < 0.3 ? "#f59e0b" : "#10b981";
                 const reservedRows = reservedMap[u.id] || [];
                 const reservedByOther = reservedRows.length > 0;
-                const reservedTotal = reservedRows.reduce((s, r) => s + (r.qty || 0), 0);
-                const effectiveStock = Math.max(0, stockNum - reservedTotal);
                 const displayStock = activeTab === "freon" ? stockNum.toFixed(1) : Math.floor(stockNum);
-                const effDisplay = activeTab === "freon" ? effectiveStock.toFixed(1) : Math.floor(effectiveStock);
                 const lowStock = isLowStock(u);
                 return (
                   <div key={u.id} style={{
@@ -341,7 +334,7 @@ export default function MaterialBringModal({
                     background: isPicked ? cs.accent + "10" : cs.card,
                     borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8,
                   }}>
-                    <div onClick={() => togglePick(u.id, activeTab === "freon" ? 1.5 : activeTab === "pipa" ? 5 : 3)}
+                    <div onClick={() => togglePick(u.id)}
                       style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
                       <div style={{
                         width: 22, height: 22, borderRadius: 6, flexShrink: 0,
@@ -369,11 +362,6 @@ export default function MaterialBringModal({
                         </div>
                         <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>
                           {u.inv_name} · {u.inventory_code}
-                          {reservedByOther && (
-                            <span style={{ marginLeft: 6, color: "#a855f7" }}>
-                              · effective: {effDisplay} {u.inv_unit}
-                            </span>
-                          )}
                         </div>
                       </div>
                       <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -389,30 +377,6 @@ export default function MaterialBringModal({
                         </div>
                       </div>
                     </div>
-                    {isPicked && (
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: 6, marginLeft: 32 }}>
-                        <div>
-                          <div style={{ fontSize: 9, color: cs.muted, marginBottom: 2 }}>Qty estimasi (opsional)</div>
-                          <input type="number" min="0" step="0.1" placeholder={u.inv_unit}
-                            value={picked[u.id]?.qty_estimate || ""}
-                            onChange={e => updatePick(u.id, { qty_estimate: e.target.value ? Number(e.target.value) : null })}
-                            style={{
-                              width: "100%", background: cs.surface, border: "1px solid " + cs.border,
-                              borderRadius: 6, padding: "5px 8px", color: cs.text, fontSize: 12, outline: "none",
-                            }} />
-                        </div>
-                        <div>
-                          <div style={{ fontSize: 9, color: cs.muted, marginBottom: 2 }}>Catatan (opsional)</div>
-                          <input type="text" placeholder="mis. tukar dgn tabung Aris"
-                            value={picked[u.id]?.notes || ""}
-                            onChange={e => updatePick(u.id, { notes: e.target.value })}
-                            style={{
-                              width: "100%", background: cs.surface, border: "1px solid " + cs.border,
-                              borderRadius: 6, padding: "5px 8px", color: cs.text, fontSize: 12, outline: "none",
-                            }} />
-                        </div>
-                      </div>
-                    )}
                   </div>
                 );
               })}
