@@ -5850,6 +5850,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           ordersData={ordersData}
           TODAY={TODAY}
           openLaporanModal={openLaporanModal}
+          openMaterialBringModal={openMaterialBringModal}
+          materialsBroughtMap={materialsBroughtMap}
           updateOrderStatus={updateOrderStatus}
           supabase={supabase}
           sendWA={sendWA}
@@ -7540,7 +7542,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         <div style={{ padding: "16px 14px", borderBottom: "1px solid " + cs.border }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
             <div style={{ fontWeight: 800, fontSize: 16, color: cs.accent }}>⬡ {appSettings.app_name || "AClean"}</div>
-            <span style={{ fontSize: 9, color: cs.accent, fontWeight: 700, background: cs.accent + "18", padding: "2px 6px", borderRadius: 4, border: "1px solid " + cs.accent + "33" }}>v19</span>
+            <span style={{ fontSize: 9, color: cs.accent, fontWeight: 700, background: cs.accent + "18", padding: "2px 6px", borderRadius: 4, border: "1px solid " + cs.accent + "33" }}>v20</span>
           </div>
           {currentUser && (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

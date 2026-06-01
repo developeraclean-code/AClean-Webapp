@@ -10,7 +10,7 @@ const STATUS_CONFIG = {
   COMPLETED:  { label: "Selesai",    color: "#10b981", bg: "#10b98122" },
 };
 
-function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu }) {
+function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
 
@@ -147,15 +147,46 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, upda
 
               {/* Action Buttons */}
               <div style={{ padding: "12px 16px", display: "grid", gap: 8 }}>
-                {/* Primary CTA — berubah per status */}
-                {isPending && (
-                  <button
-                    onClick={() => handleStatus(order, "DISPATCHED", "Status diupdate: Berangkat")}
-                    disabled={isUpdating}
-                    style={{ width: "100%", background: "#f59e0b", border: "none", color: "#0a0f1e", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 800, cursor: "pointer", opacity: isUpdating ? 0.6 : 1 }}>
-                    {isUpdating ? "⏳ Memproses..." : "🚀 Konfirmasi Berangkat"}
-                  </button>
-                )}
+                {/* Primary CTA — berubah per status & berdasarkan bawa material */}
+                {isPending && (() => {
+                  const bCount = (materialsBroughtMap || {})[order.id] || 0;
+                  // Step 1: belum declare bawa material → primary = Bawa Material (ungu)
+                  if (bCount === 0 && openMaterialBringModal) {
+                    return (
+                      <>
+                        <button
+                          onClick={() => openMaterialBringModal(order)}
+                          style={{ width: "100%", background: "#a855f7", border: "none", color: "#fff", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
+                          📦 Bawa Material Dulu
+                        </button>
+                        <button
+                          onClick={() => handleStatus(order, "DISPATCHED", "Status diupdate: Berangkat (tanpa bawa material)")}
+                          disabled={isUpdating}
+                          style={{ width: "100%", background: "transparent", border: "1px solid " + cs.border, color: cs.muted, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", opacity: isUpdating ? 0.6 : 1 }}>
+                          {isUpdating ? "⏳ Memproses..." : "Lewati & Berangkat →"}
+                        </button>
+                      </>
+                    );
+                  }
+                  // Step 2: sudah declare → primary = Berangkat (orange), secondary = edit bawa
+                  return (
+                    <>
+                      <button
+                        onClick={() => handleStatus(order, "DISPATCHED", "Status diupdate: Berangkat")}
+                        disabled={isUpdating}
+                        style={{ width: "100%", background: "#f59e0b", border: "none", color: "#0a0f1e", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 800, cursor: "pointer", opacity: isUpdating ? 0.6 : 1 }}>
+                        {isUpdating ? "⏳ Memproses..." : "🚀 Konfirmasi Berangkat"}
+                      </button>
+                      {openMaterialBringModal && (
+                        <button
+                          onClick={() => openMaterialBringModal(order)}
+                          style={{ width: "100%", background: "#a855f722", border: "1px solid #a855f744", color: "#a855f7", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
+                          📦 {bCount} material dibawa — Edit
+                        </button>
+                      )}
+                    </>
+                  );
+                })()}
                 {isDispatched && (
                   <button
                     onClick={() => handleStatus(order, "ON_SITE", "Konfirmasi tiba di lokasi")}
