@@ -135,7 +135,7 @@ export const fetchInventoryUnits = (supabase) =>
 export const fetchExpenses = (supabase) =>
   supabase.from("expenses")
     .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at")
-    .order("date", { ascending: false }).limit(500);
+    .order("date", { ascending: false }).limit(2000);
 
 export const fetchPayments = (supabase) =>
   supabase.from("payments").select("invoice_id,amount,method,paid_at").order("paid_at", { ascending: false }).limit(20);
