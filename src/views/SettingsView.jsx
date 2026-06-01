@@ -504,8 +504,8 @@ const d = await r.json();
                   value={appSettings[field.key] || ""}
                   onChange={e => setAppSettings(prev => ({ ...prev, [field.key]: e.target.value }))}
                   onBlur={async e => {
-                    try { await supabase.from("app_settings").upsert({ key: field.key, value: e.target.value.trim() }, { onConflict: "key" }); }
-                    catch (err) { console.warn("branding settings err:", err); }
+                    try { await supabase.from("app_settings").upsert({ key: field.key, value: e.target.value.trim() }, { onConflict: "key" }); showNotif("✅ " + field.label + " tersimpan"); }
+                    catch (err) { console.warn("branding settings err:", err); showNotif("❌ Gagal simpan " + field.label); }
                   }}
                   placeholder={field.ph}
                   style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }}
@@ -530,8 +530,8 @@ const d = await r.json();
                 onBlur={async e => {
                   const v = e.target.value.trim();
                   if (v) { try { JSON.parse(v); } catch { showNotif("❌ Format JSON tidak valid untuk Service Types"); return; } }
-                  try { await supabase.from("app_settings").upsert({ key: "service_types_json", value: v }, { onConflict: "key" }); }
-                  catch (err) { console.warn(err); }
+                  try { await supabase.from("app_settings").upsert({ key: "service_types_json", value: v }, { onConflict: "key" }); showNotif("✅ Jenis Layanan tersimpan"); }
+                  catch (err) { console.warn(err); showNotif("❌ Gagal simpan Jenis Layanan"); }
                 }}
                 placeholder='["Cleaning","Install","Repair","Complain","Survey"]'
                 style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "9px 12px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box", fontFamily: "monospace" }}
@@ -549,8 +549,8 @@ const d = await r.json();
                   onBlur={async e => {
                     const v = e.target.value.trim();
                     if (v) { try { JSON.parse(v); } catch { showNotif("❌ Format JSON tidak valid untuk " + field.label); return; } }
-                    try { await supabase.from("app_settings").upsert({ key: field.key, value: v }, { onConflict: "key" }); }
-                    catch (err) { console.warn(err); }
+                    try { await supabase.from("app_settings").upsert({ key: field.key, value: v }, { onConflict: "key" }); showNotif("✅ " + field.label + " tersimpan"); }
+                    catch (err) { console.warn(err); showNotif("❌ Gagal simpan " + field.label); }
                   }}
                   placeholder={field.ph}
                   style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "9px 12px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box", fontFamily: "monospace" }}
@@ -571,8 +571,8 @@ const d = await r.json();
             value={appSettings.bap_statement_default || ""}
             onChange={e => setAppSettings(prev => ({ ...prev, bap_statement_default: e.target.value }))}
             onBlur={async e => {
-              try { await supabase.from("app_settings").upsert({ key: "bap_statement_default", value: e.target.value.trim() }, { onConflict: "key" }); }
-              catch (err) { console.warn("bap settings err:", err); }
+              try { await supabase.from("app_settings").upsert({ key: "bap_statement_default", value: e.target.value.trim() }, { onConflict: "key" }); showNotif("✅ Teks BAP tersimpan"); }
+              catch (err) { console.warn("bap settings err:", err); showNotif("❌ Gagal simpan teks BAP"); }
             }}
             placeholder="Dengan ditandatanganinya Berita Acara ini..."
             rows={5}
