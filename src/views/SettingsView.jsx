@@ -489,6 +489,80 @@ const d = await r.json();
           </button>
         </Card>
 
+        {/* Branding Aplikasi */}
+        <Card>
+          <CardHeader icon="🎨" title="Branding Aplikasi" subtitle="Nama aplikasi, nama AI, dan logo — dipakai di pesan WA, PDF, dan tampilan header" />
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+            {[
+              { key: "app_name", label: "Nama Aplikasi / Brand", ph: "Contoh: AClean", icon: "🏷️" },
+              { key: "ai_name", label: "Nama AI Assistant", ph: "Contoh: ARA", icon: "🤖" },
+              { key: "logo_url", label: "URL Logo (opsional)", ph: "https://...", icon: "🖼️" },
+            ].map(field => (
+              <div key={field.key}>
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 5, fontWeight: 600 }}>{field.icon} {field.label}</div>
+                <input
+                  value={appSettings[field.key] || ""}
+                  onChange={e => setAppSettings(prev => ({ ...prev, [field.key]: e.target.value }))}
+                  onBlur={async e => {
+                    try { await supabase.from("app_settings").upsert({ key: field.key, value: e.target.value.trim() }, { onConflict: "key" }); }
+                    catch (err) { console.warn("branding settings err:", err); }
+                  }}
+                  placeholder={field.ph}
+                  style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 10 }}>
+            Nama Aplikasi akan menggantikan "AClean" di seluruh pesan WA, notifikasi, dan dokumen PDF. Nama AI menggantikan "ARA" di header chat.
+          </div>
+        </Card>
+
+        {/* Layanan & Area Pelayanan */}
+        <Card>
+          <CardHeader icon="⚙️" title="Konfigurasi Layanan & Area" subtitle="Jenis layanan dan area pelayanan — kosongkan untuk pakai nilai default" />
+          <div style={{ display: "grid", gap: 14 }}>
+            <div>
+              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 5, fontWeight: 600 }}>🔧 Jenis Layanan (JSON array — kosong = pakai default)</div>
+              <input
+                value={appSettings.service_types_json || ""}
+                onChange={e => setAppSettings(prev => ({ ...prev, service_types_json: e.target.value }))}
+                onBlur={async e => {
+                  const v = e.target.value.trim();
+                  if (v) { try { JSON.parse(v); } catch { showNotif("❌ Format JSON tidak valid untuk Service Types"); return; } }
+                  try { await supabase.from("app_settings").upsert({ key: "service_types_json", value: v }, { onConflict: "key" }); }
+                  catch (err) { console.warn(err); }
+                }}
+                placeholder='["Cleaning","Install","Repair","Complain","Survey"]'
+                style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "9px 12px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box", fontFamily: "monospace" }}
+              />
+            </div>
+            {[
+              { key: "area_utama", label: "Area Utama (JSON array)", ph: '["Alam Sutera","BSD","Gading Serpong","Serpong"]' },
+              { key: "area_konfirmasi", label: "Area Konfirmasi (JSON array)", ph: '["Jakarta Barat","Kebon Jeruk"]' },
+            ].map(field => (
+              <div key={field.key}>
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 5, fontWeight: 600 }}>📍 {field.label}</div>
+                <input
+                  value={appSettings[field.key] || ""}
+                  onChange={e => setAppSettings(prev => ({ ...prev, [field.key]: e.target.value }))}
+                  onBlur={async e => {
+                    const v = e.target.value.trim();
+                    if (v) { try { JSON.parse(v); } catch { showNotif("❌ Format JSON tidak valid untuk " + field.label); return; } }
+                    try { await supabase.from("app_settings").upsert({ key: field.key, value: v }, { onConflict: "key" }); }
+                    catch (err) { console.warn(err); }
+                  }}
+                  placeholder={field.ph}
+                  style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "9px 12px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box", fontFamily: "monospace" }}
+                />
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 10 }}>
+            Kosongkan semua field di atas untuk menggunakan nilai default AClean. Perubahan aktif setelah reload.
+          </div>
+        </Card>
+
         {/* BAP — Pernyataan Default */}
         <Card>
           <CardHeader icon="📋" title="BAP (Berita Acara Pengerjaan)" subtitle="Teks pernyataan default yang muncul di BAP saat teknisi minta TTD customer" />

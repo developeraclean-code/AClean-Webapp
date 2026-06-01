@@ -1016,8 +1016,22 @@ export default function ACleanWebApp() {
     wa_payment_detect: "true",
     wa_cleanup_enabled: "true",
     wa_monitor_enabled: "false",
-    foto_compression_quality: "0.70", // 30%-100%, default 70%
+    foto_compression_quality: "0.70",
+    // White-label branding
+    app_name: "AClean",
+    ai_name: "ARA",
+    logo_url: "",
+    // Configurable business logic
+    service_types_json: "",
+    area_utama: "",
+    area_konfirmasi: "",
   });
+
+  // Service types — bisa override via app_settings.service_types_json (JSON array)
+  const effectiveServiceTypes = useMemo(() => {
+    const p = safeJsonParse(appSettings.service_types_json, null);
+    return Array.isArray(p) && p.length > 0 ? p : SERVICE_TYPES;
+  }, [appSettings.service_types_json]);
 
   // ── Settings: _ls HARUS dideklarasi SEBELUM useState yang memakainya ──
   const _ls = (key, def) => {
@@ -1295,7 +1309,7 @@ export default function ACleanWebApp() {
     setNotification(msg);
     clearTimeout(notifTimer.current);
     notifTimer.current = setTimeout(() => setNotification(null), 3000);
-    if (push) pushNotif("AClean", msg.replace(/[🔔📋✅❌⚠️💰]/g, "").trim());
+    if (push) pushNotif(appSettings.app_name || "AClean", msg.replace(/[🔔📋✅❌⚠️💰]/g, "").trim());
   };
 
   // ── FORCE RELOAD PRICE LIST: dipanggil dari tombol "Sync Harga" di panel ARA ──
@@ -1377,7 +1391,7 @@ export default function ACleanWebApp() {
 
 Halo ${o.teknisi}, job *${o.id}* (${o.customer} — ${o.service}) sudah selesai lebih dari 1 jam.
 
-Mohon segera submit laporan di aplikasi AClean ya! 🙏`;
+Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 🙏`;
         if (tek?.phone) sendWA(tek.phone, msg);
       }
       addAgentLog("LAPORAN_REMINDER", `Reminder laporan dikirim ke ${o.teknisi} — ${o.id}`, "WARNING");
@@ -2324,7 +2338,7 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
 <div class="header">
   <div class="header-left">
     ${logoUrl
-      ? `<div class="logo-wrap"><img src="${logoUrl}" alt="AClean"/></div>`
+      ? `<div class="logo-wrap"><img src="${logoUrl}" alt="${appSettings.app_name || "AClean"}"/></div>`
       : `<div style="font-size:22px;font-weight:900;color:#1e3a5f;line-height:1">AC<span style="color:#3b82f6">lean</span><div style="font-size:9px;font-weight:400;color:#64748b;margin-top:2px">We clean with heart</div></div>`}
   </div>
   <div class="header-right">
@@ -2456,8 +2470,8 @@ ${jasaItems.length > 0 ? `
 
 <!-- FOOTER -->
 <div class="footer">
-  <div class="footer-left">AClean Service · Jasa Servis AC Profesional · aclean.id</div>
-  <div class="footer-right">Dokumen ini dicetak otomatis oleh sistem AClean</div>
+  <div class="footer-left">${appSettings.company_name || "AClean Service"} · ${appSettings.company_addr || "Jasa Servis AC Profesional"}</div>
+  <div class="footer-right">Dokumen ini dicetak otomatis oleh sistem ${appSettings.app_name || "AClean"}</div>
 </div>
 
 <!-- ═══════ HALAMAN FOTO ═══════ -->
@@ -3130,6 +3144,12 @@ ${photoPageHTML}
               voucher_loyalty_enabled: sMap.voucher_loyalty_enabled ?? prev.voucher_loyalty_enabled ?? "false",
               voucher_winback_enabled: sMap.voucher_winback_enabled ?? prev.voucher_winback_enabled ?? "false",
               voucher_expiry_reminder_enabled: sMap.voucher_expiry_reminder_enabled ?? prev.voucher_expiry_reminder_enabled ?? "false",
+              app_name: sMap.app_name || prev.app_name,
+              ai_name: sMap.ai_name || prev.ai_name,
+              logo_url: sMap.logo_url ?? prev.logo_url,
+              service_types_json: sMap.service_types_json ?? prev.service_types_json,
+              area_utama: sMap.area_utama ?? prev.area_utama,
+              area_konfirmasi: sMap.area_konfirmasi ?? prev.area_konfirmasi,
             }));
             if (sMap.cron_jobs) {
               try {
@@ -3700,7 +3720,7 @@ ${photoPageHTML}
       + "Alamat: " + order.address + "\n"
       + "Service: " + order.service + " - " + order.units + " unit\n"
       + "Jadwal: " + order.date + " jam " + order.time + (order.time_end ? " - " + order.time_end : "") + "\n\n"
-      + "Segera konfirmasi kehadiran. — AClean";
+      + `Segera konfirmasi kehadiran. — ${appSettings.app_name || "AClean"}`;
     const ok = await sendWA(tek.phone, msg);
     if (order.helper) {
       const helperData = teknisiData.find(t => t.name === order.helper);
@@ -3712,7 +3732,7 @@ ${photoPageHTML}
           + "Service: " + order.service + " - " + order.units + " unit\n"
           + "Jadwal: " + order.date + " jam " + order.time + "\n"
           + "Teknisi: " + order.teknisi + "\n\n"
-          + "Kamu ditugaskan sebagai Helper. — AClean";
+          + `Kamu ditugaskan sebagai Helper. — ${appSettings.app_name || "AClean"}`;
         await sendWA(helperData.phone, helperMsg);
       }
     }
@@ -3742,14 +3762,14 @@ ${photoPageHTML}
             const portalMsg =
               `Halo ${order.customer}! 👋\n` +
               `Ini adalah Pesan Otomatis Konfirmasi Pesanan Anda 😊\n` +
-              `Tim AClean sedang menuju lokasi Anda sekarang 🚗\n\n` +
+              `Tim ${appSettings.app_name || "AClean"} sedang menuju lokasi Anda sekarang 🚗\n\n` +
               `📋 Detail Servis:\n` +
               `• Layanan  : ${order.service}\n` +
               `• Jadwal   : ${tgl} · ${order.time || "--:--"}\n` +
               `• Tim      : ${team || order.teknisi}\n` +
               `• Lokasi   : ${order.address || "-"}\n\n` +
               `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
-              `Link aktif 30 hari sejak Pemesanan Anda. Detail Service, Pembayaran, Complain dan History Pengerjaan Di Lokasi. Jika Ada Pertanyaan? Balas pesan ini.\n— AClean Service`;
+              `Link aktif 30 hari sejak Pemesanan Anda. Detail Service, Pembayaran, Complain dan History Pengerjaan Di Lokasi. Jika Ada Pertanyaan? Balas pesan ini.\n— ${appSettings.app_name || "AClean"} Service`;
             await sendWA(order.phone, portalMsg);
             // Tandai portal WA sudah dikirim agar cron morning-dispatch tidak kirim dobel
             await supabase.from("orders").update({ portal_wa_sent_at: new Date().toISOString() }).eq("id", order.id);
@@ -4315,7 +4335,7 @@ ${photoPageHTML}
     const portalLink = await getPortalLink(inv.phone, inv.customer);
     const invoiceUrl = await uploadInvoicePDFForWA(inv, portalLink);
     const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
-    const waMsg = `Halo ${inv.customer}, invoice *AClean Service* telah disiapkan:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nTerima kasih! 🙏${portalLine}`;
+    const waMsg = `Halo ${inv.customer}, invoice *${appSettings.app_name || "AClean"} Service* telah disiapkan:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nTerima kasih! 🙏${portalLine}`;
     const sent = await sendWA(inv.phone, waMsg, invoiceUrl
       ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` }
       : {}
@@ -4427,7 +4447,7 @@ ${photoPageHTML}
       }));
     if (shouldNotif && inv.phone) {
       sendWA(inv.phone,
-        "Pembayaran " + inv.id + " Rp " + (inv.total || 0).toLocaleString("id-ID") + " diterima. Terima kasih! — AClean"
+        "Pembayaran " + inv.id + " Rp " + (inv.total || 0).toLocaleString("id-ID") + " diterima. Terima kasih! — " + (appSettings.app_name || "AClean")
       );
     }
     // GAP 1.6: Catat ke payments table untuk history + partial payment support
@@ -5551,7 +5571,7 @@ Jadwal layanan AC Anda *${act.id}* telah diubah:
 🔧 Layanan: ${rOrd.service}
 
 Mohon pastikan ada di lokasi pada waktu tersebut.
-Terima kasih — *AClean Service* 😊`;
+Terima kasih — *${appSettings.app_name || "AClean"} Service* 😊`;
                   if (rOrd?.phone) sendWA(rOrd.phone, custMsg);
                 }
                 if (tekData?.phone) {
@@ -6095,12 +6115,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     }
   };
 
-  // AREA PELAYANAN
-  const AREA_PELAYANAN = {
-    utama: ["Alam Sutera", "BSD", "Gading Serpong", "Graha Raya", "Karawaci", "Tangerang", "Tangerang Selatan", "Serpong", "Serpong Utara", "Cipondoh", "Pinang", "Bitung", "Curug"],
-    konfirmasi: ["Jakarta Barat", "Kebon Jeruk", "Palmerah", "Taman Sari", "Kembangan"],
-    luar: [], // tidak dilayani
-  };
+  // AREA PELAYANAN — bisa dikonfigurasi via app_settings (area_utama / area_konfirmasi JSON array)
+  const _defaultAreaUtama = ["Alam Sutera", "BSD", "Gading Serpong", "Graha Raya", "Karawaci", "Tangerang", "Tangerang Selatan", "Serpong", "Serpong Utara", "Cipondoh", "Pinang", "Bitung", "Curug"];
+  const _defaultAreaKonfirmasi = ["Jakarta Barat", "Kebon Jeruk", "Palmerah", "Taman Sari", "Kembangan"];
+  const AREA_PELAYANAN = useMemo(() => ({
+    utama: safeJsonParse(appSettings.area_utama, null) || _defaultAreaUtama,
+    konfirmasi: safeJsonParse(appSettings.area_konfirmasi, null) || _defaultAreaKonfirmasi,
+    luar: [],
+  }), [appSettings.area_utama, appSettings.area_konfirmasi]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cekAreaPelayanan = (area) => {
     const a = (area || "").toLowerCase();
@@ -6869,7 +6891,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           + `Customer: ${laporanModal.customer}\n`
           + `Teknisi: ${laporanModal.teknisi}\n\n`
           + `Laporan pekerjaan sudah disubmit oleh ${currentUser?.name || laporanModal.teknisi}. `
-          + `Kamu tercatat sebagai helper. Cek di menu Laporan Saya. — AClean`
+          + `Kamu tercatat sebagai helper. Cek di menu Laporan Saya. — ${appSettings.app_name || "AClean"}`
         );
       }
     }
@@ -7385,7 +7407,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     }
 
     setLaporanSubmitted(true);
-    pushNotif("AClean", "Laporan berhasil dikirim ke Admin ✅");
+    pushNotif(appSettings.app_name || "AClean", "Laporan berhasil dikirim ke Admin ✅");
     showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan dikirim ke Owner/Admin untuk verifikasi.`);
     } catch (err) {
       console.error("submitLaporan fatal:", err);
@@ -7431,7 +7453,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {!isMobile && <div style={{ width: 200, background: cs.surface, borderRight: "1px solid " + cs.border, display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh", overflowY: "auto" }}>
         <div style={{ padding: "16px 14px", borderBottom: "1px solid " + cs.border }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <div style={{ fontWeight: 800, fontSize: 16, color: cs.accent }}>⬡ AClean</div>
+            <div style={{ fontWeight: 800, fontSize: 16, color: cs.accent }}>⬡ {appSettings.app_name || "AClean"}</div>
             <span style={{ fontSize: 9, color: cs.accent, fontWeight: 700, background: cs.accent + "18", padding: "2px 6px", borderRadius: 4, border: "1px solid " + cs.accent + "33" }}>v18</span>
           </div>
           {currentUser && (
@@ -7789,7 +7811,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Jenis Layanan</div>
                   <select value={newOrderForm.service} onChange={e => setNewOrderForm(f => ({ ...f, service: e.target.value }))}
                     style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none" }}>
-                    {SERVICE_TYPES.map(s => <option key={s}>{s}</option>)}
+                    {effectiveServiceTypes.map(s => <option key={s}>{s}</option>)}
                   </select>
                 </div>
                 <div>
@@ -9623,27 +9645,27 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 {
                   icon: "🚗",
                   label: "Konfirmasi sedang menuju",
-                  msg: `Halo ${waTekTarget.customer}, saya dari AClean Service sedang dalam perjalanan menuju lokasi Anda. Estimasi tiba pkl ${waTekTarget.time || "sebentar lagi"}. Mohon ditunggu ya! 🙏`
+                  msg: `Halo ${waTekTarget.customer}, saya dari ${appSettings.app_name || "AClean"} Service sedang dalam perjalanan menuju lokasi Anda. Estimasi tiba pkl ${waTekTarget.time || "sebentar lagi"}. Mohon ditunggu ya! 🙏`
                 },
                 {
                   icon: "📍",
                   label: "Tanya patokan / lokasi",
-                  msg: `Halo ${waTekTarget.customer}, saya teknisi AClean yang akan servis hari ini. Boleh minta patokan lokasi rumah Bapak/Ibu? Alamat yang tercatat: ${waTekTarget.address || "—"}. Terima kasih 🙏`
+                  msg: `Halo ${waTekTarget.customer}, saya teknisi ${appSettings.app_name || "AClean"} yang akan servis hari ini. Boleh minta patokan lokasi rumah Bapak/Ibu? Alamat yang tercatat: ${waTekTarget.address || "—"}. Terima kasih 🙏`
                 },
                 {
                   icon: "✅",
                   label: "Konfirmasi jadwal hari ini",
-                  msg: `Halo ${waTekTarget.customer}, kami konfirmasi jadwal servis AC dari AClean hari ini pkl ${waTekTarget.time || "—"} untuk ${waTekTarget.service || "servis AC"}. Apakah masih bisa? 🙏`
+                  msg: `Halo ${waTekTarget.customer}, kami konfirmasi jadwal servis AC dari ${appSettings.app_name || "AClean"} hari ini pkl ${waTekTarget.time || "—"} untuk ${waTekTarget.service || "servis AC"}. Apakah masih bisa? 🙏`
                 },
                 {
                   icon: "⏰",
                   label: "Info terlambat / minta reschedule",
-                  msg: `Halo ${waTekTarget.customer}, mohon maaf kami dari AClean ada keterlambatan. Kami akan tiba sedikit lebih lama dari jadwal. Terima kasih atas pengertiannya 🙏`
+                  msg: `Halo ${waTekTarget.customer}, mohon maaf kami dari ${appSettings.app_name || "AClean"} ada keterlambatan. Kami akan tiba sedikit lebih lama dari jadwal. Terima kasih atas pengertiannya 🙏`
                 },
                 {
                   icon: "✔️",
                   label: "Pekerjaan selesai — terima kasih",
-                  msg: `Halo ${waTekTarget.customer}, pekerjaan servis AC (${waTekTarget.service || "—"}) telah selesai. Terima kasih sudah mempercayakan ke AClean Service. Semoga AC-nya nyaman kembali! 😊`
+                  msg: `Halo ${waTekTarget.customer}, pekerjaan servis AC (${waTekTarget.service || "—"}) telah selesai. Terima kasih sudah mempercayakan ke ${appSettings.app_name || "AClean"} Service. Semoga AC-nya nyaman kembali! 😊`
                 },
               ].map(({ icon, label, msg }) => (
                 <button key={label} onClick={async () => {
@@ -10296,7 +10318,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 3 }}>Layanan</div>
                     <select value={editOrderForm.service || "Cleaning"} onChange={e => setEditOrderForm(f => ({ ...f, service: e.target.value }))}
                       style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 11px", color: cs.text, fontSize: 13, outline: "none" }}>
-                      {SERVICE_TYPES.map(s => <option key={s}>{s}</option>)}
+                      {effectiveServiceTypes.map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>
@@ -10449,7 +10471,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     addAgentLog("ORDER_UPDATED", `Order ${editOrderItem.id} diedit — ${editOrderForm.teknisi} ${editOrderForm.date} ${editOrderForm.time}`, "SUCCESS");
                     const tek = teknisiData.find(t => t.name === editOrderForm.teknisi);
                     if (tek && (editOrderForm.teknisi !== editOrderItem.teknisi || editOrderForm.date !== editOrderItem.date || editOrderForm.time !== editOrderItem.time)) {
-                      sendWA(tek.phone, `Halo ${editOrderForm.teknisi}, ada *perubahan jadwal*:\n📋 ${editOrderItem.id} — ${editOrderForm.customer || editOrderItem.customer}\n🔧 ${editOrderForm.service} ${editOrderForm.units} unit\n📅 ${editOrderForm.date} jam ${editOrderForm.time}–${timeEnd}\n📍 ${editOrderForm.address || editOrderItem.address}\n${editOrderForm.notes ? "📝 " + editOrderForm.notes + "\n" : ""}Mohon konfirmasi. — AClean`);
+                      sendWA(tek.phone, `Halo ${editOrderForm.teknisi}, ada *perubahan jadwal*:\n📋 ${editOrderItem.id} — ${editOrderForm.customer || editOrderItem.customer}\n🔧 ${editOrderForm.service} ${editOrderForm.units} unit\n📅 ${editOrderForm.date} jam ${editOrderForm.time}–${timeEnd}\n📍 ${editOrderForm.address || editOrderItem.address}\n${editOrderForm.notes ? "📝 " + editOrderForm.notes + "\n" : ""}Mohon konfirmasi. — ${appSettings.app_name || "AClean"}`);
                     }
                     showNotif("✅ Order " + editOrderItem.id + " berhasil diupdate");
                   }
