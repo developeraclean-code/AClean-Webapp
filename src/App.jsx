@@ -55,6 +55,7 @@ const ReportsView = lazy(() => import("./views/ReportsView.jsx"));
 const LaporanTimView = lazy(() => import("./views/LaporanTimView.jsx"));
 const MyReportView = lazy(() => import("./views/MyReportView.jsx"));
 const BAPModal = lazy(() => import("./views/BAPModal.jsx"));
+const MaterialBringModal = lazy(() => import("./views/MaterialBringModal.jsx"));
 const MatTrackView = lazy(() => import("./views/MatTrackView.jsx"));
 const ExpensesView = lazy(() => import("./views/ExpensesView.jsx"));
 const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
@@ -917,6 +918,23 @@ export default function ACleanWebApp() {
   // BAP offline queue — count untuk indikator, auto-sync periodic & on online
   const [pendingBAPCount, setPendingBAPCount] = useState(0);
   const [bapSyncing, setBapSyncing] = useState(false);
+
+  // Bawa Material modal — teknisi/helper declare unit material yang dibawa per job
+  const [materialBringJob, setMaterialBringJob] = useState(null);
+  const openMaterialBringModal = (order) => setMaterialBringJob(order);
+  // Map job_id → count brought (status BROUGHT/USED), untuk badge tombol Bawa Material
+  const [materialsBroughtMap, setMaterialsBroughtMap] = useState({});
+  const refreshMaterialsBroughtMap = async () => {
+    try {
+      const { data } = await supabase.from("job_materials_brought")
+        .select("job_id, status")
+        .in("status", ["BROUGHT", "USED"]);
+      const m = {};
+      (data || []).forEach(r => { m[r.job_id] = (m[r.job_id] || 0) + 1; });
+      setMaterialsBroughtMap(m);
+    } catch (_) { /* ignore */ }
+  };
+  useEffect(() => { refreshMaterialsBroughtMap(); /* eslint-disable-next-line */ }, []);
 
   // Server-side search (Opsi B) — extra hasil dari DB di luar window 300/500 default
   const [searchInvExt, setSearchInvExt] = useState([]);
@@ -2611,6 +2629,41 @@ ${photoPageHTML}
     setLaporanJasaItems([]); setJasaManualText({});
     setLaporanRepairItems([]); setRepairManualText({});
     setLaporanBarangItems([]); // ✨ NEW: reset barang items
+    // ── Pre-fill dari materials_brought (Bawa Material) ──
+    // Kalau teknisi pagi sudah declare bawa tabung/roll → auto-add ke section barang
+    (async () => {
+      try {
+        const { data: brought } = await supabase.from("job_materials_brought")
+          .select("id, unit_id, inventory_code, inventory_name, unit_label, material_type, qty_estimate, qty_used")
+          .eq("job_id", order.id)
+          .in("status", ["BROUGHT", "USED"])
+          .order("brought_at", { ascending: true });
+        if (brought && brought.length > 0) {
+          const inv = inventoryData;
+          const prefill = brought.map((b, i) => {
+            const invItem = inv.find(x => x.code === b.inventory_code);
+            const hargaSatuan = (() => {
+              const pl = priceListData.find(p => p.type && b.inventory_name && p.type.toLowerCase().includes((b.inventory_name || "").toLowerCase()));
+              return pl ? parseInt(pl.price || 0) : 0;
+            })();
+            return {
+              id: Date.now() + i,
+              nama: b.inventory_name || invItem?.name || "",
+              jumlah: Number(b.qty_used || b.qty_estimate || 1),
+              satuan: invItem?.unit || (b.material_type === "freon" ? "kg" : "m"),
+              harga_satuan: hargaSatuan,
+              _isManual: false,
+              unit_id: b.unit_id,
+              unit_label: b.unit_label,
+              inv_code: b.inventory_code,
+              _broughtId: b.id,
+              _fromBrought: true,
+            };
+          });
+          setLaporanBarangItems(prefill);
+        }
+      } catch (e) { console.warn("[BROUGHT_PREFILL]", e?.message || e); }
+    })();
     setLaporanCleaningInRepair([]); // ✨ NEW: reset cleaning-in-repair checkboxes
     setShowJasaSearch(false); setJasaSearchQ("");
     setShowRepairSearch(false); setRepairSearchQ("");
@@ -5973,7 +6026,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setHistoryPreview={setHistoryPreview} setWaTekTarget={setWaTekTarget} setModalWaTek={setModalWaTek}
       getTechColor={getTechColor} dispatchStatus={dispatchStatus} sendDispatchWA={sendDispatchWA} dispatchWA={dispatchWA}
       deleteOrder={deleteOrder} addAgentLog={addAgentLog} auditUserName={auditUserName} showConfirm={showConfirm} showNotif={showNotif}
-      openWA={openWA} openLaporanModal={openLaporanModal} sendWA={sendWA} updateOrderStatus={updateOrderStatus}
+      openWA={openWA} openLaporanModal={openLaporanModal}
+      openMaterialBringModal={openMaterialBringModal} materialsBroughtMap={materialsBroughtMap}
+      sendWA={sendWA} updateOrderStatus={updateOrderStatus}
       hitungJamSelesai={hitungJamSelesai} downloadRekapHarian={downloadRekapHarian} triggerRekapHarian={triggerRekapHarian}
       supabase={supabase} TODAY={TODAY} SCHED_PAGE_SIZE={SCHED_PAGE_SIZE} getLocalDate={getLocalDate} userAccounts={userAccounts}
       uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} invoicesData={invoicesData} setLaporanReports={setLaporanReports} />
@@ -7405,6 +7460,36 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         }
       }
     }
+
+    // ── Sync job_materials_brought: tandai USED / RETURNED ──
+    // Item barang yang masih dipakai → USED + qty_used
+    // Item brought yang tidak ke-laporan lagi → RETURNED (balik ke stok, tidak deduct)
+    try {
+      const broughtIdsUsed = new Map(); // id → qty_used
+      for (const b of laporanBarangItems) {
+        if (b._broughtId) broughtIdsUsed.set(b._broughtId, Number(b.jumlah) || 0);
+      }
+      const { data: existingBrought } = await supabase.from("job_materials_brought")
+        .select("id, status, qty_used")
+        .eq("job_id", laporanModal.id);
+      const now = new Date().toISOString();
+      for (const row of (existingBrought || [])) {
+        if (broughtIdsUsed.has(row.id)) {
+          const newQty = broughtIdsUsed.get(row.id);
+          if (row.status !== "USED" || Number(row.qty_used || 0) !== newQty) {
+            await supabase.from("job_materials_brought")
+              .update({ status: "USED", qty_used: newQty, used_at: now, updated_at: now })
+              .eq("id", row.id);
+          }
+        } else if (row.status === "BROUGHT") {
+          // Brought tapi tidak ke-laporan → returned
+          await supabase.from("job_materials_brought")
+            .update({ status: "RETURNED", updated_at: now })
+            .eq("id", row.id);
+        }
+      }
+      refreshMaterialsBroughtMap();
+    } catch (e) { console.warn("[BROUGHT_SYNC]", e?.message || e); }
 
     setLaporanSubmitted(true);
     pushNotif(appSettings.app_name || "AClean", "Laporan berhasil dikirim ke Admin ✅");
@@ -11993,6 +12078,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             appSettings={appSettings}
             getLocalDate={getLocalDate}
             fotoSrc={fotoSrc}
+          />
+        </Suspense>
+      )}
+
+      {/* Material Bring Modal — declare unit material dibawa per job */}
+      {materialBringJob && (
+        <Suspense fallback={<div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 9998, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>Memuat...</div>}>
+          <MaterialBringModal
+            open={!!materialBringJob}
+            job={materialBringJob}
+            onClose={() => setMaterialBringJob(null)}
+            currentUser={currentUser}
+            inventoryData={inventoryData}
+            invUnitsData={invUnitsData}
+            supabase={supabase}
+            showNotif={showNotif}
+            onSaved={() => { refreshMaterialsBroughtMap(); }}
           />
         </Suspense>
       )}

@@ -3,7 +3,7 @@ import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { smartSearchNormalize } from "../lib/phone.js";
 
-function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, currentUser, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, isMobile, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, addAgentLog, auditUserName, showConfirm, showNotif, openWA, openLaporanModal, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
+function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, currentUser, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, isMobile, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, addAgentLog, auditUserName, showConfirm, showNotif, openWA, openLaporanModal, openMaterialBringModal, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
 // Hitung minggu dinamis berdasarkan weekOffset
 const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 const baseDate = new Date();
@@ -349,6 +349,19 @@ return (
                           ✅ On Site
                         </button>
                       )}
+                      {openMaterialBringModal && (() => {
+                        const bCount = (materialsBroughtMap || {})[o.id] || 0;
+                        return (
+                          <button onClick={() => openMaterialBringModal(o)}
+                            style={{ background: "#a855f722", border: "1px solid #a855f744", color: "#a855f7", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, position: "relative" }}>
+                            📦 Bawa Material
+                            {bCount > 0 && <span style={{
+                              position: "absolute", top: -5, right: -5, background: "#a855f7", color: "#fff",
+                              fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 99,
+                            }}>{bCount}</span>}
+                          </button>
+                        );
+                      })()}
                       <button onClick={() => openLaporanModal(o)}
                         style={{ background: cs.ara + "22", border: "1px solid " + cs.ara + "44", color: cs.ara, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
                         📝 Laporan
