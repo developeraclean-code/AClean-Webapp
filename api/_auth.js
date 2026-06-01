@@ -212,10 +212,50 @@ export async function checkRateLimit(req, res, maxRequests = 60, windowMs = 6000
       return true;
     }
   } catch(kvErr) {
-    console.warn("[RATE_LIMIT_KV_ERROR]", kvErr.message, "— falling back to in-memory");
+    console.warn("[RATE_LIMIT_KV_ERROR]", kvErr.message, "— falling back to Supabase/in-memory");
   }
 
-  // ── FALLBACK: In-memory rate limiter (development or KV unavailable) ──
+  // ── TRY: Supabase table (M-02) — distributed & gratis, pakai DB yang sudah ada ──
+  // Efektif di serverless (penghitung terpusat di DB), beda dengan in-memory Map per-instance.
+  try {
+    const sbUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    const sbKey = process.env.SUPABASE_SERVICE_KEY;
+    if (sbUrl && sbKey) {
+      const bucketKey = `${ip}:${Math.floor(now / windowMs)}`; // 1 baris per window → hitungan akurat
+      const ttl = Math.ceil(windowMs / 1000) * 2;              // expiry untuk cleanup (bukan correctness)
+      const r = await fetch(`${sbUrl}/rest/v1/rpc/rl_hit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: sbKey, Authorization: "Bearer " + sbKey },
+        body: JSON.stringify({ p_key: bucketKey, p_ttl: ttl }),
+        signal: AbortSignal.timeout(2000),
+      });
+      if (r.ok) {
+        // PostgREST scalar RPC return `5`; defensif juga handle bentuk [{rl_hit:5}] / {rl_hit:5}
+        const body = await r.json();
+        const count = typeof body === "number" ? body
+          : Array.isArray(body) ? Number(body[0]?.rl_hit ?? body[0])
+          : Number(body?.rl_hit ?? body);
+        if (Number.isFinite(count)) {
+          if (count > maxRequests) {
+            const retryAfter = Math.ceil(windowMs / 1000);
+            res.setHeader("Retry-After", retryAfter);
+            res.status(429).json({
+              error: "Too Many Requests",
+              message: `Limit ${maxRequests} request per menit. Coba lagi dalam ${retryAfter} detik.`,
+              retryAfter
+            });
+            console.warn(`[RATE_LIMIT_EXCEEDED_DB] IP: ${ip}, count: ${count}, max: ${maxRequests}`);
+            return false;
+          }
+          return true;
+        }
+      }
+    }
+  } catch(dbErr) {
+    console.warn("[RATE_LIMIT_DB_ERROR]", dbErr.message, "— falling back to in-memory");
+  }
+
+  // ── FALLBACK: In-memory rate limiter (dev, atau KV & Supabase tidak tersedia) ──
   const data = rateLimitMap.get(ip);
 
   if (!data || now > data.resetAt) {
