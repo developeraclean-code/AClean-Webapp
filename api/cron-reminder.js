@@ -628,13 +628,15 @@ async function taskBackupData() {
 
   // Catat ke backup_log
   const successTables = tables.filter(t => results[t] && !results[t].startsWith("ERROR") && !results[t].startsWith("PUT_FAIL") && !results[t].startsWith("EXCEPTION"));
-  await sb.from("backup_log").insert({
-    type: "auto-r2-monthly",
-    tables: successTables.join(","),
-    row_counts: JSON.stringify(results),
-    exported_by: "CRON",
-    notes: "Backup bulanan ke R2: backup/" + yearMonth + "/"
-  }).catch(e => console.error("[BACKUP_LOG]", e.message));
+  try {
+    await sb.from("backup_log").insert({
+      type: "auto-r2-monthly",
+      tables: successTables,           // ARRAY column — jangan join
+      row_counts: results,             // jsonb column — pass object langsung
+      exported_by: "CRON",
+      notes: "Backup bulanan ke R2: backup/" + yearMonth + "/"
+    });
+  } catch(e) { console.error("[BACKUP_LOG]", e.message); }
 
   const summary = "Backup " + yearMonth + ": " + Object.entries(results).map(([t, r]) => t + "=" + r).join(", ");
   await log("BACKUP_DATA", summary, successTables.length === tables.length ? "SUCCESS" : "WARNING");
