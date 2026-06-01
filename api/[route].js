@@ -302,6 +302,29 @@ export default async function handler(req, res) {
         let parsedOk = false;
         let expenseSaved = false;
 
+        // ── Whitelist gate: cek apakah grup ini dimonitor ──
+        // Kalau group_id TIDAK ada di wa_monitored_groups (atau disabled) → skip total.
+        let groupConfig = null;
+        try {
+          const gRes = await fetch(
+            SU_g + "/rest/v1/wa_monitored_groups?select=group_id,group_name,enabled,capture_all,forward_to_owner,notify_keywords&group_id=eq." + encodeURIComponent(groupId || "") + "&limit=1",
+            { headers: { apikey: SK_g, Authorization: "Bearer " + SK_g } }
+          );
+          if (gRes.ok) {
+            const rows = await gRes.json();
+            if (rows && rows.length > 0) groupConfig = rows[0];
+          }
+        } catch(gErr) {
+          console.warn("[receive-wa] group whitelist lookup failed:", gErr.message);
+        }
+        if (!groupConfig || !groupConfig.enabled) {
+          return res.status(200).json({ status: "skipped", reason: "group_not_monitored", group_id: groupId });
+        }
+        const groupName = groupConfig.group_name || null;
+        const captureAll = !!groupConfig.capture_all;
+        const fwdToOwner = !!groupConfig.forward_to_owner;
+        const notifyKws = Array.isArray(groupConfig.notify_keywords) ? groupConfig.notify_keywords : [];
+
         // Step 2: Parse format pesan
         const msgLower = message.toLowerCase();
 
@@ -358,8 +381,19 @@ export default async function handler(req, res) {
           }
         }
 
+        // Cek keyword match (alert trigger)
+        let kwMatched = false;
+        if (notifyKws.length > 0) {
+          for (const kw of notifyKws) {
+            if (kw && msgLower.includes(String(kw).toLowerCase())) { kwMatched = true; break; }
+          }
+        }
+
         // Step 3: Simpan ke wa_group_logs
-        if (SU_g && SK_g) {
+        // - Selalu log kalau parsed_ok (biaya/laporan/stok)
+        // - Kalau capture_all=true → log juga pesan general yang tidak ke-parse
+        const shouldLog = parsedOk || captureAll || kwMatched;
+        if (shouldLog && SU_g && SK_g) {
           fetch(SU_g + "/rest/v1/wa_group_logs", {
             method: "POST",
             headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
@@ -367,18 +401,26 @@ export default async function handler(req, res) {
               sender_phone: participantNorm,
               sender_name: profileName,
               group_id: groupId,
+              group_name: groupName,
               type: parsedType,
               content: message,
               job_id: parsedJobId,
               amount: parsedAmount,
-              parsed_ok: parsedOk
+              parsed_ok: parsedOk,
+              forwarded: false,
+              metadata: kwMatched ? { keyword_match: true } : null,
             })
           }).catch(e => console.error("[WA_GROUP_LOG]", e.message));
         }
 
-        // Step 4: Notif owner jika biaya atau stok_alert
-        if ((parsedType === "biaya" || parsedType === "stok_alert") && FT_g && OP_g) {
-          const ownerMsg = "📋 *Laporan Grup*\n👤 " + profileName + ": " + message + "\n✅ Dicatat otomatis";
+        // Step 4: Notif owner — kalau parsed (biaya/stok_alert), forward_to_owner, atau keyword match
+        const shouldNotifyOwner = (parsedType === "biaya" || parsedType === "stok_alert") || fwdToOwner || kwMatched;
+        if (shouldNotifyOwner && FT_g && OP_g) {
+          let prefix = "📋 *Laporan Grup*";
+          if (kwMatched) prefix = "🔔 *Alert Keyword*";
+          else if (fwdToOwner && parsedType === "general") prefix = "📥 *Pesan Grup*";
+          const ownerMsg = prefix + "\n📛 " + (groupName || groupId) + "\n👤 " + profileName + ": " + message
+            + (parsedOk ? "\n✅ Dicatat otomatis" : "");
           fetch("https://api.fonnte.com/send", {
             method: "POST",
             headers: { Authorization: FT_g, "Content-Type": "application/json" },
@@ -386,7 +428,7 @@ export default async function handler(req, res) {
           }).catch(() => {});
         }
 
-        return res.status(200).json({ status: "group_processed", type: parsedType });
+        return res.status(200).json({ status: "group_processed", type: parsedType, logged: shouldLog });
       }
 
       const FT = process.env.FONNTE_TOKEN;

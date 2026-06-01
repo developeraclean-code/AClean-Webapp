@@ -43,6 +43,7 @@ import ViewErrorBoundary from "./components/ViewErrorBoundary.jsx";
 import { AppContext } from "./context/AppContext.js";
 const DeletedAuditView = lazy(() => import("./views/DeletedAuditView.jsx"));
 const MonitoringView = lazy(() => import("./views/MonitoringView.jsx"));
+const WaGroupMonitorView = lazy(() => import("./views/WaGroupMonitorView.jsx"));
 const InventoryView = lazy(() => import("./views/InventoryView.jsx"));
 const AraView = lazy(() => import("./views/AraView.jsx"));
 const CustomersView = lazy(() => import("./views/CustomersView.jsx"));
@@ -2837,7 +2838,7 @@ ${photoPageHTML}
     // SOP_ADMIN_ROLE.md: Admin = input & edit only, no delete, no price list, no settings
     // Statistik (reports), Deleted Audit (deletedaudit) → Owner only
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport", "monitoring", "finance", "pricelist", "reports", "deletedaudit"];
+      const adminBlocked = ["settings", "myreport", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit"];
       return !adminBlocked.includes(menu);
     }
     // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri (komisi disembunyikan — password shared)
@@ -5829,6 +5830,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id: "reports", icon: "📊", label: "Statistik" },
     { id: "deletedaudit", icon: "🗑", label: "Deleted Audit" },
     { id: "monitoring", icon: "🔍", label: "Monitoring" },
+    { id: "wa_groups", icon: "📡", label: "Monitor WA Group" },
     { id: "settings", icon: "⚙️", label: "Pengaturan" },
     { id: "mattrack", icon: "🧮", label: "Stok Material" },
     { id: "biaya", icon: "💸", label: "Biaya" },
@@ -6369,6 +6371,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     <MonitoringView monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} _apiHeaders={_apiHeaders} supabase={supabase} />
   );
 
+  const renderWaGroupMonitor = () => (
+    <WaGroupMonitorView currentUser={currentUser} supabase={supabase} showNotif={showNotif} showConfirm={showConfirm} auditUserName={auditUserName} />
+  );
+
   // ============================================================
   // RENDER CONTENT ROUTER
   // ============================================================
@@ -6412,6 +6418,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       case "mattrack": return renderMatTrack();
       case "biaya": return renderExpenses();
       case "monitoring": return renderMonitoring();
+      case "wa_groups": return renderWaGroupMonitor();
       case "settings": return renderSettings();
       default: return renderDashboard();
     }
@@ -7542,7 +7549,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         <div style={{ padding: "16px 14px", borderBottom: "1px solid " + cs.border }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
             <div style={{ fontWeight: 800, fontSize: 16, color: cs.accent }}>⬡ {appSettings.app_name || "AClean"}</div>
-            <span style={{ fontSize: 9, color: cs.accent, fontWeight: 700, background: cs.accent + "18", padding: "2px 6px", borderRadius: 4, border: "1px solid " + cs.accent + "33" }}>v22</span>
+            <span style={{ fontSize: 9, color: cs.accent, fontWeight: 700, background: cs.accent + "18", padding: "2px 6px", borderRadius: 4, border: "1px solid " + cs.accent + "33" }}>v23</span>
           </div>
           {currentUser && (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
