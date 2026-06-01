@@ -135,7 +135,25 @@ export const fetchInventoryUnits = (supabase) =>
 export const fetchExpenses = (supabase) =>
   supabase.from("expenses")
     .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at")
+    .is("deleted_at", null)
     .order("date", { ascending: false }).limit(2000);
+
+// Recycle bin — expenses yang sudah di-soft-delete (untuk tab "Dihapus")
+export const fetchDeletedExpenses = (supabase) =>
+  supabase.from("expenses")
+    .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at,deleted_at,deleted_by")
+    .not("deleted_at", "is", null)
+    .order("deleted_at", { ascending: false }).limit(500);
+
+// Bulk kasbon untuk satu periode (semua orang) — untuk deteksi staleness payroll.
+// Hanya yang aktif (deleted_at NULL) agar konsisten dengan total live.
+export const fetchAllKasbonByPeriod = (supabase, periodStart, periodEnd) =>
+  supabase.from("expenses")
+    .select("teknisi_name,amount,date")
+    .eq("subcategory", "Kasbon Karyawan")
+    .is("deleted_at", null)
+    .gte("date", periodStart)
+    .lte("date", periodEnd);
 
 export const fetchPayments = (supabase) =>
   supabase.from("payments").select("invoice_id,amount,method,paid_at").order("paid_at", { ascending: false }).limit(20);
@@ -214,6 +232,7 @@ export const fetchKasbonByPeriod = (supabase, userName, periodStart, periodEnd) 
   supabase.from("expenses")
     .select("amount,date,description")
     .eq("subcategory", "Kasbon Karyawan")
+    .is("deleted_at", null)
     .ilike("teknisi_name", (userName || "").trim())
     .gte("date", periodStart)
     .lte("date", periodEnd);

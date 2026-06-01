@@ -1,7 +1,11 @@
 import { memo, useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import {
-  fetchWeeklyPayroll, fetchDaysWorkedFromOrders, fetchKasbonByPeriod,
+  localDateStr, getMondayOf, getSaturdayOf, addWeeks,
+  fullWeekBonusAmt, computeGross, kasbonOwed, kasbonSisa,
+} from "../lib/payroll.js";
+import {
+  fetchWeeklyPayroll, fetchDaysWorkedFromOrders, fetchKasbonByPeriod, fetchAllKasbonByPeriod,
   fetchOrderBonusesByPeriod, fetchOrdersWithoutBonus, fetchAvailabilityByUserPeriod,
 } from "../data/reads.js";
 import {
@@ -25,31 +29,7 @@ const BONUS_DEFAULTS = {
 const STATUS_COLORS = { PENDING: "#f59e0b", ELIGIBLE: "#3b82f6", PAID: "#22c55e", VOID: "#ef4444" };
 const STATUS_LABELS = { PENDING: "Dalam Warranty", ELIGIBLE: "Siap Cair", PAID: "Sudah Dibayar", VOID: "Void" };
 
-// Hitung Senin terdekat sebelum/sama dengan today
-// Selalu pakai local date — toISOString() return UTC dan geser hari di WIB (UTC+7)
-function localDateStr(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-}
-function getMondayOf(dateStr) {
-  const d = new Date(dateStr + "T00:00:00");
-  const day = d.getDay(); // 0=Sun
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  return localDateStr(d);
-}
-function getSaturdayOf(mondayStr) {
-  const d = new Date(mondayStr + "T00:00:00");
-  d.setDate(d.getDate() + 5);
-  return localDateStr(d);
-}
-function addWeeks(mondayStr, n) {
-  const d = new Date(mondayStr + "T00:00:00");
-  d.setDate(d.getDate() + n * 7);
-  return localDateStr(d);
-}
+// Period helpers (localDateStr/getMondayOf/getSaturdayOf/addWeeks) → src/lib/payroll.js
 // Helper bulan untuk komisi — "2026-05"
 function getMonthStart(ym) { return ym + "-01"; } // "2026-05" → "2026-05-01"
 function getMonthEnd(ym) {
@@ -79,18 +59,7 @@ function fmtDate(d) {
   if (!d) return "-";
   return new Date(d + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
-function fullWeekBonusAmt(role) { return role === "Helper" ? 75000 : 100000; }
-// Hitung gross client-side (mirror formula GENERATED di DB) → total live tanpa nunggu reload
-function computeGross(row) {
-  return Number(row.days_worked || 0) * Number(row.daily_rate || 0)
-    + (row.full_week_bonus ? fullWeekBonusAmt(row.role) : 0)
-    - Number(row.late_days || 0) * 10000
-    - Number(row.kasbon_deduct || 0)
-    + Number(row.manual_bonus || 0);
-}
-// Total kasbon terutang minggu ini = kasbon baru + sisa minggu lalu
-function kasbonOwed(row) { return Number(row.kasbon_total || 0) + Number(row.kasbon_carryover || 0); }
-function kasbonSisa(row) { return Math.max(0, kasbonOwed(row) - Number(row.kasbon_deduct || 0)); }
+// fullWeekBonusAmt/computeGross/kasbonOwed/kasbonSisa → src/lib/payroll.js
 // Komisi PENDING → ELIGIBLE otomatis setelah 30 hari (derive, tanpa cron)
 function daysSinceDate(dateStr) {
   if (!dateStr) return 0;
@@ -532,6 +501,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   // ── Payroll state ──
   const [payrollRows, setPayrollRows] = useState([]);
   const [loadingPayroll, setLoadingPayroll] = useState(false);
+  const [liveKasbonMap, setLiveKasbonMap] = useState({}); // { namaLowercase: totalKasbonLive }
   const [editingRate, setEditingRate] = useState({}); // { userId: draftValue }
   const [localRates, setLocalRates]   = useState({}); // { userId: savedRate }
   const [slipPreview, setSlipPreview] = useState(null);
@@ -555,10 +525,44 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   // ── Load payroll ──
   const loadPayroll = useCallback(async () => {
     setLoadingPayroll(true);
-    const { data } = await fetchWeeklyPayroll(supabase, periodStart);
+    // Paralel: snapshot payroll + live kasbon dari expenses (untuk deteksi staleness)
+    const [{ data }, kasbonRes] = await Promise.all([
+      fetchWeeklyPayroll(supabase, periodStart),
+      fetchAllKasbonByPeriod(supabase, periodStart, periodEnd),
+    ]);
     setPayrollRows(data || []);
+    // Group live kasbon per nama (case/space-insensitive, mirror fetchKasbonByPeriod)
+    const map = {};
+    for (const e of (kasbonRes.data || [])) {
+      const k = (e.teknisi_name || "").trim().toLowerCase();
+      if (!k) continue;
+      map[k] = (map[k] || 0) + Number(e.amount || 0);
+    }
+    setLiveKasbonMap(map);
     setLoadingPayroll(false);
-  }, [supabase, periodStart]);
+  }, [supabase, periodStart, periodEnd]);
+
+  // Live kasbon per nama (lowercase) — dibandingkan dgn snapshot kasbon_total tiap row.
+  const liveKasbon = (row) => Number(liveKasbonMap[(row.user_name || "").trim().toLowerCase()] || 0);
+  const kasbonIsStale = (row) =>
+    Object.keys(liveKasbonMap).length > 0 && !row.is_paid && liveKasbon(row) !== Number(row.kasbon_total || 0);
+
+  // Sinkronkan kasbon_total satu row ke nilai live + sesuaikan potongan secara aman.
+  const syncKasbonRow = async (row) => {
+    const live = liveKasbon(row);
+    const carry = Number(row.kasbon_carryover || 0);
+    const oldOwed = Number(row.kasbon_total || 0) + carry;
+    const newOwed = live + carry;
+    const oldDeduct = Number(row.kasbon_deduct || 0);
+    // Jika admin sebelumnya potong PENUH → tetap potong penuh dgn nilai baru.
+    // Selain itu, pertahankan keputusan potong admin tapi clamp ke owed baru.
+    const newDeduct = oldDeduct >= oldOwed && oldOwed > 0 ? newOwed : Math.min(oldDeduct, newOwed);
+    const fields = { kasbon_total: live, kasbon_deduct: newDeduct };
+    const { error } = await updateWeeklyPayroll(supabase, row.id, fields);
+    if (error) { showNotif?.("❌ Gagal sinkron kasbon: " + error.message); return; }
+    setPayrollRows(prev => prev.map(r => r.id === row.id ? { ...r, ...fields } : r));
+    showNotif?.(`🔄 Kasbon ${row.user_name} disinkronkan → ${fmtRp(live)}`);
+  };
 
   // ── Load bonuses (periode BULANAN) ──
   const loadBonuses = useCallback(async () => {
@@ -1016,6 +1020,23 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
             })()}
 
             {/* Slip cards */}
+            {/* Banner: ada row yang kasbon-nya stale (expenses berubah setelah generate) */}
+            {!loadingPayroll && payrollRows.some(kasbonIsStale) && (
+              <div style={{ background: cs.yellow + "12", border: "1px solid " + cs.yellow + "44", borderRadius: 10, padding: "10px 14px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 16 }}>⚠️</span>
+                <div style={{ flex: 1, minWidth: 180 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, color: cs.yellow }}>
+                    {payrollRows.filter(kasbonIsStale).length} slip punya kasbon kedaluwarsa
+                  </div>
+                  <div style={{ fontSize: 11, color: cs.muted }}>Data kasbon di menu Biaya berubah setelah slip di-generate. Sinkronkan agar total benar.</div>
+                </div>
+                <button
+                  onClick={async () => { for (const r of payrollRows.filter(kasbonIsStale)) { await syncKasbonRow(r); } }}
+                  style={{ padding: "6px 14px", borderRadius: 7, background: cs.yellow + "22", border: "1px solid " + cs.yellow + "66", color: cs.yellow, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                  🔄 Sinkronkan Semua
+                </button>
+              </div>
+            )}
             {loadingPayroll ? (
               <div style={{ color: cs.muted, fontSize: 13, padding: 20, textAlign: "center" }}>Memuat data...</div>
             ) : payrollRows.length === 0 ? (
@@ -1098,6 +1119,20 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                         Kasbon Terutang: <strong style={{ color: owed > 0 ? cs.red : cs.muted }}>{fmtRp(owed)}</strong>
                         {Number(row.kasbon_carryover) > 0 && <span style={{ color: cs.yellow }}> (incl. sisa lalu {fmtRp(row.kasbon_carryover)})</span>}
                       </div>
+                      {/* Staleness: snapshot kasbon_total beda dgn data expenses live → tawarkan sync */}
+                      {kasbonIsStale(row) && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", background: cs.yellow + "14", border: "1px solid " + cs.yellow + "44", borderRadius: 7, padding: "5px 8px", marginBottom: 6 }}>
+                          <span style={{ fontSize: 11, color: cs.yellow, flex: 1, minWidth: 140 }}>
+                            ⚠️ Kasbon di Biaya berubah: live <strong>{fmtRp(liveKasbon(row))}</strong> vs tersimpan <strong>{fmtRp(row.kasbon_total)}</strong>
+                          </span>
+                          {!locked && (
+                            <button onClick={() => syncKasbonRow(row)}
+                              style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid " + cs.yellow + "66", background: cs.yellow + "22", color: cs.yellow }}>
+                              🔄 Sinkronkan
+                            </button>
+                          )}
+                        </div>
+                      )}
                       {owed > 0 ? (
                         <>
                           <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>

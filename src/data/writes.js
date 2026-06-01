@@ -92,10 +92,24 @@ export const insertExpense = (supabase, payload) =>
 export const updateExpense = (supabase, id, fields, userName) =>
   supabase.from("expenses").update({ ...fields, last_changed_by: userName }).eq("id", id);
 
-export const deleteExpense = async (supabase, id, userName) => {
-  await supabase.from("expenses").update({ last_changed_by: userName }).eq("id", id);
-  return supabase.from("expenses").delete().eq("id", id);
-};
+// Soft-delete: pindah ke recycle bin (deleted_at terisi), bukan hapus permanen.
+// Bisa di-restore lewat restoreExpense. Hard delete pakai purgeExpense (Owner only).
+export const deleteExpense = (supabase, id, userName) =>
+  supabase.from("expenses")
+    .update({ deleted_at: new Date().toISOString(), deleted_by: userName, last_changed_by: userName })
+    .eq("id", id);
+
+// Restore dari recycle bin → kembali aktif.
+export const restoreExpense = (supabase, id, userName) =>
+  supabase.from("expenses")
+    .update({ deleted_at: null, deleted_by: null, last_changed_by: userName })
+    .eq("id", id)
+    .select()
+    .single();
+
+// Hapus permanen dari recycle bin (tidak bisa di-undo) — Owner only.
+export const purgeExpense = (supabase, id) =>
+  supabase.from("expenses").delete().eq("id", id);
 
 // ───── CUSTOMERS ─────
 // Customers table belum punya kolom last_changed_by — tidak ada audit injection.

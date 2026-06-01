@@ -1,5 +1,7 @@
-import { memo, useState, useMemo } from "react";
+import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
+import { fetchDeletedExpenses } from "../data/reads.js";
+import { restoreExpense, purgeExpense } from "../data/writes.js";
 
 function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, currentUser, supabase, insertExpense, updateExpense, deleteExpense, auditUserName, setAuditModal, TODAY, EXPENSE_PAGE_SIZE, fmt, showNotif, showConfirm, appSettings, setAppSettings, teknisiData, userAccounts }) {
 const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin" || currentUser?.role === "Finance";
@@ -89,11 +91,28 @@ const budgetAlerts = ALL_BUDGET_ITEMS.filter(item => {
   return b > 0 && s >= b * 0.8;
 });
 
-// Apply filters
-const filtered = expensesData.filter(e => {
-  if (expenseTab === "petty_cash" && e.category !== "petty_cash") return false;
-  if (expenseTab === "material_purchase" && e.category !== "material_purchase") return false;
-  if (expenseTab === "petty_cash" && expenseFilter !== "Semua" && e.subcategory !== expenseFilter) return false;
+const isTrash = expenseTab === "deleted";
+
+// Recycle bin state — di-load lazy saat tab "Dihapus" dibuka (Owner only)
+const [deletedData, setDeletedData] = useState([]);
+const [loadingDeleted, setLoadingDeleted] = useState(false);
+useEffect(() => {
+  if (expenseTab !== "deleted") return;
+  let alive = true;
+  setLoadingDeleted(true);
+  fetchDeletedExpenses(supabase).then(({ data }) => {
+    if (alive) { setDeletedData(data || []); setLoadingDeleted(false); }
+  }).catch(() => { if (alive) setLoadingDeleted(false); });
+  return () => { alive = false; };
+}, [expenseTab, supabase]);
+
+// Apply filters — sumber data tergantung tab (trash = deletedData, else = expensesData)
+const filtered = (isTrash ? deletedData : expensesData).filter(e => {
+  if (!isTrash) {
+    if (expenseTab === "petty_cash" && e.category !== "petty_cash") return false;
+    if (expenseTab === "material_purchase" && e.category !== "material_purchase") return false;
+    if (expenseTab === "petty_cash" && expenseFilter !== "Semua" && e.subcategory !== expenseFilter) return false;
+  }
   if (expenseDateFrom && (e.date || "") < expenseDateFrom) return false;
   if (expenseDateTo && (e.date || "") > expenseDateTo) return false;
   if (expenseSearch) {
@@ -164,15 +183,36 @@ const handleDeleteExpense = async (item) => {
   const { error } = await deleteExpense(supabase, item.id, auditUserName());
   if (error) { showNotif?.("❌ Gagal hapus biaya: " + error.message); return; }
   setExpensesData(prev => prev.filter(x => x.id !== item.id));
-  showNotif?.(`🗑️ Biaya ${item.subcategory} dihapus`);
+  showNotif?.(`🗑️ Biaya ${item.subcategory} dipindah ke Dihapus (bisa dipulihkan)`);
+};
+
+// ── Recycle bin: restore & purge (Owner only) ──
+const handleRestoreExpense = async (item) => {
+  const { data, error } = await restoreExpense(supabase, item.id, auditUserName());
+  if (error) { showNotif?.("❌ Gagal pulihkan: " + error.message); return; }
+  setDeletedData(prev => prev.filter(x => x.id !== item.id));
+  setExpensesData(prev => [data || item, ...prev]);
+  showNotif?.(`♻️ Biaya ${item.subcategory} dipulihkan`);
+};
+
+const handlePurgeExpense = async (item) => {
+  const confirmed = showConfirm
+    ? await showConfirm({ icon: "⚠️", title: "Hapus Permanen?", danger: true,
+        message: `Hapus PERMANEN "${item.subcategory}" ${fmt(item.amount)}? Tindakan ini tidak bisa dibatalkan.`, confirmText: "Hapus Permanen" })
+    : window.confirm(`Hapus PERMANEN "${item.subcategory}"? Tidak bisa di-undo.`);
+  if (!confirmed) return;
+  const { error } = await purgeExpense(supabase, item.id);
+  if (error) { showNotif?.("❌ Gagal hapus permanen: " + error.message); return; }
+  setDeletedData(prev => prev.filter(x => x.id !== item.id));
+  showNotif?.(`🗑️ Biaya ${item.subcategory} dihapus permanen`);
 };
 
 return (
   <div style={{ display: "grid", gap: 16 }}>
     {/* Header */}
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-      <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>💸 Biaya</div>
-      {isOwnerAdmin && (
+      <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>💸 Biaya{isTrash ? " — Recycle Bin" : ""}</div>
+      {isOwnerAdmin && !isTrash && (
         <button onClick={openAdd}
           style={{
             background: "linear-gradient(135deg," + cs.accent + "," + cs.ara + ")", border: "none", color: "#fff",
@@ -315,7 +355,7 @@ return (
 
     {/* Tab bar */}
     <div style={{ display: "flex", gap: 6 }}>
-      {[["petty_cash", "💰 Petty Cash"], ["material_purchase", "🔧 Pembelian Material"]].map(([v, lbl]) => (
+      {[["petty_cash", "💰 Petty Cash"], ["material_purchase", "🔧 Pembelian Material"], ...(isOwner ? [["deleted", "🗑️ Dihapus"]] : [])].map(([v, lbl]) => (
         <button key={v} onClick={() => { setExpenseTab(v); setExpensePage(1); setExpenseFilter("Semua"); }}
           style={{
             padding: "8px 16px", borderRadius: 10, border: "1px solid " + (expenseTab === v ? cs.accent : cs.border),
@@ -405,8 +445,10 @@ return (
 
     {/* Table */}
     <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
-      {pageData.length === 0
-        ? <div style={{ padding: "40px", textAlign: "center", color: cs.muted }}>Tidak ada data biaya.</div>
+      {isTrash && loadingDeleted
+        ? <div style={{ padding: "40px", textAlign: "center", color: cs.muted }}>Memuat data dihapus…</div>
+        : pageData.length === 0
+        ? <div style={{ padding: "40px", textAlign: "center", color: cs.muted }}>{isTrash ? "Recycle bin kosong — tidak ada biaya yang dihapus." : "Tidak ada data biaya."}</div>
         : pageData.map((item, i) => (
           <div key={item.id || i} style={{
             display: "flex", gap: 12, padding: "12px 16px",
@@ -418,11 +460,29 @@ return (
               {item.description && <div style={{ fontSize: 11, color: cs.muted }}>{item.description}</div>}
               {item.teknisi_name && <div style={{ fontSize: 11, color: cs.accent }}>👤 {item.teknisi_name}</div>}
               {item.item_name && <div style={{ fontSize: 11, color: cs.muted }}>📦 {item.item_name}{item.freon_type ? " (" + item.freon_type + ")" : ""}</div>}
+              {isTrash && item.deleted_at && (
+                <div style={{ fontSize: 10, color: cs.red, marginTop: 2 }}>
+                  🗑️ Dihapus {new Date(item.deleted_at).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}{item.deleted_by ? " oleh " + item.deleted_by : ""}
+                </div>
+              )}
             </div>
             <div style={{ fontWeight: 700, fontSize: 14, color: cs.red, whiteSpace: "nowrap" }}>
               Rp {Number(item.amount || 0).toLocaleString("id-ID")}
             </div>
-            {isOwnerAdmin && (
+            {isTrash ? (
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => handleRestoreExpense(item)}
+                  style={{
+                    background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green,
+                    borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600
+                  }}>♻️ Pulihkan</button>
+                <button onClick={() => handlePurgeExpense(item)}
+                  style={{
+                    background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red,
+                    borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12
+                  }}>⚠️</button>
+              </div>
+            ) : isOwnerAdmin && (
               <div style={{ display: "flex", gap: 6 }}>
                 <button onClick={() => openEdit(item)}
                   style={{
