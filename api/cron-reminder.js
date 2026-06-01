@@ -11,7 +11,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import * as Sentry from "@sentry/node";
-import { timingSafeEqual } from "crypto";
+import { timingSafeEqual, createHmac, createHash } from "crypto";
 import { initSentry, setCronContext } from "./sentry-init.js";
 import { runWithCronLogging, logStructured } from "./_logger.js";
 import { verifyAppToken } from "./_auth.js";
@@ -588,22 +588,21 @@ async function taskBackupData() {
     return { skipped: true };
   }
 
-  const crypto = require("crypto");
-  function hmac(key, data) { return crypto.createHmac("sha256", key).update(data).digest(); }
+  function hmac(key, data) { return createHmac("sha256", key).update(data).digest(); }
   function sigV4Put(key, body, contentType) {
     const host = r2Account + ".r2.cloudflarestorage.com";
     const now = new Date();
     const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, "").slice(0, 15) + "Z";
     const dateStr = amzDate.slice(0, 8);
-    const payloadHash = crypto.createHash("sha256").update(body).digest("hex");
+    const payloadHash = createHash("sha256").update(body).digest("hex");
     const canonicalUri = "/" + r2Bucket + "/" + key;
     const canonicalHeaders = "content-type:" + contentType + "\nhost:" + host + "\nx-amz-content-sha256:" + payloadHash + "\nx-amz-date:" + amzDate + "\n";
     const signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
     const canonicalRequest = "PUT\n" + canonicalUri + "\n\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHash;
     const credScope = dateStr + "/auto/s3/aws4_request";
-    const strToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credScope + "\n" + crypto.createHash("sha256").update(canonicalRequest).digest("hex");
+    const strToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credScope + "\n" + createHash("sha256").update(canonicalRequest).digest("hex");
     const signingKey = hmac(hmac(hmac(hmac("AWS4" + r2Secret, dateStr), "auto"), "s3"), "aws4_request");
-    const signature = crypto.createHmac("sha256", signingKey).update(strToSign).digest("hex");
+    const signature = createHmac("sha256", signingKey).update(strToSign).digest("hex");
     const authorization = "AWS4-HMAC-SHA256 Credential=" + r2Key + "/" + credScope + ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
     return { url: "https://" + host + canonicalUri, headers: { Authorization: authorization, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash, "content-type": contentType, host } };
   }
