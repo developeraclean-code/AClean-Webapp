@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
+import AbsenBanner from "./AbsenBanner.jsx";
 
 const STATUS_CONFIG = {
   PENDING:    { label: "Pending",    color: "#94a3b8", bg: "#94a3b822" },
@@ -69,6 +70,9 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
           {new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
         </div>
       </div>
+
+      {/* Absen mandiri — Teknisi & Helper */}
+      <AbsenBanner currentUser={currentUser} supabase={supabase} TODAY={TODAY} showNotif={showNotif} />
 
       {/* Stats Bar */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
