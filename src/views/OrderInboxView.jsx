@@ -435,14 +435,16 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
             const meta = STATUS_META[status] || STATUS_META.AUTO;
             const color = getTechColor(t.name, teknisiData);
             const isOverride = status !== "AUTO";
+            // Ijin/Sakit/Alpa = tidak hadir → tampil "off"/abu-abu (redup, dicoret)
+            const isAbsent = ["IJIN", "SAKIT", "ALPA"].includes(status);
             return (
               <button key={t.name}
                 title={rec?.reason ? `${meta.label} — ${rec.reason}` : meta.label}
                 onClick={() => setAvailEditor({ name: t.name, date: slotDate, status, reason: rec?.reason || "" })}
-                style={{ display: "flex", alignItems: "center", gap: 6, background: isOverride ? meta.color + "22" : color + "18", border: "2px solid " + (isOverride ? meta.color : color), borderRadius: 8, padding: "5px 10px", cursor: "pointer", transition: "all 0.15s" }}>
-                <span style={{ fontSize: 12 }}>{meta.emoji}</span>
-                <span style={{ color: isOverride ? meta.color : color, fontWeight: 700, fontSize: 11 }}>{t.name}</span>
-                <span style={{ fontSize: 9, color: meta.color, fontWeight: 600 }}>{meta.label}</span>
+                style={{ display: "flex", alignItems: "center", gap: 6, background: isAbsent ? cs.card : isOverride ? meta.color + "22" : color + "18", border: "2px solid " + (isAbsent ? cs.border : isOverride ? meta.color : color), borderRadius: 8, padding: "5px 10px", cursor: "pointer", transition: "all 0.15s", opacity: isAbsent ? 0.5 : 1 }}>
+                <span style={{ fontSize: 12, filter: isAbsent ? "grayscale(1)" : "none" }}>{meta.emoji}</span>
+                <span style={{ color: isAbsent ? cs.muted : isOverride ? meta.color : color, fontWeight: 700, fontSize: 11, textDecoration: isAbsent ? "line-through" : "none" }}>{t.name}</span>
+                <span style={{ fontSize: 9, color: isAbsent ? cs.muted : meta.color, fontWeight: 600 }}>{meta.label}</span>
               </button>
             );
           })}
