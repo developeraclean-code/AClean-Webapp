@@ -101,15 +101,37 @@ export async function classifyImage({ imageUrl, groupCfg, sender, messageText })
   const tokensOut = response?.usage?.output_tokens || 0;
   const costUsd   = (tokensIn / 1_000_000) * PRICE_IN_PER_MTOK + (tokensOut / 1_000_000) * PRICE_OUT_PER_MTOK;
 
+  // Log cost ke ai_usage SEKARANG (sebelum parse) — tetap track meski hasil parse fail
+  const SU0 = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const SK0 = process.env.SUPABASE_SERVICE_KEY;
+  const logUsage = (extra = {}) => {
+    if (!SU0 || !SK0) return;
+    fetch(SU0 + "/rest/v1/ai_usage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SK0, Authorization: "Bearer " + SK0, Prefer: "return=minimal" },
+      body: JSON.stringify({
+        provider: "anthropic",
+        model: ANTHROPIC_MODEL,
+        feature: "wa-group-vision",
+        input_tokens: tokensIn,
+        output_tokens: tokensOut,
+        cost_usd: costUsd,
+        user_name: sender?.name || null,
+        metadata: { group_id: groupCfg?.group_id, ...extra },
+      }),
+    }).catch(() => {});
+  };
+
   const text = response?.content?.[0]?.text || "";
   let parsed = null;
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
   } catch (e) {
+    logUsage({ status: "parse_failed" });
     return { error: "parse_failed", raw: text.slice(0, 300), tokensIn, tokensOut, costUsd };
   }
-  if (!parsed) return { error: "no_json", raw: text.slice(0, 300), tokensIn, tokensOut, costUsd };
+  if (!parsed) { logUsage({ status: "no_json" }); return { error: "no_json", raw: text.slice(0, 300), tokensIn, tokensOut, costUsd }; }
 
   // Normalisasi intent + confidence (handle case variation dari AI)
   const intent = String(parsed.intent || "unknown").toLowerCase().trim();
@@ -124,25 +146,7 @@ export async function classifyImage({ imageUrl, groupCfg, sender, messageText })
     tokensIn, tokensOut, costUsd,
     model: ANTHROPIC_MODEL,
   };
-  // Log ke ai_usage untuk Monitoring dashboard (best-effort, tidak blocking)
-  const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const SK = process.env.SUPABASE_SERVICE_KEY;
-  if (SU && SK) {
-    fetch(SU + "/rest/v1/ai_usage", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-      body: JSON.stringify({
-        provider: "anthropic",
-        model: ANTHROPIC_MODEL,
-        feature: "wa_group_vision",
-        input_tokens: tokensIn,
-        output_tokens: tokensOut,
-        cost_usd: costUsd,
-        user_name: sender?.name || null,
-        metadata: { group_id: groupCfg?.group_id, intent: result.intent, confidence: result.confidence },
-      }),
-    }).catch(() => {});
-  }
+  logUsage({ intent: result.intent, confidence: result.confidence });
   return result;
 }
 
