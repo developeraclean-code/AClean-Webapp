@@ -343,6 +343,56 @@ async function taskCleanup() {
 // ══════════════════════════════════════════════════
 
 // ══════════════════════════════════════════════════
+// TASK 5b: Cleanup R2 mirror untuk image grup WA (>90 hari)
+// — Image grup di-mirror ke R2 saat masuk (audit trail Phase 1 WA AI).
+//   Setelah 90 hari, hapus dari R2 untuk privacy + cost. Row di wa_group_logs
+//   tetap tersimpan (metadata only) dengan r2_purged_at terisi.
+// ══════════════════════════════════════════════════
+async function taskR2Cleanup90d() {
+  const result = { swept: 0, purged: 0, errors: 0 };
+  const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
+
+  const { data: rows, error } = await sb.from("wa_group_logs")
+    .select("id, r2_image_url, r2_uploaded_at")
+    .lt("r2_uploaded_at", cutoff)
+    .is("r2_purged_at", null)
+    .not("r2_image_url", "is", null)
+    .limit(500);
+  if (error) {
+    await log("R2_CLEANUP_90D", "Query gagal: " + error.message, "ERROR");
+    return { error: error.message };
+  }
+  result.swept = (rows || []).length;
+  if (result.swept === 0) {
+    await log("R2_CLEANUP_90D", "Tidak ada image >90 hari", "INFO");
+    return result;
+  }
+
+  for (const row of rows) {
+    try {
+      // Ekstrak key dari URL (format: https://<account>.r2.cloudflarestorage.com/<bucket>/<key>)
+      const url = new URL(row.r2_image_url);
+      const parts = url.pathname.split("/").filter(Boolean);
+      const key = parts.slice(1).join("/"); // skip bucket name
+      if (!key) { result.errors++; continue; }
+      const ok = await deleteR2Object(key);
+      if (ok) {
+        await sb.from("wa_group_logs").update({ r2_purged_at: new Date().toISOString() }).eq("id", row.id);
+        result.purged++;
+      } else {
+        result.errors++;
+      }
+    } catch (e) {
+      result.errors++;
+      console.warn("[R2_CLEANUP_90D]", row.id, e.message);
+    }
+  }
+
+  await log("R2_CLEANUP_90D", `swept=${result.swept} purged=${result.purged} errors=${result.errors}`, "SUCCESS");
+  return result;
+}
+
+// ══════════════════════════════════════════════════
 // TASK 6: Cleanup WA chat lama (>14 hari)
 // ══════════════════════════════════════════════════
 async function taskWaCleanup() {
@@ -1375,6 +1425,7 @@ export default async function handler(req, res) {
       "payroll-wa":       taskPayrollWA,
       "log-cleanup":      taskLogCleanup,
       "auto-return-brought": taskAutoReturnBrought,
+      "r2-cleanup-90d":   taskR2Cleanup90d,
       "reminder":         taskReminder,
     };
     const handler = taskMap[task] || taskReminder;
