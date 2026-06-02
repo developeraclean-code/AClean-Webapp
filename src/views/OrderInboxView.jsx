@@ -780,8 +780,8 @@ function calcTimeEnd(timeStart, service, units) {
   return String(nh).padStart(2, "0") + ":" + String(nm).padStart(2, "0");
 }
 
-// 10 slot tim — saat ini pakai 7, siapkan sampai 10
-const TEAM_SLOTS = Array.from({ length: 10 }, (_, i) => `Team ${String(i + 1).padStart(2, "0")}`);
+// Minimal 10 slot tim; tim ekstra (>10) ditambah dinamis dari team_presets
+const TEAM_SLOTS_BASE = Array.from({ length: 10 }, (_, i) => `Team ${String(i + 1).padStart(2, "0")}`);
 const MEMBER_ROLES = ["teknisi", "helper"];
 const EMPTY_SLOT = { member1: "", member1_role: "teknisi", member2: "", member2_role: "helper", member3: "", member3_role: "helper", member4: "", member4_role: "helper", confirmed: false };
 
@@ -812,6 +812,14 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // ── Team presets (teknisi default per slot) ──
   const [teamPresets, setTeamPresets] = useState({}); // slot → teknisi
+
+  // Slot tim aktif: base 10 + tim ekstra dari preset, urut by nomor
+  const TEAM_SLOTS = useMemo(() => {
+    const all = Array.from(new Set([...TEAM_SLOTS_BASE, ...Object.keys(teamPresets)]));
+    return all.sort((a, b) =>
+      (parseInt(a.match(/\d+/)?.[0] || "0", 10)) - (parseInt(b.match(/\d+/)?.[0] || "0", 10))
+    );
+  }, [teamPresets]);
 
   // Load data saat mount
   useEffect(() => {
