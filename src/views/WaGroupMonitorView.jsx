@@ -31,12 +31,13 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
   const [syncModal, setSyncModal] = useState(null); // null | { loading, groups, pickedIds }
   const [syncing, setSyncing] = useState(false);
 
-  const fetchFonnteGroups = async () => {
+  const fetchFonnteGroups = async (forceRefresh = false) => {
     setSyncing(true);
     setSyncModal({ loading: true, groups: [], pickedIds: new Set() });
     try {
       const headers = apiHeaders ? await apiHeaders() : {};
-      const res = await fetch("/api/wa-groups?action=fonnte-list", { method: "GET", headers });
+      const url = "/api/wa-groups?action=fonnte-list" + (forceRefresh ? "&refresh=1" : "");
+      const res = await fetch(url, { method: "GET", headers });
       const json = await res.json().catch(() => ({}));
       if (!json.ok) {
         // Tampilkan detail Fonnte error di modal
@@ -619,10 +620,20 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
                       </pre>
                     </div>
                   )}
-                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 4, lineHeight: 1.5 }}>
-                    <b>Solusi alternatif:</b> Buka tab <b>🔍 Discovery</b> — begitu ada pesan masuk
-                    dari grup, group_id-nya akan ke-capture otomatis dan bisa di-whitelist 1 klik
-                    tanpa perlu Fonnte API.
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <button onClick={() => fetchFonnteGroups(true)} disabled={syncing} style={{
+                      background: "#f59e0b22", border: "1px solid #f59e0b55", color: "#f59e0b",
+                      borderRadius: 6, padding: "7px 12px", fontSize: 12, cursor: syncing ? "not-allowed" : "pointer", fontWeight: 700,
+                    }}>
+                      🔄 Force Refresh Cache Fonnte
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 8, lineHeight: 1.5 }}>
+                    <b>Penjelasan:</b> Fonnte cache list grup. Kalau baru pertama, atau ada grup baru,
+                    perlu force refresh dulu. ⚠️ Jangan sering-sering — bisa kena banned WA.
+                    <br/><br/>
+                    <b>Alternatif:</b> Buka tab <b>🔍 Discovery</b> — begitu ada pesan masuk dari grup,
+                    group_id-nya akan ke-capture otomatis dan bisa di-whitelist 1 klik.
                   </div>
                 </div>
               ) : syncModal.groups.length === 0 ? (

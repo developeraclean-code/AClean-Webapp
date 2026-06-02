@@ -311,16 +311,19 @@ export default async function handler(req, res) {
       if (!message) return res.status(400).json({ error: "Message is required and must be 1-4096 characters" });
 
       // ── VALIDATION: Group message check ──
-      // Fonnte tidak selalu kirim isGroup field, tergantung paket/versi.
-      // Heuristik fallback: cek sender (format grup `xxx@g.us` atau ada participant field).
+      // Per docs.fonnte.com/webhook-reply-message/:
+      //   - "member" field = "Sender from a group" → populated HANYA kalau pesan dari grup
+      //   - "sender" field = jadi group_id saat dari grup (format xxx@g.us)
+      //   - Personal chat: "sender" = nomor HP, "member" tidak ada
       const senderRaw = String(wb.sender || wb.from || wb.group || "");
+      const memberRaw = String(wb.member || wb.participant || "");
       const looksLikeGroup =
+        !!memberRaw ||
         wb.isGroup === true || wb.isGroup === "true" ||
         senderRaw.includes("@g.us") ||
-        senderRaw.includes("-") && /^\d+-\d+/.test(senderRaw) ||
-        !!wb.participant;
+        (senderRaw.includes("-") && /^\d+-\d+/.test(senderRaw));
       // Debug log: setiap webhook hit untuk monitoring (akan ke-log di Vercel runtime logs)
-      try { console.log("[WA_WEBHOOK]", JSON.stringify({ sender: senderRaw, participant: wb.participant, isGroup: wb.isGroup, type: wb.type, hasMsg: !!wb.message, looksLikeGroup })); } catch (_) {}
+      try { console.log("[WA_WEBHOOK]", JSON.stringify({ sender: senderRaw, member: memberRaw, isGroup: wb.isGroup, type: wb.type, hasMsg: !!wb.message, looksLikeGroup })); } catch (_) {}
       if (looksLikeGroup) {
         // Group messages: proses sebagai input satu arah ke ARA (no AI reply, no personal flow)
         const SU_g = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -328,10 +331,10 @@ export default async function handler(req, res) {
         const FT_g = process.env.FONNTE_TOKEN;
         const OP_g = process.env.OWNER_PHONE;
 
-        // Step 1: Validasi pengirim (wb.participant = nomor anggota grup)
-        const participantRaw = wb.participant || "";
-        // Fonnte format: "628xxx@s.whatsapp.net" atau "628xxx"
-        const participantClean = participantRaw.replace(/@s\.whatsapp\.net$/i, "").replace(/@.*$/, "");
+        // Step 1: Validasi pengirim (Fonnte: wb.member = nomor anggota grup, wb.participant = alias lama)
+        const participantRaw = String(wb.member || wb.participant || "");
+        // Fonnte format: "628xxx@s.whatsapp.net" atau "628xxx" atau "628xxx@c.us"
+        const participantClean = participantRaw.replace(/@.*$/, "");
         const participantNorm = validateAndNormalizePhone(participantClean);
 
         if (!participantNorm || !SU_g || !SK_g) {
@@ -1820,50 +1823,102 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const FT = process.env.FONNTE_TOKEN;
       if (!FT) return res.status(500).json({ error: "FONNTE_TOKEN belum diset" });
       if (action === "fonnte-list") {
-        // Coba beberapa endpoint Fonnte (mereka tidak konsisten penamaan)
-        const endpoints = [
-          { url: "https://api.fonnte.com/get-group", method: "POST" },
-          { url: "https://api.fonnte.com/group-list", method: "POST" },
-          { url: "https://api.fonnte.com/get-devices", method: "POST" },
-        ];
+        // Fonnte API per docs.fonnte.com:
+        // Step 1: POST /fetch-group → populate cache (CATATAN: jangan sering, bisa banned WA)
+        // Step 2: POST /get-whatsapp-group → ambil cached list
+        // Param ?refresh=1 untuk force step 1, default skip (pakai cache yang sudah ada)
+        const forceRefresh = String(req.query.refresh || "") === "1";
         const attempts = [];
-        for (const ep of endpoints) {
-          try {
-            const fRes = await fetch(ep.url, {
-              method: ep.method,
-              headers: { Authorization: FT, "Content-Type": "application/x-www-form-urlencoded" },
-              body: "",
+        try {
+          // Step 1: fetch-group (hanya kalau force refresh ATAU get-list balikin empty/false)
+          if (forceRefresh) {
+            const fRes = await fetch("https://api.fonnte.com/fetch-group", {
+              method: "POST",
+              headers: { Authorization: FT },
             });
             const fText = await fRes.text();
             let fBody;
             try { fBody = JSON.parse(fText); } catch { fBody = { _raw: fText.slice(0, 300) }; }
-            attempts.push({ url: ep.url, status: fRes.status, body: fBody });
-            if (fRes.ok && fBody.status !== false) {
-              // Try to extract groups from various shapes
-              const raw = Array.isArray(fBody.data) ? fBody.data
-                        : Array.isArray(fBody.groups) ? fBody.groups
-                        : Array.isArray(fBody.group) ? fBody.group
-                        : Array.isArray(fBody) ? fBody : [];
-              const groups = raw.map(g => ({
-                id: g.id || g.group_id || g.jid || g.gid || null,
-                name: g.name || g.subject || g.group_name || g.title || "(tanpa nama)",
-                member_count: g.member_count || g.participants || g.members || null,
-              })).filter(g => g.id);
-              if (groups.length > 0) {
-                return res.status(200).json({ ok: true, count: groups.length, groups, endpoint_used: ep.url });
-              }
+            attempts.push({ step: "fetch-group", status: fRes.status, body: fBody });
+            if (!fRes.ok || fBody.status === false) {
+              return res.status(200).json({
+                ok: false,
+                error: "Fonnte fetch-group gagal",
+                fonnte_reason: fBody.detail || fBody.reason || fBody.message || null,
+                attempts,
+              });
             }
-          } catch (e) {
-            attempts.push({ url: ep.url, error: e?.message || String(e) });
           }
+
+          // Step 2: get-whatsapp-group
+          const gRes = await fetch("https://api.fonnte.com/get-whatsapp-group", {
+            method: "POST",
+            headers: { Authorization: FT },
+          });
+          const gText = await gRes.text();
+          let gBody;
+          try { gBody = JSON.parse(gText); } catch { gBody = { _raw: gText.slice(0, 300) }; }
+          attempts.push({ step: "get-whatsapp-group", status: gRes.status, body: gBody });
+
+          // Kalau status:false (biasanya "never called fetch-group") → auto refresh & retry
+          if ((!gRes.ok || gBody.status === false) && !forceRefresh) {
+            const fRes = await fetch("https://api.fonnte.com/fetch-group", {
+              method: "POST",
+              headers: { Authorization: FT },
+            });
+            const fText = await fRes.text();
+            let fBody;
+            try { fBody = JSON.parse(fText); } catch { fBody = { _raw: fText.slice(0, 300) }; }
+            attempts.push({ step: "fetch-group (auto)", status: fRes.status, body: fBody });
+            if (!fRes.ok || fBody.status === false) {
+              return res.status(200).json({
+                ok: false,
+                error: "Fonnte fetch-group auto-refresh gagal",
+                fonnte_reason: fBody.detail || fBody.reason || null,
+                attempts,
+              });
+            }
+            // Retry get-whatsapp-group
+            const g2Res = await fetch("https://api.fonnte.com/get-whatsapp-group", {
+              method: "POST",
+              headers: { Authorization: FT },
+            });
+            const g2Text = await g2Res.text();
+            let g2Body;
+            try { g2Body = JSON.parse(g2Text); } catch { g2Body = { _raw: g2Text.slice(0, 300) }; }
+            attempts.push({ step: "get-whatsapp-group (retry)", status: g2Res.status, body: g2Body });
+            if (!g2Res.ok || g2Body.status === false) {
+              return res.status(200).json({
+                ok: false,
+                error: "Fonnte get-whatsapp-group gagal setelah auto-refresh",
+                fonnte_reason: g2Body.detail || g2Body.reason || null,
+                attempts,
+              });
+            }
+            gBody = g2Body;
+          }
+
+          // Parse data
+          const raw = Array.isArray(gBody.data) ? gBody.data : [];
+          const groups = raw.map(g => ({
+            id: g.id || null,
+            name: g.name || "(tanpa nama)",
+            member_count: g.member_count || g.participants || null,
+          })).filter(g => g.id);
+          return res.status(200).json({
+            ok: true,
+            count: groups.length,
+            groups,
+            attempts_count: attempts.length,
+          });
+        } catch (e) {
+          return res.status(200).json({
+            ok: false,
+            error: "Network error",
+            detail: e?.message || String(e),
+            attempts,
+          });
         }
-        // Semua endpoint gagal
-        return res.status(200).json({
-          ok: false,
-          error: "Fonnte tidak punya endpoint get-groups yang berfungsi",
-          detail: "Mereka punya paket berbeda — beberapa endpoint hanya tersedia di paket tertentu. Gunakan tab Discovery sebagai alternatif.",
-          attempts,
-        });
       }
       if (action === "discovery-list") {
         // List grup yang sempat kirim pesan tapi BELUM whitelisted
