@@ -13,7 +13,7 @@ import { cs } from "../theme/cs.js";
 // - auditUserName
 export default function WaGroupMonitorView({ currentUser, supabase, showNotif, showConfirm, auditUserName, apiHeaders }) {
   const isOwner = currentUser?.role === "Owner";
-  const [activeTab, setActiveTab] = useState("groups"); // groups | personal | discovery | logs
+  const [activeTab, setActiveTab] = useState("personal"); // personal (inbox) | groups | discovery | logs
 
   // ── Personal chats (wa_conversations + wa_messages) ──
   const [convs, setConvs] = useState([]);
@@ -25,12 +25,53 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
   const fetchConversations = async () => {
     setLoadingConvs(true);
     try {
-      const { data, error } = await supabase.from("wa_conversations")
-        .select("phone,name,last_message,unread,updated_at")
-        .order("updated_at", { ascending: false })
-        .limit(100);
-      if (error) throw error;
-      setConvs(data || []);
+      const [persRes, grpListRes, grpLogRes] = await Promise.all([
+        supabase.from("wa_conversations")
+          .select("phone,name,last_message,unread,updated_at")
+          .order("updated_at", { ascending: false })
+          .limit(100),
+        supabase.from("wa_monitored_groups")
+          .select("group_id,group_name,enabled")
+          .eq("enabled", true),
+        supabase.from("wa_group_logs")
+          .select("group_id,group_name,sender_name,content,created_at")
+          .order("created_at", { ascending: false })
+          .limit(300),
+      ]);
+      const personalChats = (persRes.data || []).map(c => ({
+        _kind: "personal",
+        _id: "p:" + c.phone,
+        phone: c.phone,
+        name: c.name,
+        label: null,
+        last_message: c.last_message,
+        unread: c.unread || 0,
+        updated_at: c.updated_at,
+      }));
+      // Last message per group_id dari wa_group_logs
+      const lastByGroup = {};
+      (grpLogRes.data || []).forEach(l => {
+        if (!l.group_id) return;
+        if (!lastByGroup[l.group_id] || l.created_at > lastByGroup[l.group_id].created_at) {
+          lastByGroup[l.group_id] = l;
+        }
+      });
+      const groupChats = (grpListRes.data || []).map(g => {
+        const last = lastByGroup[g.group_id];
+        return {
+          _kind: "group",
+          _id: "g:" + g.group_id,
+          phone: g.group_id,
+          name: g.group_name,
+          label: "👥 Grup",
+          last_message: last ? `${last.sender_name || "?"}: ${last.content || ""}` : "(belum ada pesan masuk)",
+          unread: 0,
+          updated_at: last?.created_at || null,
+        };
+      });
+      const merged = [...personalChats, ...groupChats]
+        .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+      setConvs(merged);
     } catch (e) {
       showNotif("Gagal load chat: " + e.message, "error");
     } finally {
@@ -41,13 +82,33 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
     setSelectedConv(conv);
     setLoadingMessages(true);
     try {
-      const { data, error } = await supabase.from("wa_messages")
-        .select("id,phone,name,role,content,image_url,created_at")
-        .eq("phone", conv.phone)
-        .order("created_at", { ascending: false })
-        .limit(50);
-      if (error) throw error;
-      setConvMessages((data || []).reverse());
+      if (conv._kind === "group") {
+        const { data, error } = await supabase.from("wa_group_logs")
+          .select("id,sender_phone,sender_name,type,content,amount,created_at,image_url,parsed_ok")
+          .eq("group_id", conv.phone)
+          .order("created_at", { ascending: false })
+          .limit(100);
+        if (error) throw error;
+        const msgs = (data || []).reverse().map(m => ({
+          id: m.id,
+          phone: m.sender_phone,
+          name: m.sender_name,
+          role: m.type === "biaya" || m.type === "laporan" || m.type === "stok_alert" ? "parsed" : "customer",
+          content: m.content,
+          image_url: m.image_url,
+          created_at: m.created_at,
+          _meta: { type: m.type, amount: m.amount, parsed_ok: m.parsed_ok },
+        }));
+        setConvMessages(msgs);
+      } else {
+        const { data, error } = await supabase.from("wa_messages")
+          .select("id,phone,name,role,content,image_url,created_at")
+          .eq("phone", conv.phone)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        if (error) throw error;
+        setConvMessages((data || []).reverse());
+      }
     } catch (e) {
       showNotif("Gagal load thread: " + e.message, "error");
     } finally {
@@ -370,8 +431,8 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
       {/* Tab bar */}
       <div style={{ display: "flex", gap: 8, borderBottom: "1px solid " + cs.border, paddingBottom: 0 }}>
         {[
+          { key: "personal", label: "Inbox", icon: "💬" },
           { key: "groups", label: "Daftar Grup", icon: "📋" },
-          { key: "personal", label: "Personal", icon: "👤" },
           { key: "discovery", label: "Discovery", icon: "🔍" },
           { key: "logs", label: "Log Aktivitas", icon: "📥" },
         ].map(t => {
@@ -680,26 +741,36 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
                 </div>
               ) : (
                 filteredConvs.map(c => {
-                  const active = selectedConv?.phone === c.phone;
+                  const active = selectedConv?._id === c._id;
+                  const isGroup = c._kind === "group";
                   return (
-                    <div key={c.phone} onClick={() => openConv(c)} style={{
+                    <div key={c._id} onClick={() => openConv(c)} style={{
                       padding: "10px 12px", cursor: "pointer",
                       background: active ? cs.accent + "12" : "transparent",
                       borderLeft: active ? "3px solid " + cs.accent : "3px solid transparent",
                       borderBottom: "1px solid " + cs.border + "33",
                     }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 3 }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>{c.name || c.phone}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
+                          {isGroup && (
+                            <span style={{ background: "#a855f722", color: "#a855f7", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 99, flexShrink: 0 }}>👥</span>
+                          )}
+                          <span style={{ fontSize: 13, fontWeight: 700, color: cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {c.name || c.phone}
+                          </span>
+                        </div>
                         {c.unread > 0 && (
                           <span style={{ background: "#22c55e", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 99 }}>{c.unread}</span>
                         )}
                       </div>
-                      <div style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace", marginBottom: 4 }}>{c.phone}</div>
+                      <div style={{ fontSize: 10, color: isGroup ? "#a855f7" : cs.muted, fontFamily: isGroup ? "inherit" : "monospace", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {isGroup ? (c.phone || "").slice(0, 30) + "…" : c.phone}
+                      </div>
                       <div style={{ fontSize: 11, color: cs.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {(c.last_message || "(tidak ada pesan)").slice(0, 60)}
                       </div>
                       <div style={{ fontSize: 9, color: cs.muted, marginTop: 3 }}>
-                        {c.updated_at ? new Date(c.updated_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }) : ""}
+                        {c.updated_at ? new Date(c.updated_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }) : "-"}
                       </div>
                     </div>
                   );
@@ -712,8 +783,13 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
               <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, display: "flex", flexDirection: "column", maxHeight: "70vh" }}>
                 <div style={{ padding: "10px 14px", borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>{selectedConv.name || selectedConv.phone}</div>
-                    <div style={{ fontSize: 10, color: cs.muted }}>{selectedConv.phone}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, display: "flex", alignItems: "center", gap: 6 }}>
+                      {selectedConv._kind === "group" && (
+                        <span style={{ background: "#a855f722", color: "#a855f7", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 99 }}>👥 GRUP</span>
+                      )}
+                      {selectedConv.name || selectedConv.phone}
+                    </div>
+                    <div style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace", wordBreak: "break-all" }}>{selectedConv.phone}</div>
                   </div>
                   <button onClick={() => setSelectedConv(null)} style={{
                     background: "transparent", border: "none", color: cs.muted, fontSize: 18, cursor: "pointer",
@@ -727,6 +803,7 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
                   ) : (
                     convMessages.map(m => {
                       const isMe = m.role === "admin" || m.role === "assistant";
+                      const isGroup = selectedConv?._kind === "group";
                       return (
                         <div key={m.id} style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start" }}>
                           <div style={{
@@ -734,8 +811,20 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
                             border: "1px solid " + (isMe ? cs.accent + "44" : cs.border),
                             borderRadius: 10, padding: "8px 12px",
                           }}>
-                            <div style={{ fontSize: 9, color: cs.muted, marginBottom: 2 }}>
-                              {m.role || "?"} · {new Date(m.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                            <div style={{ fontSize: 9, color: cs.muted, marginBottom: 2, display: "flex", gap: 6, alignItems: "center" }}>
+                              {isGroup && m.name && (
+                                <span style={{ color: "#a855f7", fontWeight: 700 }}>👤 {m.name}</span>
+                              )}
+                              {!isGroup && <span>{m.role || "?"}</span>}
+                              <span>· {new Date(m.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</span>
+                              {m._meta?.type && m._meta.type !== "general" && (
+                                <span style={{ background: "#10b98122", color: "#10b981", padding: "1px 5px", borderRadius: 99, fontSize: 8, fontWeight: 700 }}>
+                                  {m._meta.type === "biaya" ? "💰" : m._meta.type === "laporan" ? "📝" : "⚠️"} {m._meta.type}
+                                </span>
+                              )}
+                              {m._meta?.amount && (
+                                <span style={{ color: "#10b981", fontWeight: 700 }}>Rp{Number(m._meta.amount).toLocaleString("id")}</span>
+                              )}
                             </div>
                             {m.image_url && (
                               <div style={{ marginBottom: 4 }}>
