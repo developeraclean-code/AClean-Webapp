@@ -464,13 +464,21 @@ return (
                 <div style={{ fontSize: 12, color: cs.text, marginBottom: 4 }}>📅 {item.date} · 🏷 {item.category} <span style={{ color: cs.muted }}>· {item.subcategory || "—"}</span></div>
                 <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8, wordBreak: "break-word" }}>{item.description}</div>
                 {ai.notes && <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic", marginBottom: 8 }}>🧠 {ai.notes}</div>}
-                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>👤 {item.teknisi || "—"} · 🤖 {ai.model || "AI"}</div>
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>👤 {item.teknisi_name || "—"} · 🤖 {ai.model || "AI"}</div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button disabled={pendingAiBusy === item.id} onClick={() => handleApprovePendingAi(item)}
                     style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                     ✓ Approve
                   </button>
-                  <button disabled={pendingAiBusy === item.id} onClick={() => setEditExpenseItem(item)}
+                  <button disabled={pendingAiBusy === item.id} onClick={() => {
+                    setEditExpenseItem(item);
+                    setNewExpenseForm({
+                      category: item.category, subcategory: item.subcategory, amount: String(item.amount || ""),
+                      date: item.date || TODAY, description: item.description || "", teknisi_name: item.teknisi_name || "",
+                      item_name: item.item_name || "", freon_type: item.freon_type || ""
+                    });
+                    setModalExpense(true);
+                  }}
                     style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
                     ✏️ Edit
                   </button>

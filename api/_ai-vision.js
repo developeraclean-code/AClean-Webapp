@@ -160,9 +160,8 @@ export async function persistClassification({ SU, SK, classification, sender, gr
       subcategory: d.subcategory || "petty_cash",
       description: `[AI] ${d.merchant || "Foto struk"} — ${messageText || ""}`.trim(),
       amount: Number(d.amount) || 0,
-      teknisi: sender.name,
-      source: "wa_group_ai",
-      notes: classification.reasoning,
+      teknisi_name: sender.name,
+      created_by: "wa_group_ai",
       validation_status: "PENDING_AI",
       ai_extraction_id: extractionId,
     };
@@ -187,15 +186,15 @@ export async function persistClassification({ SU, SK, classification, sender, gr
   if (classification.intent === "payment" && groupCfg.ai_payment_enabled) {
     const d = classification.data || {};
     const sugBody = {
-      sender_phone: sender.phone,
+      phone: sender.phone,
       sender_name: sender.name,
+      raw_message: messageText || "(foto bukti — grup)",
       image_url: imageUrl,
-      r2_url: r2Url,
       amount: Number(d.amount) || null,
       bank: d.bank || null,
       transfer_date: d.transfer_date || null,
-      confidence: classification.confidence,
-      candidates: { reasoning: classification.reasoning },
+      status: "PENDING",
+      source: "wa_group_ai",
       validation_status: "PENDING",
       ai_extraction_id: extractionId,
     };

@@ -482,11 +482,10 @@ export default async function handler(req, res) {
                 body: JSON.stringify({
                   date: today,
                   category: biayaMatch[1].toLowerCase(),
-                  description: message,
+                  description: message + " (via WA grup)",
                   amount: parsedAmount,
-                  teknisi: profileName,
-                  source: "wa_group",
-                  notes: "via WA grup"
+                  teknisi_name: profileName,
+                  created_by: "wa_group"
                 })
               }).catch(e => console.error("[WA_GROUP_EXPENSE]", e.message));
               expenseSaved = true;

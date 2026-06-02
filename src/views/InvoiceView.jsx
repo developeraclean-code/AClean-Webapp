@@ -235,6 +235,7 @@ const loadPendingPayments = async () => {
       .from("payment_suggestions")
       .select("*, ai_extractions:ai_extraction_id(*)")
       .eq("validation_status", "PENDING")
+      .not("ai_extraction_id", "is", null)
       .order("created_at", { ascending: false })
       .limit(50);
     if (error) throw error;
@@ -251,7 +252,7 @@ useEffect(() => { if (invoiceSubTab === "pending_ai") loadPendingPayments(); /* 
 const findInvoiceCandidates = (sug) => {
   const target = Number(sug.amount) || 0;
   if (!target) return [];
-  const phone = (sug.sender_phone || "").replace(/\D/g, "");
+  const phone = (sug.phone || "").replace(/\D/g, "");
   const unpaid = (invoicesData || []).filter(i =>
     ["UNPAID", "OVERDUE", "PARTIAL_PAID"].includes(i.status) &&
     Math.abs(Number(i.total || 0) - target) < 1000  // toleransi Rp 1.000
@@ -272,8 +273,14 @@ const handleLinkPayment = async (sug) => {
   if (!invId) { showNotif?.("Pilih invoice dulu", "error"); return; }
   setPendingPaymentBusy(sug.id);
   try {
-    await markInvoicePaid?.(invId, { source: "ai_payment", proof_url: sug.image_url, amount: sug.amount });
-    await supabase.from("payment_suggestions").update({ validation_status: "LINKED", match_invoice_id: invId }).eq("id", sug.id);
+    const paidAt = getLocalDate ? getLocalDate() : new Date().toISOString().slice(0,10);
+    const { error: payErr } = await markInvoicePaid(supabase, invId, paidAt, auditUserName ? auditUserName() : "AI Validator");
+    if (payErr) throw payErr;
+    // Patch payment_proof_url di invoice kalau belum ada
+    if (sug.image_url) {
+      await supabase.from("invoices").update({ payment_proof_url: sug.image_url }).eq("id", invId).is("payment_proof_url", null);
+    }
+    await supabase.from("payment_suggestions").update({ validation_status: "LINKED", status: "CONFIRMED", invoice_id: invId, resolved_at: new Date().toISOString(), resolved_by: auditUserName ? auditUserName() : "AI Validator" }).eq("id", sug.id);
     if (sug.ai_extraction_id) {
       await supabase.from("ai_extractions").update({ status: "approved", linked_table: "invoices", linked_id: invId }).eq("id", sug.ai_extraction_id);
     }
@@ -290,7 +297,7 @@ const handleRejectPayment = async (sug) => {
     onConfirm: async () => {
       setPendingPaymentBusy(sug.id);
       try {
-        await supabase.from("payment_suggestions").update({ validation_status: "REJECTED" }).eq("id", sug.id);
+        await supabase.from("payment_suggestions").update({ validation_status: "REJECTED", status: "DISMISSED" }).eq("id", sug.id);
         if (sug.ai_extraction_id) {
           await supabase.from("ai_extractions").update({ status: "rejected" }).eq("id", sug.ai_extraction_id);
         }
@@ -608,7 +615,8 @@ return (
         {pendingPayments.map(sug => {
           const ai = sug.ai_extractions || {};
           const candidates = findInvoiceCandidates(sug);
-          const confColor = sug.confidence === "HIGH" ? "#10b981" : sug.confidence === "MEDIUM" ? "#f59e0b" : "#ef4444";
+          const conf = sug.ai_extractions?.confidence || "?";
+          const confColor = conf === "HIGH" ? "#10b981" : conf === "MEDIUM" ? "#f59e0b" : "#ef4444";
           const selected = pendingSelectedInvoice[sug.id] || candidates[0]?.inv?.id;
           return (
             <div key={sug.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 14, display: "flex", gap: 14 }}>
@@ -621,11 +629,11 @@ return (
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>{fmt(sug.amount || 0)}</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: confColor + "22", color: confColor }}>{sug.confidence || "?"}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: confColor + "22", color: confColor }}>{conf}</span>
                   {sug.forwarded_to_group && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#ec489922", color: "#ec4899" }}>📥 Auto-forwarded</span>}
                 </div>
                 <div style={{ fontSize: 12, color: cs.text, marginBottom: 4 }}>🏦 {sug.bank || "—"} · 📅 {sug.transfer_date || "—"}</div>
-                <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8 }}>👤 {sug.sender_name || "—"} ({sug.sender_phone || "—"})</div>
+                <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8 }}>👤 {sug.sender_name || "—"} ({sug.phone || "—"})</div>
                 {ai.notes && <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic", marginBottom: 8 }}>🧠 {ai.notes}</div>}
 
                 <div style={{ marginTop: 8, padding: 10, background: cs.surface, borderRadius: 8 }}>
