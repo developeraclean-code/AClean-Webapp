@@ -227,6 +227,8 @@ const [pendingPayments, setPendingPayments] = useState([]);
 const [loadingPendingPayments, setLoadingPendingPayments] = useState(false);
 const [pendingSelectedInvoice, setPendingSelectedInvoice] = useState({}); // { suggestion_id: invoice_id }
 const [pendingPaymentBusy, setPendingPaymentBusy] = useState(null);
+const [manualPickerOpen, setManualPickerOpen] = useState({}); // { suggestion_id: bool }
+const [manualPickerSearch, setManualPickerSearch] = useState({}); // { suggestion_id: search_string }
 const loadPendingPayments = async () => {
   if (!supabase) return;
   setLoadingPendingPayments(true);
@@ -235,6 +237,7 @@ const loadPendingPayments = async () => {
       .from("payment_suggestions")
       .select("*, ai_extractions:ai_extraction_id(*)")
       .eq("validation_status", "PENDING")
+      .eq("status", "PENDING")  // defensive: exclude kalau old UI sudah CONFIRMED/DISMISSED
       .or("ai_extraction_id.not.is.null,forwarded_to_group.not.is.null")
       .order("created_at", { ascending: false })
       .limit(50);
@@ -637,8 +640,16 @@ return (
                 {ai.notes && <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic", marginBottom: 8 }}>🧠 {ai.notes}</div>}
 
                 <div style={{ marginTop: 8, padding: 10, background: cs.surface, borderRadius: 8 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>Match Candidates ({candidates.length})</div>
-                  {candidates.length === 0 && <div style={{ fontSize: 11, color: cs.muted }}>Tidak ada invoice UNPAID dengan jumlah {fmt(sug.amount || 0)}.</div>}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted }}>Match Candidates ({candidates.length})</div>
+                    <button onClick={() => setManualPickerOpen(s => ({ ...s, [sug.id]: !s[sug.id] }))}
+                      style={{ background: "transparent", border: "1px solid " + cs.border, color: cs.muted, borderRadius: 6, padding: "3px 10px", fontSize: 10, cursor: "pointer" }}>
+                      {manualPickerOpen[sug.id] ? "✕ Tutup" : "🔍 Cari Manual"}
+                    </button>
+                  </div>
+                  {candidates.length === 0 && !manualPickerOpen[sug.id] && (
+                    <div style={{ fontSize: 11, color: cs.muted }}>Tidak ada invoice UNPAID dengan jumlah {fmt(sug.amount || 0)}. Klik "Cari Manual" untuk pilih invoice lain.</div>
+                  )}
                   {candidates.map(({ inv, cust, score }) => (
                     <label key={inv.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", cursor: "pointer", fontSize: 12, color: cs.text }}>
                       <input type="radio" name={`cand-${sug.id}`}
@@ -647,6 +658,41 @@ return (
                       <span><b>{cust.name || "?"}</b> · {inv.id} · {fmt(inv.total)} · <span style={{ color: cs.muted }}>{inv.status}</span> · <span style={{ color: "#10b981", fontSize: 10 }}>score {score}</span></span>
                     </label>
                   ))}
+
+                  {/* Manual picker — search by customer name / invoice id */}
+                  {manualPickerOpen[sug.id] && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid " + cs.border + "44" }}>
+                      <input
+                        value={manualPickerSearch[sug.id] || ""}
+                        onChange={e => setManualPickerSearch(s => ({ ...s, [sug.id]: e.target.value }))}
+                        placeholder="Cari nama customer atau ID invoice..."
+                        style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, color: cs.text, padding: "6px 10px", fontSize: 12, outline: "none", marginBottom: 8 }}
+                      />
+                      {(() => {
+                        const q = (manualPickerSearch[sug.id] || "").toLowerCase().trim();
+                        if (!q) return <div style={{ fontSize: 11, color: cs.muted }}>Ketik nama/ID untuk cari.</div>;
+                        const results = (invoicesData || [])
+                          .filter(i => ["UNPAID","OVERDUE","PARTIAL_PAID"].includes(i.status))
+                          .filter(i => {
+                            const c = (customersData || []).find(x => x.id === i.customer_id) || {};
+                            return (c.name || "").toLowerCase().includes(q) || String(i.id).toLowerCase().includes(q);
+                          })
+                          .slice(0, 8);
+                        if (results.length === 0) return <div style={{ fontSize: 11, color: cs.muted }}>Tidak ada invoice unpaid yang match "{q}".</div>;
+                        return results.map(inv => {
+                          const cust = (customersData || []).find(x => x.id === inv.customer_id) || {};
+                          return (
+                            <label key={inv.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", cursor: "pointer", fontSize: 11, color: cs.text }}>
+                              <input type="radio" name={`cand-${sug.id}`}
+                                checked={selected === inv.id}
+                                onChange={() => setPendingSelectedInvoice(s => ({ ...s, [sug.id]: inv.id }))} />
+                              <span><b>{cust.name || "?"}</b> · {inv.id} · {fmt(inv.total)} · <span style={{ color: cs.muted }}>{inv.status}</span></span>
+                            </label>
+                          );
+                        });
+                      })()}
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}>

@@ -101,22 +101,44 @@ export async function classifyImage({ imageUrl, groupCfg, sender, messageText })
   const tokensOut = response?.usage?.output_tokens || 0;
   const costUsd   = (tokensIn / 1_000_000) * PRICE_IN_PER_MTOK + (tokensOut / 1_000_000) * PRICE_OUT_PER_MTOK;
 
+  // Log cost ke ai_usage SEKARANG (sebelum parse) — tetap track meski hasil parse fail
+  const SU0 = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const SK0 = process.env.SUPABASE_SERVICE_KEY;
+  const logUsage = (extra = {}) => {
+    if (!SU0 || !SK0) return;
+    fetch(SU0 + "/rest/v1/ai_usage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SK0, Authorization: "Bearer " + SK0, Prefer: "return=minimal" },
+      body: JSON.stringify({
+        provider: "anthropic",
+        model: ANTHROPIC_MODEL,
+        feature: "wa-group-vision",
+        input_tokens: tokensIn,
+        output_tokens: tokensOut,
+        cost_usd: costUsd,
+        user_name: sender?.name || null,
+        metadata: { group_id: groupCfg?.group_id, ...extra },
+      }),
+    }).catch(() => {});
+  };
+
   const text = response?.content?.[0]?.text || "";
   let parsed = null;
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
   } catch (e) {
+    logUsage({ status: "parse_failed" });
     return { error: "parse_failed", raw: text.slice(0, 300), tokensIn, tokensOut, costUsd };
   }
-  if (!parsed) return { error: "no_json", raw: text.slice(0, 300), tokensIn, tokensOut, costUsd };
+  if (!parsed) { logUsage({ status: "no_json" }); return { error: "no_json", raw: text.slice(0, 300), tokensIn, tokensOut, costUsd }; }
 
   // Normalisasi intent + confidence (handle case variation dari AI)
   const intent = String(parsed.intent || "unknown").toLowerCase().trim();
   const validIntents = new Set(["expense", "material", "payment", "unknown"]);
   const confRaw = String(parsed.confidence || "LOW").toUpperCase().trim();
   const validConf = new Set(["HIGH", "MEDIUM", "LOW"]);
-  return {
+  const result = {
     intent: validIntents.has(intent) ? intent : "unknown",
     confidence: validConf.has(confRaw) ? confRaw : "LOW",
     data: parsed.data || {},
@@ -124,6 +146,8 @@ export async function classifyImage({ imageUrl, groupCfg, sender, messageText })
     tokensIn, tokensOut, costUsd,
     model: ANTHROPIC_MODEL,
   };
+  logUsage({ intent: result.intent, confidence: result.confidence });
+  return result;
 }
 
 // Persist classification + buat pending row sesuai intent.
@@ -256,8 +280,92 @@ export async function persistClassification({ SU, SK, classification, sender, gr
     }
   }
 
-  // material intent → TODO Phase 1.5: link to job_materials_brought with dedup check
-  // (lihat CLAUDE.md memory: dedup per sender+material_type+job_today)
+  // Material intent — auto-tag ke job_materials_brought dgn dedup per (job, material_type, today)
+  let materialJobId = null;
+  let materialSkipped = null;
+  let materialInsertedCount = 0;
+  let materialDupCount = 0;
+  if (classification.intent === "material" && groupCfg.ai_material_enabled) {
+    const d = classification.data || {};
+    const items = Array.isArray(d.items) ? d.items : [];
+    if (items.length === 0) {
+      // AI bilang material tapi tidak extract item — flag untuk Owner review
+      materialSkipped = "AI tidak bisa extract item material";
+    } else if (items.length > 0) {
+      // Find sender's today job (Asia/Jakarta = UTC+7)
+      const todayJkt = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+      const orderUrl = SU + "/rest/v1/orders?select=id,customer,teknisi,teknisi2,teknisi3,helper,helper2,helper3,team_slot,date,status"
+        + "&date=eq." + encodeURIComponent(todayJkt)
+        + "&status=in.(SCHEDULED,IN_PROGRESS,ON_SITE,WORKING)&limit=50";
+      let todayOrders = [];
+      try {
+        const r = await fetch(orderUrl, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+        if (r.ok) todayOrders = await r.json();
+      } catch (_) {}
+      const sLow = String(sender.name || "").toLowerCase();
+      const senderJobs = todayOrders.filter(o => {
+        const slots = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3];
+        return slots.some(s => s && String(s).toLowerCase() === sLow);
+      });
+      if (senderJobs.length === 1) {
+        const job = senderJobs[0];
+        materialJobId = job.id;
+        // Dedup: per (job_id, material_type, today)
+        const startToday = todayJkt + "T00:00:00Z";
+        const endToday   = todayJkt + "T23:59:59Z";
+        for (const it of items) {
+          const matType = String(it.type || "").toLowerCase();
+          if (!matType) continue;
+          // Cek existing
+          const dupUrl = SU + "/rest/v1/job_materials_brought?select=id,brought_by"
+            + "&job_id=eq." + encodeURIComponent(job.id)
+            + "&material_type=eq." + encodeURIComponent(matType)
+            + "&brought_at=gte." + encodeURIComponent(startToday)
+            + "&brought_at=lte." + encodeURIComponent(endToday)
+            + "&status=neq.RETURNED&limit=1";
+          let existing = [];
+          try {
+            const dr = await fetch(dupUrl, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+            if (dr.ok) existing = await dr.json();
+          } catch (_) {}
+          if (existing.length > 0) {
+            materialDupCount++;
+            materialSkipped = `${matType} sudah dicatat oleh ${existing[0].brought_by || "tim"}`;
+            continue;
+          }
+          materialInsertedCount++;
+          const matBody = {
+            job_id: job.id,
+            material_type: matType,
+            inventory_name: [it.brand, it.size].filter(Boolean).join(" ") || `${matType} (AI)`,
+            qty_estimate: Number(it.qty) || 1,
+            brought_at: new Date().toISOString(),
+            brought_by: sender.name,
+            status: "BROUGHT",
+            notes: `[AI vision] ${classification.reasoning || ""}`.trim(),
+          };
+          await fetch(SU + "/rest/v1/job_materials_brought", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+            body: JSON.stringify(matBody),
+          }).catch(() => {});
+        }
+        // Patch ai_extractions linked_id
+        await fetch(SU + "/rest/v1/ai_extractions?id=eq." + extractionId, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
+          body: JSON.stringify({ linked_table: "job_materials_brought", linked_id: job.id, notes: classification.reasoning + (materialSkipped ? " | DEDUP: " + materialSkipped : "") }),
+        }).catch(() => {});
+      } else {
+        // 0 atau >1 job → notes saja (ambiguous), Owner review manual via MatTrack
+        await fetch(SU + "/rest/v1/ai_extractions?id=eq." + extractionId, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
+          body: JSON.stringify({ notes: (classification.reasoning || "") + ` | AMBIGUOUS: ${senderJobs.length} job today` }),
+        }).catch(() => {});
+      }
+    }
+  }
 
-  return { extractionId, expenseId, paymentSuggestionId };
+  return { extractionId, expenseId, paymentSuggestionId, materialJobId, materialSkipped, materialInsertedCount, materialDupCount };
 }

@@ -1,6 +1,7 @@
 // api/[route].js - AClean Unified API Router
 import { setCorsHeaders, checkRateLimit, validateInternalToken, signAppToken } from "./_auth.js";
 import { classifyImage, persistClassification } from "./_ai-vision.js";
+import { classifyText, matchSelesaiToOrder, persistTextClassification } from "./_ai-text.js";
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
@@ -608,7 +609,7 @@ export default async function handler(req, res) {
                 messageText: aiMsgText,
               });
               if (classification && !classification.error && classification.intent !== "unknown") {
-                await persistClassification({
+                const persistResult = await persistClassification({
                   SU: SU_g, SK: SK_g,
                   classification,
                   sender: { phone: participantNorm, name: profileName },
@@ -617,6 +618,30 @@ export default async function handler(req, res) {
                   messageText: aiMsgText,
                 });
                 aiStatus = "ok:" + classification.intent;
+                // Reply WA ke teknisi kalau material auto-tagged
+                if (classification.intent === "material" && groupConfig.ai_material_enabled && FT_g) {
+                  let matReply = null;
+                  const ins = persistResult?.materialInsertedCount || 0;
+                  const dup = persistResult?.materialDupCount || 0;
+                  if (persistResult?.materialJobId && ins > 0) {
+                    const items = (classification.data?.items || []).map(i => `${i.type}${i.brand ? " " + i.brand : ""}${i.size ? " " + i.size : ""}`).filter(Boolean).join(", ");
+                    matReply = `✅ Material tercatat (${ins})\n📦 ${items || "Material"}\n🔧 Job ${persistResult.materialJobId}`
+                      + (dup > 0 ? `\n⚠️ ${dup} item skip (dup): ${persistResult.materialSkipped}` : "");
+                  } else if (persistResult?.materialJobId && ins === 0 && dup > 0) {
+                    matReply = `ℹ️ Semua material yang kamu kirim SUDAH dicatat tim hari ini (${dup} dup). Tidak ada tambahan.`;
+                  } else if (persistResult?.materialSkipped && !persistResult?.materialJobId) {
+                    matReply = `⚠️ Foto material diterima tapi: ${persistResult.materialSkipped}. Admin akan review.`;
+                  } else if (!persistResult?.materialJobId) {
+                    matReply = `⚠️ Foto material diterima tapi job kamu tidak jelas (0 atau >1 job hari ini). Admin akan review manual.`;
+                  }
+                  if (matReply) {
+                    fetch("https://api.fonnte.com/send", {
+                      method: "POST",
+                      headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                      body: JSON.stringify({ target: participantNorm, message: matReply, delay: "2", countryCode: "62" })
+                    }).catch(() => {});
+                  }
+                }
               } else if (classification?.error) {
                 console.warn("[AI_VISION] skip:", classification.error, classification.detail || "");
                 aiStatus = "err:" + classification.error;
@@ -626,6 +651,86 @@ export default async function handler(req, res) {
             } catch (e) {
               console.error("[AI_VISION] failed:", e.message);
               aiStatus = "exc";
+            }
+          }
+        }
+
+        // Step 3.6: AI Text classification — text-only message (no image), grup punya ai_selesai/quotation ON
+        const anyAiTextOn = !!(groupConfig.ai_selesai_enabled || groupConfig.ai_quotation_enabled);
+        let aiTextStatus = "skipped";
+        if (!groupImageUrl && anyAiTextOn && SU_g && SK_g && (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)) {
+          const msgClean = (groupContent || "").trim();
+          // Quick filter — only attempt AI if message length reasonable & contains likely trigger word
+          const trigger = /(selesai|done|finish|beres|kelar|penawaran|nawar|harga|tanya)/i;
+          if (msgClean.length >= 6 && msgClean.length <= 500 && trigger.test(msgClean)) {
+            // Dedup mutex — sama dgn image flow
+            const msgHash = msgClean.toLowerCase().replace(/\s+/g, "").slice(0, 60);
+            const dedupKey = `grpTxt_${(groupId || "x").slice(0,40)}_${(participantNorm || "x").slice(0,15)}_${msgHash}`.slice(0, 200);
+            let isDup = false;
+            try {
+              const dedupRes = await fetch(SU_g + "/rest/v1/wa_webhook_dedup", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+                body: JSON.stringify({ dedup_key: dedupKey }),
+              });
+              if (dedupRes.status === 409) isDup = true;
+            } catch (e) {
+              console.warn("[AI_TEXT] dedup err:", e.message);
+            }
+            if (isDup) {
+              aiTextStatus = "skip_dup";
+            } else {
+              try {
+                const textCls = await classifyText({
+                  messageText: msgClean,
+                  groupCfg: groupConfig,
+                  sender: { phone: participantNorm, name: profileName },
+                });
+                if (textCls && !textCls.error && textCls.intent !== "unknown") {
+                  let matchResult = null;
+                  if (textCls.intent === "selesai" && groupConfig.ai_selesai_enabled) {
+                    matchResult = await matchSelesaiToOrder({
+                      SU: SU_g, SK: SK_g, classification: textCls,
+                      senderPhone: participantNorm, senderName: profileName,
+                    });
+                  }
+                  await persistTextClassification({
+                    SU: SU_g, SK: SK_g, classification: textCls,
+                    sender: { phone: participantNorm, name: profileName },
+                    groupCfg: groupConfig, messageText: msgClean, matchResult,
+                  });
+                  aiTextStatus = "ok:" + textCls.intent + (matchResult?.action ? ":" + matchResult.action : "");
+
+                  // Reply WA ke teknisi kalau selesai
+                  if (textCls.intent === "selesai" && FT_g && matchResult) {
+                    let replyMsg = null;
+                    if (matchResult.action === "auto") {
+                      const o = matchResult.matched;
+                      replyMsg = `✅ Laporan diterima\n👤 ${o.customer}\n🔧 ${o.service || "-"}\n📋 Job ${o.id}\nStatus akan dicek admin.`;
+                    } else if (matchResult.action === "ambiguous") {
+                      const list = matchResult.candidates.slice(0, 3).map((o, i) => `${i+1}. ${o.customer} — ${o.service || "?"} (${o.id})`).join("\n");
+                      replyMsg = `⚠️ Ada ${matchResult.candidates.length} customer mirip "${textCls.data.customer_name}":\n${list}\n\nBalas dgn ID job (e.g. "selesai ${matchResult.candidates[0].id}")`;
+                    } else if (matchResult.action === "skip_no_name") {
+                      // AI tidak bisa extract nama customer — skip reply biar tidak misleading
+                      replyMsg = null;
+                    } else {
+                      replyMsg = `❓ Tidak ketemu customer "${textCls.data.customer_name || "?"}" di jadwal kamu hari ini. Cek nama lagi atau hubungi admin.`;
+                    }
+                    if (replyMsg) {
+                      fetch("https://api.fonnte.com/send", {
+                        method: "POST",
+                        headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                        body: JSON.stringify({ target: participantNorm, message: replyMsg, delay: "2", countryCode: "62" })
+                      }).catch(() => {});
+                    }
+                  }
+                } else {
+                  aiTextStatus = textCls?.error ? ("err:" + textCls.error) : "unknown";
+                }
+              } catch (e) {
+                console.error("[AI_TEXT] failed:", e.message);
+                aiTextStatus = "exc";
+              }
             }
           }
         }
@@ -645,7 +750,7 @@ export default async function handler(req, res) {
           }).catch(() => {});
         }
 
-        return res.status(200).json({ status: "group_processed", type: parsedType, logged: shouldLog, ai: aiStatus });
+        return res.status(200).json({ status: "group_processed", type: parsedType, logged: shouldLog, ai: aiStatus, aiText: aiTextStatus });
       }
 
       const FT = process.env.FONNTE_TOKEN;
