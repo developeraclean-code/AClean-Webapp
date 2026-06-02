@@ -30,7 +30,13 @@ export default function AbsenBanner({ currentUser, supabase, TODAY, showNotif, a
         .select("status,reason,is_available")
         .eq("date", TODAY).eq("teknisi", name).maybeSingle();
       if (alive) {
-        setRec(data && data.status ? data : null);
+        // status NULL + hadir = Masuk (sesuai desain: NULL = auto/hadir)
+        let display = null;
+        if (data) {
+          if (data.status) display = data;                          // IJIN/SAKIT/STANDBY/ALPA
+          else if (data.is_available) display = { ...data, status: "MASUK" };
+        }
+        setRec(display);
         setLoading(false);
       }
     })();
@@ -45,8 +51,11 @@ export default function AbsenBanner({ currentUser, supabase, TODAY, showNotif, a
     }
     setSaving(true);
     const is_available = status === "MASUK";
+    // MASUK disimpan sebagai status NULL (desain: NULL = hadir/auto). Constraint DB
+    // techavail_status_chk hanya izinkan NULL/STANDBY/IJIN/SAKIT/ALPA — "MASUK" ditolak.
+    const dbStatus = status === "MASUK" ? null : status;
     const { error } = await supabase.from("technician_availability").upsert(
-      { date: TODAY, teknisi: name, status, reason: (status === "MASUK") ? null : reason.trim(), is_available, updated_at: new Date().toISOString() },
+      { date: TODAY, teknisi: name, status: dbStatus, reason: (status === "MASUK") ? null : reason.trim(), is_available, updated_at: new Date().toISOString() },
       { onConflict: "date,teknisi" }
     );
     setSaving(false);
