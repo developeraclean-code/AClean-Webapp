@@ -5830,7 +5830,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id: "reports", icon: "📊", label: "Statistik" },
     { id: "deletedaudit", icon: "🗑", label: "Deleted Audit" },
     { id: "monitoring", icon: "🔍", label: "Monitoring" },
-    { id: "wa_groups", icon: "📡", label: "Monitor WA Group" },
+    { id: "wa_groups", icon: "📡", label: "Monitor WA" },
     { id: "settings", icon: "⚙️", label: "Pengaturan" },
     { id: "mattrack", icon: "🧮", label: "Stok Material" },
     { id: "biaya", icon: "💸", label: "Biaya" },
@@ -7550,7 +7550,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         <div style={{ padding: "16px 14px", borderBottom: "1px solid " + cs.border }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
             <div style={{ fontWeight: 800, fontSize: 16, color: cs.accent }}>⬡ {appSettings.app_name || "AClean"}</div>
-            <span style={{ fontSize: 9, color: cs.accent, fontWeight: 700, background: cs.accent + "18", padding: "2px 6px", borderRadius: 4, border: "1px solid " + cs.accent + "33" }}>v28</span>
+            <span style={{ fontSize: 9, color: cs.accent, fontWeight: 700, background: cs.accent + "18", padding: "2px 6px", borderRadius: 4, border: "1px solid " + cs.accent + "33" }}>v29</span>
           </div>
           {currentUser && (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

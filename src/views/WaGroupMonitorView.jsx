@@ -13,7 +13,47 @@ import { cs } from "../theme/cs.js";
 // - auditUserName
 export default function WaGroupMonitorView({ currentUser, supabase, showNotif, showConfirm, auditUserName, apiHeaders }) {
   const isOwner = currentUser?.role === "Owner";
-  const [activeTab, setActiveTab] = useState("groups"); // groups | logs | discovery
+  const [activeTab, setActiveTab] = useState("groups"); // groups | personal | discovery | logs
+
+  // ── Personal chats (wa_conversations + wa_messages) ──
+  const [convs, setConvs] = useState([]);
+  const [loadingConvs, setLoadingConvs] = useState(false);
+  const [selectedConv, setSelectedConv] = useState(null); // { phone, name }
+  const [convMessages, setConvMessages] = useState([]);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [convSearch, setConvSearch] = useState("");
+  const fetchConversations = async () => {
+    setLoadingConvs(true);
+    try {
+      const { data, error } = await supabase.from("wa_conversations")
+        .select("phone,name,last_message,unread,updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      setConvs(data || []);
+    } catch (e) {
+      showNotif("Gagal load chat: " + e.message, "error");
+    } finally {
+      setLoadingConvs(false);
+    }
+  };
+  const openConv = async (conv) => {
+    setSelectedConv(conv);
+    setLoadingMessages(true);
+    try {
+      const { data, error } = await supabase.from("wa_messages")
+        .select("id,phone,name,role,content,image_url,created_at")
+        .eq("phone", conv.phone)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      setConvMessages((data || []).reverse());
+    } catch (e) {
+      showNotif("Gagal load thread: " + e.message, "error");
+    } finally {
+      setLoadingMessages(false);
+    }
+  };
 
   // ── State: daftar grup ──
   const [groups, setGroups] = useState([]);
@@ -26,6 +66,7 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
   const [logFilterType, setLogFilterType] = useState("all");
   const [logFilterGroup, setLogFilterGroup] = useState("all");
   const [logRange, setLogRange] = useState(7); // hari
+  const [logFilterSource, setLogFilterSource] = useState("group"); // group | personal | all
 
   // ── Sync from Fonnte ──
   const [syncModal, setSyncModal] = useState(null); // null | { loading, groups, pickedIds }
@@ -110,6 +151,7 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
   const [rawHits, setRawHits] = useState([]);
   const [loadingRaw, setLoadingRaw] = useState(false);
   const [expandedRawId, setExpandedRawId] = useState(null);
+  const [hideStatusCb, setHideStatusCb] = useState(true);
   const fetchRawHits = async () => {
     setLoadingRaw(true);
     try {
@@ -128,8 +170,20 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
 
   useEffect(() => {
     if (activeTab === "discovery") { fetchDiscovery(); fetchRawHits(); }
+    if (activeTab === "personal") { fetchConversations(); }
     /* eslint-disable-next-line */
   }, [activeTab]);
+
+  // Filter convs by search
+  const filteredConvs = useMemo(() => {
+    const q = convSearch.toLowerCase().trim();
+    if (!q) return convs;
+    return convs.filter(c =>
+      (c.name || "").toLowerCase().includes(q) ||
+      (c.phone || "").includes(q) ||
+      (c.last_message || "").toLowerCase().includes(q)
+    );
+  }, [convs, convSearch]);
 
   const togglePickSync = (gid) => {
     setSyncModal(m => {
@@ -182,21 +236,40 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
     }
   };
 
-  // Fetch logs
+  // Fetch logs — merge dari wa_group_logs + wa_messages tergantung source filter
   const fetchLogs = async () => {
     setLoadingLogs(true);
     try {
       const since = new Date(Date.now() - logRange * 86400000).toISOString();
-      let q = supabase.from("wa_group_logs")
-        .select("*")
-        .gte("created_at", since)
-        .order("created_at", { ascending: false })
-        .limit(500);
-      if (logFilterType !== "all") q = q.eq("type", logFilterType);
-      if (logFilterGroup !== "all") q = q.eq("group_id", logFilterGroup);
-      const { data, error } = await q;
-      if (error) throw error;
-      setLogs(data || []);
+      const tasks = [];
+      if (logFilterSource === "group" || logFilterSource === "all") {
+        let q = supabase.from("wa_group_logs")
+          .select("id,sender_phone,sender_name,group_id,group_name,type,content,amount,parsed_ok,metadata,created_at")
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(300);
+        if (logFilterType !== "all") q = q.eq("type", logFilterType);
+        if (logFilterGroup !== "all") q = q.eq("group_id", logFilterGroup);
+        tasks.push(q.then(r => (r.data || []).map(x => ({ ...x, _source: "group" }))));
+      }
+      if (logFilterSource === "personal" || logFilterSource === "all") {
+        const q = supabase.from("wa_messages")
+          .select("id,phone,name,role,content,image_url,created_at")
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(300);
+        tasks.push(q.then(r => (r.data || []).map(x => ({
+          id: x.id, sender_phone: x.phone, sender_name: x.name,
+          group_id: null, group_name: null,
+          type: x.role || "personal", content: x.content,
+          image_url: x.image_url,
+          parsed_ok: false, created_at: x.created_at,
+          _source: "personal",
+        }))));
+      }
+      const results = await Promise.all(tasks);
+      const merged = results.flat().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).slice(0, 500);
+      setLogs(merged);
     } catch (e) {
       showNotif("Gagal load log: " + e.message, "error");
     } finally {
@@ -205,7 +278,7 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
   };
 
   useEffect(() => { fetchGroups(); /* eslint-disable-next-line */ }, []);
-  useEffect(() => { if (activeTab === "logs") fetchLogs(); /* eslint-disable-next-line */ }, [activeTab, logFilterType, logFilterGroup, logRange]);
+  useEffect(() => { if (activeTab === "logs") fetchLogs(); /* eslint-disable-next-line */ }, [activeTab, logFilterType, logFilterGroup, logRange, logFilterSource]);
 
   // ── Stats per grup (dari logs) ──
   const groupStats = useMemo(() => {
@@ -288,9 +361,9 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Header */}
       <div>
-        <div style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>📡 Monitor WA Group</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>📡 Monitor WA</div>
         <div style={{ fontSize: 12, color: cs.muted, marginTop: 4 }}>
-          Whitelist grup yang dimonitor. Webhook skip semua grup yang tidak ada di daftar.
+          Pantau semua chat WA — personal & grup di satu tempat. Whitelist grup yang ingin di-track.
         </div>
       </div>
 
@@ -298,6 +371,7 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
       <div style={{ display: "flex", gap: 8, borderBottom: "1px solid " + cs.border, paddingBottom: 0 }}>
         {[
           { key: "groups", label: "Daftar Grup", icon: "📋" },
+          { key: "personal", label: "Personal", icon: "👤" },
           { key: "discovery", label: "Discovery", icon: "🔍" },
           { key: "logs", label: "Log Aktivitas", icon: "📥" },
         ].map(t => {
@@ -466,6 +540,20 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {/* Filter bar */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {/* Source chips: All / Grup / Personal */}
+            <div style={{ display: "flex", gap: 0, border: "1px solid " + cs.border, borderRadius: 6, overflow: "hidden" }}>
+              {[
+                { k: "all", l: "🌐 Semua" },
+                { k: "group", l: "👥 Grup" },
+                { k: "personal", l: "👤 Personal" },
+              ].map(s => (
+                <button key={s.k} onClick={() => setLogFilterSource(s.k)} style={{
+                  background: logFilterSource === s.k ? cs.accent + "22" : "transparent",
+                  border: "none", color: logFilterSource === s.k ? cs.accent : cs.muted,
+                  padding: "6px 10px", fontSize: 11, cursor: "pointer", fontWeight: 700,
+                }}>{s.l}</button>
+              ))}
+            </div>
             <select value={logRange} onChange={e => setLogRange(Number(e.target.value))} style={{
               background: cs.surface, border: "1px solid " + cs.border, color: cs.text,
               borderRadius: 6, padding: "6px 10px", fontSize: 12, outline: "none",
@@ -511,17 +599,25 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "65vh", overflowY: "auto" }}>
               {logs.map(l => {
+                const isPersonal = l._source === "personal";
                 const typeColor = {
                   biaya: "#10b981", laporan: "#3b82f6", stok_alert: "#f59e0b", general: cs.muted,
+                  customer: cs.accent, admin: "#a855f7", assistant: "#a855f7",
                 }[l.type] || cs.muted;
-                const typeIcon = { biaya: "💰", laporan: "📝", stok_alert: "⚠️", general: "📥" }[l.type] || "📥";
+                const typeIcon = { biaya: "💰", laporan: "📝", stok_alert: "⚠️", general: "📥",
+                  customer: "👤", admin: "💼", assistant: "🤖" }[l.type] || "📥";
                 return (
-                  <div key={l.id} style={{
+                  <div key={l._source + l.id} style={{
                     background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
                     padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4,
                   }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, flexWrap: "wrap" }}>
+                        <span style={{
+                          background: isPersonal ? cs.muted + "22" : "#a855f722",
+                          color: isPersonal ? cs.muted : "#a855f7",
+                          padding: "2px 7px", borderRadius: 99, fontSize: 9, fontWeight: 800,
+                        }}>{isPersonal ? "👤 personal" : "👥 grup"}</span>
                         <span style={{
                           background: typeColor + "22", color: typeColor, padding: "2px 7px",
                           borderRadius: 99, fontSize: 10, fontWeight: 700,
@@ -535,13 +631,16 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
                         {l.metadata?.keyword_match && (
                           <span style={{ background: "#f59e0b22", color: "#f59e0b", padding: "2px 6px", borderRadius: 99, fontSize: 9, fontWeight: 700 }}>🔔 keyword</span>
                         )}
+                        {l.image_url && (
+                          <a href={l.image_url} target="_blank" rel="noreferrer" style={{ background: cs.accent + "22", color: cs.accent, padding: "2px 6px", borderRadius: 99, fontSize: 9, fontWeight: 700, textDecoration: "none" }}>📷 foto</a>
+                        )}
                       </div>
-                      <span style={{ fontSize: 10, color: cs.muted }}>
+                      <span style={{ fontSize: 10, color: cs.muted, whiteSpace: "nowrap" }}>
                         {new Date(l.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}
                       </span>
                     </div>
                     <div style={{ fontSize: 12, color: cs.text, lineHeight: 1.4 }}>
-                      <span style={{ fontWeight: 700 }}>{l.sender_name}</span>
+                      <span style={{ fontWeight: 700 }}>{l.sender_name || l.sender_phone}</span>
                       {l.group_name && <span style={{ color: cs.muted }}> · {l.group_name}</span>}
                       <span style={{ color: cs.text }}>: {l.content}</span>
                     </div>
@@ -550,6 +649,113 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ─── TAB: Personal ─── */}
+      {activeTab === "personal" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input type="text" value={convSearch} onChange={e => setConvSearch(e.target.value)}
+              placeholder="🔍 Cari nama, nomor, atau isi pesan..."
+              style={{
+                flex: 1, background: cs.surface, border: "1px solid " + cs.border,
+                borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 12, outline: "none",
+              }} />
+            <button onClick={fetchConversations} disabled={loadingConvs} style={{
+              background: cs.surface, border: "1px solid " + cs.border, color: cs.text,
+              borderRadius: 8, padding: "8px 12px", fontSize: 12, cursor: loadingConvs ? "not-allowed" : "pointer", fontWeight: 600,
+            }}>{loadingConvs ? "..." : "🔄"}</button>
+            <span style={{ fontSize: 11, color: cs.muted }}>{filteredConvs.length} chat</span>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: selectedConv ? "320px 1fr" : "1fr", gap: 12, minHeight: 400 }}>
+            {/* Chat list */}
+            <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, overflowY: "auto", maxHeight: "70vh" }}>
+              {loadingConvs ? (
+                <div style={{ textAlign: "center", color: cs.muted, padding: 30, fontSize: 12 }}>Memuat...</div>
+              ) : filteredConvs.length === 0 ? (
+                <div style={{ textAlign: "center", color: cs.muted, padding: 30, fontSize: 12 }}>
+                  {convSearch ? "Tidak ada chat cocok." : "Belum ada chat personal."}
+                </div>
+              ) : (
+                filteredConvs.map(c => {
+                  const active = selectedConv?.phone === c.phone;
+                  return (
+                    <div key={c.phone} onClick={() => openConv(c)} style={{
+                      padding: "10px 12px", cursor: "pointer",
+                      background: active ? cs.accent + "12" : "transparent",
+                      borderLeft: active ? "3px solid " + cs.accent : "3px solid transparent",
+                      borderBottom: "1px solid " + cs.border + "33",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 3 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>{c.name || c.phone}</span>
+                        {c.unread > 0 && (
+                          <span style={{ background: "#22c55e", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 99 }}>{c.unread}</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace", marginBottom: 4 }}>{c.phone}</div>
+                      <div style={{ fontSize: 11, color: cs.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {(c.last_message || "(tidak ada pesan)").slice(0, 60)}
+                      </div>
+                      <div style={{ fontSize: 9, color: cs.muted, marginTop: 3 }}>
+                        {c.updated_at ? new Date(c.updated_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }) : ""}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Thread view */}
+            {selectedConv && (
+              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, display: "flex", flexDirection: "column", maxHeight: "70vh" }}>
+                <div style={{ padding: "10px 14px", borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>{selectedConv.name || selectedConv.phone}</div>
+                    <div style={{ fontSize: 10, color: cs.muted }}>{selectedConv.phone}</div>
+                  </div>
+                  <button onClick={() => setSelectedConv(null)} style={{
+                    background: "transparent", border: "none", color: cs.muted, fontSize: 18, cursor: "pointer",
+                  }}>×</button>
+                </div>
+                <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {loadingMessages ? (
+                    <div style={{ textAlign: "center", color: cs.muted, padding: 30, fontSize: 12 }}>Memuat...</div>
+                  ) : convMessages.length === 0 ? (
+                    <div style={{ textAlign: "center", color: cs.muted, padding: 30, fontSize: 12 }}>Belum ada pesan.</div>
+                  ) : (
+                    convMessages.map(m => {
+                      const isMe = m.role === "admin" || m.role === "assistant";
+                      return (
+                        <div key={m.id} style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start" }}>
+                          <div style={{
+                            maxWidth: "75%", background: isMe ? cs.accent + "22" : cs.surface,
+                            border: "1px solid " + (isMe ? cs.accent + "44" : cs.border),
+                            borderRadius: 10, padding: "8px 12px",
+                          }}>
+                            <div style={{ fontSize: 9, color: cs.muted, marginBottom: 2 }}>
+                              {m.role || "?"} · {new Date(m.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                            {m.image_url && (
+                              <div style={{ marginBottom: 4 }}>
+                                <a href={m.image_url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: cs.accent }}>
+                                  📷 Lihat foto
+                                </a>
+                              </div>
+                            )}
+                            <div style={{ fontSize: 12, color: cs.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                              {m.content || "(kosong)"}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -565,10 +771,18 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
                   20 webhook terakhir yang diterima — termasuk yang reject di validasi. Cek <b>has_member</b> = true untuk grup.
                 </div>
               </div>
-              <button onClick={fetchRawHits} disabled={loadingRaw} style={{
-                background: cs.surface, border: "1px solid " + cs.border, color: cs.text,
-                borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: loadingRaw ? "not-allowed" : "pointer", fontWeight: 600,
-              }}>{loadingRaw ? "..." : "🔄"}</button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => setHideStatusCb(s => !s)} style={{
+                  background: hideStatusCb ? "transparent" : "#f59e0b22",
+                  border: "1px solid " + (hideStatusCb ? cs.border : "#f59e0b55"),
+                  color: hideStatusCb ? cs.muted : "#f59e0b",
+                  borderRadius: 6, padding: "5px 10px", fontSize: 10, cursor: "pointer", fontWeight: 700,
+                }}>{hideStatusCb ? "Tampilkan status" : "Sembunyikan status"}</button>
+                <button onClick={fetchRawHits} disabled={loadingRaw} style={{
+                  background: cs.surface, border: "1px solid " + cs.border, color: cs.text,
+                  borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: loadingRaw ? "not-allowed" : "pointer", fontWeight: 600,
+                }}>{loadingRaw ? "..." : "🔄"}</button>
+              </div>
             </div>
             {rawHits.length === 0 ? (
               <div style={{ textAlign: "center", color: cs.muted, padding: 20, fontSize: 11 }}>
@@ -576,26 +790,42 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 360, overflowY: "auto" }}>
-                {rawHits.map(h => {
+                {rawHits.filter(h => {
+                  const p = h.payload || {};
+                  const isStatus = !!(p.state || p.stateid) && !p.message && !p.sender;
+                  return hideStatusCb ? !isStatus : true;
+                }).map(h => {
                   const isExpanded = expandedRawId === h.id;
+                  const p = h.payload || {};
+                  // Klasifikasi: status callback vs incoming
+                  const isStatusCallback = !!(p.state || p.stateid) && !p.message && !p.sender;
+                  const kind = isStatusCallback ? "status" : (h.has_member ? "group" : "personal");
+                  const badge = isStatusCallback
+                    ? { label: "📊 STATUS", color: "#f59e0b" }
+                    : kind === "group"
+                      ? { label: "📡 GROUP", color: "#a855f7" }
+                      : { label: "👤 personal", color: cs.muted };
                   return (
                     <div key={h.id} style={{
-                      background: cs.surface, border: "1px solid " + (h.has_member ? "#a855f755" : cs.border),
+                      background: cs.surface, border: "1px solid " + badge.color + "55",
                       borderRadius: 6, padding: "6px 10px", fontSize: 11,
+                      opacity: isStatusCallback ? 0.7 : 1,
                     }}>
                       <div onClick={() => setExpandedRawId(isExpanded ? null : h.id)} style={{ cursor: "pointer", display: "flex", justifyContent: "space-between", gap: 8 }}>
                         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                          {h.has_member ? (
-                            <span style={{ background: "#a855f722", color: "#a855f7", padding: "1px 6px", borderRadius: 99, fontSize: 9, fontWeight: 800 }}>📡 GROUP</span>
-                          ) : (
-                            <span style={{ background: cs.muted + "22", color: cs.muted, padding: "1px 6px", borderRadius: 99, fontSize: 9, fontWeight: 700 }}>👤 personal</span>
-                          )}
-                          {h.msg_type && (
+                          <span style={{ background: badge.color + "22", color: badge.color, padding: "1px 6px", borderRadius: 99, fontSize: 9, fontWeight: 800 }}>{badge.label}</span>
+                          {h.msg_type && !isStatusCallback && (
                             <span style={{ background: cs.accent + "22", color: cs.accent, padding: "1px 6px", borderRadius: 99, fontSize: 9, fontWeight: 700 }}>{h.msg_type}</span>
                           )}
-                          <span style={{ color: cs.text, fontFamily: "monospace", fontSize: 10 }}>
-                            sender: <b>{(h.sender || "?").slice(0, 40)}{(h.sender || "").length > 40 ? "..." : ""}</b>
-                          </span>
+                          {isStatusCallback ? (
+                            <span style={{ color: cs.text, fontFamily: "monospace", fontSize: 10 }}>
+                              state: <b>{p.state || "?"}</b>
+                            </span>
+                          ) : (
+                            <span style={{ color: cs.text, fontFamily: "monospace", fontSize: 10 }}>
+                              sender: <b>{(h.sender || "?").slice(0, 40)}{(h.sender || "").length > 40 ? "..." : ""}</b>
+                            </span>
+                          )}
                           {h.member && (
                             <span style={{ color: cs.muted, fontFamily: "monospace", fontSize: 10 }}>
                               member: {h.member.slice(0, 20)}
@@ -608,7 +838,7 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
                       </div>
                       {isExpanded && (
                         <pre style={{ fontSize: 9, color: cs.muted, background: cs.card, padding: 6, borderRadius: 4, marginTop: 6, maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                          {JSON.stringify(h.payload, null, 2)}
+                          {JSON.stringify(p, null, 2)}
                         </pre>
                       )}
                     </div>
