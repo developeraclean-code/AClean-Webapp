@@ -1389,6 +1389,56 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                         body: JSON.stringify({ target: OP, message: ownerNotifImg, delay: "1", countryCode: "62" })
                       }).catch(() => {});
                     }
+
+                    // ── REVERSE FLOW: auto-forward bukti TF ke grup yang ditandai ai_forward_target ──
+                    // Confidence: HIGH = amount + bank + match invoice, MEDIUM = amount only
+                    try {
+                      const conf = (classified.amount && classified.bank && matchedInvoiceId) ? "HIGH"
+                                 : (classified.amount && (classified.bank || matchedInvoiceId)) ? "MEDIUM"
+                                 : "LOW";
+                      if (FT && conf !== "LOW") {
+                        const tgtRes = await fetch(
+                          SU + "/rest/v1/wa_monitored_groups?select=group_id,group_name,ai_forward_min_conf&ai_forward_target=eq.true&enabled=eq.true",
+                          { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+                        );
+                        if (tgtRes.ok) {
+                          const tgts = await tgtRes.json();
+                          for (const tgt of (tgts || [])) {
+                            const minConf = tgt.ai_forward_min_conf || "HIGH";
+                            // confidence rank: LOW=0, MEDIUM=1, HIGH=2
+                            const rank = { LOW: 0, MEDIUM: 1, HIGH: 2 };
+                            if (rank[conf] < rank[minConf]) continue;
+                            const fwdCaption = "📥 *Sent by AI*\n"
+                              + "Dari: " + senderName + " (" + sender + ")\n"
+                              + "💰 " + (classified.amount ? "Rp" + Number(classified.amount).toLocaleString("id-ID") : "?")
+                              + (classified.bank ? " · " + classified.bank : "")
+                              + (classified.transfer_date ? " · " + classified.transfer_date : "")
+                              + "\n"
+                              + (matchedInvoiceId ? "Diduga: " + matchedInvoiceId + " (" + (matchedInvoice?.status || "UNPAID") + ")\n" : "⚠️ Invoice belum match\n")
+                              + "Confidence: " + conf + "\n"
+                              + "\n✅ Verify di app menu Invoice → Pending AI";
+                            fetch("https://api.fonnte.com/send", {
+                              method: "POST",
+                              headers: { Authorization: FT, "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                target: tgt.group_id,
+                                message: fwdCaption,
+                                url: savedImageUrl || mediaUrl,
+                                delay: "2", countryCode: "62"
+                              })
+                            }).catch(() => {});
+                            // Tandai sudah di-forward (best-effort PATCH via phone+nowIso filter)
+                            fetch(SU + "/rest/v1/payment_suggestions?phone=eq." + encodeURIComponent(sender) + "&created_at=eq." + encodeURIComponent(nowIso), {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
+                              body: JSON.stringify({ forwarded_to_group: tgt.group_id, forwarded_at: new Date().toISOString() })
+                            }).catch(() => {});
+                          }
+                        }
+                      }
+                    } catch (fwdErr) {
+                      console.warn("[REVERSE_FORWARD]", fwdErr.message);
+                    }
                   }
                 }
               }
