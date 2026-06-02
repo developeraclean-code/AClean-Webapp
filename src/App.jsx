@@ -9122,7 +9122,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const matTotal = editInvoiceItems.reduce((s, m) => s + (m.subtotal || 0), 0);
         const editDiscount = parseInt(editInvoiceForm.discount || 0) || 0;
         const editTradeIn = !!editInvoiceForm.trade_in;
-        const editTradeInAmt = editTradeIn ? 250000 : 0;
+        const editTradeInAmt = editTradeIn ? (parseInt(editInvoiceForm.trade_in_amount) || 0) : 0;
         const newTotal = jasaTotal + matTotal - editDiscount - editTradeInAmt;
         return (
           <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 450, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -9365,16 +9365,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
 
                   {/* Trade-In AC Lama */}
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: cs.text, background: editInvoiceForm.trade_in ? "#be123c12" : cs.surface, border: "1px solid " + (editInvoiceForm.trade_in ? "#be123c44" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
-                    <input type="checkbox"
-                      checked={!!editInvoiceForm.trade_in}
-                      onChange={e => setEditInvoiceForm(f => ({ ...f, trade_in: e.target.checked }))}
-                      style={{ width: 16, height: 16, accentColor: "#f43f5e" }} />
-                    <div>
+                  <div style={{ background: editInvoiceForm.trade_in ? "#be123c12" : cs.surface, border: "1px solid " + (editInvoiceForm.trade_in ? "#be123c44" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: cs.text }}>
+                      <input type="checkbox"
+                        checked={!!editInvoiceForm.trade_in}
+                        onChange={e => setEditInvoiceForm(f => ({ ...f, trade_in: e.target.checked, trade_in_amount: e.target.checked ? (parseInt(f.trade_in_amount) || 250000) : f.trade_in_amount }))}
+                        style={{ width: 16, height: 16, accentColor: "#f43f5e" }} />
                       <div style={{ fontWeight: 700 }}>Trade-In AC Lama</div>
-                      <div style={{ fontSize: 11, color: "#f43f5e", fontFamily: "monospace", fontWeight: 700 }}>-Rp 250.000</div>
-                    </div>
-                  </label>
+                    </label>
+                    {editInvoiceForm.trade_in && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                        <span style={{ fontSize: 12, color: "#f43f5e", fontWeight: 700 }}>- Rp</span>
+                        <input type="number" min="0"
+                          value={editInvoiceForm.trade_in_amount ?? ""}
+                          onChange={e => setEditInvoiceForm(f => ({ ...f, trade_in_amount: e.target.value }))}
+                          placeholder="250000"
+                          style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 13, fontFamily: "monospace", outline: "none", boxSizing: "border-box" }} />
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* ── Total preview ── */}
@@ -9383,7 +9392,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <div style={{ fontWeight: 800, fontSize: 22, color: cs.accent, fontFamily: "monospace" }}>{fmt(newTotal)}</div>
                   {(editDiscount > 0 || editTradeIn) && (
                     <div style={{ fontSize: 11, color: "#f43f5e", marginTop: 4 }}>
-                      Potongan: {editDiscount > 0 ? `Discount ${fmt(editDiscount)}` : ""}{editDiscount > 0 && editTradeIn ? " + " : ""}{editTradeIn ? "Trade-In Rp 250.000" : ""}
+                      Potongan: {editDiscount > 0 ? `Discount ${fmt(editDiscount)}` : ""}{editDiscount > 0 && editTradeIn ? " + " : ""}{editTradeIn ? `Trade-In ${fmt(editTradeInAmt)}` : ""}
                     </div>
                   )}
                   {newTotal !== editInvoiceData.total && (
@@ -9415,7 +9424,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const labor = jasaTotal3;
                     const discountFinal = parseInt(editInvoiceForm.discount || 0) || 0;
                     const tradeInFinal = !!editInvoiceForm.trade_in;
-                    const tradeInAmtFinal = tradeInFinal ? 250000 : 0;
+                    const tradeInAmtFinal = tradeInFinal ? (parseInt(editInvoiceForm.trade_in_amount) || 0) : 0;
                     const newTotalFinal = Math.max(0, jasaTotal3 + matTotal3 - discountFinal - tradeInAmtFinal);
                     if (newTotalFinal <= 0 && !tradeInFinal && discountFinal === 0) { showNotif("⚠️ Total tidak boleh 0"); return; }
                     const newMD = [
@@ -9627,7 +9636,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 )}
                 {liveInv.status === "PENDING_APPROVAL" &&
                   (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, discount: liveInv.discount || 0, trade_in: liveInv.trade_in || false, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => jasaSvcNames.some(s => (m.nama || "").includes(s))); const _mLv = _aLv.filter(m => !jasaSvcNames.some(s => (m.nama || "").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setVoucherCheckCode(""); setVoucherCheckResult(null); setVoucherApplied(null); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
+                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, discount: liveInv.discount || 0, trade_in: liveInv.trade_in || false, trade_in_amount: liveInv.trade_in_amount || 250000, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => jasaSvcNames.some(s => (m.nama || "").includes(s))); const _mLv = _aLv.filter(m => !jasaSvcNames.some(s => (m.nama || "").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setVoucherCheckCode(""); setVoucherCheckResult(null); setVoucherApplied(null); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
                   )}
               </div>
             </div>
