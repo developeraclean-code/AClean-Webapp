@@ -520,10 +520,23 @@ export default async function handler(req, res) {
           }
         }
 
+        // Deteksi gambar/dokumen dari grup
+        // Fonnte URL gambar valid sementara, tapi tetap kita simpan supaya owner bisa
+        // lihat real-time. Untuk persistent storage, future: upload ke R2.
+        const groupImageUrl = (wb.type === "image" || wb.type === "document") && isSafeFonnteUrl(wb.url)
+          ? wb.url : null;
+        const isImage = wb.type === "image";
+        const isDoc = wb.type === "document";
+        // Override content kalau pesan = URL (artinya cuma gambar tanpa caption)
+        const groupContent = (groupImageUrl && message === wb.url)
+          ? (isImage ? "(foto)" : isDoc ? `(dokumen: ${wb.filename || "file"})` : "(media)")
+          : message;
+
         // Step 3: Simpan ke wa_group_logs
         // - Selalu log kalau parsed_ok (biaya/laporan/stok)
         // - Kalau capture_all=true → log juga pesan general yang tidak ke-parse
-        const shouldLog = parsedOk || captureAll || kwMatched;
+        // - Kalau ada gambar/dokumen → log juga (jangan sampai foto hilang)
+        const shouldLog = parsedOk || captureAll || kwMatched || !!groupImageUrl;
         if (shouldLog && SU_g && SK_g) {
           fetch(SU_g + "/rest/v1/wa_group_logs", {
             method: "POST",
@@ -534,12 +547,16 @@ export default async function handler(req, res) {
               group_id: groupId,
               group_name: groupName,
               type: parsedType,
-              content: message,
+              content: groupContent,
               job_id: parsedJobId,
               amount: parsedAmount,
               parsed_ok: parsedOk,
               forwarded: false,
-              metadata: kwMatched ? { keyword_match: true } : null,
+              image_url: groupImageUrl,
+              metadata: kwMatched || groupImageUrl ? {
+                ...(kwMatched ? { keyword_match: true } : {}),
+                ...(groupImageUrl ? { media_type: wb.type, filename: wb.filename || null } : {}),
+              } : null,
             })
           }).catch(e => console.error("[WA_GROUP_LOG]", e.message));
         }

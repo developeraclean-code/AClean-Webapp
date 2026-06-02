@@ -34,7 +34,7 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
           .select("group_id,group_name,enabled")
           .eq("enabled", true),
         supabase.from("wa_group_logs")
-          .select("group_id,group_name,sender_name,content,created_at")
+          .select("group_id,group_name,sender_name,content,image_url,created_at")
           .order("created_at", { ascending: false })
           .limit(300),
       ]);
@@ -693,7 +693,10 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
                           <span style={{ background: "#f59e0b22", color: "#f59e0b", padding: "2px 6px", borderRadius: 99, fontSize: 9, fontWeight: 700 }}>🔔 keyword</span>
                         )}
                         {l.image_url && (
-                          <a href={l.image_url} target="_blank" rel="noreferrer" style={{ background: cs.accent + "22", color: cs.accent, padding: "2px 6px", borderRadius: 99, fontSize: 9, fontWeight: 700, textDecoration: "none" }}>📷 foto</a>
+                          <a href={l.image_url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, background: cs.accent + "22", color: cs.accent, padding: "2px 6px", borderRadius: 99, fontSize: 9, fontWeight: 700, textDecoration: "none" }}>
+                            <img src={l.image_url} alt="" style={{ width: 14, height: 14, objectFit: "cover", borderRadius: 2 }} onError={e => { e.target.style.display = "none"; }} />
+                            foto
+                          </a>
                         )}
                       </div>
                       <span style={{ fontSize: 10, color: cs.muted, whiteSpace: "nowrap" }}>
@@ -827,9 +830,16 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
                               )}
                             </div>
                             {m.image_url && (
-                              <div style={{ marginBottom: 4 }}>
-                                <a href={m.image_url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: cs.accent }}>
-                                  📷 Lihat foto
+                              <div style={{ marginBottom: 6 }}>
+                                <a href={m.image_url} target="_blank" rel="noreferrer" style={{ display: "block", lineHeight: 0 }}>
+                                  <img src={m.image_url}
+                                    alt="foto"
+                                    loading="lazy"
+                                    onError={e => { e.target.style.display = "none"; e.target.parentNode.insertAdjacentHTML("beforeend", `<span style="font-size:10px;color:${cs.muted}">📷 (foto tidak bisa dimuat — mungkin URL expired)</span>`); }}
+                                    style={{
+                                      maxWidth: "100%", maxHeight: 220, borderRadius: 6,
+                                      border: "1px solid " + cs.border, objectFit: "cover", cursor: "pointer",
+                                    }} />
                                 </a>
                               </div>
                             )}
