@@ -11,7 +11,7 @@ import { cs } from "../theme/cs.js";
 // - showNotif
 // - showConfirm
 // - auditUserName
-export default function WaGroupMonitorView({ currentUser, supabase, showNotif, showConfirm, auditUserName }) {
+export default function WaGroupMonitorView({ currentUser, supabase, showNotif, showConfirm, auditUserName, apiHeaders }) {
   const isOwner = currentUser?.role === "Owner";
   const [activeTab, setActiveTab] = useState("groups"); // groups | logs
 
@@ -26,6 +26,68 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
   const [logFilterType, setLogFilterType] = useState("all");
   const [logFilterGroup, setLogFilterGroup] = useState("all");
   const [logRange, setLogRange] = useState(7); // hari
+
+  // ── Sync from Fonnte ──
+  const [syncModal, setSyncModal] = useState(null); // null | { loading, groups, pickedIds }
+  const [syncing, setSyncing] = useState(false);
+
+  const fetchFonnteGroups = async () => {
+    setSyncing(true);
+    setSyncModal({ loading: true, groups: [], pickedIds: new Set() });
+    try {
+      const headers = apiHeaders ? await apiHeaders() : {};
+      const res = await fetch("/api/wa-groups?action=fonnte-list", { method: "GET", headers });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || json.detail || ("HTTP " + res.status));
+      const existing = new Set(groups.map(g => g.group_id));
+      // Mark which are already whitelisted
+      const list = (json.groups || []).map(g => ({
+        ...g,
+        already_whitelisted: existing.has(g.id),
+      }));
+      setSyncModal({ loading: false, groups: list, pickedIds: new Set() });
+    } catch (e) {
+      showNotif("Sync gagal: " + (e?.message || e), "error");
+      setSyncModal(null);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const togglePickSync = (gid) => {
+    setSyncModal(m => {
+      if (!m) return m;
+      const s = new Set(m.pickedIds);
+      if (s.has(gid)) s.delete(gid); else s.add(gid);
+      return { ...m, pickedIds: s };
+    });
+  };
+
+  const handleBatchWhitelist = async () => {
+    if (!syncModal || syncModal.pickedIds.size === 0) return;
+    setSyncing(true);
+    try {
+      const picked = syncModal.groups.filter(g => syncModal.pickedIds.has(g.id));
+      const rows = picked.map(g => ({
+        group_id: g.id,
+        group_name: g.name,
+        description: g.member_count ? `${g.member_count} member` : null,
+        enabled: true,
+        capture_all: false,
+        forward_to_owner: false,
+        added_by: auditUserName?.() || currentUser?.name || "Unknown",
+      }));
+      const { error } = await supabase.from("wa_monitored_groups").upsert(rows);
+      if (error) throw error;
+      showNotif(`✅ ${rows.length} grup ditambahkan ke whitelist`);
+      setSyncModal(null);
+      fetchGroups();
+    } catch (e) {
+      showNotif("Batch save gagal: " + (e?.message || e), "error");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // Fetch groups
   const fetchGroups = async () => {
@@ -177,17 +239,26 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
       {/* ─── TAB: Daftar Grup ─── */}
       {activeTab === "groups" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
             <div style={{ fontSize: 12, color: cs.muted }}>
               {groups.length} grup terdaftar · {groups.filter(g => g.enabled).length} aktif
             </div>
-            <button onClick={() => setAddForm({ group_id: "", group_name: "", description: "", capture_all: false, forward_to_owner: false, notify_keywords: "" })}
-              style={{
-                background: cs.accent, border: "none", color: "#fff", borderRadius: 8,
-                padding: "8px 14px", fontSize: 12, cursor: "pointer", fontWeight: 700,
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={fetchFonnteGroups} disabled={syncing} style={{
+                background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8,
+                padding: "8px 14px", fontSize: 12, cursor: syncing ? "not-allowed" : "pointer", fontWeight: 700,
+                opacity: syncing ? 0.6 : 1,
               }}>
-              ➕ Tambah Grup
-            </button>
+                {syncing ? "⏳ Sync..." : "🔄 Sync dari Fonnte"}
+              </button>
+              <button onClick={() => setAddForm({ group_id: "", group_name: "", description: "", capture_all: false, forward_to_owner: false, notify_keywords: "" })}
+                style={{
+                  background: cs.accent, border: "none", color: "#fff", borderRadius: 8,
+                  padding: "8px 14px", fontSize: 12, cursor: "pointer", fontWeight: 700,
+                }}>
+                ➕ Tambah Manual
+              </button>
+            </div>
           </div>
 
           {/* Form tambah */}
@@ -401,6 +472,103 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ─── Sync Modal ─── */}
+      {syncModal && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 12,
+        }} onClick={() => !syncing && setSyncModal(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14,
+            maxWidth: 600, width: "100%", maxHeight: "92vh", display: "flex", flexDirection: "column",
+            boxShadow: "0 12px 40px rgba(0,0,0,0.6)",
+          }}>
+            <div style={{ padding: "14px 16px", borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: cs.text }}>🔄 Sync Grup dari Fonnte</div>
+                <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+                  Pilih grup mana yang mau di-whitelist & monitor
+                </div>
+              </div>
+              <button onClick={() => setSyncModal(null)} disabled={syncing} style={{
+                background: "transparent", border: "none", color: cs.muted, fontSize: 22, cursor: syncing ? "not-allowed" : "pointer",
+              }}>×</button>
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+              {syncModal.loading ? (
+                <div style={{ textAlign: "center", color: cs.muted, padding: 40, fontSize: 12 }}>
+                  Memuat dari Fonnte API...
+                </div>
+              ) : syncModal.groups.length === 0 ? (
+                <div style={{ textAlign: "center", color: cs.muted, padding: 40, fontSize: 12 }}>
+                  Fonnte mengembalikan list kosong. Pastikan device terhubung & ada grup yang join.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {syncModal.groups.map(g => {
+                    const picked = syncModal.pickedIds.has(g.id);
+                    const disabled = g.already_whitelisted;
+                    return (
+                      <div key={g.id} onClick={() => !disabled && togglePickSync(g.id)}
+                        style={{
+                          background: picked ? cs.accent + "12" : cs.card,
+                          border: "1px solid " + (picked ? cs.accent + "66" : cs.border),
+                          borderRadius: 8, padding: "10px 12px",
+                          cursor: disabled ? "not-allowed" : "pointer",
+                          opacity: disabled ? 0.5 : 1,
+                          display: "flex", gap: 10, alignItems: "center",
+                        }}>
+                        <div style={{
+                          width: 20, height: 20, borderRadius: 5, flexShrink: 0,
+                          border: "2px solid " + (picked ? cs.accent : cs.border),
+                          background: picked ? cs.accent : "transparent",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          color: "#fff", fontSize: 12, fontWeight: 800,
+                        }}>{picked ? "✓" : ""}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>
+                            {g.name}
+                            {g.already_whitelisted && (
+                              <span style={{ marginLeft: 8, fontSize: 9, background: "#10b98122", color: "#10b981", padding: "2px 6px", borderRadius: 99, fontWeight: 700 }}>
+                                ✓ sudah whitelisted
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace", marginTop: 2, wordBreak: "break-all" }}>{g.id}</div>
+                          {g.member_count && (
+                            <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>👥 {g.member_count} member</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: "12px 14px", borderTop: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: cs.muted }}>
+                {syncModal.pickedIds.size} dipilih dari {syncModal.groups.length}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setSyncModal(null)} disabled={syncing} style={{
+                  background: "transparent", border: "1px solid " + cs.border, color: cs.muted,
+                  borderRadius: 8, padding: "8px 14px", fontSize: 12, cursor: syncing ? "not-allowed" : "pointer",
+                }}>Batal</button>
+                <button onClick={handleBatchWhitelist} disabled={syncing || syncModal.pickedIds.size === 0} style={{
+                  background: cs.accent, border: "none", color: "#fff",
+                  borderRadius: 8, padding: "8px 16px", fontSize: 12, cursor: syncing || syncModal.pickedIds.size === 0 ? "not-allowed" : "pointer", fontWeight: 700,
+                  opacity: syncing || syncModal.pickedIds.size === 0 ? 0.5 : 1,
+                }}>
+                  {syncing ? "Menyimpan..." : `Whitelist ${syncModal.pickedIds.size} Grup`}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -1767,6 +1767,43 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       }
     }
 
+    // ── WA-GROUPS: list grup dari Fonnte device (untuk sync whitelist) ──
+    // Butuh auth (Owner/Admin via X-Internal-Token)
+    if (route === "wa-groups") {
+      if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+      const action = String(req.query.action || "");
+      const FT = process.env.FONNTE_TOKEN;
+      if (!FT) return res.status(500).json({ error: "FONNTE_TOKEN belum diset" });
+      if (action === "fonnte-list") {
+        try {
+          const fRes = await fetch("https://api.fonnte.com/get-groups", {
+            method: "POST",
+            headers: { Authorization: FT },
+          });
+          const fBody = await fRes.json().catch(() => ({}));
+          if (!fRes.ok || fBody.status === false) {
+            return res.status(502).json({
+              error: "Fonnte get-groups gagal",
+              detail: fBody.reason || fBody.message || ("HTTP " + fRes.status),
+            });
+          }
+          // Fonnte returns { status: true, data: [{ id, name, ...}] }
+          const raw = Array.isArray(fBody.data) ? fBody.data
+                    : Array.isArray(fBody.groups) ? fBody.groups
+                    : Array.isArray(fBody) ? fBody : [];
+          const groups = raw.map(g => ({
+            id: g.id || g.group_id || g.jid || null,
+            name: g.name || g.subject || g.group_name || "(tanpa nama)",
+            member_count: g.member_count || g.participants || null,
+          })).filter(g => g.id);
+          return res.status(200).json({ ok: true, count: groups.length, groups });
+        } catch (e) {
+          return res.status(500).json({ error: "Network error", detail: e?.message || String(e) });
+        }
+      }
+      return res.status(400).json({ error: "Unknown action", supported: ["fonnte-list"] });
+    }
+
         // ── HEALTH: Public lightweight health check (untuk uptime monitor eksternal) ──
     // PUBLIC_ROUTES — tidak butuh auth. UptimeRobot dll bisa ping ini.
     if (route === "health") {
