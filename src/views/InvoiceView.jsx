@@ -220,7 +220,88 @@ const handleRetryFailed = async () => {
 };
 const dismissRetry = () => setLastFailedMerge(null);
 
-const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation" | "voucher"
+const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation" | "voucher" | "pending_ai"
+
+// Pending AI: payment_suggestions menunggu validasi (dari grup Finance / reverse-flow personal)
+const [pendingPayments, setPendingPayments] = useState([]);
+const [loadingPendingPayments, setLoadingPendingPayments] = useState(false);
+const [pendingSelectedInvoice, setPendingSelectedInvoice] = useState({}); // { suggestion_id: invoice_id }
+const [pendingPaymentBusy, setPendingPaymentBusy] = useState(null);
+const loadPendingPayments = async () => {
+  if (!supabase) return;
+  setLoadingPendingPayments(true);
+  try {
+    const { data, error } = await supabase
+      .from("payment_suggestions")
+      .select("*, ai_extractions:ai_extraction_id(*)")
+      .eq("validation_status", "PENDING")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    setPendingPayments(data || []);
+  } catch (e) {
+    showNotif?.("Gagal load Pending AI: " + e.message, "error");
+  } finally {
+    setLoadingPendingPayments(false);
+  }
+};
+useEffect(() => { if (invoiceSubTab === "pending_ai") loadPendingPayments(); /* eslint-disable-line */ }, [invoiceSubTab]);
+
+// Cari kandidat invoice berdasarkan amount + phone match
+const findInvoiceCandidates = (sug) => {
+  const target = Number(sug.amount) || 0;
+  if (!target) return [];
+  const phone = (sug.sender_phone || "").replace(/\D/g, "");
+  const unpaid = (invoicesData || []).filter(i =>
+    ["UNPAID", "OVERDUE", "PARTIAL_PAID"].includes(i.status) &&
+    Math.abs(Number(i.total || 0) - target) < 1000  // toleransi Rp 1.000
+  );
+  // ranking: phone exact > nama partial > amount only
+  const ranked = unpaid.map(i => {
+    let score = 1;
+    const cust = (customersData || []).find(c => c.id === i.customer_id) || {};
+    if (phone && (cust.phone || "").replace(/\D/g, "").endsWith(phone.slice(-9))) score += 5;
+    if (sug.sender_name && (cust.name || "").toLowerCase().includes(String(sug.sender_name).toLowerCase().split(" ")[0])) score += 2;
+    return { inv: i, cust, score };
+  }).sort((a, b) => b.score - a.score);
+  return ranked.slice(0, 3);
+};
+
+const handleLinkPayment = async (sug) => {
+  const invId = pendingSelectedInvoice[sug.id];
+  if (!invId) { showNotif?.("Pilih invoice dulu", "error"); return; }
+  setPendingPaymentBusy(sug.id);
+  try {
+    await markInvoicePaid?.(invId, { source: "ai_payment", proof_url: sug.image_url, amount: sug.amount });
+    await supabase.from("payment_suggestions").update({ validation_status: "LINKED", match_invoice_id: invId }).eq("id", sug.id);
+    if (sug.ai_extraction_id) {
+      await supabase.from("ai_extractions").update({ status: "approved", linked_table: "invoices", linked_id: invId }).eq("id", sug.ai_extraction_id);
+    }
+    showNotif?.("✓ Linked & marked PAID: " + invId, "success");
+    setPendingPayments(prev => prev.filter(x => x.id !== sug.id));
+  } catch (e) {
+    showNotif?.("Gagal link: " + e.message, "error");
+  } finally { setPendingPaymentBusy(null); }
+};
+const handleRejectPayment = async (sug) => {
+  showConfirm?.({
+    title: "Tolak bukti TF ini?",
+    message: "Entri akan ditandai REJECTED. Yakin?",
+    onConfirm: async () => {
+      setPendingPaymentBusy(sug.id);
+      try {
+        await supabase.from("payment_suggestions").update({ validation_status: "REJECTED" }).eq("id", sug.id);
+        if (sug.ai_extraction_id) {
+          await supabase.from("ai_extractions").update({ status: "rejected" }).eq("id", sug.ai_extraction_id);
+        }
+        showNotif?.("✕ Rejected", "info");
+        setPendingPayments(prev => prev.filter(x => x.id !== sug.id));
+      } catch (e) {
+        showNotif?.("Gagal: " + e.message, "error");
+      } finally { setPendingPaymentBusy(null); }
+    }
+  });
+};
 const [voucherList, setVoucherList]     = useState([]);
 const [voucherStats, setVoucherStats]   = useState(null);
 const [voucherFilter, setVoucherFilter] = useState("active"); // "all" | "active" | "claimed" | "expired"
@@ -418,6 +499,7 @@ return (
         { key: "invoice",   label: "🧾 Invoice" },
         ...(currentUser?.role !== "Finance" ? [{ key: "quotation", label: "📋 Quotation" }] : []),
         ...(["Owner","Admin"].includes(currentUser?.role) ? [{ key: "voucher", label: "🎁 Voucher" }] : []),
+        ...(["Owner","Admin"].includes(currentUser?.role) ? [{ key: "pending_ai", label: "🤖 Pending AI" + (pendingPayments.length ? ` (${pendingPayments.length})` : "") }] : []),
       ].map(t => (
         <button key={t.key} onClick={() => {
           setInvoiceSubTab(t.key);
@@ -506,6 +588,76 @@ return (
     )}
 
     {/* Invoice view (default) */}
+    {/* Pending AI sub-view (Owner/Admin) */}
+    {invoiceSubTab === "pending_ai" && (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ fontSize: 12, color: cs.muted }}>
+            Bukti TF dari grup Finance / reverse-flow personal. Pilih invoice yang dimaksud lalu Link.
+          </div>
+          <button onClick={loadPendingPayments} disabled={loadingPendingPayments}
+            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
+            {loadingPendingPayments ? "Loading..." : "↻ Refresh"}
+          </button>
+        </div>
+        {pendingPayments.length === 0 && !loadingPendingPayments && (
+          <div style={{ padding: 24, background: cs.card, borderRadius: 10, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+            Tidak ada bukti TF menunggu validasi.
+          </div>
+        )}
+        {pendingPayments.map(sug => {
+          const ai = sug.ai_extractions || {};
+          const candidates = findInvoiceCandidates(sug);
+          const confColor = sug.confidence === "HIGH" ? "#10b981" : sug.confidence === "MEDIUM" ? "#f59e0b" : "#ef4444";
+          const selected = pendingSelectedInvoice[sug.id] || candidates[0]?.inv?.id;
+          return (
+            <div key={sug.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 14, display: "flex", gap: 14 }}>
+              {sug.image_url && (
+                <a href={sug.image_url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
+                  <img src={sug.image_url} alt="bukti TF" style={{ width: 160, height: 200, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }}
+                    onError={e => { e.target.style.display = "none"; }} />
+                </a>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>{fmt(sug.amount || 0)}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: confColor + "22", color: confColor }}>{sug.confidence || "?"}</span>
+                  {sug.forwarded_to_group && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#ec489922", color: "#ec4899" }}>📥 Auto-forwarded</span>}
+                </div>
+                <div style={{ fontSize: 12, color: cs.text, marginBottom: 4 }}>🏦 {sug.bank || "—"} · 📅 {sug.transfer_date || "—"}</div>
+                <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8 }}>👤 {sug.sender_name || "—"} ({sug.sender_phone || "—"})</div>
+                {ai.notes && <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic", marginBottom: 8 }}>🧠 {ai.notes}</div>}
+
+                <div style={{ marginTop: 8, padding: 10, background: cs.surface, borderRadius: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>Match Candidates ({candidates.length})</div>
+                  {candidates.length === 0 && <div style={{ fontSize: 11, color: cs.muted }}>Tidak ada invoice UNPAID dengan jumlah {fmt(sug.amount || 0)}.</div>}
+                  {candidates.map(({ inv, cust, score }) => (
+                    <label key={inv.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", cursor: "pointer", fontSize: 12, color: cs.text }}>
+                      <input type="radio" name={`cand-${sug.id}`}
+                        checked={selected === inv.id}
+                        onChange={() => setPendingSelectedInvoice(s => ({ ...s, [sug.id]: inv.id }))} />
+                      <span><b>{cust.name || "?"}</b> · {inv.id} · {fmt(inv.total)} · <span style={{ color: cs.muted }}>{inv.status}</span> · <span style={{ color: "#10b981", fontSize: 10 }}>score {score}</span></span>
+                    </label>
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <button disabled={pendingPaymentBusy === sug.id || !selected} onClick={() => handleLinkPayment(sug)}
+                    style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: selected ? "pointer" : "not-allowed", opacity: selected ? 1 : 0.5 }}>
+                    ✓ Link & Mark PAID
+                  </button>
+                  <button disabled={pendingPaymentBusy === sug.id} onClick={() => handleRejectPayment(sug)}
+                    style={{ background: "#ef444422", border: "1px solid #ef444455", color: "#ef4444", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+                    ✕ Reject
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    )}
+
     {invoiceSubTab === "invoice" && <>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
       <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>🧾 Invoice <span style={{ fontSize: 13, color: cs.muted, fontWeight: 400 }}>({filteredInv.length})</span></div>
