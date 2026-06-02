@@ -374,7 +374,42 @@ export default async function handler(req, res) {
           console.warn("[receive-wa] group whitelist lookup failed:", gErr.message);
         }
         if (!groupConfig || !groupConfig.enabled) {
-          return res.status(200).json({ status: "skipped", reason: "group_not_monitored", group_id: groupId });
+          // Tetap log ke wa_group_discovery supaya Owner bisa whitelist nanti
+          if (groupId && SU_g && SK_g) {
+            const sampleMsg = (message || "").slice(0, 200);
+            const upsertBody = {
+              group_id: groupId,
+              last_seen: new Date().toISOString(),
+              sample_sender_name: profileName,
+              sample_sender_phone: participantNorm,
+              sample_message: sampleMsg,
+            };
+            // Try UPDATE first (increment message_count); if not exists, INSERT
+            fetch(SU_g + "/rest/v1/wa_group_discovery?group_id=eq." + encodeURIComponent(groupId), {
+              method: "PATCH",
+              headers: { apikey: SK_g, Authorization: "Bearer " + SK_g, "Content-Type": "application/json", Prefer: "return=representation" },
+              body: JSON.stringify(upsertBody),
+            }).then(async r => {
+              const rows = r.ok ? await r.json().catch(() => []) : [];
+              if (!rows || rows.length === 0) {
+                // INSERT baru
+                fetch(SU_g + "/rest/v1/wa_group_discovery", {
+                  method: "POST",
+                  headers: { apikey: SK_g, Authorization: "Bearer " + SK_g, "Content-Type": "application/json", Prefer: "return=minimal" },
+                  body: JSON.stringify({ ...upsertBody, message_count: 1 }),
+                }).catch(() => {});
+              } else {
+                // Inkrement counter
+                const cur = (rows[0]?.message_count || 0) + 1;
+                fetch(SU_g + "/rest/v1/wa_group_discovery?group_id=eq." + encodeURIComponent(groupId), {
+                  method: "PATCH",
+                  headers: { apikey: SK_g, Authorization: "Bearer " + SK_g, "Content-Type": "application/json", Prefer: "return=minimal" },
+                  body: JSON.stringify({ message_count: cur }),
+                }).catch(() => {});
+              }
+            }).catch(() => {});
+          }
+          return res.status(200).json({ status: "skipped", reason: "group_not_monitored", group_id: groupId, discovered: true });
         }
         const groupName = groupConfig.group_name || null;
         const captureAll = !!groupConfig.capture_all;
@@ -1778,13 +1813,19 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
         try {
           const fRes = await fetch("https://api.fonnte.com/get-groups", {
             method: "POST",
-            headers: { Authorization: FT },
+            headers: { Authorization: FT, "Content-Type": "application/x-www-form-urlencoded" },
+            body: "",
           });
-          const fBody = await fRes.json().catch(() => ({}));
+          const fText = await fRes.text();
+          let fBody;
+          try { fBody = JSON.parse(fText); } catch { fBody = { _raw: fText.slice(0, 500) }; }
           if (!fRes.ok || fBody.status === false) {
-            return res.status(502).json({
+            return res.status(200).json({
+              ok: false,
               error: "Fonnte get-groups gagal",
-              detail: fBody.reason || fBody.message || ("HTTP " + fRes.status),
+              fonnte_status: fRes.status,
+              fonnte_reason: fBody.reason || fBody.message || null,
+              fonnte_raw: fBody,
             });
           }
           // Fonnte returns { status: true, data: [{ id, name, ...}] }
@@ -1796,12 +1837,27 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
             name: g.name || g.subject || g.group_name || "(tanpa nama)",
             member_count: g.member_count || g.participants || null,
           })).filter(g => g.id);
-          return res.status(200).json({ ok: true, count: groups.length, groups });
+          return res.status(200).json({ ok: true, count: groups.length, groups, fonnte_raw: fBody });
         } catch (e) {
-          return res.status(500).json({ error: "Network error", detail: e?.message || String(e) });
+          return res.status(200).json({ ok: false, error: "Network error", detail: e?.message || String(e) });
         }
       }
-      return res.status(400).json({ error: "Unknown action", supported: ["fonnte-list"] });
+      if (action === "discovery-list") {
+        // List grup yang sempat kirim pesan tapi BELUM whitelisted
+        const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+        const SK = process.env.SUPABASE_SERVICE_KEY;
+        if (!SU || !SK) return res.status(500).json({ error: "DB not configured" });
+        try {
+          const r = await fetch(SU + "/rest/v1/wa_group_discovery?select=*&order=last_seen.desc&limit=100", {
+            headers: { apikey: SK, Authorization: "Bearer " + SK }
+          });
+          const rows = r.ok ? await r.json() : [];
+          return res.status(200).json({ ok: true, count: rows.length, groups: rows });
+        } catch (e) {
+          return res.status(500).json({ ok: false, error: e?.message || String(e) });
+        }
+      }
+      return res.status(400).json({ error: "Unknown action", supported: ["fonnte-list", "discovery-list"] });
     }
 
         // ── HEALTH: Public lightweight health check (untuk uptime monitor eksternal) ──

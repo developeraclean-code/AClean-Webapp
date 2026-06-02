@@ -13,7 +13,7 @@ import { cs } from "../theme/cs.js";
 // - auditUserName
 export default function WaGroupMonitorView({ currentUser, supabase, showNotif, showConfirm, auditUserName, apiHeaders }) {
   const isOwner = currentUser?.role === "Owner";
-  const [activeTab, setActiveTab] = useState("groups"); // groups | logs
+  const [activeTab, setActiveTab] = useState("groups"); // groups | logs | discovery
 
   // ── State: daftar grup ──
   const [groups, setGroups] = useState([]);
@@ -38,9 +38,17 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
       const headers = apiHeaders ? await apiHeaders() : {};
       const res = await fetch("/api/wa-groups?action=fonnte-list", { method: "GET", headers });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || json.detail || ("HTTP " + res.status));
+      if (!json.ok) {
+        // Tampilkan detail Fonnte error di modal
+        setSyncModal({
+          loading: false, groups: [], pickedIds: new Set(),
+          errorMessage: json.error || "Unknown error",
+          errorDetail: json.fonnte_reason || json.detail || null,
+          errorRaw: json.fonnte_raw || null,
+        });
+        return;
+      }
       const existing = new Set(groups.map(g => g.group_id));
-      // Mark which are already whitelisted
       const list = (json.groups || []).map(g => ({
         ...g,
         already_whitelisted: existing.has(g.id),
@@ -53,6 +61,51 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
       setSyncing(false);
     }
   };
+
+  // ── Discovery: grup yang sempat kirim pesan tapi belum whitelisted ──
+  const [discovery, setDiscovery] = useState([]);
+  const [loadingDiscovery, setLoadingDiscovery] = useState(false);
+  const fetchDiscovery = async () => {
+    setLoadingDiscovery(true);
+    try {
+      const { data, error } = await supabase.from("wa_group_discovery")
+        .select("*")
+        .eq("whitelisted", false)
+        .order("last_seen", { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      setDiscovery(data || []);
+    } catch (e) {
+      showNotif("Gagal load discovery: " + e.message, "error");
+    } finally {
+      setLoadingDiscovery(false);
+    }
+  };
+
+  const handleWhitelistDiscovered = async (item) => {
+    const name = window.prompt("Beri nama grup ini (boleh apa saja):", `Grup ${(item.sample_sender_name || "WA").slice(0, 30)}`);
+    if (!name?.trim()) return;
+    try {
+      const { error: e1 } = await supabase.from("wa_monitored_groups").upsert({
+        group_id: item.group_id,
+        group_name: name.trim(),
+        description: `${item.message_count} pesan terdeteksi · sample: ${(item.sample_sender_name || "?")}`,
+        enabled: true,
+        capture_all: false,
+        forward_to_owner: false,
+        added_by: auditUserName?.() || currentUser?.name || "Unknown",
+      });
+      if (e1) throw e1;
+      await supabase.from("wa_group_discovery").update({ whitelisted: true }).eq("group_id", item.group_id);
+      showNotif("✅ Grup di-whitelist");
+      fetchDiscovery();
+      fetchGroups();
+    } catch (e) {
+      showNotif("Gagal whitelist: " + e.message, "error");
+    }
+  };
+
+  useEffect(() => { if (activeTab === "discovery") fetchDiscovery(); /* eslint-disable-next-line */ }, [activeTab]);
 
   const togglePickSync = (gid) => {
     setSyncModal(m => {
@@ -221,6 +274,7 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
       <div style={{ display: "flex", gap: 8, borderBottom: "1px solid " + cs.border, paddingBottom: 0 }}>
         {[
           { key: "groups", label: "Daftar Grup", icon: "📋" },
+          { key: "discovery", label: "Discovery", icon: "🔍" },
           { key: "logs", label: "Log Aktivitas", icon: "📥" },
         ].map(t => {
           const active = activeTab === t.key;
@@ -475,6 +529,54 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
         </div>
       )}
 
+      {/* ─── TAB: Discovery ─── */}
+      {activeTab === "discovery" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 12, color: cs.muted }}>
+              Grup yang sempat kirim pesan tapi BELUM di-whitelist. Klik "Whitelist" untuk mulai monitor.
+            </div>
+            <button onClick={fetchDiscovery} style={{
+              background: cs.surface, border: "1px solid " + cs.border, color: cs.text,
+              borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600,
+            }}>🔄 Refresh</button>
+          </div>
+          {loadingDiscovery ? (
+            <div style={{ textAlign: "center", color: cs.muted, padding: 30, fontSize: 12 }}>Memuat...</div>
+          ) : discovery.length === 0 ? (
+            <div style={{ textAlign: "center", color: cs.muted, padding: 40, fontSize: 12, background: cs.card, borderRadius: 10, border: "1px dashed " + cs.border }}>
+              Belum ada grup tersembunyi terdeteksi.<br/>
+              <span style={{ fontSize: 11 }}>Begitu ada pesan masuk dari grup yang belum whitelisted, group_id-nya akan muncul di sini.</span>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {discovery.map(d => (
+                <div key={d.group_id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 14px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace", wordBreak: "break-all" }}>{d.group_id}</div>
+                      <div style={{ fontSize: 11, color: cs.text, marginTop: 4 }}>
+                        Sample sender: <b>{d.sample_sender_name || "?"}</b> ({d.sample_sender_phone || "?"})
+                      </div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginTop: 2, fontStyle: "italic" }}>
+                        "{(d.sample_message || "").slice(0, 100)}{(d.sample_message || "").length > 100 ? "..." : ""}"
+                      </div>
+                    </div>
+                    <button onClick={() => handleWhitelistDiscovered(d)} style={{
+                      background: "#10b981", border: "none", color: "#fff", borderRadius: 6,
+                      padding: "6px 12px", fontSize: 11, cursor: "pointer", fontWeight: 700, flexShrink: 0,
+                    }}>+ Whitelist</button>
+                  </div>
+                  <div style={{ fontSize: 10, color: cs.muted, paddingTop: 6, borderTop: "1px solid " + cs.border + "33" }}>
+                    📊 {d.message_count} pesan · First: {new Date(d.first_seen).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })} · Last: {new Date(d.last_seen).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ─── Sync Modal ─── */}
       {syncModal && (
         <div style={{
@@ -502,6 +604,26 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
               {syncModal.loading ? (
                 <div style={{ textAlign: "center", color: cs.muted, padding: 40, fontSize: 12 }}>
                   Memuat dari Fonnte API...
+                </div>
+              ) : syncModal.errorMessage ? (
+                <div style={{ padding: 16, background: "#ef444412", border: "1px solid #ef444444", borderRadius: 8, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#ef4444" }}>⚠️ {syncModal.errorMessage}</div>
+                  {syncModal.errorDetail && (
+                    <div style={{ fontSize: 12, color: cs.text }}>Detail: {syncModal.errorDetail}</div>
+                  )}
+                  {syncModal.errorRaw && (
+                    <div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Raw response Fonnte:</div>
+                      <pre style={{ fontSize: 10, color: cs.muted, background: cs.card, padding: 8, borderRadius: 6, maxHeight: 200, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                        {JSON.stringify(syncModal.errorRaw, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 4, lineHeight: 1.5 }}>
+                    <b>Solusi alternatif:</b> Buka tab <b>🔍 Discovery</b> — begitu ada pesan masuk
+                    dari grup, group_id-nya akan ke-capture otomatis dan bisa di-whitelist 1 klik
+                    tanpa perlu Fonnte API.
+                  </div>
                 </div>
               ) : syncModal.groups.length === 0 ? (
                 <div style={{ textAlign: "center", color: cs.muted, padding: 40, fontSize: 12 }}>
