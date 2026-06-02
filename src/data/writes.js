@@ -65,6 +65,38 @@ export const markInvoicePaid = async (supabase, id, paidAt, userName) => {
   return { data, error };
 };
 
+// Revert invoice PAID/PARTIAL_PAID → UNPAID/OVERDUE (Owner only — untuk koreksi nilai).
+// Hanya membalik status + field pembayaran. payment_logs & bukti bayar TIDAK dihapus (audit).
+// Order terkait (PAID → INVOICE_APPROVED) di-handle di caller.
+export const revertInvoiceToUnpaid = async (supabase, id, userName) => {
+  const { data: inv } = await supabase
+    .from("invoices").select("total,status,due").eq("id", id).single();
+  if (!inv) return { data: null, error: { message: "Invoice tidak ditemukan" } };
+
+  const REVERTABLE = ["PAID", "PARTIAL_PAID"];
+  if (!REVERTABLE.includes(inv.status)) {
+    return { data: null, error: { message: `Invoice status ${inv.status} — hanya PAID/PARTIAL yang bisa direvert` } };
+  }
+
+  const total = Number(inv.total) || 0;
+  const isOverdue = inv.due && new Date(inv.due) < new Date();
+  const newStatus = isOverdue ? "OVERDUE" : "UNPAID";
+
+  const { data, error } = await supabase.from("invoices").update({
+    status: newStatus,
+    paid_at: null,
+    paid_amount: 0,
+    remaining_amount: total,
+    paid_method: null,
+    last_changed_by: `${userName}::REVERT_PAID`,
+  }).eq("id", id).in("status", REVERTABLE).select("id");
+
+  if (!error && (!data || data.length === 0)) {
+    return { data: null, error: { message: "Invoice sudah diproses pengguna lain — refresh halaman" } };
+  }
+  return { data, error, newStatus };
+};
+
 export const deleteInvoice = async (supabase, id, userName, reason = "MANUAL_DELETE") => {
   await supabase.from("invoices").update({ last_changed_by: `${userName}::${reason}` }).eq("id", id);
   // payment_logs FK NO ACTION — hapus dulu agar invoice bisa dihapus

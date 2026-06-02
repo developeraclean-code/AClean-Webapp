@@ -33,7 +33,7 @@ import {
 } from "./data/reads.js";
 import {
   insertOrder, updateOrder, updateOrderStatus, deleteOrder,
-  insertInvoice, updateInvoice, markInvoicePaid, deleteInvoice,
+  insertInvoice, updateInvoice, markInvoicePaid, revertInvoiceToUnpaid, deleteInvoice,
   updateServiceReport, deleteServiceReport,
   insertExpense, updateExpense, deleteExpense,
   insertCustomer, upsertCustomer, updateCustomer, deleteCustomer,
@@ -4531,6 +4531,32 @@ ${photoPageHTML}
     }
   };
 
+  // ── Revert invoice PAID → UNPAID/OVERDUE (Owner only) — untuk koreksi nilai ──
+  // Membalik status + field bayar, dan kembalikan order PAID → INVOICE_APPROVED.
+  // payment_logs & bukti bayar TIDAK dihapus (audit tetap terjaga).
+  const revertInvoicePaid = async (inv) => {
+    if (currentUser?.role !== "Owner") { showNotif("🔒 Hanya Owner yang bisa revert invoice lunas"); return; }
+    const ok = await showConfirm({
+      icon: "↩️", danger: true,
+      title: "Revert invoice ke Belum Bayar?",
+      message: `Invoice ${inv.id} (${inv.customer}) akan dikembalikan ke status BELUM BAYAR agar nilainya bisa dikoreksi.\n\n• Pembayaran ${fmt(inv.total)} dibatalkan (catatan/bukti bayar tetap tersimpan)\n• Order terkait kembali ke "Invoice Dikirim"\n• Setelah koreksi nilai, tandai Lunas lagi\n\nLanjutkan?`,
+      confirmText: "Ya, Revert",
+    });
+    if (!ok) return;
+    const { error, newStatus } = await revertInvoiceToUnpaid(supabase, inv.id, auditUserName());
+    if (error) { showNotif("❌ Gagal revert: " + error.message); return; }
+    const st = newStatus || "UNPAID";
+    // Kembalikan order terkait PAID → INVOICE_APPROVED (job_id + invoice_id + anak)
+    supabase.from("orders").update({ status: "INVOICE_APPROVED" }).eq("invoice_id", inv.id).eq("status", "PAID").then(() => {});
+    if (inv.job_id) supabase.from("orders").update({ status: "INVOICE_APPROVED" }).eq("id", inv.job_id).eq("status", "PAID").then(() => {});
+    setInvoicesData(prev => prev.map(i => i.id === inv.id
+      ? { ...i, status: st, paid_at: null, paid_amount: 0, remaining_amount: inv.total, paid_method: null } : i));
+    setOrdersData(prev => prev.map(o =>
+      (o.invoice_id === inv.id || o.id === inv.job_id) && o.status === "PAID" ? { ...o, status: "INVOICE_APPROVED" } : o));
+    addAgentLog("INVOICE_REVERTED", `Invoice ${inv.id} (${inv.customer}) direvert PAID→${st} oleh ${currentUser?.name} untuk koreksi nilai`, "WARNING");
+    showNotif(`↩️ Invoice ${inv.id} → ${st === "OVERDUE" ? "Terlambat" : "Belum Bayar"}. Sekarang bisa Edit Nilai.`);
+  };
+
   // ── Group Payment: 1 transfer cover beberapa invoice 1 customer ──
   const handleGroupPayment = async (customerPhone, invoiceIds, totalReceived, proofUrl, method) => {
     const targetInvoices = invoicesData.filter(i => invoiceIds.includes(i.id));
@@ -5982,7 +6008,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       ordersData={ordersData} setOrdersData={setOrdersData} setActiveMenu={setActiveMenu} setAuditModal={setAuditModal}
       invoiceReminderWA={invoiceReminderWA} mergedInvoiceWA={mergedInvoiceWA} createConsolidatedInvoice={createConsolidatedInvoice} previewMergedInvoicePDF={previewMergedInvoicePDF} approveInvoice={approveInvoice} markPaid={markPaid}
       showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog} auditUserName={auditUserName}
-      markInvoicePaid={markInvoicePaid} updateOrderStatus={updateOrderStatus} deleteInvoice={deleteInvoice} updateInvoice={updateInvoice}
+      markInvoicePaid={markInvoicePaid} revertInvoicePaid={revertInvoicePaid} updateOrderStatus={updateOrderStatus} deleteInvoice={deleteInvoice} updateInvoice={updateInvoice}
       getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
       supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE}
       laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
