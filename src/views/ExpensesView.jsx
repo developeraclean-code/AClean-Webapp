@@ -92,6 +92,72 @@ const budgetAlerts = ALL_BUDGET_ITEMS.filter(item => {
 });
 
 const isTrash = expenseTab === "deleted";
+const isPendingAi = expenseTab === "pending_ai";
+
+// Pending AI items — diisi oleh AI vision classifier dari foto grup WA
+const [pendingAi, setPendingAi] = useState([]);
+const [loadingPendingAi, setLoadingPendingAi] = useState(false);
+const [pendingAiBusy, setPendingAiBusy] = useState(null); // id yang sedang diproses
+const loadPendingAi = async () => {
+  if (!supabase) return;
+  setLoadingPendingAi(true);
+  try {
+    const { data, error } = await supabase
+      .from("expenses")
+      .select("*, ai_extractions:ai_extraction_id(*)")
+      .eq("validation_status", "PENDING_AI")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    setPendingAi(data || []);
+  } catch (e) {
+    showNotif?.("Gagal load Pending AI: " + e.message, "error");
+  } finally {
+    setLoadingPendingAi(false);
+  }
+};
+useEffect(() => { if (isPendingAi) loadPendingAi(); /* eslint-disable-line */ }, [isPendingAi]);
+
+const handleApprovePendingAi = async (item) => {
+  setPendingAiBusy(item.id);
+  try {
+    await supabase.from("expenses").update({ validation_status: "APPROVED" }).eq("id", item.id);
+    if (item.ai_extraction_id) {
+      await supabase.from("ai_extractions").update({ status: "approved" }).eq("id", item.ai_extraction_id);
+    }
+    showNotif?.("✓ Approved: " + (item.description || ""), "success");
+    setPendingAi(prev => prev.filter(x => x.id !== item.id));
+    // Sync expensesData biar item muncul di regular tab (Petty Cash / Material) tanpa reload
+    setExpensesData(prev => {
+      const exists = prev.some(x => x.id === item.id);
+      if (exists) return prev.map(x => x.id === item.id ? { ...x, validation_status: "APPROVED" } : x);
+      // Item belum ada di expensesData (insert dari backend setelah Owner buka tab) → tambah
+      return [{ ...item, validation_status: "APPROVED" }, ...prev];
+    });
+  } catch (e) {
+    showNotif?.("Gagal approve: " + e.message, "error");
+  } finally { setPendingAiBusy(null); }
+};
+const handleRejectPendingAi = async (item) => {
+  showConfirm?.({
+    title: "Tolak entri ini?",
+    message: "Entri AI akan dihapus permanen. Yakin?",
+    onConfirm: async () => {
+      setPendingAiBusy(item.id);
+      try {
+        await supabase.from("expenses").delete().eq("id", item.id);
+        if (item.ai_extraction_id) {
+          await supabase.from("ai_extractions").update({ status: "rejected" }).eq("id", item.ai_extraction_id);
+        }
+        showNotif?.("✕ Rejected", "info");
+        setPendingAi(prev => prev.filter(x => x.id !== item.id));
+        setExpensesData(prev => prev.filter(x => x.id !== item.id));
+      } catch (e) {
+        showNotif?.("Gagal reject: " + e.message, "error");
+      } finally { setPendingAiBusy(null); }
+    }
+  });
+};
 
 // Recycle bin state — di-load lazy saat tab "Dihapus" dibuka (Owner only)
 const [deletedData, setDeletedData] = useState([]);
@@ -109,6 +175,8 @@ useEffect(() => {
 // Apply filters — sumber data tergantung tab (trash = deletedData, else = expensesData)
 const filtered = (isTrash ? deletedData : expensesData).filter(e => {
   if (!isTrash) {
+    // Sembunyikan entri PENDING_AI dari tab regular — hanya muncul di tab Pending AI
+    if (e.validation_status === "PENDING_AI") return false;
     if (expenseTab === "petty_cash" && e.category !== "petty_cash") return false;
     if (expenseTab === "material_purchase" && e.category !== "material_purchase") return false;
     if (expenseTab === "petty_cash" && expenseFilter !== "Semua" && e.subcategory !== expenseFilter) return false;
@@ -160,9 +228,19 @@ const saveExpense = async () => {
     created_by: currentUser?.name || currentUser?.email || "unknown",
   };
   if (editExpenseItem) {
+    // Auto-approve kalau edit entri PENDING_AI — anggap edit+save = Owner sudah review
+    if (editExpenseItem.validation_status === "PENDING_AI") {
+      payload.validation_status = "APPROVED";
+      if (editExpenseItem.ai_extraction_id) {
+        supabase.from("ai_extractions").update({ status: "edited" }).eq("id", editExpenseItem.ai_extraction_id).then(() => {}, () => {});
+      }
+    }
     const { error } = await updateExpense(supabase, editExpenseItem.id, payload, auditUserName());
     if (error) { showNotif?.("❌ Gagal update biaya: " + error.message); return; }
     setExpensesData(prev => prev.map(x => x.id === editExpenseItem.id ? { ...x, ...payload } : x));
+    if (editExpenseItem.validation_status === "PENDING_AI") {
+      setPendingAi(prev => prev.filter(x => x.id !== editExpenseItem.id));
+    }
     showNotif?.(`✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) diperbarui`);
   } else {
     const { data, error } = await insertExpense(supabase, { ...payload, last_changed_by: auditUserName() });
@@ -355,7 +433,7 @@ return (
 
     {/* Tab bar */}
     <div style={{ display: "flex", gap: 6 }}>
-      {[["petty_cash", "💰 Petty Cash"], ["material_purchase", "🔧 Pembelian Material"], ...(isOwner ? [["deleted", "🗑️ Dihapus"]] : [])].map(([v, lbl]) => (
+      {[["petty_cash", "💰 Petty Cash"], ["material_purchase", "🔧 Pembelian Material"], ["pending_ai", "🤖 Pending AI" + (pendingAi.length ? ` (${pendingAi.length})` : "")], ...(isOwner ? [["deleted", "🗑️ Dihapus"]] : [])].map(([v, lbl]) => (
         <button key={v} onClick={() => { setExpenseTab(v); setExpensePage(1); setExpenseFilter("Semua"); }}
           style={{
             padding: "8px 16px", borderRadius: 10, border: "1px solid " + (expenseTab === v ? cs.accent : cs.border),
@@ -368,7 +446,74 @@ return (
       ))}
     </div>
 
+    {/* ─── Tab Pending AI ─── */}
+    {isPendingAi && (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ fontSize: 12, color: cs.muted }}>
+            Foto struk dari grup WA yang diklasifikasi AI. Review sebelum approve.
+          </div>
+          <button onClick={loadPendingAi} disabled={loadingPendingAi}
+            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
+            {loadingPendingAi ? "Loading..." : "↻ Refresh"}
+          </button>
+        </div>
+        {pendingAi.length === 0 && !loadingPendingAi && (
+          <div style={{ padding: 24, background: cs.card, borderRadius: 10, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+            Tidak ada entri menunggu validasi AI.
+          </div>
+        )}
+        {pendingAi.map(item => {
+          const ai = item.ai_extractions || {};
+          const confColor = ai.confidence === "HIGH" ? "#10b981" : ai.confidence === "MEDIUM" ? "#f59e0b" : "#ef4444";
+          return (
+            <div key={item.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 14, display: "flex", gap: 14 }}>
+              {ai.image_url && (
+                <a href={ai.image_url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
+                  <img src={ai.image_url} alt="struk" style={{ width: 160, height: 200, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }}
+                    onError={e => { e.target.style.display = "none"; }} />
+                </a>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>{fmt ? fmt(item.amount) : `Rp ${item.amount?.toLocaleString("id")}`}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: confColor + "22", color: confColor }}>{ai.confidence || "?"}</span>
+                </div>
+                <div style={{ fontSize: 12, color: cs.text, marginBottom: 4 }}>📅 {item.date} · 🏷 {item.category} <span style={{ color: cs.muted }}>· {item.subcategory || "—"}</span></div>
+                <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8, wordBreak: "break-word" }}>{item.description}</div>
+                {ai.notes && <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic", marginBottom: 8 }}>🧠 {ai.notes}</div>}
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>👤 {item.teknisi_name || "—"} · 🤖 {ai.model || "AI"}</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button disabled={pendingAiBusy === item.id} onClick={() => handleApprovePendingAi(item)}
+                    style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    ✓ Approve
+                  </button>
+                  <button disabled={pendingAiBusy === item.id} onClick={() => {
+                    setEditExpenseItem(item);
+                    setNewExpenseForm({
+                      category: item.category, subcategory: item.subcategory, amount: String(item.amount || ""),
+                      date: item.date || TODAY, description: item.description || "", teknisi_name: item.teknisi_name || "",
+                      item_name: item.item_name || "", freon_type: item.freon_type || ""
+                    });
+                    setModalExpense(true);
+                  }}
+                    style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+                    ✏️ Edit
+                  </button>
+                  <button disabled={pendingAiBusy === item.id} onClick={() => handleRejectPendingAi(item)}
+                    style={{ background: "#ef444422", border: "1px solid #ef444455", color: "#ef4444", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+                    ✕ Reject
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    )}
+
     {/* Filter row: subcategory chips + month quick-select dalam satu baris */}
+    {!isPendingAi && <>
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
       {/* Subcategory chips — petty_cash only */}
       {expenseTab === "petty_cash" && QUICK_FILTERS.map(f => (
@@ -522,6 +667,7 @@ return (
         ))}
       </div>
     )}
+    </>}
 
     {/* Modal Add/Edit */}
     {modalExpense && (

@@ -575,6 +575,28 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
                       ))}
                     </div>
 
+                    {/* AI Feature toggles (Phase 1) */}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10, paddingTop: 8, borderTop: "1px dashed " + cs.border + "44" }}>
+                      <span style={{ fontSize: 10, color: cs.muted, fontWeight: 700, alignSelf: "center" }}>🤖 AI:</span>
+                      {[
+                        { key: "ai_expense_enabled",   label: "Auto Expense",    color: "#06b6d4" },
+                        { key: "ai_material_enabled",  label: "Auto Material",   color: "#10b981" },
+                        { key: "ai_payment_enabled",   label: "Auto Bukti TF",   color: "#22c55e" },
+                        { key: "ai_selesai_enabled",   label: "Parser Selesai",  color: "#a855f7" },
+                        { key: "ai_quotation_enabled", label: "Draft Quotation", color: "#f59e0b" },
+                        { key: "ai_forward_target",    label: "Target Forward",  color: "#ec4899" },
+                      ].map(t => (
+                        <button key={t.key} onClick={() => handleToggleField(g, t.key)} style={{
+                          background: g[t.key] ? t.color + "22" : "transparent",
+                          border: "1px solid " + (g[t.key] ? t.color + "55" : cs.border),
+                          color: g[t.key] ? t.color : cs.muted,
+                          borderRadius: 6, padding: "4px 10px", fontSize: 10, cursor: "pointer", fontWeight: 700,
+                        }}>
+                          {g[t.key] ? "✓" : "○"} {t.label}
+                        </button>
+                      ))}
+                    </div>
+
                     {g.notify_keywords && g.notify_keywords.length > 0 && (
                       <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8 }}>
                         🔔 Keywords: {g.notify_keywords.join(", ")}

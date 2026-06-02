@@ -1,5 +1,6 @@
 // api/[route].js - AClean Unified API Router
 import { setCorsHeaders, checkRateLimit, validateInternalToken, signAppToken } from "./_auth.js";
+import { classifyImage, persistClassification } from "./_ai-vision.js";
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
@@ -403,7 +404,7 @@ export default async function handler(req, res) {
         let groupConfig = null;
         try {
           const gRes = await fetch(
-            SU_g + "/rest/v1/wa_monitored_groups?select=group_id,group_name,enabled,capture_all,forward_to_owner,notify_keywords&group_id=eq." + encodeURIComponent(groupId || "") + "&limit=1",
+            SU_g + "/rest/v1/wa_monitored_groups?select=group_id,group_name,enabled,capture_all,forward_to_owner,notify_keywords,ai_expense_enabled,ai_material_enabled,ai_selesai_enabled,ai_quotation_enabled,ai_payment_enabled,ai_forward_target,ai_forward_min_conf&group_id=eq." + encodeURIComponent(groupId || "") + "&limit=1",
             { headers: { apikey: SK_g, Authorization: "Bearer " + SK_g } }
           );
           if (gRes.ok) {
@@ -472,20 +473,29 @@ export default async function handler(req, res) {
           if (nominalMatch) {
             parsedAmount = parseInt(nominalMatch[0]);
             parsedOk = true;
-            // Simpan ke operational_expenses
-            if (SU_g && SK_g) {
+            // Simpan ke expenses — SKIP hanya kalau ai_expense_enabled DAN ada foto
+            // (foto+caption "Bensin 50rb" akan ditangani AI vision; text-only tetap pakai text-pattern)
+            const hasImageForBiaya = (wb.type === "image" || wb.type === "document");
+            if (SU_g && SK_g && !(groupConfig.ai_expense_enabled && hasImageForBiaya)) {
               const today = new Date().toISOString().slice(0, 10);
-              fetch(SU_g + "/rest/v1/operational_expenses", {
+              fetch(SU_g + "/rest/v1/expenses", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
                 body: JSON.stringify({
                   date: today,
-                  category: biayaMatch[1].toLowerCase(),
-                  description: message,
+                  category: "petty_cash",
+                  // Map keyword text → subcategory existing (whitelist PETTY_CASH_SUBS)
+                  subcategory: (() => {
+                    const k = biayaMatch[1].toLowerCase();
+                    if (["bensin","bbm","pertamax","solar"].includes(k)) return "Bensin Motor";
+                    if (k === "parkir") return "Parkir";
+                    return "Lain-lain"; // makan/tol/belanja/transport/consumable semua dipetakan ke Lain-lain
+                  })(),
+                  description: message + " (via WA grup)",
                   amount: parsedAmount,
-                  teknisi: profileName,
-                  source: "wa_group",
-                  notes: "via WA grup"
+                  teknisi_name: profileName,
+                  created_by: "wa_group",
+                  validation_status: "PENDING_AI"
                 })
               }).catch(e => console.error("[WA_GROUP_EXPENSE]", e.message));
               expenseSaved = true;
@@ -561,6 +571,65 @@ export default async function handler(req, res) {
           }).catch(e => console.error("[WA_GROUP_LOG]", e.message));
         }
 
+        // Step 3.5: AI Vision classification — kalau image + grup punya toggle AI ON
+        // Pattern Tool Bag: await + wa_webhook_dedup mutex untuk Fonnte retry safety
+        // (Vercel kill function setelah res.send → fire-and-forget unreliable)
+        const anyAiOn = !!(groupConfig.ai_expense_enabled || groupConfig.ai_material_enabled || groupConfig.ai_payment_enabled);
+        let aiStatus = "skipped";
+        if (groupImageUrl && anyAiOn && SU_g && SK_g && (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)) {
+          // Dedup mutex — Fonnte retry hit 409 → skip total
+          const mediaSuffix = (groupImageUrl.split("/").pop() || "").slice(0, 80).replace(/[^a-zA-Z0-9._-]/g, "");
+          const dedupKey = `grpAi_${(groupId || "x").slice(0,40)}_${(participantNorm || "x").slice(0,15)}_${mediaSuffix}`.slice(0, 200);
+          let isDup = false;
+          try {
+            const dedupRes = await fetch(SU_g + "/rest/v1/wa_webhook_dedup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+              body: JSON.stringify({ dedup_key: dedupKey }),
+            });
+            if (dedupRes.status === 409) isDup = true;
+            else if (!dedupRes.ok) {
+              const errBody = await dedupRes.text().catch(() => "");
+              console.warn("[AI_VISION] dedup insert non-409 fail:", dedupRes.status, errBody.slice(0, 200));
+            }
+          } catch (e) {
+            console.warn("[AI_VISION] dedup check err:", e.message);
+          }
+
+          if (isDup) {
+            aiStatus = "skip_dup";
+          } else {
+            try {
+              const aiMsgText = groupContent === "(foto)" ? null : groupContent;
+              const classification = await classifyImage({
+                imageUrl: groupImageUrl,
+                groupCfg: groupConfig,
+                sender: { phone: participantNorm, name: profileName },
+                messageText: aiMsgText,
+              });
+              if (classification && !classification.error && classification.intent !== "unknown") {
+                await persistClassification({
+                  SU: SU_g, SK: SK_g,
+                  classification,
+                  sender: { phone: participantNorm, name: profileName },
+                  groupCfg: groupConfig,
+                  imageUrl: groupImageUrl,
+                  messageText: aiMsgText,
+                });
+                aiStatus = "ok:" + classification.intent;
+              } else if (classification?.error) {
+                console.warn("[AI_VISION] skip:", classification.error, classification.detail || "");
+                aiStatus = "err:" + classification.error;
+              } else {
+                aiStatus = "unknown";
+              }
+            } catch (e) {
+              console.error("[AI_VISION] failed:", e.message);
+              aiStatus = "exc";
+            }
+          }
+        }
+
         // Step 4: Notif owner — kalau parsed (biaya/stok_alert), forward_to_owner, atau keyword match
         const shouldNotifyOwner = (parsedType === "biaya" || parsedType === "stok_alert") || fwdToOwner || kwMatched;
         if (shouldNotifyOwner && FT_g && OP_g) {
@@ -576,7 +645,7 @@ export default async function handler(req, res) {
           }).catch(() => {});
         }
 
-        return res.status(200).json({ status: "group_processed", type: parsedType, logged: shouldLog });
+        return res.status(200).json({ status: "group_processed", type: parsedType, logged: shouldLog, ai: aiStatus });
       }
 
       const FT = process.env.FONNTE_TOKEN;
@@ -1357,6 +1426,56 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                         headers: { Authorization: FT, "Content-Type": "application/json" },
                         body: JSON.stringify({ target: OP, message: ownerNotifImg, delay: "1", countryCode: "62" })
                       }).catch(() => {});
+                    }
+
+                    // ── REVERSE FLOW: auto-forward bukti TF ke grup yang ditandai ai_forward_target ──
+                    // Confidence: HIGH = amount + bank + match invoice, MEDIUM = amount only
+                    try {
+                      const conf = (classified.amount && classified.bank && matchedInvoiceId) ? "HIGH"
+                                 : (classified.amount && (classified.bank || matchedInvoiceId)) ? "MEDIUM"
+                                 : "LOW";
+                      if (FT && conf !== "LOW") {
+                        const tgtRes = await fetch(
+                          SU + "/rest/v1/wa_monitored_groups?select=group_id,group_name,ai_forward_min_conf&ai_forward_target=eq.true&enabled=eq.true",
+                          { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+                        );
+                        if (tgtRes.ok) {
+                          const tgts = await tgtRes.json();
+                          for (const tgt of (tgts || [])) {
+                            const minConf = tgt.ai_forward_min_conf || "HIGH";
+                            // confidence rank: LOW=0, MEDIUM=1, HIGH=2
+                            const rank = { LOW: 0, MEDIUM: 1, HIGH: 2 };
+                            if (rank[conf] < rank[minConf]) continue;
+                            const fwdCaption = "📥 *Sent by AI*\n"
+                              + "Dari: " + senderName + " (" + sender + ")\n"
+                              + "💰 " + (classified.amount ? "Rp" + Number(classified.amount).toLocaleString("id-ID") : "?")
+                              + (classified.bank ? " · " + classified.bank : "")
+                              + (classified.transfer_date ? " · " + classified.transfer_date : "")
+                              + "\n"
+                              + (matchedInvoiceId ? "Diduga: " + matchedInvoiceId + " (" + (matchedInvoice?.status || "UNPAID") + ")\n" : "⚠️ Invoice belum match\n")
+                              + "Confidence: " + conf + "\n"
+                              + "\n✅ Verify di app menu Invoice → Pending AI";
+                            fetch("https://api.fonnte.com/send", {
+                              method: "POST",
+                              headers: { Authorization: FT, "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                target: tgt.group_id,
+                                message: fwdCaption,
+                                url: savedImageUrl || mediaUrl,
+                                delay: "2", countryCode: "62"
+                              })
+                            }).catch(() => {});
+                            // Tandai sudah di-forward (best-effort PATCH via phone+nowIso filter)
+                            fetch(SU + "/rest/v1/payment_suggestions?phone=eq." + encodeURIComponent(sender) + "&created_at=eq." + encodeURIComponent(nowIso), {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
+                              body: JSON.stringify({ forwarded_to_group: tgt.group_id, forwarded_at: new Date().toISOString() })
+                            }).catch(() => {});
+                          }
+                        }
+                      }
+                    } catch (fwdErr) {
+                      console.warn("[REVERSE_FORWARD]", fwdErr.message);
                     }
                   }
                 }

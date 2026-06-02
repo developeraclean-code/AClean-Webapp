@@ -116,6 +116,10 @@
     {
       "path": "/api/cron-reminder?task=morning-dispatch",
       "schedule": "30 2 * * *"
+    },
+    {
+      "path": "/api/cron-reminder?task=r2-cleanup-90d",
+      "schedule": "0 20 * * *"
     }
   ],
   "functions": {
