@@ -1,5 +1,6 @@
 // api/[route].js - AClean Unified API Router
 import { setCorsHeaders, checkRateLimit, validateInternalToken, signAppToken } from "./_auth.js";
+import { classifyImage, persistClassification } from "./_ai-vision.js";
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
@@ -403,7 +404,7 @@ export default async function handler(req, res) {
         let groupConfig = null;
         try {
           const gRes = await fetch(
-            SU_g + "/rest/v1/wa_monitored_groups?select=group_id,group_name,enabled,capture_all,forward_to_owner,notify_keywords&group_id=eq." + encodeURIComponent(groupId || "") + "&limit=1",
+            SU_g + "/rest/v1/wa_monitored_groups?select=group_id,group_name,enabled,capture_all,forward_to_owner,notify_keywords,ai_expense_enabled,ai_material_enabled,ai_selesai_enabled,ai_quotation_enabled,ai_payment_enabled,ai_forward_target,ai_forward_min_conf&group_id=eq." + encodeURIComponent(groupId || "") + "&limit=1",
             { headers: { apikey: SK_g, Authorization: "Bearer " + SK_g } }
           );
           if (gRes.ok) {
@@ -475,7 +476,7 @@ export default async function handler(req, res) {
             // Simpan ke operational_expenses
             if (SU_g && SK_g) {
               const today = new Date().toISOString().slice(0, 10);
-              fetch(SU_g + "/rest/v1/operational_expenses", {
+              fetch(SU_g + "/rest/v1/expenses", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
                 body: JSON.stringify({
@@ -559,6 +560,36 @@ export default async function handler(req, res) {
               } : null,
             })
           }).catch(e => console.error("[WA_GROUP_LOG]", e.message));
+        }
+
+        // Step 3.5: AI Vision classification — kalau image + grup punya toggle AI ON
+        // Fire-and-forget supaya response ke Fonnte tetap cepat (hindari retry storm)
+        const anyAiOn = !!(groupConfig.ai_expense_enabled || groupConfig.ai_material_enabled || groupConfig.ai_payment_enabled);
+        if (groupImageUrl && anyAiOn && SU_g && SK_g && process.env.ANTHROPIC_API_KEY) {
+          (async () => {
+            try {
+              const classification = await classifyImage({
+                imageUrl: groupImageUrl,
+                groupCfg: groupConfig,
+                sender: { phone: participantNorm, name: profileName },
+                messageText: groupContent === "(foto)" ? null : groupContent,
+              });
+              if (classification && !classification.error && classification.intent !== "unknown") {
+                await persistClassification({
+                  SU: SU_g, SK: SK_g,
+                  classification,
+                  sender: { phone: participantNorm, name: profileName },
+                  groupCfg: groupConfig,
+                  imageUrl: groupImageUrl,
+                  messageText: groupContent === "(foto)" ? null : groupContent,
+                });
+              } else if (classification?.error) {
+                console.warn("[AI_VISION] skip:", classification.error, classification.detail || "");
+              }
+            } catch (e) {
+              console.error("[AI_VISION] failed:", e.message);
+            }
+          })();
         }
 
         // Step 4: Notif owner — kalau parsed (biaya/stok_alert), forward_to_owner, atau keyword match
