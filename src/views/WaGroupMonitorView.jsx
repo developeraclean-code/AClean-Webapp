@@ -106,7 +106,30 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
     }
   };
 
-  useEffect(() => { if (activeTab === "discovery") fetchDiscovery(); /* eslint-disable-next-line */ }, [activeTab]);
+  // ── Webhook raw hits (debug) ──
+  const [rawHits, setRawHits] = useState([]);
+  const [loadingRaw, setLoadingRaw] = useState(false);
+  const [expandedRawId, setExpandedRawId] = useState(null);
+  const fetchRawHits = async () => {
+    setLoadingRaw(true);
+    try {
+      const { data, error } = await supabase.from("wa_webhook_raw")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      setRawHits(data || []);
+    } catch (e) {
+      showNotif("Gagal load raw: " + e.message, "error");
+    } finally {
+      setLoadingRaw(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "discovery") { fetchDiscovery(); fetchRawHits(); }
+    /* eslint-disable-next-line */
+  }, [activeTab]);
 
   const togglePickSync = (gid) => {
     setSyncModal(m => {
@@ -532,7 +555,69 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
 
       {/* ─── TAB: Discovery ─── */}
       {activeTab === "discovery" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* ── Webhook Recent Hits (Debug) ── */}
+          <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>🔬 Webhook Recent Hits (Debug)</div>
+                <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>
+                  20 webhook terakhir yang diterima — termasuk yang reject di validasi. Cek <b>has_member</b> = true untuk grup.
+                </div>
+              </div>
+              <button onClick={fetchRawHits} disabled={loadingRaw} style={{
+                background: cs.surface, border: "1px solid " + cs.border, color: cs.text,
+                borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: loadingRaw ? "not-allowed" : "pointer", fontWeight: 600,
+              }}>{loadingRaw ? "..." : "🔄"}</button>
+            </div>
+            {rawHits.length === 0 ? (
+              <div style={{ textAlign: "center", color: cs.muted, padding: 20, fontSize: 11 }}>
+                Belum ada webhook hit. Coba kirim pesan ke nomor AClean.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 360, overflowY: "auto" }}>
+                {rawHits.map(h => {
+                  const isExpanded = expandedRawId === h.id;
+                  return (
+                    <div key={h.id} style={{
+                      background: cs.surface, border: "1px solid " + (h.has_member ? "#a855f755" : cs.border),
+                      borderRadius: 6, padding: "6px 10px", fontSize: 11,
+                    }}>
+                      <div onClick={() => setExpandedRawId(isExpanded ? null : h.id)} style={{ cursor: "pointer", display: "flex", justifyContent: "space-between", gap: 8 }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          {h.has_member ? (
+                            <span style={{ background: "#a855f722", color: "#a855f7", padding: "1px 6px", borderRadius: 99, fontSize: 9, fontWeight: 800 }}>📡 GROUP</span>
+                          ) : (
+                            <span style={{ background: cs.muted + "22", color: cs.muted, padding: "1px 6px", borderRadius: 99, fontSize: 9, fontWeight: 700 }}>👤 personal</span>
+                          )}
+                          {h.msg_type && (
+                            <span style={{ background: cs.accent + "22", color: cs.accent, padding: "1px 6px", borderRadius: 99, fontSize: 9, fontWeight: 700 }}>{h.msg_type}</span>
+                          )}
+                          <span style={{ color: cs.text, fontFamily: "monospace", fontSize: 10 }}>
+                            sender: <b>{(h.sender || "?").slice(0, 40)}{(h.sender || "").length > 40 ? "..." : ""}</b>
+                          </span>
+                          {h.member && (
+                            <span style={{ color: cs.muted, fontFamily: "monospace", fontSize: 10 }}>
+                              member: {h.member.slice(0, 20)}
+                            </span>
+                          )}
+                        </div>
+                        <span style={{ color: cs.muted, fontSize: 10, whiteSpace: "nowrap" }}>
+                          {new Date(h.created_at).toLocaleTimeString("id-ID")}
+                        </span>
+                      </div>
+                      {isExpanded && (
+                        <pre style={{ fontSize: 9, color: cs.muted, background: cs.card, padding: 6, borderRadius: 4, marginTop: 6, maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                          {JSON.stringify(h.payload, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontSize: 12, color: cs.muted }}>
               Grup yang sempat kirim pesan tapi BELUM di-whitelist. Klik "Whitelist" untuk mulai monitor.

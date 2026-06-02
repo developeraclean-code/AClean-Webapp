@@ -299,22 +299,34 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, type: "status_callback", processed: true });
       }
 
-      // ── VALIDATION: Phone number ──
-      const sender = validateAndNormalizePhone(wb.sender);
-      if (!sender) return res.status(400).json({ error: "Invalid phone number format" });
+      // ── DEBUG: Save raw payload (last N) untuk diagnose ──
+      // Insert async, jangan await — biar tidak slow webhook
+      try {
+        const SU_dbg = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+        const SK_dbg = process.env.SUPABASE_SERVICE_KEY;
+        if (SU_dbg && SK_dbg) {
+          const dbgSenderRaw = String(wb.sender || wb.from || "");
+          const dbgMemberRaw = String(wb.member || wb.participant || "");
+          fetch(SU_dbg + "/rest/v1/wa_webhook_raw", {
+            method: "POST",
+            headers: { apikey: SK_dbg, Authorization: "Bearer " + SK_dbg, "Content-Type": "application/json", Prefer: "return=minimal" },
+            body: JSON.stringify({
+              payload: wb,
+              has_member: !!dbgMemberRaw,
+              sender: dbgSenderRaw.slice(0, 100),
+              member: dbgMemberRaw.slice(0, 100),
+              msg_type: wb.type || null,
+              has_message: !!wb.message,
+            })
+          }).catch(() => {});
+          // Trim ke 100 row terbaru — jangan biarkan grow infinite
+          // Pakai cron untuk cleanup, di sini cuma insert
+        }
+      } catch (_) {}
 
-      // ── VALIDATION: Message length & content ──
-      // Saat Fonnte kirim gambar, message bisa berupa URL atau kosong (ada di wb.url)
-      const isMediaType = wb.type === "image" || wb.type === "document";
-      const rawMessage = wb.message || (isMediaType && wb.url ? wb.url : "");
-      const message = validateMessage(rawMessage, 4096);
-      if (!message) return res.status(400).json({ error: "Message is required and must be 1-4096 characters" });
-
-      // ── VALIDATION: Group message check ──
-      // Per docs.fonnte.com/webhook-reply-message/:
-      //   - "member" field = "Sender from a group" → populated HANYA kalau pesan dari grup
-      //   - "sender" field = jadi group_id saat dari grup (format xxx@g.us)
-      //   - Personal chat: "sender" = nomor HP, "member" tidak ada
+      // ── DETEKSI GRUP DULU sebelum validasi phone ──
+      // Penting: kalau pesan grup, "sender" = group_id (format xxx@g.us) → bukan phone valid.
+      // Phone validation dipakai untuk PERSONAL chat. Grup validate "member" instead.
       const senderRaw = String(wb.sender || wb.from || wb.group || "");
       const memberRaw = String(wb.member || wb.participant || "");
       const looksLikeGroup =
@@ -322,6 +334,21 @@ export default async function handler(req, res) {
         wb.isGroup === true || wb.isGroup === "true" ||
         senderRaw.includes("@g.us") ||
         (senderRaw.includes("-") && /^\d+-\d+/.test(senderRaw));
+
+      // ── VALIDATION: Phone number (skip untuk grup — sender=group_id, bukan phone) ──
+      let sender = null;
+      if (!looksLikeGroup) {
+        sender = validateAndNormalizePhone(wb.sender);
+        if (!sender) return res.status(400).json({ error: "Invalid phone number format", reason: "invalid_sender_format", raw_sender: senderRaw.slice(0,50) });
+      }
+
+      // ── VALIDATION: Message length & content ──
+      // Saat Fonnte kirim gambar, message bisa berupa URL atau kosong (ada di wb.url)
+      const isMediaType = wb.type === "image" || wb.type === "document";
+      const rawMessage = wb.message || (isMediaType && wb.url ? wb.url : "");
+      // Grup boleh empty message (sistem pesan, sticker, dll) → tetap proses
+      const message = validateMessage(rawMessage, 4096) || (looksLikeGroup ? "(empty/system message)" : null);
+      if (!message) return res.status(400).json({ error: "Message is required and must be 1-4096 characters" });
       // Debug log: setiap webhook hit untuk monitoring (akan ke-log di Vercel runtime logs)
       try { console.log("[WA_WEBHOOK]", JSON.stringify({ sender: senderRaw, member: memberRaw, isGroup: wb.isGroup, type: wb.type, hasMsg: !!wb.message, looksLikeGroup })); } catch (_) {}
       if (looksLikeGroup) {
