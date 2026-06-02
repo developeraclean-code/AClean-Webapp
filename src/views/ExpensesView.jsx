@@ -220,9 +220,19 @@ const saveExpense = async () => {
     created_by: currentUser?.name || currentUser?.email || "unknown",
   };
   if (editExpenseItem) {
+    // Auto-approve kalau edit entri PENDING_AI — anggap edit+save = Owner sudah review
+    if (editExpenseItem.validation_status === "PENDING_AI") {
+      payload.validation_status = "APPROVED";
+      if (editExpenseItem.ai_extraction_id) {
+        supabase.from("ai_extractions").update({ status: "edited" }).eq("id", editExpenseItem.ai_extraction_id).then(() => {}, () => {});
+      }
+    }
     const { error } = await updateExpense(supabase, editExpenseItem.id, payload, auditUserName());
     if (error) { showNotif?.("❌ Gagal update biaya: " + error.message); return; }
     setExpensesData(prev => prev.map(x => x.id === editExpenseItem.id ? { ...x, ...payload } : x));
+    if (editExpenseItem.validation_status === "PENDING_AI") {
+      setPendingAi(prev => prev.filter(x => x.id !== editExpenseItem.id));
+    }
     showNotif?.(`✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) diperbarui`);
   } else {
     const { data, error } = await insertExpense(supabase, { ...payload, last_changed_by: auditUserName() });

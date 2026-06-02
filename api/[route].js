@@ -473,8 +473,10 @@ export default async function handler(req, res) {
           if (nominalMatch) {
             parsedAmount = parseInt(nominalMatch[0]);
             parsedOk = true;
-            // Simpan ke operational_expenses
-            if (SU_g && SK_g) {
+            // Simpan ke expenses — SKIP hanya kalau ai_expense_enabled DAN ada foto
+            // (foto+caption "Bensin 50rb" akan ditangani AI vision; text-only tetap pakai text-pattern)
+            const hasImageForBiaya = (wb.type === "image" || wb.type === "document");
+            if (SU_g && SK_g && !(groupConfig.ai_expense_enabled && hasImageForBiaya)) {
               const today = new Date().toISOString().slice(0, 10);
               fetch(SU_g + "/rest/v1/expenses", {
                 method: "POST",
@@ -485,7 +487,9 @@ export default async function handler(req, res) {
                   description: message + " (via WA grup)",
                   amount: parsedAmount,
                   teknisi_name: profileName,
-                  created_by: "wa_group"
+                  created_by: "wa_group",
+                  // Selalu PENDING — Owner approve manual via tab Pending AI Biaya
+                  validation_status: "PENDING_AI"
                 })
               }).catch(e => console.error("[WA_GROUP_EXPENSE]", e.message));
               expenseSaved = true;
