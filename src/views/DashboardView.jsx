@@ -4,7 +4,7 @@ import { statusColor, statusLabel } from "../constants/status.js";
 import { displayStock } from "../lib/inventory.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 
-function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, materialsBroughtMap, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData, supabase }) {
+function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, materialsBroughtMap, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData, supabase, apiHeaders }) {
 const role = currentUser?.role || "Admin";
 const [gridDate, setGridDate] = useState(TODAY);
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -47,7 +47,7 @@ if (role === "Teknisi" || role === "Helper") {
       </div>
 
       {/* Absen mandiri — hanya Teknisi & Helper */}
-      <AbsenBanner currentUser={currentUser} supabase={supabase} TODAY={TODAY} showNotif={showNotif} />
+      <AbsenBanner currentUser={currentUser} supabase={supabase} TODAY={TODAY} showNotif={showNotif} apiHeaders={apiHeaders} />
 
       {/* My stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: isMobile ? 10 : 12 }}>

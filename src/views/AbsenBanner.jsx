@@ -7,7 +7,7 @@ import { cs } from "../theme/cs.js";
 // IJIN/SAKIT → is_available=false → hilang dari pool tim di Planning Order.
 // MASUK → is_available=true.
 // Tampil sepanjang hari Senin–Sabtu (tanpa cutoff jam).
-export default function AbsenBanner({ currentUser, supabase, TODAY, showNotif }) {
+export default function AbsenBanner({ currentUser, supabase, TODAY, showNotif, apiHeaders }) {
   const role = currentUser?.role;
   const name = currentUser?.name;
   const isField = role === "Teknisi" || role === "Helper";
@@ -51,10 +51,23 @@ export default function AbsenBanner({ currentUser, supabase, TODAY, showNotif })
     );
     setSaving(false);
     if (error) { showNotif?.("Gagal menyimpan: " + error.message); return; }
-    setRec({ status, reason: (status === "MASUK") ? null : reason.trim(), is_available });
+    const reasonText = (status === "MASUK") ? "" : reason.trim();
+    setRec({ status, reason: reasonText || null, is_available });
     setEditing(null); setReason("");
     const label = { MASUK: "✅ Absen tercatat: Masuk", IJIN: "✅ Absen tercatat: Ijin", SAKIT: "✅ Absen tercatat: Sakit" };
     showNotif?.(label[status] || "✅ Tersimpan");
+
+    // Best-effort: info WA ke Owner saat absen (Ijin/Sakit) — tidak blokir UI
+    if (status !== "MASUK" && apiHeaders) {
+      try {
+        const headers = await apiHeaders();
+        fetch("/api/notify-absence", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ teknisi: name, status, reason: reasonText, role, date: TODAY }),
+        }).catch(() => {});
+      } catch { /* notifikasi non-kritis — abaikan error */ }
+    }
   }
 
   const META = {

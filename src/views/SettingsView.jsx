@@ -911,8 +911,10 @@ const d = await r.json();
             { key: "wa_chatbot_enabled", label: "ARA Chatbot Customer", desc: "ARA balas WA customer secara AI (terima order, info harga, komplain). Keyword auto-reply tetap jadi fallback jika ARA gagal.", icon: "🧠" },
             { key: "wa_payment_detect", label: "Deteksi Bukti Bayar", desc: "Deteksi otomatis pesan/foto bukti transfer dari customer, beri notif konfirmasi ke admin", icon: "💳" },
             { key: "wa_cleanup_enabled", label: "Auto-Cleanup Chat (14 Hari)", desc: "Hapus otomatis riwayat chat WA yang lebih dari 14 hari. Phone dengan bukti bayar PENDING tetap dilindungi.", icon: "🗑️" },
+            { key: "wa_absen_notify_enabled", label: "Notif Absen Tim ke Owner", desc: "Kirim WA ke Owner setiap teknisi/helper lapor Ijin/Sakit, sebagai informasi awal sebelum atur ulang tim. Default: aktif.", icon: "🔔" },
           ].map(({ key, label, desc, icon }) => {
-            const isOn = appSettings[key] === "true";
+            // wa_absen_notify_enabled default AKTIF (kirim kecuali eksplisit "false") — sinkron dgn backend
+            const isOn = key === "wa_absen_notify_enabled" ? appSettings[key] !== "false" : appSettings[key] === "true";
             return (
               <div key={key} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: "1px solid " + cs.border }}>
                 <span style={{ fontSize: 18, minWidth: 24 }}>{icon}</span>

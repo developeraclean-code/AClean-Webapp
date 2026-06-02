@@ -11,7 +11,7 @@ const STATUS_CONFIG = {
   COMPLETED:  { label: "Selesai",    color: "#10b981", bg: "#10b98122" },
 };
 
-function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu }) {
+function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
 
@@ -72,7 +72,7 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
       </div>
 
       {/* Absen mandiri — Teknisi & Helper */}
-      <AbsenBanner currentUser={currentUser} supabase={supabase} TODAY={TODAY} showNotif={showNotif} />
+      <AbsenBanner currentUser={currentUser} supabase={supabase} TODAY={TODAY} showNotif={showNotif} apiHeaders={apiHeaders} />
 
       {/* Stats Bar */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>

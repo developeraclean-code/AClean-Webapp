@@ -148,6 +148,62 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, target, withAttachment: hasAttachment });
     }
 
+    // ── NOTIFY-ABSENCE (authenticated) — info WA ke Owner saat teknisi/helper Ijin/Sakit ──
+    if (route === "notify-absence") {
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const b = req.body || {};
+      const teknisi = String(b.teknisi || "").trim().slice(0, 60);
+      const status  = String(b.status || "").trim().toUpperCase();
+      const role    = String(b.role || "").trim().slice(0, 20);
+      const reason  = String(b.reason || "").trim().slice(0, 300);
+      const date    = String(b.date || "").trim().slice(0, 10);
+      if (!teknisi || !["IJIN", "SAKIT", "ALPA"].includes(status)) {
+        return res.status(400).json({ error: "teknisi & status (IJIN/SAKIT/ALPA) wajib" });
+      }
+
+      const FT = process.env.FONNTE_TOKEN;
+      if (!FT) return res.status(200).json({ ok: false, skipped: "FONNTE_TOKEN_NOT_SET" });
+
+      // Resolve owner phone + toggle dari app_settings (service key), fallback ke env
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      let ownerPhone = process.env.OWNER_PHONE || "";
+      let notifEnabled = true;
+      if (SU && SK) {
+        try {
+          const headers = { apikey: SK, Authorization: "Bearer " + SK, "Content-Type": "application/json" };
+          const r = await fetch(`${SU}/rest/v1/app_settings?key=in.(owner_phone,wa_absen_notify_enabled)&select=key,value`, { headers });
+          if (r.ok) {
+            const rows = await r.json();
+            const map = Object.fromEntries(rows.map(x => [x.key, x.value]));
+            if (map.owner_phone) ownerPhone = map.owner_phone;
+            if (map.wa_absen_notify_enabled === "false") notifEnabled = false;
+          }
+        } catch { /* fallback ke env */ }
+      }
+
+      if (!notifEnabled) return res.status(200).json({ ok: false, skipped: "disabled" });
+      const target = validateAndNormalizePhone(ownerPhone);
+      if (!target) return res.status(200).json({ ok: false, skipped: "no_owner_phone" });
+
+      const META = { IJIN: "🟡 Ijin", SAKIT: "🟠 Sakit", ALPA: "🔴 Alpa" };
+      const tgl = date || new Date().toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" });
+      const msg = `🔔 *INFO ABSEN TIM* — ${tgl}\n\n${META[status]}: *${teknisi}*${role ? " (" + role + ")" : ""}\nAlasan: ${reason || "-"}\n\n⚠️ Anggota ini otomatis keluar dari pool tim hari ini. Cek *Planning Order* untuk reassign bila ada order terdampak.\n\n— Notifikasi otomatis`;
+
+      try {
+        const fr = await fetch("https://api.fonnte.com/send", {
+          method: "POST",
+          headers: { "Authorization": FT, "Content-Type": "application/json" },
+          body: JSON.stringify({ target, message: msg, delay: "1", countryCode: "62" })
+        });
+        const fd = await fr.json().catch(() => ({}));
+        if (!fr.ok || fd.status === false) return res.status(200).json({ ok: false, error: fd.reason || "Fonnte error" });
+        return res.status(200).json({ ok: true, target });
+      } catch (e) {
+        return res.status(200).json({ ok: false, error: e.message });
+      }
+    }
+
     // ── RECEIVE-WA (public) ──
     if (route === "receive-wa") {
       if (req.method === "GET") return res.status(200).json({ status: "ok", service: "AClean WA Webhook" });

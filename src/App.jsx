@@ -5860,6 +5860,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           auditUserName={auditUserName}
           showNotif={showNotif}
           setActiveMenu={setActiveMenu}
+          apiHeaders={_apiHeaders}
         />
       );
     }
@@ -5874,7 +5875,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       customersData={customersData} laporanReports={laporanReports} findCustomer={findCustomer}
       setSelectedCustomer={setSelectedCustomer} setCustomerTab={setCustomerTab}
-      expensesData={expensesData} supabase={supabase} />
+      expensesData={expensesData} supabase={supabase} apiHeaders={_apiHeaders} />
     );
   };
 
