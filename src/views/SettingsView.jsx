@@ -185,62 +185,114 @@ function UserManagementPanel({ userAccounts, setUserAccounts, setTeknisiData, cu
 }
 
 // ── Team Presets Panel ───────────────────────────────────────────────────────
-function TeamPresetsPanel({ supabase, showNotif, currentUser }) {
-  const SLOTS = ["Team 01","Team 02","Team 03","Team 04","Team 05","Team 06","Team 07"];
-  const DEFAULT_TEKNISI = { "Team 01":"Usaeri","Team 02":"Mulyadi","Team 03":"Aji","Team 04":"Putra","Team 05":"Agung","Team 06":"Rey","Team 07":"Fikri" };
-  const [presets, setPresets] = useState(null); // null = loading
+function TeamPresetsPanel({ supabase, showNotif, showConfirm, currentUser }) {
+  // Default seed saat tabel masih kosong
+  const DEFAULT_ROWS = [
+    { slot: "Team 01", teknisi: "Usaeri" },
+    { slot: "Team 02", teknisi: "Mulyadi" },
+    { slot: "Team 03", teknisi: "Aji" },
+    { slot: "Team 04", teknisi: "Putra" },
+    { slot: "Team 05", teknisi: "Agung" },
+    { slot: "Team 06", teknisi: "Rey" },
+    { slot: "Team 07", teknisi: "Fikri" },
+  ];
+  const [rows, setRows] = useState(null); // null = loading; array = loaded
   const [saving, setSaving] = useState(false);
+  const isOwnerOrAdmin = ["owner","admin"].includes((currentUser?.role || "").toLowerCase());
 
   const load = async () => {
     const { data } = await supabase.from("team_presets").select("slot,teknisi").order("sort_order");
-    if (data) {
-      const map = {};
-      SLOTS.forEach(s => { map[s] = DEFAULT_TEKNISI[s]; });
-      data.forEach(r => { map[r.slot] = r.teknisi; });
-      setPresets(map);
-    }
+    if (data && data.length) setRows(data.map(r => ({ slot: r.slot, teknisi: r.teknisi || "" })));
+    else setRows(DEFAULT_ROWS.map(r => ({ ...r })));
   };
 
-  if (presets === null) { load(); return <div style={{ padding: 20, color: cs.muted, fontSize: 12 }}>Memuat preset tim...</div>; }
+  if (rows === null) { load(); return <div style={{ padding: 20, color: cs.muted, fontSize: 12 }}>Memuat preset tim...</div>; }
 
-  const handleChange = (slot, val) => setPresets(p => ({ ...p, [slot]: val }));
+  const handleChange = (idx, field, val) =>
+    setRows(rs => rs.map((r, i) => i === idx ? { ...r, [field]: val } : r));
+
+  const handleAdd = () => {
+    setRows(rs => {
+      const maxNum = rs.reduce((m, r) => {
+        const mm = (r.slot || "").match(/(\d+)/);
+        return mm ? Math.max(m, parseInt(mm[1], 10)) : m;
+      }, 0);
+      const next = String(maxNum + 1).padStart(2, "0");
+      return [...rs, { slot: "Team " + next, teknisi: "" }];
+    });
+  };
+
+  const handleRemove = async (idx) => {
+    const target = rows[idx];
+    const ok = await showConfirm({
+      icon: "🗑️", title: "Hapus slot tim?", danger: true,
+      message: `Hapus ${target.slot}${target.teknisi ? " (" + target.teknisi + ")" : ""} dari preset?\nOrder lama yang sudah memakai slot ini tidak terpengaruh.`,
+      confirmText: "Hapus",
+    });
+    if (!ok) return;
+    setRows(rs => rs.filter((_, i) => i !== idx));
+  };
 
   const handleSave = async () => {
     setSaving(true);
-    const rows = SLOTS.map((slot, i) => ({ slot, teknisi: (presets[slot] || "").trim(), sort_order: i + 1 })).filter(r => r.teknisi);
-    const { error } = await supabase.from("team_presets").upsert(rows, { onConflict: "slot" });
+    // Baris valid: harus punya nama slot
+    const clean = rows
+      .map((r, i) => ({ slot: (r.slot || "").trim(), teknisi: (r.teknisi || "").trim(), sort_order: i + 1 }))
+      .filter(r => r.slot);
+    // Hapus slot yang dibuang dari DB
+    const { data: existing } = await supabase.from("team_presets").select("slot");
+    const keep = clean.map(r => r.slot);
+    const toDelete = (existing || []).map(r => r.slot).filter(s => !keep.includes(s));
+    if (toDelete.length) await supabase.from("team_presets").delete().in("slot", toDelete);
+    const { error } = await supabase.from("team_presets").upsert(clean, { onConflict: "slot" });
     setSaving(false);
     if (error) { showNotif("❌ Gagal simpan: " + error.message); return; }
     showNotif("✅ Preset tim berhasil disimpan");
   };
 
-  const isOwnerOrAdmin = ["owner","admin"].includes((currentUser?.role || "").toLowerCase());
-
   return (
     <Card>
       <CardHeader icon="👷" title="Preset Tim Teknisi" subtitle="Nama teknisi tetap per slot tim. Helper dipilih harian di Planning." />
       <div style={{ display: "grid", gap: 8 }}>
-        {SLOTS.map(slot => (
-          <div key={slot} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: cs.accent, width: 60, flexShrink: 0 }}>{slot}</span>
+        {rows.map((r, idx) => (
+          <div key={idx} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: cs.accent, width: 60, flexShrink: 0 }}>{r.slot}</span>
             <input
-              value={presets[slot] || ""}
-              onChange={e => handleChange(slot, e.target.value)}
+              value={r.teknisi || ""}
+              onChange={e => handleChange(idx, "teknisi", e.target.value)}
               disabled={!isOwnerOrAdmin}
-              placeholder={DEFAULT_TEKNISI[slot]}
+              placeholder="Nama teknisi tetap…"
               style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 12px", fontSize: 13, color: cs.text, outline: "none" }}
             />
+            {isOwnerOrAdmin && (
+              <button
+                onClick={() => handleRemove(idx)}
+                title={"Hapus " + r.slot}
+                style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 8, background: cs.red + "15", border: "1px solid " + cs.red + "33", color: cs.red, cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                🗑️
+              </button>
+            )}
           </div>
         ))}
       </div>
       {isOwnerOrAdmin && (
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          style={{ marginTop: 14, background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: "9px 20px", borderRadius: 9, cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 12, opacity: saving ? 0.7 : 1 }}>
-          {saving ? "Menyimpan..." : "Simpan Preset Tim"}
-        </button>
+        <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+          <button
+            onClick={handleAdd}
+            style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "9px 16px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+            + Tambah Tim
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: "9px 20px", borderRadius: 9, cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 12, opacity: saving ? 0.7 : 1 }}>
+            {saving ? "Menyimpan..." : "💾 Simpan Preset Tim"}
+          </button>
+        </div>
       )}
+      <div style={{ marginTop: 10, fontSize: 11, color: cs.muted }}>
+        💡 Tambah/hapus tim sesuai pertumbuhan bisnis. Tim baru otomatis muncul di grid Planning Order setelah disimpan.
+      </div>
     </Card>
   );
 }
@@ -263,6 +315,16 @@ function SettingsView({
 }) {
 
   const isOwner = currentUser?.role === "Owner";
+
+  // ── Tab kategori (biar tidak scroll panjang) ─────────────────────────────────
+  const [activeTab, setActiveTab] = useState("bisnis");
+  const SETTINGS_TABS = [
+    { id: "bisnis",  icon: "🏢", label: "Bisnis" },
+    { id: "ai",      icon: "🤖", label: "AI & Brain" },
+    { id: "otomasi", icon: "⚙️", label: "Otomasi" },
+    { id: "sistem",  icon: "🗄️", label: "Sistem" },
+    { id: "akses",   icon: "👥", label: "Akses & Tim" },
+  ];
 
   // ── LLM Providers (Owner view: hanya Anthropic + Minimax) ─────────────────
   // Model dibatasi 1 per provider — otomatis terset saat ganti provider
@@ -443,8 +505,32 @@ const d = await r.json();
 
       {currentUser?.role === "Owner" && (<>
 
+        {/* ── Tab bar kategori ── */}
+        <div style={{
+          display: "flex", gap: 6, flexWrap: "wrap",
+          position: "sticky", top: 0, zIndex: 5,
+          background: cs.bg, padding: "4px 0 10px", marginBottom: 2,
+        }}>
+          {SETTINGS_TABS.map(t => {
+            const active = activeTab === t.id;
+            return (
+              <button key={t.id} onClick={() => setActiveTab(t.id)}
+                style={{
+                  background: active ? cs.accent + "18" : cs.surface,
+                  border: "1px solid " + (active ? cs.accent : cs.border),
+                  borderRadius: 99, padding: isMobile ? "7px 13px" : "8px 16px",
+                  cursor: "pointer", fontSize: isMobile ? 12 : 13,
+                  fontWeight: active ? 800 : 600, color: active ? cs.accent : cs.muted,
+                  transition: "all .15s", whiteSpace: "nowrap",
+                }}>
+                {t.icon} {t.label}
+              </button>
+            );
+          })}
+        </div>
+
         {/* ══ BISNIS ══════════════════════════════════════════════════════════ */}
-        <SectionLabel icon="🏢" label="Bisnis" />
+        {activeTab === "bisnis" && (<>
 
         {/* Informasi Perusahaan */}
         <Card>
@@ -625,8 +711,10 @@ const d = await r.json();
           </div>
         </Card>
 
+        </>)}
+
         {/* ══ AI & BRAIN ══════════════════════════════════════════════════════ */}
-        <SectionLabel icon="🤖" label="AI & Brain" />
+        {activeTab === "ai" && (<>
 
         {/* ARA Brain LLM */}
         <Card>
@@ -808,8 +896,10 @@ const d = await r.json();
           </div>
         </Card>
 
+        </>)}
+
         {/* ══ OTOMASI ═════════════════════════════════════════════════════════ */}
-        <SectionLabel icon="⚙️" label="Otomasi" />
+        {activeTab === "otomasi" && (<>
 
         {/* WA Auto-Reply */}
         <Card>
@@ -1047,8 +1137,10 @@ const d = await r.json();
           </div>
         </Card>
 
+        </>)}
+
         {/* ══ SISTEM ══════════════════════════════════════════════════════════ */}
-        <SectionLabel icon="🗄️" label="Sistem" />
+        {activeTab === "sistem" && (<>
 
         {/* Database — info only */}
         <Card>
@@ -1178,7 +1270,11 @@ const d = await r.json();
           </div>
         </Card>
 
-        {/* ══ AKSES ═══════════════════════════════════════════════════════════ */}
+        </>)}
+
+        {/* ══ AKSES & TIM ═════════════════════════════════════════════════════ */}
+        {activeTab === "akses" && (<>
+
         <SectionLabel icon="👥" label="Akses" />
 
         <UserManagementPanel
@@ -1191,7 +1287,9 @@ const d = await r.json();
 
         {/* ══ PRESET TIM ══════════════════════════════════════════════════════ */}
         <SectionLabel icon="👷" label="Preset Tim Teknisi" />
-        <TeamPresetsPanel supabase={supabase} showNotif={showNotif} currentUser={currentUser} />
+        <TeamPresetsPanel supabase={supabase} showNotif={showNotif} showConfirm={showConfirm} currentUser={currentUser} />
+
+        </>)}
 
       </>)}
     </div>
