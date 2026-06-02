@@ -32,7 +32,19 @@ Output WAJIB JSON valid (tidak ada prefix/suffix lain), struktur:
 }
 
 Field per intent:
-- expense: { amount: number, merchant: string, date: "YYYY-MM-DD"|null, category: "bensin"|"makan"|"parkir"|"tol"|"belanja"|"consumable"|"lain", subcategory: "petty_cash"|"pembelian_barang"|"lain" }
+- expense: {
+    amount: number,
+    merchant: string,
+    date: "YYYY-MM-DD"|null,
+    category: "petty_cash"|"material_purchase",  // WAJIB salah satu dari 2
+    subcategory: string  // WAJIB salah satu nilai exact dibawah, tidak boleh nilai lain
+  }
+  Aturan subcategory wajib salah satu:
+  - Kalau category="petty_cash": "Bensin Motor", "Perbaikan Motor", "Parkir", "Lain-lain"
+    (struk makan/tol/jajan/minum → pakai "Lain-lain")
+  - Kalau category="material_purchase": "Pipa AC", "Kabel", "Freon", "Material Lain"
+  Pilihan category: foto struk bensin SPBU/parkir/perbaikan motor/jajan/makan → "petty_cash".
+  Foto nota toko bangunan/pipa/kabel/freon/material → "material_purchase".
 - material: { items: [{ type: "freon"|"pipa"|"kabel"|"lain", brand: string|null, size: string|null, qty: number|null }] }
 - payment: { amount: number, bank: string, transfer_date: "YYYY-MM-DD"|null, sender_name: string|null, reference: string|null }
 
@@ -45,7 +57,7 @@ Kalau intent tidak cocok dengan apapun → return intent:"unknown", confidence:"
 }
 
 export async function classifyImage({ imageUrl, groupCfg, sender, messageText }) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { error: "no_anthropic_key" };
   if (!imageUrl) return { error: "no_image_url" };
 
@@ -99,9 +111,14 @@ export async function classifyImage({ imageUrl, groupCfg, sender, messageText })
   }
   if (!parsed) return { error: "no_json", raw: text.slice(0, 300), tokensIn, tokensOut, costUsd };
 
+  // Normalisasi intent + confidence (handle case variation dari AI)
+  const intent = String(parsed.intent || "unknown").toLowerCase().trim();
+  const validIntents = new Set(["expense", "material", "payment", "unknown"]);
+  const confRaw = String(parsed.confidence || "LOW").toUpperCase().trim();
+  const validConf = new Set(["HIGH", "MEDIUM", "LOW"]);
   return {
-    intent: parsed.intent || "unknown",
-    confidence: parsed.confidence || "LOW",
+    intent: validIntents.has(intent) ? intent : "unknown",
+    confidence: validConf.has(confRaw) ? confRaw : "LOW",
     data: parsed.data || {},
     reasoning: parsed.reasoning || null,
     tokensIn, tokensOut, costUsd,
@@ -154,12 +171,30 @@ export async function persistClassification({ SU, SK, classification, sender, gr
   if (classification.intent === "expense" && groupCfg.ai_expense_enabled) {
     const d = classification.data || {};
     const today = new Date().toISOString().slice(0, 10);
+    // Normalisasi category → wajib salah satu dari 2 enum existing app
+    const validCats = new Set(["petty_cash", "material_purchase"]);
+    const cat = validCats.has(d.category) ? d.category : "petty_cash";
+    // Whitelist subcategory — harus match exact dgn ExpensesView.PETTY_CASH_SUBS / MATERIAL_SUBS
+    const PETTY = new Set(["Bensin Motor", "Perbaikan Motor", "Parkir", "Kasbon Karyawan", "Lembur", "Bonus", "Lain-lain"]);
+    const MAT   = new Set(["Pipa AC", "Kabel", "Freon", "Material Lain"]);
+    const rawSub = d.subcategory ? String(d.subcategory).trim() : "";
+    const sub = cat === "material_purchase"
+      ? (MAT.has(rawSub) ? rawSub : "Material Lain")
+      : (PETTY.has(rawSub) ? rawSub : "Lain-lain");
+    // Robust amount parse — handle "50.000" / "Rp 50,000" / "50000" / 50000
+    const parseAmt = (v) => {
+      if (typeof v === "number" && Number.isFinite(v)) return Math.abs(v);
+      const digits = String(v || "").replace(/[^\d]/g, "");
+      return digits ? parseInt(digits, 10) : 0;
+    };
+    const descParts = [`[AI] ${d.merchant || "Foto struk"}`];
+    if (messageText) descParts.push(messageText);
     const expBody = {
       date: d.date || today,
-      category: d.category || "lain",
-      subcategory: d.subcategory || "petty_cash",
-      description: `[AI] ${d.merchant || "Foto struk"} — ${messageText || ""}`.trim(),
-      amount: Number(d.amount) || 0,
+      category: cat,
+      subcategory: sub,
+      description: descParts.join(" — "),
+      amount: parseAmt(d.amount),
       teknisi_name: sender.name,
       created_by: "wa_group_ai",
       validation_status: "PENDING_AI",
@@ -185,12 +220,17 @@ export async function persistClassification({ SU, SK, classification, sender, gr
 
   if (classification.intent === "payment" && groupCfg.ai_payment_enabled) {
     const d = classification.data || {};
+    const parseAmtP = (v) => {
+      if (typeof v === "number" && Number.isFinite(v)) return Math.abs(v);
+      const digits = String(v || "").replace(/[^\d]/g, "");
+      return digits ? parseInt(digits, 10) : null;
+    };
     const sugBody = {
       phone: sender.phone,
       sender_name: sender.name,
       raw_message: messageText || "(foto bukti — grup)",
       image_url: imageUrl,
-      amount: Number(d.amount) || null,
+      amount: parseAmtP(d.amount),
       bank: d.bank || null,
       transfer_date: d.transfer_date || null,
       status: "PENDING",

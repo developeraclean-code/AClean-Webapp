@@ -127,6 +127,13 @@ const handleApprovePendingAi = async (item) => {
     }
     showNotif?.("✓ Approved: " + (item.description || ""), "success");
     setPendingAi(prev => prev.filter(x => x.id !== item.id));
+    // Sync expensesData biar item muncul di regular tab (Petty Cash / Material) tanpa reload
+    setExpensesData(prev => {
+      const exists = prev.some(x => x.id === item.id);
+      if (exists) return prev.map(x => x.id === item.id ? { ...x, validation_status: "APPROVED" } : x);
+      // Item belum ada di expensesData (insert dari backend setelah Owner buka tab) → tambah
+      return [{ ...item, validation_status: "APPROVED" }, ...prev];
+    });
   } catch (e) {
     showNotif?.("Gagal approve: " + e.message, "error");
   } finally { setPendingAiBusy(null); }
@@ -144,6 +151,7 @@ const handleRejectPendingAi = async (item) => {
         }
         showNotif?.("✕ Rejected", "info");
         setPendingAi(prev => prev.filter(x => x.id !== item.id));
+        setExpensesData(prev => prev.filter(x => x.id !== item.id));
       } catch (e) {
         showNotif?.("Gagal reject: " + e.message, "error");
       } finally { setPendingAiBusy(null); }

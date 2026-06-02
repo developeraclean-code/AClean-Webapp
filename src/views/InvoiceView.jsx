@@ -235,7 +235,7 @@ const loadPendingPayments = async () => {
       .from("payment_suggestions")
       .select("*, ai_extractions:ai_extraction_id(*)")
       .eq("validation_status", "PENDING")
-      .not("ai_extraction_id", "is", null)
+      .or("ai_extraction_id.not.is.null,forwarded_to_group.not.is.null")
       .order("created_at", { ascending: false })
       .limit(50);
     if (error) throw error;

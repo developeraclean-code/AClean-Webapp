@@ -483,12 +483,18 @@ export default async function handler(req, res) {
                 headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
                 body: JSON.stringify({
                   date: today,
-                  category: biayaMatch[1].toLowerCase(),
+                  category: "petty_cash",
+                  // Map keyword text → subcategory existing (whitelist PETTY_CASH_SUBS)
+                  subcategory: (() => {
+                    const k = biayaMatch[1].toLowerCase();
+                    if (["bensin","bbm","pertamax","solar"].includes(k)) return "Bensin Motor";
+                    if (k === "parkir") return "Parkir";
+                    return "Lain-lain"; // makan/tol/belanja/transport/consumable semua dipetakan ke Lain-lain
+                  })(),
                   description: message + " (via WA grup)",
                   amount: parsedAmount,
                   teknisi_name: profileName,
                   created_by: "wa_group",
-                  // Selalu PENDING — Owner approve manual via tab Pending AI Biaya
                   validation_status: "PENDING_AI"
                 })
               }).catch(e => console.error("[WA_GROUP_EXPENSE]", e.message));
@@ -566,16 +572,40 @@ export default async function handler(req, res) {
         }
 
         // Step 3.5: AI Vision classification — kalau image + grup punya toggle AI ON
-        // Fire-and-forget supaya response ke Fonnte tetap cepat (hindari retry storm)
+        // Pattern Tool Bag: await + wa_webhook_dedup mutex untuk Fonnte retry safety
+        // (Vercel kill function setelah res.send → fire-and-forget unreliable)
         const anyAiOn = !!(groupConfig.ai_expense_enabled || groupConfig.ai_material_enabled || groupConfig.ai_payment_enabled);
-        if (groupImageUrl && anyAiOn && SU_g && SK_g && process.env.ANTHROPIC_API_KEY) {
-          (async () => {
+        let aiStatus = "skipped";
+        if (groupImageUrl && anyAiOn && SU_g && SK_g && (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)) {
+          // Dedup mutex — Fonnte retry hit 409 → skip total
+          const mediaSuffix = (groupImageUrl.split("/").pop() || "").slice(0, 80).replace(/[^a-zA-Z0-9._-]/g, "");
+          const dedupKey = `grpAi_${(groupId || "x").slice(0,40)}_${(participantNorm || "x").slice(0,15)}_${mediaSuffix}`.slice(0, 200);
+          let isDup = false;
+          try {
+            const dedupRes = await fetch(SU_g + "/rest/v1/wa_webhook_dedup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+              body: JSON.stringify({ dedup_key: dedupKey }),
+            });
+            if (dedupRes.status === 409) isDup = true;
+            else if (!dedupRes.ok) {
+              const errBody = await dedupRes.text().catch(() => "");
+              console.warn("[AI_VISION] dedup insert non-409 fail:", dedupRes.status, errBody.slice(0, 200));
+            }
+          } catch (e) {
+            console.warn("[AI_VISION] dedup check err:", e.message);
+          }
+
+          if (isDup) {
+            aiStatus = "skip_dup";
+          } else {
             try {
+              const aiMsgText = groupContent === "(foto)" ? null : groupContent;
               const classification = await classifyImage({
                 imageUrl: groupImageUrl,
                 groupCfg: groupConfig,
                 sender: { phone: participantNorm, name: profileName },
-                messageText: groupContent === "(foto)" ? null : groupContent,
+                messageText: aiMsgText,
               });
               if (classification && !classification.error && classification.intent !== "unknown") {
                 await persistClassification({
@@ -584,15 +614,20 @@ export default async function handler(req, res) {
                   sender: { phone: participantNorm, name: profileName },
                   groupCfg: groupConfig,
                   imageUrl: groupImageUrl,
-                  messageText: groupContent === "(foto)" ? null : groupContent,
+                  messageText: aiMsgText,
                 });
+                aiStatus = "ok:" + classification.intent;
               } else if (classification?.error) {
                 console.warn("[AI_VISION] skip:", classification.error, classification.detail || "");
+                aiStatus = "err:" + classification.error;
+              } else {
+                aiStatus = "unknown";
               }
             } catch (e) {
               console.error("[AI_VISION] failed:", e.message);
+              aiStatus = "exc";
             }
-          })();
+          }
         }
 
         // Step 4: Notif owner — kalau parsed (biaya/stok_alert), forward_to_owner, atau keyword match
@@ -610,7 +645,7 @@ export default async function handler(req, res) {
           }).catch(() => {});
         }
 
-        return res.status(200).json({ status: "group_processed", type: parsedType, logged: shouldLog });
+        return res.status(200).json({ status: "group_processed", type: parsedType, logged: shouldLog, ai: aiStatus });
       }
 
       const FT = process.env.FONNTE_TOKEN;
