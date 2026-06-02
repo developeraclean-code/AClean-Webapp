@@ -307,15 +307,17 @@ async function deleteR2Object(key) {
 async function taskCleanup() {
   const result = { agent_logs: 0, audit_log: 0, dispatch_logs: 0, payment_suggestions: 0 };
 
-  // 1. Cleanup agent_logs > 90 hari
+  // Cutoffs retensi: agent_logs & audit_log = 30 hari, dispatch_logs = 90 hari
+  const cutoff30 = new Date(Date.now() - 30 * 86400000).toISOString();
   const cutoff90 = new Date(Date.now() - 90 * 86400000).toISOString();
+
+  // 1. Cleanup agent_logs > 30 hari (diperpendek dari 90 — kurangi ukuran tabel & beban DB)
   const { error: logDelErr, count: logCount } = await sb.from("agent_logs")
-    .delete({ count: "exact" }).lt("created_at", cutoff90);
+    .delete({ count: "exact" }).lt("created_at", cutoff30);
   if (logDelErr) console.error("[CLEANUP_AGENT_LOGS]", logDelErr.message);
   else result.agent_logs = logCount || 0;
 
   // 2. Cleanup audit_log > 30 hari (tumbuh paling cepat ~15MB/bulan)
-  const cutoff30 = new Date(Date.now() - 30 * 86400000).toISOString();
   const { error: auditDelErr, count: auditCount } = await sb.from("audit_log")
     .delete({ count: "exact" }).lt("changed_at", cutoff30);
   if (auditDelErr) console.error("[CLEANUP_AUDIT_LOG]", auditDelErr.message);
