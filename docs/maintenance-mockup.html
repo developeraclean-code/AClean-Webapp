@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aclean — Mockup Modul Maintenance</title>
+<style>
+  :root{
+    --bg:#0a0f1e; --surface:#0d1526; --card:#111827; --border:#1e2d4a;
+    --text:#e2e8f0; --muted:#64748b; --accent:#38bdf8; --green:#22c55e;
+    --yellow:#f59e0b; --red:#ef4444; --ara:#a78bfa;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+  a{color:var(--accent)}
+  .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;padding:10px 18px;background:var(--surface);border-bottom:1px solid var(--border)}
+  .brand{font-weight:700;font-size:16px}
+  .brand .dot{color:var(--accent)}
+  .seg{margin-left:auto;display:flex;background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .seg button{background:transparent;color:var(--muted);border:0;padding:8px 16px;cursor:pointer;font-weight:600;font-size:13px}
+  .seg button.active{background:var(--accent);color:#04121f}
+  .wrap{max-width:1200px;margin:0 auto;padding:18px}
+  .mobileframe{max-width:430px;margin:18px auto;background:var(--bg);border:1px solid var(--border);border-radius:22px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  .hidden{display:none!important}
+  /* generic */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px}
+  .pad{padding:16px}
+  .row{display:flex;gap:12px}
+  .muted{color:var(--muted)}
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
+  .pill.green{background:rgba(34,197,94,.15);color:var(--green)}
+  .pill.red{background:rgba(239,68,68,.15);color:var(--red)}
+  .pill.yellow{background:rgba(245,158,11,.15);color:var(--yellow)}
+  .pill.gray{background:rgba(100,116,139,.18);color:var(--muted)}
+  .pill.blue{background:rgba(56,189,248,.15);color:var(--accent)}
+  button.btn{background:var(--accent);color:#04121f;border:0;border-radius:9px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:13px}
+  button.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--border)}
+  button.btn.danger{background:var(--red);color:#fff}
+  input,select{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px;width:100%}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);font-size:13px}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  tr:hover td{background:rgba(56,189,248,.04)}
+  .tabs{display:flex;gap:6px;margin-bottom:14px}
+  .tabs button{background:var(--card);border:1px solid var(--border);color:var(--muted);padding:8px 14px;border-radius:9px;cursor:pointer;font-weight:600;font-size:13px}
+  .tabs button.active{color:var(--accent);border-color:var(--accent)}
+  .kpi{flex:1;text-align:center;padding:14px}
+  .kpi .n{font-size:24px;font-weight:800}
+  .kpi .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:3px}
+  /* toggle */
+  .switch{position:relative;display:inline-block;width:42px;height:24px}
+  .switch input{display:none}
+  .slider{position:absolute;inset:0;background:#334155;border-radius:24px;transition:.2s;cursor:pointer}
+  .slider:before{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+  .switch input:checked + .slider{background:var(--green)}
+  .switch input:checked + .slider:before{transform:translateX(18px)}
+  /* portal accordion */
+  .unitcard{background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden}
+  .unithead{display:flex;align-items:center;gap:10px;padding:13px 14px;cursor:pointer;user-select:none}
+  .unithead:hover{background:rgba(56,189,248,.05)}
+  .unithead .chev{margin-left:auto;transition:transform .2s;color:var(--muted)}
+  .unithead.open .chev{transform:rotate(90deg)}
+  .unitbody{border-top:1px solid var(--border);padding:0 14px;max-height:0;overflow:hidden;transition:max-height .3s ease,padding .3s ease}
+  .unitbody.open{max-height:1400px;padding:14px}
+  .timeline{position:relative;padding-left:18px}
+  .timeline:before{content:"";position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:var(--border)}
+  .tl-item{position:relative;margin-bottom:14px}
+  .tl-item:before{content:"";position:absolute;left:-16px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--accent);border:2px solid var(--bg)}
+  .photos{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .photo{width:64px;height:48px;border-radius:6px;background:linear-gradient(135deg,#1e3a5f,#0d2137);display:flex;align-items:center;justify-content:center;font-size:18px;border:1px solid var(--border);cursor:pointer}
+  .qr{width:120px;height:120px;background:#fff;border-radius:10px;display:grid;grid-template-columns:repeat(10,1fr);grid-template-rows:repeat(10,1fr);padding:8px;gap:1px}
+  .qr i{background:#000;border-radius:1px}
+  .note{font-size:12px;color:var(--muted);background:rgba(56,189,248,.06);border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-top:10px}
+  .banner{padding:10px 14px;border-radius:10px;font-size:13px;font-weight:600;margin-bottom:14px}
+  .banner.warn{background:rgba(245,158,11,.12);color:var(--yellow);border:1px solid rgba(245,158,11,.3)}
+  .banner.err{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.3)}
+  .searchbar{display:flex;gap:8px;margin-bottom:12px}
+  .small{font-size:12px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}
+  .grid2 .k{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">Aclean<span class="dot">.</span> <span class="muted small">Maintenance Mockup</span></div>
+  <div class="seg">
+    <button id="segInternal" class="active" onclick="setMode('internal')">🛠️ Internal (Admin)</button>
+    <button id="segPortal" onclick="setMode('portal')">👁️ Customer Portal</button>
+  </div>
+</div>
+
+<!-- ============ INTERNAL ADMIN ============ -->
+<div id="viewInternal" class="wrap">
+  <div class="row" style="margin-bottom:14px">
+    <div class="card kpi"><div class="n" id="kpiUnits">30</div><div class="l">Total Unit</div></div>
+    <div class="card kpi"><div class="n" style="color:var(--green)" id="kpiActive">27</div><div class="l">Aktif</div></div>
+    <div class="card kpi"><div class="n" style="color:var(--red)" id="kpiRusak">2</div><div class="l">Rusak</div></div>
+    <div class="card kpi"><div class="n" style="color:var(--muted)" id="kpiRetired">1</div><div class="l">Retired</div></div>
+  </div>
+
+  <div class="card pad" style="margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+    <div>
+      <div style="font-size:17px;font-weight:700">🏢 PT Sinar Mas Tower</div>
+      <div class="muted small">PIC: Budi Santoso · 0812-3456-7890 · Jl. Sudirman Kav. 21, Jakarta</div>
+    </div>
+    <span class="pill green" style="margin-left:auto">● Kontrak Aktif</span>
+  </div>
+
+  <div class="tabs">
+    <button class="active" onclick="setTab('unit',this)">📋 Unit (30)</button>
+    <button onclick="setTab('history',this)">🕑 History</button>
+    <button onclick="setTab('portal',this)">🔗 Portal & Akses</button>
+  </div>
+
+  <!-- TAB UNIT -->
+  <div id="tabUnit">
+    <div class="searchbar">
+      <input id="unitSearch" placeholder="Cari kode / lokasi / brand…" oninput="renderUnits()">
+      <select id="unitFilter" onchange="renderUnits()" style="max-width:160px">
+        <option value="">Semua jenis</option>
+        <option>split</option><option>cassette</option><option>standing</option><option>floor</option>
+      </select>
+      <button class="btn ghost" onclick="alert('Mockup: form bulk add / paste CSV unit')">+ Tambah Unit</button>
+    </div>
+    <div class="card" style="overflow:hidden">
+      <table>
+        <thead><tr><th>Kode</th><th>Lokasi</th><th>Brand</th><th>Jenis</th><th>Kapasitas</th><th>Freon</th><th>Status</th><th>Servis Terakhir</th></tr></thead>
+        <tbody id="unitRows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TAB HISTORY -->
+  <div id="tabHistory" class="hidden">
+    <div class="muted small" style="margin-bottom:10px">Pilih unit untuk lihat riwayat servisnya. (Mockup menampilkan unit dengan riwayat.)</div>
+    <div id="histList"></div>
+  </div>
+
+  <!-- TAB PORTAL -->
+  <div id="tabPortal" class="hidden">
+    <div class="row" style="flex-wrap:wrap">
+      <div class="card pad" style="flex:1;min-width:300px">
+        <div style="font-weight:700;margin-bottom:12px">🔗 Token Portal Customer (Permanen)</div>
+        <div class="muted small">URL akses customer</div>
+        <div class="row" style="margin:6px 0 14px">
+          <input id="tokenUrl" readonly value="https://status.aclean.id/m/mtk_8fK3a9Qz">
+          <button class="btn ghost" onclick="copyTok()">Salin</button>
+        </div>
+
+        <div class="row" style="align-items:center;margin-bottom:12px">
+          <div><div style="font-weight:600">Akses portal aktif</div><div class="muted small">Matikan jika kerjasama berakhir → customer kena 403</div></div>
+          <label class="switch" style="margin-left:auto"><input type="checkbox" id="togAccess" checked onchange="syncPortalState()"><span class="slider"></span></label>
+        </div>
+        <div class="row" style="align-items:center;margin-bottom:12px">
+          <div><div style="font-weight:600">Sembunyikan biaya</div><div class="muted small">Customer lihat riwayat tanpa nominal (di-strip backend)</div></div>
+          <label class="switch" style="margin-left:auto"><input type="checkbox" id="togCost" checked onchange="syncPortalState()"><span class="slider"></span></label>
+        </div>
+        <div class="row" style="align-items:center;margin-bottom:16px">
+          <div><div style="font-weight:600">Masa berlaku</div><div class="muted small">Kosong = permanen</div></div>
+          <input id="expiry" type="date" style="max-width:170px;margin-left:auto" onchange="syncPortalState()">
+        </div>
+        <div class="row">
+          <button class="btn danger" onclick="regen()">♻️ Regenerate Token</button>
+          <span class="muted small" style="align-self:center">URL & QR lama langsung mati</span>
+        </div>
+        <div class="note" id="portalStatusNote"></div>
+      </div>
+
+      <div class="card pad" style="width:200px;text-align:center">
+        <div style="font-weight:700;margin-bottom:10px">QR Akses</div>
+        <div class="qr" id="qrbox" style="margin:0 auto"></div>
+        <div class="muted small" style="margin-top:10px">Tempel di ruang teknik customer</div>
+        <button class="btn ghost small" style="margin-top:8px" onclick="alert('Mockup: download PNG QR')">⬇ Download</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CUSTOMER PORTAL (CLEAN) ============ -->
+<div id="viewPortal" class="hidden">
+  <div class="mobileframe">
+    <div id="portalGate"></div>
+  </div>
+  <div class="wrap muted small" style="text-align:center">
+    Pratinjau ini mengikuti status toggle di tab <b>Portal & Akses</b>. Coba matikan "Akses portal aktif" atau "Sembunyikan biaya", lalu buka tab Customer Portal.
+  </div>
+</div>
+
+<script>
+/* ---------- SAMPLE DATA ---------- */
+const BRANDS=["Daikin","Panasonic","Gree","Sharp","LG","Midea"];
+const TYPES=["split","cassette","standing","floor"];
+const PK=[0.5,1,1.5,2,2.5,3,5];
+const FREON=["R32","R410A","R22"];
+const FLOORS=["Lobby","Lantai 1 - Resepsionis","Lantai 2 - R. Meeting","Lantai 3 - Open Space","Lantai 4 - Direksi","Basement - Genset","Lantai 5 - Pantry"];
+function rnd(a){return a[Math.floor(Math.random()*a.length)]}
+
+const units=[];
+for(let i=1;i<=30;i++){
+  const st = i===7?'rusak': i===19?'rusak': i===25?'retired':'active';
+  units.push({
+    code:"AC-"+String(i).padStart(3,'0'),
+    location:rnd(FLOORS),
+    brand:rnd(BRANDS),
+    type:rnd(TYPES),
+    pk:rnd(PK),
+    freon:rnd(FREON),
+    status:st,
+    last: st==='retired'? '—' : ["2026-05-12","2026-04-28","2026-03-15","2026-02-20"][i%4],
+    logs: buildLogs(i,st)
+  });
+}
+function buildLogs(i,st){
+  if(st==='retired') return [{date:"2025-11-02",type:"Retired",tech:"Andi",desc:"Unit diturunkan, kompresor mati total. Direkomendasikan ganti unit.",cost:0,photos:2}];
+  const base=[
+    {date:"2026-05-12",type:"Cuci Rutin",tech:"Andi & Rizal",desc:"Cuci indoor+outdoor, cek tekanan freon normal.",cost:150000,photos:3},
+    {date:"2026-02-20",type:"Cuci Rutin",tech:"Rizal",desc:"Cuci berkala 3 bulanan. Drainase dibersihkan.",cost:150000,photos:2},
+  ];
+  if(i%3===0) base.unshift({date:"2026-05-30",type:"Isi Freon",tech:"Andi",desc:"Top-up R32 0.4kg, ada kebocoran kecil di nepel (sudah dikencangkan).",cost:325000,photos:2});
+  if(st==='rusak') base.unshift({date:"2026-06-01",type:"Perbaikan",tech:"Andi",desc:"PCB indoor error E5, menunggu sparepart. Unit sementara non-aktif.",cost:0,photos:1});
+  return base;
+}
+
+/* ---------- STATE ---------- */
+let portal = { access:true, hideCost:true, expiry:"", token:"mtk_8fK3a9Qz" };
+
+/* ---------- MODE / TAB ---------- */
+function setMode(m){
+  document.getElementById('viewInternal').classList.toggle('hidden',m!=='internal');
+  document.getElementById('viewPortal').classList.toggle('hidden',m!=='portal');
+  document.getElementById('segInternal').classList.toggle('active',m==='internal');
+  document.getElementById('segPortal').classList.toggle('active',m==='portal');
+  if(m==='portal') renderPortal();
+}
+function setTab(t,btn){
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tabUnit').classList.toggle('hidden',t!=='unit');
+  document.getElementById('tabHistory').classList.toggle('hidden',t!=='history');
+  document.getElementById('tabPortal').classList.toggle('hidden',t!=='portal');
+  if(t==='history') renderHist();
+  if(t==='portal') drawQR();
+}
+
+/* ---------- UNIT TABLE ---------- */
+function statusPill(s){
+  if(s==='active') return '<span class="pill green">Aktif</span>';
+  if(s==='rusak') return '<span class="pill red">Rusak</span>';
+  return '<span class="pill gray">Retired</span>';
+}
+function renderUnits(){
+  const q=(document.getElementById('unitSearch').value||'').toLowerCase();
+  const f=document.getElementById('unitFilter').value;
+  const rows=units.filter(u=>{
+    const m=(u.code+u.location+u.brand).toLowerCase().includes(q);
+    return m && (!f || u.type===f);
+  }).map(u=>`<tr>
+    <td><b>${u.code}</b></td><td>${u.location}</td><td>${u.brand}</td>
+    <td><span class="pill blue">${u.type}</span></td><td>${u.pk} PK</td><td>${u.freon}</td>
+    <td>${statusPill(u.status)}</td><td class="muted small">${u.last}</td>
+  </tr>`).join('');
+  document.getElementById('unitRows').innerHTML = rows || '<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">Tidak ada unit cocok.</td></tr>';
+}
+
+/* ---------- HISTORY (internal) ---------- */
+function renderHist(){
+  const withLogs=units.filter(u=>u.logs.length);
+  document.getElementById('histList').innerHTML = withLogs.map((u,idx)=>`
+    <div class="unitcard">
+      <div class="unithead" onclick="toggleAcc(this)">
+        <b>${u.code}</b> <span class="muted small">${u.location} · ${u.brand} ${u.pk}PK</span>
+        ${statusPill(u.status)} <span class="muted small">${u.logs.length} riwayat</span>
+        <span class="chev">▶</span>
+      </div>
+      <div class="unitbody">${logHtml(u.logs,false)}</div>
+    </div>`).join('');
+}
+function logHtml(logs, customer){
+  return '<div class="timeline">'+logs.map(l=>`
+    <div class="tl-item">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <b>${l.type}</b><span class="muted small">${l.date}</span>
+        ${(!customer || !portal.hideCost) && l.cost>0 ? `<span class="pill yellow">Rp ${l.cost.toLocaleString('id-ID')}</span>`:''}
+      </div>
+      <div class="small" style="margin:3px 0">${l.desc}</div>
+      <div class="muted small">👷 ${l.tech}</div>
+      <div class="photos">${Array.from({length:l.photos}).map(()=>'<div class="photo" title="Mockup: buka foto R2 via /api/foto">📷</div>').join('')}</div>
+    </div>`).join('')+'</div>';
+}
+function toggleAcc(el){
+  el.classList.toggle('open');
+  el.nextElementSibling.classList.toggle('open');
+}
+
+/* ---------- PORTAL ACCESS TAB ---------- */
+function syncPortalState(){
+  portal.access=document.getElementById('togAccess').checked;
+  portal.hideCost=document.getElementById('togCost').checked;
+  portal.expiry=document.getElementById('expiry').value;
+  const n=document.getElementById('portalStatusNote');
+  let msg = portal.access ? '✅ Customer bisa akses portal.' : '⛔ Akses dimatikan — portal menampilkan pesan 403.';
+  msg += portal.hideCost ? ' Biaya disembunyikan.' : ' Biaya TAMPIL ke customer.';
+  if(portal.expiry) msg += ' Expired: '+portal.expiry+'.';
+  n.textContent=msg;
+}
+function copyTok(){ navigator.clipboard?.writeText(document.getElementById('tokenUrl').value); alert('URL disalin (mockup).'); }
+function regen(){
+  if(!confirm('Regenerate token? URL & QR lama akan mati.')) return;
+  portal.token='mtk_'+Math.random().toString(36).slice(2,12);
+  document.getElementById('tokenUrl').value='https://status.aclean.id/m/'+portal.token;
+  drawQR(); alert('Token baru dibuat: '+portal.token);
+}
+function drawQR(){
+  const box=document.getElementById('qrbox'); if(!box) return;
+  box.innerHTML='';
+  // deterministic pseudo-QR from token
+  let seed=0; for(const c of portal.token) seed+=c.charCodeAt(0);
+  for(let i=0;i<100;i++){ const on=((i*seed*7+i*i)%3===0)|| i<11||i>88; const c=document.createElement('i'); if(!on)c.style.background='transparent'; box.appendChild(c); }
+}
+
+/* ---------- CUSTOMER PORTAL (clean) ---------- */
+function renderPortal(){
+  syncPortalState();
+  const gate=document.getElementById('portalGate');
+  if(!portal.access){
+    gate.innerHTML=`<div style="padding:60px 24px;text-align:center">
+      <div style="font-size:40px">🔒</div>
+      <h3>Akses Dinonaktifkan</h3>
+      <p class="muted small">Portal ini sudah tidak aktif. Hubungi Aclean untuk mengaktifkan kembali.</p>
+      <div class="muted small">(HTTP 403 · TOKEN_DISABLED)</div></div>`;
+    return;
+  }
+  if(portal.expiry && new Date(portal.expiry) < new Date(new Date().toDateString())){
+    gate.innerHTML=`<div style="padding:60px 24px;text-align:center">
+      <div style="font-size:40px">⏳</div><h3>Link Kedaluwarsa</h3>
+      <p class="muted small">Masa berlaku berakhir ${portal.expiry}. Minta link baru ke Aclean.</p></div>`;
+    return;
+  }
+  const active=units.filter(u=>u.status!=='retired').length;
+  gate.innerHTML=`
+    <div style="background:linear-gradient(135deg,#0d2137,#0a0f1e);padding:20px 18px;border-bottom:1px solid var(--border)">
+      <div class="brand" style="font-size:18px">Aclean<span class="dot">.</span></div>
+      <div style="font-size:20px;font-weight:800;margin-top:6px">PT Sinar Mas Tower</div>
+      <div class="muted small">Asset Maintenance Report</div>
+      <div class="row" style="margin-top:14px">
+        <div class="kpi" style="background:var(--card);border:1px solid var(--border);border-radius:10px;flex:1"><div class="n" style="font-size:20px">${units.length}</div><div class="l">Unit</div></div>
+        <div class="kpi" style="background:var(--card);border:1px solid var(--border);border-radius:10px;flex:1"><div class="n" style="font-size:20px;color:var(--green)">${active}</div><div class="l">Aktif</div></div>
+        <div class="kpi" style="background:var(--card);border:1px solid var(--border);border-radius:10px;flex:1"><div class="n" style="font-size:20px;color:var(--accent)">${units.reduce((a,u)=>a+u.logs.length,0)}</div><div class="l">Servis</div></div>
+      </div>
+    </div>
+    <div style="padding:14px">
+      <input id="pSearch" placeholder="🔍 Cari unit / lokasi…" oninput="renderPortalUnits()" style="margin-bottom:12px">
+      <div id="pUnits"></div>
+      <div style="text-align:center;padding:16px 0" class="muted small">Data dikelola & diperbarui oleh tim Aclean · Terakhir update 2026-06-01</div>
+    </div>`;
+  renderPortalUnits();
+}
+function renderPortalUnits(){
+  const q=(document.getElementById('pSearch')?.value||'').toLowerCase();
+  const list=units.filter(u=>(u.code+u.location+u.brand).toLowerCase().includes(q));
+  document.getElementById('pUnits').innerHTML = list.map(u=>`
+    <div class="unitcard">
+      <div class="unithead" onclick="toggleAcc(this)">
+        <div>
+          <b>${u.code}</b> ${statusPill(u.status)}
+          <div class="muted small">${u.location}</div>
+        </div>
+        <div style="margin-left:auto;text-align:right" class="muted small">${u.brand}<br>${u.pk}PK · ${u.freon}</div>
+        <span class="chev">▶</span>
+      </div>
+      <div class="unitbody">
+        <div class="grid2" style="margin-bottom:10px">
+          <div><span class="k">Jenis</span><br>${u.type}</div>
+          <div><span class="k">Servis terakhir</span><br>${u.last}</div>
+        </div>
+        <div style="font-weight:700;margin-bottom:8px;font-size:13px">Riwayat Servis</div>
+        ${u.logs.length? logHtml(u.logs,true) : '<div class="muted small">Belum ada riwayat.</div>'}
+      </div>
+    </div>`).join('') || '<div class="muted small" style="text-align:center;padding:20px">Tidak ada unit.</div>';
+}
+
+/* ---------- INIT ---------- */
+renderUnits(); syncPortalState(); drawQR();
+</script>
+</body>
+</html>
