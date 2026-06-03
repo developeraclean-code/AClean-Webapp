@@ -93,7 +93,7 @@ export async function classifyText({ messageText, groupCfg, sender }) {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SK0, Authorization: "Bearer " + SK0, Prefer: "return=minimal" },
       body: JSON.stringify({
-        provider: "anthropic", model: ANTHROPIC_MODEL, feature: "wa-group-text",
+        provider: "claude", model: ANTHROPIC_MODEL, feature: "wa-group-text",
         input_tokens: tokensIn, output_tokens: tokensOut, cost_usd: costUsd,
         user_name: sender?.name || null,
         metadata: { group_id: groupCfg?.group_id, ...extra },

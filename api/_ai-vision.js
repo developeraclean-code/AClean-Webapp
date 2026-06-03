@@ -117,7 +117,7 @@ export async function classifyImage({ imageUrl, imageBase64, mimeType, groupCfg,
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SK0, Authorization: "Bearer " + SK0, Prefer: "return=minimal" },
       body: JSON.stringify({
-        provider: "anthropic",
+        provider: "claude",
         model: ANTHROPIC_MODEL,
         feature: "wa-group-vision",
         input_tokens: tokensIn,

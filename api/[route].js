@@ -485,10 +485,10 @@ export default async function handler(req, res) {
           if (nominalMatch) {
             parsedAmount = parseInt(nominalMatch[0]);
             parsedOk = true;
-            // Simpan ke expenses — SKIP hanya kalau ai_expense_enabled DAN ada foto
-            // (foto+caption "Bensin 50rb" akan ditangani AI vision; text-only tetap pakai text-pattern)
-            const hasImageForBiaya = (wb.type === "image" || wb.type === "document");
-            if (SU_g && SK_g && !(groupConfig.ai_expense_enabled && hasImageForBiaya)) {
+            // Selalu simpan biaya via text-pattern (PENDING_AI). AI vision juga akan jalan paralel
+            // kalau ada foto + ai_expense_enabled. Aman dari kasus: caption "Bensin 20k" + foto
+            // bukan struk → AI return unknown, expense TIDAK lost karena text-pattern fallback.
+            if (SU_g && SK_g) {
               const today = new Date().toISOString().slice(0, 10);
               fetch(SU_g + "/rest/v1/expenses", {
                 method: "POST",
