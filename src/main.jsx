@@ -31,19 +31,40 @@ window.addEventListener('vite:preloadError', (event) => {
 setTimeout(() => sessionStorage.removeItem('chunk_reload'), 5000);
 
 const CustomerPortalView = lazy(() => import('./views/CustomerPortalView.jsx'))
+const MaintenancePortalView = lazy(() => import('./views/MaintenancePortalView.jsx'))
 
 // Deteksi path token portal — render portal tanpa App shell.
 // Terima dua format: /status/<token> (lama) DAN /<token> (status.aclean.id/<token>).
 const pathMatch = window.location.pathname.match(/^\/(?:status\/)?([a-f0-9]{48})$/)
+// Portal Maintenance B2B: /m/<token> (token format mtk_xxxxx)
+const maintMatch = window.location.pathname.match(/^\/m\/(mtk_[a-z0-9]{40})$/)
 
 // Jika dibuka di domain customer (status.aclean.id) tanpa token yang valid,
 // redirect ke landing page agar tidak tampil halaman login internal
 const isCustomerDomain = window.location.hostname === "status.aclean.id";
-if (isCustomerDomain && !pathMatch) {
+if (isCustomerDomain && !pathMatch && !maintMatch) {
   window.location.replace("https://aclean.id");
 }
 
+const portalFallback = (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f0f4f8" }}>
+    <div style={{ textAlign: "center", fontFamily: "sans-serif" }}>
+      <div style={{ fontSize: 40, marginBottom: 12 }}>❄️</div>
+      <div style={{ fontWeight: 700, color: "#0369a1" }}>Memuat...</div>
+    </div>
+  </div>
+)
+
 function Root() {
+  if (maintMatch) {
+    return (
+      <Sentry.ErrorBoundary fallback={portalFallback}>
+        <Suspense fallback={portalFallback}>
+          <MaintenancePortalView token={maintMatch[1]} />
+        </Suspense>
+      </Sentry.ErrorBoundary>
+    )
+  }
   if (pathMatch) {
     return (
       <Sentry.ErrorBoundary fallback={

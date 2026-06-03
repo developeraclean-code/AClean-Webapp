@@ -66,6 +66,7 @@ const TechMobileView = lazy(() => import("./views/TechMobileView.jsx"));
 const KomisiView = lazy(() => import("./views/KomisiView.jsx"));
 const LaporanDetailModal = lazy(() => import("./views/LaporanDetailModal.jsx"));
 const ProjectApp = lazy(() => import("./project/ProjectApp.jsx"));
+const MaintenanceView = lazy(() => import("./views/MaintenanceView.jsx"));
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -5851,6 +5852,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id: "pricelist", icon: "💰", label: "Price List" },
     { id: "teknisi", icon: "👷", label: "Tim Teknisi" },
     { id: "laporantim", icon: "📝", label: "Laporan Tim" },
+    { id: "maintenance", icon: "🏢", label: "Maintenance" },
     { id: "project", icon: "🏗", label: "Project" },
     { id: "ara", icon: "🤖", label: "ARA Chat" },
     { id: "reports", icon: "📊", label: "Statistik" },
@@ -6428,6 +6430,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       case "pricelist": return renderPriceList();
       case "teknisi": return renderTeknisiAdmin();
       case "laporantim": return renderLaporanTim();
+      case "maintenance": return (
+        <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
+          <MaintenanceView currentUser={currentUser} apiFetch={_apiFetch} showNotif={showNotif} showConfirm={showConfirm} />
+        </Suspense>
+      );
       case "project": return (
         <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
           <ProjectApp currentUser={currentUser} apiFetch={_apiFetch} onBack={() => setActiveMenu("dashboard")} />

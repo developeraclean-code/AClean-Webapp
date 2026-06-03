@@ -6,7 +6,7 @@ import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "./_r2-upload.js
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health"];
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal"];
 
 // ── VALIDATION HELPERS ──
 function validateAndNormalizePhone(phone) {
@@ -2798,6 +2798,252 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       }
 
       return res.status(400).json({ error: "Action tidak dikenal: " + action });
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // MAINTENANCE (INTERNAL — butuh X-Internal-Token, Owner/Admin)
+    // Semua CRUD modul Maintenance lewat sini (tabel RLS-restrictive,
+    // anon key diblok → wajib service key). Dispatch via body.action.
+    // ════════════════════════════════════════════════════════════
+    if (route === "maintenance") {
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
+      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
+      const REST = (p) => `${SU}/rest/v1/${p}`;
+      const body = req.body || {};
+      const action = String(body.action || "");
+
+      const genToken = () => "mtk_" + Array.from({ length: 40 }, () =>
+        "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
+
+      try {
+        // ---- CLIENTS ----
+        if (action === "list-clients") {
+          const r = await fetch(REST("maintenance_clients?select=*&order=created_at.desc"), { headers });
+          if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
+          return res.status(200).json({ clients: await r.json() });
+        }
+        if (action === "create-client") {
+          const name = sanitizeName(body.name);
+          if (!name) return res.status(400).json({ error: "Nama perusahaan wajib" });
+          const payload = {
+            name,
+            address: body.address || null,
+            pic_name: body.pic_name || null,
+            pic_phone: validateAndNormalizePhone(body.pic_phone) || null,
+            notes: body.notes || null,
+            portal_token: genToken(),
+            token_active: true,
+            hide_costs: body.hide_costs !== false,
+          };
+          const r = await fetch(REST("maintenance_clients"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
+          if (!r.ok) return res.status(400).json({ error: "Gagal buat klien", detail: await r.text() });
+          return res.status(200).json({ client: (await r.json())[0] });
+        }
+        if (action === "update-client") {
+          if (!body.id) return res.status(400).json({ error: "id wajib" });
+          const upd = {};
+          ["name", "address", "pic_name", "notes", "contract_status"].forEach(k => { if (body[k] !== undefined) upd[k] = body[k]; });
+          if (body.pic_phone !== undefined) upd.pic_phone = validateAndNormalizePhone(body.pic_phone) || null;
+          if (body.hide_costs !== undefined) upd.hide_costs = !!body.hide_costs;
+          if (body.token_active !== undefined) upd.token_active = !!body.token_active;
+          if (body.token_expires_at !== undefined) upd.token_expires_at = body.token_expires_at || null;
+          if (body.customer_id !== undefined) upd.customer_id = body.customer_id || null;
+          const r = await fetch(REST("maintenance_clients?id=eq." + encodeURIComponent(body.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(upd) });
+          if (!r.ok) return res.status(400).json({ error: "Gagal update klien", detail: await r.text() });
+          return res.status(200).json({ client: (await r.json())[0] });
+        }
+        if (action === "regen-token") {
+          if (!body.id) return res.status(400).json({ error: "id wajib" });
+          const tok = genToken();
+          const r = await fetch(REST("maintenance_clients?id=eq." + encodeURIComponent(body.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify({ portal_token: tok }) });
+          if (!r.ok) return res.status(400).json({ error: "Gagal regenerate", detail: await r.text() });
+          return res.status(200).json({ client: (await r.json())[0] });
+        }
+        if (action === "delete-client") {
+          if (!body.id) return res.status(400).json({ error: "id wajib" });
+          const r = await fetch(REST("maintenance_clients?id=eq." + encodeURIComponent(body.id)), { method: "DELETE", headers });
+          if (!r.ok) return res.status(400).json({ error: "Gagal hapus", detail: await r.text() });
+          return res.status(200).json({ ok: true });
+        }
+
+        // ---- UNITS ----
+        if (action === "list-units") {
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          const r = await fetch(REST("maintenance_units?client_id=eq." + encodeURIComponent(body.client_id) + "&select=*&order=unit_code.asc"), { headers });
+          if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
+          return res.status(200).json({ units: await r.json() });
+        }
+        if (action === "save-units") {
+          // batch unit (insert baru / update existing). body.units = [{id?, client_id, unit_code, ...}]
+          // Row ber-id → PATCH by id (aman saat ganti unit_code). Row baru → INSERT.
+          if (!Array.isArray(body.units) || !body.units.length) return res.status(400).json({ error: "units kosong" });
+          const clean = (u) => ({
+            client_id: body.client_id || u.client_id,
+            unit_code: String(u.unit_code || "").trim(),
+            location: u.location || null,
+            brand: u.brand || null,
+            ac_type: u.ac_type || null,
+            capacity_pk: u.capacity_pk != null && u.capacity_pk !== "" ? Number(u.capacity_pk) : null,
+            refrigerant: u.refrigerant || null,
+            year_installed: u.year_installed ? parseInt(u.year_installed) : null,
+            serial_no: u.serial_no || null,
+            status: ["active", "rusak", "retired"].includes(u.status) ? u.status : "active",
+            notes: u.notes || null,
+          });
+          const valid = body.units.filter(u => String(u.unit_code || "").trim());
+          if (!valid.length) return res.status(400).json({ error: "unit_code wajib di tiap unit" });
+          const out = [];
+          for (const u of valid) {
+            const payload = clean(u);
+            let r;
+            if (u.id) {
+              r = await fetch(REST("maintenance_units?id=eq." + encodeURIComponent(u.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
+            } else {
+              r = await fetch(REST("maintenance_units"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
+            }
+            if (!r.ok) {
+              const detail = await r.text();
+              const dup = /duplicate key|unique/i.test(detail);
+              return res.status(400).json({ error: dup ? `Kode unit "${payload.unit_code}" sudah ada` : "Gagal simpan unit", detail });
+            }
+            const arr = await r.json(); if (arr[0]) out.push(arr[0]);
+          }
+          return res.status(200).json({ units: out });
+        }
+        if (action === "delete-unit") {
+          if (!body.id) return res.status(400).json({ error: "id wajib" });
+          const r = await fetch(REST("maintenance_units?id=eq." + encodeURIComponent(body.id)), { method: "DELETE", headers });
+          if (!r.ok) return res.status(400).json({ error: "Gagal hapus unit", detail: await r.text() });
+          return res.status(200).json({ ok: true });
+        }
+
+        // ---- LOGS ----
+        if (action === "list-logs") {
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          const r = await fetch(REST("maintenance_logs?client_id=eq." + encodeURIComponent(body.client_id) + "&select=*&order=service_date.desc"), { headers });
+          if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
+          return res.status(200).json({ logs: await r.json() });
+        }
+        if (action === "create-log") {
+          if (!body.unit_id || !body.client_id || !body.service_date) return res.status(400).json({ error: "unit_id, client_id, service_date wajib" });
+          const payload = {
+            unit_id: body.unit_id,
+            client_id: body.client_id,
+            service_date: body.service_date,
+            service_type: body.service_type || null,
+            technician: body.technician || null,
+            description: body.description || null,
+            parts_used: Array.isArray(body.parts_used) ? body.parts_used : [],
+            cost: body.cost != null && body.cost !== "" ? Math.round(Number(body.cost)) : null,
+            photos: Array.isArray(body.photos) ? body.photos : [],
+            order_id: body.order_id || null,
+            created_by: body.created_by || null,
+          };
+          const r = await fetch(REST("maintenance_logs"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
+          if (!r.ok) return res.status(400).json({ error: "Gagal simpan log", detail: await r.text() });
+          return res.status(200).json({ log: (await r.json())[0] });
+        }
+        if (action === "delete-log") {
+          if (!body.id) return res.status(400).json({ error: "id wajib" });
+          const r = await fetch(REST("maintenance_logs?id=eq." + encodeURIComponent(body.id)), { method: "DELETE", headers });
+          if (!r.ok) return res.status(400).json({ error: "Gagal hapus log", detail: await r.text() });
+          return res.status(200).json({ ok: true });
+        }
+
+        // ---- INVOICE B2B ----
+        // Buat 1 invoice dari beberapa log servis yang dipilih (1 baris/log).
+        if (action === "create-invoice") {
+          if (!body.client_id || !Array.isArray(body.log_ids) || !body.log_ids.length)
+            return res.status(400).json({ error: "client_id & log_ids wajib" });
+          // Ambil klien
+          const cRes = await fetch(REST("maintenance_clients?id=eq." + encodeURIComponent(body.client_id) + "&select=*"), { headers });
+          const cRows = await cRes.json();
+          if (!cRows.length) return res.status(404).json({ error: "Klien tidak ditemukan" });
+          const client = cRows[0];
+          // Ambil logs terpilih + unit_code untuk deskripsi
+          const idFilter = body.log_ids.join(",");
+          const lRes = await fetch(REST(`maintenance_logs?id=in.(${encodeURIComponent(idFilter)})&select=id,service_type,service_date,cost,unit_id`), { headers });
+          const logs = await lRes.json();
+          if (!Array.isArray(logs) || !logs.length) return res.status(400).json({ error: "Log tidak ditemukan" });
+          const total = logs.reduce((s, l) => s + (Number(l.cost) || 0), 0);
+          // Generate invoice id (format konsisten: INV-YYYYMMDD-XXXXX)
+          const now = new Date();
+          const ymd = now.toISOString().slice(0, 10).replace(/-/g, "");
+          const seq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
+          const invId = "INV-" + ymd + "-" + seq;
+          const invPayload = {
+            id: invId,
+            customer: client.name,
+            phone: client.pic_phone || null,
+            service: `Maintenance ${logs.length} unit — ${client.name}`,
+            job_id: null,
+            invoice_type: "service",
+            units: logs.length,
+            labor: total,
+            material: 0,
+            total,
+            status: "PENDING_APPROVAL",
+            maintenance_client_id: client.id,
+            created_at: new Date().toISOString(),
+          };
+          const iRes = await fetch(REST("invoices"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(invPayload) });
+          if (!iRes.ok) return res.status(400).json({ error: "Gagal buat invoice", detail: await iRes.text() });
+          // Tandai logs sudah di-invoice
+          await fetch(REST(`maintenance_logs?id=in.(${encodeURIComponent(idFilter)})`), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ invoiced: true }) });
+          return res.status(200).json({ invoice: (await iRes.json())[0] });
+        }
+
+        return res.status(400).json({ error: "Action tidak dikenal: " + action });
+      } catch (e) {
+        console.error("[maintenance] error:", e.message);
+        return res.status(500).json({ error: "Server error" });
+      }
+    }
+
+    // ── M-PORTAL (PUBLIC) — portal customer korporat, token PERMANEN ──
+    // Gate akses & strip cost DI BACKEND (anon key tidak bisa baca tabel langsung).
+    if (route === "m-portal") {
+      if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+      if (!await checkRateLimit(req, res, 30, 60000)) return;
+      const token = String(req.query.token || "").trim();
+      if (!token) return res.status(400).json({ error: "Token diperlukan" });
+
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
+      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
+
+      const cRes = await fetch(`${SU}/rest/v1/maintenance_clients?portal_token=eq.${encodeURIComponent(token)}&select=id,name,token_active,token_expires_at,hide_costs`, { headers });
+      if (!cRes.ok) return res.status(500).json({ error: "DB error" });
+      const cRows = await cRes.json();
+      if (!cRows.length) return res.status(404).json({ error: "Token tidak ditemukan", code: "NOT_FOUND" });
+      const client = cRows[0];
+
+      // Gate 1: akses dimatikan → 403 (cek SEBELUM ambil data, jangan bocor unit list)
+      if (!client.token_active) return res.status(403).json({ error: "Akses portal dinonaktifkan", code: "TOKEN_DISABLED" });
+      // Gate 2: expired (NULL = permanen, tidak pernah expired)
+      if (client.token_expires_at && new Date(client.token_expires_at) < new Date())
+        return res.status(401).json({ error: "Link portal sudah expired", code: "TOKEN_EXPIRED" });
+
+      // Ambil unit + logs
+      const [uRes, lRes] = await Promise.all([
+        fetch(`${SU}/rest/v1/maintenance_units?client_id=eq.${client.id}&select=id,unit_code,location,brand,ac_type,capacity_pk,refrigerant,status,last_service_date&order=unit_code.asc`, { headers }),
+        fetch(`${SU}/rest/v1/maintenance_logs?client_id=eq.${client.id}&select=id,unit_id,service_date,service_type,technician,description,cost,photos&order=service_date.desc`, { headers }),
+      ]);
+      const units = uRes.ok ? await uRes.json() : [];
+      let logs = lRes.ok ? await lRes.json() : [];
+
+      // STRIP COST di backend kalau hide_costs (jangan andalkan CSS frontend)
+      if (client.hide_costs) logs = logs.map(({ cost, ...rest }) => rest);
+
+      return res.status(200).json({
+        client: { name: client.name, hide_costs: client.hide_costs },
+        units,
+        logs,
+      });
     }
 
     // ── CUSTOMER-STATUS (PUBLIC) ──
