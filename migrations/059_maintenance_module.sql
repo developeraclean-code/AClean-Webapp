@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS maintenance_clients (
   token_active     boolean DEFAULT true,                  -- toggle on/off akses
   token_expires_at timestamptz,                           -- NULL = permanen
   hide_costs       boolean DEFAULT true,                  -- sembunyikan biaya di portal
-  customer_id      uuid,                                  -- link opsional ke tabel customers (untuk invoice)
+  customer_id      text,                                  -- link opsional ke customers.id (TEXT)
   notes            text,
   created_at       timestamptz DEFAULT now()
 );
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS maintenance_logs (
   parts_used    jsonb DEFAULT '[]'::jsonb,
   cost          bigint,                                   -- di-strip backend kalau client.hide_costs
   photos        jsonb DEFAULT '[]'::jsonb,                -- array R2 key (before/after)
-  order_id      uuid,                                     -- link opsional ke orders existing
+  order_id      text,                                     -- link opsional ke orders.id (TEXT, mis. JOB-xxx)
   invoiced      boolean DEFAULT false,                    -- sudah masuk invoice B2B?
   created_by    text,
   created_at    timestamptz DEFAULT now()

@@ -2,7 +2,7 @@ import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
 
-function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData }) {
+function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData, apiFetch }) {
 const _todayLap = getLocalDate?.() || new Date().toISOString().slice(0, 10);
 const [lapViewMode, setLapViewMode] = useState("detail"); // "rekap" | "detail" — default detail
 const [rekapDate, setRekapDate]     = useState(_todayLap);
@@ -249,6 +249,21 @@ const verifyLaporan = async (r) => {
   }
   setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "VERIFIED" } : x));
   addAgentLog("LAPORAN_VERIFIED", `Laporan ${r.job_id} (${r.customer}) diverifikasi`, "SUCCESS");
+
+  // Maintenance korporat (Opsi B): jika order ini ditautkan ke klien maintenance,
+  // auto-create log servis per unit (idempotent di backend). Non-blocking.
+  if (apiFetch && r.job_id) {
+    (async () => {
+      try {
+        const resp = await apiFetch("/api/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "autolog-from-order", order_id: r.job_id, created_by: auditUserName() }) });
+        const jj = await resp.json().catch(() => ({}));
+        if (resp.ok && jj.created > 0) {
+          showNotif(`🏢 ${jj.created} unit maintenance tercatat ke history`);
+          addAgentLog("MAINTENANCE_AUTOLOG", `${jj.created} log dibuat dari order ${r.job_id}`, "SUCCESS");
+        }
+      } catch (_) { /* non-blocking — verifikasi tetap sukses */ }
+    })();
+  }
 
   const existInv = invoicesData.find(i => i.job_id === r.job_id);
   if (existInv) {

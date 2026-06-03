@@ -886,7 +886,10 @@ export default function ACleanWebApp() {
   const [schedListFilter, setSchedListFilter] = useState("minggu_ini"); // "hari_ini" | "minggu_ini" | "semua"
   const [invUnitsData, setInvUnitsData] = useState([]); // unit fisik per item (tabung/roll)
   const [showAddStock, setShowAddStock] = useState(false);
-  const [newOrderForm, setNewOrderForm] = useState({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", team_slot: "", date: "", time: "09:00", notes: "" });
+  const [newOrderForm, setNewOrderForm] = useState({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", team_slot: "", date: "", time: "09:00", notes: "", maintenance_client_id: "", maintenance_unit_ids: [] });
+  // Maintenance korporat (Opsi B): daftar klien & unit untuk dipilih saat buat order
+  const [maintClientsForOrder, setMaintClientsForOrder] = useState([]);
+  const [maintUnitsForOrder, setMaintUnitsForOrder] = useState([]);
   // Server-side lookup customer by phone — anti miss customer di luar limit fetchCustomers
   const [orderPhoneLookup, setOrderPhoneLookup] = useState({ phone: "", matches: [] });
   // Auto-detect pekerjaan lanjutan: order OPEN customer yg sama dalam H-3
@@ -2928,6 +2931,31 @@ ${photoPageHTML}
     setContinuationParentId(null);
   }, [newOrderForm.phone, modalOrder, ordersData]);
 
+  // Maintenance korporat: muat daftar klien saat modal order dibuka
+  useEffect(() => {
+    if (!modalOrder) return;
+    (async () => {
+      try {
+        const r = await _apiFetch("/api/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "list-clients" }) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) setMaintClientsForOrder((j.clients || []).filter(c => c.contract_status === "active"));
+      } catch (_) { /* abaikan — fitur opsional */ }
+    })();
+  }, [modalOrder]);
+
+  // Muat unit saat klien maintenance dipilih
+  useEffect(() => {
+    const cid = newOrderForm.maintenance_client_id;
+    if (!cid) { setMaintUnitsForOrder([]); return; }
+    (async () => {
+      try {
+        const r = await _apiFetch("/api/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "list-units", client_id: cid }) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) setMaintUnitsForOrder(j.units || []);
+      } catch (_) { setMaintUnitsForOrder([]); }
+    })();
+  }, [newOrderForm.maintenance_client_id]);
+
   // SECURITY: Never store API keys in localStorage — keys are managed on backend only
   useEffect(() => { _lsSave("llmModel", llmModel); }, [llmModel]);
   useEffect(() => { _lsSave("ollamaUrl", ollamaUrl); }, [ollamaUrl]);
@@ -4916,6 +4944,8 @@ ${photoPageHTML}
       invoice_id: null, dispatch: false, notes: form.notes || "",
       parent_job_id: form.parent_job_id || null,
       is_multi_day: form.is_multi_day || false,
+      maintenance_client_id: form.maintenance_client_id || null,
+      maintenance_unit_ids: Array.isArray(form.maintenance_unit_ids) ? form.maintenance_unit_ids : [],
     };
 
     // ── Fallback insert: coba full → minimal (BEFORE updating state) ──
@@ -6295,7 +6325,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       sendWA={sendWA} supabase={supabase} LAP_PAGE_SIZE={LAP_PAGE_SIZE} INSTALL_ITEMS={INSTALL_ITEMS}
       downloadServiceReportPDF={downloadServiceReportPDF}
       setInvTxData={setInvTxData} setInventoryData={setInventoryData}
-      updateCustomerTierAfterOrder={updateCustomerTierAfterOrder} customersData={customersData} setCustomersData={setCustomersData} />
+      updateCustomerTierAfterOrder={updateCustomerTierAfterOrder} customersData={customersData} setCustomersData={setCustomersData} apiFetch={_apiFetch} />
   );
 
   // ============================================================
@@ -7935,6 +7965,45 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 );
               })()}
 
+              {/* 🏢 Maintenance Korporat (Opsi B) — tampil hanya jika ada klien maintenance aktif */}
+              {maintClientsForOrder.length > 0 && (
+                <div style={{ border: "1px solid " + cs.border, borderRadius: 10, padding: 12, background: cs.card }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent, marginBottom: 6 }}>🏢 Maintenance Korporat (opsional)</div>
+                  <select value={newOrderForm.maintenance_client_id || ""}
+                    onChange={e => setNewOrderForm(f => ({ ...f, maintenance_client_id: e.target.value, maintenance_unit_ids: [] }))}
+                    style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }}>
+                    <option value="">— Bukan order maintenance —</option>
+                    {maintClientsForOrder.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  {newOrderForm.maintenance_client_id && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: cs.muted }}>Pilih unit yang diservis ({(newOrderForm.maintenance_unit_ids || []).length}/{maintUnitsForOrder.length})</span>
+                        <button type="button" onClick={() => setNewOrderForm(f => ({ ...f, maintenance_unit_ids: (f.maintenance_unit_ids || []).length === maintUnitsForOrder.length ? [] : maintUnitsForOrder.map(u => u.id) }))}
+                          style={{ marginLeft: "auto", background: "transparent", border: "1px solid " + cs.border, color: cs.text, borderRadius: 6, padding: "2px 8px", fontSize: 11, cursor: "pointer" }}>
+                          {(newOrderForm.maintenance_unit_ids || []).length === maintUnitsForOrder.length ? "Hapus semua" : "Pilih semua"}
+                        </button>
+                      </div>
+                      <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid " + cs.border, borderRadius: 8 }}>
+                        {maintUnitsForOrder.length === 0 ? <div style={{ padding: 10, fontSize: 12, color: cs.muted }}>Memuat unit… (unit baru harus didaftarkan dulu di menu Maintenance)</div> :
+                          maintUnitsForOrder.map(u => {
+                            const checked = (newOrderForm.maintenance_unit_ids || []).includes(u.id);
+                            return (
+                              <label key={u.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "7px 10px", borderBottom: "1px solid " + cs.border, cursor: "pointer", fontSize: 12, color: cs.text }}>
+                                <input type="checkbox" checked={checked} onChange={e => setNewOrderForm(f => {
+                                  const cur = f.maintenance_unit_ids || [];
+                                  return { ...f, maintenance_unit_ids: e.target.checked ? [...cur, u.id] : cur.filter(x => x !== u.id) };
+                                })} />
+                                <b>{u.unit_code}</b><span style={{ color: cs.muted }}>{u.location || ""} · {u.brand || ""}</span>
+                              </label>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Jenis Layanan</div>
@@ -8225,7 +8294,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             setModalOrder(false);
                             setContinuationSuggestion([]);
                             setContinuationParentId(null);
-                            setNewOrderForm({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", date: "", time: "09:00", notes: "" });
+                            setNewOrderForm({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", date: "", time: "09:00", notes: "", maintenance_client_id: "", maintenance_unit_ids: [] });
                             await createOrder(formCopy);
                           } finally { _orderSubmitLock.current = false; setIsSubmittingOrder(false); }
                         }}
