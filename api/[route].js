@@ -1348,8 +1348,10 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       // Optimasi: cek Content-Length dulu via HEAD request — skip gambar < 10 KB (sticker/icon)
       // Download gambar hanya dilakukan setelah lolos size check
       // PENTING: skip jika ini tool bag photo (sudah diproses di branch di atas)
+      console.log("[WA_IMG_GATE]", JSON.stringify({ sender, isMediaMessage, hasMediaUrl: !!mediaUrl, hasSU: !!SU, hasSK: !!SK, isToolBagPhoto }));
       if (isMediaMessage && mediaUrl && SU && SK && !isToolBagPhoto) {
         const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+        console.log("[WA_IMG_ENTRY]", { sender, hasAK: !!AK });
         if (AK) {
           try {
             // HEAD request dulu untuk cek ukuran — tidak download isi gambar
@@ -1400,6 +1402,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 
                   // Hanya simpan bukti_transfer — kategori lain tidak perlu disimpan di R2
                   const shouldSave = classified && classified.category === "bukti_transfer";
+                  console.log("[WA_IMG_CLASSIFIED]", { sender, category: classified?.category, shouldSave, amount: classified?.amount });
 
                   // Step 2: Upload ke R2 hanya jika kategori relevan
                   if (shouldSave) {
@@ -1443,6 +1446,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                           // Simpan key R2 saja — frontend render via /api/foto?key=...
                           // Hindari hardcode domain agar tidak berubah tiap deploy
                           savedImageUrl = "/api/foto?key=" + encodeURIComponent(r2ObjectKey);
+                          console.log("[WA_IMG_R2_OK]", { sender, key: r2ObjectKey });
                         } else {
                           const errTxt = await r2UploadRes.text().catch(() => "");
                           console.warn("[WA_IMG_R2] Upload failed:", r2UploadRes.status, errTxt.slice(0,200));
@@ -1450,6 +1454,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       } catch(r2Err) {
                         console.warn("[WA_IMG_R2] R2 upload error:", r2Err.message);
                       }
+                    } else {
+                      console.warn("[WA_IMG_R2] Missing env:", { hasKey: !!r2Key, hasSecret: !!r2Secret, hasAccount: !!r2Account });
                     }
                   }
 
@@ -1463,6 +1469,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                   }
 
                   // Step 4: Payment suggestion + auto-patch invoice jika bukti_transfer
+                  console.log("[WA_IMG_PAY_GATE]", { sender, payDetectOn, classifiedCat: classified?.category });
                   if (payDetectOn && classified && classified.category === "bukti_transfer") {
                     let matchedInvoice = null;
                     let matchedOrderId = null;
