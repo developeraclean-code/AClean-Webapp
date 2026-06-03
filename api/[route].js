@@ -630,9 +630,14 @@ export default async function handler(req, res) {
         // Step 3.5: AI Vision classification — kalau image + grup punya toggle AI ON
         // Pattern Tool Bag: await + wa_webhook_dedup mutex untuk Fonnte retry safety
         // Dedup grpImg_ sudah di Step 2.5 (R2 mirror gate). Kalau imageDedupSkip=true, skip AI juga.
+        //
+        // OPTIMASI COST: skip AI vision kalau text-pattern udah catch biaya. Phrase parser
+        // "Bensin NSA 15k" / "Parkir Mtown 5k" / etc cheaper + reliable than vision. AI vision
+        // tetap jalan untuk sparepart bon (caption nggak match biaya keyword).
         const anyAiOn = !!(groupConfig.ai_expense_enabled || groupConfig.ai_material_enabled || groupConfig.ai_payment_enabled);
-        let aiStatus = imageDedupSkip ? "skip_dup" : "skipped";
-        if (!imageDedupSkip && groupImageUrl && anyAiOn && SU_g && SK_g && (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)) {
+        const textHandledExpense = parsedType === "biaya" && parsedOk && expenseSaved;
+        let aiStatus = imageDedupSkip ? "skip_dup" : (textHandledExpense ? "skip_text_handled" : "skipped");
+        if (!imageDedupSkip && !textHandledExpense && groupImageUrl && anyAiOn && SU_g && SK_g && (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)) {
           let isDup = false;
           // (dedup gate dipindah ke Step 2.5 grpImg_ — block ini dipertahankan untuk safety)
           try {
