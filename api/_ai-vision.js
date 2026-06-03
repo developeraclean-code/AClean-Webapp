@@ -56,13 +56,20 @@ Aturan confidence:
 Kalau intent tidak cocok dengan apapun → return intent:"unknown", confidence:"LOW", data:{}`;
 }
 
-export async function classifyImage({ imageUrl, groupCfg, sender, messageText }) {
+// Accept either:
+//   { imageUrl }                          — Anthropic fetches by URL (fragile kalau Fonnte TTL habis)
+//   { imageBase64, mimeType }             — kirim base64 langsung (tahan TTL Fonnte)
+export async function classifyImage({ imageUrl, imageBase64, mimeType, groupCfg, sender, messageText }) {
   const apiKey = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { error: "no_anthropic_key" };
-  if (!imageUrl) return { error: "no_image_url" };
+  if (!imageUrl && !imageBase64) return { error: "no_image" };
 
   const prompt = buildPrompt(groupCfg);
   const userText = messageText ? `Caption WhatsApp: "${messageText}"\n\nKlasifikasikan foto.` : "Klasifikasikan foto.";
+
+  const imageContent = imageBase64
+    ? { type: "image", source: { type: "base64", media_type: mimeType || "image/jpeg", data: imageBase64 } }
+    : { type: "image", source: { type: "url", url: imageUrl } };
 
   const body = {
     model: ANTHROPIC_MODEL,
@@ -71,7 +78,7 @@ export async function classifyImage({ imageUrl, groupCfg, sender, messageText })
     messages: [{
       role: "user",
       content: [
-        { type: "image", source: { type: "url", url: imageUrl } },
+        imageContent,
         { type: "text", text: userText }
       ]
     }]

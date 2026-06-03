@@ -2,6 +2,7 @@
 import { setCorsHeaders, checkRateLimit, validateInternalToken, signAppToken } from "./_auth.js";
 import { classifyImage, persistClassification } from "./_ai-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification } from "./_ai-text.js";
+import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "./_r2-upload.js";
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
@@ -542,8 +543,6 @@ export default async function handler(req, res) {
         }
 
         // Deteksi gambar/dokumen dari grup
-        // Fonnte URL gambar valid sementara, tapi tetap kita simpan supaya owner bisa
-        // lihat real-time. Untuk persistent storage, future: upload ke R2.
         const groupImageUrl = (wb.type === "image" || wb.type === "document") && isSafeFonnteUrl(wb.url)
           ? wb.url : null;
         const isImage = wb.type === "image";
@@ -552,6 +551,50 @@ export default async function handler(req, res) {
         const groupContent = (groupImageUrl && message === wb.url)
           ? (isImage ? "(foto)" : isDoc ? `(dokumen: ${wb.filename || "file"})` : "(media)")
           : message;
+
+        // ── Step 2.5: Mirror image ke R2 sebelum Fonnte TTL habis (audit trail) ──
+        // Fonnte URL hanya valid ~15-30 menit. R2 mirror = source of truth utk historical
+        // foto, dan jadi input AI vision biar tahan retry/lambat.
+        //
+        // Dedup mutex DULU (cegah retry re-upload R2 / re-call AI).
+        let r2MirrorUrl = null;
+        let imageBuffer = null;
+        let imageMime = "image/jpeg";
+        let imageDedupSkip = false;
+        if (groupImageUrl && SU_g && SK_g) {
+          const mediaSuffix = (groupImageUrl.split("/").pop() || "").slice(0, 80).replace(/[^a-zA-Z0-9._-]/g, "");
+          const imgDedupKey = `grpImg_${(groupId || "x").slice(0,40)}_${(participantNorm || "x").slice(0,15)}_${mediaSuffix}`.slice(0, 200);
+          try {
+            const ddRes = await fetch(SU_g + "/rest/v1/wa_webhook_dedup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+              body: JSON.stringify({ dedup_key: imgDedupKey }),
+            });
+            if (ddRes.status === 409) imageDedupSkip = true;
+          } catch (e) {
+            console.warn("[WA_GRUP_IMG_DEDUP]", e.message);
+          }
+        }
+        if (groupImageUrl && !imageDedupSkip && hasR2Config()) {
+          const dl = await downloadToBuffer(groupImageUrl, { timeoutMs: 8000 });
+          if (dl.ok) {
+            imageBuffer = dl.buffer;
+            imageMime = dl.mimeType;
+            const ext = imageMime === "image/png" ? "png" : imageMime === "image/gif" ? "gif" : imageMime === "image/webp" ? "webp" : imageMime === "application/pdf" ? "pdf" : "jpg";
+            const ym = new Date().toISOString().slice(0, 7); // 2026-06
+            const grpShort = String(groupId || "x").replace(/[^a-zA-Z0-9]/g, "").slice(0, 24);
+            const sendShort = (participantNorm || "x").slice(0, 14);
+            const r2Key = `wa-group/${ym}/${grpShort}/${Date.now()}_${sendShort}.${ext}`;
+            const up = await uploadBufferToR2({ buffer: imageBuffer, key: r2Key, mimeType: imageMime });
+            if (up.ok) {
+              r2MirrorUrl = up.url;
+            } else {
+              console.warn("[WA_GRUP_R2_UPLOAD]", up.err);
+            }
+          } else {
+            console.warn("[WA_GRUP_R2_DOWNLOAD]", dl.err);
+          }
+        }
 
         // Step 3: Simpan ke wa_group_logs
         // - Selalu log kalau parsed_ok (biaya/laporan/stok)
@@ -574,6 +617,8 @@ export default async function handler(req, res) {
               parsed_ok: parsedOk,
               forwarded: false,
               image_url: groupImageUrl,
+              r2_image_url: r2MirrorUrl,
+              r2_uploaded_at: r2MirrorUrl ? new Date().toISOString() : null,
               metadata: kwMatched || groupImageUrl ? {
                 ...(kwMatched ? { keyword_match: true } : {}),
                 ...(groupImageUrl ? { media_type: wb.type, filename: wb.filename || null } : {}),
@@ -584,15 +629,14 @@ export default async function handler(req, res) {
 
         // Step 3.5: AI Vision classification — kalau image + grup punya toggle AI ON
         // Pattern Tool Bag: await + wa_webhook_dedup mutex untuk Fonnte retry safety
-        // (Vercel kill function setelah res.send → fire-and-forget unreliable)
+        // Dedup grpImg_ sudah di Step 2.5 (R2 mirror gate). Kalau imageDedupSkip=true, skip AI juga.
         const anyAiOn = !!(groupConfig.ai_expense_enabled || groupConfig.ai_material_enabled || groupConfig.ai_payment_enabled);
-        let aiStatus = "skipped";
-        if (groupImageUrl && anyAiOn && SU_g && SK_g && (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)) {
-          // Dedup mutex — Fonnte retry hit 409 → skip total
-          const mediaSuffix = (groupImageUrl.split("/").pop() || "").slice(0, 80).replace(/[^a-zA-Z0-9._-]/g, "");
-          const dedupKey = `grpAi_${(groupId || "x").slice(0,40)}_${(participantNorm || "x").slice(0,15)}_${mediaSuffix}`.slice(0, 200);
+        let aiStatus = imageDedupSkip ? "skip_dup" : "skipped";
+        if (!imageDedupSkip && groupImageUrl && anyAiOn && SU_g && SK_g && (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)) {
           let isDup = false;
+          // (dedup gate dipindah ke Step 2.5 grpImg_ — block ini dipertahankan untuk safety)
           try {
+            const dedupKey = `grpAi_${(groupId || "x").slice(0,40)}_${(participantNorm || "x").slice(0,15)}_${(groupImageUrl.split("/").pop() || "").slice(0,80).replace(/[^a-zA-Z0-9._-]/g, "")}`.slice(0, 200);
             const dedupRes = await fetch(SU_g + "/rest/v1/wa_webhook_dedup", {
               method: "POST",
               headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
@@ -612,7 +656,11 @@ export default async function handler(req, res) {
           } else {
             try {
               const aiMsgText = groupContent === "(foto)" ? null : groupContent;
+              // Pakai base64 dari buffer (R2 mirror) supaya AI tahan Fonnte TTL.
+              // Fallback ke URL kalau buffer download gagal.
               const classification = await classifyImage({
+                imageBase64: imageBuffer ? imageBuffer.toString("base64") : null,
+                mimeType: imageMime,
                 imageUrl: groupImageUrl,
                 groupCfg: groupConfig,
                 sender: { phone: participantNorm, name: profileName },
@@ -625,6 +673,7 @@ export default async function handler(req, res) {
                   sender: { phone: participantNorm, name: profileName },
                   groupCfg: groupConfig,
                   imageUrl: groupImageUrl,
+                  r2Url: r2MirrorUrl,
                   messageText: aiMsgText,
                 });
                 aiStatus = "ok:" + classification.intent;
