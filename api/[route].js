@@ -351,6 +351,16 @@ export default async function handler(req, res) {
       // Grup boleh empty message (sistem pesan, sticker, dll) → tetap proses
       const message = validateMessage(rawMessage, 4096) || (looksLikeGroup ? "(empty/system message)" : null);
       if (!message) return res.status(400).json({ error: "Message is required and must be 1-4096 characters" });
+
+      // ── SSRF safety: hanya izinkan URL dari domain Fonnte ──
+      // (hoisted ke sini supaya bisa dipakai DI DALAM grup flow yang dieksekusi sebelum personal flow)
+      const isSafeFonnteUrl = (url) => {
+        if (!url || typeof url !== "string") return false;
+        try {
+          const u = new URL(url);
+          return u.protocol === "https:" && (u.hostname === "api.fonnte.com" || u.hostname.endsWith(".fonnte.com"));
+        } catch { return false; }
+      };
       // Debug log: setiap webhook hit untuk monitoring (akan ke-log di Vercel runtime logs)
       try { console.log("[WA_WEBHOOK]", JSON.stringify({ sender: senderRaw, member: memberRaw, isGroup: wb.isGroup, type: wb.type, hasMsg: !!wb.message, looksLikeGroup })); } catch (_) {}
       if (looksLikeGroup) {
@@ -810,15 +820,7 @@ export default async function handler(req, res) {
       }
 
       // ── DETECT MEDIA MESSAGE (Fonnte image/document webhook) ──
-      // C-3 fix: whitelist URL hanya dari domain Fonnte — blokir SSRF ke internal/arbitrary URL
-      const isSafeFonnteUrl = (url) => {
-        if (!url || typeof url !== "string") return false;
-        try {
-          const u = new URL(url);
-          // Hanya izinkan HTTPS dari domain fonnte.com
-          return u.protocol === "https:" && (u.hostname === "api.fonnte.com" || u.hostname.endsWith(".fonnte.com"));
-        } catch { return false; }
-      };
+      // isSafeFonnteUrl sudah di-hoist ke atas (sebelum grup flow)
       const fonnteMediaUrl = (wb.type === "image" || wb.type === "document") && isSafeFonnteUrl(wb.url) ? wb.url : null;
       const isMediaMessage = wb.type === "image" || wb.type === "document" ||
         (typeof message === "string" && /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|pdf)(\?|$)/i.test(message));
