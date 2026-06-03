@@ -1367,15 +1367,19 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
             if (skipDueToSize) {
               console.log("[WA_IMG] Skip: ukuran < 10 KB (sticker/icon), tidak diproses");
             } else {
+            console.log("[WA_IMG_STEP1] downloading from Fonnte:", mediaUrl);
             const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(10000) });
+            console.log("[WA_IMG_STEP2] fetch result:", { ok: imgFetch.ok, status: imgFetch.status });
             if (imgFetch.ok) {
               const imgBuf = await imgFetch.arrayBuffer();
+              console.log("[WA_IMG_STEP3] buffer bytes:", imgBuf.byteLength);
               // Double-check ukuran setelah download — buang jika < 10 KB
               if (imgBuf.byteLength < 10240) {
                 console.log("[WA_IMG] Skip setelah download: ukuran < 10 KB");
               } else {
               const base64Img = Buffer.from(imgBuf).toString("base64");
               const mimeType = (imgFetch.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+              console.log("[WA_IMG_STEP4] calling Anthropic", { mimeType, base64Len: base64Img.length });
 
               // Step 1: Classify gambar — satu API call untuk dua tujuan
               const classifyRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -1391,6 +1395,11 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                 })
               });
 
+              console.log("[WA_IMG_STEP5] Anthropic response", { ok: classifyRes.ok, status: classifyRes.status });
+              if (!classifyRes.ok) {
+                const errBodyAnthropic = await classifyRes.text().catch(() => "");
+                console.warn("[WA_IMG_ANTHROPIC_ERR]", classifyRes.status, errBodyAnthropic.slice(0, 300));
+              }
               let savedImageUrl = null;
               if (classifyRes.ok) {
                 const classifyData = await classifyRes.json();
@@ -3001,6 +3010,38 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
           // Tandai logs sudah di-invoice
           await fetch(REST(`maintenance_logs?id=in.(${encodeURIComponent(idFilter)})`), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ invoiced: true }) });
           return res.status(200).json({ invoice: (await iRes.json())[0] });
+        }
+
+        // ---- AUTO-LOG dari order yang laporannya diverifikasi (Opsi B) ----
+        // Idempotent: kalau order ini sudah punya log → skip (cegah dobel saat verify ulang).
+        if (action === "autolog-from-order") {
+          if (!body.order_id) return res.status(400).json({ error: "order_id wajib" });
+          // Ambil order (sumber kebenaran field maintenance)
+          const oRes = await fetch(REST("orders?id=eq." + encodeURIComponent(body.order_id) + "&select=id,maintenance_client_id,maintenance_unit_ids,teknisi,service,date"), { headers });
+          const oRows = await oRes.json();
+          if (!Array.isArray(oRows) || !oRows.length) return res.status(404).json({ error: "Order tidak ditemukan" });
+          const order = oRows[0];
+          const unitIds = Array.isArray(order.maintenance_unit_ids) ? order.maintenance_unit_ids : [];
+          if (!order.maintenance_client_id || !unitIds.length) return res.status(200).json({ skipped: true, reason: "bukan order maintenance" });
+          // Idempotency: sudah ada log utk order ini?
+          const exRes = await fetch(REST("maintenance_logs?order_id=eq." + encodeURIComponent(order.id) + "&select=id&limit=1"), { headers });
+          const ex = await exRes.json();
+          if (Array.isArray(ex) && ex.length) return res.status(200).json({ skipped: true, reason: "sudah ter-log" });
+          // Buat 1 log per unit
+          const rows = unitIds.map(uid => ({
+            unit_id: uid,
+            client_id: order.maintenance_client_id,
+            service_date: order.date || new Date().toISOString().slice(0, 10),
+            service_type: order.service || "Maintenance",
+            technician: order.teknisi || null,
+            description: `Servis via order ${order.id}`,
+            order_id: order.id,
+            cost: null,
+            created_by: body.created_by || "auto-verify",
+          }));
+          const r = await fetch(REST("maintenance_logs"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(rows) });
+          if (!r.ok) return res.status(400).json({ error: "Gagal auto-log", detail: await r.text() });
+          return res.status(200).json({ created: (await r.json()).length });
         }
 
         return res.status(400).json({ error: "Action tidak dikenal: " + action });
