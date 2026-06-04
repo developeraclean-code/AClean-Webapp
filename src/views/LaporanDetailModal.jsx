@@ -246,8 +246,8 @@ export default function LaporanDetailModal({ ctx }) {
               </div>
             )}
 
-            {/* JASA SECTION (non-Install only) */}
-            {selectedLaporan?.service !== "Install" && (() => {
+            {/* JASA SECTION (non-Install, non-Survey only) */}
+            {(editLaporanForm.editService || selectedLaporan?.service) !== "Survey" && selectedLaporan?.service !== "Install" && (() => {
               // Include: category="Jasa", OR category starts with "freon", OR service matches laporan
               const jasaLookup = priceListData
                 .filter(r => {
@@ -308,8 +308,8 @@ export default function LaporanDetailModal({ ctx }) {
               );
             })()}
 
-            {/* ══ STOK MATERIAL TERPAKAI (semua service, terhubung ke inventory unit) ══ */}
-            {(() => {
+            {/* ══ STOK MATERIAL TERPAKAI — disembunyikan untuk Survey ══ */}
+            {(editLaporanForm.editService || selectedLaporan?.service) !== "Survey" && (() => {
               const addStockMat = () => setEditStockMats(p => [...p, { id: Date.now(), nama: "", jumlah: 1, satuan: "pcs", freon_tabung_code: "", freon_unit_label: "", freon_inv_code: "" }]);
               const updateMat = (id, patch) => setEditStockMats(p => p.map(m => m.id === id ? { ...m, ...patch } : m));
               const removeMat = (id) => setEditStockMats(p => p.filter(m => m.id !== id));
@@ -405,8 +405,8 @@ export default function LaporanDetailModal({ ctx }) {
               );
             })()}
 
-            {/* REKOMENDASI & CATATAN */}
-            {[["Rekomendasi", "rekomendasi"], ["Catatan Tambahan", "catatan_global"]].map(([lbl, key]) => (
+            {/* REKOMENDASI & CATATAN — disembunyikan untuk Survey (pakai field khusus survey) */}
+            {(editLaporanForm.editService || selectedLaporan?.service) !== "Survey" && [["Rekomendasi", "rekomendasi"], ["Catatan Tambahan", "catatan_global"]].map(([lbl, key]) => (
               <div key={key}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>{lbl}</div>
                 <textarea value={editLaporanForm[key] || ""} onChange={e => setEditLaporanForm(f => ({ ...f, [key]: e.target.value }))} rows={3} style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
