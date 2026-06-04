@@ -652,6 +652,33 @@ const d = await r.json();
         {/* BAP — Pernyataan Default */}
         <Card>
           <CardHeader icon="📋" title="BAP (Berita Acara Pengerjaan)" subtitle="Teks pernyataan default yang muncul di BAP saat teknisi minta TTD customer" />
+
+          {/* Toggle aktif/nonaktif fitur BAP — default OFF */}
+          {(() => {
+            const bapOn = appSettings.bap_enabled === "true";
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 14, background: cs.surface, border: "1px solid " + (bapOn ? cs.green + "44" : cs.border), borderRadius: 10 }}>
+                <span style={{ fontSize: 18, minWidth: 24 }}>📋</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, color: bapOn ? cs.text : cs.muted, fontSize: 13 }}>Aktifkan Fitur BAP</div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Saat OFF, tombol "Buat BAP" disembunyikan dari teknisi/helper. Laporan tetap bisa dibuat tanpa TTD customer. Bisa diaktifkan lagi kapan saja.</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: bapOn ? cs.green : cs.muted, minWidth: 24 }}>{bapOn ? "ON" : "OFF"}</span>
+                  <div onClick={async () => {
+                    const newVal = bapOn ? "false" : "true";
+                    setAppSettings(prev => ({ ...prev, bap_enabled: newVal }));
+                    try { await supabase.from("app_settings").upsert({ key: "bap_enabled", value: newVal }, { onConflict: "key" }); showNotif((bapOn ? "⛔ BAP dinonaktifkan" : "✅ BAP diaktifkan")); }
+                    catch (err) { console.warn("bap_enabled err:", err); showNotif("❌ Gagal simpan toggle BAP"); }
+                  }}
+                    style={{ width: 44, height: 24, borderRadius: 99, background: bapOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (bapOn ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
+                    <div style={{ position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff", top: 2, left: bapOn ? 22 : 2, transition: "left .2s", boxShadow: "0 1px 3px #0004" }} />
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           <div style={{ fontSize: 11, color: cs.muted, marginBottom: 6, fontWeight: 600 }}>📝 Teks Pernyataan Default</div>
           <textarea
             value={appSettings.bap_statement_default || ""}

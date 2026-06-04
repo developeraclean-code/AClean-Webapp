@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-function MyReportView({ laporanReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, openLaporanModal, openBAPModal, safeArr, TODAY, INSTALL_ITEMS, downloadServiceReportPDF }) {
+function MyReportView({ laporanReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, openLaporanModal, openBAPModal, bapEnabled, safeArr, TODAY, INSTALL_ITEMS, downloadServiceReportPDF }) {
 const myName = currentUser?.name || "";
 // Get all submitted reports
 const submittedReps = laporanReports.filter(r => r.teknisi === myName || r.helper === myName);
@@ -140,6 +140,7 @@ return (
                     </div>
                   );
                 }
+                if (!bapEnabled) return null;
                 return (
                   <button onClick={() => openBAPModal?.(ordersData.find(o => o.id === r.job_id) || { id: r.job_id, customer: r.customer, service: r.service, date: r.date, teknisi: r.teknisi, helper: r.helper, units: 1 })}
                     style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>

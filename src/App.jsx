@@ -1039,6 +1039,7 @@ export default function ACleanWebApp() {
     wa_payment_detect: "true",
     wa_cleanup_enabled: "true",
     wa_monitor_enabled: "false",
+    bap_enabled: "false",
     foto_compression_quality: "0.70",
     // White-label branding
     app_name: "AClean",
@@ -3213,6 +3214,7 @@ ${photoPageHTML}
               company_addr: sMap.company_addr || prev.company_addr,
               wa_number: sMap.wa_number || prev.wa_number,
               bap_statement_default: sMap.bap_statement_default || prev.bap_statement_default,
+              bap_enabled: sMap.bap_enabled ?? prev.bap_enabled ?? "false",
               wa_autoreply_enabled: sMap.wa_autoreply_enabled ?? prev.wa_autoreply_enabled,
               wa_forward_to_owner: sMap.wa_forward_to_owner ?? prev.wa_forward_to_owner,
               wa_chatbot_enabled: sMap.wa_chatbot_enabled ?? prev.wa_chatbot_enabled ?? "false",
@@ -5927,7 +5929,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       teknisiData={teknisiData} omsetView={omsetView} setOmsetView={setOmsetView} isMobile={isMobile} waConversations={waConversations}
       bulanIni={bulanIni} setActiveMenu={setActiveMenu} setInvoiceFilter={setInvoiceFilter} setModalOrder={setModalOrder}
       setWaPanel={setWaPanel} setWaTekTarget={setWaTekTarget} setModalWaTek={setModalWaTek}
-      fmt={fmt} getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} openBAPModal={openBAPModal}
+      fmt={fmt} getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} bapEnabled={appSettings?.bap_enabled === "true"}
       openMaterialBringModal={openMaterialBringModal} materialsBroughtMap={materialsBroughtMap} showNotif={showNotif} TODAY={TODAY}
       sendWA={sendWA} dispatchWA={dispatchWA} addAgentLog={addAgentLog}
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
@@ -6337,7 +6339,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setModalLaporanDetail={setModalLaporanDetail} setEditLaporanForm={setEditLaporanForm} setLaporanBarangItems={setLaporanBarangItems}
       setEditRepairType={setEditRepairType} setEditGratisAlasan={setEditGratisAlasan} setActiveEditUnitIdx={setActiveEditUnitIdx}
       setEditPhotoMode={setEditPhotoMode} setEditLaporanFotos={setEditLaporanFotos} setEditStockMats={setEditStockMats} setLaporanInstallItems={setLaporanInstallItems}
-      openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} safeArr={safeArr} TODAY={TODAY} INSTALL_ITEMS={INSTALL_ITEMS}
+      openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} bapEnabled={appSettings?.bap_enabled === "true"} safeArr={safeArr} TODAY={TODAY} INSTALL_ITEMS={INSTALL_ITEMS}
       downloadServiceReportPDF={downloadServiceReportPDF} />
   );
 

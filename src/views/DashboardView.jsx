@@ -4,7 +4,7 @@ import { statusColor, statusLabel } from "../constants/status.js";
 import { displayStock } from "../lib/inventory.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 
-function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, materialsBroughtMap, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData, supabase, apiHeaders }) {
+function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, materialsBroughtMap, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData, supabase, apiHeaders, bapEnabled }) {
 const role = currentUser?.role || "Admin";
 const [gridDate, setGridDate] = useState(TODAY);
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -89,7 +89,7 @@ if (role === "Teknisi" || role === "Helper") {
                       style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🗺 Maps</button>
                     {(() => {
                       const existingLap = laporanReports.find(lr => lr.job_id === o.id && lr.status !== "PENDING");
-                      if (!existingLap) {
+                      if (!existingLap && bapEnabled) {
                         return (
                           <button onClick={() => openBAPModal?.(o)}
                             style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>📋 Buat BAP</button>
