@@ -6422,7 +6422,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     if (!currentUser) return;
     if (activeMenu === "biaya" || activeMenu === "dashboard") {
       fetchExpenses(supabase).then(({ data, error }) => { if (!error && data) setExpensesData(data); }).catch(() => {});
-    } else if (activeMenu === "invoice") {
+    } else if (activeMenu === "invoice" || activeMenu === "maintenance") {
       supabase.from("quotations").select("*").order("created_at", { ascending: false }).limit(200)
         .then(({ data, error }) => { if (!error && data) setQuotationsData(data); });
     }
