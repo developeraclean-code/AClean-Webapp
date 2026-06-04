@@ -725,15 +725,42 @@ export default function LaporanDetailModal({ ctx }) {
             {selectedLaporan.rekomendasi && <div style={{ fontSize: 11, marginBottom: 4 }}><span style={{ color: cs.muted }}>Rekomendasi: </span><span style={{ color: cs.text }}>{selectedLaporan.rekomendasi}</span></div>}
             {(selectedLaporan.catatan_global || selectedLaporan.catatan) && <div style={{ fontSize: 11 }}><span style={{ color: cs.muted }}>Catatan: </span><span style={{ color: cs.text }}>{selectedLaporan.catatan_global || selectedLaporan.catatan}</span></div>}
 
-            {/* ── Preview Service Report Card (Owner/Admin only) ── */}
+            {/* ── Survey: preview hasil + tombol kirim ── */}
+            {selectedLaporan.service === "Survey" && (selectedLaporan.hasil_survey || selectedLaporan.catatan_rekomendasi) && (
+              <div style={{ background: "linear-gradient(135deg,#0369a1,#0c4a6e)", borderRadius: 12, padding: "16px 18px", marginBottom: 4 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "rgba(255,255,255,.7)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>📋 Hasil Survey</div>
+                {selectedLaporan.hasil_survey && (
+                  <div style={{ background: "rgba(255,255,255,.12)", borderRadius: 8, padding: "10px 12px", marginBottom: selectedLaporan.catatan_rekomendasi ? 8 : 0 }}>
+                    <div style={{ fontSize: 13, color: "#fff", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{selectedLaporan.hasil_survey}</div>
+                  </div>
+                )}
+                {selectedLaporan.catatan_rekomendasi && (
+                  <div style={{ background: "rgba(255,255,255,.12)", borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,.6)", marginBottom: 4 }}>💡 Rekomendasi</div>
+                    <div style={{ fontSize: 13, color: "#fff", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{selectedLaporan.catatan_rekomendasi}</div>
+                  </div>
+                )}
+                {selectedLaporan.survey_sent_at && (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,.55)", marginTop: 8 }}>
+                    ✅ Dikirim ke customer: {new Date(selectedLaporan.survey_sent_at).toLocaleString("id-ID")}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Tombol aksi bawah ── */}
             {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                <button onClick={() => {
-                  const relInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id) || {};
-                  downloadServiceReportPDF(selectedLaporan, relInv);
-                }} style={{ flex: 1, background: "#1e3a5f", border: "none", color: "#fff", padding: "10px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
-                  📋 Preview Report Card
-                </button>
+                {selectedLaporan.service === "Survey"
+                  ? <button onClick={() => { setModalLaporanDetail(false); setTimeout(() => { window.dispatchEvent(new CustomEvent("open-survey-kirim", { detail: selectedLaporan })); }, 100); }}
+                      style={{ flex: 1, background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", padding: "10px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                      📤 Kirim Hasil Survey ke Customer
+                    </button>
+                  : <button onClick={() => { const relInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id) || {}; downloadServiceReportPDF(selectedLaporan, relInv); }}
+                      style={{ flex: 1, background: "#1e3a5f", border: "none", color: "#fff", padding: "10px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                      📋 Preview Report Card
+                    </button>
+                }
               </div>
             )}
 

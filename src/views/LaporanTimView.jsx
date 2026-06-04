@@ -1,11 +1,146 @@
-import { memo, useState } from "react";
+import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
+
+// ── Survey Kirim Modal ─────────────────────────────────────────────────────────
+function SurveyKirimModal({ r, onClose, sendWA, showNotif, addAgentLog, auditUserName, updateServiceReport, supabase, fotoSrc, downloadServiceReportPDF, invoicesData }) {
+  const fmtTgl = (d) => { try { return new Date(d + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" }); } catch { return d || "—"; } };
+  const team = [r.teknisi, r.helper].filter(Boolean).join(" & ");
+  const fotos = (r.fotos || []).filter(f => f.url);
+  const fotoNote = fotos.length > 0 ? `\n📸 ${fotos.length} foto dokumentasi tersedia.` : "";
+
+  const defaultMsg =
+    `📋 *Laporan Hasil Survey AC*\n` +
+    `AClean Service — Profesional Maintenance Company\n\n` +
+    `👤 Customer   : ${r.customer}\n` +
+    `📅 Tgl Survey : ${fmtTgl(r.date)}\n` +
+    `👷 Teknisi    : ${team || r.teknisi || "—"}\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n📝 *HASIL SURVEY*\n━━━━━━━━━━━━━━━━━━━━\n` +
+    `${r.hasil_survey || "(tidak ada catatan)"}\n\n` +
+    (r.catatan_rekomendasi
+      ? `━━━━━━━━━━━━━━━━━━━━\n💡 *REKOMENDASI*\n━━━━━━━━━━━━━━━━━━━━\n${r.catatan_rekomendasi}\n\n`
+      : "") +
+    `${fotoNote}Untuk penawaran / tindak lanjut, silakan balas pesan ini.\n— AClean Service`;
+
+  const [msg, setMsg] = useState(defaultMsg);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const phone = r.phone || "";
+
+  const doSend = async () => {
+    if (!phone) { showNotif("⚠️ Nomor HP customer tidak tersedia"); return; }
+    setSending(true);
+    try {
+      const ok = await sendWA(phone, msg);
+      if (ok !== false) {
+        await updateServiceReport(supabase, r.id, { survey_sent_at: new Date().toISOString() }, auditUserName());
+        addAgentLog("SURVEY_SENT", `Hasil survey dikirim ke ${r.customer} (${phone})`, "SUCCESS");
+        showNotif(`✅ Hasil survey terkirim ke ${r.customer}`);
+        setSent(true);
+        setTimeout(onClose, 1500);
+      } else {
+        showNotif("📱 WA dibuka manual di browser");
+        setSent(true);
+        setTimeout(onClose, 1000);
+      }
+    } catch (e) { showNotif("❌ Gagal kirim: " + e.message); }
+    finally { setSending(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 580, maxHeight: "92vh", overflowY: "auto", padding: 24 }} onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>📤 Kirim Hasil Survey</div>
+            <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{r.job_id} — {r.customer}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+
+        {/* Preview card — tampilan profesional */}
+        <div style={{ background: "linear-gradient(135deg,#0369a1,#0c4a6e)", borderRadius: 14, padding: "18px 20px", marginBottom: 16, color: "#fff" }}>
+          <div style={{ fontWeight: 800, fontSize: 13, opacity: .85, marginBottom: 4 }}>AClean Service — Profesional Maintenance Company</div>
+          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 2 }}>📋 Laporan Hasil Survey</div>
+          <div style={{ fontSize: 12, opacity: .8, marginBottom: 14 }}>{fmtTgl(r.date)} · {team || r.teknisi}</div>
+          <div style={{ background: "rgba(255,255,255,.12)", borderRadius: 10, padding: "12px 14px", marginBottom: r.catatan_rekomendasi ? 10 : 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, opacity: .7, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px" }}>Hasil Survey</div>
+            <div style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{r.hasil_survey || "(belum diisi)"}</div>
+          </div>
+          {r.catatan_rekomendasi && (
+            <div style={{ background: "rgba(255,255,255,.12)", borderRadius: 10, padding: "12px 14px", marginBottom: fotos.length > 0 ? 10 : 0 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, opacity: .7, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px" }}>💡 Rekomendasi</div>
+              <div style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{r.catatan_rekomendasi}</div>
+            </div>
+          )}
+          {/* Foto dokumentasi */}
+          {fotos.length > 0 && (
+            <div style={{ background: "rgba(255,255,255,.12)", borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 10, fontWeight: 800, opacity: .7, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>📸 Foto Dokumentasi ({fotos.length})</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6 }}>
+                {fotos.slice(0, 6).map((f, fi) => (
+                  <div key={fi} style={{ position: "relative", cursor: "pointer" }} onClick={() => window.open(fotoSrc(f.url), "_blank")}>
+                    <img src={fotoSrc(f.url)} alt={f.label || "foto " + (fi + 1)}
+                      style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 8, border: "2px solid rgba(255,255,255,.2)" }} />
+                    {f.label && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,.55)", fontSize: 9, color: "#fff", padding: "2px 4px", borderRadius: "0 0 6px 6px", textAlign: "center" }}>{f.label}</div>}
+                  </div>
+                ))}
+              </div>
+              {fotos.length > 6 && <div style={{ fontSize: 10, opacity: .6, marginTop: 6, textAlign: "center" }}>+{fotos.length - 6} foto lainnya di Report Card PDF</div>}
+            </div>
+          )}
+          {r.survey_sent_at && (
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,.55)", marginTop: 10 }}>
+              ✅ Terakhir dikirim: {new Date(r.survey_sent_at).toLocaleString("id-ID")}
+            </div>
+          )}
+        </div>
+
+        {/* PDF Download */}
+        {downloadServiceReportPDF && (
+          <button onClick={() => { const relInv = (invoicesData || []).find(i => i.job_id === r.job_id) || {}; downloadServiceReportPDF(r, relInv); }}
+            style={{ width: "100%", background: "#1e3a5f", border: "none", color: "#93c5fd", padding: "10px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 12, marginBottom: 12 }}>
+            📋 Download PDF Survey Report
+          </button>
+        )}
+
+        {/* Pesan WA yang bisa diedit */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>
+            📱 Pesan WA ke Customer
+            {phone ? <span style={{ color: cs.green, marginLeft: 6 }}>+{phone}</span> : <span style={{ color: cs.red, marginLeft: 6 }}>⚠️ Nomor HP tidak tersedia</span>}
+          </div>
+          <textarea value={msg} onChange={e => setMsg(e.target.value)} rows={10}
+            style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 12px", color: cs.text, fontSize: 12, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "monospace", lineHeight: 1.5 }} />
+          <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>Pesan bisa diedit sebelum dikirim. Foto dikirim terpisah via PDF.</div>
+        </div>
+
+        {/* Buttons */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
+          <button onClick={onClose} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Batal</button>
+          <button onClick={doSend} disabled={sending || sent || !phone}
+            style={{ background: sent ? cs.green : (phone ? "linear-gradient(135deg,#16a34a,#15803d)" : cs.surface), border: "none", color: sent ? "#fff" : (phone ? "#fff" : cs.muted), padding: "11px", borderRadius: 10, cursor: (sending || !phone) ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, opacity: (sending || !phone) ? .6 : 1 }}>
+            {sent ? "✅ Terkirim!" : sending ? "⏳ Mengirim..." : `📤 Kirim ke ${r.customer}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData, apiFetch }) {
 const _todayLap = getLocalDate?.() || new Date().toISOString().slice(0, 10);
 const [lapViewMode, setLapViewMode] = useState("detail"); // "rekap" | "detail" — default detail
 const [rekapDate, setRekapDate]     = useState(_todayLap);
+const [surveyKirimModal, setSurveyKirimModal] = useState(null);
+
+// Terima event dari LaporanDetailModal yang minta buka SurveyKirimModal
+useEffect(() => {
+  const handler = (e) => setSurveyKirimModal(e.detail);
+  window.addEventListener("open-survey-kirim", handler);
+  return () => window.removeEventListener("open-survey-kirim", handler);
+}, []);
 
 // Toggle tampilan — dipakai di mode rekap & detail
 const _viewToggle = (
@@ -482,6 +617,7 @@ const verifyLaporan = async (r) => {
 };
 
 return (
+  <>
   <div style={{ display: "grid", gap: 16 }}>
     {_viewToggle}
     {/* Header */}
@@ -1035,14 +1171,20 @@ return (
                 ✏️ Edit Laporan
               </button>
             )}
-            {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && downloadServiceReportPDF && (
-              <button onClick={() => {
-                const relInv = invoicesData.find(i => i.job_id === r.job_id) || {};
-                downloadServiceReportPDF(r, relInv);
-              }}
-                style={{ background: "#1e3a5f22", border: "1px solid #1e3a5f44", color: "#93c5fd", padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-                📋 Report Card
-              </button>
+            {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+              r.service === "Survey"
+                ? (r.status === "VERIFIED" || r.status === "SUBMITTED") && (
+                  <button onClick={() => setSurveyKirimModal(r)}
+                    style={{ background: "#16a34a22", border: "1px solid #16a34a44", color: "#4ade80", padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                    📤 Kirim Hasil Survey
+                  </button>
+                )
+                : downloadServiceReportPDF && (
+                  <button onClick={() => { const relInv = invoicesData.find(i => i.job_id === r.job_id) || {}; downloadServiceReportPDF(r, relInv); }}
+                    style={{ background: "#1e3a5f22", border: "1px solid #1e3a5f44", color: "#93c5fd", padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                    📋 Report Card
+                  </button>
+                )
             )}
             {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
               <button onClick={async () => {
@@ -1137,6 +1279,22 @@ return (
       </div>
     )}
   </div>
+  {surveyKirimModal && (
+    <SurveyKirimModal
+      r={surveyKirimModal}
+      onClose={() => setSurveyKirimModal(null)}
+      sendWA={sendWA}
+      showNotif={showNotif}
+      addAgentLog={addAgentLog}
+      auditUserName={auditUserName}
+      updateServiceReport={updateServiceReport}
+      supabase={supabase}
+      fotoSrc={fotoSrc}
+      downloadServiceReportPDF={downloadServiceReportPDF}
+      invoicesData={invoicesData}
+    />
+  )}
+  </>
 );
 }
 
