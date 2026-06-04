@@ -5,6 +5,7 @@ import { classifyText, matchSelesaiToOrder, persistTextClassification } from "./
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "./_r2-upload.js";
 import { md5Buffer, checkImageDuplicate } from "./_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage } from "./_kasbon-parser.js";
+import { parseCarrierFromCaption, matchCarrierName, parseLaporanTeam, matchLaporanToOrder, parseBiayaExtended } from "./_shadow-parsers.js";
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
@@ -794,6 +795,88 @@ export default async function handler(req, res) {
               } : null,
             })
           }).catch(e => console.error("[WA_GROUP_LOG]", e.message));
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // Step 3.25: SHADOW LOGGING — Gap 1/2/3 parser observations
+        // PURE OBSERVASI: HANYA INSERT ke wa_ai_observations.
+        // TIDAK pernah write ke orders, mat_track, expenses.
+        // Owner review manual → setelah confidence ≥ 95% baru flip toggle ke action mode.
+        // ──────────────────────────────────────────────────────────────
+        const obsToInsert = [];
+        const grupNameLower = String(groupName || "").toLowerCase();
+        try {
+          // GAP 1 — carrier ("dibawa <X>") di AClean Grup, caption foto material
+          if (grupNameLower.includes("aclean grup") && groupImageUrl && groupContent && groupContent !== "(foto)") {
+            const carrier = parseCarrierFromCaption(groupContent);
+            if (carrier) {
+              const m = await matchCarrierName({ SU: SU_g, SK: SK_g, mainToken: carrier.carrier_main_token });
+              obsToInsert.push({
+                source: "gap1_carrier",
+                proposed_action: "link_material_to_carrier_job",
+                parsed_data: { caption: groupContent, ...carrier },
+                proposed_target: m.matched ? { user_id: m.matched.id, name: m.matched.name, role: m.matched.role } : null,
+                match_confidence: m.matched ? "HIGH" : (m.candidates.length > 1 ? "LOW" : "LOW"),
+                match_candidates: m.candidates,
+                notes: m.matched ? `Carrier "${carrier.carrier_main_token}" → match ${m.matched.name} (${m.matched.role})`
+                                 : `Carrier "${carrier.carrier_main_token}" tidak unique match (${m.candidates.length} candidates)`,
+              });
+            }
+          }
+
+          // GAP 2 — laporan team di Report Pekerjaan AClean
+          if (grupNameLower.includes("report pekerjaan")) {
+            const lap = parseLaporanTeam(groupContent || "");
+            if (lap) {
+              const m = await matchLaporanToOrder({ SU: SU_g, SK: SK_g, parsed: lap });
+              obsToInsert.push({
+                source: "gap2_laporan_team",
+                proposed_action: "mark_order_completed",
+                parsed_data: lap,
+                proposed_target: m.matched.length === 1 ? { order_id: m.matched[0].id, customer: m.matched[0].customer, status: m.matched[0].status } : null,
+                match_confidence: m.reason === "unique" ? lap.confidence : (m.reason === "multi" ? "LOW" : "LOW"),
+                match_candidates: m.matched,
+                notes: m.reason === "unique" ? `Unique match → order #${m.matched[0].id} (status: ${m.matched[0].status})`
+                     : m.reason === "multi"  ? `Multi match (${m.matched.length}) — ambiguous`
+                     : `No order match utk customer "${lap.customer_name}"`,
+              });
+            }
+          }
+
+          // GAP 3 — extended biaya keyword (Perbaikan motor / Tol / Cuci motor / etc) di AClean Grup
+          if (grupNameLower.includes("aclean grup") && !groupImageUrl) {
+            const bx = parseBiayaExtended(groupContent || "");
+            if (bx) {
+              obsToInsert.push({
+                source: "gap3_bon_ext",
+                proposed_action: "create_expense_pending_ai",
+                parsed_data: { text: groupContent, ...bx },
+                proposed_target: { subcategory: bx.subcategory, amount: bx.amount, teknisi_name: profileName },
+                match_confidence: "MEDIUM",
+                match_candidates: null,
+                notes: `Keyword "${bx.keyword}" → subcat ${bx.subcategory} Rp ${bx.amount.toLocaleString("id-ID")}`,
+              });
+            }
+          }
+        } catch (eShadow) {
+          console.warn("[WA_SHADOW]", eShadow.message);
+        }
+
+        if (obsToInsert.length > 0 && SU_g && SK_g) {
+          const rows = obsToInsert.map(o => ({
+            ...o,
+            group_id: groupId,
+            group_name: groupName,
+            source_log_id: null, // wa_group_logs.id tidak available di sini (fire-and-forget INSERT)
+            sender_phone: participantNorm,
+            sender_name: profileName,
+            message_text: (groupContent || "").slice(0, 1000),
+          }));
+          fetch(SU_g + "/rest/v1/wa_ai_observations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+            body: JSON.stringify(rows),
+          }).catch(e => console.error("[WA_AI_OBS_INSERT]", e.message));
         }
 
         // Step 3.5: AI Vision classification — kalau image + grup punya toggle AI ON

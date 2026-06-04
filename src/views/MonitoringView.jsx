@@ -618,6 +618,106 @@ function TabWaSnapshots({ supabase, apiHeaders }) {
 }
 
 // ─────────────────────────────────────────────
+// Tab: AI Observations (Phase 2 shadow log — Gap 1/2/3 monitor only, NO actions)
+// ─────────────────────────────────────────────
+const SOURCE_LABEL = {
+  gap1_carrier:      "📦 Gap 1 · Carrier 'dibawa <X>'",
+  gap2_laporan_team: "📋 Gap 2 · Laporan 'team X dan Y'",
+  gap3_bon_ext:      "💰 Gap 3 · Bon extended (perbaikan/tol/cuci)",
+};
+function TabWaObservations({ supabase }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [confFilter, setConfFilter] = useState("all");
+  const [days, setDays] = useState(3);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const since = new Date(Date.now() - days * 86400_000).toISOString();
+      let q = supabase.from("wa_ai_observations").select("*").gte("observed_at", since).order("observed_at", { ascending: false }).limit(300);
+      if (sourceFilter !== "all") q = q.eq("source", sourceFilter);
+      if (confFilter !== "all") q = q.eq("match_confidence", confFilter);
+      const { data } = await q;
+      setRows(data || []);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [sourceFilter, confFilter, days]);
+
+  const counts = useMemo(() => {
+    const c = { total: rows.length, gap1: 0, gap2: 0, gap3: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    for (const r of rows) { c[r.source.replace("_carrier","").replace("_laporan_team","").replace("_bon_ext","")] = (c[r.source.replace("_carrier","").replace("_laporan_team","").replace("_bon_ext","")] || 0) + 1; c[r.match_confidence] = (c[r.match_confidence] || 0) + 1; }
+    return { total: rows.length, gap1: rows.filter(r=>r.source==="gap1_carrier").length, gap2: rows.filter(r=>r.source==="gap2_laporan_team").length, gap3: rows.filter(r=>r.source==="gap3_bon_ext").length, HIGH: rows.filter(r=>r.match_confidence==="HIGH").length, MEDIUM: rows.filter(r=>r.match_confidence==="MEDIUM").length, LOW: rows.filter(r=>r.match_confidence==="LOW").length };
+  }, [rows]);
+
+  const confColor = (c) => c === "HIGH" ? "#10b981" : c === "MEDIUM" ? "#f59e0b" : "#ef4444";
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ padding: 12, background: "#3b82f622", border: "1px solid #3b82f655", borderRadius: 8, fontSize: 12, color: cs.text }}>
+        🧪 <b>Shadow mode:</b> parser cuma LOG ke <code>wa_ai_observations</code>. Tidak ada auto-mark order COMPLETED, auto-create draft invoice, atau auto-insert material/expense. Owner review manual. Akan diaktifkan jadi action mode setelah confidence ≥95%.
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
+          style={{ background: cs.card, color: cs.text, border: "1px solid " + cs.border, borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+          <option value="all">Semua source</option>
+          <option value="gap1_carrier">Gap 1 · Carrier</option>
+          <option value="gap2_laporan_team">Gap 2 · Laporan</option>
+          <option value="gap3_bon_ext">Gap 3 · Bon ext</option>
+        </select>
+        <select value={confFilter} onChange={e => setConfFilter(e.target.value)}
+          style={{ background: cs.card, color: cs.text, border: "1px solid " + cs.border, borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+          <option value="all">Semua confidence</option>
+          <option value="HIGH">HIGH</option>
+          <option value="MEDIUM">MEDIUM</option>
+          <option value="LOW">LOW</option>
+        </select>
+        <select value={days} onChange={e => setDays(parseInt(e.target.value))}
+          style={{ background: cs.card, color: cs.text, border: "1px solid " + cs.border, borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+          <option value={1}>1 hari</option>
+          <option value={3}>3 hari</option>
+          <option value={7}>7 hari</option>
+          <option value={30}>30 hari</option>
+        </select>
+        <button onClick={load} disabled={loading}
+          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
+          {loading ? "..." : "↻"}
+        </button>
+        <div style={{ marginLeft: "auto", fontSize: 11, color: cs.muted }}>
+          {counts.total} obs · Gap1: {counts.gap1} · Gap2: {counts.gap2} · Gap3: {counts.gap3} · <span style={{ color: "#10b981" }}>{counts.HIGH} HIGH</span> · <span style={{ color: "#f59e0b" }}>{counts.MEDIUM} MED</span> · <span style={{ color: "#ef4444" }}>{counts.LOW} LOW</span>
+        </div>
+      </div>
+
+      {rows.length === 0 && !loading && (
+        <div style={{ padding: 24, background: cs.card, borderRadius: 10, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+          Tidak ada observasi sesuai filter. Coba ubah filter atau perpanjang range hari.
+        </div>
+      )}
+      <div style={{ display: "grid", gap: 6 }}>
+        {rows.map(r => (
+          <div key={r.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 6, background: cs.muted + "22", color: cs.text, fontWeight: 700 }}>
+                {SOURCE_LABEL[r.source] || r.source}
+              </span>
+              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: confColor(r.match_confidence) + "22", color: confColor(r.match_confidence), fontWeight: 700 }}>
+                {r.match_confidence}
+              </span>
+              <span style={{ fontSize: 11, color: cs.muted }}>{new Date(r.observed_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</span>
+              <span style={{ fontSize: 11, color: cs.muted }}>· {r.sender_name} @ {r.group_name}</span>
+            </div>
+            <div style={{ fontSize: 12, color: cs.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{r.message_text}</div>
+            <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>🧠 {r.notes}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────
 function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHeaders, supabase }) {
@@ -635,12 +735,13 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
   };
 
   const tabs = [
-    { id: "overview",  label: "🔍 Overview" },
-    { id: "cron",      label: "⏰ Cron Jobs" },
-    { id: "ai",        label: "🤖 AI Cost" },
-    { id: "wa",        label: "📱 WA Delivery" },
-    { id: "snapshots", label: "📸 WA Snapshots" },
-    { id: "audit",     label: "📜 Audit Log" },
+    { id: "overview",     label: "🔍 Overview" },
+    { id: "cron",         label: "⏰ Cron Jobs" },
+    { id: "ai",           label: "🤖 AI Cost" },
+    { id: "wa",           label: "📱 WA Delivery" },
+    { id: "snapshots",    label: "📸 WA Snapshots" },
+    { id: "observations", label: "🧪 AI Observations" },
+    { id: "audit",        label: "📜 Audit Log" },
   ];
 
   return (
@@ -673,7 +774,8 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
       {activeTab === "cron"  && <TabCron supabase={supabase} />}
       {activeTab === "ai"    && <TabAiCost supabase={supabase} />}
       {activeTab === "wa"        && <TabWa supabase={supabase} />}
-      {activeTab === "snapshots" && <TabWaSnapshots supabase={supabase} apiHeaders={_apiHeaders} />}
+      {activeTab === "snapshots"    && <TabWaSnapshots supabase={supabase} apiHeaders={_apiHeaders} />}
+      {activeTab === "observations" && <TabWaObservations supabase={supabase} />}
       {activeTab === "audit"     && <TabAudit supabase={supabase} />}
     </div>
   );
