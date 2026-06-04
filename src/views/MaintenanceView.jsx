@@ -54,46 +54,78 @@ export default function MaintenanceView({ currentUser, apiFetch, showNotif, show
     } catch (e) { showNotif("❌ " + e.message); }
   }, [call, showNotif]);
 
-  // ---------- create client ----------
-  const [newName, setNewName] = useState("");
-  const addClient = async () => {
-    if (!newName.trim()) return;
+  // ---------- create / edit client ----------
+  const [clientModal, setClientModal] = useState(null); // null | {} (new) | {id,...} (edit)
+
+  const saveClient = async (form) => {
+    if (!form.name?.trim()) { showNotif("❌ Nama perusahaan wajib"); return; }
     setBusy(true);
-    try { const j = await call("create-client", { name: newName.trim() }); setNewName(""); await loadClients(); openClient(j.client); showNotif("✅ Klien dibuat"); }
-    catch (e) { showNotif("❌ " + e.message); }
+    try {
+      if (form.id) {
+        // edit existing
+        const j = await call("update-client", { ...form });
+        setClients(prev => prev.map(c => c.id === j.client.id ? j.client : c));
+        if (sel?.id === j.client.id) setSel(j.client);
+        showNotif("✅ Data perusahaan diperbarui");
+      } else {
+        // create new
+        const j = await call("create-client", form);
+        setClientModal(null);
+        await loadClients();
+        openClient(j.client);
+        showNotif("✅ Klien dibuat");
+      }
+      setClientModal(null);
+    } catch (e) { showNotif("❌ " + e.message); }
     finally { setBusy(false); }
+  };
+
+  const deleteClient = async (c) => {
+    const ok = await showConfirm({ title: "Hapus perusahaan?", message: `Hapus "${c.name}" beserta semua unit dan history-nya? Tindakan tidak bisa diurungkan.` });
+    if (!ok) return;
+    try { await call("delete-client", { id: c.id }); await loadClients(); setSel(null); showNotif("✅ Perusahaan dihapus"); }
+    catch (e) { showNotif("❌ " + e.message); }
   };
 
   if (!sel) {
     return (
       <div style={{ padding: 18 }}>
-        <h2 style={{ color: cs.text, margin: "0 0 14px" }}>🏢 Maintenance — Customer Korporat</h2>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16, maxWidth: 480 }}>
-          <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nama perusahaan baru…"
-            onKeyDown={e => e.key === "Enter" && addClient()}
-            style={inp} />
-          <button onClick={addClient} disabled={busy} style={btn}>+ Tambah</button>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
+          <h2 style={{ color: cs.text, margin: 0 }}>🏢 Maintenance — Customer Korporat</h2>
+          <button onClick={() => setClientModal({})} style={{ ...btn, marginLeft: "auto" }}>+ Tambah Perusahaan</button>
         </div>
         {loading ? <div style={{ color: cs.muted }}>Memuat…</div> :
-          clients.length === 0 ? <div style={{ color: cs.muted }}>Belum ada perusahaan. Tambahkan di atas.</div> :
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 12 }}>
+          clients.length === 0 ? <div style={{ color: cs.muted }}>Belum ada perusahaan. Klik "+ Tambah Perusahaan".</div> :
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(290px,1fr))", gap: 12 }}>
               {clients.map(c => (
-                <div key={c.id} onClick={() => openClient(c)} style={{ ...card, cursor: "pointer" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ fontWeight: 700, color: cs.text, fontSize: 15 }}>{c.name}</div>
-                    <span style={{ marginLeft: "auto", ...(c.contract_status === "active" ? pillGreen : pillGray) }}>
-                      {c.contract_status === "active" ? "● Aktif" : "Nonaktif"}
-                    </span>
-                  </div>
-                  <div style={{ color: cs.muted, fontSize: 12, marginTop: 6 }}>
-                    {c.pic_name ? `PIC: ${c.pic_name}` : "PIC belum diisi"} {c.pic_phone ? `· ${c.pic_phone}` : ""}
-                  </div>
-                  <div style={{ color: cs.muted, fontSize: 11, marginTop: 6 }}>
-                    {c.token_active ? "🔓 Portal aktif" : "🔒 Portal off"} · {c.hide_costs ? "Biaya disembunyikan" : "Biaya tampil"}
+                <div key={c.id} style={{ ...card, cursor: "pointer" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                    <div onClick={() => openClient(c)} style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, color: cs.text, fontSize: 15 }}>{c.name}</div>
+                      <div style={{ color: cs.muted, fontSize: 12, marginTop: 4 }}>
+                        {c.pic_name ? `PIC: ${c.pic_name}` : "PIC belum diisi"}{c.pic_phone ? ` · ${c.pic_phone}` : ""}
+                      </div>
+                      {c.address && <div style={{ color: cs.muted, fontSize: 11, marginTop: 2 }}>{c.address}</div>}
+                      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                        <span style={c.contract_status === "active" ? pillGreen : pillGray}>
+                          {c.contract_status === "active" ? "● Aktif" : "Nonaktif"}
+                        </span>
+                        <span style={{ ...pillGray, fontSize: 10 }}>
+                          {c.token_active ? "🔓 Portal aktif" : "🔒 Portal off"}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+                      <button onClick={e => { e.stopPropagation(); setClientModal(c); }} style={miniBtn} title="Edit perusahaan">✏️</button>
+                      {isOwner && <button onClick={e => { e.stopPropagation(); deleteClient(c); }} style={{ ...miniBtn, color: cs.red }} title="Hapus perusahaan">🗑</button>}
+                    </div>
                   </div>
                 </div>
               ))}
             </div>}
+        {clientModal !== null && (
+          <ClientFormModal client={clientModal} onClose={() => setClientModal(null)} onSave={saveClient} busy={busy} />
+        )}
       </div>
     );
   }
@@ -101,7 +133,12 @@ export default function MaintenanceView({ currentUser, apiFetch, showNotif, show
   return (
     <div style={{ padding: 18 }}>
       <button onClick={() => { setSel(null); loadClients(); }} style={{ ...btnGhost, marginBottom: 12 }}>← Semua Perusahaan</button>
-      <ClientHeader sel={sel} units={units} />
+      <ClientHeader sel={sel} units={units} isOwner={isOwner}
+        onEdit={() => setClientModal(sel)}
+        onDelete={() => deleteClient(sel).then(() => setSel(null)).catch(() => {})} />
+      {clientModal !== null && (
+        <ClientFormModal client={clientModal} onClose={() => setClientModal(null)} onSave={saveClient} busy={busy} />
+      )}
       <div style={{ display: "flex", gap: 6, margin: "14px 0" }}>
         {[["unit", `📋 Unit (${units.length})`], ["history", "🕑 History"], ["invoice", "🧾 Invoice B2B"], ["portal", "🔗 Portal & Akses"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
@@ -115,19 +152,35 @@ export default function MaintenanceView({ currentUser, apiFetch, showNotif, show
   );
 }
 
-function ClientHeader({ sel, units }) {
+function ClientHeader({ sel, units, isOwner, onEdit, onDelete }) {
   const active = units.filter(u => u.status === "active").length;
   const rusak = units.filter(u => u.status === "rusak").length;
   return (
-    <div style={{ ...card, display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-      <div>
-        <div style={{ fontSize: 18, fontWeight: 700, color: cs.text }}>🏢 {sel.name}</div>
-        <div style={{ color: cs.muted, fontSize: 12 }}>{[sel.pic_name && "PIC: " + sel.pic_name, sel.pic_phone, sel.address].filter(Boolean).join(" · ") || "Detail PIC belum diisi"}</div>
-      </div>
-      <div style={{ marginLeft: "auto", display: "flex", gap: 18 }}>
-        <Kpi n={units.length} l="Unit" />
-        <Kpi n={active} l="Aktif" c={cs.green} />
-        <Kpi n={rusak} l="Rusak" c={cs.red} />
+    <div style={{ ...card, marginBottom: 0 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: cs.text }}>🏢 {sel.name}</div>
+            <span style={sel.contract_status === "active" ? { ...pillGreen, fontSize: 11 } : { ...pillGray, fontSize: 11 }}>
+              {sel.contract_status === "active" ? "● Kontrak Aktif" : "Nonaktif"}
+            </span>
+          </div>
+          <div style={{ color: cs.muted, fontSize: 12, marginTop: 5, display: "grid", gap: 2 }}>
+            {sel.pic_name && <span>👤 PIC: <b style={{ color: cs.text }}>{sel.pic_name}</b>{sel.pic_phone ? ` · ${sel.pic_phone}` : ""}</span>}
+            {sel.address && <span>📍 {sel.address}</span>}
+            {sel.notes && <span>📝 {sel.notes}</span>}
+            {!sel.pic_name && !sel.address && <span style={{ color: cs.red }}>⚠️ Detail PIC & alamat belum diisi — klik Edit</span>}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+          <Kpi n={units.length} l="Unit" />
+          <Kpi n={active} l="Aktif" c={cs.green} />
+          <Kpi n={rusak} l="Rusak" c={cs.red} />
+          <div style={{ borderLeft: "1px solid " + cs.border, paddingLeft: 10, display: "flex", gap: 6 }}>
+            <button onClick={onEdit} style={{ ...btnGhost, padding: "6px 12px", fontSize: 12 }}>✏️ Edit</button>
+            {isOwner && <button onClick={onDelete} style={{ ...btnGhost, padding: "6px 12px", fontSize: 12, color: cs.red, borderColor: cs.red + "55" }}>🗑 Hapus</button>}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -412,6 +465,60 @@ function ToggleRow({ label, desc, checked, onChange }) {
 }
 
 // ─────────── shared bits ───────────
+// ─────────── FORM PERUSAHAAN (Create & Edit) ───────────
+function ClientFormModal({ client, onClose, onSave, busy }) {
+  const isEdit = !!client.id;
+  const [f, setF] = useState({
+    name: client.name || "",
+    address: client.address || "",
+    pic_name: client.pic_name || "",
+    pic_phone: client.pic_phone || "",
+    contract_status: client.contract_status || "active",
+    notes: client.notes || "",
+  });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ fontWeight: 700, color: cs.text, fontSize: 16, marginBottom: 14 }}>
+        {isEdit ? "✏️ Edit Perusahaan" : "🏢 Tambah Perusahaan Baru"}
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        <Field l="Nama Perusahaan *">
+          <input value={f.name} onChange={e => set("name", e.target.value)} style={inp} placeholder="PT. Contoh Indonesia" />
+        </Field>
+        <Field l="Alamat">
+          <textarea value={f.address} onChange={e => set("address", e.target.value)}
+            style={{ ...inp, minHeight: 60, resize: "vertical" }} placeholder="Jl. Contoh No. 1, Kota..." />
+        </Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <Field l="Nama PIC / Kontak">
+            <input value={f.pic_name} onChange={e => set("pic_name", e.target.value)} style={inp} placeholder="Budi Santoso" />
+          </Field>
+          <Field l="No. HP PIC">
+            <input value={f.pic_phone} onChange={e => set("pic_phone", e.target.value)} style={inp} placeholder="08xx / +62..." />
+          </Field>
+        </div>
+        <Field l="Status Kontrak">
+          <select value={f.contract_status} onChange={e => set("contract_status", e.target.value)} style={inp}>
+            <option value="active">Aktif</option>
+            <option value="inactive">Nonaktif</option>
+          </select>
+        </Field>
+        <Field l="Catatan Internal (tidak tampil ke customer)">
+          <textarea value={f.notes} onChange={e => set("notes", e.target.value)}
+            style={{ ...inp, minHeight: 48, resize: "vertical" }} placeholder="Opsional..." />
+        </Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+        <button onClick={onClose} style={btnGhost}>Batal</button>
+        <button onClick={() => onSave(isEdit ? { ...f, id: client.id } : f)} disabled={busy} style={btn}>
+          {busy ? "Menyimpan…" : isEdit ? "Simpan Perubahan" : "Buat Perusahaan"}
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
 function Field({ l, children }) { return <label style={{ display: "block", marginTop: 8 }}><div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>{l}</div>{children}</label>; }
 function Overlay({ children, onClose }) {
   return (
