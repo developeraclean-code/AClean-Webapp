@@ -7,27 +7,70 @@
 // Multi-name belum di-support. Prefix "Teknisi"/"Helper" opsional.
 // Validasi nama wajib match user_profiles (role IN Teknisi/Helper, active=true).
 
-const KASBON_RE = /^kasbon\s+(?:(?:teknisi|helper)\s+)?(.+?)\s+(\d+(?:[.,]\d+)?)\s*(k|ribu|rb|jt|juta|m|jt\.|jt,)?\s*\.?$/i;
+// Single-line kasbon (legacy / quick path)
+const KASBON_RE_SINGLE = /^kasbon\s+(?:(?:teknisi|helper)\s+)?(.+?)\s+(\d+(?:[.,]\d+)?)\s*(k|ribu|rb|jt|juta|m|jt\.|jt,)?\s*\.?$/i;
+// Per-line item dlm multi-list, mis: "1. Rizal 100" / "- Putra 100" / "Ezra 100"
+const KASBON_LINE_ITEM = /^(?:\s*[-•*]?\s*\d+[.)]?\s+|\s*[-•*]\s+|\s*)([A-Za-z][A-Za-z\s.'-]+?)\s+(\d+(?:[.,]\d+)?)\s*(k|ribu|rb|jt|juta|m)?\.?$/i;
+
+function normalizeAmount(numRaw, unit, { defaultThousand }) {
+  const num = parseFloat(String(numRaw).replace(",", "."));
+  if (!Number.isFinite(num) || num <= 0) return null;
+  unit = (unit || "").toLowerCase();
+  let amount;
+  if (unit === "k" || unit === "ribu" || unit === "rb") amount = num * 1000;
+  else if (unit === "jt" || unit === "juta" || unit === "m") amount = num * 1_000_000;
+  else if (defaultThousand) amount = num * 1000; // dlm konteks list multi-kasbon, "100" = 100rb
+  else amount = num;
+  if (!unit && !defaultThousand && amount < 1000) return null; // single-line anti-typo
+  if (amount > 10_000_000) return null;
+  return Math.round(amount);
+}
 
 export function parseKasbonText(message) {
   if (!message || typeof message !== "string") return null;
   const text = message.trim();
-  const m = text.match(KASBON_RE);
-  if (!m) return null;
-  const nameRaw = m[1].trim();
-  const numRaw = m[2].replace(",", ".");
-  const num = parseFloat(numRaw);
-  if (!Number.isFinite(num) || num <= 0) return null;
-  const unit = (m[3] || "").toLowerCase();
-  let amount;
-  if (unit === "k" || unit === "ribu" || unit === "rb") amount = num * 1000;
-  else if (unit === "jt" || unit === "juta" || unit === "m") amount = num * 1_000_000;
-  else amount = num;
-  // Anti-typo: kalau tidak pakai unit dan amount < 1000, anggap ambigu (skip)
-  if (!unit && amount < 1000) return null;
-  // Sanity cap (Rp 10jt per single entry)
-  if (amount > 10_000_000) return null;
-  return { nameRaw, amount: Math.round(amount), unit: unit || "rupiah" };
+
+  // ── PATH 1: Single-line "Kasbon <name> <amount>" (legacy quick) ──
+  const single = text.match(KASBON_RE_SINGLE);
+  if (single) {
+    const amt = normalizeAmount(single[2], single[3], { defaultThousand: false });
+    if (amt !== null) return { nameRaw: single[1].trim(), amount: amt, unit: (single[3] || "rupiah").toLowerCase(), items: null };
+  }
+
+  // ── PATH 2: Multi-line list — message mengandung kata "kasbon" + lines with "name <number>" ──
+  // Pattern Santi: "Sore Bu, untuk kasbon\n1. Rizal 100\n2. Putra 100\n3. Ezra 100\nApakah bisa Bu?"
+  if (/kasbon/i.test(text)) {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const items = [];
+    for (const line of lines) {
+      // Skip header line (mengandung "kasbon" tapi bukan item, e.g. "untuk kasbon", "kasbon hari ini")
+      if (/kasbon/i.test(line) && !/^\s*[-•*\d]/.test(line)) continue;
+      // Skip tanya/closing line
+      if (/^(apakah|tolong|mohon|terima|trims|thx|ok|baik|siap)/i.test(line)) continue;
+      const m = line.match(KASBON_LINE_ITEM);
+      if (!m) continue;
+      const nameRaw = m[1].trim().replace(/[.,]$/, "");
+      if (!nameRaw || nameRaw.length < 2) continue;
+      // Reject jika nama kebanyakan bukan-huruf (mis. "Bu 100" – "Bu" cuma 2 huruf, OK; tapi "ya 5")
+      if (!/[a-zA-Z]/.test(nameRaw)) continue;
+      const amt = normalizeAmount(m[2], m[3], { defaultThousand: true });
+      if (amt === null) continue;
+      items.push({ nameRaw, amount: amt, unit: (m[3] || "rupiah").toLowerCase() });
+    }
+    if (items.length >= 2) {
+      // Total guard
+      const totalAmt = items.reduce((s, i) => s + i.amount, 0);
+      if (totalAmt > 0 && totalAmt <= 50_000_000) {
+        return { multi: true, items, total: totalAmt };
+      }
+    } else if (items.length === 1) {
+      // Single item ditemukan via list pattern — treat as single (e.g. user kirim "kasbon\n- Andi 100")
+      const it = items[0];
+      return { nameRaw: it.nameRaw, amount: it.amount, unit: it.unit, items: null };
+    }
+  }
+
+  return null;
 }
 
 // Match nama ke user_profiles (Teknisi/Helper, active=true)
@@ -58,9 +101,16 @@ export async function matchKasbonName({ SU, SK, nameRaw }) {
 }
 
 // Approval message detector — phrase reply oleh approver
-const APPROVAL_RE = /^(ok|oke|okay|baik|siap|acc|approve|approved|setuju|yes|ya|gas|👍|✅)\.?!?$/i;
+// Mengakomodasi kalimat informal: "Oke San pada masuk semua ya", "Iya masuk semua Bu", "approve semua"
+const APPROVAL_RE_STRICT = /^(ok|oke|okay|baik|siap|acc|approve|approved|setuju|yes|ya|gas|👍|✅)\.?!?$/i;
+const APPROVAL_RE_PHRASE = /\b(ok(?:e|ay)?|baik|siap|acc|approve[ds]?|setuju|gas|masuk\s+semua|iya\s+masuk|ya\s+masuk|silakan|silahkan|boleh|gass)\b/i;
 
 export function isKasbonApprovalMessage(message) {
   if (!message || typeof message !== "string") return false;
-  return APPROVAL_RE.test(message.trim());
+  const text = message.trim();
+  if (text.length > 200) return false; // Approval biasanya pendek; long-form text bukan approval
+  if (APPROVAL_RE_STRICT.test(text)) return true;
+  // Phrase mode: harus ada keyword approve DAN pesan pendek (<= 80 char) untuk kurangi false-positive
+  if (text.length <= 80 && APPROVAL_RE_PHRASE.test(text)) return true;
+  return false;
 }

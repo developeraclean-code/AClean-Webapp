@@ -468,11 +468,13 @@ return (
           const confColor = ai.confidence === "HIGH" ? "#10b981" : ai.confidence === "MEDIUM" ? "#f59e0b" : "#ef4444";
           const isKasbon = item.subcategory === "Kasbon Karyawan";
           const ackMatch = (item.description || "").match(/\[ACK by (\d+) at ([\d:]+)\]/);
+          // Prefer R2 (permanent) over Fonnte URL (TTL 15-30 min, returns 404 after)
+          const photoUrl = ai.r2_url || ai.image_url || null;
           return (
             <div key={item.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 14, display: "flex", gap: 14 }}>
-              {ai.image_url && (
-                <a href={ai.image_url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
-                  <img src={ai.image_url} alt="struk" style={{ width: 160, height: 200, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }}
+              {photoUrl && (
+                <a href={photoUrl} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
+                  <img src={photoUrl} alt="struk" style={{ width: 160, height: 200, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }}
                     onError={e => { e.target.style.display = "none"; }} />
                 </a>
               )}

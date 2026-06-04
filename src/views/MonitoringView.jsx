@@ -525,6 +525,64 @@ function selectStyle() {
 }
 
 // ─────────────────────────────────────────────
+// Tab: WA Snapshots (Phase 2 review window 4-11 Juni)
+// ─────────────────────────────────────────────
+function TabWaSnapshots({ supabase }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await supabase.from("wa_daily_snapshots")
+        .select("*").order("snapshot_date", { ascending: false }).limit(60);
+      setRows(data || []);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const fmtSize = (b) => b ? (b/1024).toFixed(1) + " KB" : "—";
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+        <div style={{ fontSize: 12, color: cs.muted }}>
+          Snapshot harian percakapan 3 grup (cron 20:00 WIB). Periode review awal: <b>4–11 Juni 2026</b>.
+          Hapus manual via SQL/Supabase setelah analisa selesai.
+        </div>
+        <button onClick={load} disabled={loading}
+          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
+          {loading ? "Loading..." : "↻ Refresh"}
+        </button>
+      </div>
+      {rows.length === 0 && !loading && (
+        <div style={{ padding: 24, background: cs.card, borderRadius: 10, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+          Belum ada snapshot. Cron jalan tiap 20:00 WIB.
+        </div>
+      )}
+      <div style={{ display: "grid", gap: 8 }}>
+        {rows.map(r => (
+          <div key={r.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 12, display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>📅 {r.snapshot_date}</div>
+              <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>
+                {r.groups_count} grup · {r.total_messages} msg · {r.total_with_image} foto · {r.total_ai_classified} AI · {r.total_expenses_inserted} biaya · {fmtSize(r.size_bytes)}
+              </div>
+              <div style={{ fontSize: 10, color: cs.muted, marginTop: 4, fontFamily: "monospace" }}>{r.r2_key}</div>
+            </div>
+            <a href={r.r2_url} target="_blank" rel="noreferrer"
+              style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "55", color: cs.accent, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>
+              ⬇️ Download JSON
+            </a>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: cs.muted, padding: 12, background: "#f59e0b22", border: "1px solid #f59e0b55", borderRadius: 8 }}>
+        ⏰ <b>Reminder:</b> setelah 12 Juni, hapus snapshot lama dari R2 (key <code>wa-snapshots/*</code>) + table <code>wa_daily_snapshots</code> agar storage tidak numpuk. Cron dapat di-disable via <code>vercel.json</code>.
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────
 function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHeaders, supabase }) {
@@ -542,11 +600,12 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
   };
 
   const tabs = [
-    { id: "overview", label: "🔍 Overview" },
-    { id: "cron",     label: "⏰ Cron Jobs" },
-    { id: "ai",       label: "🤖 AI Cost" },
-    { id: "wa",       label: "📱 WA Delivery" },
-    { id: "audit",    label: "📜 Audit Log" },
+    { id: "overview",  label: "🔍 Overview" },
+    { id: "cron",      label: "⏰ Cron Jobs" },
+    { id: "ai",        label: "🤖 AI Cost" },
+    { id: "wa",        label: "📱 WA Delivery" },
+    { id: "snapshots", label: "📸 WA Snapshots" },
+    { id: "audit",     label: "📜 Audit Log" },
   ];
 
   return (
@@ -578,8 +637,9 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
       {activeTab === "overview" && (monitorData ? <TabOverview data={monitorData} onRefresh={refreshOverview} /> : <Empty msg="⏳ Loading monitoring data..." />)}
       {activeTab === "cron"  && <TabCron supabase={supabase} />}
       {activeTab === "ai"    && <TabAiCost supabase={supabase} />}
-      {activeTab === "wa"    && <TabWa supabase={supabase} />}
-      {activeTab === "audit" && <TabAudit supabase={supabase} />}
+      {activeTab === "wa"        && <TabWa supabase={supabase} />}
+      {activeTab === "snapshots" && <TabWaSnapshots supabase={supabase} />}
+      {activeTab === "audit"     && <TabAudit supabase={supabase} />}
     </div>
   );
 }

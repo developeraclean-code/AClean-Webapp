@@ -525,12 +525,62 @@ export default async function handler(req, res) {
           const kasbonParsed = parseKasbonText(message);
           if (kasbonParsed) {
             try {
+              const today = new Date().toISOString().slice(0, 10);
+              // Multi-kasbon path (Santi list pattern)
+              if (kasbonParsed.multi && Array.isArray(kasbonParsed.items)) {
+                const insertedNames = [];
+                const failedNames = [];
+                for (const it of kasbonParsed.items) {
+                  const mRes = await matchKasbonName({ SU: SU_g, SK: SK_g, nameRaw: it.nameRaw });
+                  if (mRes.matched) {
+                    const expBody = {
+                      date: today,
+                      category: "petty_cash",
+                      subcategory: "Kasbon Karyawan",
+                      teknisi_name: mRes.matched.name,
+                      amount: it.amount,
+                      description: `Kasbon ${mRes.matched.name} (via WA Finance grup, dari ${profileName})`,
+                      created_by: "wa_group_kasbon",
+                      validation_status: "PENDING_AI",
+                    };
+                    await fetch(SU_g + "/rest/v1/expenses", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+                      body: JSON.stringify(expBody),
+                    }).catch(e => console.error("[KASBON_EXPENSE_INSERT_MULTI]", e.message));
+                    insertedNames.push(`${mRes.matched.name} (${it.amount.toLocaleString("id-ID")})`);
+                  } else {
+                    failedNames.push(it.nameRaw);
+                  }
+                }
+                if (insertedNames.length > 0) {
+                  parsedType = "kasbon";
+                  parsedOk = true;
+                  parsedAmount = kasbonParsed.total;
+                  expenseSaved = true;
+                  console.log("[KASBON_MULTI_PARSED]", { inserted: insertedNames.length, failed: failedNames });
+                  if (FT_g) {
+                    const failMsg = failedNames.length ? `\n⚠️ Gagal match: ${failedNames.join(", ")}` : "";
+                    fetch("https://api.fonnte.com/send", {
+                      method: "POST",
+                      headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                      body: JSON.stringify({ target: participantNorm, message: `✅ ${insertedNames.length} kasbon tercatat (PENDING AI):\n${insertedNames.map(n => "• " + n).join("\n")}${failMsg}\n\nTunggu approve dari Finance/Owner, lalu Owner finalisasi di app.`, delay: "2", countryCode: "62" })
+                    }).catch(() => {});
+                  }
+                } else if (failedNames.length > 0 && FT_g) {
+                  fetch("https://api.fonnte.com/send", {
+                    method: "POST",
+                    headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                    body: JSON.stringify({ target: participantNorm, message: `⚠️ Kasbon list gagal — semua nama tidak ditemukan di tim aktif: ${failedNames.join(", ")}. Cek ejaan.`, delay: "2", countryCode: "62" })
+                  }).catch(() => {});
+                }
+              } else {
+                // Single kasbon path (legacy)
               const matchRes = await matchKasbonName({ SU: SU_g, SK: SK_g, nameRaw: kasbonParsed.nameRaw });
               if (matchRes.matched) {
                 parsedType = "kasbon";
                 parsedOk = true;
                 parsedAmount = kasbonParsed.amount;
-                const today = new Date().toISOString().slice(0, 10);
                 const expBody = {
                   date: today,
                   category: "petty_cash",
@@ -565,6 +615,7 @@ export default async function handler(req, res) {
                 }).catch(() => {});
                 console.warn("[KASBON_NO_MATCH]", kasbonParsed.nameRaw);
               }
+              } // close single-path else
             } catch (e) {
               console.error("[KASBON_HANDLER]", e.message);
             }
