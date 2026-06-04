@@ -61,7 +61,7 @@ export default function LaporanDetailModal({ ctx }) {
                 <select value={editLaporanForm.editService || selectedLaporan?.service}
                   onChange={e => setEditLaporanForm(f => ({ ...f, editService: e.target.value }))}
                   style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none" }}>
-                  {["Cleaning", "Install", "Repair", "Complain", "Maintenance"].map(s => (
+                  {["Cleaning", "Install", "Repair", "Complain", "Maintenance", "Survey"].map(s => (
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
@@ -100,8 +100,32 @@ export default function LaporanDetailModal({ ctx }) {
               </div>
             )}
 
-            {/* UNIT TABS */}
-            {(editLaporanForm.editUnits || []).length > 1 && (
+            {/* ══ SURVEY FORM — tampil khusus jika service = Survey ══ */}
+            {(editLaporanForm.editService || selectedLaporan?.service) === "Survey" && (
+              <div style={{ background: cs.surface, border: "1px solid " + cs.accent + "44", borderRadius: 10, padding: "14px", display: "grid", gap: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent }}>📋 Laporan Survey</div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Hasil Survey *</div>
+                  <textarea
+                    value={editLaporanForm.hasil_survey || ""}
+                    onChange={e => setEditLaporanForm(f => ({ ...f, hasil_survey: e.target.value }))}
+                    rows={4} placeholder="Deskripsi kondisi, temuan, dan rekomendasi unit AC..."
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Catatan & Rekomendasi</div>
+                  <textarea
+                    value={editLaporanForm.catatan_rekomendasi || ""}
+                    onChange={e => setEditLaporanForm(f => ({ ...f, catatan_rekomendasi: e.target.value }))}
+                    rows={3} placeholder="Rekomendasi tindak lanjut, penawaran, dll..."
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
+                </div>
+              </div>
+            )}
+
+            {/* UNIT TABS — disembunyikan untuk Survey */}
+            {(editLaporanForm.editService || selectedLaporan?.service) === "Survey" ? null :
+            (editLaporanForm.editUnits || []).length > 1 && (
               <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, borderBottom: "1px solid " + cs.border }}>
                 {(editLaporanForm.editUnits || []).map((_, idx) => (
                   <button key={idx} onClick={() => setActiveEditUnitIdx(idx)}
@@ -112,8 +136,9 @@ export default function LaporanDetailModal({ ctx }) {
               </div>
             )}
 
-            {/* PER-UNIT FORM */}
-            {editLaporanForm.editUnits && editLaporanForm.editUnits[activeEditUnitIdx] && (() => {
+            {/* PER-UNIT FORM — disembunyikan untuk Survey */}
+            {(editLaporanForm.editService || selectedLaporan?.service) !== "Survey" &&
+            editLaporanForm.editUnits && editLaporanForm.editUnits[activeEditUnitIdx] && (() => {
               const u = editLaporanForm.editUnits[activeEditUnitIdx];
               const updateU = (field, val) => setEditLaporanForm(f => { const units = [...f.editUnits]; units[activeEditUnitIdx] = { ...u, [field]: val }; return { ...f, editUnits: units }; });
               const toggleUArr = (field, val) => { const arr = u[field] || []; updateU(field, arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val]); };
@@ -454,7 +479,8 @@ export default function LaporanDetailModal({ ctx }) {
                       ...(editLaporanForm.editMatItems || [])
                     ];
 
-                const updatePayload = { status: newStatus, service: newService, catatan_global: editLaporanForm.catatan_global || "", rekomendasi: editLaporanForm.rekomendasi || "", units_json: JSON.stringify(editLaporanForm.editUnits || []), materials_json: JSON.stringify(combinedMats), edit_log: JSON.stringify(allLogs) };
+                const isSurveyEdit = newService === "Survey";
+                const updatePayload = { status: newStatus, service: newService, catatan_global: editLaporanForm.catatan_global || "", rekomendasi: editLaporanForm.rekomendasi || "", units_json: JSON.stringify(editLaporanForm.editUnits || []), materials_json: JSON.stringify(combinedMats), edit_log: JSON.stringify(allLogs), ...(isSurveyEdit && { hasil_survey: editLaporanForm.hasil_survey || "", catatan_rekomendasi: editLaporanForm.catatan_rekomendasi || "" }) };
 
                 // ✨ NEW: Handle photo re-upload option
                 if (editPhotoMode && editLaporanFotos.length > 0) {
