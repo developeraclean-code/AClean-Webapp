@@ -1399,6 +1399,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
               if (!classifyRes.ok) {
                 const errBodyAnthropic = await classifyRes.text().catch(() => "");
                 console.warn("[WA_IMG_ANTHROPIC_ERR]", classifyRes.status, errBodyAnthropic.slice(0, 300));
+                // Sentry capture biar body error lengkap visible di dashboard (Vercel logs UI truncate)
+                try { Sentry.captureMessage(`Anthropic classify ${classifyRes.status}: ${errBodyAnthropic.slice(0, 500)}`, "warning"); } catch (_) {}
               }
               let savedImageUrl = null;
               if (classifyRes.ok) {
