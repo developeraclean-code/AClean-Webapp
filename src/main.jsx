@@ -34,10 +34,12 @@ const CustomerPortalView = lazy(() => import('./views/CustomerPortalView.jsx'))
 const MaintenancePortalView = lazy(() => import('./views/MaintenancePortalView.jsx'))
 
 // Deteksi path token portal — render portal tanpa App shell.
-// Terima dua format: /status/<token> (lama) DAN /<token> (status.aclean.id/<token>).
+// Customer portal: /status/<48-hex> atau /<48-hex>
 const pathMatch = window.location.pathname.match(/^\/(?:status\/)?([a-f0-9]{48})$/)
-// Portal Maintenance B2B: /m/<token> (token format mtk_xxxxx)
-const maintMatch = window.location.pathname.match(/^\/m\/(mtk_[a-z0-9]{40})$/)
+// Maintenance portal B2B — dua format didukung:
+//   Baru: /status/mtk_xxxxx  (status.aclean.id/status/mtk_xxx — sama domain customer portal)
+//   Lama: /m/mtk_xxxxx       (backward compat — QR lama / link yang sudah terlanjur dibagikan)
+const maintMatch = window.location.pathname.match(/^\/(?:status\/|m\/)(mtk_[a-z0-9]{40})$/)
 
 // Jika dibuka di domain customer (status.aclean.id) tanpa token yang valid,
 // redirect ke landing page agar tidak tampil halaman login internal
