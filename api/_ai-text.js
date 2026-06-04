@@ -44,7 +44,7 @@ Aturan confidence:
 }
 
 export async function classifyText({ messageText, groupCfg, sender }) {
-  const apiKey = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+  const apiKey = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
   if (!apiKey) return { error: "no_anthropic_key" };
   if (!messageText || messageText.length < 5) return { error: "text_too_short" };
   if (messageText.length > 1000) messageText = messageText.slice(0, 1000); // truncate untuk hemat token

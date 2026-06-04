@@ -60,7 +60,7 @@ Kalau intent tidak cocok dengan apapun → return intent:"unknown", confidence:"
 //   { imageUrl }                          — Anthropic fetches by URL (fragile kalau Fonnte TTL habis)
 //   { imageBase64, mimeType }             — kirim base64 langsung (tahan TTL Fonnte)
 export async function classifyImage({ imageUrl, imageBase64, mimeType, groupCfg, sender, messageText }) {
-  const apiKey = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+  const apiKey = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
   if (!apiKey) return { error: "no_anthropic_key" };
   if (!imageUrl && !imageBase64) return { error: "no_image" };
 

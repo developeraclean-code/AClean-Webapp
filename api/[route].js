@@ -906,7 +906,7 @@ export default async function handler(req, res) {
         const hasAmount = amountMatch && parseInt(amountMatch[1].replace(/[.,]/g,"")) >= 10000;
 
         if (looksLikePayment && hasAmount) {
-          const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+          const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
           if (AK) {
             try {
               const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -992,7 +992,7 @@ export default async function handler(req, res) {
       // Trigger: caption "Pagi/Pulang [Nama Teknisi]" + media image
       // Flow: download foto → Claude Vision analisa vs checklist → upload R2 → simpan DB → WA warning ke Owner
       if (isToolBagPhoto && mediaUrl && SU && SK) {
-        const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+        const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
         if (AK && toolBagCaption.bagId) {
           // CLAIM LOCK: cegah Fonnte retry paralel proses webhook yg sama
           // dedup_key = hash sederhana dari (sender + caption + mediaUrl). INSERT dengan PRIMARY KEY
@@ -1350,7 +1350,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       // PENTING: skip jika ini tool bag photo (sudah diproses di branch di atas)
       console.log("[WA_IMG_GATE]", JSON.stringify({ sender, isMediaMessage, hasMediaUrl: !!mediaUrl, hasSU: !!SU, hasSK: !!SK, isToolBagPhoto }));
       if (isMediaMessage && mediaUrl && SU && SK && !isToolBagPhoto) {
-        const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+        const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
         console.log("[WA_IMG_ENTRY]", { sender, hasAK: !!AK });
         if (AK) {
           try {
@@ -1672,7 +1672,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const ml = message.toLowerCase().trim();
       let reply = null;
       if (chatbotOn && SU && SK) {
-        const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+        const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
         if (AK) {
           try {
             const [brainRes, histRes] = await Promise.all([
@@ -1812,7 +1812,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       console.log("[ROUTE.JS ara-chat] Provider detection: requested=", provider, "=> using=", prov);
 
       if (prov === "claude" || prov === "anthropic") {
-        const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+        const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
         if (!AK) return res.status(500).json({ error: "LLM_API_KEY belum diset di Vercel Environment Variables" });
         const mdl = model || process.env.LLM_MODEL || "claude-sonnet-4-6";
         const cMsgs = messages.map((m, i) => {
@@ -1912,7 +1912,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       }
 
       if (type === "llm" || type === "claude") {
-        const AK = process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY;
+        const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
         if (!AK) return res.status(200).json({ ok: false, error: "LLM_API_KEY tidak diset" });
         try {
           const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -3159,7 +3159,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       if (jobIds.length > 0) {
         const rptFilter = jobIds.map(id => `job_id.eq.${encodeURIComponent(id)}`).join(",");
         const rptRes = await fetch(
-          `${SU}/rest/v1/service_reports?or=(${rptFilter})&status=eq.VERIFIED&select=id,job_id,date,service,total_units,rekomendasi,catatan_rekomendasi,units&order=date.desc&limit=20`,
+          `${SU}/rest/v1/service_reports?or=(${rptFilter})&status=eq.VERIFIED&select=id,job_id,date,service,total_units,rekomendasi,catatan_rekomendasi,units,foto_urls,teknisi,helper&order=date.desc&limit=20`,
           { headers }
         );
         if (rptRes.ok) reports = await rptRes.json();
