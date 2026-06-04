@@ -533,7 +533,8 @@ function HistoryItem({ order, invoice, report }) {
       );
     } catch { return []; }
   })();
-  const hasReport = report && (rptUnits.length > 0 || report.rekomendasi?.trim() || report.catatan_rekomendasi?.trim());
+  const fotoList = Array.isArray(report?.foto_urls) ? report.foto_urls.filter(Boolean) : [];
+  const hasReport = report && (rptUnits.length > 0 || report.rekomendasi?.trim() || report.catatan_rekomendasi?.trim() || fotoList.length > 0);
 
   return (
     <div style={{ ...s.historyItem, flexDirection: "column", alignItems: "stretch", padding: 0, overflow: "hidden" }}>
@@ -566,7 +567,7 @@ function HistoryItem({ order, invoice, report }) {
           <button onClick={() => setExpanded(e => !e)}
             style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#0369a1", fontSize: 12, fontWeight: 600, padding: "10px 0", width: "100%" }}>
             <span style={{ fontSize: 14 }}>{expanded ? "▲" : "▼"}</span>
-            {expanded ? "Sembunyikan Laporan" : "Lihat Laporan Servis"}
+            {expanded ? "Sembunyikan Detail" : (fotoList.length > 0 ? "Lihat Laporan & Foto Servis" : "Lihat Laporan Servis")}
           </button>
 
           {expanded && (
@@ -619,6 +620,24 @@ function HistoryItem({ order, invoice, report }) {
                   </div>
                 </div>
               ))}
+
+              {/* Galeri Foto Servis */}
+              {fotoList.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#334155", marginBottom: 6 }}>
+                    📷 Foto Servis ({fotoList.length})
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                    {fotoList.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                        style={{ display: "block", aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0", background: "#f1f5f9" }}>
+                        <img src={url} alt={`Foto servis ${i + 1}`} loading="lazy"
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
