@@ -283,8 +283,8 @@ export default function LaporanDetailModal({ ctx }) {
               );
             })()}
 
-            {/* MATERIAL SECTION (non-Install only) */}
-            {selectedLaporan?.service !== "Install" && (() => {
+            {/* MATERIAL SECTION (non-Install, non-Survey only) */}
+            {(editLaporanForm.editService || selectedLaporan?.service) !== "Survey" && selectedLaporan?.service !== "Install" && (() => {
               const matLookup = [...inventoryData.map(r => ({ nama: r.name, satuan: r.unit || "pcs" })), ...priceListData.filter(r => r.service === "Material").map(r => ({ nama: r.type, satuan: r.unit || "pcs" }))].filter((v, i, a) => a.findIndex(x => x.nama === v.nama) === i);
               return (
                 <div>
