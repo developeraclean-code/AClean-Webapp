@@ -59,6 +59,8 @@ const emptyMat  = () => ({ _id: Date.now() + Math.random(), nama: "", qty: 1, ha
 export default function QuotationModal({
   onClose, supabase, customersData, showNotif, setQuotationsData,
   getLocalDate, editData, priceListData,
+  maintenanceClientId,  // opsional — link quotation ke maintenance client
+  maintenancePrefill,   // opsional — { name, phone, address } untuk pre-fill customer
 }) {
   const isEdit = !!editData;
   const [activeTab, setActiveTab] = useState("customer");
@@ -153,7 +155,7 @@ export default function QuotationModal({
   const [unitFilterBrandQuo, setUnitFilterBrandQuo] = useState("");
   const [unitFilterPKQuo, setUnitFilterPKQuo]   = useState("");
 
-  // ── Inisialisasi customer saat edit ──
+  // ── Inisialisasi customer saat edit atau pre-fill dari maintenance ──
   useEffect(() => {
     if (isEdit && editData.customer && customersData) {
       const found = customersData.find(c =>
@@ -167,6 +169,10 @@ export default function QuotationModal({
         setCustMode("baru");
         setNewCust({ name: editData.customer || "", phone: editData.phone || "", area: editData.area || "", alamat: editData.address || "" });
       }
+    } else if (!isEdit && maintenancePrefill) {
+      // Pre-fill dari maintenance client (buat quotation baru untuk perusahaan ini)
+      setCustMode("baru");
+      setNewCust({ name: maintenancePrefill.name || "", phone: maintenancePrefill.phone || "", area: "", alamat: maintenancePrefill.address || "" });
     }
   }, []);
 
@@ -338,6 +344,7 @@ export default function QuotationModal({
         valid_until:     validUntil,
         notes:           notes || null,
         updated_at:      new Date().toISOString(),
+        ...(maintenanceClientId ? { maintenance_client_id: maintenanceClientId } : {}),
       };
 
       if (isEdit) {

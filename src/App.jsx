@@ -6464,7 +6464,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       case "laporantim": return renderLaporanTim();
       case "maintenance": return (
         <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
-          <MaintenanceView currentUser={currentUser} apiFetch={_apiFetch} showNotif={showNotif} showConfirm={showConfirm} />
+          <MaintenanceView
+            currentUser={currentUser} apiFetch={_apiFetch}
+            showNotif={showNotif} showConfirm={showConfirm}
+            quotationsData={quotationsData} setQuotationsData={setQuotationsData}
+            supabase={supabase} customersData={customersData}
+            priceListData={priceListData} getLocalDate={getLocalDate}
+          />
         </Suspense>
       );
       case "project": return (

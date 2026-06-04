@@ -1,9 +1,12 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
+
+const QuotationModal = lazy(() => import("./QuotationModal.jsx"));
 
 // Modul Maintenance (B2B Asset Registry) — internal (Owner/Admin).
 // Semua data via backend /api/maintenance (tabel RLS-restrictive, anon diblok).
-// Props: currentUser, apiFetch, showNotif, showConfirm
+// Props: currentUser, apiFetch, showNotif, showConfirm, quotationsData, setQuotationsData,
+//        supabase, customersData, priceListData, getLocalDate
 
 const PORTAL_BASE = (typeof window !== "undefined" ? window.location.origin : "") + "/m/";
 const AC_TYPES = ["split", "cassette", "standing", "floor"];
@@ -17,7 +20,11 @@ function statusPill(s) {
   return <span style={{ background: c + "22", color: c, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>{l}</span>;
 }
 
-export default function MaintenanceView({ currentUser, apiFetch, showNotif, showConfirm }) {
+export default function MaintenanceView({
+  currentUser, apiFetch, showNotif, showConfirm,
+  quotationsData, setQuotationsData,
+  supabase, customersData, priceListData, getLocalDate,
+}) {
   const isOwner = currentUser?.role === "Owner";
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -139,15 +146,40 @@ export default function MaintenanceView({ currentUser, apiFetch, showNotif, show
       {clientModal !== null && (
         <ClientFormModal client={clientModal} onClose={() => setClientModal(null)} onSave={saveClient} busy={busy} />
       )}
-      <div style={{ display: "flex", gap: 6, margin: "14px 0" }}>
-        {[["unit", `📋 Unit (${units.length})`], ["history", "🕑 History"], ["invoice", "🧾 Invoice B2B"], ["portal", "🔗 Portal & Akses"]].map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
-        ))}
-      </div>
-      {tab === "unit" && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} />}
-      {tab === "history" && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} />}
-      {tab === "invoice" && <InvoiceTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} />}
-      {tab === "portal" && <PortalTab sel={sel} setSel={setSel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} onChanged={loadClients} />}
+      {(() => {
+          const clientQuotations = (quotationsData || []).filter(q =>
+            q.maintenance_client_id === sel.id ||
+            (sel.pic_phone && (q.phone === sel.pic_phone || q.phone === sel.pic_phone?.replace(/^62/, "0")))
+          );
+          return (
+            <>
+              <div style={{ display: "flex", gap: 6, margin: "14px 0", flexWrap: "wrap" }}>
+                {[
+                  ["unit", `📋 Unit (${units.length})`],
+                  ["history", "🕑 History"],
+                  ["quotation", `📄 Quotasi (${clientQuotations.length})`],
+                  ["invoice", "🧾 Invoice B2B"],
+                  ["portal", "🔗 Portal & Akses"],
+                ].map(([k, l]) => (
+                  <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
+                ))}
+              </div>
+              {tab === "unit" && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} />}
+              {tab === "history" && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} />}
+              {tab === "quotation" && (
+                <QuotasiTab
+                  sel={sel} quotations={clientQuotations}
+                  quotationsData={quotationsData} setQuotationsData={setQuotationsData}
+                  supabase={supabase} customersData={customersData}
+                  priceListData={priceListData} getLocalDate={getLocalDate}
+                  showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner}
+                />
+              )}
+              {tab === "invoice" && <InvoiceTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} />}
+              {tab === "portal" && <PortalTab sel={sel} setSel={setSel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} onChanged={loadClients} />}
+            </>
+          );
+        })()}
     </div>
   );
 }
@@ -516,6 +548,119 @@ function ClientFormModal({ client, onClose, onSave, busy }) {
         </button>
       </div>
     </Overlay>
+  );
+}
+
+// ─────────── QUOTASI TAB ───────────
+const QUO_STATUS_COLOR = {
+  DRAFT:     { bg: cs.muted + "22", color: cs.muted },
+  SENT:      { bg: "#3b82f622",     color: "#60a5fa" },
+  APPROVED:  { bg: cs.green + "22", color: cs.green },
+  EXPIRED:   { bg: cs.yellow + "22",color: cs.yellow },
+  CANCELLED: { bg: cs.red + "22",   color: cs.red },
+};
+const QUO_LABEL = { DRAFT: "📝 Draft", SENT: "📤 Terkirim", APPROVED: "✅ Disetujui", EXPIRED: "⏰ Kadaluarsa", CANCELLED: "❌ Dibatalkan" };
+
+function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [editQ, setEditQ] = useState(null);
+  const today = typeof getLocalDate === "function" ? getLocalDate() : new Date().toISOString().slice(0, 10);
+
+  const delQ = async (q) => {
+    const ok = await showConfirm({ title: "Hapus Quotation?", message: `Hapus ${q.id}? Tindakan tidak bisa diurungkan.` });
+    if (!ok) return;
+    const { error } = await supabase.from("quotations").delete().eq("id", q.id);
+    if (error) { showNotif("❌ " + error.message); return; }
+    setQuotationsData(prev => prev.filter(x => x.id !== q.id));
+    showNotif("✅ Quotation dihapus");
+  };
+
+  const prefill = { name: sel.name, phone: sel.pic_phone || "", address: sel.address || "" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
+        <div style={{ color: cs.muted, fontSize: 12 }}>
+          Semua quotation untuk <b style={{ color: cs.text }}>{sel.name}</b> — riwayat penawaran, status, dan konversi ke invoice.
+        </div>
+        <button onClick={() => { setEditQ(null); setShowCreate(true); }} style={{ ...btn, marginLeft: "auto" }}>+ Buat Quotation</button>
+      </div>
+
+      {quotations.length === 0 ? (
+        <div style={{ ...card, textAlign: "center", padding: "36px 16px", color: cs.muted }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>📄</div>
+          Belum ada quotation untuk perusahaan ini.<br />
+          <span style={{ fontSize: 12 }}>Klik "+ Buat Quotation" untuk membuat penawaran baru.</span>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {quotations.map(q => {
+            const isExpired = q.valid_until && q.valid_until < today && !["APPROVED", "CANCELLED"].includes(q.status);
+            const effectiveStatus = isExpired && q.status === "SENT" ? "EXPIRED" : q.status;
+            const sc = QUO_STATUS_COLOR[effectiveStatus] || QUO_STATUS_COLOR.DRAFT;
+            const items = Array.isArray(q.items) ? q.items : [];
+            return (
+              <div key={q.id} style={{ ...card, padding: 0, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", padding: "12px 14px", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <b style={{ color: cs.text, fontFamily: "monospace" }}>{q.id}</b>
+                      <span style={{ background: sc.bg, color: sc.color, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                        {QUO_LABEL[effectiveStatus] || effectiveStatus}
+                      </span>
+                      {q.invoice_id && <span style={{ ...pillGreen, fontSize: 10 }}>Invoice: {q.invoice_id}</span>}
+                    </div>
+                    <div style={{ color: cs.muted, fontSize: 12, marginTop: 4 }}>
+                      {items.length} item · Valid s/d {q.valid_until || "—"} · Dibuat {q.created_at?.slice(0, 10) || "—"}
+                    </div>
+                    {q.notes && <div style={{ color: cs.muted, fontSize: 11, marginTop: 2 }}>📝 {q.notes}</div>}
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>
+                      {fmtRp(q.total)}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, marginTop: 4, justifyContent: "flex-end" }}>
+                      <button onClick={() => { setEditQ(q); setShowCreate(true); }} style={miniBtn}>✏️</button>
+                      {isOwner && <button onClick={() => delQ(q)} style={{ ...miniBtn, color: cs.red }}>🗑</button>}
+                    </div>
+                  </div>
+                </div>
+                {items.length > 0 && (
+                  <div style={{ borderTop: "1px solid " + cs.border, padding: "8px 14px", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {items.map((it, i) => (
+                      <span key={i} style={{ background: cs.surface, border: "1px solid " + cs.border, padding: "2px 8px", borderRadius: 6, fontSize: 11, color: cs.text }}>
+                        {it.description || it.nama || "Item"} {it.qty > 1 ? `×${it.qty}` : ""} · {fmtRp(it.subtotal || it.harga)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showCreate && (
+        <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 500, overflowY: "auto" }} onClick={() => setShowCreate(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ maxWidth: 780, margin: "24px auto", padding: "0 16px 80px" }}>
+            <Suspense fallback={<div style={{ color: cs.muted, padding: 40, textAlign: "center" }}>Memuat form quotation…</div>}>
+              <QuotationModal
+                onClose={() => { setShowCreate(false); setEditQ(null); }}
+                supabase={supabase}
+                customersData={customersData}
+                showNotif={showNotif}
+                setQuotationsData={setQuotationsData}
+                getLocalDate={getLocalDate}
+                priceListData={priceListData}
+                editData={editQ}
+                maintenanceClientId={sel.id}
+                maintenancePrefill={editQ ? undefined : prefill}
+              />
+            </Suspense>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
