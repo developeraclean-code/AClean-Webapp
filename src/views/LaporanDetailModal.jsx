@@ -100,24 +100,26 @@ export default function LaporanDetailModal({ ctx }) {
               </div>
             )}
 
-            {/* ══ SURVEY FORM — tampil khusus jika service = Survey ══ */}
+            {/* ══ SURVEY FORM — identik dengan form teknisi/helper ══ */}
             {(editLaporanForm.editService || selectedLaporan?.service) === "Survey" && (
-              <div style={{ background: cs.surface, border: "1px solid " + cs.accent + "44", borderRadius: 10, padding: "14px", display: "grid", gap: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent }}>📋 Laporan Survey</div>
+              <div style={{ display: "grid", gap: 14 }}>
+                <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: cs.muted }}>
+                  📋 Survey — tidak ada invoice. Isi hasil survey dan catatan/rekomendasi untuk Owner/Admin.
+                </div>
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Hasil Survey *</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 6 }}>Hasil Survey *</div>
                   <textarea
                     value={editLaporanForm.hasil_survey || ""}
                     onChange={e => setEditLaporanForm(f => ({ ...f, hasil_survey: e.target.value }))}
-                    rows={4} placeholder="Deskripsi kondisi, temuan, dan rekomendasi unit AC..."
+                    rows={4} placeholder="Kondisi AC, temuan, kendala, dll..."
                     style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Catatan & Rekomendasi</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 6 }}>Catatan / Rekomendasi</div>
                   <textarea
                     value={editLaporanForm.catatan_rekomendasi || ""}
                     onChange={e => setEditLaporanForm(f => ({ ...f, catatan_rekomendasi: e.target.value }))}
-                    rows={3} placeholder="Rekomendasi tindak lanjut, penawaran, dll..."
+                    rows={3} placeholder="Rekomendasi tindak lanjut, jenis pekerjaan yang disarankan, dll..."
                     style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
                 </div>
               </div>
