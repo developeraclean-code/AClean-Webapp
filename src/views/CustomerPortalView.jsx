@@ -42,6 +42,19 @@ function fmtDateShort(d) {
   } catch { return d; }
 }
 
+// Foto R2 disajikan via proxy /api/foto (public access r2.dev mungkin nonaktif).
+// Konsisten dengan fotoSrc() di App.jsx.
+function fotoSrc(url) {
+  if (!url) return "";
+  if (url.startsWith("/api/foto")) return url;
+  if (url.startsWith("laporan/")) return `${API_BASE}/foto?key=` + encodeURIComponent(url);
+  const m = url.match(/\.r2\.dev\/(.+)$/);
+  if (m) return `${API_BASE}/foto?key=` + encodeURIComponent(m[1]);
+  const m2 = url.match(/cloudflarestorage\.com\/[^/]+\/(.+)$/);
+  if (m2) return `${API_BASE}/foto?key=` + encodeURIComponent(m2[1]);
+  return url;
+}
+
 const SERVICE_ICON = (service = "") => {
   const s = service.toLowerCase();
   if (s.includes("pasang") || s.includes("install")) return "🏗️";
@@ -629,11 +642,11 @@ function HistoryItem({ order, invoice, report }) {
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
                     {fotoList.map((url, i) => (
-                      <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                        style={{ display: "block", aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0", background: "#f1f5f9" }}>
-                        <img src={url} alt={`Foto servis ${i + 1}`} loading="lazy"
-                          style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      </a>
+                      <div key={i}
+                        style={{ aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0", background: "#f1f5f9" }}>
+                        <img src={fotoSrc(url)} alt={`Foto servis ${i + 1}`} loading="lazy" draggable={false}
+                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", pointerEvents: "none", userSelect: "none" }} />
+                      </div>
                     ))}
                   </div>
                 </div>
