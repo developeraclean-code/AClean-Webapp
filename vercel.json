@@ -120,6 +120,10 @@
     {
       "path": "/api/cron-reminder?task=r2-cleanup-90d",
       "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/cron-reminder?task=wa-snapshot",
+      "schedule": "0 13 * * *"
     }
   ],
   "functions": {

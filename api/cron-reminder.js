@@ -15,6 +15,7 @@ import { timingSafeEqual, createHmac, createHash } from "crypto";
 import { initSentry, setCronContext } from "./sentry-init.js";
 import { runWithCronLogging, logStructured } from "./_logger.js";
 import { verifyAppToken } from "./_auth.js";
+import { uploadBufferToR2, hasR2Config } from "./_r2-upload.js";
 
 // Initialize Sentry
 initSentry();
@@ -392,6 +393,161 @@ async function taskR2Cleanup90d() {
 
   await log("R2_CLEANUP_90D", `swept=${result.swept} purged=${result.purged} errors=${result.errors}`, "SUCCESS");
   return result;
+}
+
+// ══════════════════════════════════════════════════
+// TASK: WA Daily Snapshot — Phase 2 review window
+// Dump seluruh percakapan 3 grup ke R2 JSON tiap hari jam 20:00 WIB
+// Window awal: 2026-06-04 → 2026-06-11 (review pattern utk tuning rule)
+// ══════════════════════════════════════════════════
+async function taskWaSnapshot() {
+  if (!hasR2Config()) return { skipped: true, reason: "no_r2_config" };
+  // Tanggal target = hari ini WIB (cron jalan 20:00 WIB, ambil snapshot data hari ini)
+  const nowUtcMs = Date.now();
+  const wibMs = nowUtcMs + 7 * 3600_000;
+  const dateStr = new Date(wibMs).toISOString().slice(0, 10);
+  // Boundary WIB → UTC ISO untuk query Postgres
+  const startWibUtcIso = new Date(Date.parse(dateStr + "T00:00:00+07:00")).toISOString();
+  const endWibUtcIso = new Date(Date.parse(dateStr + "T23:59:59.999+07:00")).toISOString();
+
+  // 1) Ambil monitored groups
+  const { data: groups } = await sb.from("wa_monitored_groups")
+    .select("group_id,group_name,enabled,capture_all,ai_expense_enabled,ai_material_enabled,ai_payment_enabled,ai_selesai_enabled,ai_quotation_enabled,ai_kasbon_enabled");
+  const enabledGroups = (groups || []).filter(g => g.enabled);
+
+  // 2) Per-group: ambil semua wa_group_logs hari ini
+  const perGroup = [];
+  let totalMessages = 0;
+  let totalWithImage = 0;
+  for (const g of enabledGroups) {
+    const { data: logs } = await sb.from("wa_group_logs")
+      .select("id,sender_phone,sender_name,type,content,parsed_ok,amount,job_id,image_url,r2_image_url,metadata,forwarded,created_at")
+      .eq("group_id", g.group_id)
+      .gte("created_at", startWibUtcIso)
+      .lte("created_at", endWibUtcIso)
+      .order("created_at", { ascending: true });
+    const rows = logs || [];
+    const withImg = rows.filter(r => !!r.image_url).length;
+    totalMessages += rows.length;
+    totalWithImage += withImg;
+    perGroup.push({
+      group_id: g.group_id,
+      group_name: g.group_name,
+      toggles: {
+        capture_all: g.capture_all,
+        ai_expense: g.ai_expense_enabled,
+        ai_material: g.ai_material_enabled,
+        ai_payment: g.ai_payment_enabled,
+        ai_selesai: g.ai_selesai_enabled,
+        ai_quotation: g.ai_quotation_enabled,
+        ai_kasbon: g.ai_kasbon_enabled,
+      },
+      stats: { total: rows.length, with_image: withImg, parsed_ok: rows.filter(r => r.parsed_ok).length },
+      messages: rows.map(r => ({
+        id: r.id,
+        wib: new Date(new Date(r.created_at).getTime() + 7 * 3600_000).toISOString().slice(11, 19),
+        sender_phone: r.sender_phone,
+        sender_name: r.sender_name,
+        type: r.type,
+        content: r.content,
+        parsed_ok: r.parsed_ok,
+        amount: r.amount,
+        job_id: r.job_id,
+        has_image: !!r.image_url,
+        r2_image_url: r.r2_image_url,
+        md5: r.metadata?.img_md5 || null,
+        dup_of_log_id: r.metadata?.dup_of_log_id || null,
+        forwarded: r.forwarded,
+      })),
+    });
+  }
+
+  // 3) AI extractions hari ini (cross-grup)
+  const { data: aiRows } = await sb.from("ai_extractions")
+    .select("id,group_id,sender_phone,sender_name,intent,confidence,status,extracted,notes,model,cost_usd,linked_table,linked_id,created_at")
+    .gte("created_at", startWibUtcIso)
+    .lte("created_at", endWibUtcIso)
+    .order("created_at", { ascending: true });
+  const aiArr = (aiRows || []).map(r => ({
+    id: r.id, group_id: r.group_id, sender_name: r.sender_name,
+    intent: r.intent, confidence: r.confidence, status: r.status,
+    extracted: r.extracted, notes: r.notes, model: r.model, cost_usd: r.cost_usd,
+    linked_table: r.linked_table, linked_id: r.linked_id,
+    wib: new Date(new Date(r.created_at).getTime() + 7 * 3600_000).toISOString().slice(11, 19),
+  }));
+
+  // 4) Expenses dari WA grup hari ini
+  const { data: expRows } = await sb.from("expenses")
+    .select("id,date,subcategory,teknisi_name,amount,description,validation_status,created_by,created_at")
+    .eq("date", dateStr)
+    .in("created_by", ["wa_group", "wa_group_kasbon", "wa_group_ai"])
+    .order("created_at", { ascending: true });
+  const expArr = (expRows || []).map(r => ({
+    id: r.id, subcategory: r.subcategory, teknisi_name: r.teknisi_name, amount: r.amount,
+    description: r.description, validation_status: r.validation_status, created_by: r.created_by,
+    wib: new Date(new Date(r.created_at).getTime() + 7 * 3600_000).toISOString().slice(11, 19),
+  }));
+
+  // 5) Payment suggestions hari ini
+  const { data: paySuggRows } = await sb.from("payment_suggestions")
+    .select("id,phone,sender_name,amount,bank,transfer_date,invoice_id,status,source,created_at")
+    .gte("created_at", startWibUtcIso)
+    .lte("created_at", endWibUtcIso)
+    .order("created_at", { ascending: true });
+  const paySuggArr = (paySuggRows || []).map(r => ({
+    id: r.id, sender_name: r.sender_name, amount: r.amount, bank: r.bank,
+    invoice_id: r.invoice_id, status: r.status, source: r.source,
+    wib: new Date(new Date(r.created_at).getTime() + 7 * 3600_000).toISOString().slice(11, 19),
+  }));
+
+  const snapshot = {
+    snapshot_date: dateStr,
+    generated_at_utc: new Date().toISOString(),
+    generated_at_wib: new Date(wibMs).toISOString().slice(0, 19) + "+07:00",
+    summary: {
+      groups: enabledGroups.length,
+      total_messages: totalMessages,
+      total_with_image: totalWithImage,
+      total_ai_classified: aiArr.length,
+      total_expenses_inserted: expArr.length,
+      total_payment_suggestions: paySuggArr.length,
+    },
+    groups: perGroup,
+    ai_extractions: aiArr,
+    expenses_from_wa: expArr,
+    payment_suggestions: paySuggArr,
+  };
+
+  // 6) Upload ke R2
+  const json = JSON.stringify(snapshot, null, 2);
+  const buf = Buffer.from(json, "utf8");
+  const r2Key = `wa-snapshots/${dateStr}.json`;
+  const up = await uploadBufferToR2({ buffer: buf, key: r2Key, mimeType: "application/json" });
+  if (!up.ok) {
+    await Sentry.captureMessage(`taskWaSnapshot R2 upload failed: ${up.err}`, "warning");
+    return { ok: false, error: "r2_upload_failed", detail: up.err };
+  }
+
+  // 7) Save manifest di wa_daily_snapshots (UPSERT)
+  await sb.from("wa_daily_snapshots").upsert({
+    snapshot_date: dateStr,
+    r2_key: r2Key,
+    r2_url: up.url,
+    groups_count: enabledGroups.length,
+    total_messages: totalMessages,
+    total_with_image: totalWithImage,
+    total_ai_classified: aiArr.length,
+    total_expenses_inserted: expArr.length,
+    size_bytes: buf.length,
+    notes: `Auto-snapshot phase 2 review window`,
+  }, { onConflict: "snapshot_date" });
+
+  return {
+    ok: true,
+    date: dateStr,
+    r2_url: up.url,
+    summary: snapshot.summary,
+  };
 }
 
 // ══════════════════════════════════════════════════
@@ -1428,6 +1584,7 @@ export default async function handler(req, res) {
       "log-cleanup":      taskLogCleanup,
       "auto-return-brought": taskAutoReturnBrought,
       "r2-cleanup-90d":   taskR2Cleanup90d,
+      "wa-snapshot":      taskWaSnapshot,
       "reminder":         taskReminder,
     };
     const handler = taskMap[task] || taskReminder;
