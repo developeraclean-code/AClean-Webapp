@@ -6470,6 +6470,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             quotationsData={quotationsData} setQuotationsData={setQuotationsData}
             supabase={supabase} customersData={customersData}
             priceListData={priceListData} getLocalDate={getLocalDate}
+            appSettings={appSettings} sendWAFn={sendWA}
+            uploadQuotationPDFFn={uploadQuotationPDFForWA}
           />
         </Suspense>
       );

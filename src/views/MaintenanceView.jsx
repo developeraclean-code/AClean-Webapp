@@ -2,6 +2,51 @@ import { useEffect, useState, useCallback, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
 
 const QuotationModal = lazy(() => import("./QuotationModal.jsx"));
+// Lazy load PDF — sama dengan pola InvoiceView agar tidak tambah bundle size
+const QuotationPDFModule = lazy(() =>
+  Promise.all([
+    import("./QuotationModal.jsx"), // dipanasi sebelumnya
+    import("@react-pdf/renderer"),
+    import("../components/QuotationPDF.jsx"),
+  ]).then(([, renderer, pdf]) => ({
+    default: ({ quo, appSettings, logoUrl, onClose }) => {
+      const { BlobProvider } = renderer;
+      const QuotationPDF = pdf.default;
+      const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
+      return (
+        <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: cs.surface, borderRadius: 16, padding: 16, width: "100%", maxWidth: 540 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>👁 Preview PDF — {quo.id}</div>
+              <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+            </div>
+            <BlobProvider document={<QuotationPDF quo={quo} appSettings={appSettings || {}} logoUrl={logoUrl} />}>
+              {({ url, loading, error }) => {
+                if (loading) return <div style={{ textAlign: "center", padding: 24, color: cs.muted }}>Membuat PDF…</div>;
+                if (error) return <div style={{ textAlign: "center", padding: 24, color: cs.red }}>Gagal buat PDF</div>;
+                return (
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <a href={url} target="_blank" rel="noreferrer"
+                      style={{ flex: 1, padding: "12px 0", borderRadius: 10, background: cs.accent, color: "#04121f", fontWeight: 700, fontSize: 13, textAlign: "center", textDecoration: "none" }}>
+                      🔗 Buka PDF
+                    </a>
+                    <a href={url} download={`${quo.id}.pdf`}
+                      style={{ flex: 1, padding: "12px 0", borderRadius: 10, background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, fontWeight: 700, fontSize: 13, textAlign: "center", textDecoration: "none" }}>
+                      ⬇️ Download
+                    </a>
+                  </div>
+                );
+              }}
+            </BlobProvider>
+            <div style={{ marginTop: 10, padding: "8px 12px", background: cs.card, borderRadius: 8, fontSize: 12, color: cs.muted }}>
+              Customer: <strong style={{ color: cs.text }}>{quo.customer}</strong> · Total: <strong style={{ color: cs.accent }}>{fmt(quo.total)}</strong>
+            </div>
+          </div>
+        </div>
+      );
+    }
+  }))
+);
 
 // Modul Maintenance (B2B Asset Registry) — internal (Owner/Admin).
 // Semua data via backend /api/maintenance (tabel RLS-restrictive, anon diblok).
@@ -24,6 +69,7 @@ export default function MaintenanceView({
   currentUser, apiFetch, showNotif, showConfirm,
   quotationsData, setQuotationsData,
   supabase, customersData, priceListData, getLocalDate,
+  appSettings, sendWAFn, uploadQuotationPDFFn,
 }) {
   const isOwner = currentUser?.role === "Owner";
   const [clients, setClients] = useState([]);
@@ -173,6 +219,8 @@ export default function MaintenanceView({
                   supabase={supabase} customersData={customersData}
                   priceListData={priceListData} getLocalDate={getLocalDate}
                   showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner}
+                  appSettings={appSettings} sendWAFn={sendWAFn}
+                  uploadQuotationPDFFn={uploadQuotationPDFFn}
                 />
               )}
               {tab === "invoice" && <InvoiceTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} />}
@@ -561,10 +609,25 @@ const QUO_STATUS_COLOR = {
 };
 const QUO_LABEL = { DRAFT: "📝 Draft", SENT: "📤 Terkirim", APPROVED: "✅ Disetujui", EXPIRED: "⏰ Kadaluarsa", CANCELLED: "❌ Dibatalkan" };
 
-function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner }) {
+function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner, appSettings, sendWAFn, uploadQuotationPDFFn }) {
   const [showCreate, setShowCreate] = useState(false);
   const [editQ, setEditQ] = useState(null);
+  const [previewQ, setPreviewQ] = useState(null);
+  const [sendingId, setSendingId] = useState(null);
+  const [logoUrl, setLogoUrl] = useState(null);
   const today = typeof getLocalDate === "function" ? getLocalDate() : new Date().toISOString().slice(0, 10);
+
+  // Load logo untuk PDF (sama dengan pola InvoiceView)
+  useEffect(() => {
+    let alive = true;
+    fetch("/aclean-logo.png").then(r => r.ok ? r.blob() : null).then(blob => {
+      if (!blob || !alive) return;
+      const reader = new FileReader();
+      reader.onload = () => { if (alive) setLogoUrl(reader.result); };
+      reader.readAsDataURL(blob);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   const delQ = async (q) => {
     const ok = await showConfirm({ title: "Hapus Quotation?", message: `Hapus ${q.id}? Tindakan tidak bisa diurungkan.` });
@@ -573,6 +636,30 @@ function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, supaba
     if (error) { showNotif("❌ " + error.message); return; }
     setQuotationsData(prev => prev.filter(x => x.id !== q.id));
     showNotif("✅ Quotation dihapus");
+  };
+
+  const markSent = async (q) => {
+    const { error } = await supabase.from("quotations").update({ status: "SENT", updated_at: new Date().toISOString() }).eq("id", q.id);
+    if (error) { showNotif("❌ " + error.message); return; }
+    setQuotationsData(prev => prev.map(x => x.id === q.id ? { ...x, status: "SENT" } : x));
+    showNotif("✅ Status berubah ke Terkirim");
+  };
+
+  const handleSendWA = async (q) => {
+    if (!q.phone) { showNotif("❌ Nomor HP PIC belum diisi di perusahaan"); return; }
+    setSendingId(q.id);
+    try {
+      let pdfAttachment = null;
+      if (uploadQuotationPDFFn) {
+        try { pdfAttachment = await uploadQuotationPDFFn(q); } catch (_) {}
+      }
+      const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
+      const msg = `Halo ${q.customer},\n\nBerikut penawaran dari AClean:\n📄 ${q.id}\nTotal: ${fmt(q.total)}\nBerlaku s/d: ${q.valid_until || "-"}\n\nTerima kasih 🙏`;
+      await sendWAFn?.(q.phone, msg, pdfAttachment ? { url: pdfAttachment.url, filename: pdfAttachment.filename } : {});
+      if (q.status === "DRAFT") await markSent(q);
+      showNotif("📱 WA terkirim" + (pdfAttachment ? " + PDF terlampir" : ""));
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setSendingId(null); }
   };
 
   const prefill = { name: sel.name, phone: sel.pic_phone || "", address: sel.address || "" };
@@ -619,9 +706,19 @@ function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, supaba
                     <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>
                       {fmtRp(q.total)}
                     </div>
-                    <div style={{ display: "flex", gap: 6, marginTop: 4, justifyContent: "flex-end" }}>
-                      <button onClick={() => { setEditQ(q); setShowCreate(true); }} style={miniBtn}>✏️</button>
-                      {isOwner && <button onClick={() => delQ(q)} style={{ ...miniBtn, color: cs.red }}>🗑</button>}
+                    <div style={{ display: "flex", gap: 5, marginTop: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                      <button onClick={() => setPreviewQ(q)} style={{ ...miniBtn, color: cs.accent }} title="Preview PDF">👁 Preview</button>
+                      {sendWAFn && q.phone && (
+                        <button onClick={() => handleSendWA(q)} disabled={sendingId === q.id}
+                          style={{ ...miniBtn, color: "#25D366", borderColor: "#25D36655" }} title="Kirim via WhatsApp">
+                          {sendingId === q.id ? "…" : "📱 Kirim WA"}
+                        </button>
+                      )}
+                      {(q.status === "DRAFT") && (
+                        <button onClick={() => markSent(q)} style={{ ...miniBtn, color: "#60a5fa" }} title="Tandai sudah dikirim">📤 Sent</button>
+                      )}
+                      <button onClick={() => { setEditQ(q); setShowCreate(true); }} style={miniBtn} title="Edit">✏️</button>
+                      {isOwner && <button onClick={() => delQ(q)} style={{ ...miniBtn, color: cs.red }} title="Hapus">🗑</button>}
                     </div>
                   </div>
                 </div>
@@ -659,6 +756,17 @@ function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, supaba
             </Suspense>
           </div>
         </div>
+      )}
+
+      {/* PDF Preview Modal */}
+      {previewQ && (
+        <Suspense fallback={
+          <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ color: cs.muted }}>Memuat PDF…</div>
+          </div>
+        }>
+          <QuotationPDFModule quo={previewQ} appSettings={appSettings || {}} logoUrl={logoUrl} onClose={() => setPreviewQ(null)} />
+        </Suspense>
       )}
     </div>
   );
