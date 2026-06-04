@@ -527,9 +527,11 @@ function selectStyle() {
 // ─────────────────────────────────────────────
 // Tab: WA Snapshots (Phase 2 review window 4-11 Juni)
 // ─────────────────────────────────────────────
-function TabWaSnapshots({ supabase }) {
+function TabWaSnapshots({ supabase, apiHeaders }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [busyDate, setBusyDate] = useState(null);
+  const [lastResult, setLastResult] = useState(null);
   const load = async () => {
     setLoading(true);
     try {
@@ -539,6 +541,22 @@ function TabWaSnapshots({ supabase }) {
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+
+  const runBackfill = async (date) => {
+    if (!apiHeaders) { alert("Auth header tidak tersedia."); return; }
+    if (!confirm(`Backfill semua pesan ${date} ke Pending AI?\n\nAkan re-run parser kasbon+biaya+approval. Idempotent (skip yang sudah ada).`)) return;
+    setBusyDate(date);
+    setLastResult(null);
+    try {
+      const h = await apiHeaders();
+      const resp = await fetch(`/api/cron-reminder?task=wa-backfill&from=${date}&to=${date}`, { headers: h });
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json.error || "Backfill gagal");
+      setLastResult({ date, ...json });
+    } catch (e) {
+      alert("Backfill gagal: " + e.message);
+    } finally { setBusyDate(null); }
+  };
 
   const fmtSize = (b) => b ? (b/1024).toFixed(1) + " KB" : "—";
   return (
@@ -568,15 +586,32 @@ function TabWaSnapshots({ supabase }) {
               </div>
               <div style={{ fontSize: 10, color: cs.muted, marginTop: 4, fontFamily: "monospace" }}>{r.r2_key}</div>
             </div>
-            <a href={r.r2_url} target="_blank" rel="noreferrer"
-              style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "55", color: cs.accent, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>
-              ⬇️ Download JSON
-            </a>
+            <div style={{ display: "flex", gap: 6, flexDirection: "column", alignItems: "flex-end" }}>
+              <a href={r.r2_url} target="_blank" rel="noreferrer"
+                style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "55", color: cs.accent, borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>
+                ⬇️ Download JSON
+              </a>
+              <button onClick={() => runBackfill(r.snapshot_date)} disabled={busyDate === r.snapshot_date}
+                style={{ background: "#f59e0b22", border: "1px solid #f59e0b55", color: "#f59e0b", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: busyDate ? "wait" : "pointer", whiteSpace: "nowrap" }}>
+                {busyDate === r.snapshot_date ? "⏳ Running..." : "🔁 Backfill ke Pending AI"}
+              </button>
+            </div>
           </div>
         ))}
       </div>
+      {lastResult && (
+        <div style={{ padding: 12, background: "#10b98122", border: "1px solid #10b98155", borderRadius: 8, fontSize: 12, color: cs.text }}>
+          ✅ <b>Backfill {lastResult.date} selesai.</b><br/>
+          Logs di-scan: <b>{lastResult.counters?.logs_scanned}</b> ·
+          Kasbon: <b>{(lastResult.counters?.kasbon_single_inserted || 0) + (lastResult.counters?.kasbon_multi_inserted || 0)}</b> ·
+          Biaya: <b>{lastResult.counters?.biaya_inserted}</b> ·
+          Approval di-ACK: <b>{lastResult.counters?.approval_acked}</b> ·
+          Dup skipped: <b>{lastResult.counters?.skipped_dup}</b> ·
+          No-match: <b>{lastResult.counters?.skipped_no_match}</b>
+        </div>
+      )}
       <div style={{ fontSize: 11, color: cs.muted, padding: 12, background: "#f59e0b22", border: "1px solid #f59e0b55", borderRadius: 8 }}>
-        ⏰ <b>Reminder:</b> setelah 12 Juni, hapus snapshot lama dari R2 (key <code>wa-snapshots/*</code>) + table <code>wa_daily_snapshots</code> agar storage tidak numpuk. Cron dapat di-disable via <code>vercel.json</code>.
+        ⏰ <b>Auto-cleanup aktif:</b> manifest snapshot > 60 hari dihapus otomatis tiap 03:00 UTC (10:00 WIB) via cron <code>snapshot-cleanup</code>. R2 objek ikut di-purge cron <code>r2-cleanup-90d</code>.
       </div>
     </div>
   );
@@ -638,7 +673,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
       {activeTab === "cron"  && <TabCron supabase={supabase} />}
       {activeTab === "ai"    && <TabAiCost supabase={supabase} />}
       {activeTab === "wa"        && <TabWa supabase={supabase} />}
-      {activeTab === "snapshots" && <TabWaSnapshots supabase={supabase} />}
+      {activeTab === "snapshots" && <TabWaSnapshots supabase={supabase} apiHeaders={_apiHeaders} />}
       {activeTab === "audit"     && <TabAudit supabase={supabase} />}
     </div>
   );

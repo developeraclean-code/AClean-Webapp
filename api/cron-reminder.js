@@ -16,6 +16,7 @@ import { initSentry, setCronContext } from "./sentry-init.js";
 import { runWithCronLogging, logStructured } from "./_logger.js";
 import { verifyAppToken } from "./_auth.js";
 import { uploadBufferToR2, hasR2Config } from "./_r2-upload.js";
+import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage } from "./_kasbon-parser.js";
 
 // Initialize Sentry
 initSentry();
@@ -548,6 +549,193 @@ async function taskWaSnapshot() {
     r2_url: up.url,
     summary: snapshot.summary,
   };
+}
+
+// ══════════════════════════════════════════════════
+// TASK: WA Backfill — re-parse wa_group_logs ke expenses Pending AI
+// Re-run text-pattern biaya + kasbon parser + approval handler untuk
+// pesan yang ketinggalan (e.g. deploy baru, parser improvement).
+// AI Vision TIDAK di-re-run (mahal). Idempotent via dedup expense
+// (date+teknisi+amount+created_by).
+//
+// Query: ?task=wa-backfill&from=YYYY-MM-DD&to=YYYY-MM-DD
+// Default: hari ini (WIB) saja
+// ══════════════════════════════════════════════════
+async function taskWaBackfill(opts = {}) {
+  const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const SK = process.env.SUPABASE_SERVICE_KEY;
+  if (!SU || !SK) return { skipped: true, reason: "no_supabase_env" };
+
+  const todayWib = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+  const fromDate = opts.from || todayWib;
+  const toDate = opts.to || fromDate;
+  const startIso = new Date(Date.parse(fromDate + "T00:00:00+07:00")).toISOString();
+  const endIso = new Date(Date.parse(toDate + "T23:59:59.999+07:00")).toISOString();
+
+  // Cek dup expense — sama date+teknisi_name+amount+created_by berarti sudah ada
+  const expenseAlreadyExists = async ({ date, teknisi_name, amount, created_by }) => {
+    const url = SU + "/rest/v1/expenses?select=id"
+      + "&date=eq." + date
+      + "&teknisi_name=eq." + encodeURIComponent(teknisi_name || "")
+      + "&amount=eq." + amount
+      + "&created_by=eq." + created_by
+      + "&limit=1";
+    const r = await fetch(url, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+    if (!r.ok) return false;
+    const rows = await r.json();
+    return Array.isArray(rows) && rows.length > 0;
+  };
+
+  // Ambil grup config (utk filter ai_kasbon_enabled per grup)
+  const { data: groupsCfg } = await sb.from("wa_monitored_groups")
+    .select("group_id,group_name,ai_kasbon_enabled,ai_expense_enabled");
+  const cfgMap = Object.fromEntries((groupsCfg || []).map(g => [g.group_id, g]));
+
+  // Ambil semua logs dalam range
+  const { data: logs } = await sb.from("wa_group_logs")
+    .select("id,sender_phone,sender_name,group_id,group_name,type,content,parsed_ok,amount,created_at,metadata")
+    .gte("created_at", startIso).lte("created_at", endIso)
+    .order("created_at", { ascending: true })
+    .limit(2000);
+
+  const counters = {
+    logs_scanned: (logs || []).length,
+    kasbon_single_inserted: 0,
+    kasbon_multi_inserted: 0,
+    biaya_inserted: 0,
+    approval_acked: 0,
+    skipped_dup: 0,
+    skipped_no_match: 0,
+  };
+
+  for (const lg of (logs || [])) {
+    const cfg = cfgMap[lg.group_id];
+    if (!cfg) continue;
+    const date = new Date(new Date(lg.created_at).getTime() + 7 * 3600_000).toISOString().slice(0, 10);
+    const profileName = lg.sender_name || lg.sender_phone;
+    const text = lg.content || "";
+
+    // ── KASBON parser ──
+    if (cfg.ai_kasbon_enabled) {
+      const k = parseKasbonText(text);
+      if (k) {
+        if (k.multi && Array.isArray(k.items)) {
+          for (const it of k.items) {
+            const mr = await matchKasbonName({ SU, SK, nameRaw: it.nameRaw });
+            if (!mr.matched) { counters.skipped_no_match++; continue; }
+            const dup = await expenseAlreadyExists({ date, teknisi_name: mr.matched.name, amount: it.amount, created_by: "wa_group_kasbon" });
+            if (dup) { counters.skipped_dup++; continue; }
+            await fetch(SU + "/rest/v1/expenses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+              body: JSON.stringify({
+                date, category: "petty_cash", subcategory: "Kasbon Karyawan",
+                teknisi_name: mr.matched.name, amount: it.amount,
+                description: `Kasbon ${mr.matched.name} (via WA Finance grup, dari ${profileName}) [BACKFILL]`,
+                created_by: "wa_group_kasbon", validation_status: "PENDING_AI",
+              }),
+            }).catch(() => {});
+            counters.kasbon_multi_inserted++;
+          }
+        } else if (k.nameRaw) {
+          const mr = await matchKasbonName({ SU, SK, nameRaw: k.nameRaw });
+          if (!mr.matched) { counters.skipped_no_match++; continue; }
+          const dup = await expenseAlreadyExists({ date, teknisi_name: mr.matched.name, amount: k.amount, created_by: "wa_group_kasbon" });
+          if (dup) { counters.skipped_dup++; continue; }
+          await fetch(SU + "/rest/v1/expenses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+            body: JSON.stringify({
+              date, category: "petty_cash", subcategory: "Kasbon Karyawan",
+              teknisi_name: mr.matched.name, amount: k.amount,
+              description: `Kasbon ${mr.matched.name} (via WA Finance grup, dari ${profileName}) [BACKFILL]`,
+              created_by: "wa_group_kasbon", validation_status: "PENDING_AI",
+            }),
+          }).catch(() => {});
+          counters.kasbon_single_inserted++;
+        }
+      }
+    }
+
+    // ── KASBON APPROVAL (annotate) ──
+    if (cfg.ai_kasbon_enabled && isKasbonApprovalMessage(text)) {
+      const APPROVERS = ["6281398989837", "6281289898937"];
+      if (APPROVERS.includes(lg.sender_phone)) {
+        const qUrl = SU + "/rest/v1/expenses?select=id,description"
+          + "&validation_status=eq.PENDING_AI&subcategory=eq." + encodeURIComponent("Kasbon Karyawan")
+          + "&date=eq." + date + "&created_by=eq.wa_group_kasbon"
+          + "&description=not.ilike." + encodeURIComponent("%[ACK by%");
+        const qRes = await fetch(qUrl, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+        const pendings = qRes.ok ? await qRes.json() : [];
+        if (Array.isArray(pendings) && pendings.length > 0) {
+          const hh = new Date(new Date(lg.created_at).getTime() + 7 * 3600_000).toISOString().slice(11, 16);
+          const ackTag = ` [ACK by ${lg.sender_phone} at ${hh}]`;
+          await Promise.all(pendings.map(p =>
+            fetch(SU + "/rest/v1/expenses?id=eq." + p.id, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+              body: JSON.stringify({ description: (p.description || "") + ackTag }),
+            }).catch(() => {})
+          ));
+          counters.approval_acked += pendings.length;
+        }
+      }
+    }
+
+    // ── BIAYA text-pattern (bensin/parkir/etc) ──
+    if (cfg.ai_expense_enabled) {
+      const biayaMatch = text.match(/^(bensin|makan|parkir|tol|belanja|beli|transport|bbm|solar|pertamax|consumable)[\s:]+(.+)/i);
+      if (biayaMatch) {
+        let nominalStr = biayaMatch[2]
+          .replace(/(\d+)\s*(jt|juta)/gi, (_, n) => String(parseInt(n) * 1000000))
+          .replace(/(\d+)\s*(rb|ribu|k)/gi, (_, n) => String(parseInt(n) * 1000));
+        const nominalMatch = nominalStr.match(/[\d]{4,}/);
+        if (nominalMatch) {
+          const amt = parseInt(nominalMatch[0]);
+          const k = biayaMatch[1].toLowerCase();
+          const subcat = ["bensin","bbm","pertamax","solar"].includes(k) ? "Bensin Motor"
+            : k === "parkir" ? "Parkir" : "Lain-lain";
+          const dup = await expenseAlreadyExists({ date, teknisi_name: profileName, amount: amt, created_by: "wa_group" });
+          if (!dup) {
+            await fetch(SU + "/rest/v1/expenses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+              body: JSON.stringify({
+                date, category: "petty_cash", subcategory: subcat,
+                description: text + " (via WA grup) [BACKFILL]",
+                amount: amt, teknisi_name: profileName,
+                created_by: "wa_group", validation_status: "PENDING_AI",
+              }),
+            }).catch(() => {});
+            counters.biaya_inserted++;
+          } else {
+            counters.skipped_dup++;
+          }
+        }
+      }
+    }
+  }
+
+  return { ok: true, from: fromDate, to: toDate, counters };
+}
+
+// ══════════════════════════════════════════════════
+// TASK: Snapshot cleanup — retention 60 hari
+// Hapus wa_daily_snapshots + objek R2 yg > 60 hari
+// (R2 object cleanup pakai pattern existing taskR2Cleanup90d).
+// ══════════════════════════════════════════════════
+async function taskSnapshotCleanup() {
+  const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
+  // Ambil rows yg expired (utk delete R2 objects nanti)
+  const { data: stale } = await sb.from("wa_daily_snapshots")
+    .select("id,snapshot_date,r2_key")
+    .lt("snapshot_date", cutoff);
+  const count = (stale || []).length;
+  if (count === 0) return { ok: true, deleted: 0, cutoff };
+  // Note: R2 object delete via taskR2Cleanup90d (pattern existing); kalau mau lebih cepat
+  // tambah delete object di sini — saat ini cukup hapus manifest, R2 di-purge cron 90d.
+  await sb.from("wa_daily_snapshots").delete().lt("snapshot_date", cutoff);
+  return { ok: true, deleted: count, cutoff, note: "R2 objects akan di-purge cron r2-cleanup-90d" };
 }
 
 // ══════════════════════════════════════════════════
@@ -1585,6 +1773,8 @@ export default async function handler(req, res) {
       "auto-return-brought": taskAutoReturnBrought,
       "r2-cleanup-90d":   taskR2Cleanup90d,
       "wa-snapshot":      taskWaSnapshot,
+      "wa-backfill":      () => taskWaBackfill({ from: req.query.from, to: req.query.to }),
+      "snapshot-cleanup": taskSnapshotCleanup,
       "reminder":         taskReminder,
     };
     const handler = taskMap[task] || taskReminder;
