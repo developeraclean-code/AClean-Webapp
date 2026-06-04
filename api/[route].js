@@ -3,6 +3,8 @@ import { setCorsHeaders, checkRateLimit, validateInternalToken, signAppToken } f
 import { classifyImage, persistClassification } from "./_ai-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification } from "./_ai-text.js";
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "./_r2-upload.js";
+import { md5Buffer, checkImageDuplicate } from "./_image-dedup.js";
+import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage } from "./_kasbon-parser.js";
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
@@ -416,7 +418,7 @@ export default async function handler(req, res) {
         let groupConfig = null;
         try {
           const gRes = await fetch(
-            SU_g + "/rest/v1/wa_monitored_groups?select=group_id,group_name,enabled,capture_all,forward_to_owner,notify_keywords,ai_expense_enabled,ai_material_enabled,ai_selesai_enabled,ai_quotation_enabled,ai_payment_enabled,ai_forward_target,ai_forward_min_conf&group_id=eq." + encodeURIComponent(groupId || "") + "&limit=1",
+            SU_g + "/rest/v1/wa_monitored_groups?select=group_id,group_name,enabled,capture_all,forward_to_owner,notify_keywords,ai_expense_enabled,ai_material_enabled,ai_selesai_enabled,ai_quotation_enabled,ai_payment_enabled,ai_kasbon_enabled,ai_forward_target,ai_forward_min_conf&group_id=eq." + encodeURIComponent(groupId || "") + "&limit=1",
             { headers: { apikey: SK_g, Authorization: "Bearer " + SK_g } }
           );
           if (gRes.ok) {
@@ -515,6 +517,106 @@ export default async function handler(req, res) {
           }
         }
 
+        // KASBON pattern — hanya di grup Finance (ai_kasbon_enabled = TRUE)
+        // Format: "Kasbon Andi 500k" / "Kasbon Helper Budi 200rb" / "Kasbon Caca 1.5jt"
+        // Match nama ke user_profiles (Teknisi/Helper) — kalau unique → INSERT expenses PENDING_AI
+        // (Opsi B: langsung muncul di Pending AI Biaya, WA "ok" jadi annotation ack)
+        if (parsedType === "general" && groupConfig.ai_kasbon_enabled && SU_g && SK_g) {
+          const kasbonParsed = parseKasbonText(message);
+          if (kasbonParsed) {
+            try {
+              const matchRes = await matchKasbonName({ SU: SU_g, SK: SK_g, nameRaw: kasbonParsed.nameRaw });
+              if (matchRes.matched) {
+                parsedType = "kasbon";
+                parsedOk = true;
+                parsedAmount = kasbonParsed.amount;
+                const today = new Date().toISOString().slice(0, 10);
+                const expBody = {
+                  date: today,
+                  category: "petty_cash",
+                  subcategory: "Kasbon Karyawan",
+                  teknisi_name: matchRes.matched.name,
+                  amount: kasbonParsed.amount,
+                  description: `Kasbon ${matchRes.matched.name} (via WA Finance grup, dari ${profileName})`,
+                  created_by: "wa_group_kasbon",
+                  validation_status: "PENDING_AI",
+                };
+                await fetch(SU_g + "/rest/v1/expenses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+                  body: JSON.stringify(expBody),
+                }).catch(e => console.error("[KASBON_EXPENSE_INSERT]", e.message));
+                expenseSaved = true;
+                console.log("[KASBON_PARSED]", { name: matchRes.matched.name, amount: kasbonParsed.amount });
+              } else if (matchRes.reason === "ambiguous" && FT_g) {
+                // Reply ambiguous ke sender
+                const cands = matchRes.candidates.map(c => `• ${c.name} (${c.role})`).join("\n");
+                fetch("https://api.fonnte.com/send", {
+                  method: "POST",
+                  headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                  body: JSON.stringify({ target: participantNorm, message: `⚠️ Kasbon ambigu — nama "${kasbonParsed.nameRaw}" cocok ke beberapa orang:\n${cands}\n\nKirim ulang dengan nama lengkap.`, delay: "2", countryCode: "62" })
+                }).catch(() => {});
+                console.warn("[KASBON_AMBIGUOUS]", kasbonParsed.nameRaw, matchRes.candidates.map(c => c.name));
+              } else if (matchRes.reason === "none" && FT_g) {
+                fetch("https://api.fonnte.com/send", {
+                  method: "POST",
+                  headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                  body: JSON.stringify({ target: participantNorm, message: `⚠️ Kasbon gagal — nama "${kasbonParsed.nameRaw}" tidak ditemukan di tim aktif. Cek ejaan nama teknisi/helper.`, delay: "2", countryCode: "62" })
+                }).catch(() => {});
+                console.warn("[KASBON_NO_MATCH]", kasbonParsed.nameRaw);
+              }
+            } catch (e) {
+              console.error("[KASBON_HANDLER]", e.message);
+            }
+          }
+        }
+
+        // KASBON APPROVAL pattern — reply "ok"/"baik"/"siap" dari Finance (62...837) atau Owner (62...937)
+        // di grup Finance → annotate semua expenses PENDING_AI Kasbon hari ini (created_by=wa_group_kasbon)
+        // dengan suffix "[ACK by <phone> at <HH:MM>]" → UI akan tampilkan badge "✅ Acked".
+        if (parsedType === "general" && groupConfig.ai_kasbon_enabled && SU_g && SK_g && isKasbonApprovalMessage(message)) {
+          const APPROVER_PHONES = ["6281398989837", "6281289898937"];
+          if (APPROVER_PHONES.includes(participantNorm)) {
+            try {
+              const today = new Date().toISOString().slice(0, 10);
+              // Ambil semua kasbon PENDING_AI hari ini yang belum di-ack (tidak punya "[ACK" di description)
+              const qUrl = SU_g + "/rest/v1/expenses?select=id,description"
+                + "&validation_status=eq.PENDING_AI"
+                + "&subcategory=eq." + encodeURIComponent("Kasbon Karyawan")
+                + "&date=eq." + today
+                + "&created_by=eq.wa_group_kasbon"
+                + "&description=not.ilike." + encodeURIComponent("%[ACK by%");
+              const qRes = await fetch(qUrl, { headers: { apikey: SK_g, Authorization: "Bearer " + SK_g } });
+              const pendings = qRes.ok ? await qRes.json() : [];
+              if (Array.isArray(pendings) && pendings.length > 0) {
+                const hh = new Date(Date.now() + 7 * 3600_000).toISOString().slice(11, 16);
+                const ackTag = ` [ACK by ${participantNorm} at ${hh}]`;
+                const patches = pendings.map(p =>
+                  fetch(SU_g + "/rest/v1/expenses?id=eq." + p.id, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+                    body: JSON.stringify({ description: (p.description || "") + ackTag }),
+                  }).catch(() => {})
+                );
+                await Promise.all(patches);
+                console.log("[KASBON_ACK]", { approver: participantNorm, count: pendings.length });
+                parsedType = "kasbon_ack";
+                parsedOk = true;
+                // Reply confirm singkat
+                if (FT_g) {
+                  fetch("https://api.fonnte.com/send", {
+                    method: "POST",
+                    headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                    body: JSON.stringify({ target: groupId, message: `✅ ${pendings.length} kasbon hari ini di-acknowledge. Owner tinggal final approve di app.`, delay: "2", countryCode: "62" })
+                  }).catch(() => {});
+                }
+              }
+            } catch (e) {
+              console.error("[KASBON_ACK_HANDLER]", e.message);
+            }
+          }
+        }
+
         // LAPORAN SINGKAT pattern
         if (parsedType === "general") {
           const laporanMatch = message.match(/^(selesai|done|finish|beres|kelar)[\s]+([A-Z0-9\-]+)/i);
@@ -575,21 +677,35 @@ export default async function handler(req, res) {
             console.warn("[WA_GRUP_IMG_DEDUP]", e.message);
           }
         }
+        let imageMd5 = null;
+        let imageDupRef = null; // { refLogId, refGroupName } kalau foto duplikat sender sama dlm ±1 jam
         if (groupImageUrl && !imageDedupSkip && hasR2Config()) {
           const dl = await downloadToBuffer(groupImageUrl, { timeoutMs: 8000 });
           if (dl.ok) {
             imageBuffer = dl.buffer;
             imageMime = dl.mimeType;
-            const ext = imageMime === "image/png" ? "png" : imageMime === "image/gif" ? "gif" : imageMime === "image/webp" ? "webp" : imageMime === "application/pdf" ? "pdf" : "jpg";
-            const ym = new Date().toISOString().slice(0, 7); // 2026-06
-            const grpShort = String(groupId || "x").replace(/[^a-zA-Z0-9]/g, "").slice(0, 24);
-            const sendShort = (participantNorm || "x").slice(0, 14);
-            const r2Key = `wa-group/${ym}/${grpShort}/${Date.now()}_${sendShort}.${ext}`;
-            const up = await uploadBufferToR2({ buffer: imageBuffer, key: r2Key, mimeType: imageMime });
-            if (up.ok) {
-              r2MirrorUrl = up.url;
-            } else {
-              console.warn("[WA_GRUP_R2_UPLOAD]", up.err);
+            // Cross-group dedup: hash buffer + cek wa_group_logs (sender sama, ±1 jam)
+            imageMd5 = md5Buffer(imageBuffer);
+            if (imageMd5) {
+              const dupRes = await checkImageDuplicate({ SU: SU_g, SK: SK_g, md5: imageMd5, senderPhone: participantNorm });
+              if (dupRes.isDuplicate) {
+                imageDupRef = dupRes;
+                imageDedupSkip = true; // jangan re-upload R2 + skip AI vision (cegah double biaya/payment)
+                console.log("[WA_GRUP_IMG_DUP]", { md5: imageMd5, refLogId: dupRes.refLogId, refGroup: dupRes.refGroupName });
+              }
+            }
+            if (!imageDedupSkip) {
+              const ext = imageMime === "image/png" ? "png" : imageMime === "image/gif" ? "gif" : imageMime === "image/webp" ? "webp" : imageMime === "application/pdf" ? "pdf" : "jpg";
+              const ym = new Date().toISOString().slice(0, 7); // 2026-06
+              const grpShort = String(groupId || "x").replace(/[^a-zA-Z0-9]/g, "").slice(0, 24);
+              const sendShort = (participantNorm || "x").slice(0, 14);
+              const r2Key = `wa-group/${ym}/${grpShort}/${Date.now()}_${sendShort}.${ext}`;
+              const up = await uploadBufferToR2({ buffer: imageBuffer, key: r2Key, mimeType: imageMime });
+              if (up.ok) {
+                r2MirrorUrl = up.url;
+              } else {
+                console.warn("[WA_GRUP_R2_UPLOAD]", up.err);
+              }
             }
           } else {
             console.warn("[WA_GRUP_R2_DOWNLOAD]", dl.err);
@@ -622,6 +738,8 @@ export default async function handler(req, res) {
               metadata: kwMatched || groupImageUrl ? {
                 ...(kwMatched ? { keyword_match: true } : {}),
                 ...(groupImageUrl ? { media_type: wb.type, filename: wb.filename || null } : {}),
+                ...(imageMd5 ? { img_md5: imageMd5 } : {}),
+                ...(imageDupRef ? { dup_of_log_id: imageDupRef.refLogId, dup_of_group: imageDupRef.refGroupName, dup_ignored: true } : {}),
               } : null,
             })
           }).catch(e => console.error("[WA_GROUP_LOG]", e.message));

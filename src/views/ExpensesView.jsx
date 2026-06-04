@@ -466,6 +466,8 @@ return (
         {pendingAi.map(item => {
           const ai = item.ai_extractions || {};
           const confColor = ai.confidence === "HIGH" ? "#10b981" : ai.confidence === "MEDIUM" ? "#f59e0b" : "#ef4444";
+          const isKasbon = item.subcategory === "Kasbon Karyawan";
+          const ackMatch = (item.description || "").match(/\[ACK by (\d+) at ([\d:]+)\]/);
           return (
             <div key={item.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 14, display: "flex", gap: 14 }}>
               {ai.image_url && (
@@ -475,9 +477,21 @@ return (
                 </a>
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>{fmt ? fmt(item.amount) : `Rp ${item.amount?.toLocaleString("id")}`}</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: confColor + "22", color: confColor }}>{ai.confidence || "?"}</span>
+                  {isKasbon && (
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: "#a855f722", color: "#a855f7" }}>💸 KASBON</span>
+                  )}
+                  {ai.confidence && (
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: confColor + "22", color: confColor }}>{ai.confidence}</span>
+                  )}
+                  {ackMatch ? (
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: "#10b98122", color: "#10b981" }}>
+                      ✅ ACKED · {ackMatch[1].slice(-4)} · {ackMatch[2]}
+                    </span>
+                  ) : isKasbon ? (
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: "#f59e0b22", color: "#f59e0b" }}>🕐 Awaiting Finance/Owner ack</span>
+                  ) : null}
                 </div>
                 <div style={{ fontSize: 12, color: cs.text, marginBottom: 4 }}>📅 {item.date} · 🏷 {item.category} <span style={{ color: cs.muted }}>· {item.subcategory || "—"}</span></div>
                 <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8, wordBreak: "break-word" }}>{item.description}</div>
