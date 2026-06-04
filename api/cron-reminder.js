@@ -1152,7 +1152,8 @@ async function taskMorningDispatch() {
 
       let link, isMaintenanceLink = false;
       if (isMaintenance) {
-        link = `${APP_URL}/status/${mc.portal_token}`;
+        // B2B selalu pakai status.aclean.id — dedicated maintenance domain, tidak bergantung APP_URL setting
+        link = `https://status.aclean.id/status/${mc.portal_token}`;
         isMaintenanceLink = true;
       } else {
         // Generate / refresh customer token reguler

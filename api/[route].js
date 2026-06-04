@@ -3571,13 +3571,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
           const mcRows = await mcRes.json();
           const mc = mcRows[0];
           if (mc?.portal_token && mc.token_active) {
-            // Ambil base URL dari settings (konsisten dgn cron)
-            let appUrl = process.env.APP_URL || "https://a-clean-webapp.vercel.app";
-            try {
-              const setRes = await fetch(`${SU}/rest/v1/app_settings?key=eq.customer_portal_url&select=value`, { headers });
-              if (setRes.ok) { const rows = await setRes.json(); if (rows[0]?.value) appUrl = rows[0].value; }
-            } catch { /* fallback */ }
-            const link = `${appUrl}/status/${mc.portal_token}`;
+            // B2B selalu pakai status.aclean.id — dedicated maintenance domain, tidak bergantung setting DB
+            const link = `https://status.aclean.id/status/${mc.portal_token}`;
             return res.status(200).json({ ok: true, token: mc.portal_token, link, is_maintenance: true, client_name: mc.name });
           }
         }
