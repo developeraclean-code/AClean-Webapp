@@ -41,8 +41,9 @@ const QuotationPDFModule = lazy(() =>
   }))
 );
 
-const PORTAL_BASE = (typeof window !== "undefined" ? window.location.origin : "") + "/m/";
+const PORTAL_BASE = "https://status.aclean.id/status/";
 const AC_TYPES = ["split", "cassette", "standing", "floor"];
+const AC_TYPE_LABELS = { split: "Split Wall", cassette: "Cassette", standing: "Floor Standing", floor: "Split Duct" };
 const REFRIGERANTS = ["R32", "R410A", "R22"];
 const STATUSES = ["active", "rusak", "retired"];
 const SERVICE_TYPES_LOG = ["Cuci Rutin", "Cuci Besar", "Perbaikan", "Isi Freon", "Ganti Sparepart", "Instalasi", "Cek & Check-Up", "Lainnya"];
@@ -323,7 +324,7 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Cari unit / lokasi / brand…" style={{ ...inp, flex: 1, minWidth: 160 }} />
         <select value={filter} onChange={e => setFilter(e.target.value)} style={{ ...inp, maxWidth: 150 }}>
           <option value="">Semua Jenis</option>
-          {AC_TYPES.map(t => <option key={t}>{t}</option>)}
+          {AC_TYPES.map(t => <option key={t} value={t}>{AC_TYPE_LABELS[t]}</option>)}
         </select>
         {isOwner && <button onClick={() => setShowCsv(true)} style={{ ...btnGhost, fontSize: 12 }}>📥 Import CSV</button>}
         <button onClick={() => setEdit({})} style={btn}>+ Unit Baru</button>
@@ -347,7 +348,7 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
                     </div>
                     <div style={{ color: cs.muted, fontSize: 12, marginTop: 4 }}>
                       {u.location && <div>📍 {u.location}</div>}
-                      <div>{u.brand || "—"} {u.capacity_pk ? u.capacity_pk + "PK" : ""} {u.ac_type ? "· " + u.ac_type : ""} {u.refrigerant ? "· " + u.refrigerant : ""}</div>
+                      <div>{u.brand || "—"} {u.capacity_pk ? u.capacity_pk + "PK" : ""} {u.ac_type ? "· " + (AC_TYPE_LABELS[u.ac_type] || u.ac_type) : ""} {u.refrigerant ? "· " + u.refrigerant : ""}</div>
                       {u.last_service_date && <div>Terakhir: {fmtDate(u.last_service_date)}</div>}
                       {u.next_service_date && <div style={{ color: overdue ? cs.red : dueSoon ? cs.yellow : cs.muted }}>PM Berikutnya: {fmtDate(u.next_service_date)}</div>}
                     </div>
@@ -389,7 +390,7 @@ function UnitFormModal({ unit, onClose, onSave }) {
         <Field l="Kode Unit *"><input value={f.unit_code} onChange={e => set("unit_code", e.target.value)} style={inp} placeholder="AC-01" /></Field>
         <Field l="Lokasi"><input value={f.location} onChange={e => set("location", e.target.value)} style={inp} placeholder="Lantai 2 — Ruang Rapat" /></Field>
         <Field l="Brand"><input value={f.brand} onChange={e => set("brand", e.target.value)} style={inp} placeholder="Daikin / Gree / LG…" /></Field>
-        <Field l="Jenis AC"><select value={f.ac_type} onChange={e => set("ac_type", e.target.value)} style={inp}>{AC_TYPES.map(t => <option key={t}>{t}</option>)}</select></Field>
+        <Field l="Jenis AC"><select value={f.ac_type} onChange={e => set("ac_type", e.target.value)} style={inp}>{AC_TYPES.map(t => <option key={t} value={t}>{AC_TYPE_LABELS[t]}</option>)}</select></Field>
         <Field l="Kapasitas (PK)"><input type="number" value={f.capacity_pk || ""} onChange={e => set("capacity_pk", e.target.value)} style={inp} placeholder="1" step="0.5" /></Field>
         <Field l="Refrigerant"><select value={f.refrigerant} onChange={e => set("refrigerant", e.target.value)} style={inp}>{REFRIGERANTS.map(r => <option key={r}>{r}</option>)}</select></Field>
         <Field l="Status"><select value={f.status} onChange={e => set("status", e.target.value)} style={inp}>{STATUSES.map(s => <option key={s}>{s}</option>)}</select></Field>
@@ -406,7 +407,7 @@ function UnitFormModal({ unit, onClose, onSave }) {
 }
 
 function UnitQrModal({ unit, sel, onClose }) {
-  const portalBase = (typeof window !== "undefined" ? window.location.origin : "") + "/m/";
+  const portalBase = "https://status.aclean.id/status/";
   const url = portalBase + (sel.portal_token || "");
   const unitUrl = url + "?unit=" + encodeURIComponent(unit.unit_code);
   const qr = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(unitUrl)}`;
@@ -490,7 +491,7 @@ function CsvImportModal({ sel, call, setUnits, showNotif, onClose }) {
       <div style={{ fontWeight: 700, color: cs.text, fontSize: 16, marginBottom: 10 }}>📥 Import Unit via CSV</div>
       <div style={{ fontSize: 12, color: cs.muted, marginBottom: 10 }}>
         Kolom CSV: <code style={{ color: cs.accent }}>unit_code, location, brand, ac_type, capacity_pk, refrigerant, status, service_interval_months</code><br />
-        ac_type: split/cassette/standing/floor · status: active/rusak/retired · Kolom opsional boleh kosong
+        ac_type: split (Split Wall) / cassette / standing (Floor Standing) / floor (Split Duct) · status: active/rusak/retired · Kolom opsional boleh kosong
       </div>
       <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 13, color: cs.text, marginBottom: 8 }} />
       {err && <div style={{ color: cs.red, fontSize: 12, marginBottom: 8 }}>❌ {err}</div>}

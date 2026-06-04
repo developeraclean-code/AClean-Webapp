@@ -3563,6 +3563,27 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 
       const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json", "Prefer": "return=representation" };
 
+      // ── Jika order dari maintenance client (B2B): pakai portal_token permanen mereka.
+      // Tidak buat customer_token baru — link maintenance tidak expired selama kontrak aktif.
+      if (b.maintenance_client_id) {
+        const mcRes = await fetch(`${SU}/rest/v1/maintenance_clients?id=eq.${encodeURIComponent(b.maintenance_client_id)}&select=id,name,portal_token,token_active`, { headers });
+        if (mcRes.ok) {
+          const mcRows = await mcRes.json();
+          const mc = mcRows[0];
+          if (mc?.portal_token && mc.token_active) {
+            // Ambil base URL dari settings (konsisten dgn cron)
+            let appUrl = process.env.APP_URL || "https://a-clean-webapp.vercel.app";
+            try {
+              const setRes = await fetch(`${SU}/rest/v1/app_settings?key=eq.customer_portal_url&select=value`, { headers });
+              if (setRes.ok) { const rows = await setRes.json(); if (rows[0]?.value) appUrl = rows[0].value; }
+            } catch { /* fallback */ }
+            const link = `${appUrl}/status/${mc.portal_token}`;
+            return res.status(200).json({ ok: true, token: mc.portal_token, link, is_maintenance: true, client_name: mc.name });
+          }
+        }
+        // Jika maintenance client tidak ditemukan / token nonaktif → fall through ke regular token
+      }
+
       // ── Token: REUSE yang masih aktif, atau buat baru. Expiry 30 hari (cover garansi).
       // Reuse = link customer STABIL (tidak berubah tiap dispatch) → customer bisa cek
       // status pakai link yang sama selama masa garansi 30 hari. Expiry selalu di-refresh

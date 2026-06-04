@@ -275,6 +275,15 @@ const verifyLaporan = async (r) => {
       if (updateCustomerTierAfterOrder) updateCustomerTierAfterOrder(ord0).catch(() => {});
     }
     showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
+  } else if (r.service === "Survey") {
+    // Survey tidak buat invoice — hanya update order status ke COMPLETED
+    await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
+    setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+    if (updateCustomerTierAfterOrder) {
+      const ord0 = ordersData.find(o => o.id === r.job_id);
+      if (ord0) updateCustomerTierAfterOrder(ord0).catch(() => {});
+    }
+    showNotif("✅ Laporan Survey terverifikasi — tidak ada invoice");
   } else {
     const ord = ordersData.find(o => o.id === r.job_id);
     const invId = "INV" + Date.now().toString().slice(-7) + Math.floor(Math.random() * 100).toString().padStart(2, "0");
@@ -522,7 +531,7 @@ return (
         </button>
       ))}
       <span style={{ width: 1, height: 16, background: cs.border }} />
-      {["Semua", "Cleaning", "Install", "Repair", "Complain"].map(f => (
+      {["Semua", "Cleaning", "Install", "Repair", "Complain", "Survey"].map(f => (
         <button key={f} onClick={() => { setLaporanSvcFilter(f); setLaporanPage(1); }}
           style={{
             padding: "5px 12px", borderRadius: 99, fontSize: 12, cursor: "pointer",
@@ -796,6 +805,20 @@ return (
               );
             })()}
           </div>
+
+          {/* ── Survey hasil — ditampilkan khusus untuk laporan Survey ── */}
+          {r.service === "Survey" && (r.hasil_survey || r.catatan_rekomendasi) && (
+            <div style={{ background: cs.surface, border: "1px solid " + cs.accent + "44", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: cs.accent, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>📋 Hasil Survey</div>
+              {r.hasil_survey && <div style={{ fontSize: 13, color: cs.text, lineHeight: 1.55, whiteSpace: "pre-wrap", marginBottom: r.catatan_rekomendasi ? 8 : 0 }}>{r.hasil_survey}</div>}
+              {r.catatan_rekomendasi && (
+                <div style={{ borderTop: "1px solid " + cs.border, paddingTop: 8 }}>
+                  <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700, marginBottom: 4 }}>Rekomendasi</div>
+                  <div style={{ fontSize: 13, color: cs.text, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{r.catatan_rekomendasi}</div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── BAP highlight — info kunci dari teknisi untuk admin bikin invoice ── */}
           {r.bap_number && (

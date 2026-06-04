@@ -1121,8 +1121,9 @@ async function taskMorningDispatch() {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" }); // YYYY-MM-DD WIB
 
   // Ambil order hari ini: ada teknisi, ada phone, belum dapat portal WA
+  // maintenance_client_id disertakan untuk kirim link portal B2B yang berbeda
   const { data: orders } = await sb.from("orders")
-    .select("id,customer,phone,service,date,time,teknisi,helper,address")
+    .select("id,customer,phone,service,date,time,teknisi,helper,address,maintenance_client_id")
     .eq("date", today)
     .not("teknisi", "is", null)
     .not("phone", "is", null)
@@ -1132,46 +1133,77 @@ async function taskMorningDispatch() {
 
   if (!orders?.length) return { sent: 0, reason: "Tidak ada order hari ini yang perlu dispatch WA" };
 
+  // Cache maintenance clients yang dibutuhkan (batch lookup untuk efisiensi)
+  const mcIds = [...new Set(orders.map(o => o.maintenance_client_id).filter(Boolean))];
+  const mcMap = {};
+  if (mcIds.length > 0) {
+    const { data: mcRows } = await sb.from("maintenance_clients")
+      .select("id,name,portal_token,token_active")
+      .in("id", mcIds);
+    (mcRows || []).forEach(mc => { mcMap[mc.id] = mc; });
+  }
+
   let sent = 0, failed = 0;
   for (const order of orders) {
     try {
-      // Generate / refresh customer token
-      const { data: tokRows } = await sb.from("customer_tokens")
-        .select("token,expires_at").eq("phone", order.phone).limit(1);
-      let token = tokRows?.[0]?.token;
-      const tokExpired = tokRows?.[0]?.expires_at && new Date(tokRows[0].expires_at) < new Date();
-      if (!token || tokExpired) {
-        const { randomBytes } = await import("crypto");
-        token = randomBytes(24).toString("hex");
-        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-        if (tokRows?.length > 0) {
-          await sb.from("customer_tokens").update({ token, expires_at: expiresAt, customer_name: order.customer }).eq("phone", order.phone);
-        } else {
-          await sb.from("customer_tokens").insert({ phone: order.phone, token, expires_at: expiresAt, customer_name: order.customer });
+      // ── Tentukan link portal: B2B (permanen) atau reguler (30 hari) ──
+      const mc = order.maintenance_client_id ? mcMap[order.maintenance_client_id] : null;
+      const isMaintenance = !!(mc?.portal_token && mc.token_active);
+
+      let link, isMaintenanceLink = false;
+      if (isMaintenance) {
+        link = `${APP_URL}/status/${mc.portal_token}`;
+        isMaintenanceLink = true;
+      } else {
+        // Generate / refresh customer token reguler
+        const { data: tokRows } = await sb.from("customer_tokens")
+          .select("token,expires_at").eq("phone", order.phone).limit(1);
+        let token = tokRows?.[0]?.token;
+        const tokExpired = tokRows?.[0]?.expires_at && new Date(tokRows[0].expires_at) < new Date();
+        if (!token || tokExpired) {
+          const { randomBytes } = await import("crypto");
+          token = randomBytes(24).toString("hex");
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+          if (tokRows?.length > 0) {
+            await sb.from("customer_tokens").update({ token, expires_at: expiresAt, customer_name: order.customer }).eq("phone", order.phone);
+          } else {
+            await sb.from("customer_tokens").insert({ phone: order.phone, token, expires_at: expiresAt, customer_name: order.customer });
+          }
         }
+        link = `${APP_URL}/status/${token}`;
       }
 
-      const link = `${APP_URL}/status/${token}`;
       const tgl = new Date(order.date).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
       const team = [order.teknisi, order.helper].filter(Boolean).join(" & ");
-      const msg =
-        `Halo ${order.customer}! 👋\n` +
-        `Ini adalah Pesan Otomatis Konfirmasi Pesanan Anda 😊\n` +
-        `Tim AClean sedang menuju lokasi Anda sekarang 🚗\n\n` +
-        `📋 Detail Servis:\n` +
-        `• Layanan  : ${order.service}\n` +
-        `• Jadwal   : ${tgl} · ${order.time || "--:--"}\n` +
-        `• Tim      : ${team}\n` +
-        `• Lokasi   : ${order.address || "-"}\n\n` +
-        `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
-        `Link aktif 30 hari sejak Pemesanan Anda. Detail Service, Pembayaran, Complain dan History Pengerjaan Di Lokasi. Jika Ada Pertanyaan? Balas pesan ini.\n— AClean Service`;
+      const msg = isMaintenanceLink
+        ? `Halo ${order.customer}! 👋\n` +
+          `Konfirmasi Jadwal Maintenance Aset AC Anda 😊\n` +
+          `Tim AClean sedang menuju lokasi Anda sekarang 🚗\n\n` +
+          `📋 Detail Servis:\n` +
+          `• Layanan  : ${order.service}\n` +
+          `• Jadwal   : ${tgl} · ${order.time || "--:--"}\n` +
+          `• Tim      : ${team}\n` +
+          `• Lokasi   : ${order.address || "-"}\n\n` +
+          `🔗 Portal Maintenance Aset AC Anda:\n${link}\n\n` +
+          `Akses laporan, history, dan status aset AC Perusahaan Anda secara lengkap. Jika Ada Pertanyaan? Balas pesan ini.\n— AClean Service`
+        : `Halo ${order.customer}! 👋\n` +
+          `Ini adalah Pesan Otomatis Konfirmasi Pesanan Anda 😊\n` +
+          `Tim AClean sedang menuju lokasi Anda sekarang 🚗\n\n` +
+          `📋 Detail Servis:\n` +
+          `• Layanan  : ${order.service}\n` +
+          `• Jadwal   : ${tgl} · ${order.time || "--:--"}\n` +
+          `• Tim      : ${team}\n` +
+          `• Lokasi   : ${order.address || "-"}\n\n` +
+          `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
+          `Link aktif 30 hari sejak Pemesanan Anda. Detail Service, Pembayaran, Complain dan History Pengerjaan Di Lokasi. Jika Ada Pertanyaan? Balas pesan ini.\n— AClean Service`;
 
       const ok = await sendWA(order.phone, msg);
       if (ok) {
         // Tandai sudah dikirim agar tidak dobel
         await sb.from("orders").update({ portal_wa_sent_at: new Date().toISOString() }).eq("id", order.id);
         sent++;
-        await log("MORNING_DISPATCH_SENT", `WA dispatch → ${order.customer} (${order.id})`, "SUCCESS");
+        const tag = isMaintenanceLink ? "[B2B]" : "[REG]";
+        await log("MORNING_DISPATCH_SENT", `WA dispatch ${tag} → ${order.customer} (${order.id})`, "SUCCESS");
       } else {
         failed++;
       }

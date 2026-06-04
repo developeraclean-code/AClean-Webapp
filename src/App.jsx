@@ -185,6 +185,10 @@ Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal).
 - AC Cassette 4PK             : Rp400.000/unit
 - AC Cassette 5PK             : Rp500.000/unit
 - AC Cassette 6PK             : Rp600.000/unit
+- AC Floor Standing 2–2.5PK   : Rp250.000/unit
+- AC Floor Standing 3PK       : Rp300.000/unit
+- AC Floor Standing 4PK       : Rp400.000/unit
+- AC Floor Standing 5PK       : Rp500.000/unit
 - AC Standing / Split Duct    : Rp100.000/unit
 - Jasa Service Besar 0.5–1PK  : Rp400.000/unit
 - Jasa Service Besar 1.5–2.5PK: Rp450.000/unit
@@ -198,6 +202,7 @@ Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal).
 - Bongkar Unit AC 0.5–1PK     : Rp150.000
 - Bongkar Unit AC 1.5–2.5PK   : Rp200.000
 - Pasang AC Cassette          : Rp900.000
+- Pasang AC Floor Standing    : Rp900.000
 - Pasang AC Standing          : Rp600.000
 - Pemasangan AC Baru Apartemen: Rp350.000
 - Jasa Pergantian Instalasi   : Rp300.000
@@ -1564,6 +1569,13 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
     "AC Cassette 4.5PK",
     "AC Cassette 5PK",
     "AC Cassette 6PK",
+    "AC Floor Standing 2PK",
+    "AC Floor Standing 2.5PK",
+    "AC Floor Standing 3PK",
+    "AC Floor Standing 3.5PK",
+    "AC Floor Standing 4PK",
+    "AC Floor Standing 4.5PK",
+    "AC Floor Standing 5PK",
     "AC Split Duct 2PK",
     "AC Split Duct 2.5PK",
     "AC Split Duct 3PK",
@@ -3838,27 +3850,44 @@ ${photoPageHTML}
           const hdrs = await _apiHeaders();
           const tokRes = await fetch("/api/generate-customer-token", {
             method: "POST", headers: hdrs,
-            body: JSON.stringify({ phone: order.phone, customer_name: order.customer }),
+            body: JSON.stringify({
+              phone: order.phone,
+              customer_name: order.customer,
+              // Kirim maintenance_client_id agar API return link portal permanen (B2B)
+              maintenance_client_id: order.maintenance_client_id || null,
+            }),
           });
           if (tokRes.ok) {
-            const { link } = await tokRes.json();
+            const { link, is_maintenance } = await tokRes.json();
             const tgl = new Date(order.date).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
             const team = [order.teknisi, order.helper].filter(Boolean).join(" & ");
-            const portalMsg =
-              `Halo ${order.customer}! 👋\n` +
-              `Ini adalah Pesan Otomatis Konfirmasi Pesanan Anda 😊\n` +
-              `Tim ${appSettings.app_name || "AClean"} sedang menuju lokasi Anda sekarang 🚗\n\n` +
-              `📋 Detail Servis:\n` +
-              `• Layanan  : ${order.service}\n` +
-              `• Jadwal   : ${tgl} · ${order.time || "--:--"}\n` +
-              `• Tim      : ${team || order.teknisi}\n` +
-              `• Lokasi   : ${order.address || "-"}\n\n` +
-              `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
-              `Link aktif 30 hari sejak Pemesanan Anda. Detail Service, Pembayaran, Complain dan History Pengerjaan Di Lokasi. Jika Ada Pertanyaan? Balas pesan ini.\n— ${appSettings.app_name || "AClean"} Service`;
+            const appName = appSettings.app_name || "AClean";
+            const portalMsg = is_maintenance
+              ? `Halo ${order.customer}! 👋\n` +
+                `Konfirmasi Jadwal Maintenance Aset AC Anda 😊\n` +
+                `Tim ${appName} sedang menuju lokasi Anda sekarang 🚗\n\n` +
+                `📋 Detail Servis:\n` +
+                `• Layanan  : ${order.service}\n` +
+                `• Jadwal   : ${tgl} · ${order.time || "--:--"}\n` +
+                `• Tim      : ${team || order.teknisi}\n` +
+                `• Lokasi   : ${order.address || "-"}\n\n` +
+                `🔗 Portal Maintenance Aset AC Anda:\n${link}\n\n` +
+                `Akses laporan, history, dan status aset AC Perusahaan Anda secara lengkap. Jika Ada Pertanyaan? Balas pesan ini.\n— ${appName} Service`
+              : `Halo ${order.customer}! 👋\n` +
+                `Ini adalah Pesan Otomatis Konfirmasi Pesanan Anda 😊\n` +
+                `Tim ${appName} sedang menuju lokasi Anda sekarang 🚗\n\n` +
+                `📋 Detail Servis:\n` +
+                `• Layanan  : ${order.service}\n` +
+                `• Jadwal   : ${tgl} · ${order.time || "--:--"}\n` +
+                `• Tim      : ${team || order.teknisi}\n` +
+                `• Lokasi   : ${order.address || "-"}\n\n` +
+                `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
+                `Link aktif 30 hari sejak Pemesanan Anda. Detail Service, Pembayaran, Complain dan History Pengerjaan Di Lokasi. Jika Ada Pertanyaan? Balas pesan ini.\n— ${appName} Service`;
             await sendWA(order.phone, portalMsg);
             // Tandai portal WA sudah dikirim agar cron morning-dispatch tidak kirim dobel
             await supabase.from("orders").update({ portal_wa_sent_at: new Date().toISOString() }).eq("id", order.id);
-            addAgentLog("PORTAL_LINK_SENT", `Link portal terkirim ke ${order.customer} (${order.phone})`, "SUCCESS");
+            const logLabel = is_maintenance ? "MAINTENANCE_PORTAL_LINK_SENT" : "PORTAL_LINK_SENT";
+            addAgentLog(logLabel, `Link portal ${is_maintenance ? "B2B permanen" : "customer"} terkirim ke ${order.customer} (${order.phone})`, "SUCCESS");
           }
         } catch (e) { /* portal link opsional — tidak blok dispatch */ }
       }

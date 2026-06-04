@@ -10,6 +10,10 @@ export const PRICE_LIST_DEFAULT = {
     "AC Cassette 4PK": 0,
     "AC Cassette 5PK": 0,
     "AC Cassette 6PK": 0,
+    "AC Floor Standing 2-2.5PK": 0,
+    "AC Floor Standing 3PK": 0,
+    "AC Floor Standing 4PK": 0,
+    "AC Floor Standing 5PK": 0,
     "AC Standing": 0,
     "AC Split Duct 2PK": 0,
     "AC Split Duct 2.5PK": 0,
@@ -38,6 +42,7 @@ export const PRICE_LIST_DEFAULT = {
     "Jasa Penarikan Pipa AC": 0,
     "Jasa Penarikan Pipa Ruko": 0,
     "Pasang AC Cassette": 0,
+    "Pasang AC Floor Standing": 0,
     "Pasang AC Standing": 0,
     "Pemasangan AC Baru Apartemen": 0,
     "Jasa Instalasi Pipa AC": 0,
@@ -122,9 +127,16 @@ export const getBracketKey = (service, tipe) => {
   const pk = tipeToPkNumber(tipe);
   const t = String(tipe || "").toLowerCase();
   const isCassette = t.includes("cassette");
-  const isDuct = t.includes("duct") || t.includes("standing");
+  const isFloorStanding = t.includes("floor standing");
+  const isDuct = t.includes("duct") || (t.includes("standing") && !isFloorStanding);
 
   if (service === "Cleaning") {
+    if (isFloorStanding) {
+      if (pk <= 2.5) return "AC Floor Standing 2-2.5PK";
+      if (pk <= 3) return "AC Floor Standing 3PK";
+      if (pk <= 4) return "AC Floor Standing 4PK";
+      return "AC Floor Standing 5PK";
+    }
     if (isCassette) {
       if (pk <= 2.5) return "AC Cassette 2-2.5PK";
       if (pk <= 3) return "AC Cassette 3PK";

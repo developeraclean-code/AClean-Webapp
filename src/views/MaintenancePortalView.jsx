@@ -71,7 +71,7 @@ export default function MaintenancePortalView({ token }) {
       <div style={{ maxWidth: 540, margin: "0 auto", background: "#fff", minHeight: "100vh", boxShadow: "0 0 40px rgba(0,0,0,.08)" }}>
         {/* Header */}
         <div style={{ background: "linear-gradient(135deg,#0369a1,#0c4a6e)", color: "#fff", padding: "22px 20px" }}>
-          <div style={{ fontWeight: 800, fontSize: 18, letterSpacing: .5 }}>Aclean<span style={{ color: "#7dd3fc" }}>.</span></div>
+          <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: .5, opacity: .9 }}>AClean Service - Profesional Maintenance Company</div>
           <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>{client.name}</div>
           <div style={{ fontSize: 12, opacity: .85 }}>Laporan Maintenance Aset AC</div>
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
@@ -124,7 +124,7 @@ export default function MaintenancePortalView({ token }) {
                   {isOpen && (
                     <div style={{ borderTop: "1px solid #e2e8f0", padding: 14, background: "#f8fafc" }}>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 14px", marginBottom: 12, fontSize: 13 }}>
-                        <div><span style={{ color: "#94a3b8" }}>Jenis</span><br />{u.ac_type || "—"}</div>
+                        <div><span style={{ color: "#94a3b8" }}>Jenis</span><br />{{ split: "Split Wall", cassette: "Cassette", standing: "Floor Standing", floor: "Split Duct" }[u.ac_type] || u.ac_type || "—"}</div>
                         <div><span style={{ color: "#94a3b8" }}>Servis terakhir</span><br />{fmtDate(u.last_service_date)}</div>
                         {u.next_service_date && (
                           <div style={{ gridColumn: "1/-1" }}>
