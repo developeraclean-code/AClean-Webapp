@@ -3249,8 +3249,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 
       // Ambil unit + logs
       const [uRes, lRes] = await Promise.all([
-        fetch(`${SU}/rest/v1/maintenance_units?client_id=eq.${client.id}&select=id,unit_code,location,brand,ac_type,capacity_pk,refrigerant,status,last_service_date&order=unit_code.asc`, { headers }),
-        fetch(`${SU}/rest/v1/maintenance_logs?client_id=eq.${client.id}&select=id,unit_id,service_date,service_type,technician,description,cost,photos&order=service_date.desc`, { headers }),
+        fetch(`${SU}/rest/v1/maintenance_units?client_id=eq.${client.id}&select=id,unit_code,location,brand,ac_type,capacity_pk,refrigerant,status,last_service_date,next_service_date,service_interval_months&order=unit_code.asc`, { headers }),
+        fetch(`${SU}/rest/v1/maintenance_logs?client_id=eq.${client.id}&select=id,unit_id,service_date,service_type,technician,description,cost,photos,materials&order=service_date.desc`, { headers }),
       ]);
       const units = uRes.ok ? await uRes.json() : [];
       let logs = lRes.ok ? await lRes.json() : [];
