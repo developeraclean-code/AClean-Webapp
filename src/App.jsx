@@ -9299,7 +9299,42 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
               <div style={{ display: "grid", gap: 14 }}>
 
-                {/* ── JASA / LABOR section ── */}
+                {/* ── ATAS NAMA & ALAMAT INVOICE ── */}
+                {(() => {
+                  const samePhoneCusts = customersData.filter(c => c.phone === editInvoiceData.phone && c.name !== editInvoiceData.customer);
+                  return (
+                    <div style={{ background: cs.card, border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "12px 14px", display: "grid", gap: 10 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent }}>🏢 Atas Nama Invoice</div>
+                      <div>
+                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Nama / Perusahaan *</div>
+                        <input value={editInvoiceForm.billing_name ?? editInvoiceData.customer}
+                          onChange={e => setEditInvoiceForm(f => ({ ...f, billing_name: e.target.value }))}
+                          list="billing-name-opts"
+                          placeholder={editInvoiceData.customer}
+                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                        {samePhoneCusts.length > 0 && (
+                          <datalist id="billing-name-opts">
+                            <option value={editInvoiceData.customer} />
+                            {samePhoneCusts.map(c => <option key={c.id} value={c.name} />)}
+                          </datalist>
+                        )}
+                        {samePhoneCusts.length > 0 && (
+                          <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>
+                            💡 Lokasi lain di nomor ini: {samePhoneCusts.map(c => c.name).join(", ")}
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Alamat</div>
+                        <input value={editInvoiceForm.billing_address ?? (editInvoiceData.address || "")}
+                          onChange={e => setEditInvoiceForm(f => ({ ...f, billing_address: e.target.value }))}
+                          placeholder="Alamat lengkap untuk invoice..."
+                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* ── JASA / LABOR section ── */}
                 <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 14px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -9590,13 +9625,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       ...editJasaItems.filter(m => m.nama && (m.jumlah || 0) > 0),
                       ...editInvoiceItems.filter(m => m.nama && (m.jumlah || 0) > 0)
                     ];
+                    const billingName = (editInvoiceForm.billing_name ?? editInvoiceData.customer) || editInvoiceData.customer;
+                    const billingAddress = editInvoiceForm.billing_address ?? (editInvoiceData.address || "");
                     setInvoicesData(prev => prev.map(i => i.id === editInvoiceData.id
-                      ? { ...i, labor, material: matTotal3, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, materials_detail: newMD } : i));
+                      ? { ...i, labor, material: matTotal3, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, materials_detail: newMD, customer: billingName, address: billingAddress } : i));
                     let saved = false;
                     {
                       const { error: e1 } = await updateInvoice(supabase, editInvoiceData.id, {
                         labor, material: matTotal3, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal,
-                        materials_detail: JSON.stringify(newMD)
+                        materials_detail: JSON.stringify(newMD), customer: billingName, address: billingAddress
                       }, auditUserName()); if (!e1) saved = true; else console.warn("editInv e1:", e1.message);
                     }
                     if (!saved) {
