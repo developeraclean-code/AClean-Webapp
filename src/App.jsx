@@ -29,7 +29,7 @@ import {
   fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
   fetchWaConversations, fetchPriceList, fetchAraBrain,
-  lookupCustomersByPhone,
+  lookupCustomersByPhone, fetchKasbonRequests,
 } from "./data/reads.js";
 import {
   insertOrder, updateOrder, updateOrderStatus, deleteOrder,
@@ -37,6 +37,7 @@ import {
   updateServiceReport, deleteServiceReport,
   insertExpense, updateExpense, deleteExpense,
   insertCustomer, upsertCustomer, updateCustomer, deleteCustomer,
+  insertKasbonRequest, updateKasbonRequest,
 } from "./data/writes.js";
 import DashboardView from "./views/DashboardView.jsx";
 import ViewErrorBoundary from "./components/ViewErrorBoundary.jsx";
@@ -874,6 +875,7 @@ export default function ACleanWebApp() {
 
   // ── Biaya / Expenses ──
   const [expensesData, setExpensesData] = useState([]);
+  const [kasbonRequests, setKasbonRequests] = useState([]);
   const [expenseTab, setExpenseTab] = useState("petty_cash"); // "petty_cash" | "material_purchase"
   const [expenseFilter, setExpenseFilter] = useState("Semua");
   const [expenseSearch, setExpenseSearch] = useState("");
@@ -919,6 +921,53 @@ export default function ACleanWebApp() {
   // BAP modal state — order/job yang sedang dibuat BAP-nya
   const [bapModalOrder, setBapModalOrder] = useState(null);
   const openBAPModal = (order) => setBapModalOrder(order);
+
+  // ── Kasbon: approve → auto-insert ke expenses (Kasbon Karyawan) ──
+  const approveKasbon = async (req, reviewNotes = "") => {
+    const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+    const expId = "EXP_KSB_" + Date.now().toString(36).toUpperCase();
+    const expPayload = {
+      id: expId,
+      category: "petty_cash",
+      subcategory: "Kasbon Karyawan",
+      teknisi_name: (req.teknisi_name || "").trim(),
+      amount: req.amount,
+      date: today,
+      description: "Kasbon: " + (req.reason || ""),
+      validation_status: "APPROVED",
+      last_changed_by: auditUserName(),
+    };
+    const { error: eErr } = await insertExpense(supabase, expPayload);
+    if (eErr) { showNotif("❌ Gagal catat ke Biaya: " + eErr.message); return; }
+    setExpensesData(prev => [expPayload, ...prev]);
+
+    await updateKasbonRequest(supabase, req.id, {
+      status: "APPROVED",
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: currentUser?.name || auditUserName(),
+      review_notes: reviewNotes || null,
+      expense_id: expId,
+    });
+    setKasbonRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "APPROVED", expense_id: expId, reviewed_by: currentUser?.name } : r));
+
+    // WA notif ke teknisi
+    if (req.teknisi_phone) sendWA(req.teknisi_phone, `✅ *Kasbon Disetujui*\n\nHalo ${req.teknisi_name},\nRequest kasbon Rp ${Number(req.amount).toLocaleString("id-ID")} sudah disetujui oleh ${currentUser?.name || "Admin"}.\n\nKeperluan: ${req.reason}\n${reviewNotes ? "Catatan: " + reviewNotes + "\n" : ""}\n— ${appSettings?.app_name || "AClean"}`);
+    addAgentLog("KASBON_APPROVED", `Kasbon ${req.id} (${req.teknisi_name} Rp${Number(req.amount).toLocaleString("id-ID")}) diapprove → expense ${expId}`, "SUCCESS");
+    showNotif(`✅ Kasbon ${req.teknisi_name} Rp${Number(req.amount).toLocaleString("id-ID")} diapprove & dicatat ke Biaya`);
+  };
+
+  const rejectKasbon = async (req, reviewNotes = "") => {
+    await updateKasbonRequest(supabase, req.id, {
+      status: "REJECTED",
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: currentUser?.name || auditUserName(),
+      review_notes: reviewNotes || null,
+    });
+    setKasbonRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "REJECTED", reviewed_by: currentUser?.name } : r));
+    if (req.teknisi_phone) sendWA(req.teknisi_phone, `❌ *Kasbon Ditolak*\n\nHalo ${req.teknisi_name},\nRequest kasbon Rp ${Number(req.amount).toLocaleString("id-ID")} ditolak oleh ${currentUser?.name || "Admin"}.\n\nKeperluan: ${req.reason}\n${reviewNotes ? "Alasan: " + reviewNotes + "\n" : ""}\n— ${appSettings?.app_name || "AClean"}`);
+    addAgentLog("KASBON_REJECTED", `Kasbon ${req.id} (${req.teknisi_name}) ditolak`, "INFO");
+    showNotif(`✅ Kasbon ${req.teknisi_name} ditolak`);
+  };
   const onBAPSubmitted = (newReport) => {
     setLaporanReports(prev => [newReport, ...prev.filter(r => r.id !== newReport.id)]);
     setBapModalOrder(null);
@@ -6371,7 +6420,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       sendWA={sendWA} supabase={supabase} LAP_PAGE_SIZE={LAP_PAGE_SIZE} INSTALL_ITEMS={INSTALL_ITEMS}
       downloadServiceReportPDF={downloadServiceReportPDF}
       setInvTxData={setInvTxData} setInventoryData={setInventoryData}
-      updateCustomerTierAfterOrder={updateCustomerTierAfterOrder} customersData={customersData} setCustomersData={setCustomersData} apiFetch={_apiFetch} />
+      updateCustomerTierAfterOrder={updateCustomerTierAfterOrder} customersData={customersData} setCustomersData={setCustomersData} apiFetch={_apiFetch}
+      kasbonRequests={kasbonRequests} approveKasbon={approveKasbon} rejectKasbon={rejectKasbon} />
   );
 
   // ============================================================
@@ -6384,7 +6434,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setEditRepairType={setEditRepairType} setEditGratisAlasan={setEditGratisAlasan} setActiveEditUnitIdx={setActiveEditUnitIdx}
       setEditPhotoMode={setEditPhotoMode} setEditLaporanFotos={setEditLaporanFotos} setEditStockMats={setEditStockMats} setLaporanInstallItems={setLaporanInstallItems}
       openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} bapEnabled={appSettings?.bap_enabled === "true"} safeArr={safeArr} TODAY={TODAY} INSTALL_ITEMS={INSTALL_ITEMS}
-      downloadServiceReportPDF={downloadServiceReportPDF} />
+      downloadServiceReportPDF={downloadServiceReportPDF}
+      kasbonRequests={kasbonRequests} setKasbonRequests={setKasbonRequests}
+      insertKasbonRequest={insertKasbonRequest} sendWA={sendWA} appSettings={appSettings} userAccounts={userAccounts}
+      supabase={supabase} showNotif={showNotif} />
   );
 
   // ============================================================
@@ -6466,6 +6519,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     if (!currentUser) return;
     if (activeMenu === "biaya" || activeMenu === "dashboard") {
       fetchExpenses(supabase).then(({ data, error }) => { if (!error && data) setExpensesData(data); }).catch(() => {});
+      fetchKasbonRequests(supabase).then(({ data, error }) => { if (!error && data) setKasbonRequests(data); }).catch(() => {});
     } else if (activeMenu === "invoice" || activeMenu === "maintenance") {
       supabase.from("quotations").select("*").order("created_at", { ascending: false }).limit(200)
         .then(({ data, error }) => { if (!error && data) setQuotationsData(data); });

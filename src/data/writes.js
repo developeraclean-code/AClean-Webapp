@@ -117,6 +117,13 @@ export const deleteServiceReport = async (supabase, id, userName) => {
   return supabase.from("service_reports").delete().eq("id", id);
 };
 
+// ───── KASBON REQUESTS ─────
+export const insertKasbonRequest = (supabase, payload) =>
+  supabase.from("kasbon_requests").insert(payload).select().single();
+
+export const updateKasbonRequest = (supabase, id, fields) =>
+  supabase.from("kasbon_requests").update(fields).eq("id", id);
+
 // ───── EXPENSES ─────
 export const insertExpense = (supabase, payload) =>
   supabase.from("expenses").insert(payload).select().single();

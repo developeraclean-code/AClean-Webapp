@@ -237,6 +237,12 @@ export const fetchKasbonByPeriod = (supabase, userName, periodStart, periodEnd) 
     .gte("date", periodStart)
     .lte("date", periodEnd);
 
+// ───── KASBON REQUESTS ─────
+export const fetchKasbonRequests = (supabase) =>
+  supabase.from("kasbon_requests")
+    .select("id,teknisi_name,teknisi_phone,amount,reason,status,requested_at,reviewed_at,reviewed_by,review_notes,expense_id,job_id,created_at")
+    .order("requested_at", { ascending: false }).limit(500);
+
 // ───── ORDER BONUSES ─────
 export const fetchOrderBonuses = (supabase, { status, orderDate, limit = 100 } = {}) => {
   let q = supabase.from("order_bonuses").select("*").order("order_date", { ascending: false }).limit(limit);
