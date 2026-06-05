@@ -1,6 +1,7 @@
 import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import AbsenBanner from "./AbsenBanner.jsx";
+import KasbonWidget from "./KasbonWidget.jsx";
 
 const STATUS_CONFIG = {
   PENDING:    { label: "Pending",    color: "#94a3b8", bg: "#94a3b822" },
@@ -11,7 +12,7 @@ const STATUS_CONFIG = {
   COMPLETED:  { label: "Selesai",    color: "#10b981", bg: "#10b98122" },
 };
 
-function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders }) {
+function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
 
@@ -73,6 +74,9 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
 
       {/* Absen mandiri — Teknisi & Helper */}
       <AbsenBanner currentUser={currentUser} supabase={supabase} TODAY={TODAY} showNotif={showNotif} apiHeaders={apiHeaders} />
+
+      {/* Kasbon — request uang muka */}
+      {kasbonProps && <KasbonWidget {...kasbonProps} />}
 
       {/* Stats Bar */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>

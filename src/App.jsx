@@ -40,6 +40,7 @@ import {
   insertKasbonRequest, updateKasbonRequest,
 } from "./data/writes.js";
 import DashboardView from "./views/DashboardView.jsx";
+import KasbonWidget from "./views/KasbonWidget.jsx";
 import ViewErrorBoundary from "./components/ViewErrorBoundary.jsx";
 import { AppContext } from "./context/AppContext.js";
 const DeletedAuditView = lazy(() => import("./views/DeletedAuditView.jsx"));
@@ -867,6 +868,7 @@ export default function ACleanWebApp() {
   // ── New order / stok / customer form ──
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false); // anti double submit
   const _orderSubmitLock = useRef(false); // ref-level lock (state updates batch, ref updates instantly)
+  const _maintAutoDetectRef = useRef(false); // flag: maintenance client di-detect otomatis → centang semua unit
   const [matTrackFilter, setMatTrackFilter] = useState("Semua"); // filter kategori material
   const [matTrackSearch, setMatTrackSearch] = useState("");
   const [matTrackDateFrom, setMatTrackDateFrom] = useState("");
@@ -2727,6 +2729,36 @@ ${photoPageHTML}
     }
     const count = Math.min(order.units || 1, 30);
     setLaporanUnits(Array.from({ length: count }, (_, i) => mkUnit(i + 1)));
+
+    // Pre-fill unit label/tipe/merk/PK dari maintenance preset (jika order corporate)
+    const mUnitIds = Array.isArray(order.maintenance_unit_ids) ? order.maintenance_unit_ids : [];
+    if (order.maintenance_client_id && mUnitIds.length > 0) {
+      (async () => {
+        try {
+          const r = await _apiFetch("/api/maintenance", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "list-units", client_id: order.maintenance_client_id }),
+          });
+          if (!r.ok) return;
+          const { units: allUnits = [] } = await r.json().catch(() => ({}));
+          const AC_TYPE_MAP = { cassette: "AC Cassette", split: "AC Split", ducted: "AC Split Duct", standing: "AC Floor Standing" };
+          const filled = mUnitIds.map((uid, i) => {
+            const mu = allUnits.find(u => u.id === uid);
+            if (!mu) return mkUnit(i + 1);
+            return mkUnit(i + 1, {
+              label: `${mu.unit_code} — ${mu.location || ""}`.replace(/— $/, "").trim(),
+              tipe: AC_TYPE_MAP[mu.ac_type] || "AC Split",
+              merk: mu.brand || "",
+              pk: mu.capacity_pk ? `${mu.capacity_pk}PK` : "1PK",
+              model: mu.serial_no || "",
+              from_history_job_id: null,
+            });
+          });
+          setLaporanUnits(filled);
+        } catch (_) { /* non-blocking — default units tetap dipakai */ }
+      })();
+    }
+
     setLaporanMaterials([]);
     setLaporanJasaItems([]); setJasaManualText({});
     setLaporanRepairItems([]); setRepairManualText({});
@@ -3052,6 +3084,24 @@ ${photoPageHTML}
       } catch (_) { setMaintUnitsForOrder([]); }
     })();
   }, [newOrderForm.maintenance_client_id]);
+
+  // Auto-detect maintenance client: jika phone match customer yg ada di maintenance_clients → auto-select
+  useEffect(() => {
+    if (!modalOrder || newOrderForm.maintenance_client_id) return;
+    const custMatch = orderPhoneLookup.matches?.[0];
+    if (!custMatch?.id || !maintClientsForOrder.length) return;
+    const found = maintClientsForOrder.find(c => c.customer_id === custMatch.id);
+    if (!found) return;
+    _maintAutoDetectRef.current = true;
+    setNewOrderForm(f => ({ ...f, maintenance_client_id: found.id }));
+  }, [orderPhoneLookup.matches, maintClientsForOrder, modalOrder]);
+
+  // Saat units selesai di-load via auto-detect → centang semua otomatis
+  useEffect(() => {
+    if (!_maintAutoDetectRef.current || !maintUnitsForOrder.length) return;
+    _maintAutoDetectRef.current = false;
+    setNewOrderForm(f => ({ ...f, maintenance_unit_ids: maintUnitsForOrder.map(u => u.id) }));
+  }, [maintUnitsForOrder]);
 
   // SECURITY: Never store API keys in localStorage — keys are managed on backend only
   useEffect(() => { _lsSave("llmModel", llmModel); }, [llmModel]);
@@ -6017,6 +6067,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // RENDER DASHBOARD
   // ============================================================
   const renderDashboard = () => {
+    // Props kasbon untuk widget di dashboard teknisi/helper
+    const kasbonProps = {
+      currentUser, kasbonRequests, setKasbonRequests, insertKasbonRequest,
+      sendWA, appSettings, userAccounts, supabase, showNotif,
+    };
     // Mobile teknisi/helper: tampilkan TechMobileView yang lebih sederhana
     if (isMobile && isTekRoleGlobal) {
       return (
@@ -6034,9 +6089,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           showNotif={showNotif}
           setActiveMenu={setActiveMenu}
           apiHeaders={_apiHeaders}
+          kasbonProps={kasbonProps}
         />
       );
     }
+    // Desktop teknisi/helper: KasbonWidget di atas DashboardView
+    if (isTekRoleGlobal) {
+      return (
+        <div style={{ display: "grid", gap: 16 }}>
+          <KasbonWidget {...kasbonProps} />
+          {renderDashboardMain()}
+        </div>
+      );
+    }
+    return renderDashboardMain();
+  };
+
+  const renderDashboardMain = () => {
     return (
     <DashboardView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} inventoryData={inventoryData}
       teknisiData={teknisiData} omsetView={omsetView} setOmsetView={setOmsetView} isMobile={isMobile} waConversations={waConversations}
@@ -6454,10 +6523,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setEditRepairType={setEditRepairType} setEditGratisAlasan={setEditGratisAlasan} setActiveEditUnitIdx={setActiveEditUnitIdx}
       setEditPhotoMode={setEditPhotoMode} setEditLaporanFotos={setEditLaporanFotos} setEditStockMats={setEditStockMats} setLaporanInstallItems={setLaporanInstallItems}
       openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} bapEnabled={appSettings?.bap_enabled === "true"} safeArr={safeArr} TODAY={TODAY} INSTALL_ITEMS={INSTALL_ITEMS}
-      downloadServiceReportPDF={downloadServiceReportPDF}
-      kasbonRequests={kasbonRequests} setKasbonRequests={setKasbonRequests}
-      insertKasbonRequest={insertKasbonRequest} sendWA={sendWA} appSettings={appSettings} userAccounts={userAccounts}
-      supabase={supabase} showNotif={showNotif} />
+      downloadServiceReportPDF={downloadServiceReportPDF} />
   );
 
   // ============================================================
@@ -6590,6 +6656,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             priceListData={priceListData} getLocalDate={getLocalDate}
             appSettings={appSettings} sendWAFn={sendWA}
             uploadQuotationPDFFn={uploadQuotationPDFForWA}
+            setActiveMenu={setActiveMenu}
           />
         </Suspense>
       );
@@ -7631,6 +7698,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       // Update local state SETELAH DB insert sukses (atau retry sukses)
       setInvoicesData(prev => [...prev, newInvoice]);
 
+      // P1: Link invoice ↔ quotation — jika order ini berasal dari quotation
+      const srcOrder = ordersData.find(o => o.id === laporanModal.id);
+      if (srcOrder?.source === "quotation") {
+        const linkedQuo = quotationsData.find(q => q.job_id === laporanModal.id);
+        if (linkedQuo) {
+          // Patch invoice.quotation_id
+          supabase.from("invoices").update({ quotation_id: linkedQuo.id }).eq("id", invId).then(() => {});
+          // Patch quotation.invoice_id
+          supabase.from("quotations").update({ invoice_id: invId, updated_at: new Date().toISOString() }).eq("id", linkedQuo.id).then(() => {});
+          setQuotationsData(prev => prev.map(q => q.id === linkedQuo.id ? { ...q, invoice_id: invId } : q));
+          setInvoicesData(prev => prev.map(i => i.id === invId ? { ...i, quotation_id: linkedQuo.id } : i));
+          addAgentLog("QUOTATION_INVOICE_LINKED", `Invoice ${invId} ↔ Quotation ${linkedQuo.id} ter-link`, "SUCCESS");
+        }
+      }
+
       addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
 
       // WA notif ke Owner
@@ -8079,6 +8161,43 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   </div>
                 </div>
               )}
+              {/* ── P3: Badge Quotation Aktif ── */}
+              {(() => {
+                const phone = newOrderForm.phone ? normalizePhone(newOrderForm.phone) : null;
+                if (!phone || !quotationsData.length) return null;
+                const activeQuo = quotationsData.filter(q =>
+                  ["SENT","DRAFT"].includes(q.status) &&
+                  q.phone && normalizePhone(q.phone) === phone
+                );
+                if (!activeQuo.length) return null;
+                return (
+                  <div style={{ background: "#6366f114", border: "1px solid #6366f144", borderRadius: 12, overflow: "hidden" }}>
+                    <div style={{ padding: "10px 14px", background: "#6366f11a", display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 15 }}>📋</span>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "#818cf8" }}>Ada Quotation Aktif</div>
+                        <div style={{ fontSize: 11, color: "#a5b4fc" }}>Customer ini punya {activeQuo.length} quotation belum diproses</div>
+                      </div>
+                    </div>
+                    {activeQuo.map(q => (
+                      <div key={q.id} style={{ padding: "9px 14px", borderTop: "1px solid #6366f122", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <div style={{ fontSize: 12 }}>
+                          <span style={{ fontWeight: 700, color: "#a5b4fc", fontFamily: "monospace" }}>{q.id}</span>
+                          <span style={{ color: "#94a3b8", marginLeft: 8 }}>
+                            {q.created_at?.slice(0,10)} · {(q.items||[]).length} item · Rp {Number(q.total||0).toLocaleString("id-ID")}
+                          </span>
+                          <span style={{ marginLeft: 8, fontSize: 11, padding: "1px 7px", borderRadius: 99, background: "#6366f122", color: "#a5b4fc" }}>{q.status}</span>
+                        </div>
+                        <button
+                          onClick={() => setActiveMenu("quotations")}
+                          style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          Lihat Quotation
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               {continuationParentId && continuationParentId !== "" && (() => {
                 const parent = ordersData.find(o => o.id === continuationParentId);
                 return (
