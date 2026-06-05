@@ -243,6 +243,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
           <View style={[s.box, s.boxWhite]}>
             <Text style={s.boxTitle}>Tagihan Kepada</Text>
             <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 12, marginBottom: 4 }}>{inv.customer || ""}</Text>
+            {inv.address ? <Text style={{ color: "#334155", fontSize: 9, marginBottom: 2 }}>{inv.address}</Text> : null}
             <Text style={{ color: "#64748b", fontSize: 9 }}>HP: {inv.phone || "—"}</Text>
             <Text style={{ color: "#64748b", fontSize: 9, marginTop: 3 }}>Servis: {inv.service || "—"}</Text>
           </View>
