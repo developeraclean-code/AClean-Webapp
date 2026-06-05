@@ -122,6 +122,10 @@
       "schedule": "0 20 * * *"
     },
     {
+      "path": "/api/cron-reminder?task=expense-foto-cleanup",
+      "schedule": "30 20 * * *"
+    },
+    {
       "path": "/api/cron-reminder?task=wa-snapshot",
       "schedule": "0 13 * * *"
     },
@@ -137,6 +141,10 @@
     },
     "api/ara-chat.js": {
       "maxDuration": 60
+    },
+    "api/expense-submit.js": {
+      "maxDuration": 60,
+      "memory": 512
     },
     "api/cron-reminder.js": {
       "maxDuration": 30

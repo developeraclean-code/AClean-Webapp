@@ -397,6 +397,49 @@ async function taskR2Cleanup90d() {
 }
 
 // ══════════════════════════════════════════════════
+// TASK: Expense Foto Cleanup — hapus foto R2 pengeluaran teknisi >30 hari
+// Sumber: ai_extractions source='teknisi_dashboard'. Record expense TETAP (data keuangan),
+// hanya foto bukti yang di-purge agar R2 tidak numpuk. r2_url di-null setelah purge.
+// ══════════════════════════════════════════════════
+async function taskExpenseFotoCleanup30d() {
+  // Toggle-gated (default ON kecuali eksplisit "false")
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["expense_foto_cleanup_enabled"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (togMap["expense_foto_cleanup_enabled"] === "false") {
+    await log("EXPENSE_FOTO_CLEANUP", "Dilewati — toggle OFF", "INFO");
+    return { skipped: true };
+  }
+
+  const result = { swept: 0, purged: 0, errors: 0 };
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data: rows, error } = await sb.from("ai_extractions")
+    .select("id, r2_url")
+    .eq("source", "teknisi_dashboard")
+    .lt("created_at", cutoff)
+    .not("r2_url", "is", null)
+    .limit(500);
+  if (error) { await log("EXPENSE_FOTO_CLEANUP", "Query gagal: " + error.message, "ERROR"); return { error: error.message }; }
+  result.swept = (rows || []).length;
+  if (result.swept === 0) { await log("EXPENSE_FOTO_CLEANUP", "Tidak ada foto >30 hari", "INFO"); return result; }
+
+  for (const row of rows) {
+    try {
+      // r2_url format: "/api/foto?key=<encoded>" → ekstrak key
+      let key = null;
+      try { key = new URL("http://x" + row.r2_url).searchParams.get("key"); } catch { key = null; }
+      if (!key) { result.errors++; continue; }
+      const ok = await deleteR2Object(key);
+      if (ok) {
+        await sb.from("ai_extractions").update({ r2_url: null }).eq("id", row.id);
+        result.purged++;
+      } else { result.errors++; }
+    } catch (e) { result.errors++; console.warn("[EXPENSE_FOTO_CLEANUP]", row.id, e.message); }
+  }
+  await log("EXPENSE_FOTO_CLEANUP", `swept=${result.swept} purged=${result.purged} errors=${result.errors}`, "SUCCESS");
+  return result;
+}
+
+// ══════════════════════════════════════════════════
 // TASK: WA Daily Snapshot — Phase 2 review window
 // Dump seluruh percakapan 3 grup ke R2 JSON tiap hari jam 20:00 WIB
 // Window awal: 2026-06-04 → 2026-06-11 (review pattern utk tuning rule)
@@ -1805,6 +1848,7 @@ export default async function handler(req, res) {
       "log-cleanup":      taskLogCleanup,
       "auto-return-brought": taskAutoReturnBrought,
       "r2-cleanup-90d":   taskR2Cleanup90d,
+      "expense-foto-cleanup": taskExpenseFotoCleanup30d,
       "wa-snapshot":      taskWaSnapshot,
       "wa-backfill":      () => taskWaBackfill({ from: req.query.from, to: req.query.to }),
       "snapshot-cleanup": taskSnapshotCleanup,

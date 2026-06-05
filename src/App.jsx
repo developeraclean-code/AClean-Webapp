@@ -41,6 +41,7 @@ import {
 } from "./data/writes.js";
 import DashboardView from "./views/DashboardView.jsx";
 import KasbonWidget from "./views/KasbonWidget.jsx";
+import ExpenseInputWidget from "./views/ExpenseInputWidget.jsx";
 import ViewErrorBoundary from "./components/ViewErrorBoundary.jsx";
 import { AppContext } from "./context/AppContext.js";
 const DeletedAuditView = lazy(() => import("./views/DeletedAuditView.jsx"));
@@ -6072,6 +6073,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       currentUser, kasbonRequests, setKasbonRequests, insertKasbonRequest,
       sendWA, appSettings, userAccounts, supabase, showNotif,
     };
+    const expenseProps = { currentUser, apiHeaders: _apiHeaders, supabase, showNotif, TODAY };
     // Mobile teknisi/helper: tampilkan TechMobileView yang lebih sederhana
     if (isMobile && isTekRoleGlobal) {
       return (
@@ -6090,13 +6092,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           setActiveMenu={setActiveMenu}
           apiHeaders={_apiHeaders}
           kasbonProps={kasbonProps}
+          expenseProps={expenseProps}
         />
       );
     }
-    // Desktop teknisi/helper: KasbonWidget di atas DashboardView
+    // Desktop teknisi/helper: widget di atas DashboardView
     if (isTekRoleGlobal) {
       return (
         <div style={{ display: "grid", gap: 16 }}>
+          <ExpenseInputWidget {...expenseProps} />
           <KasbonWidget {...kasbonProps} />
           {renderDashboardMain()}
         </div>
