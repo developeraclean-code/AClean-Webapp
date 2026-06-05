@@ -924,10 +924,29 @@ export default function ACleanWebApp() {
 
   // ── Kasbon: approve → auto-insert ke expenses (Kasbon Karyawan) ──
   const approveKasbon = async (req, reviewNotes = "") => {
+    // ATOMIC CLAIM: update status hanya jika MASIH PENDING (.eq status filter).
+    // PostgREST/Postgres update bersifat atomic per-row → hanya 1 caller konkuren yang
+    // dapat baris (rows.length===1); caller kedua dapat 0 baris → skip, cegah double-expense.
+    const { data: claimed, error: claimErr } = await supabase
+      .from("kasbon_requests")
+      .update({
+        status: "APPROVED",
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: currentUser?.name || auditUserName(),
+        review_notes: reviewNotes || null,
+      })
+      .eq("id", req.id)
+      .eq("status", "PENDING")
+      .select();
+    if (claimErr) { showNotif("❌ Gagal proses kasbon: " + claimErr.message); return; }
+    if (!claimed || claimed.length === 0) {
+      showNotif("⚠️ Kasbon ini sudah diproses sebelumnya");
+      return;
+    }
+
     const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
-    const expId = "EXP_KSB_" + Date.now().toString(36).toUpperCase();
+    // id expenses dibiarkan default (UUID gen_random_uuid) — jangan kirim id custom (kolom UUID).
     const expPayload = {
-      id: expId,
       category: "petty_cash",
       subcategory: "Kasbon Karyawan",
       teknisi_name: (req.teknisi_name || "").trim(),
@@ -937,17 +956,18 @@ export default function ACleanWebApp() {
       validation_status: "APPROVED",
       last_changed_by: auditUserName(),
     };
-    const { error: eErr } = await insertExpense(supabase, expPayload);
-    if (eErr) { showNotif("❌ Gagal catat ke Biaya: " + eErr.message); return; }
-    setExpensesData(prev => [expPayload, ...prev]);
+    const { data: expData, error: eErr } = await insertExpense(supabase, expPayload);
+    if (eErr) {
+      // Expense gagal → rollback klaim ke PENDING agar bisa diproses ulang.
+      await supabase.from("kasbon_requests").update({ status: "PENDING", reviewed_at: null, reviewed_by: null, review_notes: null }).eq("id", req.id);
+      showNotif("❌ Gagal catat ke Biaya: " + eErr.message);
+      return;
+    }
+    const expId = expData?.id;  // UUID hasil generate DB
+    setExpensesData(prev => [expData || expPayload, ...prev]);
 
-    await updateKasbonRequest(supabase, req.id, {
-      status: "APPROVED",
-      reviewed_at: new Date().toISOString(),
-      reviewed_by: currentUser?.name || auditUserName(),
-      review_notes: reviewNotes || null,
-      expense_id: expId,
-    });
+    // Link expense_id ke request yang sudah diklaim
+    await updateKasbonRequest(supabase, req.id, { expense_id: expId });
     setKasbonRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "APPROVED", expense_id: expId, reviewed_by: currentUser?.name } : r));
 
     // WA notif ke teknisi
