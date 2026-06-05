@@ -2472,7 +2472,21 @@ ${jasaItems.length > 0 ? `
 </div>
 ` : ""}
 
-<!-- CATATAN & REKOMENDASI -->
+<!-- CATATAN & REKOMENDASI / SURVEY -->
+${laporan.service === "Survey" ? `
+<div class="section">
+  <div class="section-title">Laporan Hasil Survey</div>
+  <div style="margin-bottom:8px">
+    <div style="font-size:9px;color:#64748b;margin-bottom:3px;font-weight:700">Hasil Survey</div>
+    <div class="catatan-box" style="min-height:60px;white-space:pre-wrap">${escH(laporan.hasil_survey || "—")}</div>
+  </div>
+  ${laporan.catatan_rekomendasi ? `
+  <div>
+    <div style="font-size:9px;color:#64748b;margin-bottom:3px;font-weight:700">Rekomendasi</div>
+    <div class="catatan-box" style="min-height:40px;white-space:pre-wrap">${escH(laporan.catatan_rekomendasi)}</div>
+  </div>` : ""}
+</div>
+` : `
 <div class="section">
   <div class="section-title">Catatan & Rekomendasi</div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -2486,6 +2500,7 @@ ${jasaItems.length > 0 ? `
     </div>
   </div>
 </div>
+`}
 
 <!-- TANDA TANGAN -->
 <div class="section">
