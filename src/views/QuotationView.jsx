@@ -35,7 +35,7 @@ export default function QuotationView({
   quotationsData, setQuotationsData, customersData, showNotif, showConfirm,
   currentUser, supabase, getLocalDate, fmt: fmtProp, priceListData,
   invoicesData, setInvoicesData, ordersData, setOrdersData, sendWAFn,
-  onOpenPDF, uploadQuotationPDFFn,
+  onOpenPDF, uploadQuotationPDFFn, setActiveMenu,
 }) {
   const fmtFn = fmtProp || fmt;
   const today = getLocalDate?.() || new Date().toISOString().slice(0, 10);
@@ -88,6 +88,15 @@ export default function QuotationView({
 
       // 1. Buat order → masuk Planning Order (status PENDING, teknisi kosong)
       const totalUnits = (quo.items || []).filter(i => i.item_type === "unit_ac").reduce((s, i) => s + (i.qty || 1), 0) || 1;
+      // P2: Detect service type dari items — jangan hardcode "Install"
+      const itemDescs = (quo.items || []).map(i => (i.description || "").toLowerCase()).join(" ");
+      const detectedService = (() => {
+        if ((quo.items || []).some(i => i.item_type === "unit_ac")) return "Install";
+        if (/cuci|cleaning|maintenance|rutin/.test(itemDescs)) return "Cleaning";
+        if (/repair|perbaik|freon|isi gas/.test(itemDescs)) return "Repair";
+        if (/pasang|install/.test(itemDescs)) return "Install";
+        return "Install";
+      })();
       // Skip T&C standar dari catatan order (sudah otomatis di PDF) — cegah card Planning Order membengkak
       const _nLow = (quo.notes || "").toLowerCase();
       const isPresetNote = _nLow.includes("jasa perapian tembok") && _nLow.includes("term of payment");
@@ -98,8 +107,8 @@ export default function QuotationView({
         phone:      quo.phone || null,
         address:    quo.address || "",
         area:       quo.area || "",
-        service:    "Install",
-        type:       "Install",
+        service:    detectedService,
+        type:       detectedService,
         units:      totalUnits,
         date:       orderDate,
         time:       "09:00",
@@ -305,11 +314,19 @@ export default function QuotationView({
                   </div>
                 )}
 
-                {/* Approved: link ke order (invoice dibuat setelah laporan teknisi) */}
+                {/* Approved: link ke order + invoice (P4) */}
                 {quo.status === "APPROVED" && quo.job_id && (
-                  <div style={{ fontSize: 12, color: "#4ade80", marginBottom: 8 }}>
-                    ✅ Order: {quo.job_id} · masuk Planning Order
-                    {quo.invoice_id && ` · Invoice: ${quo.invoice_id}`}
+                  <div style={{ fontSize: 11, marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <span style={{ color: "#4ade80" }}>✅ Order: <b>{quo.job_id}</b></span>
+                    {quo.invoice_id
+                      ? <span
+                          onClick={() => setActiveMenu?.("invoice")}
+                          style={{ color: "#a5b4fc", cursor: "pointer", textDecoration: "underline" }}
+                          title="Buka menu Invoice">
+                          📄 Invoice: <b>{quo.invoice_id}</b>
+                        </span>
+                      : <span style={{ color: "#64748b" }}>⏳ Invoice belum dibuat</span>
+                    }
                   </div>
                 )}
 

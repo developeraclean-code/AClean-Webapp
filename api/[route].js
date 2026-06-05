@@ -3107,6 +3107,9 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
             portal_token: genToken(),
             token_active: true,
             hide_costs: body.hide_costs !== false,
+            contract_start_date: body.contract_start_date || null,
+            contract_end_date: body.contract_end_date || null,
+            contract_value: body.contract_value ? Number(body.contract_value) : null,
           };
           const r = await fetch(REST("maintenance_clients"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
           if (!r.ok) return res.status(400).json({ error: "Gagal buat klien", detail: await r.text() });
@@ -3116,6 +3119,9 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
           if (!body.id) return res.status(400).json({ error: "id wajib" });
           const upd = {};
           ["name", "address", "pic_name", "notes", "contract_status"].forEach(k => { if (body[k] !== undefined) upd[k] = body[k]; });
+          if (body.contract_start_date !== undefined) upd.contract_start_date = body.contract_start_date || null;
+          if (body.contract_end_date !== undefined) upd.contract_end_date = body.contract_end_date || null;
+          if (body.contract_value !== undefined) upd.contract_value = body.contract_value ? Number(body.contract_value) : null;
           if (body.pic_phone !== undefined) upd.pic_phone = validateAndNormalizePhone(body.pic_phone) || null;
           if (body.hide_costs !== undefined) upd.hide_costs = !!body.hide_costs;
           if (body.token_active !== undefined) upd.token_active = !!body.token_active;
@@ -3281,21 +3287,110 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
           const exRes = await fetch(REST("maintenance_logs?order_id=eq." + encodeURIComponent(order.id) + "&select=id&limit=1"), { headers });
           const ex = await exRes.json();
           if (Array.isArray(ex) && ex.length) return res.status(200).json({ skipped: true, reason: "sudah ter-log" });
-          // Buat 1 log per unit
-          const rows = unitIds.map(uid => ({
-            unit_id: uid,
-            client_id: order.maintenance_client_id,
-            service_date: order.date || new Date().toISOString().slice(0, 10),
-            service_type: order.service || "Maintenance",
-            technician: order.teknisi || null,
-            description: `Servis via order ${order.id}`,
-            order_id: order.id,
-            cost: null,
-            created_by: body.created_by || "auto-verify",
-          }));
+
+          // ── Perkaya log dari laporan + invoice (visi "1-stop all-in") ──
+          // 1) Laporan teknisi: detail per-unit (units_json), foto, material level-laporan.
+          let report = null;
+          try {
+            const rpRes = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(order.id) + "&select=units_json,foto_urls,materials_json,total_freon&order=updated_at.desc&limit=1"), { headers });
+            const rp = await rpRes.json();
+            if (Array.isArray(rp) && rp.length) report = rp[0];
+          } catch (_) {}
+          // units_json & materials_json disimpan sebagai STRING JSON (text), foto_urls array asli.
+          const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
+          const repUnits = _arr(report?.units_json);
+          const repFotos = _arr(report?.foto_urls);
+          const repMats = _arr(report?.materials_json);
+          // Material level-laporan non-freon (barang/jasa) → ditaruh di log unit pertama saja
+          const repMatsNonFreon = repMats.filter(m => String(m?.keterangan || "").toLowerCase() !== "freon");
+
+          // 2) Invoice (sudah dibuat saat laporan submit) → hanya link ke maintenance client.
+          //    Biaya per-AC TIDAK dicatat ke log (tidak ditampilkan di history/portal).
+          try {
+            const ivRes = await fetch(REST("invoices?job_id=eq." + encodeURIComponent(order.id) + "&select=id,maintenance_client_id&order=created_at.desc&limit=1"), { headers });
+            const iv = await ivRes.json();
+            if (Array.isArray(iv) && iv.length && !iv[0].maintenance_client_id) {
+              // Link invoice ↔ maintenance client (jalur order, bukan B2B create-invoice)
+              fetch(REST("invoices?id=eq." + encodeURIComponent(iv[0].id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ maintenance_client_id: order.maintenance_client_id }) }).catch(() => {});
+            }
+          } catch (_) {}
+
+          // 3) Deteksi mismatch registry (unit baru / ganti AC) → flag utk konfirmasi admin.
+          //    Persistent di agent_logs (Monitoring → Audit Log), tidak auto-ubah registry.
+          try {
+            const ruRes = await fetch(REST("maintenance_units?id=in.(" + encodeURIComponent(unitIds.join(",")) + ")&select=id,unit_code,brand,capacity_pk"), { headers });
+            const regUnits = await ruRes.json();
+            const regById = Object.fromEntries((Array.isArray(regUnits) ? regUnits : []).map(u => [u.id, u]));
+            const issues = [];
+            // a. Laporan punya lebih banyak unit dari yang dipilih → kemungkinan AC baru
+            if (repUnits.length > unitIds.length)
+              issues.push(`${repUnits.length - unitIds.length} unit di laporan tidak ada di registry (kemungkinan AC baru)`);
+            // b. Merk/PK laporan beda dari registry per-posisi → kemungkinan unit diganti
+            unitIds.forEach((uid, i) => {
+              const lu = repUnits[i], reg = regById[uid];
+              if (!lu || !reg) return;
+              const luMerk = String(lu.merk || "").trim().toLowerCase();
+              const regMerk = String(reg.brand || "").trim().toLowerCase();
+              if (luMerk && regMerk && luMerk !== regMerk)
+                issues.push(`${reg.unit_code}: merk laporan "${lu.merk}" ≠ registry "${reg.brand}"`);
+            });
+            if (issues.length) {
+              fetch(SU + "/rest/v1/agent_logs", {
+                method: "POST",
+                headers: { apikey: SK, Authorization: "Bearer " + SK, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  action: "MAINTENANCE_REGISTRY_REVIEW",
+                  severity: "warn", category: "maintenance", status: "WARNING",
+                  detail: `Order ${order.id} (${order.maintenance_client_id}): ${issues.join("; ")}. Perlu konfirmasi admin di registry.`,
+                  metadata: { order_id: order.id, client_id: order.maintenance_client_id, issues },
+                  time: new Date().toISOString(),
+                }),
+              }).catch(() => {});
+            }
+          } catch (_) {}
+
+          // Map jenis servis order → vocabulary maintenance
+          const SVC_MAP = { "Cleaning": "Cuci", "Cuci AC": "Cuci", "Install": "Pasang", "Pasang": "Pasang", "Bongkar Pasang": "Pasang", "Repair": "Perbaikan", "Perbaikan": "Perbaikan", "Isi Freon": "Isi Freon", "Survey": "Cek" };
+          const svcType = SVC_MAP[order.service] || order.service || "Maintenance";
+
+          // Buat 1 log per unit — units_json positional sejajar maintenance_unit_ids (preset dari Planning Order)
+          const rows = unitIds.map((uid, i) => {
+            const lu = repUnits[i] || null;
+            // Deskripsi per-AC dari laporan
+            let desc = `Servis via order ${order.id}`;
+            if (lu) {
+              const parts = [];
+              if (Array.isArray(lu.pekerjaan) && lu.pekerjaan.length) parts.push(lu.pekerjaan.join(", "));
+              if (Array.isArray(lu.kondisi_setelah) && lu.kondisi_setelah.length) parts.push("Kondisi: " + lu.kondisi_setelah.join(", "));
+              if (lu.freon_ditambah) parts.push("Freon +" + lu.freon_ditambah);
+              if (lu.ampere_akhir) parts.push("Ampere " + lu.ampere_akhir);
+              if (lu.catatan_unit) parts.push(lu.catatan_unit);
+              if (parts.length) desc = parts.join(" • ");
+            }
+            // Material per-AC: freon unit ini + (unit pertama) material level-laporan.
+            // Harga TIDAK disertakan (biaya tidak ditampilkan di history/portal).
+            const mats = [];
+            if (lu?.freon_ditambah) mats.push({ name: "Freon" + (lu.tipe ? " " + lu.tipe : ""), qty: lu.freon_ditambah, unit: "gr" });
+            if (i === 0 && repMatsNonFreon.length) {
+              repMatsNonFreon.forEach(m => mats.push({ name: m.nama || m.name || m.keterangan || "Material", qty: m.qty ?? m.jumlah ?? null }));
+            }
+            return {
+              unit_id: uid,
+              client_id: order.maintenance_client_id,
+              service_date: order.date || new Date().toISOString().slice(0, 10),
+              service_type: svcType,
+              technician: order.teknisi || null,
+              description: desc,
+              materials: mats,
+              photos: repFotos,
+              order_id: order.id,
+              cost: null,
+              created_by: body.created_by || "auto-verify",
+            };
+          });
           const r = await fetch(REST("maintenance_logs"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(rows) });
           if (!r.ok) return res.status(400).json({ error: "Gagal auto-log", detail: await r.text() });
-          return res.status(200).json({ created: (await r.json()).length });
+          return res.status(200).json({ created: (await r.json()).length, enriched: { photos: repFotos.length, units_detail: repUnits.length } });
         }
 
         return res.status(400).json({ error: "Action tidak dikenal: " + action });

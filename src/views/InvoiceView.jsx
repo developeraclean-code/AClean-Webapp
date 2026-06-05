@@ -1218,6 +1218,15 @@ return (
                   </span>
                 );
               })()}
+              {/* P4: Badge link ke quotation asal */}
+              {inv.quotation_id && (
+                <span
+                  onClick={e => { e.stopPropagation(); setActiveMenu?.("quotations"); }}
+                  style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: "#6366f118", color: "#a5b4fc", border: "1px solid #6366f144", fontWeight: 700, cursor: "pointer" }}
+                  title={"Dari Quotation " + inv.quotation_id}>
+                  📋 {inv.quotation_id}
+                </span>
+              )}
               {inv.garansi_expires && (() => {
                 const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
                 if (daysLeft < 0) return <span style={{ fontSize: 10, color: cs.muted, background: cs.surface, padding: "1px 6px", borderRadius: 4 }}>🔒 Garansi selesai</span>;
