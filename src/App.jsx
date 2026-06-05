@@ -10886,6 +10886,51 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         rows={3} placeholder="Rekomendasi tindak lanjut, jenis pekerjaan yang disarankan, dll..."
                         style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
                     </div>
+
+                    {/* ── FOTO DOKUMENTASI SURVEY ── */}
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>
+                          📸 Foto Dokumentasi
+                          {laporanFotos.length > 0 && (
+                            <span style={{ fontSize: 11, fontWeight: 400, color: laporanFotos.filter(f => f.url).length === laporanFotos.length ? cs.green : cs.yellow, marginLeft: 6 }}>
+                              {laporanFotos.filter(f => f.url).length}/{laporanFotos.length} tersimpan
+                            </span>
+                          )}
+                        </div>
+                        {laporanFotos.length < 20 && (
+                          <button onClick={() => fotoInputRef.current?.click()}
+                            style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px 12px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                            + Tambah Foto
+                          </button>
+                        )}
+                      </div>
+                      <input ref={fotoInputRef} type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple onChange={handleFotoUpload} style={{ display: "none" }} />
+                      {laporanFotos.length === 0 ? (
+                        <div onClick={() => fotoInputRef.current?.click()}
+                          style={{ border: "2px dashed " + cs.border, borderRadius: 10, padding: "20px", textAlign: "center", cursor: "pointer", color: cs.muted, fontSize: 13 }}>
+                          📷 Ketuk untuk tambah foto dokumentasi (opsional)
+                        </div>
+                      ) : (
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                          {laporanFotos.map(f => (
+                            <div key={f.id} style={{ position: "relative", aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid " + cs.border }}>
+                              <img src={f.preview || f.url} alt={f.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>
+                                {f.uploading ? "⏳" : f.url ? "" : f.errMsg ? "❌" : "⏳"}
+                              </div>
+                              <button onClick={() => setLaporanFotos(p => p.filter(x => x.id !== f.id))}
+                                style={{ position: "absolute", top: 4, right: 4, background: "#000a", border: "none", color: "#fff", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
+                            </div>
+                          ))}
+                          {laporanFotos.length < 20 && (
+                            <div onClick={() => fotoInputRef.current?.click()}
+                              style={{ aspectRatio: "1/1", border: "2px dashed " + cs.border, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: cs.muted, fontSize: 22 }}>+</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                     <button onClick={submitLaporan} disabled={!laporanSurveyHasil.trim()}
                       style={{ background: laporanSurveyHasil.trim() ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface,
                         border: "none", color: laporanSurveyHasil.trim() ? "#fff" : cs.muted,
