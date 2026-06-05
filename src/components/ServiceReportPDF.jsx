@@ -163,6 +163,7 @@ function PhotoPage({ photos, pageNum, startIdx, jobId, customer }) {
 }
 
 export default function ServiceReportPDF({ laporan, inv, logoUrl, photoDataUrls = {}, appSettings = {}, ord = {} }) {
+  const isSurvey  = laporan.service === "Survey";
   const units     = laporan.units || [];
   const materials = (laporan.materials || []).filter(m => m.nama && m.keterangan !== "jasa");
   const jasaItems = (laporan.materials || []).filter(m => m.keterangan === "jasa");
@@ -229,20 +230,36 @@ export default function ServiceReportPDF({ laporan, inv, logoUrl, photoDataUrls 
           </>
         )}
 
-        {/* ── Catatan & Rekomendasi ── */}
-        <View style={[s.section]}>
-          <Text style={s.secTitle}>Catatan & Rekomendasi</Text>
-          <View style={s.bottomRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.secTitle, { marginBottom: 3, border: "none" }]}>Catatan Teknisi</Text>
-              <View style={s.catatanBox}><Text>{laporan.catatan || "—"}</Text></View>
+        {/* ── Catatan & Rekomendasi / Survey Fields ── */}
+        {isSurvey ? (
+          <View style={[s.section]}>
+            <Text style={s.secTitle}>Laporan Hasil Survey</Text>
+            <View style={{ marginBottom: 8 }}>
+              <Text style={[s.secTitle, { marginBottom: 3, border: "none" }]}>Hasil Survey</Text>
+              <View style={[s.catatanBox, { minHeight: 60 }]}><Text>{laporan.hasil_survey || "—"}</Text></View>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.secTitle, { marginBottom: 3 }]}>Rekomendasi</Text>
-              <View style={s.catatanBox}><Text>{laporan.rekomendasi || "—"}</Text></View>
+            {laporan.catatan_rekomendasi ? (
+              <View>
+                <Text style={[s.secTitle, { marginBottom: 3 }]}>Rekomendasi</Text>
+                <View style={[s.catatanBox, { minHeight: 40 }]}><Text>{laporan.catatan_rekomendasi}</Text></View>
+              </View>
+            ) : null}
+          </View>
+        ) : (
+          <View style={[s.section]}>
+            <Text style={s.secTitle}>Catatan & Rekomendasi</Text>
+            <View style={s.bottomRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.secTitle, { marginBottom: 3, border: "none" }]}>Catatan Teknisi</Text>
+                <View style={s.catatanBox}><Text>{laporan.catatan || "—"}</Text></View>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.secTitle, { marginBottom: 3 }]}>Rekomendasi</Text>
+                <View style={s.catatanBox}><Text>{laporan.rekomendasi || "—"}</Text></View>
+              </View>
             </View>
           </View>
-        </View>
+        )}
 
         {/* ── Tanda Tangan ── */}
         <View style={s.section}>

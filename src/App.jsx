@@ -6758,11 +6758,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       }
       const now = new Date().toLocaleString("id-ID", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
       const reportId = "LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase();
+      const surveyFotoUrls = laporanFotos.filter(f => f.url).map(f => f.url);
       const surveyReport = {
         id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
         helper: laporanModal.helper || null, customer: laporanModal.customer,
         service: "Survey", date: laporanModal.date, submitted: now,
-        status: "SUBMITTED", total_units: 0, units: [], materials: [], fotos: [],
+        status: "SUBMITTED", total_units: 0, units: [], materials: [],
+        fotos: laporanFotos.map(f => ({ id: f.id, label: f.label })),
+        foto_urls: surveyFotoUrls,
         total_freon: 0, rekomendasi: "", catatan_global: "",
         hasil_survey: laporanSurveyHasil.trim(),
         catatan_rekomendasi: laporanSurveyCatatan.trim(),
@@ -6778,7 +6781,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         helper: laporanModal.helper || null, customer: laporanModal.customer,
         service: "Survey", date: laporanModal.date, status: "SUBMITTED",
         total_units: 0, total_freon: 0, submitted_at: new Date().toISOString(),
-        foto_urls: [], rekomendasi: "", catatan_global: "",
+        foto_urls: surveyFotoUrls, rekomendasi: "", catatan_global: "",
         hasil_survey: laporanSurveyHasil.trim(),
         catatan_rekomendasi: laporanSurveyCatatan.trim(),
         submitted: now,
