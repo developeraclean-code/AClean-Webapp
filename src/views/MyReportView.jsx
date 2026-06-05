@@ -140,9 +140,15 @@ return (
                     </div>
                   );
                 }
-                if (!bapEnabled) return null;
+                const srcOrder = ordersData.find(o => o.id === r.job_id) || { id: r.job_id, customer: r.customer, service: r.service, date: r.date, teknisi: r.teknisi, helper: r.helper, units: 1 };
+                if (!bapEnabled) return (
+                  <button onClick={() => openLaporanModal?.(srcOrder)}
+                    style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                    📝 Buat Laporan
+                  </button>
+                );
                 return (
-                  <button onClick={() => openBAPModal?.(ordersData.find(o => o.id === r.job_id) || { id: r.job_id, customer: r.customer, service: r.service, date: r.date, teknisi: r.teknisi, helper: r.helper, units: 1 })}
+                  <button onClick={() => openBAPModal?.(srcOrder)}
                     style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                     📋 Buat BAP
                   </button>
