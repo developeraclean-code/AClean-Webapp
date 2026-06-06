@@ -2,6 +2,183 @@ import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
 
+// ───────────────────────────────────────────────
+// Pending AI Material — manual approve only (no auto-insert)
+// Source: ai_extractions WHERE intent='material' AND status='pending'
+// Owner pilih: Link ke Job X (commit job_materials_brought) atau Reject.
+// ───────────────────────────────────────────────
+function fotoSrc(url) {
+  if (!url) return null;
+  // Already API proxy format
+  if (url.startsWith("/api/foto")) return url;
+  // R2 pub URL → proxy via /api/foto?key=
+  const m = url.match(/\/([^?]+\.[a-z0-9]+)(?:\?|$)/i);
+  if (m) return "/api/foto?key=" + encodeURIComponent(m[1]);
+  return url;
+}
+
+function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
+  const [rows, setRows] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+  const [pickerOpen, setPickerOpen] = useState(null); // extraction id
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await supabase.from("ai_extractions")
+        .select("*")
+        .eq("intent", "material").eq("status", "pending")
+        .order("created_at", { ascending: false }).limit(100);
+      setRows(data || []);
+      // Today + yesterday orders for picker
+      const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+      const yesterday = new Date(Date.now() + 7 * 3600_000 - 86400_000).toISOString().slice(0, 10);
+      const { data: ord } = await supabase.from("orders")
+        .select("id,customer,teknisi,teknisi2,helper,helper2,team_slot,date,status")
+        .in("date", [today, yesterday])
+        .in("status", ["SCHEDULED","IN_PROGRESS","ON_SITE","WORKING","DONE"])
+        .order("date", { ascending: false }).limit(200);
+      setOrders(ord || []);
+    } catch (e) { showNotif?.("Gagal load: " + e.message, "error"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  const handleLink = async (row, orderId) => {
+    if (!orderId) return;
+    setBusyId(row.id);
+    try {
+      const items = Array.isArray(row.extracted?.items) ? row.extracted.items : [];
+      if (items.length === 0) throw new Error("AI tidak extract item");
+      const matRows = items.map(it => ({
+        job_id: orderId,
+        material_type: String(it.type || "lain").toLowerCase(),
+        inventory_name: [it.brand, it.size].filter(Boolean).join(" ") || `${it.type || "material"} (AI)`,
+        qty_estimate: Number(it.qty) || 1,
+        brought_at: new Date().toISOString(),
+        brought_by: row.sender_name,
+        status: "BROUGHT",
+        notes: `[AI vision approved] ${row.notes || ""}`.trim(),
+      }));
+      const { error } = await supabase.from("job_materials_brought").insert(matRows);
+      if (error) throw error;
+      await supabase.from("ai_extractions").update({
+        status: "linked", linked_table: "job_materials_brought", linked_id: orderId,
+      }).eq("id", row.id);
+      showNotif?.(`✓ ${matRows.length} material linked ke job ${orderId}`, "success");
+      setRows(prev => prev.filter(r => r.id !== row.id));
+      setPickerOpen(null);
+    } catch (e) {
+      showNotif?.("Gagal link: " + e.message, "error");
+    } finally { setBusyId(null); }
+  };
+
+  const handleReject = async (row) => {
+    if (!confirm("Tolak material ini? Status diset rejected (tidak hilang dari audit).")) return;
+    setBusyId(row.id);
+    try {
+      await supabase.from("ai_extractions").update({ status: "rejected" }).eq("id", row.id);
+      showNotif?.("✕ Rejected", "info");
+      setRows(prev => prev.filter(r => r.id !== row.id));
+    } catch (e) { showNotif?.("Gagal: " + e.message, "error"); }
+    finally { setBusyId(null); }
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ padding: 10, background: "#3b82f622", border: "1px solid #3b82f655", borderRadius: 8, fontSize: 12, color: cs.text }}>
+        🤖 Foto material dari teknisi (AI vision). <b>Tidak auto-link</b> ke job — owner pilih manual: Link ke job, atau Reject.
+        Carrier hint di-extract dari caption "dibawa &lt;nama&gt;".
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 12, color: cs.muted }}>{rows.length} pending</div>
+        <button onClick={load} disabled={loading}
+          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
+          {loading ? "..." : "↻ Refresh"}
+        </button>
+      </div>
+      {rows.length === 0 && !loading && (
+        <div style={{ padding: 24, background: cs.card, borderRadius: 10, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+          Tidak ada material pending. 🎉
+        </div>
+      )}
+      {rows.map(r => {
+        const items = Array.isArray(r.extracted?.items) ? r.extracted.items : [];
+        const cands = r.extracted?._candidates || {};
+        const carrierHint = cands.carrier_hint;
+        const carrierJobs = cands.carrier_jobs || [];
+        const senderJobs = cands.sender_jobs || [];
+        const suggestedJobs = carrierJobs.length > 0 ? carrierJobs : senderJobs;
+        const photo = fotoSrc(r.r2_url || r.image_url);
+        return (
+          <div key={r.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 12, display: "grid", gridTemplateColumns: photo ? "160px 1fr" : "1fr", gap: 12 }}>
+            {photo && (
+              <a href={photo} target="_blank" rel="noreferrer">
+                <img src={photo} alt="material" style={{ width: 160, height: 200, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }}
+                  onError={e => { e.target.style.display = "none"; }} />
+              </a>
+            )}
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700, color: cs.text }}>{r.sender_name}</span>
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#10b98122", color: "#10b981", fontWeight: 700 }}>{r.confidence}</span>
+                <span style={{ fontSize: 11, color: cs.muted }}>{new Date(r.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</span>
+              </div>
+              {r.message_text && <div style={{ fontSize: 12, color: cs.muted, fontStyle: "italic" }}>"{r.message_text}"</div>}
+              {items.length > 0 && (
+                <div style={{ fontSize: 12, color: cs.text }}>
+                  📦 {items.map((it, i) => <span key={i}>{i > 0 ? ", " : ""}<b>{it.type || "?"}</b>{it.brand ? " " + it.brand : ""}{it.size ? " " + it.size : ""}{it.qty ? ` (${it.qty}${typeof it.qty === "number" ? "kg" : ""})` : ""}</span>)}
+                </div>
+              )}
+              {carrierHint && (
+                <div style={{ fontSize: 11, color: cs.muted }}>💡 Carrier hint: <b>{carrierHint}</b> {carrierJobs.length > 0 ? `(${carrierJobs.length} job)` : "(no job match)"}</div>
+              )}
+              {senderJobs.length > 0 && !carrierJobs.length && (
+                <div style={{ fontSize: 11, color: cs.muted }}>👤 Sender jobs: {senderJobs.length}</div>
+              )}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+                {pickerOpen === r.id ? (
+                  <>
+                    <select onChange={e => e.target.value && handleLink(r, e.target.value)} defaultValue=""
+                      disabled={busyId === r.id}
+                      style={{ background: cs.surface, color: cs.text, border: "1px solid " + cs.border, borderRadius: 8, padding: "6px 10px", fontSize: 12, flex: "1 1 300px" }}>
+                      <option value="">Pilih job…</option>
+                      {suggestedJobs.length > 0 && <optgroup label="🎯 Saran AI">
+                        {suggestedJobs.map(j => <option key={j.id} value={j.id}>{j.customer} (#{j.id})</option>)}
+                      </optgroup>}
+                      <optgroup label="Semua job hari ini/kemarin">
+                        {orders.map(o => <option key={o.id} value={o.id}>{o.customer} [{o.date}] (#{o.id})</option>)}
+                      </optgroup>
+                    </select>
+                    <button onClick={() => setPickerOpen(null)} disabled={busyId === r.id}
+                      style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
+                      Batal
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => setPickerOpen(r.id)} disabled={busyId === r.id}
+                      style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      ✓ Link ke Job
+                    </button>
+                    <button onClick={() => handleReject(r)} disabled={busyId === r.id}
+                      style={{ background: "#ef444422", border: "1px solid #ef444455", color: "#ef4444", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      ✕ Reject
+                    </button>
+                  </>
+                )}
+              </div>
+              {r.notes && <div style={{ fontSize: 10, color: cs.muted, fontStyle: "italic" }}>🧠 {r.notes}</div>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MatTrackView({ inventoryData, invUnitsData, setInvUnitsData, invTxData, setInvTxData, matTrackFilter, setMatTrackFilter, matTrackSearch, setMatTrackSearch, matTrackDateFrom, setMatTrackDateFrom, matTrackDateTo, setMatTrackDateTo, setModalStok, supabase, fetchInventoryUnits, showNotif, currentUser, setInventoryData }) {
 const TRACK_ITEMS = inventoryData.filter(item =>
   item.material_type === "freon" ||
@@ -417,6 +594,7 @@ return (
       <div style={{ display: "flex", gap: 4, background: cs.surface, borderRadius: 10, padding: 4, alignSelf: "flex-start", flexWrap: "wrap" }}>
         {[
           { id: "stok",           label: "📦 Stok & Tracking" },
+          { id: "pending_ai",     label: "🤖 Pending AI Material" },
           { id: "laporan_freon",  label: "❄️ Laporan Freon" },
           { id: "laporan_pipa",   label: "🔧 Laporan Pipa" },
           { id: "laporan_kabel",  label: "⚡ Laporan Kabel" },
@@ -429,6 +607,13 @@ return (
           </button>
         ))}
       </div>
+    )}
+
+    {/* ═══════════════════════════════════════════════
+        TAB: PENDING AI MATERIAL — manual approve
+        ═══════════════════════════════════════════════ */}
+    {mainTab === "pending_ai" && isOwnerAdmin && (
+      <PendingAiMaterialTab supabase={supabase} showNotif={showNotif} currentUser={currentUser} />
     )}
 
     {/* ═══════════════════════════════════════════════

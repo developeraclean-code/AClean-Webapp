@@ -220,8 +220,19 @@ export async function persistClassification({ SU, SK, classification, sender, gr
     };
     const descParts = [`[AI] ${d.merchant || "Foto struk"}`];
     if (messageText) descParts.push(messageText);
+    // Date guard: AI bisa salah baca tanggal struk (mis. 2025 atau bulan terbalik).
+    // Kalau AI date di luar ±7 hari dari today, fallback ke today. Owner bisa edit saat approve.
+    let safeDate = today;
+    if (d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date)) {
+      const aiTs = Date.parse(d.date + "T00:00:00+07:00");
+      const todayTs = Date.parse(today + "T00:00:00+07:00");
+      if (Number.isFinite(aiTs)) {
+        const diffDays = Math.abs((aiTs - todayTs) / 86400000);
+        if (diffDays <= 7) safeDate = d.date;
+      }
+    }
     const expBody = {
-      date: d.date || today,
+      date: safeDate,
       category: cat,
       subcategory: sub,
       description: descParts.join(" — "),
@@ -287,11 +298,17 @@ export async function persistClassification({ SU, SK, classification, sender, gr
     }
   }
 
-  // Material intent — auto-tag ke job_materials_brought dgn dedup per (job, material_type, today)
-  let materialJobId = null;
+  // Material intent — OBSERVE-ONLY mode (per Owner directive 2026-06-06).
+  // STOP auto-INSERT ke job_materials_brought karena risiko salah-link tinggi.
+  // Hasil AI hanya disimpan di ai_extractions (status=pending). Owner approve manual
+  // via tab "Pending Material" di MatTrack → tombol Link to Job → commit job_materials_brought.
+  //
+  // Enrich notes dgn carrier hint (Gap 1 parser) + candidate jobs hari ini → bantu Owner pilih.
+  let materialJobId = null;          // tetap dipertahankan untuk API compat (selalu null sekarang)
   let materialSkipped = null;
-  let materialInsertedCount = 0;
+  let materialInsertedCount = 0;     // selalu 0 sekarang
   let materialDupCount = 0;
+  let materialPendingForOwner = false;
   if (classification.intent === "material" && groupCfg.ai_material_enabled) {
     const d = classification.data || {};
     const items = Array.isArray(d.items) ? d.items : [];
@@ -299,7 +316,9 @@ export async function persistClassification({ SU, SK, classification, sender, gr
       // AI bilang material tapi tidak extract item — flag untuk Owner review
       materialSkipped = "AI tidak bisa extract item material";
     } else if (items.length > 0) {
-      // Find sender's today job (Asia/Jakarta = UTC+7)
+      // Enrich notes — TIDAK insert ke job_materials_brought.
+      // Owner approve manual via tab "Pending Material" di UI.
+      materialPendingForOwner = true;
       const todayJkt = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
       const orderUrl = SU + "/rest/v1/orders?select=id,customer,teknisi,teknisi2,teknisi3,helper,helper2,helper3,team_slot,date,status"
         + "&date=eq." + encodeURIComponent(todayJkt)
@@ -309,70 +328,53 @@ export async function persistClassification({ SU, SK, classification, sender, gr
         const r = await fetch(orderUrl, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
         if (r.ok) todayOrders = await r.json();
       } catch (_) {}
+
+      // Carrier hint — parse "dibawa <X>" dari messageText (Gap 1 parser)
+      let carrierHintName = null;
+      let carrierHintMatched = null;
+      let carrierJobs = [];
+      try {
+        const { parseCarrierFromCaption, matchCarrierName } = await import("./_shadow-parsers.js");
+        const c = parseCarrierFromCaption(messageText || "");
+        if (c) {
+          carrierHintName = c.carrier_main_token;
+          const mr = await matchCarrierName({ SU, SK, mainToken: c.carrier_main_token });
+          if (mr.matched) {
+            carrierHintMatched = mr.matched.name;
+            const lowMatch = carrierHintMatched.toLowerCase();
+            carrierJobs = todayOrders.filter(o => {
+              const slots = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3];
+              return slots.some(s => s && String(s).toLowerCase() === lowMatch);
+            }).map(o => ({ id: o.id, customer: o.customer, status: o.status }));
+          }
+        }
+      } catch (_) {}
+
+      // Sender jobs (fallback hint kalau no carrier)
       const sLow = String(sender.name || "").toLowerCase();
       const senderJobs = todayOrders.filter(o => {
         const slots = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3];
         return slots.some(s => s && String(s).toLowerCase() === sLow);
-      });
-      if (senderJobs.length === 1) {
-        const job = senderJobs[0];
-        materialJobId = job.id;
-        // Dedup: per (job_id, material_type, today)
-        const startToday = todayJkt + "T00:00:00Z";
-        const endToday   = todayJkt + "T23:59:59Z";
-        for (const it of items) {
-          const matType = String(it.type || "").toLowerCase();
-          if (!matType) continue;
-          // Cek existing
-          const dupUrl = SU + "/rest/v1/job_materials_brought?select=id,brought_by"
-            + "&job_id=eq." + encodeURIComponent(job.id)
-            + "&material_type=eq." + encodeURIComponent(matType)
-            + "&brought_at=gte." + encodeURIComponent(startToday)
-            + "&brought_at=lte." + encodeURIComponent(endToday)
-            + "&status=neq.RETURNED&limit=1";
-          let existing = [];
-          try {
-            const dr = await fetch(dupUrl, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
-            if (dr.ok) existing = await dr.json();
-          } catch (_) {}
-          if (existing.length > 0) {
-            materialDupCount++;
-            materialSkipped = `${matType} sudah dicatat oleh ${existing[0].brought_by || "tim"}`;
-            continue;
-          }
-          materialInsertedCount++;
-          const matBody = {
-            job_id: job.id,
-            material_type: matType,
-            inventory_name: [it.brand, it.size].filter(Boolean).join(" ") || `${matType} (AI)`,
-            qty_estimate: Number(it.qty) || 1,
-            brought_at: new Date().toISOString(),
-            brought_by: sender.name,
-            status: "BROUGHT",
-            notes: `[AI vision] ${classification.reasoning || ""}`.trim(),
-          };
-          await fetch(SU + "/rest/v1/job_materials_brought", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-            body: JSON.stringify(matBody),
-          }).catch(() => {});
-        }
-        // Patch ai_extractions linked_id
-        await fetch(SU + "/rest/v1/ai_extractions?id=eq." + extractionId, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
-          body: JSON.stringify({ linked_table: "job_materials_brought", linked_id: job.id, notes: classification.reasoning + (materialSkipped ? " | DEDUP: " + materialSkipped : "") }),
-        }).catch(() => {});
-      } else {
-        // 0 atau >1 job → notes saja (ambiguous), Owner review manual via MatTrack
-        await fetch(SU + "/rest/v1/ai_extractions?id=eq." + extractionId, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
-          body: JSON.stringify({ notes: (classification.reasoning || "") + ` | AMBIGUOUS: ${senderJobs.length} job today` }),
-        }).catch(() => {});
-      }
+      }).map(o => ({ id: o.id, customer: o.customer, status: o.status }));
+
+      const hintNote = [
+        carrierHintMatched ? `CARRIER_HINT: ${carrierHintMatched} (jobs: ${carrierJobs.length})` : (carrierHintName ? `CARRIER_RAW: ${carrierHintName} (no_match)` : null),
+        `SENDER_JOBS: ${senderJobs.length}`,
+      ].filter(Boolean).join(" | ");
+
+      await fetch(SU + "/rest/v1/ai_extractions?id=eq." + extractionId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
+        body: JSON.stringify({
+          notes: (classification.reasoning || "") + ` | ${hintNote}`,
+          extracted: {
+            ...d,
+            _candidates: { carrier_jobs: carrierJobs, sender_jobs: senderJobs, carrier_hint: carrierHintMatched || carrierHintName },
+          },
+        }),
+      }).catch(() => {});
     }
   }
 
-  return { extractionId, expenseId, paymentSuggestionId, materialJobId, materialSkipped, materialInsertedCount, materialDupCount };
+  return { extractionId, expenseId, paymentSuggestionId, materialJobId, materialSkipped, materialInsertedCount, materialDupCount, materialPendingForOwner };
 }

@@ -934,29 +934,15 @@ export default async function handler(req, res) {
                   messageText: aiMsgText,
                 });
                 aiStatus = "ok:" + classification.intent;
-                // Reply WA ke teknisi kalau material auto-tagged
+                // Material → manual approve. Reply ACK ke teknisi: foto diterima + menunggu review.
                 if (classification.intent === "material" && groupConfig.ai_material_enabled && FT_g) {
-                  let matReply = null;
-                  const ins = persistResult?.materialInsertedCount || 0;
-                  const dup = persistResult?.materialDupCount || 0;
-                  if (persistResult?.materialJobId && ins > 0) {
-                    const items = (classification.data?.items || []).map(i => `${i.type}${i.brand ? " " + i.brand : ""}${i.size ? " " + i.size : ""}`).filter(Boolean).join(", ");
-                    matReply = `✅ Material tercatat (${ins})\n📦 ${items || "Material"}\n🔧 Job ${persistResult.materialJobId}`
-                      + (dup > 0 ? `\n⚠️ ${dup} item skip (dup): ${persistResult.materialSkipped}` : "");
-                  } else if (persistResult?.materialJobId && ins === 0 && dup > 0) {
-                    matReply = `ℹ️ Semua material yang kamu kirim SUDAH dicatat tim hari ini (${dup} dup). Tidak ada tambahan.`;
-                  } else if (persistResult?.materialSkipped && !persistResult?.materialJobId) {
-                    matReply = `⚠️ Foto material diterima tapi: ${persistResult.materialSkipped}. Admin akan review.`;
-                  } else if (!persistResult?.materialJobId) {
-                    matReply = `⚠️ Foto material diterima tapi job kamu tidak jelas (0 atau >1 job hari ini). Admin akan review manual.`;
-                  }
-                  if (matReply) {
-                    fetch("https://api.fonnte.com/send", {
-                      method: "POST",
-                      headers: { Authorization: FT_g, "Content-Type": "application/json" },
-                      body: JSON.stringify({ target: participantNorm, message: matReply, delay: "2", countryCode: "62" })
-                    }).catch(() => {});
-                  }
+                  const items = (classification.data?.items || []).map(i => `${i.type}${i.brand ? " " + i.brand : ""}${i.size ? " " + i.size : ""}`).filter(Boolean).join(", ");
+                  const matReply = `✅ Foto material diterima${items ? `\n📦 ${items}` : ""}\n🕐 Menunggu review Admin/Owner di tab Pending Material.`;
+                  fetch("https://api.fonnte.com/send", {
+                    method: "POST",
+                    headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                    body: JSON.stringify({ target: participantNorm, message: matReply, delay: "2", countryCode: "62" })
+                  }).catch(() => {});
                 }
               } else if (classification?.error) {
                 console.warn("[AI_VISION] skip:", classification.error, classification.detail || "");
