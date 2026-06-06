@@ -210,7 +210,7 @@ export default function MaintenanceView({
                 <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
               ))}
             </div>
-            {tab === "unit" && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
+            {tab === "unit" && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} />}
             {tab === "history" && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
             {tab === "stats" && <StatsTab units={units} logs={logs} sel={sel} />}
             {tab === "quotation" && (
@@ -286,12 +286,21 @@ function Kpi({ n, l, c }) {
 }
 
 // ─────────── UNITS TAB ───────────
-function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner, apiFetch }) {
+function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner, apiFetch, supabase, setOrdersData, getLocalDate }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("");
   const [edit, setEdit] = useState(null);
   const [qrUnit, setQrUnit] = useState(null);
   const [showCsv, setShowCsv] = useState(false);
+  // ── Buat Order (opsi A): pilih unit → order PENDING masuk Planning Order ──
+  const [orderMode, setOrderMode] = useState(false);
+  const [picked, setPicked] = useState(() => new Set());
+  const [showOrderModal, setShowOrderModal] = useState(false);
+  const togglePick = (id) => setPicked(prev => {
+    const n = new Set(prev);
+    n.has(id) ? n.delete(id) : n.add(id);
+    return n;
+  });
 
   const filtered = units.filter(u =>
     (u.unit_code + (u.location || "") + (u.brand || "")).toLowerCase().includes(q.toLowerCase()) &&
@@ -317,7 +326,42 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
     catch (e) { showNotif("❌ " + e.message); }
   };
 
-  const today = new Date().toISOString().slice(0, 10);
+  const pickedUnits = units.filter(u => picked.has(u.id));
+
+  const createOrder = async ({ date, service, time, notes }) => {
+    if (picked.size === 0) { showNotif("❌ Pilih minimal 1 unit"); return; }
+    const jobId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+    const locs = [...new Set(pickedUnits.map(u => u.location).filter(Boolean))];
+    const locNote = locs.length ? "Lokasi: " + locs.join(", ") : "";
+    const orderPayload = {
+      id:         jobId,
+      customer:   sel.name,
+      phone:      sel.pic_phone || null,
+      address:    sel.address || "",
+      area:       sel.area || "",
+      service,
+      type:       service,
+      units:      picked.size,
+      date,
+      time:       time || "09:00",
+      time_end:   "11:00",
+      status:     "PENDING",
+      dispatch:   false,
+      source:     "maintenance",
+      maintenance_client_id: sel.id,
+      maintenance_unit_ids:  [...picked],
+      notes:      [`Maintenance ${sel.name}`, locNote, notes].filter(Boolean).join(" · "),
+    };
+    const { error } = await supabase.from("orders").insert(orderPayload);
+    if (error) { showNotif("❌ Gagal buat order: " + error.message); return; }
+    setOrdersData?.(prev => prev.some(o => o.id === jobId) ? prev : [orderPayload, ...prev]);
+    setShowOrderModal(false);
+    setOrderMode(false);
+    setPicked(new Set());
+    showNotif(`✅ Order ${jobId} (${picked.size} unit) masuk Planning Order. Assign teknisi di sana.`);
+  };
+
+  const today = typeof getLocalDate === "function" ? getLocalDate() : new Date().toISOString().slice(0, 10);
 
   return (
     <div>
@@ -328,8 +372,25 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
           {AC_TYPES.map(t => <option key={t} value={t}>{AC_TYPE_LABELS[t]}</option>)}
         </select>
         {isOwner && <button onClick={() => setShowCsv(true)} style={{ ...btnGhost, fontSize: 12 }}>📥 Import CSV</button>}
+        <button onClick={() => { setOrderMode(m => !m); setPicked(new Set()); }}
+          style={orderMode ? { ...btn, background: cs.green } : { ...btnGhost, fontSize: 12, color: cs.green, borderColor: cs.green + "55" }}>
+          {orderMode ? "✕ Batal Pilih" : "🛠 Buat Order"}
+        </button>
         <button onClick={() => setEdit({})} style={btn}>+ Unit Baru</button>
       </div>
+
+      {orderMode && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: cs.green + "12", border: "1px solid " + cs.green + "44", borderRadius: 10, padding: "10px 14px", marginBottom: 10 }}>
+          <span style={{ fontSize: 13, color: cs.text }}>
+            <b style={{ color: cs.green }}>{picked.size}</b> unit terpilih
+          </span>
+          <button onClick={() => setPicked(new Set(filtered.map(u => u.id)))} style={{ ...miniBtn, color: cs.accent }}>Pilih semua ({filtered.length})</button>
+          <button onClick={() => setShowOrderModal(true)} disabled={picked.size === 0}
+            style={{ ...btn, marginLeft: "auto", opacity: picked.size === 0 ? 0.5 : 1, cursor: picked.size === 0 ? "not-allowed" : "pointer" }}>
+            Lanjut Buat Order →
+          </button>
+        </div>
+      )}
 
       {filtered.length === 0 ? <div style={{ color: cs.muted }}>Belum ada unit.</div> :
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 10 }}>
@@ -337,11 +398,16 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
             const dueDays = daysUntil(u.next_service_date);
             const overdue = dueDays !== null && dueDays < 0;
             const dueSoon = dueDays !== null && dueDays >= 0 && dueDays <= 14;
+            const isPicked = picked.has(u.id);
             return (
-              <div key={u.id} style={{ ...card, padding: 12 }}>
+              <div key={u.id}
+                onClick={orderMode ? () => togglePick(u.id) : undefined}
+                style={{ ...card, padding: 12, cursor: orderMode ? "pointer" : "default",
+                  ...(orderMode && isPicked ? { border: "2px solid " + cs.green, background: cs.green + "0d" } : {}) }}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      {orderMode && <span style={{ fontSize: 14 }}>{isPicked ? "☑️" : "⬜"}</span>}
                       <b style={{ color: cs.text }}>{u.unit_code}</b>
                       {statusPill(u.status)}
                       {overdue && <span style={{ background: cs.red + "22", color: cs.red, padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>🔴 PM Terlambat</span>}
@@ -354,11 +420,13 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
                       {u.next_service_date && <div style={{ color: overdue ? cs.red : dueSoon ? cs.yellow : cs.muted }}>PM Berikutnya: {fmtDate(u.next_service_date)}</div>}
                     </div>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <button onClick={() => setQrUnit(u)} style={miniBtn} title="QR Unit">QR</button>
-                    <button onClick={() => setEdit(u)} style={miniBtn} title="Edit">✏️</button>
-                    {isOwner && <button onClick={() => del(u)} style={{ ...miniBtn, color: cs.red }}>🗑</button>}
-                  </div>
+                  {!orderMode && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <button onClick={() => setQrUnit(u)} style={miniBtn} title="QR Unit">QR</button>
+                      <button onClick={() => setEdit(u)} style={miniBtn} title="Edit">✏️</button>
+                      {isOwner && <button onClick={() => del(u)} style={{ ...miniBtn, color: cs.red }}>🗑</button>}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -368,6 +436,57 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
       {edit !== null && <UnitFormModal unit={edit} onClose={() => setEdit(null)} onSave={save} />}
       {qrUnit && <UnitQrModal unit={qrUnit} sel={sel} onClose={() => setQrUnit(null)} />}
       {showCsv && <CsvImportModal sel={sel} call={call} setUnits={setUnits} showNotif={showNotif} onClose={() => setShowCsv(false)} />}
+      {showOrderModal && <CreateOrderModal sel={sel} pickedUnits={pickedUnits} today={today} onClose={() => setShowOrderModal(false)} onCreate={createOrder} />}
+    </div>
+  );
+}
+
+// Modal buat order dari unit terpilih (opsi A — order PENDING, teknisi di-assign di Planning Order)
+function CreateOrderModal({ sel, pickedUnits, today, onClose, onCreate }) {
+  const [date, setDate] = useState(today);
+  const [service, setService] = useState("Cleaning");
+  const [time, setTime] = useState("09:00");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!date) return;
+    setBusy(true);
+    await onCreate({ date, service, time, notes });
+    setBusy(false);
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: cs.surface, borderRadius: 16, padding: 18, width: "100%", maxWidth: 460, maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <h3 style={{ margin: 0, color: cs.text, fontSize: 16 }}>🛠 Buat Order</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+        <div style={{ fontSize: 12, color: cs.muted, marginBottom: 12 }}>
+          {sel.name} · <b style={{ color: cs.green }}>{pickedUnits.length} unit</b>
+        </div>
+        <div style={{ maxHeight: 140, overflowY: "auto", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "6px 10px", marginBottom: 12 }}>
+          {pickedUnits.map(u => (
+            <div key={u.id} style={{ fontSize: 12, color: cs.text, padding: "3px 0" }}>
+              • {u.unit_code}{u.location ? <span style={{ color: cs.muted }}> — {u.location}</span> : ""}
+            </div>
+          ))}
+        </div>
+        <Field l="Tanggal"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inp} /></Field>
+        <Field l="Jam"><input type="time" value={time} onChange={e => setTime(e.target.value)} style={inp} /></Field>
+        <Field l="Jenis Servis">
+          <select value={service} onChange={e => setService(e.target.value)} style={inp}>
+            {["Cleaning", "Repair", "Install", "Maintenance"].map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </Field>
+        <Field l="Catatan (opsional)"><input value={notes} onChange={e => setNotes(e.target.value)} style={inp} placeholder="cth: bawa tangga, akses lewat lobby" /></Field>
+        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+          <button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Batal</button>
+          <button onClick={submit} disabled={busy || !date}
+            style={{ ...btn, flex: 2, background: cs.green, opacity: busy || !date ? 0.6 : 1, cursor: busy || !date ? "not-allowed" : "pointer" }}>
+            {busy ? "Proses…" : "✅ Buat Order → Planning Order"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
