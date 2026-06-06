@@ -1033,10 +1033,20 @@ export default function ACleanWebApp() {
   const [confirmModal, setConfirmModal] = useState(null);
   // confirmModal = { title, message, icon, danger, onConfirm, onCancel, confirmText, cancelText }
   const showConfirm = (opts) => new Promise(resolve => {
+    const userOnConfirm = opts.onConfirm;
+    const userOnCancel  = opts.onCancel;
     setConfirmModal({
       ...opts,
-      onConfirm: () => { setConfirmModal(null); resolve(true); },
-      onCancel: () => { setConfirmModal(null); resolve(false); },
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try { await userOnConfirm?.(); } catch (e) { console.error("[showConfirm.onConfirm]", e); }
+        resolve(true);
+      },
+      onCancel: () => {
+        setConfirmModal(null);
+        try { userOnCancel?.(); } catch (e) { console.error("[showConfirm.onCancel]", e); }
+        resolve(false);
+      },
     });
   });
 
@@ -3892,11 +3902,13 @@ ${photoPageHTML}
         return true;
       }
       // Log error detail — informasi berguna untuk debugging
-      const errMsg = d.error || d.detail || String(r.status);
-      console.warn("sendWA failed:", errMsg, "| target:", phone);
+      const errMsg = d.detail || d.error || String(r.status);
+      console.warn("sendWA failed:", d.error || "", "| detail:", d.detail || "—", "| target:", phone);
       // Tampilkan notif hanya untuk error kritis (bukan quota/device)
       if (errMsg.includes("FONNTE_TOKEN") || errMsg.includes("belum diset")) {
         showNotif("⚠️ WA tidak terkirim: FONNTE_TOKEN belum diset di Vercel");
+      } else if (errMsg.includes("FONNTE_UNREACHABLE") || errMsg.includes("fetch failed") || errMsg.includes("timeout")) {
+        showNotif("⚠️ WA tidak terkirim: server Fonnte tidak bisa dihubungi (down/timeout) — coba lagi nanti");
       } else if (errMsg.includes("offline") || errMsg.includes("device")) {
         showNotif("⚠️ WA tidak terkirim: Device Fonnte offline — scan ulang QR");
       }
