@@ -49,7 +49,7 @@ const TABS = [
 const emptyUnit = () => ({
   _id: Date.now() + Math.random(),
   brand: "", tipe: "Split Standard", kapasitas: "1 PK", model: "",
-  qty: 1, harga_satuan: 0, subtotal: 0,
+  qty: 1, harga_satuan: 0, subtotal: 0, _manual: true,
 });
 
 const SATUAN_OPT = ["Unit", "Meter", "Roll", "Set", "Pcs", "Lot", "Hari", "Jam"];
@@ -479,9 +479,9 @@ export default function QuotationModal({
                   return (
                     <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
                       {/* Unit yang sudah dipilih */}
-                      {acUnits.some(u => u.brand && u.harga_satuan > 0) && (
+                      {acUnits.some(u => !u._manual && u.brand && u.harga_satuan > 0) && (
                         <div style={{ display: "grid", gap: 6 }}>
-                          {acUnits.map((u, idx) => u.brand && u.harga_satuan > 0 && (
+                          {acUnits.map((u, idx) => !u._manual && u.brand && u.harga_satuan > 0 && (
                             <div key={u._id} style={{ background: cs.surface, border: "2px solid #f59e0b55", borderRadius: 9, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10 }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>{u.brand} {u.tipe} {u.kapasitas}</div>
@@ -552,7 +552,7 @@ export default function QuotationModal({
                         style={{ padding: "8px 12px", borderRadius: 8, background: cs.surface, border: "1px dashed " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 11, textAlign: "left" }}>
                         ✏️ Input manual — unit tidak ada di pricelist
                       </button>
-                      {acUnits.filter(u => !u.brand || u.harga_satuan === 0).map((u) => {
+                      {acUnits.filter(u => u._manual).map((u) => {
                         const idx = acUnits.findIndex(x => x._id === u._id);
                         return (
                           <div key={u._id} style={{ background: cs.surface, border: "1px dashed #f59e0b55", borderRadius: 9, padding: 10, display: "grid", gap: 8 }}>
