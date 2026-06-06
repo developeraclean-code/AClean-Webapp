@@ -3277,12 +3277,43 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
         if (action === "autolog-from-order") {
           if (!body.order_id) return res.status(400).json({ error: "order_id wajib" });
           // Ambil order (sumber kebenaran field maintenance)
-          const oRes = await fetch(REST("orders?id=eq." + encodeURIComponent(body.order_id) + "&select=id,maintenance_client_id,maintenance_unit_ids,teknisi,service,date"), { headers });
+          const oRes = await fetch(REST("orders?id=eq." + encodeURIComponent(body.order_id) + "&select=id,phone,customer,maintenance_client_id,maintenance_unit_ids,teknisi,service,date"), { headers });
           const oRows = await oRes.json();
           if (!Array.isArray(oRows) || !oRows.length) return res.status(404).json({ error: "Order tidak ditemukan" });
           const order = oRows[0];
-          const unitIds = Array.isArray(order.maintenance_unit_ids) ? order.maintenance_unit_ids : [];
-          if (!order.maintenance_client_id || !unitIds.length) return res.status(200).json({ skipped: true, reason: "bukan order maintenance" });
+          let clientId = order.maintenance_client_id || null;
+          let unitIds = Array.isArray(order.maintenance_unit_ids) ? order.maintenance_unit_ids.slice() : [];
+
+          // ── Lapis 2 (jaring pengaman): order belum ter-link tapi telpon cocok klien maintenance? ──
+          // Berlaku untuk SEMUA jalur order (WA inbound, manual) & semua jenis servis.
+          if (!clientId && order.phone) {
+            const np = validateAndNormalizePhone(order.phone);
+            if (np) {
+              try {
+                const orFilter = buildPhoneVariants(np).map(v => "pic_phone.eq." + v).join(",");
+                const mcRes = await fetch(REST("maintenance_clients?or=(" + encodeURIComponent(orFilter) + ")&select=id&limit=1"), { headers });
+                const mc = await mcRes.json();
+                if (Array.isArray(mc) && mc.length) clientId = mc[0].id;
+              } catch (_) {}
+            }
+          }
+          if (!clientId) return res.status(200).json({ skipped: true, reason: "bukan order maintenance" });
+
+          // Unit tidak disebut eksplisit → default SEMUA unit aktif klien (admin bisa narrow di laporan).
+          if (!unitIds.length) {
+            try {
+              const auRes = await fetch(REST("maintenance_units?client_id=eq." + encodeURIComponent(clientId) + "&status=eq.active&select=id&order=unit_code.asc"), { headers });
+              const au = await auRes.json();
+              if (Array.isArray(au)) unitIds = au.map(u => u.id);
+            } catch (_) {}
+          }
+          if (!unitIds.length) return res.status(200).json({ skipped: true, reason: "klien maintenance tanpa unit aktif" });
+
+          // Persist hasil resolusi balik ke order → order tampil ter-link di UI (non-blocking).
+          if (!order.maintenance_client_id) {
+            fetch(REST("orders?id=eq." + encodeURIComponent(order.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ maintenance_client_id: clientId, maintenance_unit_ids: unitIds }) }).catch(() => {});
+          }
+
           // Idempotency: sudah ada log utk order ini?
           const exRes = await fetch(REST("maintenance_logs?order_id=eq." + encodeURIComponent(order.id) + "&select=id&limit=1"), { headers });
           const ex = await exRes.json();
@@ -3299,7 +3330,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
           // units_json & materials_json disimpan sebagai STRING JSON (text), foto_urls array asli.
           const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
           const repUnits = _arr(report?.units_json);
-          const repFotos = _arr(report?.foto_urls);
+          // foto_urls = URL penuh R2; MaintenanceView & portal render via /api/foto?key=<R2 key> → strip domain.
+          const repFotos = _arr(report?.foto_urls).map(u => String(u || "").replace(/^https?:\/\/[^/]+\//, "")).filter(Boolean);
           const repMats = _arr(report?.materials_json);
           // Material level-laporan non-freon (barang/jasa) → ditaruh di log unit pertama saja
           const repMatsNonFreon = repMats.filter(m => String(m?.keterangan || "").toLowerCase() !== "freon");
@@ -3311,7 +3343,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
             const iv = await ivRes.json();
             if (Array.isArray(iv) && iv.length && !iv[0].maintenance_client_id) {
               // Link invoice ↔ maintenance client (jalur order, bukan B2B create-invoice)
-              fetch(REST("invoices?id=eq." + encodeURIComponent(iv[0].id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ maintenance_client_id: order.maintenance_client_id }) }).catch(() => {});
+              fetch(REST("invoices?id=eq." + encodeURIComponent(iv[0].id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ maintenance_client_id: clientId }) }).catch(() => {});
             }
           } catch (_) {}
 
@@ -3341,8 +3373,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                 body: JSON.stringify({
                   action: "MAINTENANCE_REGISTRY_REVIEW",
                   severity: "warn", category: "maintenance", status: "WARNING",
-                  detail: `Order ${order.id} (${order.maintenance_client_id}): ${issues.join("; ")}. Perlu konfirmasi admin di registry.`,
-                  metadata: { order_id: order.id, client_id: order.maintenance_client_id, issues },
+                  detail: `Order ${order.id} (${clientId}): ${issues.join("; ")}. Perlu konfirmasi admin di registry.`,
+                  metadata: { order_id: order.id, client_id: clientId, issues },
                   time: new Date().toISOString(),
                 }),
               }).catch(() => {});
@@ -3369,14 +3401,15 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
             }
             // Material per-AC: freon unit ini + (unit pertama) material level-laporan.
             // Harga TIDAK disertakan (biaya tidak ditampilkan di history/portal).
+            // Shape WAJIB { nama, qty, satuan } agar terrender di MaintenanceView & portal (filter m.nama).
             const mats = [];
-            if (lu?.freon_ditambah) mats.push({ name: "Freon" + (lu.tipe ? " " + lu.tipe : ""), qty: lu.freon_ditambah, unit: "gr" });
+            if (lu?.freon_ditambah) mats.push({ nama: "Freon" + (lu.tipe ? " " + lu.tipe : ""), qty: lu.freon_ditambah, satuan: "gr" });
             if (i === 0 && repMatsNonFreon.length) {
-              repMatsNonFreon.forEach(m => mats.push({ name: m.nama || m.name || m.keterangan || "Material", qty: m.qty ?? m.jumlah ?? null }));
+              repMatsNonFreon.forEach(m => mats.push({ nama: m.nama || m.name || m.keterangan || "Material", qty: m.qty ?? m.jumlah ?? "", satuan: m.satuan || "" }));
             }
             return {
               unit_id: uid,
-              client_id: order.maintenance_client_id,
+              client_id: clientId,
               service_date: order.date || new Date().toISOString().slice(0, 10),
               service_type: svcType,
               technician: order.teknisi || null,
