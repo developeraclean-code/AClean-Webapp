@@ -3203,7 +3203,50 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
           if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
           const r = await fetch(REST("maintenance_logs?client_id=eq." + encodeURIComponent(body.client_id) + "&select=*&order=service_date.desc"), { headers });
           if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
-          return res.status(200).json({ logs: await r.json() });
+          let logs = await r.json();
+
+          // ── Enrich biaya & status invoiced dari invoice yang tersambung (jalur order) ──
+          // Log jalur order dibuat cost=null (biaya ada di modul Invoice, bukan di log) → Statistik
+          // tampil Rp 0. Join via log.order_id = invoice.job_id supaya Statistik mencerminkan invoice
+          // live (billed/paid). Pemicu = cost masih kosong; log B2B (cost manual) dibiarkan apa adanya.
+          try {
+            const needOrderIds = [...new Set(
+              (Array.isArray(logs) ? logs : [])
+                .filter(l => l.cost == null && l.order_id)
+                .map(l => l.order_id)
+            )];
+            if (needOrderIds.length) {
+              const inFilter = needOrderIds.map(encodeURIComponent).join(",");
+              const ivRes = await fetch(REST(`invoices?job_id=in.(${inFilter})&select=job_id,total,status,paid_amount,created_at&order=created_at.desc`), { headers });
+              const ivRows = ivRes.ok ? await ivRes.json() : [];
+              // 1 invoice per job_id (ambil terbaru — sudah desc by created_at)
+              const invByJob = {};
+              for (const iv of (Array.isArray(ivRows) ? ivRows : [])) {
+                if (!invByJob[iv.job_id]) invByJob[iv.job_id] = iv;
+              }
+              // Hitung jumlah log per order_id → bagi rata biaya invoice antar unit (ranking adil, total tetap akurat)
+              const logCountByOrder = {};
+              for (const l of logs) {
+                if (l.cost == null && l.order_id && invByJob[l.order_id]) {
+                  logCountByOrder[l.order_id] = (logCountByOrder[l.order_id] || 0) + 1;
+                }
+              }
+              logs = logs.map(l => {
+                if (l.cost != null || !l.order_id) return l;
+                const iv = invByJob[l.order_id];
+                if (!iv) return l;
+                const n = logCountByOrder[l.order_id] || 1;
+                return {
+                  ...l,
+                  cost: Math.round((Number(iv.total) || 0) / n),
+                  invoiced: true,
+                  invoice_status: iv.status || null,
+                };
+              });
+            }
+          } catch (_) { /* non-blocking — kalau gagal, kembalikan logs apa adanya */ }
+
+          return res.status(200).json({ logs });
         }
         if (action === "create-log") {
           if (!body.unit_id || !body.client_id || !body.service_date) return res.status(400).json({ error: "unit_id, client_id, service_date wajib" });
