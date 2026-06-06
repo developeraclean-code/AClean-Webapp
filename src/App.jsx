@@ -2969,7 +2969,7 @@ ${photoPageHTML}
     // Owner: semua akses kecuali myreport
     if (role === "Owner") return menu !== "myreport";
     // Admin: semua operasional KECUALI pricelist (Owner only per SOP), settings, myreport
-    // SOP_ADMIN_ROLE.md: Admin = input & edit only, no delete, no price list, no settings
+    // docs/SOP_ADMIN_ROLE.md: Admin = input & edit only, no delete, no price list, no settings
     // Statistik (reports), Deleted Audit (deletedaudit) → Owner only
     if (role === "Admin") {
       const adminBlocked = ["settings", "myreport", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit"];

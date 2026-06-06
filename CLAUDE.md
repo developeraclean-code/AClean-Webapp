@@ -37,7 +37,7 @@ Views are split into dedicated files under `src/views/`. Heavy views are lazy-lo
 
 **Deployment:** Vercel. Cron jobs defined in [`vercel.json`](vercel.json) — 20+ scheduled jobs.
 
-## Role Access Control (ENFORCE THIS — see also SOP_ADMIN_ROLE.md)
+## Role Access Control (ENFORCE THIS — see also docs/SOP_ADMIN_ROLE.md)
 
 Role hierarchy: **Owner > Admin > Teknisi > Helper**. Enforced in `canAccess()` in App.jsx.
 
@@ -153,7 +153,7 @@ api/
   cron-reminder.js        # Cron tasks (12 tasks, lihat vercel.json untuk jadwal)
   _auth.js                # Auth middleware
 
-SOP_ADMIN_ROLE.md         # SOP lengkap untuk Admin role — baca ini sebelum ubah role/access logic
+docs/                     # Dokumentasi: SOP_ADMIN_ROLE.md (role/access), SENTRY_*, IMPLEMENTATION_DETAILS, dll
 migrations/               # SQL migration files (run manually in Supabase SQL Editor)
 ```
 
