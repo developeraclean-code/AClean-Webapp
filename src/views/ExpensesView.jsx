@@ -3,7 +3,87 @@ import { cs } from "../theme/cs.js";
 import { fetchDeletedExpenses } from "../data/reads.js";
 import { restoreExpense, purgeExpense } from "../data/writes.js";
 
-function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, currentUser, supabase, insertExpense, updateExpense, deleteExpense, auditUserName, setAuditModal, TODAY, EXPENSE_PAGE_SIZE, fmt, showNotif, showConfirm, appSettings, setAppSettings, teknisiData, userAccounts }) {
+// ── Kasbon Section (Owner/Admin) — approve request → otomatis masuk ke Biaya ──
+function KasbonSection({ currentUser, kasbonRequests, approveKasbon, rejectKasbon }) {
+  const [kasbonFilter, setKasbonFilter] = useState("PENDING");
+  const [reviewingId, setReviewingId] = useState(null);
+  const [reviewNotes, setReviewNotes] = useState("");
+  if (currentUser?.role !== "Owner" && currentUser?.role !== "Admin") return null;
+  const allKasbon = kasbonRequests || [];
+  const pendingCount = allKasbon.filter(r => r.status === "PENDING").length;
+  const shown = allKasbon.filter(r => kasbonFilter === "Semua" || r.status === kasbonFilter);
+  const fmtRp2 = (n) => "Rp " + Number(n || 0).toLocaleString("id-ID");
+  const fmtTgl2 = (d) => { try { return new Date(d).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return d || "—"; } };
+  const statusStyle = { PENDING: [cs.yellow, "⏳ Pending"], APPROVED: [cs.green, "✅ Disetujui"], REJECTED: [cs.red, "❌ Ditolak"] };
+  return (
+    <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 16, padding: 18, marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>
+            💰 Kasbon Requests
+            {pendingCount > 0 && <span style={{ marginLeft: 8, fontSize: 12, background: cs.yellow + "22", color: cs.yellow, border: "1px solid " + cs.yellow + "44", borderRadius: 99, padding: "2px 9px", fontWeight: 700 }}>{pendingCount} Pending</span>}
+          </div>
+          <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>Approve → otomatis masuk ke Biaya (Kasbon Karyawan)</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        {["PENDING", "APPROVED", "REJECTED", "Semua"].map(f => (
+          <button key={f} onClick={() => setKasbonFilter(f)}
+            style={{ padding: "5px 13px", borderRadius: 99, fontSize: 12, fontWeight: kasbonFilter === f ? 700 : 400, cursor: "pointer", border: "1px solid " + (kasbonFilter === f ? cs.accent : cs.border), background: kasbonFilter === f ? cs.accent + "22" : cs.surface, color: kasbonFilter === f ? cs.accent : cs.muted }}>
+            {f}
+          </button>
+        ))}
+      </div>
+      {shown.length === 0
+        ? <div style={{ color: cs.muted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Tidak ada request {kasbonFilter.toLowerCase()}</div>
+        : <div style={{ display: "grid", gap: 8 }}>
+          {shown.map(r => {
+            const [sc, sl] = statusStyle[r.status] || [cs.muted, r.status];
+            const isReviewing = reviewingId === r.id;
+            return (
+              <div key={r.id} style={{ background: cs.surface, border: "1px solid " + (r.status === "PENDING" ? cs.yellow + "44" : cs.border), borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                      <span style={{ fontWeight: 800, color: cs.text, fontSize: 15 }}>{fmtRp2(r.amount)}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: sc, background: sc + "18", border: "1px solid " + sc + "44", padding: "1px 8px", borderRadius: 99 }}>{sl}</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: cs.text, marginBottom: 3 }}><span style={{ color: cs.accent, fontWeight: 700 }}>{r.teknisi_name}</span> — {r.reason}</div>
+                    <div style={{ fontSize: 11, color: cs.muted }}>{fmtTgl2(r.requested_at)}{r.reviewed_by ? ` · Direview oleh ${r.reviewed_by}` : ""}</div>
+                    {r.review_notes && <div style={{ fontSize: 11, color: cs.muted, marginTop: 2, fontStyle: "italic" }}>Catatan: {r.review_notes}</div>}
+                    {r.expense_id && <div style={{ fontSize: 10, color: cs.green, marginTop: 2 }}>→ Biaya: {r.expense_id}</div>}
+                  </div>
+                  {r.status === "PENDING" && !isReviewing && (
+                    <button onClick={() => { setReviewingId(r.id); setReviewNotes(""); }}
+                      style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px 12px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                      Review
+                    </button>
+                  )}
+                </div>
+                {isReviewing && (
+                  <div style={{ marginTop: 10, borderTop: "1px solid " + cs.border, paddingTop: 10, display: "grid", gap: 8 }}>
+                    <input value={reviewNotes} onChange={e => setReviewNotes(e.target.value)}
+                      placeholder="Catatan opsional untuk teknisi..."
+                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                      <button onClick={() => setReviewingId(null)} style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "8px", borderRadius: 7, cursor: "pointer", fontSize: 12 }}>Batal</button>
+                      <button onClick={async () => { await rejectKasbon(r, reviewNotes); setReviewingId(null); }}
+                        style={{ background: cs.red + "18", border: "1px solid " + cs.red + "44", color: cs.red, padding: "8px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>❌ Tolak</button>
+                      <button onClick={async () => { await approveKasbon(r, reviewNotes); setReviewingId(null); }}
+                        style={{ background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", padding: "8px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✅ Approve</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      }
+    </div>
+  );
+}
+
+function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, currentUser, supabase, insertExpense, updateExpense, deleteExpense, auditUserName, setAuditModal, TODAY, EXPENSE_PAGE_SIZE, fmt, showNotif, showConfirm, appSettings, setAppSettings, teknisiData, userAccounts, kasbonRequests, approveKasbon, rejectKasbon }) {
 const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin" || currentUser?.role === "Finance";
 const isOwner = currentUser?.role === "Owner";
 
@@ -300,6 +380,9 @@ return (
         </button>
       )}
     </div>
+
+    {/* Kasbon Requests — approve di sini → otomatis tercatat ke Biaya (Owner/Admin) */}
+    {!isTrash && <KasbonSection currentUser={currentUser} kasbonRequests={kasbonRequests} approveKasbon={approveKasbon} rejectKasbon={rejectKasbon} />}
 
     {/* Budget Alert Banner */}
     {isOwnerAdmin && budgetAlerts.length > 0 && (

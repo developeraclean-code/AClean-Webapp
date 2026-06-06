@@ -6553,8 +6553,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       sendWA={sendWA} supabase={supabase} LAP_PAGE_SIZE={LAP_PAGE_SIZE} INSTALL_ITEMS={INSTALL_ITEMS}
       downloadServiceReportPDF={downloadServiceReportPDF}
       setInvTxData={setInvTxData} setInventoryData={setInventoryData}
-      updateCustomerTierAfterOrder={updateCustomerTierAfterOrder} customersData={customersData} setCustomersData={setCustomersData} apiFetch={_apiFetch}
-      kasbonRequests={kasbonRequests} approveKasbon={approveKasbon} rejectKasbon={rejectKasbon} />
+      updateCustomerTierAfterOrder={updateCustomerTierAfterOrder} customersData={customersData} setCustomersData={setCustomersData} apiFetch={_apiFetch} />
   );
 
   // ============================================================
@@ -6593,7 +6592,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       currentUser={currentUser} supabase={supabase} insertExpense={insertExpense} updateExpense={updateExpense} deleteExpense={deleteExpense}
       auditUserName={auditUserName} setAuditModal={setAuditModal} TODAY={TODAY} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE} fmt={fmt}
       showNotif={showNotif} showConfirm={showConfirm} appSettings={appSettings} setAppSettings={setAppSettings}
-      teknisiData={teknisiData} userAccounts={userAccounts} />
+      teknisiData={teknisiData} userAccounts={userAccounts}
+      kasbonRequests={kasbonRequests} approveKasbon={approveKasbon} rejectKasbon={rejectKasbon} />
   );
 
   // ============================================================
