@@ -24,50 +24,59 @@ const TERMS_PAYMENT = [
 const _norm = (t) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
 const _PRESET_SIGNATURE = _norm(TERMS_PEKERJAAN.join(" ") + TERMS_PAYMENT.join(" "));
 
-const s = StyleSheet.create({
-  page:       { padding: 36, fontFamily: "Helvetica", fontSize: 10, color: "#1e293b", backgroundColor: "#fff" },
-  header:     { borderRadius: 6, border: "2px solid #1E5BA8", marginBottom: 14, overflow: "hidden" },
-  headerTop:  { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: "16 20" },
-  brand:      { fontSize: 18, fontFamily: "Helvetica-Bold", color: "#1E5BA8" },
-  brandSub:   { fontSize: 8, color: "#6b7280", marginTop: 2 },
-  quoLabel:   { fontSize: 7, color: "#1E5BA8", fontFamily: "Helvetica-Bold", textAlign: "right", marginBottom: 3, textTransform: "uppercase" },
-  quoBadge:   { backgroundColor: "#1E5BA8", color: "#fff", padding: "6 12", borderRadius: 4, fontSize: 11, fontFamily: "Helvetica-Bold" },
-  headerSub:  { backgroundColor: "#f0f4f8", padding: "8 20", flexDirection: "row", gap: 20, borderTop: "1px solid #e2e8f0" },
-  headerSubTxt: { fontSize: 8, color: "#1e293b" },
-  grid2:      { flexDirection: "row", gap: 10, marginBottom: 12 },
-  box:        { flex: 1, borderRadius: 6, padding: "10 12" },
-  boxBlue:    { backgroundColor: "#e3f2fd", border: "1px solid #90caf9" },
-  boxWhite:   { backgroundColor: "#fff", border: "1px solid #e2e8f0" },
-  boxTitle:   { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", textTransform: "uppercase", marginBottom: 8, letterSpacing: 0.5 },
-  rowInfo:    { flexDirection: "row", marginBottom: 3 },
-  rowLabel:   { color: "#64748b", width: 80, fontSize: 9 },
-  rowVal:     { color: "#1e293b", fontFamily: "Helvetica-Bold", fontSize: 9, flex: 1 },
-  table:      { marginBottom: 12 },
-  thead:      { flexDirection: "row", backgroundColor: "#1E5BA8", borderRadius: "4 4 0 0" },
-  th:         { color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 8, padding: "8 8", textTransform: "uppercase" },
-  tr:         { flexDirection: "row", borderBottom: "1px solid #f1f5f9" },
-  trEven:     { backgroundColor: "#f8fafc" },
-  td:         { fontSize: 9, padding: "7 8", color: "#1e293b" },
-  tdMuted:    { fontSize: 9, padding: "7 8", color: "#64748b" },
-  secTitle:   { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", textTransform: "uppercase", letterSpacing: 0.5, padding: "5 8", backgroundColor: "#e3f2fd" },
-  totalBox:   { backgroundColor: "#1E5BA8", borderRadius: 6, padding: "10 14", marginTop: 4, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  totalLabel: { color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 11 },
-  totalVal:   { color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 14 },
-  subRow:     { flexDirection: "row", justifyContent: "space-between", padding: "4 14", borderBottom: "1px solid #f1f5f9" },
-  subLabel:   { fontSize: 9, color: "#64748b" },
-  subVal:     { fontSize: 9, color: "#1e293b", fontFamily: "Helvetica-Bold" },
-  noteBox:    { border: "1px solid #e2e8f0", borderRadius: 6, padding: "10 12", marginBottom: 12 },
-  noteTitle:  { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#64748b", marginBottom: 4, textTransform: "uppercase" },
-  noteText:   { fontSize: 9, color: "#1e293b", lineHeight: 1.5 },
-  termsBox:   { border: "1px solid #e2e8f0", borderRadius: 6, padding: "10 12", marginBottom: 12 },
-  termsTitle: { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5 },
-  termsItem:  { fontSize: 8.5, color: "#1e293b", lineHeight: 1.4, marginBottom: 2, flexDirection: "row" },
-  termsNum:   { width: 14, color: "#64748b", fontFamily: "Helvetica-Bold" },
-  validBox:   { backgroundColor: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, padding: "8 12", marginBottom: 12 },
-  validText:  { fontSize: 9, color: "#c2410c" },
-  footer:     { borderTop: "1px solid #e2e8f0", paddingTop: 10, marginTop: 8 },
-  footerText: { fontSize: 8, color: "#94a3b8", textAlign: "center" },
-});
+// Spacing dibuat dinamis: saat `compact` (≤5 item) semua margin/padding/font
+// dirapatkan agar muat 1 halaman; selain itu pakai spacing normal (boleh 2 hal).
+function buildStyles(compact) {
+  const PAD   = compact ? 26 : 36;   // page padding
+  const MB    = compact ? 7  : 12;   // jarak antar-block
+  const CELLV = compact ? 4  : 7;    // padding vertikal sel tabel
+  const BOXP  = compact ? "7 11" : "10 12"; // padding kotak info
+  const HTOP  = compact ? "10 20" : "16 20"; // padding header atas
+  return StyleSheet.create({
+    page:       { padding: PAD, fontFamily: "Helvetica", fontSize: 10, color: "#1e293b", backgroundColor: "#fff" },
+    header:     { borderRadius: 6, border: "2px solid #1E5BA8", marginBottom: compact ? 9 : 14, overflow: "hidden" },
+    headerTop:  { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: HTOP },
+    brand:      { fontSize: 18, fontFamily: "Helvetica-Bold", color: "#1E5BA8" },
+    brandSub:   { fontSize: 8, color: "#6b7280", marginTop: 2 },
+    quoLabel:   { fontSize: 7, color: "#1E5BA8", fontFamily: "Helvetica-Bold", textAlign: "right", marginBottom: 3, textTransform: "uppercase" },
+    quoBadge:   { backgroundColor: "#1E5BA8", color: "#fff", padding: "6 12", borderRadius: 4, fontSize: 11, fontFamily: "Helvetica-Bold" },
+    headerSub:  { backgroundColor: "#f0f4f8", padding: "8 20", flexDirection: "row", gap: 20, borderTop: "1px solid #e2e8f0" },
+    headerSubTxt: { fontSize: 8, color: "#1e293b" },
+    grid2:      { flexDirection: "row", gap: 10, marginBottom: MB },
+    box:        { flex: 1, borderRadius: 6, padding: BOXP },
+    boxBlue:    { backgroundColor: "#e3f2fd", border: "1px solid #90caf9" },
+    boxWhite:   { backgroundColor: "#fff", border: "1px solid #e2e8f0" },
+    boxTitle:   { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", textTransform: "uppercase", marginBottom: compact ? 5 : 8, letterSpacing: 0.5 },
+    rowInfo:    { flexDirection: "row", marginBottom: compact ? 2 : 3 },
+    rowLabel:   { color: "#64748b", width: 80, fontSize: 9 },
+    rowVal:     { color: "#1e293b", fontFamily: "Helvetica-Bold", fontSize: 9, flex: 1 },
+    table:      { marginBottom: MB },
+    thead:      { flexDirection: "row", backgroundColor: "#1E5BA8", borderRadius: "4 4 0 0" },
+    th:         { color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 8, padding: "8 8", textTransform: "uppercase" },
+    tr:         { flexDirection: "row", borderBottom: "1px solid #f1f5f9" },
+    trEven:     { backgroundColor: "#f8fafc" },
+    td:         { fontSize: 9, padding: `${CELLV} 8`, color: "#1e293b" },
+    tdMuted:    { fontSize: 9, padding: `${CELLV} 8`, color: "#64748b" },
+    secTitle:   { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", textTransform: "uppercase", letterSpacing: 0.5, padding: "5 8", backgroundColor: "#e3f2fd" },
+    totalBox:   { backgroundColor: "#1E5BA8", borderRadius: 6, padding: "10 14", marginTop: 4, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+    totalLabel: { color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 11 },
+    totalVal:   { color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 14 },
+    subRow:     { flexDirection: "row", justifyContent: "space-between", padding: compact ? "3 14" : "4 14", borderBottom: "1px solid #f1f5f9" },
+    subLabel:   { fontSize: 9, color: "#64748b" },
+    subVal:     { fontSize: 9, color: "#1e293b", fontFamily: "Helvetica-Bold" },
+    noteBox:    { border: "1px solid #e2e8f0", borderRadius: 6, padding: BOXP, marginBottom: MB },
+    noteTitle:  { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#64748b", marginBottom: 4, textTransform: "uppercase" },
+    noteText:   { fontSize: 9, color: "#1e293b", lineHeight: 1.5 },
+    termsBox:   { border: "1px solid #e2e8f0", borderRadius: 6, padding: BOXP, marginBottom: MB },
+    termsTitle: { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", marginBottom: compact ? 3 : 5, textTransform: "uppercase", letterSpacing: 0.5 },
+    termsItem:  { fontSize: 8.5, color: "#1e293b", lineHeight: compact ? 1.25 : 1.4, marginBottom: compact ? 1 : 2, flexDirection: "row" },
+    termsNum:   { width: 14, color: "#64748b", fontFamily: "Helvetica-Bold" },
+    validBox:   { backgroundColor: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, padding: compact ? "6 12" : "8 12", marginBottom: MB },
+    validText:  { fontSize: 9, color: "#c2410c" },
+    footer:     { borderTop: "1px solid #e2e8f0", paddingTop: compact ? 7 : 10, marginTop: compact ? 4 : 8 },
+    footerText: { fontSize: 8, color: "#94a3b8", textAlign: "center" },
+  });
+}
 
 export default function QuotationPDF({ quo, appSettings, logoUrl }) {
   if (!quo) return null;
@@ -77,6 +86,12 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
   const paketItems = items.filter(i => i.item_type === "paket");
   const jasaItems  = items.filter(i => i.item_type === "jasa");
   const addonItems = items.filter(i => i.item_type === "addon");
+
+  // ≤5 baris item → mode compact agar muat 1 halaman (hindari halaman ke-2 nanggung).
+  // >5 baris → spacing normal, boleh mengalir ke 2 halaman.
+  const totalRows = unitItems.length + paketItems.length + jasaItems.length + addonItems.length;
+  const compact   = totalRows <= 5;
+  const s = buildStyles(compact);
 
   const companyName  = appSettings?.company_name  || "AClean Service";
   const _rawPhone    = appSettings?.wa_number || appSettings?.company_phone || "6281289898937";
@@ -236,7 +251,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
         )}
 
         {/* Total box */}
-        <View style={{ marginBottom: 12 }}>
+        <View wrap={false} style={{ marginBottom: 12 }}>
           {(quo.unit_ac_amount > 0) && (
             <View style={s.subRow}>
               <Text style={s.subLabel}>Unit AC (Passthrough)</Text>
@@ -274,7 +289,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
         </View>
 
         {/* Valid until warning */}
-        <View style={s.validBox}>
+        <View wrap={false} style={s.validBox}>
           <Text style={s.validText}>
             ⏰ Penawaran ini berlaku hingga {fmtDate(quo.valid_until)}.
             Harga dapat berubah setelah masa berlaku habis.
@@ -290,7 +305,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
         )}
 
         {/* Syarat & Ketentuan — selalu embed di PDF (tidak perlu klik preset) */}
-        <View style={s.termsBox}>
+        <View wrap={false} style={s.termsBox}>
           <Text style={s.termsTitle}>Catatan Pekerjaan</Text>
           {TERMS_PEKERJAAN.map((t, i) => (
             <View key={i} style={s.termsItem}>
