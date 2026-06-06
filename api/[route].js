@@ -126,11 +126,21 @@ export default async function handler(req, res) {
       }
 
       if (!hasAttachment || !fonnteRes) {
-        fonnteRes = await fetch("https://api.fonnte.com/send", {
-          method: "POST",
-          headers: { "Authorization": FT, "Content-Type": "application/json" },
-          body: JSON.stringify({ target, message: msg, delay: "2", countryCode: "62" })
-        });
+        try {
+          fonnteRes = await fetch("https://api.fonnte.com/send", {
+            method: "POST",
+            headers: { "Authorization": FT, "Content-Type": "application/json" },
+            body: JSON.stringify({ target, message: msg, delay: "2", countryCode: "62" })
+          });
+        } catch (fetchErr) {
+          console.warn("[send-wa] Gagal hubungi Fonnte:", fetchErr.message);
+          fonnteRes = null;
+        }
+      }
+
+      // Tidak bisa hubungi Fonnte sama sekali (server down/timeout) — jangan lempar 500 generik
+      if (!fonnteRes) {
+        return res.status(502).json({ success: false, error: "Fonnte tidak bisa dihubungi (server timeout/down). Coba lagi nanti.", detail: "FONNTE_UNREACHABLE" });
       }
 
       const d = await fonnteRes.json().catch(() => ({}));
@@ -141,11 +151,17 @@ export default async function handler(req, res) {
         const reason = d.reason || JSON.stringify(d);
         console.warn("[send-wa] Attachment REJECTED:", reason);
         const msgWithLink = msg + "\n\n📄 " + b.url;
-        const fallbackRes = await fetch("https://api.fonnte.com/send", {
-          method: "POST",
-          headers: { "Authorization": FT, "Content-Type": "application/json" },
-          body: JSON.stringify({ target, message: msgWithLink, delay: "2", countryCode: "62" })
-        });
+        let fallbackRes;
+        try {
+          fallbackRes = await fetch("https://api.fonnte.com/send", {
+            method: "POST",
+            headers: { "Authorization": FT, "Content-Type": "application/json" },
+            body: JSON.stringify({ target, message: msgWithLink, delay: "2", countryCode: "62" })
+          });
+        } catch (fetchErr) {
+          console.warn("[send-wa] Gagal hubungi Fonnte (fallback):", fetchErr.message);
+          return res.status(502).json({ success: false, error: "Fonnte tidak bisa dihubungi (server timeout/down). Coba lagi nanti.", detail: "FONNTE_UNREACHABLE" });
+        }
         const fd = await fallbackRes.json().catch(() => ({}));
         if (!fallbackRes.ok || fd.status === false) return res.status(502).json({ success: false, error: fd.reason || "Fonnte error" });
         return res.status(200).json({ success: true, target, withAttachment: false, fallback: true, fallbackReason: reason });
