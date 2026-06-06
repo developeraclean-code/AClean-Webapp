@@ -5088,6 +5088,10 @@ ${photoPageHTML}
     // Higher entropy order ID to prevent collisions on simultaneous submissions
     const newId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
     const timeEnd = hitungJamSelesai(form.time || "09:00", form.service || "Cleaning", form.units || 1);
+
+    // Gerbang atomik anti double-book dilakukan SETELAH order tersimpan (di bawah),
+    // karena technician_schedule.order_id FK ke orders.id — klaim butuh order sudah ada.
+    let slotClaimed = false;
     // Cek customer existing by phone ATAU name (untuk customer_id).
     // Fallback ke server kalau tidak ketemu di array client (mungkin di luar limit fetchCustomers).
     let preExistCust = findCustomer(customersData, form.phone, form.customer);
@@ -5154,13 +5158,37 @@ ${photoPageHTML}
     }
     if (!orderSaved) return null;
 
+    // ── GERBANG ATOMIK (anti double-book/TOCTOU) — setelah order ada di DB ──
+    // RPC try_claim_teknisi_slot: advisory-lock per teknisi+tanggal → cek overlap+cap
+    // lalu INSERT klaim ke technician_schedule, semua dalam 1 transaksi (migrasi 070).
+    // Caller konkuren terserialisasi; yang kalah → order-nya dihapus lagi di sini.
+    if (form.teknisi && form.date && form.time && timeEnd) {
+      try {
+        const { data: claimOk, error: claimErr } = await supabase.rpc("try_claim_teknisi_slot", {
+          p_teknisi: form.teknisi, p_date: form.date, p_order_id: newId,
+          p_start: form.time, p_end: timeEnd,
+        });
+        if (claimErr) {
+          console.warn("try_claim_teknisi_slot error:", claimErr.message, "— fallback insert schedule biasa");
+        } else if (claimOk === false) {
+          // Kalah race / slot bentrok → buang order yang sudah terlanjur dibuat
+          try { await supabase.from("orders").delete().eq("id", newId); } catch (_) {}
+          showNotif("🚫 " + form.teknisi + " bentrok di jam tersebut (slot baru saja terisi)");
+          return null;
+        } else {
+          slotClaimed = true;
+        }
+      } catch (e) { console.warn("claim slot catch:", e.message); }
+    }
+
     // ── Only update state AFTER DB confirmation ──
     invalidateCache("orders");
     setOrdersData(prev => [...prev, newOrder]);
 
-    // GAP 1.5: Simpan ke technician_schedule untuk cegah double booking
-    if (form.teknisi && form.date && form.time && timeEnd) {
-      // Insert ke technician_schedule — field minimal agar kompatibel berbagai schema
+    // GAP 1.5: technician_schedule.
+    // Jika slot sudah diklaim atomik via RPC (migrasi 070) → baris sudah ada, skip.
+    // Insert manual hanya sebagai fallback kalau RPC error/tidak jalan (slotClaimed=false).
+    if (!slotClaimed && form.teknisi && form.date && form.time && timeEnd) {
       try {
         const schedPayload = {
           order_id: newId,
