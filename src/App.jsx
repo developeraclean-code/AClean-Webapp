@@ -861,6 +861,10 @@ export default function ACleanWebApp() {
   const [showUnitPresetModal, setShowUnitPresetModal] = useState(false);
   const [unitPresetHistory, setUnitPresetHistory] = useState(null);  // customer history data
   const [unitPresetSelected, setUnitPresetSelected] = useState(new Set()); // Set of unit indices from history to use
+  // ── Tambah unit dari daftar Maintenance (untuk order B2B/maintenance) ──
+  const [maintUnitPool, setMaintUnitPool] = useState([]);            // semua unit terdaftar klien
+  const [showAddMaintUnitModal, setShowAddMaintUnitModal] = useState(false);
+  const [addMaintSelected, setAddMaintSelected] = useState(new Set()); // Set of maintenance unit ids to add
   const fotoInputRef = useRef();
 
   // ── Session Management ──
@@ -1668,6 +1672,19 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
   ];
   const SATUAN_OPT = ["pcs", "kg", "liter", "meter", "set", "titik", "roll"];
 
+  // Map satu unit maintenance (dari /api/maintenance list-units) → bentuk "hist" untuk mkUnit
+  const maintUnitToHist = (mu) => {
+    const AC_TYPE_MAP = { cassette: "AC Cassette", split: "AC Split", ducted: "AC Split Duct", standing: "AC Floor Standing" };
+    return {
+      label: `${mu.unit_code} — ${mu.location || ""}`.replace(/— $/, "").trim(),
+      tipe: AC_TYPE_MAP[mu.ac_type] || "AC Split",
+      merk: mu.brand || "",
+      pk: mu.capacity_pk ? `${mu.capacity_pk}PK` : "1PK",
+      model: mu.serial_no || "",
+      from_history_job_id: null,
+      maint_unit_id: mu.id,
+    };
+  };
   const mkUnit = (no, hist = null) => {
     if (hist) {
       // Preset dari history: copy tipe, merk, pk, model dari unit history
@@ -1684,7 +1701,8 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
         freon_ditambah: "",
         ampere_akhir: "",
         catatan_unit: "",
-        from_history_job_id: hist.from_history_job_id || null
+        from_history_job_id: hist.from_history_job_id || null,
+        maint_unit_id: hist.maint_unit_id || null
       };
     }
     return {
@@ -1700,7 +1718,8 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
       freon_ditambah: "",
       ampere_akhir: "",
       catatan_unit: "",
-      from_history_job_id: null
+      from_history_job_id: null,
+      maint_unit_id: null
     };
   };
   // isUnitDone untuk Step 2: cek pekerjaan + kondisi (tipe & pk sudah di Step 1)
@@ -2741,9 +2760,12 @@ ${photoPageHTML}
     const count = Math.min(order.units || 1, 30);
     setLaporanUnits(Array.from({ length: count }, (_, i) => mkUnit(i + 1)));
 
+    // Reset pool unit maintenance — diisi ulang di bawah jika order corporate
+    setMaintUnitPool([]); setShowAddMaintUnitModal(false); setAddMaintSelected(new Set());
+
     // Pre-fill unit label/tipe/merk/PK dari maintenance preset (jika order corporate)
     const mUnitIds = Array.isArray(order.maintenance_unit_ids) ? order.maintenance_unit_ids : [];
-    if (order.maintenance_client_id && mUnitIds.length > 0) {
+    if (order.maintenance_client_id) {
       (async () => {
         try {
           const r = await _apiFetch("/api/maintenance", {
@@ -2752,20 +2774,16 @@ ${photoPageHTML}
           });
           if (!r.ok) return;
           const { units: allUnits = [] } = await r.json().catch(() => ({}));
-          const AC_TYPE_MAP = { cassette: "AC Cassette", split: "AC Split", ducted: "AC Split Duct", standing: "AC Floor Standing" };
-          const filled = mUnitIds.map((uid, i) => {
-            const mu = allUnits.find(u => u.id === uid);
-            if (!mu) return mkUnit(i + 1);
-            return mkUnit(i + 1, {
-              label: `${mu.unit_code} — ${mu.location || ""}`.replace(/— $/, "").trim(),
-              tipe: AC_TYPE_MAP[mu.ac_type] || "AC Split",
-              merk: mu.brand || "",
-              pk: mu.capacity_pk ? `${mu.capacity_pk}PK` : "1PK",
-              model: mu.serial_no || "",
-              from_history_job_id: null,
+          // Simpan seluruh unit terdaftar klien → dipakai picker "Tambah dari Daftar Maintenance"
+          setMaintUnitPool(allUnits);
+          if (mUnitIds.length > 0) {
+            const filled = mUnitIds.map((uid, i) => {
+              const mu = allUnits.find(u => u.id === uid);
+              if (!mu) return mkUnit(i + 1);
+              return mkUnit(i + 1, maintUnitToHist(mu));
             });
-          });
-          setLaporanUnits(filled);
+            setLaporanUnits(filled);
+          }
         } catch (_) { /* non-blocking — default units tetap dipakai */ }
       })();
     }
@@ -11147,9 +11165,80 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           );
         };
 
+        // ── TAMBAH UNIT DARI DAFTAR MAINTENANCE ──
+        const AddMaintUnitModal = () => {
+          if (!showAddMaintUnitModal) return null;
+          const available = maintUnitPool.filter(mu => !laporanUnits.some(u => u.maint_unit_id === mu.id));
+
+          const handleAdd = () => {
+            const toAdd = available.filter(mu => addMaintSelected.has(mu.id));
+            if (toAdd.length === 0) return;
+            setLaporanUnits(prev => {
+              const next = [...prev];
+              toAdd.forEach(mu => next.push(mkUnit(next.length + 1, maintUnitToHist(mu))));
+              return next.map((u, i) => ({ ...u, unit_no: i + 1 }));
+            });
+            setActiveUnitIdx(laporanUnits.length); // fokus ke unit pertama yang baru ditambah
+            setShowAddMaintUnitModal(false);
+            setAddMaintSelected(new Set());
+          };
+
+          return (
+            <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setShowAddMaintUnitModal(false)}>
+              <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, width: "100%", maxWidth: 500, maxHeight: "80vh", overflowY: "auto", padding: 20 }} onClick={e => e.stopPropagation()}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <h3 style={{ fontWeight: 800, fontSize: 16, color: cs.text, margin: 0 }}>🏢 Tambah Unit dari Daftar Maintenance</h3>
+                  <button onClick={() => setShowAddMaintUnitModal(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 20, cursor: "pointer" }}>×</button>
+                </div>
+                <div style={{ fontSize: 12, color: cs.muted, marginBottom: 14 }}>
+                  Unit terdaftar yang belum ada di laporan. Centang yang dikerjakan di lapangan — data langsung terisi otomatis.
+                </div>
+                {available.length === 0 ? (
+                  <div style={{ fontSize: 12, color: cs.muted, fontStyle: "italic", marginBottom: 16 }}>Semua unit terdaftar sudah ada di laporan.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+                    {available.map(mu => {
+                      const isSelected = addMaintSelected.has(mu.id);
+                      return (
+                        <div key={mu.id} style={{ display: "flex", gap: 10, alignItems: "center", background: cs.card, border: "1px solid " + (isSelected ? cs.green : cs.border), borderRadius: 10, padding: 12, cursor: "pointer" }} onClick={() => {
+                          const newSet = new Set(addMaintSelected);
+                          if (isSelected) newSet.delete(mu.id); else newSet.add(mu.id);
+                          setAddMaintSelected(newSet);
+                        }}>
+                          <input type="checkbox" checked={isSelected} onChange={() => { }} style={{ cursor: "pointer", width: 18, height: 18 }} />
+                          <div style={{ flex: 1, display: "grid", gap: 4 }}>
+                            <div style={{ fontWeight: 600, color: cs.text, fontSize: 12 }}>
+                              {mu.unit_code}{mu.location ? ` — ${mu.location}` : ""}
+                            </div>
+                            <div style={{ fontSize: 10, color: cs.muted }}>
+                              {mu.brand && <span>{mu.brand}</span>}
+                              {mu.capacity_pk && <span> · {mu.capacity_pk}PK</span>}
+                              {mu.ac_type && <span> · {mu.ac_type}</span>}
+                              {mu.refrigerant && <span> · {mu.refrigerant}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => setShowAddMaintUnitModal(false)} style={{ flex: 1, background: cs.border, color: cs.muted, border: "none", borderRadius: 8, padding: "10px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                    Batal
+                  </button>
+                  <button onClick={handleAdd} disabled={addMaintSelected.size === 0} style={{ flex: 1, background: addMaintSelected.size === 0 ? cs.border : cs.green, color: addMaintSelected.size === 0 ? cs.muted : "#fff", border: "none", borderRadius: 8, padding: "10px 14px", cursor: addMaintSelected.size === 0 ? "default" : "pointer", fontWeight: 600, fontSize: 12 }}>
+                    Tambah {addMaintSelected.size > 0 ? `${addMaintSelected.size} Unit` : ""}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
         return (
           <>
             <UnitPresetModal />
+            <AddMaintUnitModal />
             <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 600, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setLaporanModal(null)}>
               <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 560, maxHeight: "94vh", overflowY: "auto", padding: 24 }} onClick={e => e.stopPropagation()}>
 
@@ -11471,6 +11560,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           + Tambah Unit AC
                         </button>
                       )}
+                      {/* Picker: tambah unit dari daftar Maintenance klien (order corporate) */}
+                      {(() => {
+                        if (!laporanModal?.maintenance_client_id) return null;
+                        const available = maintUnitPool.filter(mu => !laporanUnits.some(u => u.maint_unit_id === mu.id));
+                        if (available.length === 0) return null;
+                        return (
+                          <button onClick={() => { setAddMaintSelected(new Set()); setShowAddMaintUnitModal(true); }}
+                            style={{ marginTop: 8, width: "100%", background: cs.green + "12", border: "1px dashed " + cs.green + "55", color: cs.green, borderRadius: 8, padding: "10px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+                            🏢 Tambah dari Daftar Maintenance ({available.length} unit belum dipilih)
+                          </button>
+                        );
+                      })()}
                     </div>
                     {laporanUnits.length !== (laporanModal.units || 1) && (
                       <div style={{ background: cs.yellow + "10", border: "1px solid " + cs.yellow + "22", borderRadius: 9, padding: "9px 13px", fontSize: 11, color: cs.yellow }}>
