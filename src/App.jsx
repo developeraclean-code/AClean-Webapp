@@ -6656,6 +6656,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             currentUser={currentUser} apiFetch={_apiFetch}
             showNotif={showNotif} showConfirm={showConfirm}
             quotationsData={quotationsData} setQuotationsData={setQuotationsData}
+            setOrdersData={setOrdersData}
             supabase={supabase} customersData={customersData}
             priceListData={priceListData} getLocalDate={getLocalDate}
             appSettings={appSettings} sendWAFn={sendWA}

@@ -65,7 +65,7 @@ function daysUntil(dateStr) {
 
 export default function MaintenanceView({
   currentUser, apiFetch, showNotif, showConfirm,
-  quotationsData, setQuotationsData,
+  quotationsData, setQuotationsData, setOrdersData,
   supabase, customersData, priceListData, getLocalDate,
   appSettings, sendWAFn, uploadQuotationPDFFn,
 }) {
@@ -217,6 +217,7 @@ export default function MaintenanceView({
               <QuotasiTab
                 sel={sel} quotations={clientQuotations}
                 quotationsData={quotationsData} setQuotationsData={setQuotationsData}
+                setOrdersData={setOrdersData}
                 supabase={supabase} customersData={customersData}
                 priceListData={priceListData} getLocalDate={getLocalDate}
                 showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner}
@@ -1031,12 +1032,15 @@ const QUO_STATUS_COLOR = {
 };
 const QUO_LABEL = { DRAFT: "📝 Draft", SENT: "📤 Terkirim", APPROVED: "✅ Disetujui", EXPIRED: "⏰ Kadaluarsa", CANCELLED: "❌ Dibatalkan" };
 
-function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner, appSettings, sendWAFn, uploadQuotationPDFFn }) {
+function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, setOrdersData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner, appSettings, sendWAFn, uploadQuotationPDFFn }) {
   const [showCreate, setShowCreate] = useState(false);
   const [editQ, setEditQ] = useState(null);
   const [previewQ, setPreviewQ] = useState(null);
   const [sendingId, setSendingId] = useState(null);
   const [logoUrl, setLogoUrl] = useState(null);
+  const [approveTargetId, setApproveTargetId] = useState(null);
+  const [approveDate, setApproveDate] = useState("");
+  const [approvingId, setApprovingId] = useState(null);
   const today = typeof getLocalDate === "function" ? getLocalDate() : new Date().toISOString().slice(0, 10);
 
   useEffect(() => {
@@ -1057,6 +1061,68 @@ function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, supaba
     if (error) { showNotif("❌ " + error.message); return; }
     setQuotationsData(prev => prev.filter(x => x.id !== q.id));
     showNotif("✅ Quotation dihapus");
+  };
+
+  // ── Approve: convert quotation → order masuk Planning Order, di-link ke
+  //    maintenance client (sel.id) supaya autolog order→unit B2B tetap jalan.
+  //    Invoice TIDAK dibuat di sini (flow: order → laporan teknisi → invoice).
+  const handleApprove = async (quo, scheduledDate) => {
+    setApprovingId(quo.id);
+    setApproveTargetId(null);
+    setApproveDate("");
+    try {
+      const orderDate = scheduledDate || today;
+      const jobId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+
+      const totalUnits = (quo.items || []).filter(i => i.item_type === "unit_ac").reduce((s, i) => s + (i.qty || 1), 0) || 1;
+      const itemDescs = (quo.items || []).map(i => (i.description || "").toLowerCase()).join(" ");
+      const detectedService = (() => {
+        if ((quo.items || []).some(i => i.item_type === "unit_ac")) return "Install";
+        if (/cuci|cleaning|maintenance|rutin/.test(itemDescs)) return "Cleaning";
+        if (/repair|perbaik|freon|isi gas/.test(itemDescs)) return "Repair";
+        if (/pasang|install/.test(itemDescs)) return "Install";
+        return "Cleaning";
+      })();
+      const _nLow = (quo.notes || "").toLowerCase();
+      const isPresetNote = _nLow.includes("jasa perapian tembok") && _nLow.includes("term of payment");
+      const customNote = quo.notes && !isPresetNote ? quo.notes : "";
+      const orderPayload = {
+        id:         jobId,
+        customer:   quo.customer,
+        phone:      quo.phone || null,
+        address:    quo.address || "",
+        area:       quo.area || "",
+        service:    detectedService,
+        type:       detectedService,
+        units:      totalUnits,
+        date:       orderDate,
+        time:       "09:00",
+        time_end:   "11:00",
+        status:     "PENDING",
+        dispatch:   false,
+        source:     "quotation",
+        maintenance_client_id: sel.id,
+        notes:      `Auto dari Quotation ${quo.id}${customNote ? " · " + customNote : ""}`,
+      };
+      const { error: orderErr } = await supabase.from("orders").insert(orderPayload);
+      if (orderErr) throw new Error("Gagal buat order: " + orderErr.message);
+
+      const { error: quoErr } = await supabase.from("quotations").update({
+        status: "APPROVED", job_id: jobId, updated_at: new Date().toISOString()
+      }).eq("id", quo.id);
+      if (quoErr) {
+        await supabase.from("orders").delete().eq("id", jobId);
+        throw new Error("Gagal update quotation: " + quoErr.message);
+      }
+
+      setQuotationsData(prev => prev.map(x => x.id === quo.id ? { ...x, status: "APPROVED", job_id: jobId } : x));
+      setOrdersData?.(prev => prev.some(o => o.id === jobId) ? prev : [orderPayload, ...prev]);
+      showNotif(`✅ ${quo.id} approved — Order ${jobId} masuk Planning Order. Invoice dibuat setelah laporan teknisi.`);
+    } catch (err) {
+      showNotif("❌ " + (err.message || err));
+    } finally {
+      setApprovingId(null);
+    }
   };
 
   const markSent = async (q) => {
@@ -1116,6 +1182,7 @@ function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, supaba
                       <span style={{ background: sc.bg, color: sc.color, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
                         {QUO_LABEL[effectiveStatus] || effectiveStatus}
                       </span>
+                      {q.job_id && <span style={{ ...pillGreen, fontSize: 10 }}>Order: {q.job_id}</span>}
                       {q.invoice_id && <span style={{ ...pillGreen, fontSize: 10 }}>Invoice: {q.invoice_id}</span>}
                     </div>
                     <div style={{ color: cs.muted, fontSize: 12, marginTop: 4 }}>
@@ -1136,11 +1203,30 @@ function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, supaba
                       {q.status === "DRAFT" && (
                         <button onClick={() => markSent(q)} style={{ ...miniBtn, color: "#60a5fa" }}>📤 Sent</button>
                       )}
+                      {!["APPROVED", "CANCELLED"].includes(q.status) && approveTargetId !== q.id && (
+                        <button onClick={() => { setApproveTargetId(q.id); setApproveDate(today); }} disabled={approvingId === q.id}
+                          style={{ ...miniBtn, color: cs.green, borderColor: cs.green + "55" }}>
+                          {approvingId === q.id ? "…" : "✅ Approve"}
+                        </button>
+                      )}
                       <button onClick={() => { setEditQ(q); setShowCreate(true); }} style={miniBtn}>✏️</button>
                       {isOwner && <button onClick={() => delQ(q)} style={{ ...miniBtn, color: cs.red }}>🗑</button>}
                     </div>
                   </div>
                 </div>
+                {approveTargetId === q.id && !["APPROVED", "CANCELLED"].includes(q.status) && (
+                  <div style={{ borderTop: "1px solid " + cs.border, background: cs.green + "0d", padding: "10px 14px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12, color: cs.muted }}>Tgl jadwal order:</span>
+                    <input type="date" value={approveDate} onChange={e => setApproveDate(e.target.value)}
+                      style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid " + cs.border, background: cs.surface, color: cs.text, fontSize: 12 }} />
+                    <button onClick={() => handleApprove(q, approveDate)} disabled={approvingId === q.id || !approveDate}
+                      style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: cs.green, color: "#fff", fontWeight: 700, fontSize: 12, cursor: approvingId === q.id || !approveDate ? "not-allowed" : "pointer", opacity: approvingId === q.id || !approveDate ? 0.6 : 1 }}>
+                      {approvingId === q.id ? "Proses…" : "✅ Konfirmasi → Buat Order"}
+                    </button>
+                    <button onClick={() => { setApproveTargetId(null); setApproveDate(""); }}
+                      style={{ ...miniBtn, color: cs.muted }}>Batal</button>
+                  </div>
+                )}
                 {items.length > 0 && (
                   <div style={{ borderTop: "1px solid " + cs.border, padding: "8px 14px", display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {items.map((it, i) => (
