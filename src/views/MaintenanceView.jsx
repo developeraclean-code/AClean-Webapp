@@ -66,6 +66,7 @@ function daysUntil(dateStr) {
 export default function MaintenanceView({
   currentUser, apiFetch, showNotif, showConfirm,
   quotationsData, setQuotationsData, setOrdersData,
+  teknisiData, createOrderFn,
   supabase, customersData, priceListData, getLocalDate,
   appSettings, sendWAFn, uploadQuotationPDFFn,
 }) {
@@ -210,7 +211,7 @@ export default function MaintenanceView({
                 <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
               ))}
             </div>
-            {tab === "unit" && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} />}
+            {tab === "unit" && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} />}
             {tab === "history" && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
             {tab === "stats" && <StatsTab units={units} logs={logs} sel={sel} />}
             {tab === "quotation" && (
@@ -286,7 +287,7 @@ function Kpi({ n, l, c }) {
 }
 
 // ─────────── UNITS TAB ───────────
-function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner, apiFetch, supabase, setOrdersData, getLocalDate }) {
+function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner, apiFetch, supabase, setOrdersData, getLocalDate, teknisiData, createOrderFn }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("");
   const [edit, setEdit] = useState(null);
@@ -328,37 +329,52 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
 
   const pickedUnits = units.filter(u => picked.has(u.id));
 
-  const createOrder = async ({ date, service, time, notes }) => {
-    if (picked.size === 0) { showNotif("❌ Pilih minimal 1 unit"); return; }
-    const jobId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+  const createOrder = async ({ date, service, time, notes, teknisi, helper }) => {
+    if (picked.size === 0) { showNotif("❌ Pilih minimal 1 unit"); return false; }
     const locs = [...new Set(pickedUnits.map(u => u.location).filter(Boolean))];
     const locNote = locs.length ? "Lokasi: " + locs.join(", ") : "";
-    const orderPayload = {
-      id:         jobId,
-      customer:   sel.name,
-      phone:      sel.pic_phone || null,
-      address:    sel.address || "",
-      area:       sel.area || "",
+    const noteStr = [`Maintenance ${sel.name}`, locNote, notes].filter(Boolean).join(" · ");
+    const baseForm = {
+      customer: sel.name,
+      phone:    sel.pic_phone || "",
+      address:  sel.address || "",
+      area:     sel.area || "",
       service,
-      type:       service,
-      units:      picked.size,
+      type:     service,
+      units:    picked.size,
       date,
-      time:       time || "09:00",
-      time_end:   "11:00",
-      status:     "PENDING",
-      dispatch:   false,
-      source:     "maintenance",
+      time:     time || "09:00",
+      notes:    noteStr,
       maintenance_client_id: sel.id,
       maintenance_unit_ids:  [...picked],
-      notes:      [`Maintenance ${sel.name}`, locNote, notes].filter(Boolean).join(" · "),
+    };
+
+    // ── Opsi B: teknisi dipilih → reuse createOrder App.jsx (cek konflik DB,
+    //    time_end otomatis, status CONFIRMED + auto-dispatch + autolog hook). ──
+    if (teknisi && createOrderFn) {
+      const res = await createOrderFn({ ...baseForm, teknisi, helper: helper || "" });
+      if (!res) return false; // gagal / bentrok — createOrderFn sudah kasih notif, modal tetap terbuka
+      setShowOrderModal(false); setOrderMode(false); setPicked(new Set());
+      return true;
+    }
+
+    // ── Opsi A: tanpa teknisi → order PENDING, assign di Planning Order. ──
+    const jobId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+    const orderPayload = {
+      id: jobId, customer: sel.name, phone: sel.pic_phone || null,
+      address: sel.address || "", area: sel.area || "",
+      service, type: service, units: picked.size,
+      date, time: time || "09:00", time_end: "11:00",
+      status: "PENDING", dispatch: false, source: "maintenance",
+      maintenance_client_id: sel.id, maintenance_unit_ids: [...picked],
+      notes: noteStr,
     };
     const { error } = await supabase.from("orders").insert(orderPayload);
-    if (error) { showNotif("❌ Gagal buat order: " + error.message); return; }
+    if (error) { showNotif("❌ Gagal buat order: " + error.message); return false; }
     setOrdersData?.(prev => prev.some(o => o.id === jobId) ? prev : [orderPayload, ...prev]);
-    setShowOrderModal(false);
-    setOrderMode(false);
-    setPicked(new Set());
+    setShowOrderModal(false); setOrderMode(false); setPicked(new Set());
     showNotif(`✅ Order ${jobId} (${picked.size} unit) masuk Planning Order. Assign teknisi di sana.`);
+    return true;
   };
 
   const today = typeof getLocalDate === "function" ? getLocalDate() : new Date().toISOString().slice(0, 10);
@@ -436,22 +452,27 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
       {edit !== null && <UnitFormModal unit={edit} onClose={() => setEdit(null)} onSave={save} />}
       {qrUnit && <UnitQrModal unit={qrUnit} sel={sel} onClose={() => setQrUnit(null)} />}
       {showCsv && <CsvImportModal sel={sel} call={call} setUnits={setUnits} showNotif={showNotif} onClose={() => setShowCsv(false)} />}
-      {showOrderModal && <CreateOrderModal sel={sel} pickedUnits={pickedUnits} today={today} onClose={() => setShowOrderModal(false)} onCreate={createOrder} />}
+      {showOrderModal && <CreateOrderModal sel={sel} pickedUnits={pickedUnits} today={today} teknisiData={teknisiData} onClose={() => setShowOrderModal(false)} onCreate={createOrder} />}
     </div>
   );
 }
 
-// Modal buat order dari unit terpilih (opsi A — order PENDING, teknisi di-assign di Planning Order)
-function CreateOrderModal({ sel, pickedUnits, today, onClose, onCreate }) {
+// Modal buat order dari unit terpilih.
+// Teknisi opsional: kosong → order PENDING (opsi A, assign di Planning Order);
+// dipilih → order CONFIRMED + cek konflik DB + auto-dispatch (opsi B).
+function CreateOrderModal({ sel, pickedUnits, today, teknisiData, onClose, onCreate }) {
   const [date, setDate] = useState(today);
   const [service, setService] = useState("Cleaning");
   const [time, setTime] = useState("09:00");
   const [notes, setNotes] = useState("");
+  const [teknisi, setTeknisi] = useState("");
+  const [helper, setHelper] = useState("");
   const [busy, setBusy] = useState(false);
+  const teknisiOpts = (teknisiData || []).filter(t => t.role === "Teknisi" || t.role === "Helper");
   const submit = async () => {
     if (!date) return;
     setBusy(true);
-    await onCreate({ date, service, time, notes });
+    await onCreate({ date, service, time, notes, teknisi, helper });
     setBusy(false);
   };
   return (
@@ -478,12 +499,31 @@ function CreateOrderModal({ sel, pickedUnits, today, onClose, onCreate }) {
             {["Cleaning", "Repair", "Install", "Maintenance"].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </Field>
+        <Field l="Teknisi (opsional)">
+          <select value={teknisi} onChange={e => setTeknisi(e.target.value)} style={inp}>
+            <option value="">— Assign nanti di Planning Order —</option>
+            {teknisiOpts.map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
+          </select>
+        </Field>
+        {teknisi && (
+          <Field l="Helper (opsional)">
+            <select value={helper} onChange={e => setHelper(e.target.value)} style={inp}>
+              <option value="">— Tanpa helper —</option>
+              {teknisiOpts.filter(t => t.name !== teknisi).map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
+            </select>
+          </Field>
+        )}
         <Field l="Catatan (opsional)"><input value={notes} onChange={e => setNotes(e.target.value)} style={inp} placeholder="cth: bawa tangga, akses lewat lobby" /></Field>
+        <div style={{ fontSize: 11, color: cs.muted, marginTop: 6 }}>
+          {teknisi
+            ? `⚡ Order langsung CONFIRMED ke ${teknisi}. Sistem cek bentrok jadwal otomatis.`
+            : "ℹ️ Tanpa teknisi → order PENDING, assign nanti di Planning Order."}
+        </div>
         <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
           <button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Batal</button>
           <button onClick={submit} disabled={busy || !date}
             style={{ ...btn, flex: 2, background: cs.green, opacity: busy || !date ? 0.6 : 1, cursor: busy || !date ? "not-allowed" : "pointer" }}>
-            {busy ? "Proses…" : "✅ Buat Order → Planning Order"}
+            {busy ? "Proses…" : teknisi ? `✅ Buat & Tugaskan ke ${teknisi.split(" ")[0]}` : "✅ Buat Order → Planning Order"}
           </button>
         </div>
       </div>
