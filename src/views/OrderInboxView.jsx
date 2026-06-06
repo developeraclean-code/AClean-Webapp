@@ -183,9 +183,10 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
           {/* Baris per teknisi */}
           {gridTeknisi.map(tek => {
             const color = getTechColor(tek, teknisiData);
+            // Job selesai (REPORT_SUBMITTED/COMPLETED/dst) tetap ditampilkan tapi redup (lihat isDone),
+            // agar grid tidak terlihat kosong saat siang. Hanya CANCELLED yang disembunyikan.
             const tekOrders = dayOrders.filter(o =>
-              hasValidTime(o.time) && o.teknisi === tek &&
-              !["CANCELLED","COMPLETED","VERIFIED","REPORT_SUBMITTED"].includes(o.status)
+              hasValidTime(o.time) && o.teknisi === tek && o.status !== "CANCELLED"
             );
 
 
@@ -230,9 +231,13 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                     const leftPct = minToPercent(startMin);
                     const widthPct = minToPercent(endMin) - leftPct;
 
-                    // Konflik: overlap dengan order lain di teknisi yang sama (pakai time_end jika ada)
-                    const isConflict = tekOrders.some(o2 => {
+                    // Job yang sudah selesai/jalan ke tahap akhir → tampil redup, tidak ikut cek konflik
+                    const isDone = ["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED"].includes(o.status);
+
+                    // Konflik: overlap dengan order AKTIF lain di teknisi yang sama (job selesai diabaikan)
+                    const isConflict = !isDone && tekOrders.some(o2 => {
                       if (o2.id === o.id) return false;
+                      if (["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED","CANCELLED"].includes(o2.status)) return false;
                       const s2 = toMinutes(o2.time);
                       if (s2 === null) return false;
                       const t2End = toMinutes(o2.time_end);
@@ -256,21 +261,22 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                           left: leftPct + "%",
                           width: Math.max(widthPct, 2) + "%",
                           top: 3, bottom: 3,
-                          background: isConflict ? cs.red + "33" : color + "28",
-                          border: "2px solid " + (isConflict ? cs.red + "99" : color + "88"),
+                          background: isDone ? cs.muted + "1f" : (isConflict ? cs.red + "33" : color + "28"),
+                          border: "2px solid " + (isDone ? cs.border : (isConflict ? cs.red + "99" : color + "88")),
                           borderRadius: 6,
                           cursor: "pointer",
                           overflow: "hidden",
                           display: "flex", flexDirection: "column", justifyContent: "center",
                           padding: "0 5px",
+                          opacity: isDone ? 0.5 : 1,
                           zIndex: isConflict ? 2 : 1,
                           boxSizing: "border-box",
                         }}>
-                        <div style={{ color, fontWeight: 800, fontSize: 9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {o.time?.slice(0,5)}–{endStr}
+                        <div style={{ color: isDone ? cs.muted : color, fontWeight: 800, fontSize: 9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {isDone && "✓ "}{o.time?.slice(0,5)}–{endStr}
                           {isConflict && " ⚠️"}
                         </div>
-                        <div style={{ color: cs.text, fontWeight: 700, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        <div style={{ color: cs.text, fontWeight: 700, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: isDone ? "line-through" : "none" }}>
                           {o.customer}
                         </div>
                         <div style={{ color: cs.muted, fontSize: 9, whiteSpace: "nowrap" }}>
