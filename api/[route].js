@@ -3299,7 +3299,32 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
           }
           if (!clientId) return res.status(200).json({ skipped: true, reason: "bukan order maintenance" });
 
-          // Unit tidak disebut eksplisit → default SEMUA unit aktif klien (admin bisa narrow di laporan).
+          const explicitUnits = unitIds.length > 0;        // admin sudah pilih unit di Planning Order?
+          // Default SEMUA unit HANYA untuk servis cleaning (servis massal seluruh lokasi).
+          // Repair/Pasang/Complain → admin WAJIB pilih unit dulu (cegah salah catat ke 22 unit).
+          const svcRaw = String(order.service || "").toLowerCase();
+          const isCleaning = svcRaw.includes("cleaning") || svcRaw.includes("cuci");
+
+          if (!explicitUnits && !isCleaning) {
+            // Bukan cleaning & unit belum dipilih → JANGAN auto-catat. Link klien saja, minta admin pilih.
+            if (!order.maintenance_client_id) {
+              fetch(REST("orders?id=eq." + encodeURIComponent(order.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ maintenance_client_id: clientId }) }).catch(() => {});
+            }
+            fetch(SU + "/rest/v1/agent_logs", {
+              method: "POST",
+              headers: { apikey: SK, Authorization: "Bearer " + SK, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "MAINTENANCE_UNIT_SELECT_NEEDED",
+                severity: "warn", category: "maintenance", status: "WARNING",
+                detail: `Order ${order.id} (${order.customer || ""}) servis ${order.service || "-"} = customer maintenance, tapi unit belum dipilih. Admin pilih AC mana + konfirmasi ke customer sebelum catat ke history.`,
+                metadata: { order_id: order.id, client_id: clientId, service: order.service },
+                time: new Date().toISOString(),
+              }),
+            }).catch(() => {});
+            return res.status(200).json({ skipped: true, reason: "servis non-cleaning — admin pilih unit dulu", client_linked: clientId });
+          }
+
+          // Cleaning tanpa pilihan eksplisit → default semua unit aktif.
           if (!unitIds.length) {
             try {
               const auRes = await fetch(REST("maintenance_units?client_id=eq." + encodeURIComponent(clientId) + "&status=eq.active&select=id&order=unit_code.asc"), { headers });
