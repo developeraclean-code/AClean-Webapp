@@ -203,6 +203,7 @@ export default function MaintenanceView({
               {[
                 ["unit", `📋 Unit (${units.length})`],
                 ["history", "🕑 History"],
+                ["svchistory", "🧾 History Service"],
                 ["stats", "📊 Statistik"],
                 ["quotation", `📄 Quotasi (${clientQuotations.length})`],
                 ["invoice", "🧾 Invoice B2B"],
@@ -213,6 +214,7 @@ export default function MaintenanceView({
             </div>
             {tab === "unit" && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} />}
             {tab === "history" && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
+            {tab === "svchistory" && <HistoryServiceTab sel={sel} call={call} showNotif={showNotif} />}
             {tab === "stats" && <StatsTab units={units} logs={logs} sel={sel} />}
             {tab === "quotation" && (
               <QuotasiTab
@@ -887,6 +889,113 @@ function LogModal({ unit, apiFetch, sel, onClose, onSave }) {
         <button onClick={() => onSave(f)} disabled={uploading} style={{ ...btn, opacity: uploading ? .5 : 1 }}>Simpan</button>
       </div>
     </Overlay>
+  );
+}
+
+// ─────────── HISTORY SERVICE TAB (kumpulan invoice per perusahaan) ───────────
+const INV_STATUS_STYLE = {
+  PAID: pillGreen,
+  PARTIAL_PAID: pillYellow,
+  UNPAID: pillYellow,
+  OVERDUE: { background: (cs.red || "#ef4444") + "22", color: cs.red || "#ef4444", padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 },
+  PENDING_APPROVAL: pillBlue,
+  APPROVED: pillBlue,
+  DRAFT: pillGray,
+};
+function svcCategory(inv) {
+  const s = ((inv.service || "") + " " + (inv.invoice_type || "")).toLowerCase();
+  if (/clean|cuci/.test(s)) return "Cleaning";
+  if (/install|pasang|instalasi/.test(s)) return "Install";
+  if (/complain|komplain|keluhan/.test(s)) return "Complain";
+  if (/repair|perbaik|freon|sparepart|servis|service/.test(s)) return "Repair";
+  return "Lainnya";
+}
+function HistoryServiceTab({ sel, call, showNotif }) {
+  const [invoices, setInvoices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [cat, setCat] = useState("Semua");
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    call("list-invoices", { client_id: sel.id })
+      .then(j => { if (alive) setInvoices(j.invoices || []); })
+      .catch(e => { if (alive) showNotif("❌ " + e.message); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [sel.id, call, showNotif]);
+
+  const CATS = ["Semua", "Cleaning", "Install", "Repair", "Complain", "Lainnya"];
+  const counts = {};
+  invoices.forEach(iv => { const c = svcCategory(iv); counts[c] = (counts[c] || 0) + 1; });
+  const shown = cat === "Semua" ? invoices : invoices.filter(iv => svcCategory(iv) === cat);
+
+  const paidOf = (iv) => {
+    const pa = Number(iv.paid_amount) || 0;
+    if (pa > 0) return pa;
+    return iv.status === "PAID" ? (Number(iv.total) || 0) : 0;
+  };
+  const totalBilled = shown.reduce((s, iv) => s + (Number(iv.total) || 0), 0);
+  const totalPaid = shown.reduce((s, iv) => s + paidOf(iv), 0);
+  const outstanding = totalBilled - totalPaid;
+
+  if (loading) return <div style={{ color: cs.muted, padding: 16 }}>Memuat invoice…</div>;
+
+  return (
+    <div>
+      <div style={{ color: cs.muted, fontSize: 12, marginBottom: 12 }}>
+        Semua invoice yang tersambung ke <b style={{ color: cs.text }}>{sel.name}</b> — dari jalur Order/Report maupun Invoice B2B.
+      </div>
+
+      {/* Ringkasan */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
+        <KpiCard label="Total Invoice" value={shown.length} sub={`dari ${invoices.length} total`} color={cs.accent} />
+        <KpiCard label="Total Ditagih" value={fmtRp(totalBilled)} sub="nilai invoice" color={cs.text} />
+        <KpiCard label="Sudah Dibayar" value={fmtRp(totalPaid)} sub="terlunasi" color={cs.green} />
+        <KpiCard label="Outstanding" value={fmtRp(outstanding)} sub="belum dibayar" color={outstanding > 0 ? (cs.yellow || "#eab308") : cs.muted} />
+      </div>
+
+      {/* Filter kategori */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        {CATS.map(c => (
+          <button key={c} onClick={() => setCat(c)} style={cat === c ? tabActive : tabBtn}>
+            {c}{c !== "Semua" && counts[c] ? ` (${counts[c]})` : ""}
+          </button>
+        ))}
+      </div>
+
+      {shown.length === 0 ? (
+        <div style={{ color: cs.muted, padding: 16 }}>Belum ada invoice{cat !== "Semua" ? ` kategori ${cat}` : ""}.</div>
+      ) : (
+        <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+          {shown.map(iv => {
+            const stStyle = INV_STATUS_STYLE[iv.status] || pillGray;
+            const c = svcCategory(iv);
+            return (
+              <div key={iv.id} style={{ display: "flex", gap: 12, alignItems: "center", padding: "11px 14px", borderBottom: "1px solid " + cs.border, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: cs.accent, fontSize: 12 }}>{iv.id}</span>
+                    <span style={pillBlue}>{c}</span>
+                    {iv.job_id && <span style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace" }}>{iv.job_id}</span>}
+                  </div>
+                  <div style={{ fontSize: 12, color: cs.muted, marginTop: 3 }}>
+                    {iv.service || "—"} · {iv.units || 1} unit · {fmtDate(iv.created_at)}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontWeight: 700, color: cs.text }}>{fmtRp(iv.total)}</div>
+                  {paidOf(iv) > 0 && paidOf(iv) < (Number(iv.total) || 0) && (
+                    <div style={{ fontSize: 10, color: cs.muted }}>dibayar {fmtRp(paidOf(iv))}</div>
+                  )}
+                </div>
+                <span style={stStyle}>{iv.status}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

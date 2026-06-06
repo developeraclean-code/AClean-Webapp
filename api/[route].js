@@ -3248,6 +3248,36 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 
           return res.status(200).json({ logs });
         }
+
+        // ---- HISTORY SERVICE: semua invoice tersambung ke klien maintenance ----
+        // Link andal (tanpa false-positive nomor HP bersama):
+        //   a) invoices.maintenance_client_id = client_id (B2B + order-path ter-link)
+        //   b) invoices.job_id ∈ orders milik klien (order-path, walau invoice belum ter-link langsung)
+        if (action === "list-invoices") {
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          const SELECT = "id,job_id,customer,service,units,total,labor,material,status,due,paid_at,paid_amount,remaining_amount,created_at,garansi_expires,invoice_type,maintenance_client_id";
+          const byId = {};
+          const addRows = (rows) => { for (const iv of (Array.isArray(rows) ? rows : [])) byId[iv.id] = iv; };
+          // a. langsung ter-link
+          try {
+            const r = await fetch(REST(`invoices?maintenance_client_id=eq.${encodeURIComponent(body.client_id)}&select=${SELECT}`), { headers });
+            if (r.ok) addRows(await r.json());
+          } catch (_) {}
+          // b. via order milik klien
+          try {
+            const oRes = await fetch(REST("orders?maintenance_client_id=eq." + encodeURIComponent(body.client_id) + "&select=id"), { headers });
+            const oRows = oRes.ok ? await oRes.json() : [];
+            const orderIds = (Array.isArray(oRows) ? oRows : []).map(o => o.id).filter(Boolean);
+            if (orderIds.length) {
+              const inFilter = orderIds.map(encodeURIComponent).join(",");
+              const r = await fetch(REST(`invoices?job_id=in.(${inFilter})&select=${SELECT}`), { headers });
+              if (r.ok) addRows(await r.json());
+            }
+          } catch (_) {}
+          const invoices = Object.values(byId).sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+          return res.status(200).json({ invoices });
+        }
+
         if (action === "create-log") {
           if (!body.unit_id || !body.client_id || !body.service_date) return res.status(400).json({ error: "unit_id, client_id, service_date wajib" });
           const payload = {
