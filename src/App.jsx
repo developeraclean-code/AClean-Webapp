@@ -1674,12 +1674,18 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
 
   // Map satu unit maintenance (dari /api/maintenance list-units) → bentuk "hist" untuk mkUnit
   const maintUnitToHist = (mu) => {
-    const AC_TYPE_MAP = { cassette: "AC Cassette", split: "AC Split", ducted: "AC Split Duct", standing: "AC Floor Standing" };
+    // Tipe AC di form = gabungan jenis + PK (cocokkan dengan TIPE_AC_OPT, mis. "AC Split 1PK")
+    const AC_TYPE_BASE = { cassette: "AC Cassette", split: "AC Split", ducted: "AC Split Duct", standing: "AC Floor Standing" };
+    const base = AC_TYPE_BASE[mu.ac_type] || "AC Split";
+    const pkNum = mu.capacity_pk != null && String(mu.capacity_pk).trim() !== "" ? String(mu.capacity_pk).trim() : "1";
+    const pkLabel = `${pkNum}PK`;
+    const candidate = `${base} ${pkLabel}`;
     return {
       label: `${mu.unit_code} — ${mu.location || ""}`.replace(/— $/, "").trim(),
-      tipe: AC_TYPE_MAP[mu.ac_type] || "AC Split",
+      // Hanya isi tipe kalau gabungan ada di daftar opsi — kalau tidak, biar helper pilih manual
+      tipe: TIPE_AC_OPT.includes(candidate) ? candidate : "",
       merk: mu.brand || "",
-      pk: mu.capacity_pk ? `${mu.capacity_pk}PK` : "1PK",
+      pk: pkLabel,
       model: mu.serial_no || "",
       from_history_job_id: null,
       maint_unit_id: mu.id,
