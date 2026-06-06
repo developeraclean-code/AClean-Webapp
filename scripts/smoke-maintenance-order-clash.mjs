@@ -176,6 +176,26 @@ function rng(seed) { let s = seed; return () => (s = (s * 1103515245 + 12345) & 
   ok("INV3 — gerbang atomik: tepat 1 klaim slot menang (anti double-book)", claims === 1);
   ok("INV3 — tepat 1 order mendarat di slot race", landed === 1);
 
+  // ── INV4: klaim basi (order CANCELLED) harus DIABAIKAN → rebook slot sama boleh ──
+  const ct = "Tek Cancel " + RUN, cd = "2026-07-15", ctime = "09:00";
+  const cEnd = hitungJamSelesai(ctime, "Cleaning", 3);
+  const claim = async (oid) => {
+    const r = await fetch(REST("rpc/try_claim_teknisi_slot"), { method: "POST", headers: H,
+      body: JSON.stringify({ p_teknisi: ct, p_date: cd, p_order_id: oid, p_start: ctime, p_end: cEnd }) });
+    return await r.json();
+  };
+  const o1 = await insertOrder({ teknisi: ct, date: cd, time: ctime, service: "Cleaning", units: 3 });
+  const w1 = await claim(o1.row.id);
+  // Batalkan order #1 via updateOrderStatus (tidak hapus baris technician_schedule → klaim basi)
+  await fetch(REST("orders?id=eq." + encodeURIComponent(o1.row.id)), { method: "PATCH", headers: H, body: JSON.stringify({ status: "CANCELLED" }) });
+  // Booking ulang slot sama dgn order baru
+  const o2 = await insertOrder({ teknisi: ct, date: cd, time: ctime, service: "Cleaning", units: 3 });
+  const w2 = await claim(o2.row.id);
+  console.log(`\n  🔁 Rebook setelah cancel → klaim#1=${w1}, cancel, klaim#2=${w2}`);
+  ok("INV4 — klaim#1 menang", w1 === true);
+  ok("INV4 — rebook slot sama setelah CANCEL berhasil (klaim basi diabaikan)", w2 === true);
+  await fetch(REST(`technician_schedule?teknisi=eq.${encodeURIComponent(ct)}&date=eq.${cd}`), { method: "DELETE", headers: H });
+
   // ── Cleanup ──
   console.log("\n  🧹 Cleanup...");
   await fetch(REST(`technician_schedule?teknisi=eq.${encodeURIComponent(rt)}&date=eq.${rd}`), { method: "DELETE", headers: H });
