@@ -23,7 +23,24 @@ function compressToBase64(file, maxDim = 1280, quality = 0.7) {
       }
       const canvas = document.createElement("canvas");
       canvas.width = width; canvas.height = height;
-      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, width, height);
+      // ── Watermark timestamp WIB (bukti kapan foto diproses/diupload) ──
+      // Label "Difoto:" sengaja dipakai agar jelas beda dari tanggal yang tercetak di struk.
+      const stamp = "Difoto: " + new Date().toLocaleString("id-ID", {
+        timeZone: "Asia/Jakarta", day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      }) + " WIB";
+      const fontSize = Math.max(13, Math.round(width * 0.030));
+      const pad = Math.round(fontSize * 0.5);
+      ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+      ctx.textBaseline = "bottom";
+      const textW = ctx.measureText(stamp).width;
+      const boxH = fontSize + pad * 2;
+      ctx.fillStyle = "rgba(0,0,0,0.55)";          // strip latar agar terbaca di struk terang
+      ctx.fillRect(0, height - boxH, textW + pad * 2, boxH);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(stamp, pad, height - pad);
       const dataUrl = canvas.toDataURL("image/jpeg", quality);
       resolve({ base64: dataUrl.split(",")[1], preview: dataUrl, mimeType: "image/jpeg" });
     };
@@ -150,12 +167,21 @@ export default function ExpenseInputWidget({ currentUser, apiHeaders, supabase, 
             </div>
           ))}
 
-          {/* Tambah foto */}
+          {/* Tambah foto — Kamera (foto langsung) atau Galeri (pilih file) */}
           {rows.length < catCfg.max && (
-            <label style={{ display: "block", border: "2px dashed " + cs.border, borderRadius: 9, padding: "12px", textAlign: "center", cursor: "pointer", color: cs.muted, fontSize: 13 }}>
-              📷 Tambah foto ({rows.length}/{catCfg.max})
-              <input type="file" accept="image/*" capture="environment" multiple onChange={e => { addPhotos(e.target.files); e.target.value = ""; }} style={{ display: "none" }} />
-            </label>
+            <div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <label style={{ flex: 1, display: "block", border: "2px dashed " + cs.border, borderRadius: 9, padding: "12px", textAlign: "center", cursor: "pointer", color: cs.muted, fontSize: 13 }}>
+                  📷 Kamera
+                  <input type="file" accept="image/*" capture="environment" multiple onChange={e => { addPhotos(e.target.files); e.target.value = ""; }} style={{ display: "none" }} />
+                </label>
+                <label style={{ flex: 1, display: "block", border: "2px dashed " + cs.border, borderRadius: 9, padding: "12px", textAlign: "center", cursor: "pointer", color: cs.muted, fontSize: 13 }}>
+                  🖼️ Galeri
+                  <input type="file" accept="image/*" multiple onChange={e => { addPhotos(e.target.files); e.target.value = ""; }} style={{ display: "none" }} />
+                </label>
+              </div>
+              <div style={{ fontSize: 10, color: cs.muted, textAlign: "center", marginTop: 4 }}>{rows.length}/{catCfg.max} foto</div>
+            </div>
           )}
 
           <button onClick={submit} disabled={submitting || rows.length === 0}
