@@ -1,8 +1,17 @@
 import { defineConfig, devices } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 // Playwright config untuk AClean Webapp E2E tests.
 // Test target: localhost dev server (port 3000 / 3001 auto-detect).
 // Untuk production smoke test, set BASE_URL env var.
+
+// Load .env.local (E2E_* credentials) tanpa dependency dotenv — file gitignored.
+try {
+  for (const line of readFileSync(".env.local", "utf8").split("\n")) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim();
+  }
+} catch { /* .env.local optional */ }
 
 const PORT = process.env.PORT || "3000";
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;

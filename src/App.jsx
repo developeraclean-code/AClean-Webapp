@@ -3029,9 +3029,10 @@ ${photoPageHTML}
       const adminBlocked = ["settings", "myreport", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit"];
       return !adminBlocked.includes(menu);
     }
-    // Teknisi & Helper: HANYA dashboard, jadwal, laporan sendiri (komisi disembunyikan — password shared)
+    // Teknisi & Helper: dashboard, jadwal, laporan sendiri, + Komisi Saya (dilindungi PIN per-teknisi
+    // bila Owner set commission_pin — layer-2 anti "intip" data keuangan sensitif)
     if (role === "Teknisi" || role === "Helper")
-      return menu === "dashboard" || menu === "schedule" || menu === "myreport";
+      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "komisi";
     // Finance: akses finance hub, invoice, biaya, statistik
     if (role === "Finance")
       return ["finance", "invoice", "biaya", "reports"].includes(menu);
