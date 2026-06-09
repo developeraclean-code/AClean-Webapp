@@ -799,6 +799,9 @@ export default function ACleanWebApp() {
   const [commissionUnlocked, setCommissionUnlocked] = useState(false);
   const [commissionPinAttempt, setCommissionPinAttempt] = useState("");
   const [commissionPinError, setCommissionPinError] = useState("");
+  // livePin: PIN terbaru dari DB saat buka menu Komisi (anti session-basi bila Owner set PIN
+  // setelah teknisi login). undefined = belum di-fetch (loading), null = tidak ada PIN, string = ada PIN.
+  const [livePin, setLivePin] = useState(undefined);
 
   // ── Dynamic bonus categories (loaded from app_settings, fallback ke default) ──
   const [bonusCategories, setBonusCategories] = useState(DEFAULT_BONUS_CATEGORIES);
@@ -6719,21 +6722,34 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
   // ── Commission PIN Protection ──
   useEffect(() => {
-    // Reset PIN unlock when navigating away from komisi menu or on page reload
     if (activeMenu !== "komisi") {
+      // Reset saat keluar dari menu komisi
       setCommissionUnlocked(false);
       setCommissionPinAttempt("");
       setCommissionPinError("");
+      setLivePin(undefined);
+      return;
     }
-  }, [activeMenu]);
+    // Masuk menu komisi → ambil PIN TERBARU dari DB (anti session-basi).
+    let cancelled = false;
+    setLivePin(undefined); // loading
+    (async () => {
+      const uid = currentUser?.id;
+      if (!uid || !isRealUUID(uid)) { if (!cancelled) setLivePin(currentUser?.commission_pin ?? null); return; }
+      const { data, error } = await supabase.from("user_profiles").select("commission_pin").eq("id", uid).single();
+      if (cancelled) return;
+      setLivePin(error ? (currentUser?.commission_pin ?? null) : (data?.commission_pin ?? null));
+    })();
+    return () => { cancelled = true; };
+  }, [activeMenu, currentUser?.id]);
 
   const handleCommissionPinSubmit = () => {
     if (!commissionPinAttempt.trim()) {
       setCommissionPinError("Silakan masukkan PIN");
       return;
     }
-    
-    if (commissionPinAttempt === currentUser?.commission_pin) {
+
+    if (commissionPinAttempt === livePin) {
       setCommissionUnlocked(true);
       setCommissionPinAttempt("");
       setCommissionPinError("");
@@ -6744,7 +6760,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   };
 
   const CommissionPinModal = () => {
-    if (commissionUnlocked || !currentUser?.commission_pin) return null;
+    // Tampil hanya bila sudah tahu ada PIN (livePin truthy) & belum unlock
+    if (commissionUnlocked || !livePin) return null;
     
     return (
       <div style={{
@@ -6910,7 +6927,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         <>
           <CommissionPinModal />
           <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
-            {commissionUnlocked || !currentUser?.commission_pin ? (
+            {livePin === undefined ? (
+              // Masih cek PIN dari DB — jangan tampilkan data dulu (hindari kebocoran sekejap)
+              <div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memeriksa akses...</div>
+            ) : (commissionUnlocked || !livePin) ? (
               <KomisiView currentUser={currentUser} supabase={supabase} bonusCategories={bonusCategories} BONUS_LABELS={BONUS_LABELS} />
             ) : (
               <div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Masukkan PIN untuk melanjutkan...</div>
