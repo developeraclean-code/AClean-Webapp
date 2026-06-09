@@ -87,8 +87,8 @@ export default async function handler(req, res) {
       if (dupRows.length > 0) { out.status = "DUPLICATE"; out.reason = "Foto struk ini sudah pernah diupload"; return out; }
 
       // ── Cross-source dedup: nama + nominal + tanggal sama (channel lain spt WA grup) ──
-      if (await expenseDuplicateExists({ SU, SK, teknisiName, amount: typedAmount, date: today })) {
-        out.status = "DUPLICATE"; out.reason = "Biaya dgn nama, nominal & tanggal sama sudah tercatat (mungkin dari WA grup)"; return out;
+      if (await expenseDuplicateExists({ SU, SK, teknisiName, amount: typedAmount, date: today, subcategory: category })) {
+        out.status = "DUPLICATE"; out.reason = "Biaya dgn nama, kategori, nominal & tanggal sama sudah tercatat (mungkin dari WA grup)"; return out;
       }
 
       // ── Upload R2 ──

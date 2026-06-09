@@ -510,10 +510,17 @@ export default async function handler(req, res) {
             // bukan struk → AI return unknown, expense TIDAK lost karena text-pattern fallback.
             if (SU_g && SK_g) {
               const today = new Date().toISOString().slice(0, 10);
-              // Dedup: nama+nominal+tanggal sama (mis. AI vision paralel / input dashboard) → skip
-              const isDup = await expenseDuplicateExists({ SU: SU_g, SK: SK_g, teknisiName: profileName, amount: parsedAmount, date: today });
+              // Map keyword text → subcategory existing (whitelist PETTY_CASH_SUBS)
+              const biayaSub = (() => {
+                const k = biayaMatch[1].toLowerCase();
+                if (["bensin","bbm","pertamax","solar"].includes(k)) return "Bensin Motor";
+                if (k === "parkir") return "Parkir";
+                return "Lain-lain"; // makan/tol/belanja/transport/consumable semua dipetakan ke Lain-lain
+              })();
+              // Dedup: nama+kategori+nominal+tanggal sama (mis. AI vision paralel / input dashboard) → skip
+              const isDup = await expenseDuplicateExists({ SU: SU_g, SK: SK_g, teknisiName: profileName, amount: parsedAmount, date: today, subcategory: biayaSub });
               if (isDup) {
-                console.log("[WA_GROUP_EXPENSE] skip duplikat:", profileName, parsedAmount, today);
+                console.log("[WA_GROUP_EXPENSE] skip duplikat:", profileName, biayaSub, parsedAmount, today);
               } else {
                 fetch(SU_g + "/rest/v1/expenses", {
                   method: "POST",
@@ -521,13 +528,7 @@ export default async function handler(req, res) {
                   body: JSON.stringify({
                     date: today,
                     category: "petty_cash",
-                    // Map keyword text → subcategory existing (whitelist PETTY_CASH_SUBS)
-                    subcategory: (() => {
-                      const k = biayaMatch[1].toLowerCase();
-                      if (["bensin","bbm","pertamax","solar"].includes(k)) return "Bensin Motor";
-                      if (k === "parkir") return "Parkir";
-                      return "Lain-lain"; // makan/tol/belanja/transport/consumable semua dipetakan ke Lain-lain
-                    })(),
+                    subcategory: biayaSub,
                     description: message + " (via WA grup)",
                     amount: parsedAmount,
                     teknisi_name: profileName,
@@ -559,7 +560,7 @@ export default async function handler(req, res) {
                   const mRes = await matchKasbonName({ SU: SU_g, SK: SK_g, nameRaw: it.nameRaw });
                   if (mRes.matched) {
                     // Dedup: kasbon nama+nominal+tanggal sama → skip (anti double-count)
-                    if (await expenseDuplicateExists({ SU: SU_g, SK: SK_g, teknisiName: mRes.matched.name, amount: it.amount, date: today })) {
+                    if (await expenseDuplicateExists({ SU: SU_g, SK: SK_g, teknisiName: mRes.matched.name, amount: it.amount, date: today, subcategory: "Kasbon Karyawan" })) {
                       dupNames.push(`${mRes.matched.name} (${it.amount.toLocaleString("id-ID")})`);
                       continue;
                     }
@@ -627,7 +628,7 @@ export default async function handler(req, res) {
                 parsedAmount = kasbonParsed.amount;
                 expenseSaved = true;
                 // Dedup: kasbon nama+nominal+tanggal sama → skip (anti double-count)
-                const isDupKasbon = await expenseDuplicateExists({ SU: SU_g, SK: SK_g, teknisiName: matchRes.matched.name, amount: kasbonParsed.amount, date: today });
+                const isDupKasbon = await expenseDuplicateExists({ SU: SU_g, SK: SK_g, teknisiName: matchRes.matched.name, amount: kasbonParsed.amount, date: today, subcategory: "Kasbon Karyawan" });
                 if (isDupKasbon) {
                   console.log("[KASBON_SINGLE_DUP]", { name: matchRes.matched.name, amount: kasbonParsed.amount });
                   if (FT_g) {

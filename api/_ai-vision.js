@@ -235,7 +235,7 @@ export async function persistClassification({ SU, SK, classification, sender, gr
     }
     const aiAmount = parseAmt(d.amount);
     // ── Cross-source dedup: nama + nominal + tanggal sama (text-pattern paralel / dashboard) ──
-    if (await expenseDuplicateExists({ SU, SK, teknisiName: sender.name, amount: aiAmount, date: safeDate })) {
+    if (await expenseDuplicateExists({ SU, SK, teknisiName: sender.name, amount: aiAmount, date: safeDate, subcategory: sub })) {
       console.log("[AI_VISION_EXPENSE] skip duplikat:", sender.name, aiAmount, safeDate);
       return { extractionId, expenseId: null, paymentSuggestionId: null, duplicate: true };
     }
