@@ -2948,7 +2948,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
 
       // ── Role check: verifikasi caller dari App Token claims atau DB ──
-      const { action, userId, name, email, password, role, phone } = req.body || {};
+      const { action, userId, name, email, password, role, phone, commission_pin } = req.body || {};
 
       let callerRole = "";
 
@@ -3024,6 +3024,8 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
         if (name) upd.name = name;
         if (role) upd.role = role;
         if (phone !== undefined) upd.phone = phone;
+        // commission_pin: null = hapus PIN, string = set PIN (layer-2 akses Komisi Saya)
+        if (commission_pin !== undefined) upd.commission_pin = commission_pin || null;
         const profileRes = await fetch(SU + "/rest/v1/user_profiles?id=eq." + userId, {
           method: "PATCH",
           headers: { ...headers, Prefer: "return=minimal" },

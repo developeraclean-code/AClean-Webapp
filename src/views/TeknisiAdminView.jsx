@@ -1,5 +1,6 @@
 import { memo, useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
+import { DEFAULT_BONUS_CATEGORIES } from "../constants/bonus.js";
 import {
   localDateStr, getMondayOf, getSaturdayOf, addWeeks,
   fullWeekBonusAmt, computeGross, kasbonOwed, kasbonSisa,
@@ -14,18 +15,6 @@ import {
 } from "../data/writes.js";
 
 // ── Payroll helpers ──
-const BONUS_LABELS = {
-  margin_1jt: "Margin >1jt", margin_2jt: "Margin >2jt", margin_3jt: "Margin >3jt",
-  freon: "Isi Freon", kapasitor: "Kapasitor", thermis: "Sparepart Thermis",
-  install_2: "Pasang >2 Unit/hari", install_3: "Pasang >3 Unit/hari", install_4: "Pasang >4 Unit/hari",
-  manual: "Bonus Manual",
-};
-const BONUS_DEFAULTS = {
-  margin_1jt: 50000, margin_2jt: 100000, margin_3jt: 200000,
-  freon: 25000, kapasitor: 35000, thermis: 35000,
-  install_2: 100000, install_3: 200000, install_4: 300000,
-  manual: 0,
-};
 const STATUS_COLORS = { PENDING: "#f59e0b", ELIGIBLE: "#3b82f6", PAID: "#22c55e", VOID: "#ef4444" };
 const STATUS_LABELS = { PENDING: "Dalam Warranty", ELIGIBLE: "Siap Cair", PAID: "Sudah Dibayar", VOID: "Void" };
 
@@ -70,7 +59,7 @@ function effBonusStatus(b) {
   return b.status;
 }
 
-function TeknisiAdminView({ teknisiData, setTeknisiData, ordersData, laporanReports, currentUser, supabase, setEditTeknisi, setNewTeknisiForm, setModalTeknisi, showConfirm, showNotif, addAgentLog, openWA, TODAY, invoicesData }) {
+function TeknisiAdminView({ teknisiData, setTeknisiData, ordersData, laporanReports, currentUser, supabase, setEditTeknisi, setNewTeknisiForm, setModalTeknisi, showConfirm, showNotif, addAgentLog, openWA, TODAY, invoicesData, bonusCategories = [], setBonusCategories, BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
 const [activeTab, setActiveTab] = useState("tim"); // "tim" | "sla" | "gaji"
 // GAP-11: Rekap performa per teknisi
 const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -485,6 +474,10 @@ return (
       showConfirm={showConfirm}
       openWA={openWA}
       TODAY={TODAY}
+      bonusCategories={bonusCategories}
+      setBonusCategories={setBonusCategories}
+      BONUS_LABELS={BONUS_LABELS}
+      BONUS_DEFAULTS={BONUS_DEFAULTS}
     />}
   </div>
 );
@@ -493,8 +486,8 @@ return (
 // ═══════════════════════════════════════════════════════════════
 // GAJI TAB — Payroll + Komisi Order
 // ═══════════════════════════════════════════════════════════════
-function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase, showNotif, showConfirm, openWA, TODAY }) {
-  const [subTab, setSubTab]         = useState("payroll"); // "payroll" | "komisi"
+function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase, showNotif, showConfirm, openWA, TODAY, bonusCategories = [], setBonusCategories, BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
+  const [subTab, setSubTab]         = useState("payroll"); // "payroll" | "komisi" | "setting"
   const [periodStart, setPeriodStart] = useState(() => getMondayOf(TODAY));
   const periodEnd = getSaturdayOf(periodStart);
 
@@ -591,14 +584,14 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
       if (existingOrderIds.has(o.id)) return false;
       const inv = fetchedInvMap[o.invoice_id];
       const invTotal = Number(inv?.total || 0);
-      const det = detectBonusFromInvoice(inv?.materials_detail, o.service);
+      const det = detectBonusFromInvoice(inv?.materials_detail, o.service, bonusCategories);
       // Kategori 1: Omset >= 1jt (non-Install), atau Install >= 1,5jt
       const isOmsetBesar = (o.service !== "Install" && invTotal >= 1000000) ||
                            (o.service === "Install" && invTotal >= 1500000);
       // Kategori 2: Pemasangan >= 2 unit
       const isInstallMulti = o.service === "Install" && Number(o.units) >= 2;
       // Kategori 3: Ada freon, kapasitor, atau thermis (tidak perlu threshold nilai invoice)
-      const hasSpecialService = det.freon || det.kapasitor || det.thermis;
+      const hasSpecialService = det.detected.some(cid => ["freon", "kapasitor", "thermis"].includes(cid));
       return isOmsetBesar || isInstallMulti || hasSpecialService;
     });
     setPeriodInvMap(fetchedInvMap);
@@ -876,7 +869,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     <div style={{ display: "grid", gap: 16 }}>
       {/* Sub-tab */}
       <div style={{ display: "flex", gap: 8 }}>
-        {[{ k: "payroll", l: "💵 Payroll Mingguan" }, { k: "komisi", l: "🎯 Komisi Order" }].map(s => (
+        {[{ k: "payroll", l: "💵 Payroll Mingguan" }, { k: "komisi", l: "🎯 Komisi Order" }, ...(isOwner ? [{ k: "setting", l: "⚙️ Setting Bonus" }] : [])].map(s => (
           <button key={s.k} onClick={() => setSubTab(s.k)} style={{
             padding: "8px 18px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 13, border: "1px solid",
             borderColor: subTab === s.k ? cs.accent : cs.border,
@@ -1312,7 +1305,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     const team = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean);
                     const inv = periodInvMap[o.invoice_id];
                     const isComplain = o.service === "Complain";
-                    const detected = detectBonusFromInvoice(inv?.materials_detail, o.service);
+                    const detected = detectBonusFromInvoice(inv?.materials_detail, o.service, bonusCategories);
                     const invTotal = Number(inv?.total || 0);
                     const isOmsetBesar = (o.service !== "Install" && invTotal >= 1000000) ||
                                          (o.service === "Install" && invTotal >= 1500000);
@@ -1328,9 +1321,9 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                             <div style={{ fontSize: 11, color: cs.muted }}>{fmtDate(o.date)} · {o.service} · {o.units} unit · {team.join(", ")}</div>
                             <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
                               {inv?.total > 0 && <span style={{ fontSize: 11, color: cs.accent }}>Invoice: {fmtRp(inv.total)}</span>}
-                              {detected.freon && <span style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>🧊 Freon</span>}
-                              {detected.kapasitor && <span style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>⚡ Kapasitor</span>}
-                              {detected.thermis && <span style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>🌡️ Thermis</span>}
+                              {detected.detected.map(cid => (
+                                <span key={cid} style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>✨ {BONUS_LABELS[cid] || cid}</span>
+                              ))}
                               {isOmsetBesar && <span style={{ fontSize: 10, background: "#14532d", color: "#86efac", borderRadius: 4, padding: "1px 6px" }}>💰 Omset {o.service === "Install" ? "≥1,5jt" : "≥1jt"}</span>}
                               {isInstallMulti && <span style={{ fontSize: 10, background: "#422006", color: "#fcd34d", borderRadius: 4, padding: "1px 6px" }}>🔩 Install {o.units} unit</span>}
                             </div>
@@ -1369,6 +1362,9 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
               ordersData={ordersData}
               onSave={handleSaveBonus}
               onCancel={() => setBonusForm(null)}
+              bonusCategories={bonusCategories}
+              BONUS_LABELS={BONUS_LABELS}
+              BONUS_DEFAULTS={BONUS_DEFAULTS}
             />}
 
             {/* Daftar bonus */}
@@ -1424,35 +1420,140 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
           </div>
         );
       })()}
+
+      {/* ── SETTING BONUS (Owner only) ── */}
+      {subTab === "setting" && isOwner && (
+        <BonusSettingPanel
+          bonusCategories={bonusCategories}
+          setBonusCategories={setBonusCategories}
+          supabase={supabase}
+          showNotif={showNotif}
+          showConfirm={showConfirm}
+        />
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SETTING BONUS — kelola kategori bonus (label, nominal, keyword deteksi)
+// Disimpan ke app_settings.bonus_categories (JSON). Owner only.
+// ═══════════════════════════════════════════════════════════════
+function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, showNotif, showConfirm }) {
+  const [rows, setRows]     = useState(() => bonusCategories.map(c => ({ ...c, detection_keywords: [...(c.detection_keywords || [])] })));
+  const [saving, setSaving] = useState(false);
+
+  const slugify = (s) => (s || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || ("bonus_" + Date.now());
+
+  const updateRow = (idx, field, val) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [field]: val } : r));
+  const addRow    = () => setRows(prev => [...prev, { id: "", label: "", amount: 0, detection_keywords: [] }]);
+  const removeRow = (idx) => setRows(prev => prev.filter((_, i) => i !== idx));
+
+  const handleSave = async () => {
+    // Validasi & normalisasi
+    const cleaned = [];
+    const seen = new Set();
+    for (const r of rows) {
+      const label = (r.label || "").trim();
+      if (!label) { showNotif?.("❌ Ada kategori tanpa label — isi atau hapus dulu"); return; }
+      let id = (r.id || "").trim() || slugify(label);
+      if (seen.has(id)) { showNotif?.(`❌ ID duplikat: ${id} — pakai label/ID unik`); return; }
+      seen.add(id);
+      const keywords = Array.isArray(r.detection_keywords)
+        ? r.detection_keywords
+        : String(r.detection_keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
+      cleaned.push({ id, label, amount: Number(r.amount) || 0, detection_keywords: keywords });
+    }
+    if (cleaned.length === 0) { showNotif?.("❌ Minimal 1 kategori bonus"); return; }
+    setSaving(true);
+    const { error } = await supabase.from("app_settings")
+      .upsert({ key: "bonus_categories", value: JSON.stringify(cleaned) }, { onConflict: "key" });
+    setSaving(false);
+    if (error) { showNotif?.("❌ Gagal simpan: " + error.message); return; }
+    setBonusCategories?.(cleaned);
+    setRows(cleaned.map(c => ({ ...c, detection_keywords: [...c.detection_keywords] })));
+    showNotif?.("✅ Kategori bonus tersimpan");
+  };
+
+  const handleReset = () => {
+    showConfirm?.({
+      message: "Kembalikan kategori bonus ke setelan bawaan? Klik Simpan setelahnya untuk menyimpan.",
+      confirmText: "Ya, Reset",
+      onConfirm: () => setRows(DEFAULT_BONUS_CATEGORIES.map(c => ({ ...c, detection_keywords: [...c.detection_keywords] }))),
+    });
+  };
+
+  const inputStyle = { background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, padding: "7px 9px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", width: "100%" };
+
+  return (
+    <div style={{ background: cs.surface, borderRadius: 12, padding: 16, border: "1px solid " + cs.border }}>
+      <div style={{ fontWeight: 800, fontSize: 14, color: cs.text, marginBottom: 4 }}>⚙️ Setting Kategori Bonus</div>
+      <div style={{ fontSize: 12, color: cs.muted, marginBottom: 14 }}>
+        Atur tipe bonus, nominal default per tim, dan keyword auto-deteksi dari invoice.
+        Keyword pisahkan dengan koma (AND-logic: semua keyword harus muncul di nama item). Kosongkan keyword untuk kategori yang ditentukan manual/threshold (margin, install).
+      </div>
+
+      {/* Header kolom */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1.6fr 36px", gap: 8, fontSize: 11, color: cs.muted, fontWeight: 700, marginBottom: 6, padding: "0 2px" }}>
+        <div>Label</div><div>Nominal/tim (Rp)</div><div>Keyword Deteksi (koma)</div><div></div>
+      </div>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        {rows.map((r, idx) => (
+          <div key={idx} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1.6fr 36px", gap: 8, alignItems: "center" }}>
+            <input value={r.label} placeholder="cth: Isi Freon" onChange={e => updateRow(idx, "label", e.target.value)} style={inputStyle} />
+            <input type="number" value={r.amount} placeholder="0" onChange={e => updateRow(idx, "amount", e.target.value)} style={inputStyle} />
+            <input
+              value={Array.isArray(r.detection_keywords) ? r.detection_keywords.join(", ") : r.detection_keywords}
+              placeholder="cth: kuras vacum, freon"
+              onChange={e => updateRow(idx, "detection_keywords", e.target.value.split(",").map(k => k.trim().toLowerCase()).filter(Boolean))}
+              style={inputStyle}
+            />
+            <button onClick={() => removeRow(idx)} title="Hapus" style={{ padding: "7px 0", borderRadius: 6, background: cs.card, border: "1px solid " + cs.red + "66", color: cs.red, cursor: "pointer", fontSize: 13 }}>🗑</button>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={addRow} style={{ marginTop: 10, padding: "7px 14px", borderRadius: 7, background: cs.card, border: "1px dashed " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>＋ Tambah Kategori</button>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid " + cs.border, paddingTop: 14 }}>
+        <button onClick={handleSave} disabled={saving} style={{ padding: "9px 20px", borderRadius: 8, background: cs.accent, border: "none", color: "#fff", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, opacity: saving ? 0.6 : 1 }}>
+          {saving ? "Menyimpan…" : "💾 Simpan"}
+        </button>
+        <button onClick={handleReset} style={{ padding: "9px 16px", borderRadius: 8, background: "transparent", border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 13 }}>↺ Reset Default</button>
+      </div>
     </div>
   );
 }
 
 // ── Helpers: deteksi dari invoice + install kumulatif ──
 // Detect bonus material spesifik: freon (kuras vacum + isi freon / tambah freon), kapasitor AC, thermis
-function detectBonusFromInvoice(materialsDetail, orderService = "") {
-  const result = { freon: false, kapasitor: false, thermis: false, freonNames: [], kapasitorNames: [], thermisNames: [] };
+function detectBonusFromInvoice(materialsDetail, orderService = "", bonusCategories = []) {
+  // Build detection keywords map from bonusCategories
+  const keywordMap = {};
+  bonusCategories.forEach(cat => {
+    if (cat.detection_keywords && Array.isArray(cat.detection_keywords) && cat.detection_keywords.length > 0) {
+      keywordMap[cat.id] = cat.detection_keywords;
+    }
+  });
+
+  const result = { detected: [], names: {} }; // detected: [categoryId], names: { categoryId: [itemNames] }
   try {
     const items = JSON.parse(materialsDetail || "[]");
     for (const item of items) {
-      const nama = (item.nama || "").toLowerCase();
-      // Freon: "Kuras Vacum + Isi Freon" atau "Kuras Vacum Freon" atau "Tambah Freon"
-      if ((nama.includes("kuras vacum") && nama.includes("freon")) || nama.includes("tambah freon")) {
-        result.freon = true;
-        result.freonNames.push(item.nama);
-      }
-      // Kapasitor: any item dengan "kapasitor ac" (tidak perlu "pasang")
-      if (nama.includes("kapasitor ac")) {
-        result.kapasitor = true;
-        result.kapasitorNames.push(item.nama);
-      }
-      // Thermis: sparepart thermis
-      if (nama.includes("thermis")) {
-        result.thermis = true;
-        result.thermisNames.push(item.nama);
+      const nama = (item.nama || "").toLowerCase().trim();
+      // Check each category's detection keywords
+      for (const [categoryId, keywords] of Object.entries(keywordMap)) {
+        if (keywords.length === 0) continue; // Skip categories with no detection keywords
+        // ALL keywords must be present in the item name (AND logic)
+        const allMatch = keywords.every(kw => nama.includes(kw.toLowerCase().trim()));
+        if (allMatch) {
+          if (!result.detected.includes(categoryId)) result.detected.push(categoryId);
+          (result.names[categoryId] = result.names[categoryId] || []).push(item.nama);
+        }
       }
     }
-  } catch {}
+  } catch (err) { console.error("Material detection error:", err); }
   return result;
 }
 
@@ -1470,18 +1571,18 @@ function getInstallCumulative(ordersData, date, teamMembers) {
 }
 
 // Form input bonus per order — smart version
-function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel }) {
+function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bonusCategories = [], BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
   const isComplain = orderRow.service === "Complain";
-  const detected   = detectBonusFromInvoice(inv?.materials_detail, orderRow.service);
+  const detected   = detectBonusFromInvoice(inv?.materials_detail, orderRow.service, bonusCategories);
   const installInfo = orderRow.service === "Install"
     ? getInstallCumulative(ordersData, orderRow.date, team) : null;
 
   // Default bonus type: freon jika terdeteksi, kapasitor, thermis, install, lalu margin, lalu manual untuk complain
   const defaultType = (() => {
     if (isComplain) return "manual";
-    if (detected.freon) return "freon";
-    if (detected.kapasitor) return "kapasitor";
-    if (detected.thermis) return "thermis";
+    if (detected.detected.includes("freon")) return "freon";
+    if (detected.detected.includes("kapasitor")) return "kapasitor";
+    if (detected.detected.includes("thermis")) return "thermis";
     if (installInfo?.tier) return installInfo.tier;
     return "margin_1jt";
   })();
@@ -1527,35 +1628,25 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel }) {
         </div>
       )}
 
-      {/* Deteksi dari invoice */}
-      {(detected.freon || detected.kapasitor || detected.thermis || installInfo?.tier) && (
+      {/* Deteksi dari invoice — dinamis dari bonusCategories */}
+      {(detected.detected.length > 0 || installInfo?.tier) && (
         <div style={{ background: "#0c2d4a", border: "1px solid #1d4ed8", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
           <div style={{ fontSize: 11, color: "#60a5fa", marginBottom: 6, fontWeight: 700 }}>✨ Terdeteksi dari Invoice</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {detected.freon && (
-              <button onClick={() => setBonusType("freon")} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid #3b82f6", background: bonusType === "freon" ? "#3b82f6" : "transparent", color: bonusType === "freon" ? "#fff" : "#93c5fd" }}>
-                🧊 Isi Freon · Rp {fmt(BONUS_DEFAULTS.freon)}/tim
+            {detected.detected.map(cid => (
+              <button key={cid} onClick={() => setBonusType(cid)} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid #3b82f6", background: bonusType === cid ? "#3b82f6" : "transparent", color: bonusType === cid ? "#fff" : "#93c5fd" }}>
+                {BONUS_LABELS[cid] || cid} · Rp {fmt(BONUS_DEFAULTS[cid])}/tim
               </button>
-            )}
-            {detected.kapasitor && (
-              <button onClick={() => setBonusType("kapasitor")} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid #3b82f6", background: bonusType === "kapasitor" ? "#3b82f6" : "transparent", color: bonusType === "kapasitor" ? "#fff" : "#93c5fd" }}>
-                ⚡ Kapasitor · Rp {fmt(BONUS_DEFAULTS.kapasitor)}/tim
-              </button>
-            )}
-            {detected.thermis && (
-              <button onClick={() => setBonusType("thermis")} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid #3b82f6", background: bonusType === "thermis" ? "#3b82f6" : "transparent", color: bonusType === "thermis" ? "#fff" : "#93c5fd" }}>
-                🌡️ Thermis · Rp {fmt(BONUS_DEFAULTS.thermis)}/tim
-              </button>
-            )}
+            ))}
             {installInfo?.tier && (
               <button onClick={() => setBonusType(installInfo.tier)} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid #3b82f6", background: bonusType === installInfo.tier ? "#3b82f6" : "transparent", color: bonusType === installInfo.tier ? "#fff" : "#93c5fd" }}>
                 🔩 Install {installInfo.totalUnits} unit/hari · Rp {fmt(BONUS_DEFAULTS[installInfo.tier])}/tim
               </button>
             )}
           </div>
-          {detected.freonNames.length > 0 && <div style={{ fontSize: 10, color: "#475569", marginTop: 4 }}>Freon: {detected.freonNames.join(", ")}</div>}
-          {detected.kapasitorNames.length > 0 && <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>Kapasitor: {detected.kapasitorNames.join(", ")}</div>}
-          {detected.thermisNames.length > 0 && <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>Thermis: {detected.thermisNames.join(", ")}</div>}
+          {detected.detected.map(cid => (
+            (detected.names[cid]?.length > 0) && <div key={cid} style={{ fontSize: 10, color: "#475569", marginTop: 4 }}>{BONUS_LABELS[cid] || cid}: {detected.names[cid].join(", ")}</div>
+          ))}
           {installInfo?.tier && <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>Kumulatif tim hari ini: {installInfo.orderIds.join(", ")}</div>}
         </div>
       )}

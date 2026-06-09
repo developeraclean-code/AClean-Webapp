@@ -22,6 +22,7 @@ import {
 import { cs } from "./theme/cs.js";
 import { statusColor, statusLabel } from "./constants/status.js";
 import { SERVICE_TYPES } from "./constants/services.js";
+import { DEFAULT_BONUS_CATEGORIES } from "./constants/bonus.js";
 import {
   fetchOrders, fetchInvoices, fetchCustomers, fetchInventory,
   fetchServiceReports, fetchInventoryTransactions,
@@ -794,7 +795,26 @@ export default function ACleanWebApp() {
   const [selectedConv, setSelectedConv] = useState(null);
   const [waInput, setWaInput] = useState("");
 
-  // ── Team daily slots cache (untuk modal order — baca dari Planning Order) ──
+  // ── Commission PIN protection (KOMISI SAYA) ──
+  const [commissionUnlocked, setCommissionUnlocked] = useState(false);
+  const [commissionPinAttempt, setCommissionPinAttempt] = useState("");
+  const [commissionPinError, setCommissionPinError] = useState("");
+
+  // ── Dynamic bonus categories (loaded from app_settings, fallback ke default) ──
+  const [bonusCategories, setBonusCategories] = useState(DEFAULT_BONUS_CATEGORIES);
+  // Build BONUS_LABELS & BONUS_DEFAULTS from bonusCategories dynamically
+  const BONUS_LABELS = useMemo(() => {
+    const labels = {};
+    bonusCategories.forEach(cat => { labels[cat.id] = cat.label; });
+    return labels;
+  }, [bonusCategories]);
+  const BONUS_DEFAULTS = useMemo(() => {
+    const defaults = {};
+    bonusCategories.forEach(cat => { defaults[cat.id] = cat.amount; });
+    return defaults;
+  }, [bonusCategories]);
+
+  // Team daily slots cache (untuk modal order — baca dari Planning Order) ──
   const [teamDailyCache, setTeamDailyCache] = useState({}); // date → [{slot,member1,member1_role,member2,...}]
   const loadTeamDaily = async (date) => {
     if (!date || teamDailyCache[date]) return;
@@ -3362,6 +3382,13 @@ ${photoPageHTML}
           const setRes = await fetchAppSettings(supabase);
           if (!setRes.error && setRes.data) {
             const sMap = Object.fromEntries(setRes.data.map(s => [s.key, s.value]));
+            // ── Load bonus_categories from app_settings ──
+            if (sMap.bonus_categories) {
+              try {
+                const parsed = JSON.parse(sMap.bonus_categories);
+                if (Array.isArray(parsed) && parsed.length > 0) setBonusCategories(parsed);
+              } catch (e) { console.error("Failed to parse bonus_categories:", e); }
+            }
             // ── FIXED: Load dari DB dan LOG untuk debugging ──
             // PRIORITAS: DB > localStorage > default "claude"
             const VALID_PROVIDERS = ["minimax", "claude", "openai", "groq", "ollama"];
@@ -6358,7 +6385,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     <TeknisiAdminView teknisiData={teknisiData} setTeknisiData={setTeknisiData} ordersData={ordersData} laporanReports={laporanReports}
       currentUser={currentUser} supabase={supabase} setEditTeknisi={setEditTeknisi} setNewTeknisiForm={setNewTeknisiForm}
       setModalTeknisi={setModalTeknisi} showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog} openWA={openWA} TODAY={TODAY}
-      invoicesData={invoicesData} />
+      invoicesData={invoicesData} bonusCategories={bonusCategories} setBonusCategories={setBonusCategories}
+      BONUS_LABELS={BONUS_LABELS} BONUS_DEFAULTS={BONUS_DEFAULTS} />
   );
 
   // ============================================================
@@ -6688,6 +6716,147 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     <WaGroupMonitorView currentUser={currentUser} supabase={supabase} showNotif={showNotif} showConfirm={showConfirm} auditUserName={auditUserName} apiHeaders={_apiHeaders} />
   );
 
+  // ── Commission PIN Protection ──
+  useEffect(() => {
+    // Reset PIN unlock when navigating away from komisi menu or on page reload
+    if (activeMenu !== "komisi") {
+      setCommissionUnlocked(false);
+      setCommissionPinAttempt("");
+      setCommissionPinError("");
+    }
+  }, [activeMenu]);
+
+  const handleCommissionPinSubmit = () => {
+    if (!commissionPinAttempt.trim()) {
+      setCommissionPinError("Silakan masukkan PIN");
+      return;
+    }
+    
+    if (commissionPinAttempt === currentUser?.commission_pin) {
+      setCommissionUnlocked(true);
+      setCommissionPinAttempt("");
+      setCommissionPinError("");
+    } else {
+      setCommissionPinError("❌ PIN salah");
+      setCommissionPinAttempt("");
+    }
+  };
+
+  const CommissionPinModal = () => {
+    if (commissionUnlocked || !currentUser?.commission_pin) return null;
+    
+    return (
+      <div style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.7)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 9999,
+      }}>
+        <div style={{
+          background: cs.card,
+          border: "2px solid " + cs.accent,
+          borderRadius: 16,
+          padding: 32,
+          maxWidth: 380,
+          width: "90%",
+          textAlign: "center",
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🔐</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: cs.text, marginBottom: 8 }}>
+            Komisi Terlindungi
+          </div>
+          <div style={{ fontSize: 13, color: cs.muted, marginBottom: 20 }}>
+            Masukkan PIN 4-6 digit untuk mengakses data komisi Anda
+          </div>
+          
+          {/* PIN Input */}
+          <input
+            type="password"
+            value={commissionPinAttempt}
+            onChange={(e) => {
+              setCommissionPinAttempt(e.target.value);
+              setCommissionPinError("");
+            }}
+            onKeyPress={(e) => e.key === "Enter" && handleCommissionPinSubmit()}
+            placeholder="••••"
+            maxLength="6"
+            inputMode="numeric"
+            style={{
+              width: "100%",
+              padding: "14px",
+              fontSize: 24,
+              textAlign: "center",
+              borderRadius: 10,
+              border: "2px solid " + (commissionPinError ? cs.red : cs.border),
+              background: cs.surface,
+              color: cs.text,
+              letterSpacing: "0.3em",
+              boxSizing: "border-box",
+              marginBottom: commissionPinError ? 8 : 16,
+            }}
+            autoFocus
+          />
+          
+          {/* Error Message */}
+          {commissionPinError && (
+            <div style={{
+              fontSize: 12,
+              color: cs.red,
+              marginBottom: 16,
+              fontWeight: 700,
+            }}>
+              {commissionPinError}
+            </div>
+          )}
+          
+          {/* Buttons */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              onClick={handleCommissionPinSubmit}
+              style={{
+                flex: 1,
+                padding: "12px",
+                borderRadius: 10,
+                background: cs.accent,
+                border: "none",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              ✓ Submit
+            </button>
+            <button
+              onClick={() => {
+                setActiveMenu("dashboard");
+                setCommissionUnlocked(false);
+                setCommissionPinAttempt("");
+                setCommissionPinError("");
+              }}
+              style={{
+                flex: 1,
+                padding: "12px",
+                borderRadius: 10,
+                background: "transparent",
+                border: "1px solid " + cs.border,
+                color: cs.muted,
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Keluar
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ============================================================
   // RENDER CONTENT ROUTER
   // ============================================================
@@ -6737,9 +6906,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       );
       case "myreport": return renderMyReport();
       case "komisi": return (
-        <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
-          <KomisiView currentUser={currentUser} supabase={supabase} />
-        </Suspense>
+        <>
+          <CommissionPinModal />
+          <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
+            {commissionUnlocked || !currentUser?.commission_pin ? (
+              <KomisiView currentUser={currentUser} supabase={supabase} bonusCategories={bonusCategories} BONUS_LABELS={BONUS_LABELS} />
+            ) : (
+              <div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Masukkan PIN untuk melanjutkan...</div>
+            )}
+          </Suspense>
+        </>
       );
       case "ara": return renderAra();
       case "reports": return renderReports();
@@ -8993,6 +9169,25 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 </div>
               )}
 
+              {/* ── Commission PIN (edit only) ── */}
+              {editTeknisi && currentUser?.role === "Owner" && (
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>🔐 Commission PIN (optional)</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input type="text" placeholder="4-6 digits (atau kosongkan untuk hapus)" maxLength="6"
+                      value={newTeknisiForm.commission_pin || ""} pattern="[0-9]*"
+                      onChange={e => {
+                        const v = e.target.value.replace(/[^0-9]/g, "");
+                        setNewTeknisiForm(f => ({ ...f, commission_pin: v }));
+                      }}
+                      style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                    <button onClick={() => { setNewTeknisiForm(f => ({ ...f, commission_pin: "" })); }}
+                      style={{ padding: "8px 10px", borderRadius: 6, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 12 }}>🗑</button>
+                  </div>
+                  <div style={{ fontSize: 10, color: cs.muted, marginTop: 4, fontStyle: "italic" }}>PIN harus diisi untuk mengakses KOMISI SAYA. Teknisi akan diminta PIN saat membuka menu Komisi Saya.</div>
+                </div>
+              )}
+
               {editTeknisi && currentUser?.role === "Owner" && (
                 <div style={{ display: "grid", gap: 6 }}>
                   <button onClick={async () => {
@@ -9058,12 +9253,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   if (!newTeknisiForm.name || !newTeknisiForm.phone) { showNotif("Nama dan nomor HP wajib diisi"); return; }
                   if (editTeknisi) {
                     // ── Update existing via backend ──
-                    const upd = { name: newTeknisiForm.name, phone: newTeknisiForm.phone, role: newTeknisiForm.role, skills: newTeknisiForm.skills || [] };
+                    // commission_pin: "" → null (hapus PIN). Selalu sertakan agar bisa di-clear.
+                    const pinVal = (newTeknisiForm.commission_pin || "").trim() || null;
+                    const upd = { name: newTeknisiForm.name, phone: newTeknisiForm.phone, role: newTeknisiForm.role, skills: newTeknisiForm.skills || [], commission_pin: pinVal };
                     const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
                     if (isUUID(editTeknisi.id)) {
                       const res = await fetch("/api/manage-user", {
                         method: "POST", headers: await _apiHeaders(),
-                        body: JSON.stringify({ action: "update", userId: editTeknisi.id, name: upd.name, role: upd.role, phone: upd.phone, callerRole: currentUser?.role })
+                        body: JSON.stringify({ action: "update", userId: editTeknisi.id, name: upd.name, role: upd.role, phone: upd.phone, commission_pin: pinVal, callerRole: currentUser?.role })
                       });
                       const result = await res.json();
                       if (!result.ok) { showNotif("⚠️ " + (result.error || "Update gagal")); return; }

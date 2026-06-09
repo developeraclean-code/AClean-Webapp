@@ -2,12 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import { fetchWeeklyPayrollByUser, fetchMyBonuses } from "../data/reads.js";
 
-const BONUS_LABELS = {
-  margin_1jt: "Margin >1jt", margin_2jt: "Margin >2jt", margin_3jt: "Margin >3jt",
-  freon: "Isi Freon", kapasitor: "Kapasitor",
-  install_2: "Pasang >2 Unit/hari", install_3: "Pasang >3 Unit/hari", install_4: "Pasang >4 Unit/hari",
-  manual: "Bonus Manual",
-};
 const STATUS_COLORS  = { PENDING: "#f59e0b", ELIGIBLE: "#3b82f6", PAID: "#22c55e", VOID: "#6b7280" };
 const STATUS_LABELS  = { PENDING: "Dalam Warranty", ELIGIBLE: "Siap Cair", PAID: "Sudah Dibayar", VOID: "Void" };
 const STATUS_ICONS   = { PENDING: "⏳", ELIGIBLE: "✅", PAID: "💰", VOID: "🚫" };
@@ -21,7 +15,7 @@ function fmtDate(d) {
   return new Date(d + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export default function KomisiView({ currentUser, supabase }) {
+export default function KomisiView({ currentUser, supabase, bonusCategories = [], BONUS_LABELS = {} }) {
   const [tab, setTab]           = useState("komisi"); // "komisi" | "payroll"
   const [payrolls, setPayrolls] = useState([]);
   const [bonuses, setBonuses]   = useState([]);
