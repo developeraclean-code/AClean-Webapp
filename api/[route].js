@@ -6,6 +6,7 @@ import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "./_r2-upload.js
 import { md5Buffer, checkImageDuplicate } from "./_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage } from "./_kasbon-parser.js";
 import { parseCarrierFromCaption, matchCarrierName, parseLaporanTeam, matchLaporanToOrder, parseBiayaExtended } from "./_shadow-parsers.js";
+import { expenseDuplicateExists } from "./_expense-dedup.js";
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
@@ -509,26 +510,32 @@ export default async function handler(req, res) {
             // bukan struk → AI return unknown, expense TIDAK lost karena text-pattern fallback.
             if (SU_g && SK_g) {
               const today = new Date().toISOString().slice(0, 10);
-              fetch(SU_g + "/rest/v1/expenses", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
-                body: JSON.stringify({
-                  date: today,
-                  category: "petty_cash",
-                  // Map keyword text → subcategory existing (whitelist PETTY_CASH_SUBS)
-                  subcategory: (() => {
-                    const k = biayaMatch[1].toLowerCase();
-                    if (["bensin","bbm","pertamax","solar"].includes(k)) return "Bensin Motor";
-                    if (k === "parkir") return "Parkir";
-                    return "Lain-lain"; // makan/tol/belanja/transport/consumable semua dipetakan ke Lain-lain
-                  })(),
-                  description: message + " (via WA grup)",
-                  amount: parsedAmount,
-                  teknisi_name: profileName,
-                  created_by: "wa_group",
-                  validation_status: "PENDING_AI"
-                })
-              }).catch(e => console.error("[WA_GROUP_EXPENSE]", e.message));
+              // Dedup: nama+nominal+tanggal sama (mis. AI vision paralel / input dashboard) → skip
+              const isDup = await expenseDuplicateExists({ SU: SU_g, SK: SK_g, teknisiName: profileName, amount: parsedAmount, date: today });
+              if (isDup) {
+                console.log("[WA_GROUP_EXPENSE] skip duplikat:", profileName, parsedAmount, today);
+              } else {
+                fetch(SU_g + "/rest/v1/expenses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+                  body: JSON.stringify({
+                    date: today,
+                    category: "petty_cash",
+                    // Map keyword text → subcategory existing (whitelist PETTY_CASH_SUBS)
+                    subcategory: (() => {
+                      const k = biayaMatch[1].toLowerCase();
+                      if (["bensin","bbm","pertamax","solar"].includes(k)) return "Bensin Motor";
+                      if (k === "parkir") return "Parkir";
+                      return "Lain-lain"; // makan/tol/belanja/transport/consumable semua dipetakan ke Lain-lain
+                    })(),
+                    description: message + " (via WA grup)",
+                    amount: parsedAmount,
+                    teknisi_name: profileName,
+                    created_by: "wa_group",
+                    validation_status: "PENDING_AI"
+                  })
+                }).catch(e => console.error("[WA_GROUP_EXPENSE]", e.message));
+              }
               expenseSaved = true;
             }
           }
@@ -547,9 +554,15 @@ export default async function handler(req, res) {
               if (kasbonParsed.multi && Array.isArray(kasbonParsed.items)) {
                 const insertedNames = [];
                 const failedNames = [];
+                const dupNames = [];
                 for (const it of kasbonParsed.items) {
                   const mRes = await matchKasbonName({ SU: SU_g, SK: SK_g, nameRaw: it.nameRaw });
                   if (mRes.matched) {
+                    // Dedup: kasbon nama+nominal+tanggal sama → skip (anti double-count)
+                    if (await expenseDuplicateExists({ SU: SU_g, SK: SK_g, teknisiName: mRes.matched.name, amount: it.amount, date: today })) {
+                      dupNames.push(`${mRes.matched.name} (${it.amount.toLocaleString("id-ID")})`);
+                      continue;
+                    }
                     const expBody = {
                       date: today,
                       category: "petty_cash",
@@ -575,13 +588,27 @@ export default async function handler(req, res) {
                   parsedOk = true;
                   parsedAmount = kasbonParsed.total;
                   expenseSaved = true;
-                  console.log("[KASBON_MULTI_PARSED]", { inserted: insertedNames.length, failed: failedNames });
+                  console.log("[KASBON_MULTI_PARSED]", { inserted: insertedNames.length, failed: failedNames, dup: dupNames });
                   if (FT_g) {
                     const failMsg = failedNames.length ? `\n⚠️ Gagal match: ${failedNames.join(", ")}` : "";
+                    const dupMsg = dupNames.length ? `\n♻️ Sudah tercatat (skip duplikat): ${dupNames.join(", ")}` : "";
                     fetch("https://api.fonnte.com/send", {
                       method: "POST",
                       headers: { Authorization: FT_g, "Content-Type": "application/json" },
-                      body: JSON.stringify({ target: participantNorm, message: `✅ ${insertedNames.length} kasbon tercatat (PENDING AI):\n${insertedNames.map(n => "• " + n).join("\n")}${failMsg}\n\nTunggu approve dari Finance/Owner, lalu Owner finalisasi di app.`, delay: "2", countryCode: "62" })
+                      body: JSON.stringify({ target: participantNorm, message: `✅ ${insertedNames.length} kasbon tercatat (PENDING AI):\n${insertedNames.map(n => "• " + n).join("\n")}${dupMsg}${failMsg}\n\nTunggu approve dari Finance/Owner, lalu Owner finalisasi di app.`, delay: "2", countryCode: "62" })
+                    }).catch(() => {});
+                  }
+                } else if (dupNames.length > 0) {
+                  // Semua item sudah tercatat sebelumnya — anggap handled, jangan double-count
+                  parsedType = "kasbon";
+                  parsedOk = true;
+                  expenseSaved = true;
+                  console.log("[KASBON_MULTI_ALL_DUP]", { dup: dupNames });
+                  if (FT_g) {
+                    fetch("https://api.fonnte.com/send", {
+                      method: "POST",
+                      headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                      body: JSON.stringify({ target: participantNorm, message: `♻️ Kasbon sudah tercatat sebelumnya (skip duplikat):\n${dupNames.map(n => "• " + n).join("\n")}`, delay: "2", countryCode: "62" })
                     }).catch(() => {});
                   }
                 } else if (failedNames.length > 0 && FT_g) {
@@ -598,23 +625,36 @@ export default async function handler(req, res) {
                 parsedType = "kasbon";
                 parsedOk = true;
                 parsedAmount = kasbonParsed.amount;
-                const expBody = {
-                  date: today,
-                  category: "petty_cash",
-                  subcategory: "Kasbon Karyawan",
-                  teknisi_name: matchRes.matched.name,
-                  amount: kasbonParsed.amount,
-                  description: `Kasbon ${matchRes.matched.name} (via WA Finance grup, dari ${profileName})`,
-                  created_by: "wa_group_kasbon",
-                  validation_status: "PENDING_AI",
-                };
-                await fetch(SU_g + "/rest/v1/expenses", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
-                  body: JSON.stringify(expBody),
-                }).catch(e => console.error("[KASBON_EXPENSE_INSERT]", e.message));
                 expenseSaved = true;
-                console.log("[KASBON_PARSED]", { name: matchRes.matched.name, amount: kasbonParsed.amount });
+                // Dedup: kasbon nama+nominal+tanggal sama → skip (anti double-count)
+                const isDupKasbon = await expenseDuplicateExists({ SU: SU_g, SK: SK_g, teknisiName: matchRes.matched.name, amount: kasbonParsed.amount, date: today });
+                if (isDupKasbon) {
+                  console.log("[KASBON_SINGLE_DUP]", { name: matchRes.matched.name, amount: kasbonParsed.amount });
+                  if (FT_g) {
+                    fetch("https://api.fonnte.com/send", {
+                      method: "POST",
+                      headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                      body: JSON.stringify({ target: participantNorm, message: `♻️ Kasbon ${matchRes.matched.name} (${kasbonParsed.amount.toLocaleString("id-ID")}) sudah tercatat hari ini — skip duplikat.`, delay: "2", countryCode: "62" })
+                    }).catch(() => {});
+                  }
+                } else {
+                  const expBody = {
+                    date: today,
+                    category: "petty_cash",
+                    subcategory: "Kasbon Karyawan",
+                    teknisi_name: matchRes.matched.name,
+                    amount: kasbonParsed.amount,
+                    description: `Kasbon ${matchRes.matched.name} (via WA Finance grup, dari ${profileName})`,
+                    created_by: "wa_group_kasbon",
+                    validation_status: "PENDING_AI",
+                  };
+                  await fetch(SU_g + "/rest/v1/expenses", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+                    body: JSON.stringify(expBody),
+                  }).catch(e => console.error("[KASBON_EXPENSE_INSERT]", e.message));
+                  console.log("[KASBON_PARSED]", { name: matchRes.matched.name, amount: kasbonParsed.amount });
+                }
               } else if (matchRes.reason === "ambiguous" && FT_g) {
                 // Reply ambiguous ke sender
                 const cands = matchRes.candidates.map(c => `• ${c.name} (${c.role})`).join("\n");

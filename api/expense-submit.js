@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { validateInternalToken, checkRateLimit, setCorsHeaders } from "./_auth.js";
 import { uploadBufferToR2, hasR2Config } from "./_r2-upload.js";
 import { classifyImage } from "./_ai-vision.js";
+import { expenseDuplicateExists } from "./_expense-dedup.js";
 
 const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SK = process.env.SUPABASE_SERVICE_KEY;
@@ -84,6 +85,11 @@ export default async function handler(req, res) {
       const dupRes = await fetch(REST(`ai_extractions?source_ref=eq.${encodeURIComponent(dedupKey)}&created_at=gte.${cutoff30}&select=id&limit=1`), { headers: H });
       const dupRows = dupRes.ok ? await dupRes.json() : [];
       if (dupRows.length > 0) { out.status = "DUPLICATE"; out.reason = "Foto struk ini sudah pernah diupload"; return out; }
+
+      // ── Cross-source dedup: nama + nominal + tanggal sama (channel lain spt WA grup) ──
+      if (await expenseDuplicateExists({ SU, SK, teknisiName, amount: typedAmount, date: today })) {
+        out.status = "DUPLICATE"; out.reason = "Biaya dgn nama, nominal & tanggal sama sudah tercatat (mungkin dari WA grup)"; return out;
+      }
 
       // ── Upload R2 ──
       const ext = mimeType.includes("png") ? "png" : "jpg";

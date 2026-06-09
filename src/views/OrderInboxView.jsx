@@ -1056,13 +1056,25 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
       for (const o of dayOrders) {
         const members = [
-          { name: o.teknisi, role: "Teknisi" },
-          { name: o.helper,  role: "Helper" },
-          { name: o.helper2, role: "Helper" },
-          { name: o.helper3, role: "Helper" },
+          { name: o.teknisi,  role: "Teknisi" },
+          { name: o.teknisi2, role: "Teknisi" },
+          { name: o.teknisi3, role: "Teknisi" },
+          { name: o.helper,   role: "Helper" },
+          { name: o.helper2,  role: "Helper" },
+          { name: o.helper3,  role: "Helper" },
         ].filter(m => m.name);
 
-        const jobLine = `• ${o.time?.slice(0,5) || "—:——"} ${o.customer} (${o.service}${o.units > 1 ? " ×" + o.units : ""}) — ${o.address || "alamat belum diisi"}`;
+        // Komposisi tim untuk job ini (teknisi + helper yg bertugas) — dilampirkan
+        // ke tiap anggota agar tahu siapa rekan satu timnya hari itu.
+        const teknisiNames = [o.teknisi, o.teknisi2, o.teknisi3].filter(Boolean);
+        const helperNames  = [o.helper, o.helper2, o.helper3].filter(Boolean);
+        const teamStr = [
+          teknisiNames.length ? `Teknisi: ${teknisiNames.join(", ")}` : null,
+          helperNames.length  ? `Helper: ${helperNames.join(", ")}`   : null,
+        ].filter(Boolean).join(" · ");
+
+        const jobLine = `• ${o.time?.slice(0,5) || "—:——"} ${o.customer} (${o.service}${o.units > 1 ? " ×" + o.units : ""}) — ${o.address || "alamat belum diisi"}`
+          + (teamStr ? `\n   👥 ${teamStr}` : "");
 
         for (const m of members) {
           const tek = teknisiData.find(t => t.name === m.name);

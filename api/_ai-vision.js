@@ -3,6 +3,8 @@
 // Output: saves to ai_extractions + creates pending row di expenses / payment_suggestions
 // sesuai intent yang dideteksi.
 
+import { expenseDuplicateExists } from "./_expense-dedup.js";
+
 const ANTHROPIC_MODEL = "claude-haiku-4-5";
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 
@@ -231,12 +233,18 @@ export async function persistClassification({ SU, SK, classification, sender, gr
         if (diffDays <= 7) safeDate = d.date;
       }
     }
+    const aiAmount = parseAmt(d.amount);
+    // ── Cross-source dedup: nama + nominal + tanggal sama (text-pattern paralel / dashboard) ──
+    if (await expenseDuplicateExists({ SU, SK, teknisiName: sender.name, amount: aiAmount, date: safeDate })) {
+      console.log("[AI_VISION_EXPENSE] skip duplikat:", sender.name, aiAmount, safeDate);
+      return { extractionId, expenseId: null, paymentSuggestionId: null, duplicate: true };
+    }
     const expBody = {
       date: safeDate,
       category: cat,
       subcategory: sub,
       description: descParts.join(" — "),
-      amount: parseAmt(d.amount),
+      amount: aiAmount,
       teknisi_name: sender.name,
       created_by: "wa_group_ai",
       validation_status: "PENDING_AI",
