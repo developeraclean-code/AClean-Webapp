@@ -5250,7 +5250,8 @@ ${photoPageHTML}
 
     // ── Only update state AFTER DB confirmation ──
     invalidateCache("orders");
-    setOrdersData(prev => [...prev, newOrder]);
+    // Dedup: realtime bisa keburu menambah order ini sebelum baris ini jalan.
+    setOrdersData(prev => prev.some(o => o.id === newOrder.id) ? prev : [...prev, newOrder]);
 
     // GAP 1.5: technician_schedule.
     // Jika slot sudah diklaim atomik via RPC (migrasi 070) → baris sudah ada, skip.
@@ -5455,7 +5456,12 @@ ${photoPageHTML}
 
     if (!created.length) return null;
     invalidateCache("orders");
-    setOrdersData(prev => [...created, ...prev]);
+    // Dedup: realtime bisa keburu menambah order yang baru dibuat ke `prev`
+    // sebelum baris ini jalan → buang dulu id yang sama agar tak dobel.
+    setOrdersData(prev => {
+      const ids = new Set(created.map(o => o.id));
+      return [...created, ...prev.filter(o => !ids.has(o.id))];
+    });
     addAgentLog("TEAM_SPLIT_CREATED",
       `Project ${groupId} — ${created.length} tim · ${base.customer} (${valid.reduce((s, t) => s + t.unitIds.length, 0)} unit)`, "SUCCESS");
     showNotif(`✅ Project dibuat: ${created.length} tim (grup ${groupId}). Cek/assign di Planning Order.`);
@@ -5816,7 +5822,7 @@ ${photoPageHTML}
                 else addAgentLog("ARA_WARN", "Helper dibutuhkan tapi belum ada di database", "WARNING");
               }
             }
-            setOrdersData(prev => [...prev, newOrd]);
+            setOrdersData(prev => prev.some(o => o.id === newOrd.id) ? prev : [...prev, newOrd]);
             const { error: oErr } = await insertOrder(supabase, newOrd);
             if (oErr) console.warn("Create order DB:", oErr.message);
             addAgentLog("ARA_CREATE_ORDER", "ARA buat order " + newId + " untuk " + newOrd.customer, "SUCCESS");
@@ -6171,7 +6177,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   const avH = teknisiData.find(t => t.role === "Helper" && t.status !== "inactive");
                   if (avH) bOrd.helper = avH.name;
                 }
-                setOrdersData(prev => [...prev, bOrd]);
+                setOrdersData(prev => prev.some(o => o.id === bOrd.id) ? prev : [...prev, bOrd]);
                 const { error: bErr } = await insertOrder(supabase, bOrd);
                 if (!bErr && bOrd.phone && bOrd.customer) {
                   const bCust = findCustomer(customersData, bOrd.phone, bOrd.customer);
@@ -12919,7 +12925,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                           };
                           const rCust = findCustomer(customersData, rJob.phone, rJob.customer);
                           if (rCust?.id) rJob.customer_id = rCust.id;
-                          setOrdersData(prev => [...prev, rJob]);
+                          setOrdersData(prev => prev.some(o => o.id === rJob.id) ? prev : [...prev, rJob]);
                           const { error: rErr } = await insertOrder(supabase, rJob);
                           if (!rErr) {
                             addAgentLog("COMPLAIN_UPGRADED", `Complain ${laporanModal.id} → Repair ${rId}`, "SUCCESS");
