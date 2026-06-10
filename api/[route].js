@@ -94,17 +94,16 @@ export default async function handler(req, res) {
       // agar Fonnte bisa fetch langsung — jauh lebih cepat, tidak makan waktu serverless.
       const hasAttachment = b.url && typeof b.url === "string" && b.url.startsWith("http");
 
-      // Resolve proxy URL → direct R2 public URL
+      // Resolve proxy URL → direct R2 public URL (hanya jika R2_PUBLIC_URL di-set & bucket public access ON)
+      // Jika R2_PUBLIC_URL tidak di-set, tetap pakai proxy URL (/api/foto) yang sudah PUBLIC_ROUTES
       const resolveDirectUrl = (proxyUrl) => {
         try {
+          const r2PublicUrl = process.env.R2_PUBLIC_URL;
+          if (!r2PublicUrl) return proxyUrl; // proxy URL aman — PUBLIC_ROUTES, no auth needed
           const u = new URL(proxyUrl);
           const key = u.searchParams.get("key");
           if (!key) return proxyUrl;
-          const r2Account = process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_ACCOUNT_ID;
-          const r2Bucket  = process.env.R2_BUCKET_NAME || "aclean-files";
-          const r2PublicUrl = process.env.R2_PUBLIC_URL; // e.g. https://pub-xxx.r2.dev
-          if (r2PublicUrl) return `${r2PublicUrl}/${key}`;
-          if (r2Account)   return `https://${r2Account}.r2.cloudflarestorage.com/${r2Bucket}/${key}`;
+          return `${r2PublicUrl}/${key}`;
         } catch { /* fallback ke URL asli */ }
         return proxyUrl;
       };
@@ -2264,7 +2263,9 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const rawData  = body.base64 || body.fileData || "";
       const fileName = body.filename || body.fileName || ("foto_" + Date.now() + ".jpg");
       const mimeType = body.mimeType || body.fileType || "image/jpeg";
-      const folder   = body.reportId ? ("laporan/" + body.reportId) : (body.folder || "laporan");
+      // Sanitize folder — cegah path traversal kalau client kirim folder bebas
+      const rawFolder = body.reportId ? ("laporan/" + body.reportId) : (body.folder || "laporan");
+      const folder = String(rawFolder).replace(/\.\./g, "").replace(/^\/+|\/+$/g, "").replace(/[^a-zA-Z0-9_\-/.]/g, "_");
 
       if (!rawData) {
         console.error("[upload-foto] body kosong. Fields:", Object.keys(body));
@@ -2391,6 +2392,17 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       const key = req.query?.key || (req.body?.key) || "";
       if (!key) return res.status(400).json({ error: "key wajib" });
 
+      // ── Quick Win 2: Whitelist regex untuk cegah path traversal ──
+      // Hanya boleh akses prefix folder yang memang dipakai app + extension whitelist.
+      // Tolak: "../...", path absolut, file backup, file env, dll.
+      // Prefix yang diizinkan: foto/, tool-bag/, laporan/, invoice/, wa-group/, wa-snapshots/
+      // Extension: jpg/jpeg/png/gif/webp/pdf/json
+      const SAFE_KEY_RE = /^(foto|tool-bag|laporan|invoice|invoices|wa-group|wa-snapshots|service-reports|orders|materials|payments|projects|maintenance|quotations|customer-photos|expense-photos|expenses|merged-pdfs)\/[a-zA-Z0-9_\-./]{1,200}\.(jpg|jpeg|png|gif|webp|pdf|json)$/i;
+      // Cek path traversal sekaligus (defense in depth)
+      if (!SAFE_KEY_RE.test(key) || key.includes("..") || key.includes("//") || key.startsWith("/")) {
+        return res.status(400).json({ error: "key tidak valid" });
+      }
+
       const accessKeyId     = process.env.R2_ACCESS_KEY;
       const secretAccessKey = process.env.R2_SECRET_KEY;
       const accountId       = process.env.R2_ACCOUNT_ID;
@@ -2446,7 +2458,9 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
           res.setHeader("Cache-Control", "public, max-age=86400");
         }
         const buf = await r2res.arrayBuffer();
-        return res.status(200).send(Buffer.from(buf));
+        const bufNode = Buffer.from(buf);
+        res.setHeader("Content-Length", bufNode.length);
+        return res.status(200).send(bufNode);
       } catch (err) {
         return res.status(500).json({ error: "Gagal fetch foto: " + err.message });
       }
