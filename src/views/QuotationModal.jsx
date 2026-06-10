@@ -48,7 +48,7 @@ const TABS = [
 
 const emptyUnit = () => ({
   _id: Date.now() + Math.random(),
-  brand: "", tipe: "Split Standard", kapasitas: "1 PK", model: "",
+  nama: "", brand: "", tipe: "Split Standard", kapasitas: "1 PK", model: "",
   qty: 1, harga_satuan: 0, subtotal: 0, _manual: true,
 });
 
@@ -77,7 +77,7 @@ export default function QuotationModal({
   const [acUnits, setAcUnits]       = useState(() => {
     if (isEdit) {
       const units = (editData.items || []).filter(i => i.item_type === "unit_ac");
-      return units.length > 0 ? units.map(u => ({ ...u, _id: Math.random(), harga_satuan: u.unit_price, subtotal: u.subtotal || u.unit_price * u.qty })) : [emptyUnit()];
+      return units.length > 0 ? units.map(u => ({ ...u, _id: Math.random(), _manual: true, nama: u.nama || u.description || "", harga_satuan: u.unit_price, subtotal: u.subtotal || u.unit_price * u.qty })) : [emptyUnit()];
     }
     return [emptyUnit()];
   });
@@ -257,7 +257,7 @@ export default function QuotationModal({
       acUnits.forEach(u => {
         if (u.harga_satuan > 0) items.push({
           item_type: "unit_ac",
-          description: [u.brand, u.tipe, u.kapasitas, u.model].filter(Boolean).join(" "),
+          description: (u.nama || "").trim() || [u.brand, u.tipe, u.kapasitas, u.model].filter(Boolean).join(" ") || "Unit AC",
           qty: Number(u.qty) || 1,
           unit_price: Number(u.harga_satuan) || 0,
           subtotal: u.subtotal || 0,
@@ -561,6 +561,11 @@ export default function QuotationModal({
                               {acUnits.length > 1 && <button onClick={() => setAcUnits(p => p.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 12 }}>Hapus</button>}
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                              <div style={{ gridColumn: "span 2" }}>
+                                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Nama / Deskripsi Unit</div>
+                                <input value={u.nama || ""} onChange={e => updateUnit(idx, "nama", e.target.value)} style={inp} placeholder="cth: AC Cassette 5PK Daikin" />
+                                <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>Teks bebas. Jika kosong, dipakai gabungan Brand + Tipe + Kapasitas.</div>
+                              </div>
                               <div>
                                 <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Brand</div>
                                 <input value={u.brand} onChange={e => updateUnit(idx, "brand", e.target.value)} style={inp} placeholder="cth: LG, Samsung..." />

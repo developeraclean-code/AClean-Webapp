@@ -305,7 +305,7 @@ export default function QuotationView({
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
                     {(quo.items || []).slice(0, 4).map((item, i) => (
                       <span key={i} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted }}>
-                        {item.description?.slice(0, 30)}
+                        {(item.description?.trim() || (item.item_type === "unit_ac" ? "Unit AC" : "")).slice(0, 30)}
                       </span>
                     ))}
                     {(quo.items || []).length > 4 && (

@@ -194,7 +194,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
             </View>
             {unitItems.map((item, i) => (
               <View key={i} style={[s.tr, i % 2 === 1 ? s.trEven : {}]}>
-                <Text style={[s.tdMuted, { flex: 4 }]}>{item.description}</Text>
+                <Text style={[s.tdMuted, { flex: 4 }]}>{item.description?.trim() || "Unit AC"}</Text>
                 <Text style={[s.tdMuted, { flex: 1, textAlign: "center" }]}>{item.qty}</Text>
                 <Text style={[s.tdMuted, { flex: 2, textAlign: "right" }]}>{fmt(item.unit_price)}</Text>
                 <Text style={[s.tdMuted, { flex: 2, textAlign: "right" }]}>{fmt(item.subtotal)}</Text>
@@ -254,7 +254,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
         <View wrap={false} style={{ marginBottom: 12 }}>
           {(quo.unit_ac_amount > 0) && (
             <View style={s.subRow}>
-              <Text style={s.subLabel}>Unit AC (Passthrough)</Text>
+              <Text style={s.subLabel}>Unit AC</Text>
               <Text style={s.subVal}>{fmt(quo.unit_ac_amount)}</Text>
             </View>
           )}
