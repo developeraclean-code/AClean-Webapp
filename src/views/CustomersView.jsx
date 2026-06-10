@@ -32,6 +32,16 @@ const siblingLocations = selectedCustomer
       .filter(c => c.phone && selectedCustomer.phone && normalizePhone(c.phone) === normalizePhone(selectedCustomer.phone))
       .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
   : [];
+// Order "yatim": HP cocok ke grup multi-lokasi ini tapi namanya tak sama persis
+// dengan lokasi manapun → tidak muncul di tab lokasi. Jaring pengaman.
+const _sibNames = new Set(siblingLocations.map(c => (c.name || "").trim().toLowerCase()));
+const unmappedOrders = (selectedCustomer && siblingLocations.length > 1)
+  ? ordersData
+      .filter(o => o.phone && selectedCustomer.phone
+        && normalizePhone(o.phone) === normalizePhone(selectedCustomer.phone)
+        && !_sibNames.has((o.customer || "").trim().toLowerCase()))
+      .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
+  : [];
 const _scq = searchCustomer.trim().toLowerCase();
 const filteredCusts = customersData.filter(cu => {
   if (tierFilter !== "all" && (cu.membership_tier || "silver") !== tierFilter) return false;
@@ -292,6 +302,31 @@ return (
                 );
               })}
             </div>
+
+            {/* ── Jaring pengaman: order yatim (nama tak cocok lokasi manapun) ── */}
+            {unmappedOrders.length > 0 && (
+              <div style={{ marginTop: 10, background: "#f59e0b14", border: "1px solid #f59e0b44", borderRadius: 9, padding: "9px 12px" }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: "#d97706", marginBottom: 6 }}>
+                  ⚠️ {unmappedOrders.length} order belum terpetakan ke lokasi manapun
+                </div>
+                <div style={{ fontSize: 10.5, color: cs.muted, marginBottom: 7 }}>
+                  Nomor HP cocok, tapi nama di order beda dari nama lokasi terdaftar — kemungkinan typo.
+                  {isOwnerAdmin ? " Edit nama order/lokasi agar sama persis supaya masuk ke tab yang benar." : ""}
+                </div>
+                <div style={{ display: "grid", gap: 4 }}>
+                  {unmappedOrders.slice(0, 6).map(o => (
+                    <div key={o.id} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 11, color: cs.text, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: "monospace", fontWeight: 700, color: cs.accent }}>{o.id}</span>
+                      <span style={{ fontWeight: 600 }}>{o.customer || "—"}</span>
+                      <span style={{ color: cs.muted }}>{o.service || ""}{o.date ? " · " + o.date : ""}</span>
+                    </div>
+                  ))}
+                  {unmappedOrders.length > 6 && (
+                    <div style={{ fontSize: 10.5, color: cs.muted }}>+{unmappedOrders.length - 6} order lainnya</div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -8311,6 +8311,22 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       <div style={{ padding: "6px 12px", background: cs.surface, fontSize: 11, color: cs.muted }}>
                         Atau ketik nama baru di atas untuk lokasi berbeda
                       </div>
+                      {/* Penegasan: nama terketik = lokasi terdaftar atau lokasi baru? (cegah typo) */}
+                      {newOrderForm.customer && newOrderForm.customer.trim() && (() => {
+                        const typed = newOrderForm.customer.trim().toLowerCase();
+                        const isKnown = phoneMatches.some(m => (m.name || "").trim().toLowerCase() === typed);
+                        return (
+                          <div style={{
+                            padding: "7px 12px", fontSize: 11.5, fontWeight: 700, borderTop: "1px solid " + cs.border,
+                            background: isKnown ? "#16a34a14" : "#f59e0b18",
+                            color: isKnown ? "#16a34a" : "#d97706"
+                          }}>
+                            {isKnown
+                              ? `✅ Lokasi terdaftar: ${newOrderForm.customer.trim()}`
+                              : `🆕 "${newOrderForm.customer.trim()}" = LOKASI BARU (bukan dari ${phoneMatches.length} lokasi di atas). Pastikan bukan typo.`}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 }
