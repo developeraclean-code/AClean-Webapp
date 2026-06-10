@@ -139,16 +139,18 @@ export default function CustomerPortalView({ token: tokenProp }) {
 
   return (
     <div style={s.page}>
+      <PortalStyles />
       {/* TOP BAR */}
       <div style={s.topbar}>
         <div style={s.logoBadge}>AC</div>
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={s.topbarTitle}>AClean</div>
           <div style={s.topbarSub}>Portal Status Servis</div>
         </div>
         {contactPhone && (
           <a href={waHref} style={s.waBtn} target="_blank" rel="noreferrer">
-            💬 Hubungi Kami
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.1-1.7-.8-1.9-.9-.3-.1-.5-.1-.6.1-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-1.6-.8-2.6-1.4-3.7-3.2-.3-.5.3-.5.8-1.5.1-.2 0-.3 0-.5-.1-.1-.6-1.4-.8-2-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.6.6-1 1.2-1 2.3 0 1.4 1 2.7 1.1 2.9.1.2 2 3.1 5 4.3 1.8.8 2.5.9 3.4.8.5-.1 1.7-.7 1.9-1.4.2-.7.2-1.3.2-1.4-.1-.2-.3-.3-.6-.4M12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.4 1.3 4.9L2 22l5.3-1.3c1.4.8 3 1.2 4.7 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2"/></svg>
+            Hubungi Kami
           </a>
         )}
       </div>
@@ -159,11 +161,13 @@ export default function CustomerPortalView({ token: tokenProp }) {
 
         {/* MULTI-LOKASI TABS */}
         {isMultiLokasi && (
-          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", padding: "12px 14px" }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-              📍 Pilih Lokasi
+          <div style={s.locCard} className="portal-fade-up">
+            <div style={s.locHeader}>
+              <span style={{ fontSize: 13 }}>📍</span>
+              <span>Pilih Lokasi</span>
+              <span style={s.locCountChip}>{locationNames.length}</span>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {locationNames.map(name => {
                 const locOrders = allOrders.filter(o => (o.customer || "").trim() === name);
                 const locAddr = locOrders[0]?.address || "";
@@ -171,12 +175,23 @@ export default function CustomerPortalView({ token: tokenProp }) {
                 const locCount = locOrders.length;
                 return (
                   <button key={name} onClick={() => setActiveLocation(name)}
-                    style={{ textAlign: "left", background: isActive ? "linear-gradient(135deg,#eff6ff,#dbeafe)" : "#f8fafc", border: "1px solid " + (isActive ? "#93c5fd" : "#e2e8f0"), borderRadius: 10, padding: "10px 12px", cursor: "pointer", transition: "all .15s" }}>
+                    style={{
+                      position: "relative", textAlign: "left", overflow: "hidden",
+                      background: isActive ? "linear-gradient(135deg,#eff6ff,#e0eaff)" : "#f8fafc",
+                      border: "1.5px solid " + (isActive ? "#93c5fd" : "#eef2f7"),
+                      borderRadius: 12, padding: "11px 13px 11px 16px", cursor: "pointer", transition: "all .18s",
+                      boxShadow: isActive ? "0 4px 14px rgba(37,99,235,0.12)" : "none",
+                    }}>
+                    {/* Accent bar kiri saat aktif */}
+                    <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: isActive ? "linear-gradient(180deg,#3b82f6,#2563eb)" : "transparent" }} />
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                      <span style={{ fontWeight: 700, fontSize: 13, color: isActive ? "#1d4ed8" : "#1e293b" }}>{name}</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: isActive ? "#bfdbfe" : "#e2e8f0", color: isActive ? "#1d4ed8" : "#64748b" }}>{locCount}x servis</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                        <span style={{ fontWeight: 700, fontSize: 13.5, color: isActive ? "#1d4ed8" : "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                        {isActive && <span style={{ fontSize: 10, color: "#2563eb", flexShrink: 0 }}>● aktif</span>}
+                      </span>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 99, flexShrink: 0, background: isActive ? "#bfdbfe" : "#e8edf3", color: isActive ? "#1d4ed8" : "#64748b" }}>{locCount}x servis</span>
                     </div>
-                    {locAddr && <div style={{ fontSize: 11, color: "#64748b", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{locAddr}</div>}
+                    {locAddr && <div style={{ fontSize: 11, color: "#7c8aa0", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📌 {locAddr}</div>}
                   </button>
                 );
               })}
@@ -308,65 +323,67 @@ function CustomerCard({ data, locationNames = [] }) {
   const isMulti = locationNames.length > 1;
 
   return (
-    <div style={s.customerCard}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={s.customerLabel}>Portal Servis</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 5, background: tier.bg, border: "1px solid " + tier.border, borderRadius: 20, padding: "3px 10px" }}>
-          <span style={{ fontSize: 14 }}>{tier.badge}</span>
-          <span style={{ fontSize: 11, fontWeight: 700, color: tier.color }}>Member {tier.label}</span>
+    <div style={s.customerCard} className="portal-fade-up">
+      {/* Glow dekoratif */}
+      <div style={s.cardGlow} />
+      <div style={{ position: "relative", zIndex: 1 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+          <div style={s.customerLabel}>Portal Servis</div>
+          <div style={s.tierChip}>
+            <span style={{ fontSize: 13 }}>{tier.badge}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#fff" }}>Member {tier.label}</span>
+          </div>
         </div>
-      </div>
-      <div style={s.customerName}>
-        {isMulti ? "📱 " + data.phone : (data.customer_name || "Pelanggan AClean")}
-      </div>
-      {isMulti && (
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.85)", marginTop: 4 }}>
-          {locationNames.length} Lokasi Terdaftar
+        <div style={s.customerName}>
+          {isMulti ? data.phone : (data.customer_name || "Pelanggan AClean")}
         </div>
-      )}
-      {!isMulti && <div style={s.customerPhone}>📱 {data.phone}</div>}
-      <div style={s.customerMeta}>
-        <span style={s.badge}>{totalOrders} kali servis</span>
-        <span style={s.badge}>{totalUnits} unit AC</span>
-        {isMulti && <span style={s.badge}>📍 {locationNames.length} lokasi</span>}
-        {data.orders?.length > 0 && (
-          <span style={s.badge}>Servis terakhir {fmtDateShort(data.orders[0]?.date)}</span>
+        {isMulti
+          ? <div style={s.customerPhone}>{locationNames.length} lokasi terdaftar</div>
+          : <div style={s.customerPhone}>📱 {data.phone}</div>}
+
+        <div style={s.customerMeta}>
+          <span style={s.badge}>🧰 {totalOrders} kali servis</span>
+          <span style={s.badge}>❄️ {totalUnits} unit AC</span>
+          {isMulti && <span style={s.badge}>📍 {locationNames.length} lokasi</span>}
+          {data.orders?.length > 0 && (
+            <span style={s.badge}>🗓 Terakhir {fmtDateShort(data.orders[0]?.date)}</span>
+          )}
+        </div>
+
+        {/* Benefit banner untuk Gold & Platinum */}
+        {isGoldPlus && (
+          <div style={s.benefitBanner}>
+            <span style={{ fontSize: 16 }}>{tier.badge}</span>
+            <div>
+              <div style={{ fontSize: 9.5, color: "#fff", fontWeight: 800, letterSpacing: "0.4px", opacity: 0.85 }}>BENEFIT AKTIF — {tier.label.toUpperCase()}</div>
+              <div style={{ fontSize: 12, color: "#fff", fontWeight: 700 }}>{tier.benefit}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Progress bar menuju tier berikutnya */}
+        {nextTier && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: "#fff", fontWeight: 600, opacity: 0.95 }}>
+                {nextTier.minUnits - totalUnits} unit lagi menuju {nextTier.badge} {nextTier.label}
+              </span>
+              <span style={{ fontSize: 13, color: "#fff", fontWeight: 800 }}>{progressPct}%</span>
+            </div>
+            <div style={s.progTrack}>
+              <div className="portal-shimmer" style={{ height: "100%", width: progressPct + "%", background: tier.key === "silver" ? "linear-gradient(90deg,#e2e8f0,#fbbf24)" : "linear-gradient(90deg,#fde68a,#a78bfa)", borderRadius: 99, transition: "width 0.6s ease", boxShadow: "0 0 8px rgba(255,255,255,0.4)" }} />
+            </div>
+            <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.8)", marginTop: 6 }}>
+              Benefit {nextTier.label}: {nextTier.benefit}
+            </div>
+          </div>
+        )}
+        {!nextTier && (
+          <div style={{ marginTop: 12, fontSize: 11.5, color: "#fff", fontWeight: 600, opacity: 0.95 }}>
+            💎 Anda Member Platinum kami! Terima kasih atas kepercayaan Anda.
+          </div>
         )}
       </div>
-
-      {/* Benefit banner untuk Gold & Platinum */}
-      {isGoldPlus && (
-        <div style={{ marginTop: 10, background: tier.benefitBg, border: "1px solid " + tier.border, borderRadius: 10, padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 16 }}>{tier.badge}</span>
-          <div>
-            <div style={{ fontSize: 10, color: tier.color, fontWeight: 800 }}>BENEFIT AKTIF — {tier.label.toUpperCase()}</div>
-            <div style={{ fontSize: 11, color: tier.color, fontWeight: 600 }}>{tier.benefit}</div>
-          </div>
-        </div>
-      )}
-
-      {/* Progress bar menuju tier berikutnya */}
-      {nextTier && (
-        <div style={{ marginTop: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.9)", fontWeight: 600 }}>
-              {nextTier.minUnits - totalUnits} unit lagi menuju {nextTier.badge} {nextTier.label}
-            </span>
-            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.9)", fontWeight: 600 }}>{progressPct}%</span>
-          </div>
-          <div style={{ height: 6, background: "rgba(255,255,255,0.25)", borderRadius: 99, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: progressPct + "%", background: tier.key === "silver" ? "linear-gradient(90deg,#94a3b8,#fbbf24)" : "linear-gradient(90deg,#fbbf24,#a78bfa)", borderRadius: 99, transition: "width 0.5s" }} />
-          </div>
-          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.75)", marginTop: 4 }}>
-            Benefit {nextTier.label}: {nextTier.benefit}
-          </div>
-        </div>
-      )}
-      {!nextTier && (
-        <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.9)", fontWeight: 600 }}>
-          💎 Anda adalah Member Platinum kami! Terima kasih atas kepercayaan Anda.
-        </div>
-      )}
     </div>
   );
 }
@@ -884,23 +901,51 @@ function ErrorScreen({ waHref }) {
   );
 }
 
+// ── ANIMASI (inject once) ──
+function PortalStyles() {
+  return (
+    <style>{`
+      @keyframes portalPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.45;transform:scale(.85)} }
+      @keyframes portalFadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:none} }
+      @keyframes portalShimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+      .portal-pulse { animation: portalPulse 1.6s ease-in-out infinite; }
+      .portal-fade-up { animation: portalFadeUp .45s ease both; }
+      .portal-shimmer { position: relative; }
+      .portal-shimmer::after { content:""; position:absolute; inset:0; border-radius:99px;
+        background: linear-gradient(90deg,transparent,rgba(255,255,255,0.55),transparent);
+        background-size: 200% 100%; animation: portalShimmer 2.2s linear infinite; }
+      @media (prefers-reduced-motion: reduce) {
+        .portal-pulse,.portal-fade-up,.portal-shimmer::after { animation: none !important; }
+      }
+    `}</style>
+  );
+}
+
 // ── STYLES ──
 const s = {
-  page:          { fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", background: "#f0f4f8", color: "#1a2332", minHeight: "100vh" },
-  topbar:        { background: "#fff", borderBottom: "1px solid #e2e8f0", padding: "14px 20px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 100 },
-  logoBadge:     { width: 38, height: 38, background: "linear-gradient(135deg,#0ea5e9,#0369a1)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 900, fontSize: 15, flexShrink: 0 },
-  topbarTitle:   { fontWeight: 800, fontSize: 16, color: "#0369a1" },
-  topbarSub:     { fontSize: 11, color: "#64748b" },
-  waBtn:         { marginLeft: "auto", background: "#22c55e", color: "#fff", border: "none", borderRadius: 20, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" },
+  page:          { fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", background: "#eef3f8", color: "#1a2332", minHeight: "100vh" },
+  topbar:        { background: "rgba(255,255,255,0.85)", backdropFilter: "saturate(180%) blur(12px)", WebkitBackdropFilter: "saturate(180%) blur(12px)", borderBottom: "1px solid #e7edf3", padding: "12px 18px", display: "flex", alignItems: "center", gap: 11, position: "sticky", top: 0, zIndex: 100 },
+  logoBadge:     { width: 40, height: 40, background: "linear-gradient(135deg,#0ea5e9,#0369a1)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 900, fontSize: 15, flexShrink: 0, boxShadow: "0 4px 12px rgba(14,165,233,0.35)", letterSpacing: "0.5px" },
+  topbarTitle:   { fontWeight: 800, fontSize: 16, color: "#0c4a6e", lineHeight: 1.1 },
+  topbarSub:     { fontSize: 11, color: "#64748b", marginTop: 1 },
+  waBtn:         { marginLeft: "auto", background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "#fff", border: "none", borderRadius: 22, padding: "9px 15px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", textDecoration: "none", boxShadow: "0 4px 12px rgba(22,197,94,0.32)" },
   wrapper:       { maxWidth: 480, margin: "0 auto", padding: "16px 16px 32px", display: "grid", gap: 14 },
   sectionLabel:  { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.8px", color: "#94a3b8", padding: "0 2px" },
 
-  customerCard:  { background: "linear-gradient(135deg,#0369a1,#0ea5e9)", borderRadius: 18, padding: 20, color: "#fff", position: "relative", overflow: "hidden" },
-  customerLabel: { fontSize: 11, opacity: 0.8, letterSpacing: "0.5px", textTransform: "uppercase" },
-  customerName:  { fontSize: 22, fontWeight: 800, marginTop: 4 },
-  customerPhone: { fontSize: 12, opacity: 0.75, marginTop: 3 },
-  customerMeta:  { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" },
-  badge:         { background: "rgba(255,255,255,0.2)", borderRadius: 20, padding: "4px 10px", fontSize: 11, fontWeight: 600 },
+  customerCard:  { background: "linear-gradient(140deg,#075985 0%,#0369a1 45%,#0ea5e9 100%)", borderRadius: 22, padding: 22, color: "#fff", position: "relative", overflow: "hidden", boxShadow: "0 10px 30px -8px rgba(3,105,161,0.45)" },
+  cardGlow:      { position: "absolute", top: -60, right: -50, width: 200, height: 200, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,255,255,0.22) 0%, transparent 70%)", pointerEvents: "none" },
+  tierChip:      { display: "flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 20, padding: "4px 11px", flexShrink: 0, backdropFilter: "blur(4px)" },
+  customerLabel: { fontSize: 10.5, opacity: 0.85, letterSpacing: "1px", textTransform: "uppercase", fontWeight: 600 },
+  customerName:  { fontSize: 23, fontWeight: 800, marginTop: 6, letterSpacing: "-0.5px", wordBreak: "break-word" },
+  customerPhone: { fontSize: 12, opacity: 0.8, marginTop: 4 },
+  customerMeta:  { display: "flex", gap: 7, marginTop: 16, flexWrap: "wrap" },
+  badge:         { background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 20, padding: "5px 11px", fontSize: 11, fontWeight: 600, backdropFilter: "blur(4px)" },
+  benefitBanner: { marginTop: 14, background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 12, padding: "9px 13px", display: "flex", alignItems: "center", gap: 9, backdropFilter: "blur(4px)" },
+  progTrack:     { height: 7, background: "rgba(255,255,255,0.22)", borderRadius: 99, overflow: "hidden" },
+
+  locCard:       { background: "#fff", borderRadius: 16, border: "1px solid #e7edf3", padding: "14px 14px", boxShadow: "0 4px 16px -8px rgba(15,23,42,0.12)" },
+  locHeader:     { display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 800, color: "#475569", marginBottom: 11, textTransform: "uppercase", letterSpacing: "0.6px" },
+  locCountChip:  { marginLeft: "auto", fontSize: 10, fontWeight: 800, color: "#2563eb", background: "#e0eaff", borderRadius: 99, padding: "2px 8px", letterSpacing: 0 },
 
   expiredBanner: { background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 16px", fontSize: 13, color: "#dc2626", fontWeight: 600 },
   expiredCard:   { background: "#fff", borderRadius: 18, padding: "40px 24px", textAlign: "center", border: "1px solid #e2e8f0" },
