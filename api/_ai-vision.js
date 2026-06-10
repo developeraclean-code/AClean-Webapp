@@ -193,6 +193,15 @@ export async function persistClassification({ SU, SK, classification, sender, gr
   });
   if (!ex.ok) {
     const t = await ex.text().catch(() => "");
+    // Sentry capture — AI cost terbayar tapi extract hilang = uang terbakar tanpa data
+    try {
+      const Sentry = await import("@sentry/node");
+      Sentry.captureMessage(`[AI_EXTRACT_INSERT_FAIL] HTTP ${ex.status}: ${t.slice(0, 300)}`, {
+        level: "warning",
+        tags: { op: "ai_extractions_insert", http_status: String(ex.status), intent: classification.intent },
+        extra: { sender_name: sender.name, group_id: groupCfg.group_id, confidence: classification.confidence },
+      });
+    } catch (_) {}
     return { error: "extract_insert_failed", detail: t.slice(0, 300) };
   }
   const extractRow = (await ex.json())[0];

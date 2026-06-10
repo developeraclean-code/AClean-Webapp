@@ -12,6 +12,28 @@ export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
 const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal"];
 
+// ── Reporter: wrap critical write fetch(...) supaya silent fail (ngga sampai DB) tetap ke-track di Sentry. ──
+// Bug 3 Juni style: regex extract OK tapi INSERT silent-fail → biaya hilang.
+// Pakai: criticalFetch("expense_insert", url, opts, { sender, date, amount, ... })
+async function criticalFetch(op, url, opts, ctx = {}) {
+  try {
+    const r = await fetch(url, opts);
+    if (!r.ok) {
+      const body = await r.text().catch(() => "");
+      Sentry.captureMessage(`[CRITICAL_WRITE_${op.toUpperCase()}] HTTP ${r.status}: ${body.slice(0, 300)}`, {
+        level: "warning",
+        tags: { op, http_status: String(r.status) },
+        extra: ctx,
+      });
+    }
+    return r;
+  } catch (e) {
+    Sentry.captureException(e, { tags: { op }, extra: ctx });
+    console.error(`[CRITICAL_WRITE_${op.toUpperCase()}]`, e.message);
+    return null;
+  }
+}
+
 // ── VALIDATION HELPERS ──
 function validateAndNormalizePhone(phone) {
   if (!phone) return null;
@@ -521,7 +543,7 @@ export default async function handler(req, res) {
               if (isDup) {
                 console.log("[WA_GROUP_EXPENSE] skip duplikat:", profileName, biayaSub, parsedAmount, today);
               } else {
-                fetch(SU_g + "/rest/v1/expenses", {
+                criticalFetch("wa_group_biaya_insert", SU_g + "/rest/v1/expenses", {
                   method: "POST",
                   headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
                   body: JSON.stringify({
@@ -534,7 +556,7 @@ export default async function handler(req, res) {
                     created_by: "wa_group",
                     validation_status: "PENDING_AI"
                   })
-                }).catch(e => console.error("[WA_GROUP_EXPENSE]", e.message));
+                }, { teknisi: profileName, amount: parsedAmount, subcategory: biayaSub, date: today });
               }
               expenseSaved = true;
             }
@@ -573,11 +595,11 @@ export default async function handler(req, res) {
                       created_by: "wa_group_kasbon",
                       validation_status: "PENDING_AI",
                     };
-                    await fetch(SU_g + "/rest/v1/expenses", {
+                    await criticalFetch("wa_kasbon_multi_insert", SU_g + "/rest/v1/expenses", {
                       method: "POST",
                       headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
                       body: JSON.stringify(expBody),
-                    }).catch(e => console.error("[KASBON_EXPENSE_INSERT_MULTI]", e.message));
+                    }, { teknisi: mRes.matched.name, amount: it.amount, date: today, from: profileName });
                     insertedNames.push(`${mRes.matched.name} (${it.amount.toLocaleString("id-ID")})`);
                   } else {
                     failedNames.push(it.nameRaw);
@@ -648,11 +670,11 @@ export default async function handler(req, res) {
                     created_by: "wa_group_kasbon",
                     validation_status: "PENDING_AI",
                   };
-                  await fetch(SU_g + "/rest/v1/expenses", {
+                  await criticalFetch("wa_kasbon_single_insert", SU_g + "/rest/v1/expenses", {
                     method: "POST",
                     headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
                     body: JSON.stringify(expBody),
-                  }).catch(e => console.error("[KASBON_EXPENSE_INSERT]", e.message));
+                  }, { teknisi: matchRes.matched.name, amount: kasbonParsed.amount, date: today, from: profileName });
                   console.log("[KASBON_PARSED]", { name: matchRes.matched.name, amount: kasbonParsed.amount });
                 }
               } else if (matchRes.reason === "ambiguous" && FT_g) {
@@ -1246,7 +1268,7 @@ export default async function handler(req, res) {
                         const ords = await ordRes.json(); if (ords?.length > 0) matchedOrderId = ords[0].id;
                       }
                     } catch(_) {}
-                    fetch(SU + "/rest/v1/payment_suggestions", {
+                    criticalFetch("payment_suggestion_text_insert", SU + "/rest/v1/payment_suggestions", {
                       method: "POST",
                       headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
                       body: JSON.stringify({
@@ -1256,7 +1278,7 @@ export default async function handler(req, res) {
                         invoice_id: matchedInvoiceId, order_id: matchedOrderId,
                         status: "PENDING", source: "text", created_at: nowIso
                       })
-                    }).catch(e => console.error("[PAY_SUGGEST_SAVE]", e.message));
+                    }, { phone: sender, amount: extracted.amount, bank: extracted.bank });
                     // Notif WA ke owner — agar tidak terlewat saat webapp tidak dibuka
                     if (FT && OP) {
                       const ownerNotif = "💰 *Bukti Bayar Masuk (Teks)*\n"
@@ -1855,6 +1877,13 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                       if (!psRes.ok) {
                         const errBody = await psRes.text().catch(() => "(no body)");
                         console.error("[PAY_SUGGEST_IMG_SAVE]", psRes.status, errBody);
+                        try {
+                          Sentry.captureMessage(`[PAY_SUGGEST_IMG_SAVE] HTTP ${psRes.status}: ${errBody.slice(0, 300)}`, {
+                            level: "warning",
+                            tags: { op: "payment_suggestion_img_insert", http_status: String(psRes.status) },
+                            extra: { phone: sender, amount: classified.amount, bank: classified.bank, invoice_id: matchedInvoiceId },
+                          });
+                        } catch (_) {}
                         // Log ke agent_logs supaya bisa di-trace via Monitoring
                         fetch(SU + "/rest/v1/agent_logs", {
                           method: "POST",
