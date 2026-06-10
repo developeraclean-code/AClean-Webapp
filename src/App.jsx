@@ -7933,7 +7933,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         }
 
         // ── Cleaning 1 unit: inject "Biaya Transport Bila 1 Unit" otomatis ──
-        if (svc === "Cleaning" && (laporanUnits || []).length === 1) {
+        // Guard: jangan inject kalau mDetail sudah berisi item transport → cegah double tagih.
+        const sudahAdaTransport = mDetail.some(m => (m.nama || "").toLowerCase().includes("transport"));
+        if (svc === "Cleaning" && (laporanUnits || []).length === 1 && !sudahAdaTransport) {
           const transportItem = priceListData.find(
             r => r.service === "Cleaning" && r.type === "Biaya Transport Bila 1 Unit" && r.is_active !== false
           );

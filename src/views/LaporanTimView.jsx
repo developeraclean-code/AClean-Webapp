@@ -486,7 +486,9 @@ const verifyLaporan = async (r) => {
     }
 
     // Inject transport fee untuk Cleaning 1 unit (sama seperti logic di App.jsx)
-    if (r.service === "Cleaning" && (Array.isArray(r.units) ? r.units.length : parseInt(r.units) || 1) === 1) {
+    // Guard: jangan inject kalau materials laporan sudah berisi item transport → cegah double tagih.
+    const sudahAdaTransport = vMDetail.some(m => (m.nama || "").toLowerCase().includes("transport"));
+    if (r.service === "Cleaning" && (Array.isArray(r.units) ? r.units.length : parseInt(r.units) || 1) === 1 && !sudahAdaTransport) {
       const transportItem = priceListData.find(p => p.service === "Cleaning" && p.type === "Biaya Transport Bila 1 Unit" && p.is_active !== false);
       if (transportItem && transportItem.price > 0) {
         vMDetail.push({ nama: "Biaya Transport Bila 1 Unit", jumlah: 1, satuan: "unit", harga_satuan: transportItem.price, subtotal: transportItem.price, keterangan: "jasa" });
