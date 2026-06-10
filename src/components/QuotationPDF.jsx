@@ -64,6 +64,15 @@ function buildStyles(compact) {
     subRow:     { flexDirection: "row", justifyContent: "space-between", padding: compact ? "3 14" : "4 14", borderBottom: "1px solid #f1f5f9" },
     subLabel:   { fontSize: 9, color: "#64748b" },
     subVal:     { fontSize: 9, color: "#1e293b", fontFamily: "Helvetica-Bold" },
+    rinCard:    { border: "1px solid #e2e8f0", borderRadius: 8, marginTop: 4, overflow: "hidden" },
+    rinCap:     { backgroundColor: "#e3f2fd", padding: compact ? "5 14" : "6 14", fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", textTransform: "uppercase", letterSpacing: 0.6 },
+    rinRow:     { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: compact ? "7 14" : "9 14", borderBottom: "1px solid #f1f5f9" },
+    rinLeft:    { flexDirection: "row", alignItems: "center", flex: 1 },
+    rinDot:     { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
+    rinLbl:     { fontSize: 9.5, color: "#1e293b" },
+    rinHint:    { fontSize: 7.5, color: "#94a3b8", marginTop: 1 },
+    rinVal:     { fontSize: 10, color: "#1e293b", fontFamily: "Helvetica-Bold" },
+    rinTotal:   { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#1E5BA8", padding: compact ? "11 14" : "13 14" },
     noteBox:    { border: "1px solid #e2e8f0", borderRadius: 6, padding: BOXP, marginBottom: MB },
     noteTitle:  { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#64748b", marginBottom: 4, textTransform: "uppercase" },
     noteText:   { fontSize: 9, color: "#1e293b", lineHeight: 1.5 },
@@ -250,39 +259,64 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
           </View>
         )}
 
-        {/* Total box */}
-        <View wrap={false} style={{ marginBottom: 12 }}>
+        {/* Total box — kartu Rincian Total */}
+        <View wrap={false} style={[s.rinCard, { marginBottom: 12 }]}>
+          <Text style={s.rinCap}>Rincian Total</Text>
           {(quo.unit_ac_amount > 0) && (
-            <View style={s.subRow}>
-              <Text style={s.subLabel}>Unit AC</Text>
-              <Text style={s.subVal}>{fmt(quo.unit_ac_amount)}</Text>
+            <View style={s.rinRow}>
+              <View style={s.rinLeft}>
+                <View style={[s.rinDot, { backgroundColor: "#1E5BA8" }]} />
+                <View>
+                  <Text style={s.rinLbl}>Unit AC</Text>
+                  <Text style={s.rinHint}>harga unit (informasi)</Text>
+                </View>
+              </View>
+              <Text style={s.rinVal}>{fmt(quo.unit_ac_amount)}</Text>
             </View>
           )}
           {(quo.labor > 0) && (
-            <View style={s.subRow}>
-              <Text style={s.subLabel}>Paket & Jasa</Text>
-              <Text style={s.subVal}>{fmt(quo.labor)}</Text>
+            <View style={s.rinRow}>
+              <View style={s.rinLeft}>
+                <View style={[s.rinDot, { backgroundColor: "#60a5fa" }]} />
+                <View>
+                  <Text style={s.rinLbl}>Paket & Jasa</Text>
+                  <Text style={s.rinHint}>paket pemasangan</Text>
+                </View>
+              </View>
+              <Text style={s.rinVal}>{fmt(quo.labor)}</Text>
             </View>
           )}
           {(quo.material > 0) && (
-            <View style={s.subRow}>
-              <Text style={s.subLabel}>Material Tambahan</Text>
-              <Text style={s.subVal}>{fmt(quo.material)}</Text>
+            <View style={s.rinRow}>
+              <View style={s.rinLeft}>
+                <View style={[s.rinDot, { backgroundColor: "#60a5fa" }]} />
+                <View>
+                  <Text style={s.rinLbl}>Material & Jasa Pemasangan</Text>
+                  <Text style={s.rinHint}>pipa, kabel, jasa, dll</Text>
+                </View>
+              </View>
+              <Text style={s.rinVal}>{fmt(quo.material)}</Text>
             </View>
           )}
           {(quo.discount > 0) && (
-            <View style={s.subRow}>
-              <Text style={[s.subLabel, { color: "#f59e0b" }]}>Diskon</Text>
-              <Text style={[s.subVal, { color: "#f59e0b" }]}>-{fmt(quo.discount)}</Text>
+            <View style={s.rinRow}>
+              <View style={s.rinLeft}>
+                <View style={[s.rinDot, { backgroundColor: "#f59e0b" }]} />
+                <Text style={[s.rinLbl, { color: "#f59e0b" }]}>Diskon</Text>
+              </View>
+              <Text style={[s.rinVal, { color: "#f59e0b" }]}>-{fmt(quo.discount)}</Text>
             </View>
           )}
           {(quo.trade_in_amount > 0) && (
-            <View style={s.subRow}>
-              <Text style={[s.subLabel, { color: "#f59e0b" }]}>Trade-in AC lama</Text>
-              <Text style={[s.subVal, { color: "#f59e0b" }]}>-{fmt(quo.trade_in_amount)}</Text>
+            <View style={s.rinRow}>
+              <View style={s.rinLeft}>
+                <View style={[s.rinDot, { backgroundColor: "#f59e0b" }]} />
+                <Text style={[s.rinLbl, { color: "#f59e0b" }]}>Trade-in AC lama</Text>
+              </View>
+              <Text style={[s.rinVal, { color: "#f59e0b" }]}>-{fmt(quo.trade_in_amount)}</Text>
             </View>
           )}
-          <View style={s.totalBox}>
+          <View style={s.rinTotal}>
             <Text style={s.totalLabel}>TOTAL PENAWARAN</Text>
             <Text style={s.totalVal}>{fmt(quo.total)}</Text>
           </View>
