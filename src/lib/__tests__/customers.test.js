@@ -76,4 +76,28 @@ describe("buildCustomerHistory", () => {
   it("returns empty for null customer", () => {
     expect(buildCustomerHistory(null, orders, laporan, invoices)).toEqual([]);
   });
+
+  describe("multi-lokasi scoping (allCustomers passed)", () => {
+    // 1 HP dipakai 2 customer (beda nama/lokasi)
+    const allCustomers = [
+      { id: 1, name: "Bapak Dedy Jelita", phone: "081234567890", address: "Jelita Residence" },
+      { id: 2, name: "Bapak Dedy Aruna", phone: "6281234567890", address: "Aruna Tower" },
+    ];
+    const multiOrders = [
+      { id: "JOB-A", customer: "Bapak Dedy Jelita", phone: "081234567890", date: "2026-04-10", status: "DONE" },
+      { id: "JOB-B", customer: "Bapak Dedy Aruna", phone: "081234567890", date: "2026-04-12", status: "DONE" },
+    ];
+    it("scopes history strictly by name when phone is multi-lokasi", () => {
+      const hJelita = buildCustomerHistory(allCustomers[0], multiOrders, [], [], allCustomers);
+      expect(hJelita.map(j => j.id)).toEqual(["JOB-A"]);
+      const hAruna = buildCustomerHistory(allCustomers[1], multiOrders, [], [], allCustomers);
+      expect(hAruna.map(j => j.id)).toEqual(["JOB-B"]);
+    });
+    it("keeps phone-OR fallback for single-lokasi phone", () => {
+      // allCustomers hanya punya 1 customer dengan HP ini → tetap match by phone
+      const single = [{ id: 9, name: "Bapak Dedy", phone: "081234567890" }];
+      const h = buildCustomerHistory(single[0], orders, laporan, invoices, single);
+      expect(h).toHaveLength(2); // JOB-001 (name) + JOB-002 (phone, nama sama)
+    });
+  });
 });

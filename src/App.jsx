@@ -2905,7 +2905,7 @@ ${photoPageHTML}
     // ── Smart Unit Preset: Cek customer history ──
     const customer = findCustomer(customersData, order.phone, order.customer);
     if (customer) {
-      const custHistory = buildCustomerHistory(customer, ordersData, laporanReports, invoicesData);
+      const custHistory = buildCustomerHistory(customer, ordersData, laporanReports, invoicesData, customersData);
       // Ambil unit detail dari job sebelumnya (terbaru)
       const historyUnits = custHistory.flatMap((h, idx) =>
         (h.unit_detail || []).map((u, uidx) => ({
@@ -8330,7 +8330,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     </div>
                     {/* ── Service History Panel ── */}
                     {exactMatch && (() => {
-                      const history = buildCustomerHistory(exactMatch, ordersData, laporanReports, invoicesData);
+                      const history = buildCustomerHistory(exactMatch, ordersData, laporanReports, invoicesData, customersData);
                       const recentJobs = (history.orders || [])
                         .filter(o => o.status !== "CANCELLED")
                         .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
@@ -9473,7 +9473,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* ══ MODAL HISTORY PREVIEW — Teknisi view-only ══ */}
       {historyPreview && (() => {
         const cu = historyPreview;
-        const hist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
+        const hist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData, customersData);
         return (
           <div style={{
             position: "fixed", inset: 0, background: "#000d", zIndex: 9998,
@@ -11564,7 +11564,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         { name: laporanModal.customer, phone: laporanModal.phone },
                         ordersData.filter(o => o.id !== laporanModal.id),
                         laporanReports,
-                        invoicesData
+                        invoicesData,
+                        customersData
                       ).filter(h => h.laporan_id || h.status === "COMPLETED");
                       if (custHistRef.length === 0) return null;
                       const lastJob = custHistRef[0]; // job terakhir (sudah sorted desc)

@@ -44,14 +44,21 @@ export const findCustomersByPhone = (customers, phone) => {
 
 // Build history per customer dari ordersData + laporanReports + invoicesData.
 // Output: array job (terbaru dulu) dengan data gabungan order + invoice + laporan.
-export const buildCustomerHistory = (customer, ordersData, laporanReports, invoicesData) => {
+// allCustomers (opsional): jika diberikan & nomor HP ini dipakai >1 customer
+// (multi-lokasi), history di-scope ketat by NAMA saja — jangan pakai phone-OR,
+// karena phone yang sama akan menarik order lokasi lain & bikin riwayat tercampur.
+export const buildCustomerHistory = (customer, ordersData, laporanReports, invoicesData, allCustomers = null) => {
   if (!customer) return [];
   const nm = (s) => (s || "").trim().toLowerCase();
   const matchName = (o) => nm(o.customer) === nm(customer.name);
   const matchPhone = (o) => customer.phone && o.phone && samePhone(o.phone, customer.phone);
 
+  // Deteksi multi-lokasi: 1 nomor HP punya >1 customer (beda nama).
+  const isMultiLoc = !!(allCustomers && customer.phone &&
+    allCustomers.filter(c => c && c.phone && samePhone(c.phone, customer.phone)).length > 1);
+
   return ordersData
-    .filter(o => matchName(o) || matchPhone(o))
+    .filter(o => isMultiLoc ? matchName(o) : (matchName(o) || matchPhone(o)))
     .map(o => {
       const lap = laporanReports.find(r => r.job_id === o.id);
       const inv = invoicesData

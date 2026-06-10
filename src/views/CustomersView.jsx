@@ -24,7 +24,13 @@ const MEMBER_TIER_INFO = {
 function CustomersView({ selectedCustomer, setSelectedCustomer, ordersData, laporanReports, invoicesData, customersData, setCustomersData, searchCustomer, setSearchCustomer, customerPage, setCustomerPage, customerTab, setCustomerTab, currentUser, isMobile, setNewCustomerForm, setModalAddCustomer, setNewOrderForm, setModalOrder, setSelectedInvoice, setModalPDF, buildCustomerHistory, openWA, showConfirm, showNotif, deleteCustomer, addAgentLog, updateCustomer, fotoSrc, safeArr, fmt, supabase, CUST_PAGE_SIZE, downloadServiceReportPDF }) {
 const [tierFilter, setTierFilter] = React.useState("all");
 const history = selectedCustomer
-  ? buildCustomerHistory(selectedCustomer, ordersData, laporanReports, invoicesData)
+  ? buildCustomerHistory(selectedCustomer, ordersData, laporanReports, invoicesData, customersData)
+  : [];
+// Lokasi lain dengan nomor HP sama (multi-lokasi) — untuk strip tab di detail.
+const siblingLocations = selectedCustomer
+  ? customersData
+      .filter(c => c.phone && selectedCustomer.phone && normalizePhone(c.phone) === normalizePhone(selectedCustomer.phone))
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
   : [];
 const _scq = searchCustomer.trim().toLowerCase();
 const filteredCusts = customersData.filter(cu => {
@@ -120,7 +126,7 @@ return (
             // Single-location: render kartu seperti semula
             if (!isMulti) {
               const cu = group[0];
-              const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
+              const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData, customersData);
               const lastSvc = cHist[0];
               const totalSpend = cHist.reduce((a, b) => a + (b.invoice_total || 0), 0);
               return (
@@ -187,7 +193,7 @@ return (
 
                 {/* Sub-kartu per lokasi */}
                 {group.map((cu, li) => {
-                  const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData);
+                  const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData, customersData);
                   const lastSvc = cHist[0];
                   const totalSpend = cHist.reduce((a, b) => a + (b.invoice_total || 0), 0);
                   const cuTier = MEMBER_TIER_INFO[cu.membership_tier || "silver"];
@@ -256,6 +262,38 @@ return (
     ) : (
       /* ── Detail Customer ── */
       <div style={{ display: "grid", gap: 14 }}>
+
+        {/* ── Strip tab lokasi (multi-lokasi: 1 HP, beda alamat) ── */}
+        {siblingLocations.length > 1 && (
+          <div style={{ background: cs.card, border: "1px solid " + cs.accent + "33", borderRadius: 12, padding: "10px 12px" }}>
+            <div style={{ fontSize: 11, color: cs.muted, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              📱 {selectedCustomer.phone} · <span style={{ color: cs.accent }}>{siblingLocations.length} Lokasi</span> — pilih untuk lihat riwayat per lokasi
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {siblingLocations.map(loc => {
+                const active = loc.id === selectedCustomer.id;
+                return (
+                  <button key={loc.id} onClick={() => { setSelectedCustomer(loc); setCustomerTab("history"); }}
+                    title={loc.area || loc.address || ""}
+                    style={{
+                      display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1,
+                      background: active ? cs.accent : cs.surface,
+                      border: "1px solid " + (active ? cs.accent : cs.border),
+                      color: active ? "#0a0f1e" : cs.text,
+                      padding: "7px 12px", borderRadius: 9, cursor: "pointer", maxWidth: 200, textAlign: "left",
+                    }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 176 }}>📍 {loc.name}</span>
+                    {(loc.area || loc.address) && (
+                      <span style={{ fontSize: 10, opacity: active ? 0.8 : 0.7, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 176 }}>
+                        {loc.area || loc.address}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Profile card */}
         {(() => {
