@@ -564,6 +564,19 @@ function HistoryItem({ order, invoice, report }) {
     } catch { return []; }
   })();
   const fotoList = Array.isArray(report?.foto_urls) ? report.foto_urls.filter(Boolean) : [];
+  // Foto per-unit: kalau report.fotos punya unit_no → kelompokkan per unit, else galeri datar.
+  const fotoMeta = (() => { try { const m = typeof report?.fotos === "string" ? JSON.parse(report.fotos) : report?.fotos; return Array.isArray(m) ? m.filter(x => x && x.url) : []; } catch { return []; } })();
+  const fotoHasUnitTags = fotoMeta.some(m => m.unit_no);
+  const fotoGroups = (() => {
+    if (!fotoHasUnitTags) return null;
+    const by = {};
+    fotoMeta.forEach(m => { const k = m.unit_no ? String(m.unit_no) : "_umum"; (by[k] = by[k] || []).push(m.url); });
+    const tagged = new Set(fotoMeta.map(m => m.url));
+    fotoList.forEach(url => { if (!tagged.has(url)) (by["_umum"] = by["_umum"] || []).push(url); });
+    const keys = Object.keys(by).filter(k => k !== "_umum").sort((a, b) => Number(a) - Number(b));
+    const lbl = (no) => { const un = rptUnits.find(u => Number(u.unit_no) === Number(no)); return un ? `Unit ${no}${un.tipe ? " · " + un.tipe : ""}` : `Unit ${no}`; };
+    return [...keys.map(k => ({ title: lbl(k), urls: by[k] })), ...(by["_umum"] ? [{ title: "Umum", urls: by["_umum"] }] : [])];
+  })();
   const hasReport = report && (rptUnits.length > 0 || report.rekomendasi?.trim() || report.catatan_rekomendasi?.trim() || fotoList.length > 0);
 
   return (
@@ -657,15 +670,33 @@ function HistoryItem({ order, invoice, report }) {
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#334155", marginBottom: 6 }}>
                     📷 Foto Servis ({fotoList.length})
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
-                    {fotoList.map((url, i) => (
-                      <div key={i}
-                        style={{ aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0", background: "#f1f5f9" }}>
-                        <img src={fotoSrc(url)} alt={`Foto servis ${i + 1}`} loading="lazy" draggable={false}
-                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", pointerEvents: "none", userSelect: "none" }} />
-                      </div>
-                    ))}
-                  </div>
+                  {fotoGroups ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {fotoGroups.map((g, gi) => (
+                        <div key={gi}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: "#0ea5e9", marginBottom: 4 }}>{g.title} ({g.urls.length})</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                            {g.urls.map((url, i) => (
+                              <div key={i} style={{ aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0", background: "#f1f5f9" }}>
+                                <img src={fotoSrc(url)} alt={`${g.title} ${i + 1}`} loading="lazy" draggable={false}
+                                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", pointerEvents: "none", userSelect: "none" }} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                      {fotoList.map((url, i) => (
+                        <div key={i}
+                          style={{ aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0", background: "#f1f5f9" }}>
+                          <img src={fotoSrc(url)} alt={`Foto servis ${i + 1}`} loading="lazy" draggable={false}
+                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", pointerEvents: "none", userSelect: "none" }} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

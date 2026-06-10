@@ -889,6 +889,8 @@ export default function ACleanWebApp() {
   const [showAddMaintUnitModal, setShowAddMaintUnitModal] = useState(false);
   const [addMaintSelected, setAddMaintSelected] = useState(new Set()); // Set of maintenance unit ids to add
   const fotoInputRef = useRef();
+  const fotoUnitInputRef = useRef(); // input khusus uploader foto per-unit di Step 2
+  const fotoTargetUnitRef = useRef(null); // unit_no untuk foto yg di-upload dari tab unit (null = umum)
 
   // ── Session Management ──
   const lastSessionCheckRef = useRef(0); // Track last session check to avoid excessive checks
@@ -2401,26 +2403,53 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
     const printDate = new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" });
     const svcDate = laporan.date || (laporan.submitted_at || "").slice(0, 10);
 
-    // ── Photo pages: chunk 6 per page ──
-    const photoPages = [];
-    for (let i = 0; i < fotos.length; i += 6) photoPages.push(fotos.slice(i, i + 6));
+    // ── Photo pages ──
+    // Jika foto sudah di-tag per unit (laporan.fotos[].unit_no) → kelompokkan per unit.
+    // Kalau tidak (laporan lama) → galeri datar seperti sebelumnya.
+    const fotoMeta = Array.isArray(laporan.fotos) ? laporan.fotos.filter(m => m && m.url) : [];
+    const hasUnitTags = fotoMeta.some(m => m.unit_no);
 
-    const photoPageHTML = photoPages.map((chunk, pi) => `
-      <div class="photo-page" style="page-break-before:always">
-        <div class="photo-page-header">
-          <div class="photo-page-title">DOKUMENTASI FOTO — Lembar ${pi + 2}</div>
-          <div class="photo-page-sub">${escH(laporan.job_id)} · ${escH(laporan.customer)}</div>
-        </div>
-        <div class="photo-grid">
-          ${chunk.map((url, idx) => {
-            const dataUrl = photoDataUrls[url] || "";
-            return dataUrl
-              ? `<div class="photo-cell"><img src="${dataUrl}" alt="Foto ${pi * 6 + idx + 1}" /><div class="photo-num">${pi * 6 + idx + 1}</div></div>`
-              : `<div class="photo-cell" style="background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:11px">Foto tidak tersedia<div class="photo-num">${pi * 6 + idx + 1}</div></div>`;
-          }).join("")}
-        </div>
-      </div>
-    `).join("");
+    const cellHTML = (url, label) => {
+      const dataUrl = photoDataUrls[url] || "";
+      const cap = label ? `<div class="photo-num" style="position:static;display:block;text-align:center;margin-top:2px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escH(label)}</div>` : "";
+      return dataUrl
+        ? `<div class="photo-cell"><img src="${dataUrl}" alt="${escH(label || "Foto")}" />${cap}</div>`
+        : `<div class="photo-cell" style="background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:11px">Foto tidak tersedia</div>`;
+    };
+    const pageHTML = (title, items) => {
+      const pages = [];
+      for (let i = 0; i < items.length; i += 6) pages.push(items.slice(i, i + 6));
+      return pages.map((chunk, pi) => `
+        <div class="photo-page" style="page-break-before:always">
+          <div class="photo-page-header">
+            <div class="photo-page-title">${escH(title)}${pages.length > 1 ? ` (${pi + 1}/${pages.length})` : ""}</div>
+            <div class="photo-page-sub">${escH(laporan.job_id)} · ${escH(laporan.customer)}</div>
+          </div>
+          <div class="photo-grid">
+            ${chunk.map(it => cellHTML(it.url, it.label)).join("")}
+          </div>
+        </div>`).join("");
+    };
+
+    let photoPageHTML;
+    if (hasUnitTags) {
+      const unitLabel = (no) => {
+        const un = units.find(u => Number(u.unit_no) === Number(no));
+        return un ? `FOTO UNIT ${no}${un.tipe ? " — " + un.tipe : ""}${un.label ? " (" + un.label + ")" : ""}` : `FOTO UNIT ${no}`;
+      };
+      const byUnit = {};
+      fotoMeta.forEach(m => { const k = m.unit_no ? String(m.unit_no) : "_umum"; (byUnit[k] = byUnit[k] || []).push({ url: m.url, label: m.label }); });
+      // Foto flat yg tak ada di meta (safety) → grup umum
+      const tagged = new Set(fotoMeta.map(m => m.url));
+      fotos.forEach(url => { if (!tagged.has(url)) (byUnit["_umum"] = byUnit["_umum"] || []).push({ url, label: "" }); });
+      const unitKeys = Object.keys(byUnit).filter(k => k !== "_umum").sort((a, b) => Number(a) - Number(b));
+      photoPageHTML = [
+        ...unitKeys.map(k => pageHTML(unitLabel(k), byUnit[k])),
+        ...(byUnit["_umum"] ? [pageHTML("DOKUMENTASI FOTO — UMUM", byUnit["_umum"])] : []),
+      ].join("");
+    } else {
+      photoPageHTML = pageHTML("DOKUMENTASI FOTO", fotos.map((url, i) => ({ url, label: "" })));
+    }
 
     return `<!DOCTYPE html>
 <html lang="id">
@@ -2869,16 +2898,20 @@ ${photoPageHTML}
     if (existingRep && existingRep.foto_urls && existingRep.foto_urls.length > 0) {
       // Rebuild laporanFotos dari foto_urls yang sudah ada di DB
       // hash dibuat dari URL (sebagai identifier unik per sesi)
+      // Tag unit_no & label dipulihkan dari existingRep.fotos (match by url) jika ada.
+      const metaByUrl = Object.fromEntries((existingRep.fotos || []).filter(m => m && m.url).map(m => [m.url, m]));
       const restoredFotos = existingRep.foto_urls.map((url, idx) => {
         const hashFromUrl = url.split("/").pop().replace(".jpg", "").slice(0, 16); // ambil hash dari nama file
+        const meta = metaByUrl[url] || {};
         return {
           id: Date.now() + idx,
-          label: `Foto ${idx + 1}`,
+          label: meta.label || `Foto ${idx + 1}`,
           data_url: url,      // tampilkan dari URL R2 (sudah tersimpan)
           url: url,      // sudah tersimpan = ☁️ OK
           errMsg: "",
           hash: hashFromUrl,
           restored: true,     // flag: ini foto lama, bukan baru diupload
+          unit_no: meta.unit_no || null,
         };
       });
       setLaporanFotos(restoredFotos);
@@ -7114,6 +7147,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   const handleFotoUpload = async (e) => {
     const MAX_PHOTOS = 20;
     const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    // Foto baru di-tag ke unit hanya jika event berasal dari input per-unit (fotoUnitInputRef).
+    // Upload dari uploader global (fotoInputRef) selalu unit_no=null (umum). Cara ini kebal
+    // stale-ref: kalau picker per-unit dibatalkan, upload global berikutnya tidak salah tag.
+    const fromUnitInput = e.target === fotoUnitInputRef.current;
+    const targetUnitNo = fromUnitInput ? fotoTargetUnitRef.current : null;
+    fotoTargetUnitRef.current = null;
 
     // ── Validasi format file — reject video ──
     const rawFiles = Array.from(e.target.files || []);
@@ -7195,6 +7234,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       errMsg: "",
       hash: hashes[i],
       uploading: true,
+      unit_no: targetUnitNo || null,
     }));
     // Push placeholders ke state supaya user lihat progress langsung
     setLaporanFotos(prev => [...prev, ...placeholders]);
@@ -7269,7 +7309,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         helper: laporanModal.helper || null, customer: laporanModal.customer,
         service: "Survey", date: laporanModal.date, submitted: now,
         status: "SUBMITTED", total_units: 0, units: [], materials: [],
-        fotos: laporanFotos.map(f => ({ id: f.id, label: f.label })),
+        fotos: laporanFotos.filter(f => f.url).map(f => ({ id: f.id, label: f.label, url: f.url, unit_no: f.unit_no || null })),
         foto_urls: surveyFotoUrls,
         total_freon: 0, rekomendasi: "", catatan_global: "",
         hasil_survey: laporanSurveyHasil.trim(),
@@ -7392,7 +7432,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       total_units: laporanUnits.length,
       units: laporanUnits,
       materials: effectiveMaterials,
-      fotos: laporanFotos.map(f => ({ id: f.id, label: f.label })),
+      fotos: laporanFotos.filter(f => f.url).map(f => ({ id: f.id, label: f.label, url: f.url, unit_no: f.unit_no || null })),
       total_freon: totalFreonLocal,
       rekomendasi: laporanRekomendasi,
       catatan_global: laporanCatatan,
@@ -7458,6 +7498,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           materials_json: JSON.stringify(effectiveMaterials),
           units_json: JSON.stringify(laporanUnits),
           units: laporanUnits,
+          fotos: laporanFotos.filter(f => f.url).map(f => ({ url: f.url, label: f.label || "", unit_no: f.unit_no || null })),
         }, { onConflict: "id" });
         if (!e1) { savedOk = true; }
         else { lastError = e1; console.warn("❌ Attempt 1 failed:", e1.message); }
@@ -11846,7 +11887,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
                               {/* Delete button */}
                               {laporanUnits.length > 1 && (
-                                <button onClick={() => { const nu = laporanUnits.filter((_, i) => i !== idx).map((u2, i) => ({ ...u2, unit_no: i + 1 })); setLaporanUnits(nu); setActiveUnitIdx(Math.max(0, idx - 1)); }}
+                                <button onClick={() => {
+                                  const deletedNo = idx + 1; // unit_no unit yg dihapus (sebelum renumber)
+                                  const nu = laporanUnits.filter((_, i) => i !== idx).map((u2, i) => ({ ...u2, unit_no: i + 1 }));
+                                  setLaporanUnits(nu); setActiveUnitIdx(Math.max(0, idx - 1));
+                                  // Remap tag foto agar tidak salah tempat: foto unit terhapus → umum, di atasnya → geser turun
+                                  setLaporanFotos(prev => prev.map(f => {
+                                    if (f.unit_no == null) return f;
+                                    if (f.unit_no === deletedNo) return { ...f, unit_no: null };
+                                    if (f.unit_no > deletedNo) return { ...f, unit_no: f.unit_no - 1 };
+                                    return f;
+                                  }));
+                                }}
                                   style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 6, padding: "8px 10px", cursor: "pointer", fontSize: 12, fontWeight: 700, lineHeight: 1, alignSelf: "flex-end" }}>×</button>
                               )}
                             </div>
@@ -11943,6 +11995,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 {/* ── STEP 2: Detail Per Unit ── */}
                 {laporanStep === 2 && (
                   <div style={{ display: "grid", gap: 14 }}>
+                    {/* Input khusus uploader foto per-unit (Step 2) — fotoInputRef hanya mounted di Step 3/Survey */}
+                    <input ref={fotoUnitInputRef} type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple onChange={handleFotoUpload} style={{ display: "none" }} />
                     {/* Info banner: Step 2 adalah untuk detail kondisi & pekerjaan */}
                     <div style={{ background: cs.green + "08", border: "1px solid " + cs.green + "33", borderRadius: 10, padding: "10px 12px", fontSize: 11, color: cs.green, lineHeight: 1.6 }}>
                       ✅ <strong>Step 1 selesai!</strong> Sekarang isi detail kondisi & pekerjaan untuk setiap unit. Step 3 (Material) opsional — hanya jika ada tambahan biaya.
@@ -12037,6 +12091,36 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             <textarea value={u.catatan_unit} onChange={e => upd({ catatan_unit: e.target.value })} rows={2} placeholder="Catatan khusus unit ini..."
                               style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", resize: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
                           </div>
+                          {/* Foto unit ini (opsional) — foto di-tag ke unit_no ini */}
+                          {(() => {
+                            const unitFotos = laporanFotos.filter(f => f.unit_no === u.unit_no);
+                            return (
+                              <div>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: "#0ea5e9" }}>📸 Foto Unit Ini ({unitFotos.length})</div>
+                                  <button onClick={() => { fotoTargetUnitRef.current = u.unit_no; fotoUnitInputRef.current?.click(); }}
+                                    disabled={laporanFotos.length >= 20}
+                                    style={{ fontSize: 11, color: "#0ea5e9", background: "#0ea5e912", border: "1px solid #0ea5e944", borderRadius: 6, padding: "4px 10px", cursor: laporanFotos.length >= 20 ? "not-allowed" : "pointer", opacity: laporanFotos.length >= 20 ? 0.5 : 1, fontWeight: 600 }}>
+                                    + Tambah Foto Unit
+                                  </button>
+                                </div>
+                                {unitFotos.length === 0 ? (
+                                  <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada foto khusus unit ini (opsional — boleh juga foto umum di Step 3).</div>
+                                ) : (
+                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                    {unitFotos.map(f => (
+                                      <div key={f.id} style={{ position: "relative", width: 64, height: 64, borderRadius: 8, overflow: "hidden", border: "1px solid " + cs.border }}>
+                                        <img src={f.data_url || fotoSrc(f.url)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: f.uploading ? 0.5 : 1 }} />
+                                        {f.uploading && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "#fff", background: "#000a" }}>⏳</div>}
+                                        <button onClick={() => setLaporanFotos(prev => prev.filter(x => x.id !== f.id))}
+                                          style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 9, background: cs.red, color: "#fff", border: "none", fontSize: 11, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })()}
@@ -12765,6 +12849,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                 style={{ position: "absolute", top: 4, left: 4, background: "#ef4444cc", border: "none", color: "#fff", borderRadius: 99, width: 18, height: 18, cursor: "pointer", fontSize: 10, lineHeight: 1, padding: 0 }}>×</button>
                               <input id="field_43" value={f.label} onChange={e => setLaporanFotos(p => p.map(x => x.id === f.id ? { ...x, label: e.target.value } : x))}
                                 placeholder="Label foto..." style={{ marginTop: 3, width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 5, padding: "4px 6px", color: cs.text, fontSize: 10, outline: "none", boxSizing: "border-box" }} />
+                              {laporanUnits.length > 1 && (
+                                <select value={f.unit_no || ""} onChange={e => setLaporanFotos(p => p.map(x => x.id === f.id ? { ...x, unit_no: e.target.value ? parseInt(e.target.value) : null } : x))}
+                                  style={{ marginTop: 3, width: "100%", background: cs.card, border: "1px solid " + (f.unit_no ? "#0ea5e966" : cs.border), borderRadius: 5, padding: "4px 6px", color: f.unit_no ? "#0ea5e9" : cs.muted, fontSize: 10, outline: "none", boxSizing: "border-box" }}>
+                                  <option value="">📷 Umum</option>
+                                  {laporanUnits.map(un => <option key={un.unit_no} value={un.unit_no}>Unit {un.unit_no}{un.tipe ? " · " + un.tipe : ""}</option>)}
+                                </select>
+                              )}
                             </div>
                           ))}
                           {laporanFotos.length < 20 && (

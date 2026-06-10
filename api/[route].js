@@ -3725,7 +3725,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       if (jobIds.length > 0) {
         const rptFilter = jobIds.map(id => `job_id.eq.${encodeURIComponent(id)}`).join(",");
         const rptRes = await fetch(
-          `${SU}/rest/v1/service_reports?or=(${rptFilter})&status=eq.VERIFIED&select=id,job_id,date,service,total_units,rekomendasi,catatan_rekomendasi,units,foto_urls,teknisi,helper&order=date.desc&limit=20`,
+          `${SU}/rest/v1/service_reports?or=(${rptFilter})&status=eq.VERIFIED&select=id,job_id,date,service,total_units,rekomendasi,catatan_rekomendasi,units,foto_urls,fotos,teknisi,helper&order=date.desc&limit=20`,
           { headers }
         );
         if (rptRes.ok) reports = await rptRes.json();
