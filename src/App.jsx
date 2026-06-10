@@ -5386,6 +5386,82 @@ ${photoPageHTML}
     return newId;
   };
 
+  // ── createTeamSplit: 1 project maintenance PT dipecah jadi N sub-order paralel ──
+  // Tiap tim = 1 pasangan teknisi+helper + subset unit. Semua sub-order share
+  // job_group_id = id parent (sub-order pertama). Parent = order dgn id === job_group_id.
+  // base: { customer, phone, address, area, service, type, date, time, notes, maintenance_client_id }
+  // teams: [{ teknisi, helper, unitIds: [] }]  — minimal 2 tim dgn unit terisi.
+  // Return groupId (parent id) atau null jika gagal total.
+  const createTeamSplit = async ({ base, teams }) => {
+    if (!base?.date) { showNotif("❌ Tanggal wajib"); return null; }
+    const valid = (teams || []).filter(t => Array.isArray(t.unitIds) && t.unitIds.length > 0);
+    if (valid.length < 2) { showNotif("❌ Minimal 2 tim dengan unit terisi"); return null; }
+
+    const mkId = () => "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+    const groupId = mkId();
+    const created = [];
+
+    for (let i = 0; i < valid.length; i++) {
+      const t = valid[i];
+      const id = i === 0 ? groupId : mkId();
+      const units = t.unitIds.length;
+      const timeEnd = hitungJamSelesai(base.time || "09:00", base.service || "Cleaning", units);
+      let teknisi = (t.teknisi || "").trim() || null;
+      let helper = teknisi ? ((t.helper || "").trim() || null) : null;
+      let status = teknisi ? "CONFIRMED" : "PENDING";
+
+      // Cek bentrok jadwal teknisi (real-time DB). Bentrok → turunkan ke PENDING.
+      if (teknisi && base.time) {
+        const dbCheck = await cekTeknisiAvailableDB(teknisi, base.date, base.time, base.service, units);
+        if (!dbCheck.ok) {
+          showNotif(`⚠️ Tim ${i + 1}: ${teknisi} bentrok jadwal → dibuat PENDING (assign ulang di Planning Order)`);
+          teknisi = null; helper = null; status = "PENDING";
+        }
+      }
+
+      const order = {
+        id,
+        customer: base.customer, phone: base.phone ? normalizePhone(base.phone) : null,
+        address: base.address || "", area: base.area || "",
+        service: base.service, type: base.type || base.service, units,
+        teknisi, helper,
+        date: base.date, time: base.time || "09:00", time_end: timeEnd, status,
+        dispatch: false, source: "maintenance",
+        job_group_id: groupId, is_team_split: true,
+        maintenance_client_id: base.maintenance_client_id || null,
+        maintenance_unit_ids: t.unitIds,
+        notes: [base.notes, `Tim ${i + 1}/${valid.length}`].filter(Boolean).join(" · "),
+      };
+
+      const { error } = await insertOrder(supabase, order);
+      if (error) { showNotif(`❌ Tim ${i + 1} gagal disimpan: ${error.message}`); continue; }
+      created.push(order);
+
+      // Gerbang atomik anti double-book (sama pola createOrder). Kalah race → turunkan PENDING.
+      if (teknisi && base.time && timeEnd) {
+        try {
+          const { data: claimOk } = await supabase.rpc("try_claim_teknisi_slot", {
+            p_teknisi: teknisi, p_date: base.date, p_order_id: id,
+            p_start: base.time, p_end: timeEnd,
+          });
+          if (claimOk === false) {
+            await supabase.from("orders").update({ teknisi: null, helper: null, status: "PENDING" }).eq("id", id);
+            order.teknisi = null; order.helper = null; order.status = "PENDING";
+            showNotif(`🚫 Tim ${i + 1}: ${teknisi} slot baru saja terisi → jadi PENDING`);
+          }
+        } catch (e) { console.warn("team-split claim slot:", e.message); }
+      }
+    }
+
+    if (!created.length) return null;
+    invalidateCache("orders");
+    setOrdersData(prev => [...created, ...prev]);
+    addAgentLog("TEAM_SPLIT_CREATED",
+      `Project ${groupId} — ${created.length} tim · ${base.customer} (${valid.reduce((s, t) => s + t.unitIds.length, 0)} unit)`, "SUCCESS");
+    showNotif(`✅ Project dibuat: ${created.length} tim (grup ${groupId}). Cek/assign di Planning Order.`);
+    return groupId;
+  };
+
   // ── Connect ARA Brain dari Supabase ──
   const connectAraBrain = async () => {
     setAraLoading(true);
@@ -6908,7 +6984,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             showNotif={showNotif} showConfirm={showConfirm}
             quotationsData={quotationsData} setQuotationsData={setQuotationsData}
             setOrdersData={setOrdersData}
-            teknisiData={teknisiData} createOrderFn={createOrder}
+            teknisiData={teknisiData} createOrderFn={createOrder} createTeamSplitFn={createTeamSplit}
             supabase={supabase} customersData={customersData}
             priceListData={priceListData} getLocalDate={getLocalDate}
             appSettings={appSettings} sendWAFn={sendWA}
@@ -7692,14 +7768,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       // Multi-hari: jika ini order anak (child) MULTI-DAY, cek apakah parent sudah punya invoice aktif
       // Penting: jangan trigger untuk Complain→Repair (parent_job_id ada tapi is_multi_day=false)
       const isMultiDayChild = !!laporanModal.parent_job_id && laporanModal.is_multi_day === true;
-      const parentInvoice = isMultiDayChild
-        ? invoicesData.find(i => i.job_id === laporanModal.parent_job_id)
+      // Team-split: invoice B2B tunggal per project, di-key ke job_group_id untuk SEMUA
+      // anggota grup (parent & child). Tim mana pun yang diverifikasi duluan membuat invoice;
+      // sisanya menemukan invoice itu via job_id = job_group_id → skip (anti invoice ganda).
+      const isTeamSplit = !!laporanModal.is_team_split && !!laporanModal.job_group_id;
+      const groupKey = isMultiDayChild ? laporanModal.parent_job_id
+        : isTeamSplit ? laporanModal.job_group_id : null;
+      const parentInvoice = groupKey
+        ? invoicesData.find(i => i.job_id === groupKey)
         : null;
-      if (isMultiDayChild && parentInvoice && !["CANCELLED", "PAID"].includes(parentInvoice.status)) {
-        // Invoice parent sudah ada & masih aktif — notif saja, jangan buat invoice baru
-        showNotif(`ℹ️ Laporan hari ke-${laporanModal.day_number || "?"} terkirim. Invoice induk ${parentInvoice.id} sudah ada — minta Admin/Owner update total jika ada tambahan.`);
-        addAgentLog("MULTI_DAY_CHILD_LAPORAN",
-          `Laporan child ${laporanModal.id} (hari ${laporanModal.day_number || "?"}) — invoice parent ${parentInvoice.id} sudah ada, skip buat invoice baru`,
+      if (groupKey && parentInvoice && !["CANCELLED", "PAID"].includes(parentInvoice.status)) {
+        // Invoice grup sudah ada & masih aktif — notif saja, jangan buat invoice baru
+        const label = isMultiDayChild ? `hari ke-${laporanModal.day_number || "?"}` : "tim project";
+        showNotif(`ℹ️ Laporan ${label} terkirim. Invoice grup ${parentInvoice.id} sudah ada — minta Admin/Owner update total jika ada tambahan.`);
+        addAgentLog("GROUP_CHILD_LAPORAN",
+          `Laporan ${laporanModal.id} (${label}) — invoice grup ${parentInvoice.id} sudah ada, skip buat invoice baru`,
           "INFO");
         setLaporanModal(null);
         return;
@@ -7858,9 +7941,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         id: invId,
         // Multi-hari: jika child MULTI-DAY, invoice di-link ke parent (hari pertama)
         // Bukan multi-day (mis. Complain→Repair) → invoice tetap pakai ID order sendiri
+        // Multi-hari → parent_job_id. Team-split → job_group_id (invoice B2B tunggal per
+        // project, keyed ke grup apa pun tim mana yang diverifikasi lebih dulu).
         job_id: (laporanModal.parent_job_id && laporanModal.is_multi_day === true)
           ? laporanModal.parent_job_id
-          : laporanModal.id,
+          : (laporanModal.is_team_split && laporanModal.job_group_id)
+            ? laporanModal.job_group_id
+            : laporanModal.id,
         customer: laporanModal.customer,
         phone: laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
         service: laporanModal.service + (laporanModal.type ? " - " + laporanModal.type : ""),

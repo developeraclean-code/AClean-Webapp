@@ -1,6 +1,13 @@
 import { useEffect, useState, useCallback, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
 
+// Pill styles — didefinisikan di atas karena dirujuk oleh const module-level
+// INV_STATUS_STYLE (TDZ: dev/esbuild eval source-order, beda dari Rollup build).
+const pillGreen = { background: cs.green + "22", color: cs.green, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 };
+const pillGray = { background: cs.muted + "22", color: cs.muted, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 };
+const pillBlue = { background: cs.accent + "22", color: cs.accent, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 };
+const pillYellow = { background: (cs.yellow || "#eab308") + "22", color: cs.yellow || "#eab308", padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 };
+
 const QuotationModal = lazy(() => import("./QuotationModal.jsx"));
 const QuotationPDFModule = lazy(() =>
   Promise.all([
@@ -66,7 +73,7 @@ function daysUntil(dateStr) {
 export default function MaintenanceView({
   currentUser, apiFetch, showNotif, showConfirm,
   quotationsData, setQuotationsData, setOrdersData,
-  teknisiData, createOrderFn,
+  teknisiData, createOrderFn, createTeamSplitFn,
   supabase, customersData, priceListData, getLocalDate,
   appSettings, sendWAFn, uploadQuotationPDFFn,
 }) {
@@ -212,7 +219,7 @@ export default function MaintenanceView({
                 <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
               ))}
             </div>
-            {tab === "unit" && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} />}
+            {tab === "unit" && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
             {tab === "history" && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
             {tab === "svchistory" && <HistoryServiceTab sel={sel} call={call} showNotif={showNotif} />}
             {tab === "stats" && <StatsTab units={units} logs={logs} sel={sel} />}
@@ -289,7 +296,7 @@ function Kpi({ n, l, c }) {
 }
 
 // ─────────── UNITS TAB ───────────
-function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner, apiFetch, supabase, setOrdersData, getLocalDate, teknisiData, createOrderFn }) {
+function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner, apiFetch, supabase, setOrdersData, getLocalDate, teknisiData, createOrderFn, createTeamSplitFn }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("");
   const [edit, setEdit] = useState(null);
@@ -331,11 +338,33 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
 
   const pickedUnits = units.filter(u => picked.has(u.id));
 
-  const createOrder = async ({ date, service, time, notes, teknisi, helper }) => {
+  const createOrder = async ({ date, service, time, notes, teknisi, helper, teamCount, teamAssign }) => {
     if (picked.size === 0) { showNotif("❌ Pilih minimal 1 unit"); return false; }
     const locs = [...new Set(pickedUnits.map(u => u.location).filter(Boolean))];
     const locNote = locs.length ? "Lokasi: " + locs.join(", ") : "";
     const noteStr = [`Maintenance ${sel.name}`, locNote, notes].filter(Boolean).join(" · ");
+
+    // ── Multi-tim (job ramai): 1 project → N sub-order paralel via createTeamSplitFn. ──
+    if (teamCount > 1 && createTeamSplitFn) {
+      const ids = [...picked];
+      // Bagi rata (contiguous chunk) ke tiap tim.
+      const per = Math.ceil(ids.length / teamCount);
+      const teams = Array.from({ length: teamCount }, (_, i) => ({
+        teknisi: teamAssign?.[i]?.teknisi || "",
+        helper:  teamAssign?.[i]?.helper || "",
+        unitIds: ids.slice(i * per, (i + 1) * per),
+      })).filter(t => t.unitIds.length > 0);
+      const base = {
+        customer: sel.name, phone: sel.pic_phone || "", address: sel.address || "", area: sel.area || "",
+        service, type: service, date, time: time || "09:00", notes: noteStr,
+        maintenance_client_id: sel.id,
+      };
+      const groupId = await createTeamSplitFn({ base, teams });
+      if (!groupId) return false;
+      setShowOrderModal(false); setOrderMode(false); setPicked(new Set());
+      return true;
+    }
+
     const baseForm = {
       customer: sel.name,
       phone:    sel.pic_phone || "",
@@ -469,12 +498,22 @@ function CreateOrderModal({ sel, pickedUnits, today, teknisiData, onClose, onCre
   const [notes, setNotes] = useState("");
   const [teknisi, setTeknisi] = useState("");
   const [helper, setHelper] = useState("");
+  const [teamCount, setTeamCount] = useState(1);
+  const [teamAssign, setTeamAssign] = useState([]); // [{teknisi, helper}] per tim
   const [busy, setBusy] = useState(false);
   const teknisiOpts = (teknisiData || []).filter(t => t.role === "Teknisi" || t.role === "Helper");
+  const multi = teamCount > 1;
+  const setTA = (i, key, val) => setTeamAssign(prev => {
+    const n = prev.slice();
+    n[i] = { ...(n[i] || {}), [key]: val };
+    return n;
+  });
+  // Pratinjau pembagian unit per tim (contiguous chunk, sama dgn createOrder).
+  const per = multi ? Math.ceil(pickedUnits.length / teamCount) : pickedUnits.length;
   const submit = async () => {
     if (!date) return;
     setBusy(true);
-    await onCreate({ date, service, time, notes, teknisi, helper });
+    await onCreate({ date, service, time, notes, teknisi, helper, teamCount, teamAssign });
     setBusy(false);
   };
   return (
@@ -501,31 +540,76 @@ function CreateOrderModal({ sel, pickedUnits, today, teknisiData, onClose, onCre
             {["Cleaning", "Repair", "Install", "Maintenance"].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </Field>
-        <Field l="Teknisi (opsional)">
-          <select value={teknisi} onChange={e => setTeknisi(e.target.value)} style={inp}>
-            <option value="">— Assign nanti di Planning Order —</option>
-            {teknisiOpts.map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
+        <Field l="Jumlah Tim">
+          <select value={teamCount} onChange={e => setTeamCount(parseInt(e.target.value))} style={inp}>
+            {[1, 2, 3, 4].map(n => (
+              <option key={n} value={n} disabled={n > pickedUnits.length}>
+                {n === 1 ? "1 tim (1 order)" : `${n} tim paralel (~${Math.ceil(pickedUnits.length / n)} unit/tim)`}
+              </option>
+            ))}
           </select>
         </Field>
-        {teknisi && (
-          <Field l="Helper (opsional)">
-            <select value={helper} onChange={e => setHelper(e.target.value)} style={inp}>
-              <option value="">— Tanpa helper —</option>
-              {teknisiOpts.filter(t => t.name !== teknisi).map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
-            </select>
-          </Field>
+
+        {!multi && (
+          <>
+            <Field l="Teknisi (opsional)">
+              <select value={teknisi} onChange={e => setTeknisi(e.target.value)} style={inp}>
+                <option value="">— Assign nanti di Planning Order —</option>
+                {teknisiOpts.map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
+              </select>
+            </Field>
+            {teknisi && (
+              <Field l="Helper (opsional)">
+                <select value={helper} onChange={e => setHelper(e.target.value)} style={inp}>
+                  <option value="">— Tanpa helper —</option>
+                  {teknisiOpts.filter(t => t.name !== teknisi).map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
+                </select>
+              </Field>
+            )}
+          </>
         )}
+
+        {multi && (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8 }}>
+              {pickedUnits.length} unit dibagi rata ke {teamCount} tim (~{per} unit/tim). Tiap tim = 1 sub-order & 1 laporan sendiri.
+            </div>
+            {Array.from({ length: teamCount }, (_, i) => {
+              const cnt = pickedUnits.slice(i * per, (i + 1) * per).length;
+              if (cnt === 0) return null;
+              const tk = teamAssign[i]?.teknisi || "";
+              return (
+                <div key={i} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.green, marginBottom: 6 }}>Tim {i + 1} · {cnt} unit</div>
+                  <select value={tk} onChange={e => setTA(i, "teknisi", e.target.value)} style={{ ...inp, marginBottom: 6 }}>
+                    <option value="">— Teknisi (assign nanti) —</option>
+                    {teknisiOpts.map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
+                  </select>
+                  {tk && (
+                    <select value={teamAssign[i]?.helper || ""} onChange={e => setTA(i, "helper", e.target.value)} style={inp}>
+                      <option value="">— Tanpa helper —</option>
+                      {teknisiOpts.filter(t => t.name !== tk).map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
+                    </select>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <Field l="Catatan (opsional)"><input value={notes} onChange={e => setNotes(e.target.value)} style={inp} placeholder="cth: bawa tangga, akses lewat lobby" /></Field>
         <div style={{ fontSize: 11, color: cs.muted, marginTop: 6 }}>
-          {teknisi
-            ? `⚡ Order langsung CONFIRMED ke ${teknisi}. Sistem cek bentrok jadwal otomatis.`
-            : "ℹ️ Tanpa teknisi → order PENDING, assign nanti di Planning Order."}
+          {multi
+            ? `🏢 ${teamCount} sub-order paralel dibuat. Tim dgn teknisi → CONFIRMED (cek bentrok otomatis); kosong → PENDING.`
+            : teknisi
+              ? `⚡ Order langsung CONFIRMED ke ${teknisi}. Sistem cek bentrok jadwal otomatis.`
+              : "ℹ️ Tanpa teknisi → order PENDING, assign nanti di Planning Order."}
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
           <button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Batal</button>
           <button onClick={submit} disabled={busy || !date}
             style={{ ...btn, flex: 2, background: cs.green, opacity: busy || !date ? 0.6 : 1, cursor: busy || !date ? "not-allowed" : "pointer" }}>
-            {busy ? "Proses…" : teknisi ? `✅ Buat & Tugaskan ke ${teknisi.split(" ")[0]}` : "✅ Buat Order → Planning Order"}
+            {busy ? "Proses…" : multi ? `✅ Buat ${teamCount} Sub-Order Tim` : teknisi ? `✅ Buat & Tugaskan ke ${teknisi.split(" ")[0]}` : "✅ Buat Order → Planning Order"}
           </button>
         </div>
       </div>
@@ -1563,7 +1647,3 @@ const tabBtn = { background: cs.card, border: "1px solid " + cs.border, color: c
 const tabActive = { ...tabBtn, color: cs.accent, borderColor: cs.accent };
 const th = { textAlign: "left", padding: "9px 10px", borderBottom: "1px solid " + cs.border, color: cs.muted, fontSize: 11, textTransform: "uppercase", whiteSpace: "nowrap" };
 const td = { padding: "9px 10px", borderBottom: "1px solid " + cs.border, color: cs.text };
-const pillGreen = { background: cs.green + "22", color: cs.green, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 };
-const pillGray = { background: cs.muted + "22", color: cs.muted, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 };
-const pillBlue = { background: cs.accent + "22", color: cs.accent, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 };
-const pillYellow = { background: (cs.yellow || "#eab308") + "22", color: cs.yellow || "#eab308", padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 };

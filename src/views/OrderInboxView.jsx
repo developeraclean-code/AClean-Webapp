@@ -2131,6 +2131,13 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                           {(o.parent_job_id && o.is_multi_day) ? `🔗 Lanjutan Hari ${o.day_number || "?"}` : "📋 Multi-Hari"}
                         </div>
                       )}
+                      {o.is_team_split && o.job_group_id && (
+                        <div style={{ fontSize: 10, color: "#0ea5e9", fontWeight: 700, marginTop: 2 }}>
+                          {o.id === o.job_group_id
+                            ? `🏢 Project (${ordersData.filter(c => c.job_group_id === o.job_group_id).length} tim)`
+                            : "🏢 Tim project"}
+                        </div>
+                      )}
                     </td>
 
                     {/* Customer */}
@@ -2211,6 +2218,13 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                       {o.is_multi_day && (
                         <div style={{ fontSize: 10, color: "#f97316", fontWeight: 700, marginBottom: 4 }}>
                           {(o.parent_job_id && o.is_multi_day) ? `🔗 Hari ${o.day_number || "?"}` : `📋 Induk (${ordersData.filter(c => c.parent_job_id === o.id && c.is_multi_day).length + 1} hari)`}
+                        </div>
+                      )}
+                      {o.is_team_split && o.job_group_id && (
+                        <div style={{ fontSize: 10, color: "#0ea5e9", fontWeight: 700, marginBottom: 4 }}>
+                          {o.id === o.job_group_id
+                            ? `🏢 Project ${ordersData.filter(c => c.job_group_id === o.job_group_id).length} tim`
+                            : "🏢 Tim project"}
                         </div>
                       )}
                       <button onClick={() => handleEdit(o)}
