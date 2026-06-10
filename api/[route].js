@@ -15,6 +15,11 @@ const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-ll
 // ── Reporter: wrap critical write fetch(...) supaya silent fail (ngga sampai DB) tetap ke-track di Sentry. ──
 // Bug 3 Juni style: regex extract OK tapi INSERT silent-fail → biaya hilang.
 // Pakai: criticalFetch("expense_insert", url, opts, { sender, date, amount, ... })
+// Lightweight helper utk fire-and-forget catch yang tetap ke-track di Sentry
+const sentryCatch = (op, extra) => (e) => {
+  try { Sentry.captureException(e, { tags: { op }, extra: extra || {} }); } catch (_) {}
+};
+
 async function criticalFetch(op, url, opts, ctx = {}) {
   try {
     const r = await fetch(url, opts);
@@ -1895,7 +1900,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                             metadata: { phone: sender, image_url: savedImageUrl, amount: classified.amount, invoice_id: matchedInvoiceId },
                             time: new Date().toISOString(),
                           })
-                        }).catch(() => {});
+                        }).catch(sentryCatch("agent_log_pay_suggest_fail", { phone: sender, invoice_id: matchedInvoiceId }));
                         // Alert owner kalau bukti ada tapi gagal disimpan — biar tidak hilang
                         if (FT && OP && savedImageUrl) {
                           fetch("https://api.fonnte.com/send", {
@@ -3481,7 +3486,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                 metadata: { order_id: order.id, client_id: clientId, service: order.service },
                 time: new Date().toISOString(),
               }),
-            }).catch(() => {});
+            }).catch(sentryCatch("agent_log_maintenance_select", { order_id: order.id, client_id: clientId }));
             return res.status(200).json({ skipped: true, reason: "servis non-cleaning — admin pilih unit dulu", client_linked: clientId });
           }
 
@@ -3563,7 +3568,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
                   metadata: { order_id: order.id, client_id: clientId, issues },
                   time: new Date().toISOString(),
                 }),
-              }).catch(() => {});
+              }).catch(sentryCatch("agent_log_maintenance_review", { order_id: order.id, client_id: clientId }));
             }
           } catch (_) {}
 

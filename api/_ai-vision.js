@@ -4,6 +4,12 @@
 // sesuai intent yang dideteksi.
 
 import { expenseDuplicateExists } from "./_expense-dedup.js";
+import * as Sentry from "@sentry/node";
+
+// Helper: ganti `.catch(() => {})` agar exception ke-track di Sentry
+const sentryCatch = (op, extra) => (e) => {
+  try { Sentry.captureException(e, { tags: { op }, extra: extra || {} }); } catch (_) {}
+};
 
 const ANTHROPIC_MODEL = "claude-haiku-4-5";
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
@@ -128,7 +134,7 @@ export async function classifyImage({ imageUrl, imageBase64, mimeType, groupCfg,
         user_name: sender?.name || null,
         metadata: { group_id: groupCfg?.group_id, ...extra },
       }),
-    }).catch(() => {});
+    }).catch(sentryCatch("ai_usage_log", { feature: "wa-group-vision" }));
   };
 
   const text = response?.content?.[0]?.text || "";
@@ -272,7 +278,7 @@ export async function persistClassification({ SU, SK, classification, sender, gr
           method: "PATCH",
           headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
           body: JSON.stringify({ linked_table: "expenses", linked_id: String(expenseId) }),
-        }).catch(() => {});
+        }).catch(sentryCatch("ai_extract_link_expense", { extractionId, expenseId }));
       }
     }
   }
@@ -310,7 +316,7 @@ export async function persistClassification({ SU, SK, classification, sender, gr
           method: "PATCH",
           headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
           body: JSON.stringify({ linked_table: "payment_suggestions", linked_id: String(paymentSuggestionId) }),
-        }).catch(() => {});
+        }).catch(sentryCatch("ai_extract_link_payment", { extractionId, paymentSuggestionId }));
       }
     }
   }
@@ -389,7 +395,7 @@ export async function persistClassification({ SU, SK, classification, sender, gr
             _candidates: { carrier_jobs: carrierJobs, sender_jobs: senderJobs, carrier_hint: carrierHintMatched || carrierHintName },
           },
         }),
-      }).catch(() => {});
+      }).catch(sentryCatch("ai_extract_material_observation", { extractionId }));
     }
   }
 

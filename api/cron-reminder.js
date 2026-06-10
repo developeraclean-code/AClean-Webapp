@@ -677,7 +677,9 @@ async function taskWaBackfill(opts = {}) {
                 description: `Kasbon ${mr.matched.name} (via WA Finance grup, dari ${profileName}) [BACKFILL]`,
                 created_by: "wa_group_kasbon", validation_status: "PENDING_AI",
               }),
-            }).catch(() => {});
+            }).catch(e => {
+              try { Sentry.captureException(e, { tags: { op: "backfill_kasbon_multi_insert" }, extra: { teknisi: mr.matched.name, amount: it.amount, date } }); } catch (_) {}
+            });
             counters.kasbon_multi_inserted++;
           }
         } else if (k.nameRaw) {
@@ -694,7 +696,9 @@ async function taskWaBackfill(opts = {}) {
               description: `Kasbon ${mr.matched.name} (via WA Finance grup, dari ${profileName}) [BACKFILL]`,
               created_by: "wa_group_kasbon", validation_status: "PENDING_AI",
             }),
-          }).catch(() => {});
+          }).catch(e => {
+            try { Sentry.captureException(e, { tags: { op: "backfill_kasbon_single_insert" }, extra: { teknisi: mr.matched.name, amount: k.amount, date } }); } catch (_) {}
+          });
           counters.kasbon_single_inserted++;
         }
       }
@@ -1739,7 +1743,10 @@ async function taskPayrollWA() {
   }
 
   // Auto-update PENDING → ELIGIBLE bonuses yang sudah >30 hari
-  await sb.rpc("fn_auto_eligible_bonuses").catch(() => {});
+  await sb.rpc("fn_auto_eligible_bonuses").catch(e => {
+    try { Sentry.captureException(e, { tags: { op: "fn_auto_eligible_bonuses" } }); } catch (_) {}
+    console.error("[PAYROLL_WA] fn_auto_eligible_bonuses fail:", e.message);
+  });
 
   await log("PAYROLL_WA", `Sent=${sent} Failed=${failed} period=${periodStart}`, sent > 0 ? "SUCCESS" : "WARN");
   return { sent, failed, period: periodStart };
