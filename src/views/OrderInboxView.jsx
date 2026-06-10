@@ -1595,7 +1595,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // ── Inbox list — hanya today + ke depan; bila gridDate aktif, filter ke hari itu ──
   const inboxOrders = useMemo(() => {
+    // Jaring pengaman: pastikan tiap order id unik (cegah tampil dobel apa pun sumbernya).
+    const _seen = new Set();
     let list = ordersData.filter(o => {
+      if (o && o.id) { if (_seen.has(o.id)) return false; _seen.add(o.id); }
+      return true;
+    }).filter(o => {
       if (!o.date) return false;
       if (gridDate) return o.date === gridDate;                  // filter ke hari yang diklik di Time Grid
       if (o.date < TODAY) return false;                          // buang masa lalu
@@ -2134,7 +2139,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                       {o.is_team_split && o.job_group_id && (
                         <div style={{ fontSize: 10, color: "#0ea5e9", fontWeight: 700, marginTop: 2 }}>
                           {o.id === o.job_group_id
-                            ? `🏢 Project (${ordersData.filter(c => c.job_group_id === o.job_group_id).length} tim)`
+                            ? `🏢 Project (${new Set(ordersData.filter(c => c.job_group_id === o.job_group_id).map(c => c.id)).size} tim)`
                             : "🏢 Tim project"}
                         </div>
                       )}
@@ -2223,7 +2228,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                       {o.is_team_split && o.job_group_id && (
                         <div style={{ fontSize: 10, color: "#0ea5e9", fontWeight: 700, marginBottom: 4 }}>
                           {o.id === o.job_group_id
-                            ? `🏢 Project ${ordersData.filter(c => c.job_group_id === o.job_group_id).length} tim`
+                            ? `🏢 Project ${new Set(ordersData.filter(c => c.job_group_id === o.job_group_id).map(c => c.id)).size} tim`
                             : "🏢 Tim project"}
                         </div>
                       )}
