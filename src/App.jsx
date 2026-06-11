@@ -3954,12 +3954,23 @@ ${photoPageHTML}
   const jasaSvcNames = ["Cleaning /", "Install /", "Repair /", "Complain /", "Jasa ", "Pemasangan ", "Bongkar ", "Vacum ", "Flaring", "Flushing"];
 
   const parseMD = (md) => {
-    if (!md) return [];
-    if (Array.isArray(md)) return md;
-    if (typeof md === "string" && md) {
-      try { return JSON.parse(md); } catch (e) { return []; }
+    let arr = [];
+    if (Array.isArray(md)) arr = md;
+    else if (typeof md === "string" && md) {
+      try { arr = JSON.parse(md); } catch (e) { arr = []; }
     }
-    return [];
+    if (!Array.isArray(arr) || arr.length === 0) return [];
+    // Dedup item transport bernama sama (mis. "Biaya Transport Bila 1 Unit") — item ini
+    // selalu tunggal per invoice; cegah double tagih dari data warisan / state in-memory.
+    // Transport dengan nama BERBEDA tetap dipertahankan; edit/hapus manual tidak terganggu.
+    const seenTransport = new Set();
+    return arr.filter(m => {
+      const n = (m?.nama || "").toLowerCase().trim();
+      if (!n.includes("transport")) return true;
+      if (seenTransport.has(n)) return false;
+      seenTransport.add(n);
+      return true;
+    });
   };
 
   // Helper: normalize invoice untuk payload event
