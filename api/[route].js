@@ -209,8 +209,11 @@ export default async function handler(req, res) {
 
       let fonnteRes;
       let attachmentFellBack = false; // true jika attachment gagal → dikirim sbg teks+link
+      let attachDebug = null;         // diagnostik: kenapa attachment gagal (utk Sentry)
+      let attachFname = null;
       if (hasAttachment) {
         const fname = b.filename || "dokumen.pdf";
+        attachFname = fname;
         const mime = /\.pdf(\?|$)/i.test(fname) ? "application/pdf"
           : /\.png(\?|$)/i.test(fname) ? "image/png"
           : /\.(jpe?g)(\?|$)/i.test(fname) ? "image/jpeg" : "application/octet-stream";
@@ -218,15 +221,21 @@ export default async function handler(req, res) {
         // Ambil bytes dari proxy internal (andal — selalu balas PDF asli), lalu upload binernya.
         // r2.dev di-skip sbg sumber bytes: rate-limit & cert kadang bermasalah → tidak reliable.
         const fileBuf = await fetchFileBytes([b.url]);
-        if (fileBuf) {
+        if (!fileBuf) {
+          attachDebug = "FETCH_BYTES_FAILED";
+        } else {
           fonnteRes = await fonnteSendFile(fileBuf, fname, mime);
+          if (!fonnteRes) attachDebug = `UPLOAD_FAILED bytes=${fileBuf.length} mime=${mime}`;
         }
       }
 
       // Tanpa attachment, ATAU attachment gagal total (throw/timeout) → kirim teks.
       // Jika attachment yang gagal, sertakan link PDF agar customer tetap bisa akses dokumennya.
       if (!fonnteRes) {
-        if (hasAttachment) attachmentFellBack = true;
+        if (hasAttachment) {
+          attachmentFellBack = true;
+          try { Sentry.captureMessage(`[SENDWA_ATTACH_FALLBACK_A] cause=${attachDebug} file=${attachFname}`, "warning"); } catch (_) {}
+        }
         const textMsg = hasAttachment ? (msg + "\n\n📄 " + b.url) : msg;
         fonnteRes = await fonnteSend({ target, message: textMsg, delay: "2", countryCode: "62" });
       }
@@ -243,6 +252,7 @@ export default async function handler(req, res) {
       if (hasAttachment && !attachmentFellBack && (!fonnteRes.ok || d.status === false)) {
         const reason = d.reason || JSON.stringify(d);
         console.warn("[send-wa] Attachment REJECTED:", reason);
+        try { Sentry.captureMessage(`[SENDWA_ATTACH_REJECTED] http=${fonnteRes.status} reason=${reason} file=${attachFname}`, "warning"); } catch (_) {}
         const msgWithLink = msg + "\n\n📄 " + b.url;
         const fallbackRes = await fonnteSend({ target, message: msgWithLink, delay: "2", countryCode: "62" }, { retries: 0 });
         if (!fallbackRes) {
@@ -253,6 +263,9 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, target, withAttachment: false, fallback: true, fallbackReason: reason });
       }
       if (!fonnteRes.ok || d.status === false) return res.status(502).json({ success: false, error: d.reason || "Fonnte error" });
+      if (hasAttachment && !attachmentFellBack) {
+        try { Sentry.captureMessage(`[SENDWA_ATTACH_OK] http=${fonnteRes.status} body=${JSON.stringify(d).slice(0, 200)} file=${attachFname}`, "info"); } catch (_) {}
+      }
       return res.status(200).json({ success: true, target, withAttachment: hasAttachment && !attachmentFellBack, fallback: attachmentFellBack });
     }
 
