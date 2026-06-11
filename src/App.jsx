@@ -9850,26 +9850,30 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     padding: "10px", background: cs.surface, border: "1px solid " + cs.border,
                     borderRadius: 10, color: cs.text, cursor: "pointer", fontWeight: 600
                   }}>Batal</button>
-                <button onClick={() => {
+                <button onClick={async () => {
                   const p = editPwdForm.newPwd.trim();
                   const c = editPwdForm.confirmPwd.trim();
                   if (!p || p.length < 8) { showNotif("⚠️ Password minimal 8 karakter"); return; }
                   if (p !== c) { showNotif("⚠️ Password tidak cocok"); return; }
-                  // Update di userAccounts state
-                  setUserAccounts(prev => prev.map(u => u.id === editPwdTarget.id ? { ...u, password: p } : u));
-                  // Jika user punya UUID Supabase → update di DB juga
+                  // Password login = Supabase Auth (auth.users), BUKAN kolom user_profiles.password.
+                  // Wajib lewat /api/manage-user reset-password → admin.updateUserById, kalau tidak
+                  // password lama tetap bisa login & password baru tidak pernah aktif.
                   const isUUID = /^[0-9a-f-]{36}$/.test(String(editPwdTarget.id || "").toLowerCase());
-                  if (isUUID) {
-                    supabase.from("user_profiles").update({ password: p }).eq("id", editPwdTarget.id)
-                      .then(({ error }) => {
-                        if (!error) addAgentLog("PWD_CHANGED", `Password ${editPwdTarget.name} diubah oleh Owner`, "SUCCESS");
-                        else showNotif("✅ Tersimpan lokal. DB sync: " + error.message);
-                      });
-                  } else {
-                    addAgentLog("PWD_CHANGED", `Password ${editPwdTarget.name} diubah (lokal)`, "SUCCESS");
+                  if (!isUUID) { showNotif("⚠️ User ini tidak punya akun Supabase Auth — password tidak bisa diubah"); return; }
+                  try {
+                    const res = await fetch("/api/manage-user", {
+                      method: "POST",
+                      headers: await _apiHeaders(),
+                      body: JSON.stringify({ action: "reset-password", userId: editPwdTarget.id, password: p, callerRole: currentUser?.role || "" })
+                    });
+                    const result = await res.json();
+                    if (!res.ok || result.error) { showNotif("❌ Gagal ubah password: " + (result.error || res.status)); return; }
+                    addAgentLog("PWD_CHANGED", `Password ${editPwdTarget.name} diubah oleh Owner`, "SUCCESS");
+                    showNotif("✅ Password " + editPwdTarget.name + " berhasil diubah");
+                    setModalEditPwd(false); setEditPwdTarget(null);
+                  } catch (err) {
+                    showNotif("❌ Gagal ubah password: " + (err.message || err));
                   }
-                  showNotif("✅ Password " + editPwdTarget.name + " berhasil diubah");
-                  setModalEditPwd(false); setEditPwdTarget(null);
                 }} style={{
                   padding: "10px", background: "linear-gradient(135deg,#f59e0b,#f97316)",
                   border: "none", borderRadius: 10, color: "#fff", cursor: "pointer", fontWeight: 700
