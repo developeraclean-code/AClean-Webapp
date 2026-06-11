@@ -162,86 +162,24 @@ export default async function handler(req, res) {
         return null;
       };
 
-      // ── Helper: ambil bytes file dari proxy internal (andal — selalu balas PDF asli) ──
-      const fetchFileBytes = async (url, timeoutMs = 12000) => {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-        try {
-          const fr = await fetch(url, { signal: ctrl.signal });
-          clearTimeout(timer);
-          if (!fr.ok) { console.warn("[send-wa] Ambil file non-OK:", fr.status); return null; }
-          const buf = Buffer.from(await fr.arrayBuffer());
-          console.log("[send-wa] File diambil:", buf.length, "bytes");
-          return buf;
-        } catch (e) {
-          clearTimeout(timer);
-          console.warn("[send-wa] Ambil file gagal:", e.name === "AbortError" ? `timeout ${timeoutMs}ms` : e.message);
-          return null;
-        }
-      };
-
-      // ── Helper: UPLOAD biner ke Fonnte sbg multipart MANUAL (Buffer + Content-Length eksplisit) ──
-      // FormData/Blob via undici dikirim chunked TANPA Content-Length → Fonnte HANG (terbukti
-      // timeout 40s walau file cuma 372KB). Body dirakit manual jadi 1 Buffer + Content-Length →
-      // request well-formed, Fonnte langsung terima file. PDF MURNI terkirim (bukan URL/link).
-      let uploadErrInfo = null;
-      const fonnteSendFile = async (fileBuf, fname, mime, timeoutMs = 30000) => {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-        try {
-          const boundary = "----AcleanBoundary" + Date.now().toString(16);
-          const safeName = String(fname).replace(/[\r\n"]/g, "");
-          const head = Buffer.from(
-            `--${boundary}\r\nContent-Disposition: form-data; name="target"\r\n\r\n${target}\r\n` +
-            `--${boundary}\r\nContent-Disposition: form-data; name="message"\r\n\r\n${msg}\r\n` +
-            `--${boundary}\r\nContent-Disposition: form-data; name="countryCode"\r\n\r\n62\r\n` +
-            `--${boundary}\r\nContent-Disposition: form-data; name="delay"\r\n\r\n2\r\n` +
-            `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
-            `Content-Type: ${mime}\r\n\r\n`,
-            "utf8"
-          );
-          const tail = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
-          const body = Buffer.concat([head, fileBuf, tail]);
-          // Body = Buffer (Uint8Array) → undici set Content-Length OTOMATIS (bukan chunked, tdk hang).
-          // JANGAN set Content-Length manual: itu "forbidden header" → undici lempar "fetch failed".
-          const r = await fetch("https://api.fonnte.com/send", {
-            method: "POST",
-            headers: {
-              "Authorization": FT,
-              "Content-Type": `multipart/form-data; boundary=${boundary}`,
-            },
-            body,
-            signal: ctrl.signal,
-          });
-          clearTimeout(timer);
-          return r;
-        } catch (e) {
-          clearTimeout(timer);
-          const cause = e.cause ? ` cause=${e.cause.code || e.cause.message || e.cause}` : "";
-          uploadErrInfo = e.name === "AbortError" ? `timeout_${timeoutMs}ms` : `${e.name}:${e.message}${cause}`;
-          console.warn("[send-wa] Fonnte upload biner gagal:", uploadErrInfo);
-          return null;
-        }
-      };
-
       let fonnteRes;
       let attachmentFellBack = false; // true jika attachment gagal → dikirim sbg teks+link
       let attachDebug = null;         // diagnostik: kenapa attachment gagal (utk Sentry)
       let attachFname = null;
       if (hasAttachment) {
+        const directUrl = resolveDirectUrl(b.url);
         const fname = b.filename || "dokumen.pdf";
         attachFname = fname;
-        const mime = /\.pdf(\?|$)/i.test(fname) ? "application/pdf"
-          : /\.png(\?|$)/i.test(fname) ? "image/png"
-          : /\.(jpe?g)(\?|$)/i.test(fname) ? "image/jpeg" : "application/octet-stream";
-        console.log("[send-wa] Attachment multipart MANUAL, source:", b.url, "filename:", fname);
-        const fileBuf = await fetchFileBytes(b.url);
-        if (!fileBuf) {
-          attachDebug = "FETCH_BYTES_FAILED";
-        } else {
-          fonnteRes = await fonnteSendFile(fileBuf, fname, mime);
-          if (!fonnteRes) attachDebug = `UPLOAD_FAILED bytes=${fileBuf.length} err=${uploadErrInfo}`;
-        }
+        // Kirim parameter "url" → Fonnte fetch file sendiri & menempelkannya sbg DOKUMEN PDF asli
+        // (bukan teks-link). Upload biner langsung DITOLAK Fonnte (ECONNRESET), jadi metode url ini
+        // satu-satunya yg menghasilkan file PDF di WA. PDF report sudah di-downscale kecil di klien
+        // → Fonnte fetch cepat & andal. Gagal fetch → fallback teks+link (jaring pengaman).
+        console.log("[send-wa] Sending URL attachment:", directUrl, "filename:", fname);
+        fonnteRes = await fonnteSend(
+          { target, message: msg, url: directUrl, filename: fname, delay: "2", countryCode: "62" },
+          { retries: 1, timeoutMs: 20000 }
+        );
+        if (!fonnteRes) attachDebug = "URL_SEND_TIMEOUT_OR_THROW";
       }
 
       // Tanpa attachment, ATAU attachment gagal total (throw/timeout) → kirim teks.
