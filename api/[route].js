@@ -135,34 +135,52 @@ export default async function handler(req, res) {
         return proxyUrl;
       };
 
+      // ── Helper: POST ke Fonnte dengan timeout eksplisit + retry ──
+      // FONNTE_UNREACHABLE selama ini intermittent (fetch throw / koneksi reset saat
+      // Fonnte men-download attachment lewat proxy). AbortController membatasi durasi
+      // per attempt; retry menutup kegagalan sesaat. Budget total dijaga < maxDuration 30s.
+      const fonnteSend = async (payload, { retries = 1, timeoutMs = 9000 } = {}) => {
+        for (let attempt = 0; attempt <= retries; attempt++) {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+          try {
+            const r = await fetch("https://api.fonnte.com/send", {
+              method: "POST",
+              headers: { "Authorization": FT, "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+              signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+            return r;
+          } catch (fetchErr) {
+            clearTimeout(timer);
+            const why = fetchErr.name === "AbortError" ? `timeout ${timeoutMs}ms` : fetchErr.message;
+            console.warn(`[send-wa] Fonnte fetch gagal (attempt ${attempt + 1}/${retries + 1}):`, why);
+            if (attempt < retries) await new Promise(r => setTimeout(r, 800));
+          }
+        }
+        return null;
+      };
+
       let fonnteRes;
+      let attachmentFellBack = false; // true jika attachment gagal → dikirim sbg teks+link
       if (hasAttachment) {
         const directUrl = resolveDirectUrl(b.url);
         const fname = b.filename || "dokumen.pdf";
         console.log("[send-wa] Sending URL attachment:", directUrl, "filename:", fname);
-        try {
-          fonnteRes = await fetch("https://api.fonnte.com/send", {
-            method: "POST",
-            headers: { "Authorization": FT, "Content-Type": "application/json" },
-            body: JSON.stringify({ target, message: msg, url: directUrl, filename: fname, delay: "2", countryCode: "62" })
-          });
-        } catch (fetchErr) {
-          console.warn("[send-wa] Gagal kirim URL ke Fonnte:", fetchErr.message);
-          fonnteRes = null;
-        }
+        // Single attempt, timeout lebih panjang — Fonnte butuh waktu men-download PDF.
+        fonnteRes = await fonnteSend(
+          { target, message: msg, url: directUrl, filename: fname, delay: "2", countryCode: "62" },
+          { retries: 0, timeoutMs: 16000 }
+        );
       }
 
-      if (!hasAttachment || !fonnteRes) {
-        try {
-          fonnteRes = await fetch("https://api.fonnte.com/send", {
-            method: "POST",
-            headers: { "Authorization": FT, "Content-Type": "application/json" },
-            body: JSON.stringify({ target, message: msg, delay: "2", countryCode: "62" })
-          });
-        } catch (fetchErr) {
-          console.warn("[send-wa] Gagal hubungi Fonnte:", fetchErr.message);
-          fonnteRes = null;
-        }
+      // Tanpa attachment, ATAU attachment gagal total (throw/timeout) → kirim teks.
+      // Jika attachment yang gagal, sertakan link PDF agar customer tetap bisa akses dokumennya.
+      if (!fonnteRes) {
+        if (hasAttachment) attachmentFellBack = true;
+        const textMsg = hasAttachment ? (msg + "\n\n📄 " + b.url) : msg;
+        fonnteRes = await fonnteSend({ target, message: textMsg, delay: "2", countryCode: "62" });
       }
 
       // Tidak bisa hubungi Fonnte sama sekali (server down/timeout) — jangan lempar 500 generik
@@ -171,22 +189,15 @@ export default async function handler(req, res) {
       }
 
       const d = await fonnteRes.json().catch(() => ({}));
-      console.log("[send-wa] Fonnte response:", JSON.stringify({ status: fonnteRes.status, body: d, hasAttachment }));
+      console.log("[send-wa] Fonnte response:", JSON.stringify({ status: fonnteRes.status, body: d, hasAttachment, attachmentFellBack }));
 
-      // Jika attachment gagal, fallback: teks + link
-      if (hasAttachment && (!fonnteRes.ok || d.status === false)) {
+      // Attachment terkirim ke Fonnte tapi DITOLAK (Fonnte merespons status false) → fallback teks + link
+      if (hasAttachment && !attachmentFellBack && (!fonnteRes.ok || d.status === false)) {
         const reason = d.reason || JSON.stringify(d);
         console.warn("[send-wa] Attachment REJECTED:", reason);
         const msgWithLink = msg + "\n\n📄 " + b.url;
-        let fallbackRes;
-        try {
-          fallbackRes = await fetch("https://api.fonnte.com/send", {
-            method: "POST",
-            headers: { "Authorization": FT, "Content-Type": "application/json" },
-            body: JSON.stringify({ target, message: msgWithLink, delay: "2", countryCode: "62" })
-          });
-        } catch (fetchErr) {
-          console.warn("[send-wa] Gagal hubungi Fonnte (fallback):", fetchErr.message);
+        const fallbackRes = await fonnteSend({ target, message: msgWithLink, delay: "2", countryCode: "62" }, { retries: 0 });
+        if (!fallbackRes) {
           return res.status(502).json({ success: false, error: "Fonnte tidak bisa dihubungi (server timeout/down). Coba lagi nanti.", detail: "FONNTE_UNREACHABLE" });
         }
         const fd = await fallbackRes.json().catch(() => ({}));
@@ -194,7 +205,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, target, withAttachment: false, fallback: true, fallbackReason: reason });
       }
       if (!fonnteRes.ok || d.status === false) return res.status(502).json({ success: false, error: d.reason || "Fonnte error" });
-      return res.status(200).json({ success: true, target, withAttachment: hasAttachment });
+      return res.status(200).json({ success: true, target, withAttachment: hasAttachment && !attachmentFellBack, fallback: attachmentFellBack });
     }
 
     // ── NOTIFY-ABSENCE (authenticated) — info WA ke Owner saat teknisi/helper Ijin/Sakit ──
