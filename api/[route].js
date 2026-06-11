@@ -163,7 +163,8 @@ export default async function handler(req, res) {
       };
 
       // ── Helper: ambil bytes file dari salah satu URL kandidat (untuk diupload ke Fonnte) ──
-      const fetchFileBytes = async (urls, timeoutMs = 7000) => {
+      // Timeout longgar: proxy /api/foto bisa ~7-10s utk PDF 1MB (Sig V4 + stream R2).
+      const fetchFileBytes = async (urls, timeoutMs = 14000) => {
         for (const src of urls) {
           if (!src) continue;
           const ctrl = new AbortController();
@@ -209,14 +210,14 @@ export default async function handler(req, res) {
       let fonnteRes;
       let attachmentFellBack = false; // true jika attachment gagal → dikirim sbg teks+link
       if (hasAttachment) {
-        const directUrl = resolveDirectUrl(b.url);
         const fname = b.filename || "dokumen.pdf";
         const mime = /\.pdf(\?|$)/i.test(fname) ? "application/pdf"
           : /\.png(\?|$)/i.test(fname) ? "image/png"
           : /\.(jpe?g)(\?|$)/i.test(fname) ? "image/jpeg" : "application/octet-stream";
-        console.log("[send-wa] Attachment multipart, source:", directUrl, "filename:", fname);
-        // Ambil bytes (R2 langsung dulu — cepat dari Vercel; fallback proxy internal), lalu upload binernya.
-        const fileBuf = await fetchFileBytes([directUrl, b.url]);
+        console.log("[send-wa] Attachment multipart, source:", b.url, "filename:", fname);
+        // Ambil bytes dari proxy internal (andal — selalu balas PDF asli), lalu upload binernya.
+        // r2.dev di-skip sbg sumber bytes: rate-limit & cert kadang bermasalah → tidak reliable.
+        const fileBuf = await fetchFileBytes([b.url]);
         if (fileBuf) {
           fonnteRes = await fonnteSendFile(fileBuf, fname, mime);
         }
