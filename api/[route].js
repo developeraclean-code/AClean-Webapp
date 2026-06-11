@@ -186,9 +186,10 @@ export default async function handler(req, res) {
 
       // ── Helper: UPLOAD file biner langsung ke Fonnte (multipart) — Fonnte TIDAK perlu fetch URL ──
       // Hindari ketergantungan Fonnte men-download r2.dev (rate-limit) / proxy lambat → PDF reliable terkirim sbg file.
-      // Timeout 18s: upload PDF ~700KB-1MB ke Fonnte bisa 13-17s (kode lama dulu tanpa timeout). Budget 9s+18s < maxDuration 30s.
+      // Timeout 40s: upload ke Fonnte LAMBAT (~50-70 KB/s) — PDF 1-2MB butuh 20-35s. maxDuration route=60s.
+      // Budget worst: 9s ambil + 40s upload + 9s fallback teks = 58s < 60s.
       let uploadErrInfo = null; // detail kegagalan upload utk diagnostik
-      const fonnteSendFile = async (fileBuf, fname, mime, timeoutMs = 18000) => {
+      const fonnteSendFile = async (fileBuf, fname, mime, timeoutMs = 40000) => {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), timeoutMs);
         try {

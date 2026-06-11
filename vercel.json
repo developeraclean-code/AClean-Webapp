@@ -136,7 +136,7 @@
   ],
   "functions": {
     "api/[route].js": {
-      "maxDuration": 30,
+      "maxDuration": 60,
       "memory": 512
     },
     "api/ara-chat.js": {
