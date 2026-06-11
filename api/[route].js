@@ -202,12 +202,13 @@ export default async function handler(req, res) {
           );
           const tail = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
           const body = Buffer.concat([head, fileBuf, tail]);
+          // Body = Buffer (Uint8Array) → undici set Content-Length OTOMATIS (bukan chunked, tdk hang).
+          // JANGAN set Content-Length manual: itu "forbidden header" → undici lempar "fetch failed".
           const r = await fetch("https://api.fonnte.com/send", {
             method: "POST",
             headers: {
               "Authorization": FT,
               "Content-Type": `multipart/form-data; boundary=${boundary}`,
-              "Content-Length": String(body.length),
             },
             body,
             signal: ctrl.signal,
@@ -216,7 +217,8 @@ export default async function handler(req, res) {
           return r;
         } catch (e) {
           clearTimeout(timer);
-          uploadErrInfo = e.name === "AbortError" ? `timeout_${timeoutMs}ms` : `${e.name}:${e.message}`;
+          const cause = e.cause ? ` cause=${e.cause.code || e.cause.message || e.cause}` : "";
+          uploadErrInfo = e.name === "AbortError" ? `timeout_${timeoutMs}ms` : `${e.name}:${e.message}${cause}`;
           console.warn("[send-wa] Fonnte upload biner gagal:", uploadErrInfo);
           return null;
         }
