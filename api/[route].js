@@ -186,7 +186,9 @@ export default async function handler(req, res) {
 
       // ── Helper: UPLOAD file biner langsung ke Fonnte (multipart) — Fonnte TIDAK perlu fetch URL ──
       // Hindari ketergantungan Fonnte men-download r2.dev (rate-limit) / proxy lambat → PDF reliable terkirim sbg file.
-      const fonnteSendFile = async (fileBuf, fname, mime, timeoutMs = 13000) => {
+      // Timeout 18s: upload PDF ~700KB-1MB ke Fonnte bisa 13-17s (kode lama dulu tanpa timeout). Budget 9s+18s < maxDuration 30s.
+      let uploadErrInfo = null; // detail kegagalan upload utk diagnostik
+      const fonnteSendFile = async (fileBuf, fname, mime, timeoutMs = 18000) => {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), timeoutMs);
         try {
@@ -202,7 +204,8 @@ export default async function handler(req, res) {
           return r;
         } catch (e) {
           clearTimeout(timer);
-          console.warn("[send-wa] Fonnte upload biner gagal:", e.name === "AbortError" ? `timeout ${timeoutMs}ms` : e.message);
+          uploadErrInfo = e.name === "AbortError" ? `timeout_${timeoutMs}ms` : `${e.name}:${e.message}`;
+          console.warn("[send-wa] Fonnte upload biner gagal:", uploadErrInfo);
           return null;
         }
       };
@@ -220,12 +223,12 @@ export default async function handler(req, res) {
         console.log("[send-wa] Attachment multipart, source:", b.url, "filename:", fname);
         // Ambil bytes dari proxy internal (andal — selalu balas PDF asli), lalu upload binernya.
         // r2.dev di-skip sbg sumber bytes: rate-limit & cert kadang bermasalah → tidak reliable.
-        const fileBuf = await fetchFileBytes([b.url]);
+        const fileBuf = await fetchFileBytes([b.url], 9000);
         if (!fileBuf) {
           attachDebug = "FETCH_BYTES_FAILED";
         } else {
           fonnteRes = await fonnteSendFile(fileBuf, fname, mime);
-          if (!fonnteRes) attachDebug = `UPLOAD_FAILED bytes=${fileBuf.length} mime=${mime}`;
+          if (!fonnteRes) attachDebug = `UPLOAD_FAILED bytes=${fileBuf.length} mime=${mime} err=${uploadErrInfo}`;
         }
       }
 
