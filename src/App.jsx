@@ -3288,7 +3288,9 @@ ${photoPageHTML}
 
             if (profile && profile.active !== false) {
               // Override localStorage role dengan server role (prevent tampering)
-              const verified = { ...saved, role: profile.role, name: profile.name };
+              // Strip kolom legacy `password` bila masih terbawa dari localSession lama
+              const { password: _ignorePwd, ...savedSafe } = saved;
+              const verified = { ...savedSafe, role: profile.role, name: profile.name };
               setCurrentUser(verified);
               setIsLoggedIn(true);
               setActiveRole(profile.role.toLowerCase());
@@ -3318,7 +3320,8 @@ ${photoPageHTML}
             return;
           }
           if (profile && profile.active) {
-            setCurrentUser({ ...session.user, ...profile });
+            const { password: _ignorePwd, ...profileSafe } = profile;
+            setCurrentUser({ ...session.user, ...profileSafe });
             setIsLoggedIn(true);
             setActiveRole(profile.role.toLowerCase());
           }
