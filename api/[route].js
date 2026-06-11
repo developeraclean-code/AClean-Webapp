@@ -162,17 +162,64 @@ export default async function handler(req, res) {
         return null;
       };
 
+      // ── Helper: ambil bytes file dari salah satu URL kandidat (untuk diupload ke Fonnte) ──
+      const fetchFileBytes = async (urls, timeoutMs = 7000) => {
+        for (const src of urls) {
+          if (!src) continue;
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+          try {
+            const fr = await fetch(src, { signal: ctrl.signal });
+            clearTimeout(timer);
+            if (!fr.ok) { console.warn("[send-wa] Ambil file non-OK:", fr.status, src); continue; }
+            const buf = Buffer.from(await fr.arrayBuffer());
+            console.log("[send-wa] File diambil:", buf.length, "bytes dari", src);
+            return buf;
+          } catch (e) {
+            clearTimeout(timer);
+            console.warn("[send-wa] Ambil file gagal:", e.name === "AbortError" ? `timeout ${timeoutMs}ms` : e.message, src);
+          }
+        }
+        return null;
+      };
+
+      // ── Helper: UPLOAD file biner langsung ke Fonnte (multipart) — Fonnte TIDAK perlu fetch URL ──
+      // Hindari ketergantungan Fonnte men-download r2.dev (rate-limit) / proxy lambat → PDF reliable terkirim sbg file.
+      const fonnteSendFile = async (fileBuf, fname, mime, timeoutMs = 13000) => {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+        try {
+          const form = new FormData();
+          form.append("target", target);
+          form.append("message", msg);
+          form.append("countryCode", "62");
+          form.append("file", new Blob([fileBuf], { type: mime }), fname);
+          const r = await fetch("https://api.fonnte.com/send", {
+            method: "POST", headers: { "Authorization": FT }, body: form, signal: ctrl.signal,
+          });
+          clearTimeout(timer);
+          return r;
+        } catch (e) {
+          clearTimeout(timer);
+          console.warn("[send-wa] Fonnte upload biner gagal:", e.name === "AbortError" ? `timeout ${timeoutMs}ms` : e.message);
+          return null;
+        }
+      };
+
       let fonnteRes;
       let attachmentFellBack = false; // true jika attachment gagal → dikirim sbg teks+link
       if (hasAttachment) {
         const directUrl = resolveDirectUrl(b.url);
         const fname = b.filename || "dokumen.pdf";
-        console.log("[send-wa] Sending URL attachment:", directUrl, "filename:", fname);
-        // Single attempt, timeout lebih panjang — Fonnte butuh waktu men-download PDF.
-        fonnteRes = await fonnteSend(
-          { target, message: msg, url: directUrl, filename: fname, delay: "2", countryCode: "62" },
-          { retries: 0, timeoutMs: 16000 }
-        );
+        const mime = /\.pdf(\?|$)/i.test(fname) ? "application/pdf"
+          : /\.png(\?|$)/i.test(fname) ? "image/png"
+          : /\.(jpe?g)(\?|$)/i.test(fname) ? "image/jpeg" : "application/octet-stream";
+        console.log("[send-wa] Attachment multipart, source:", directUrl, "filename:", fname);
+        // Ambil bytes (R2 langsung dulu — cepat dari Vercel; fallback proxy internal), lalu upload binernya.
+        const fileBuf = await fetchFileBytes([directUrl, b.url]);
+        if (fileBuf) {
+          fonnteRes = await fonnteSendFile(fileBuf, fname, mime);
+        }
       }
 
       // Tanpa attachment, ATAU attachment gagal total (throw/timeout) → kirim teks.
