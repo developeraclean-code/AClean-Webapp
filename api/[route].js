@@ -3037,7 +3037,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       if (!SU || !SK) return res.status(500).json({ error: "Supabase service key tidak dikonfigurasi" });
 
       // ── Role check: verifikasi caller dari App Token claims atau DB ──
-      const { action, userId, name, email, password, role, phone, commission_pin } = req.body || {};
+      const { action, userId, name, email, password, role, phone, commission_pin, bank_name, bank_account_no, bank_holder, work_start_date } = req.body || {};
 
       let callerRole = "";
 
@@ -3115,6 +3115,15 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
         if (phone !== undefined) upd.phone = phone;
         // commission_pin: null = hapus PIN, string = set PIN (layer-2 akses Komisi Saya)
         if (commission_pin !== undefined) upd.commission_pin = commission_pin || null;
+        // Data rekening payroll (sensitif) — Owner only
+        const bankFieldsPresent = [bank_name, bank_account_no, bank_holder, work_start_date].some(v => v !== undefined);
+        if (bankFieldsPresent) {
+          if (callerRole !== "Owner") return res.status(403).json({ error: "Forbidden: hanya Owner yang bisa ubah data rekening" });
+          if (bank_name        !== undefined) upd.bank_name       = bank_name || null;
+          if (bank_account_no  !== undefined) upd.bank_account_no = bank_account_no || null;
+          if (bank_holder      !== undefined) upd.bank_holder     = bank_holder || null;
+          if (work_start_date  !== undefined) upd.work_start_date = work_start_date || null;
+        }
         const profileRes = await fetch(SU + "/rest/v1/user_profiles?id=eq." + userId, {
           method: "PATCH",
           headers: { ...headers, Prefer: "return=minimal" },

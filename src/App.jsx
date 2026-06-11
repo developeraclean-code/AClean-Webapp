@@ -832,6 +832,22 @@ export default function ACleanWebApp() {
   const [waTekTarget, setWaTekTarget] = useState(null);  // { phone, customer, service, time, address }
   const [modalTeknisi, setModalTeknisi] = useState(false);
   const [editTeknisi, setEditTeknisi] = useState(null);
+
+  // Owner buka Edit Anggota → ambil data rekening (sensitif, tidak ikut di teknisiData)
+  useEffect(() => {
+    if (!modalTeknisi || !editTeknisi?.id || currentUser?.role !== "Owner") return;
+    const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
+    if (!isUUID(editTeknisi.id)) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from("user_profiles")
+        .select("bank_name, bank_account_no, bank_holder, work_start_date")
+        .eq("id", editTeknisi.id).single();
+      if (cancelled || !data) return;
+      setNewTeknisiForm(f => ({ ...f, ...data }));
+    })();
+    return () => { cancelled = true; };
+  }, [modalTeknisi, editTeknisi?.id, currentUser?.role]);
   const [modalEditStok, setModalEditStok] = useState(false);
   const [editStokItem, setEditStokItem] = useState(null);
   const [modalRestock, setModalRestock] = useState(false);
@@ -2995,7 +3011,9 @@ ${photoPageHTML}
           await supabase.auth.signOut(); return;
         }
         // SEC-08: Tambah expiry 8 jam ke session
-        const userObj = { ...data.user, ...profile, _exp: Date.now() + 8 * 60 * 60 * 1000 };
+        // Strip kolom legacy `password` (terenkripsi, migrasi 079) — jangan pernah kirim ke client/localStorage
+        const { password: _ignorePwd, ...profileSafe } = profile;
+        const userObj = { ...data.user, ...profileSafe, _exp: Date.now() + 8 * 60 * 60 * 1000 };
         setCurrentUser(userObj);
         setIsLoggedIn(true);
         setActiveRole(profile.role.toLowerCase());
@@ -9361,6 +9379,40 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 </div>
               )}
 
+              {/* ── Data Rekening Payroll (Owner only, edit only) ── */}
+              {editTeknisi && currentUser?.role === "Owner" && (
+                <div style={{ borderTop: "1px dashed " + cs.border, paddingTop: 12, marginTop: 2 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: cs.text, marginBottom: 8 }}>🏦 Rekening Payroll <span style={{ fontSize: 10, fontWeight: 600, color: cs.muted }}>(tampil di Komisi Saya)</span></div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Bank</div>
+                      <input list="bank-options" placeholder="BCA" value={newTeknisiForm.bank_name || ""}
+                        onChange={e => setNewTeknisiForm(f => ({ ...f, bank_name: e.target.value }))}
+                        style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                      <datalist id="bank-options"><option value="BCA" /><option value="DANA" /><option value="Mandiri" /><option value="BRI" /><option value="BNI" /><option value="OVO" /><option value="GoPay" /></datalist>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>No. Rekening / e-wallet</div>
+                      <input inputMode="numeric" placeholder="6044307591" value={newTeknisiForm.bank_account_no || ""}
+                        onChange={e => setNewTeknisiForm(f => ({ ...f, bank_account_no: e.target.value.replace(/[^0-9]/g, "") }))}
+                        style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", fontVariantNumeric: "tabular-nums" }} />
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Atas Nama</div>
+                    <input placeholder="Nama pemilik rekening" value={newTeknisiForm.bank_holder || ""}
+                      onChange={e => setNewTeknisiForm(f => ({ ...f, bank_holder: e.target.value }))}
+                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Tanggal Mulai Kerja</div>
+                    <input type="date" value={newTeknisiForm.work_start_date || ""}
+                      onChange={e => setNewTeknisiForm(f => ({ ...f, work_start_date: e.target.value }))}
+                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                </div>
+              )}
+
               {editTeknisi && currentUser?.role === "Owner" && (
                 <div style={{ display: "grid", gap: 6 }}>
                   <button onClick={async () => {
@@ -9429,11 +9481,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     // commission_pin: "" → null (hapus PIN). Selalu sertakan agar bisa di-clear.
                     const pinVal = (newTeknisiForm.commission_pin || "").trim() || null;
                     const upd = { name: newTeknisiForm.name, phone: newTeknisiForm.phone, role: newTeknisiForm.role, skills: newTeknisiForm.skills || [], commission_pin: pinVal };
+                    // Data rekening payroll — hanya Owner yang boleh kirim
+                    const bankUpd = currentUser?.role === "Owner" ? {
+                      bank_name: (newTeknisiForm.bank_name || "").trim() || null,
+                      bank_account_no: (newTeknisiForm.bank_account_no || "").trim() || null,
+                      bank_holder: (newTeknisiForm.bank_holder || "").trim() || null,
+                      work_start_date: newTeknisiForm.work_start_date || null,
+                    } : {};
+                    Object.assign(upd, bankUpd);
                     const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
                     if (isUUID(editTeknisi.id)) {
                       const res = await fetch("/api/manage-user", {
                         method: "POST", headers: await _apiHeaders(),
-                        body: JSON.stringify({ action: "update", userId: editTeknisi.id, name: upd.name, role: upd.role, phone: upd.phone, commission_pin: pinVal, callerRole: currentUser?.role })
+                        body: JSON.stringify({ action: "update", userId: editTeknisi.id, name: upd.name, role: upd.role, phone: upd.phone, commission_pin: pinVal, ...bankUpd, callerRole: currentUser?.role })
                       });
                       const result = await res.json();
                       if (!result.ok) { showNotif("⚠️ " + (result.error || "Update gagal")); return; }

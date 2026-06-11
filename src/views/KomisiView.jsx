@@ -14,11 +14,31 @@ function fmtDate(d) {
   if (!d) return "-";
   return new Date(d + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
+function maskAcct(no) {
+  if (!no) return "-";
+  const s = String(no);
+  if (s.length <= 4) return "••••";
+  return "•".repeat(Math.max(2, s.length - 4)) + s.slice(-4);
+}
+function fmtTenure(d) {
+  if (!d) return null;
+  const start = new Date(d + "T00:00:00");
+  const now = new Date();
+  let months = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
+  if (now.getDate() < start.getDate()) months -= 1;
+  if (months < 0) months = 0;
+  const y = Math.floor(months / 12), m = months % 12;
+  if (y === 0 && m === 0) return "Baru bergabung";
+  return [y > 0 ? `${y} tahun` : "", m > 0 ? `${m} bulan` : ""].filter(Boolean).join(" ");
+}
 
 export default function KomisiView({ currentUser, supabase, bonusCategories = [], BONUS_LABELS = {} }) {
   const [tab, setTab]           = useState("komisi"); // "komisi" | "payroll"
   const [payrolls, setPayrolls] = useState([]);
   const [bonuses, setBonuses]   = useState([]);
+  const [profile, setProfile]   = useState(null);
+  const [showAcct, setShowAcct] = useState(false);
+  const [copied, setCopied]     = useState(false);
   const [loading, setLoading]   = useState(false);
   const [bonusFilter, setBonusFilter] = useState("ALL");
   const [expandedPayroll, setExpandedPayroll] = useState(null);
@@ -29,14 +49,27 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
   const loadData = useCallback(async () => {
     if (!userId || !userName) return;
     setLoading(true);
-    const [payRes, bonRes] = await Promise.all([
+    const [payRes, bonRes, profRes] = await Promise.all([
       fetchWeeklyPayrollByUser(supabase, userId, 8),
       fetchMyBonuses(supabase, userName, 60),
+      supabase.from("user_profiles")
+        .select("bank_name, bank_account_no, bank_holder, work_start_date")
+        .eq("id", userId).single(),
     ]);
     setPayrolls(payRes.data || []);
     setBonuses(bonRes.data || []);
+    setProfile(profRes.data || null);
     setLoading(false);
   }, [supabase, userId, userName]);
+
+  const copyAcct = async () => {
+    if (!profile?.bank_account_no) return;
+    try {
+      await navigator.clipboard.writeText(profile.bank_account_no);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard unavailable */ }
+  };
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -58,6 +91,60 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
         <div style={{ fontSize: 22, fontWeight: 800, color: "#e2e8f0", marginBottom: 4 }}>💰 Komisi & Gaji</div>
         <div style={{ fontSize: 13, color: "#94a3b8" }}>{userName} · {currentUser?.role}</div>
       </div>
+
+      {/* ── Rekening & Data Pribadi (di balik PIN Komisi) ── */}
+      {profile && (
+        <div style={{ background: cs.card, borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid " + cs.border }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>🏦 Rekening &amp; Data Pribadi</div>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", background: "#22c55e22", padding: "2px 8px", borderRadius: 6 }}>🔒 Terlindungi PIN</span>
+          </div>
+
+          {profile.bank_account_no ? (
+            <>
+              {/* Nomor rekening + reveal + copy */}
+              <div style={{ background: cs.surface, borderRadius: 10, padding: "12px 14px", marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ fontSize: 11, color: cs.muted }}>{profile.bank_name === "DANA" ? "Nomor DANA" : "Nomor Rekening"}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: profile.bank_name === "DANA" ? "#118eea" : "#2563eb", background: (profile.bank_name === "DANA" ? "#118eea" : "#2563eb") + "22", padding: "2px 8px", borderRadius: 5 }}>
+                    {profile.bank_name || "-"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <span style={{ fontSize: 20, fontWeight: 800, color: cs.text, letterSpacing: "0.04em", fontVariantNumeric: "tabular-nums" }}>
+                    {showAcct ? profile.bank_account_no : maskAcct(profile.bank_account_no)}
+                  </span>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => setShowAcct(s => !s)} style={btnSm(cs)}>{showAcct ? "🙈 Sembunyikan" : "👁️ Lihat"}</button>
+                    <button onClick={copyAcct} disabled={!showAcct} style={{ ...btnSm(cs), opacity: showAcct ? 1 : 0.4, cursor: showAcct ? "pointer" : "not-allowed" }}>
+                      {copied ? "✅ Tersalin" : "📋 Salin"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {profile.bank_holder && (
+                <Row label="Atas Nama" value={profile.bank_holder} />
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 12, color: cs.muted, background: cs.surface, borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
+              ℹ️ Rekening belum terdaftar. Hubungi Admin/Owner untuk melengkapi data rekening payroll Anda.
+            </div>
+          )}
+
+          {profile.work_start_date && (
+            <>
+              <Row label="Bergabung Sejak" value={fmtDate(profile.work_start_date)} />
+              <Row label="Masa Kerja" value={fmtTenure(profile.work_start_date)} />
+            </>
+          )}
+
+          <div style={{ fontSize: 10, color: cs.muted, marginTop: 10, lineHeight: 1.4 }}>
+            Data ini bersifat rahasia &amp; hanya tampil setelah PIN diverifikasi. Jangan bagikan layar ke orang lain.
+          </div>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
@@ -233,6 +320,13 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
       )}
     </div>
   );
+}
+
+function btnSm(cs) {
+  return {
+    padding: "5px 9px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer",
+    border: "1px solid " + cs.border, background: cs.card, color: cs.muted, whiteSpace: "nowrap",
+  };
 }
 
 function Row({ label, value, color }) {
