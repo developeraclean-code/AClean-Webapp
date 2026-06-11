@@ -10039,10 +10039,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 14px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent }}>🔧 Jasa / Labor</div>
-                    <button onClick={() => { setEditAddType(editAddType === 'jasa' ? '' : 'jasa'); setEditAddSearch(''); }}
-                      style={{ fontSize: 11, background: cs.accent + "20", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>
-                      {editAddType === 'jasa' ? '✕ Tutup' : '+ Tambah Jasa'}
-                    </button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button onClick={() => { setEditJasaItems(prev => [...prev, { nama: '', jumlah: 1, satuan: 'Unit', harga_satuan: 0, subtotal: 0, _idx: Date.now() }]); setEditAddType(''); setEditAddSearch(''); }}
+                        style={{ fontSize: 11, background: cs.card, border: "1px solid " + cs.accent + "66", color: cs.accent, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>
+                        + Manual
+                      </button>
+                      <button onClick={() => { setEditAddType(editAddType === 'jasa' ? '' : 'jasa'); setEditAddSearch(''); }}
+                        style={{ fontSize: 11, background: cs.accent + "20", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>
+                        {editAddType === 'jasa' ? '✕ Tutup' : '+ Dari List'}
+                      </button>
+                    </div>
                   </div>
                   {editAddType === 'jasa' && (
                     <div style={{ marginBottom: 10 }}>
@@ -10103,10 +10109,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 14px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>📦 Material</div>
-                    <button onClick={() => { setEditAddType(editAddType === 'material' ? '' : 'material'); setEditAddSearch(''); }}
-                      style={{ fontSize: 11, background: cs.green + "20", border: "1px solid " + cs.green + "44", color: cs.green, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>
-                      {editAddType === 'material' ? '✕ Tutup' : '+ Tambah Material'}
-                    </button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button onClick={() => { setEditInvoiceItems(prev => [...prev, { nama: '', jumlah: 1, satuan: 'Pcs', harga_satuan: 0, subtotal: 0, _idx: Date.now() }]); setEditAddType(''); setEditAddSearch(''); }}
+                        style={{ fontSize: 11, background: cs.card, border: "1px solid " + cs.green + "66", color: cs.green, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>
+                        + Manual
+                      </button>
+                      <button onClick={() => { setEditAddType(editAddType === 'material' ? '' : 'material'); setEditAddSearch(''); }}
+                        style={{ fontSize: 11, background: cs.green + "20", border: "1px solid " + cs.green + "44", color: cs.green, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>
+                        {editAddType === 'material' ? '✕ Tutup' : '+ Dari List'}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Lookup material */}
