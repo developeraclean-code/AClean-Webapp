@@ -1795,6 +1795,30 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
     r.readAsDataURL(file);
   });
 
+  // Downscale data URL foto KHUSUS untuk PDF yang dikirim via WA (Fonnte upload lambat).
+  // Foto resolusi penuh tetap di R2; ini hanya mengecilkan salinan yang ditanam ke PDF-WA
+  // supaya total PDF kecil (~300-500KB) → upload cepat → PDF murni terkirim, bukan fallback link.
+  // Default 850px @ q0.55 — masih jelas untuk dokumentasi servis. Gagal → kembalikan data asli.
+  const downscaleDataUrl = (dataUrl, maxDim = 850, quality = 0.55) => new Promise((resolve) => {
+    try {
+      if (!dataUrl || !dataUrl.startsWith("data:image")) return resolve(dataUrl);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const sc = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const w = Math.round(img.width * sc);
+          const h = Math.round(img.height * sc);
+          const c = document.createElement("canvas");
+          c.width = w; c.height = h;
+          c.getContext("2d").drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL("image/jpeg", quality));
+        } catch { resolve(dataUrl); }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    } catch { resolve(dataUrl); }
+  });
+
   // Helper: normalize URL foto → selalu proxy via /api/foto
   // /api/foto melakukan AWS Sig V4 signing ke R2 private endpoint
   // Ini memastikan foto tampil meskipun R2 public access belum diaktifkan
@@ -2782,7 +2806,8 @@ ${photoPageHTML}
       const photoDataUrls = {};
       await Promise.all(fotoUrls.map(async (url) => {
         const dataUrl = await fetchFotoAsDataUrl(url, origin);
-        if (dataUrl) photoDataUrls[url] = dataUrl;
+        // Kecilkan foto KHUSUS untuk PDF-WA → PDF ringan → upload Fonnte cepat → terkirim sbg file.
+        if (dataUrl) photoDataUrls[url] = await downscaleDataUrl(dataUrl);
       }));
       const ord = ordersData.find(o => o.id === laporan.job_id) || {};
       const blob = await pdf(
