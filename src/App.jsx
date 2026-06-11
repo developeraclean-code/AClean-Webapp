@@ -12225,14 +12225,39 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                                   <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada foto khusus unit ini (opsional — boleh juga foto umum di Step 3).</div>
                                 ) : (
                                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                                    {unitFotos.map(f => (
-                                      <div key={f.id} style={{ position: "relative", width: 64, height: 64, borderRadius: 8, overflow: "hidden", border: "1px solid " + cs.border }}>
+                                    {unitFotos.map(f => {
+                                      const failed = !f.uploading && !f.url;
+                                      return (
+                                      <div key={f.id} style={{ position: "relative", width: 64, height: 64, borderRadius: 8, overflow: "hidden", border: "1px solid " + (failed ? cs.red : f.url ? "#22c55e66" : cs.border) }}>
                                         <img src={f.data_url || fotoSrc(f.url)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: f.uploading ? 0.5 : 1 }} />
                                         {f.uploading && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "#fff", background: "#000a" }}>⏳</div>}
+                                        {!f.uploading && f.url && <div style={{ position: "absolute", bottom: 2, left: 2, background: "#22c55e", color: "#fff", fontSize: 8, padding: "0 4px", borderRadius: 99, fontWeight: 700 }}>☁️</div>}
+                                        {failed && (
+                                          <div title="Upload gagal — ketuk untuk coba lagi"
+                                            onClick={async () => {
+                                              setLaporanFotos(prev => prev.map(x => x.id === f.id ? { ...x, uploading: true, errMsg: "" } : x));
+                                              try {
+                                                const rid = laporanModal?.id || "tmp";
+                                                const r = await _apiFetch("/api/upload-foto", {
+                                                  method: "POST", headers: await _apiHeaders(),
+                                                  body: JSON.stringify({ base64: f.data_url, filename: f.hash ? `${f.hash}.jpg` : `retry_${f.id}.jpg`, reportId: rid, mimeType: "image/jpeg", hash: f.hash, currentUserRole: currentUser?.role || "Unknown" }),
+                                                });
+                                                const d = await r.json();
+                                                setLaporanFotos(prev => prev.map(x => x.id === f.id ? { ...x, uploading: false, url: d.success ? d.url : null, errMsg: d.success ? "" : (d.error || "gagal") } : x));
+                                                showNotif(d.success ? "✅ Foto terupload" : "❌ Masih gagal: " + (d.error || "unknown"));
+                                              } catch (err) {
+                                                setLaporanFotos(prev => prev.map(x => x.id === f.id ? { ...x, uploading: false, errMsg: err.message } : x));
+                                                showNotif("❌ " + err.message);
+                                              }
+                                            }}
+                                            style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 2, fontSize: 9, color: "#fff", background: cs.red + "cc", cursor: "pointer", fontWeight: 700 }}>
+                                            <span style={{ fontSize: 14 }}>⚠️</span>Retry
+                                          </div>
+                                        )}
                                         <button onClick={() => setLaporanFotos(prev => prev.filter(x => x.id !== f.id))}
                                           style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 9, background: cs.red, color: "#fff", border: "none", fontSize: 11, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
                                       </div>
-                                    ))}
+                                    );})}
                                   </div>
                                 )}
                               </div>
