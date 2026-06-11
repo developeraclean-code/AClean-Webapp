@@ -162,44 +162,55 @@ export default async function handler(req, res) {
         return null;
       };
 
-      // ── Helper: ambil bytes file dari salah satu URL kandidat (untuk diupload ke Fonnte) ──
-      // Timeout longgar: proxy /api/foto bisa ~7-10s utk PDF 1MB (Sig V4 + stream R2).
-      const fetchFileBytes = async (urls, timeoutMs = 14000) => {
-        for (const src of urls) {
-          if (!src) continue;
-          const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-          try {
-            const fr = await fetch(src, { signal: ctrl.signal });
-            clearTimeout(timer);
-            if (!fr.ok) { console.warn("[send-wa] Ambil file non-OK:", fr.status, src); continue; }
-            const buf = Buffer.from(await fr.arrayBuffer());
-            console.log("[send-wa] File diambil:", buf.length, "bytes dari", src);
-            return buf;
-          } catch (e) {
-            clearTimeout(timer);
-            console.warn("[send-wa] Ambil file gagal:", e.name === "AbortError" ? `timeout ${timeoutMs}ms` : e.message, src);
-          }
-        }
-        return null;
-      };
-
-      // ── Helper: UPLOAD file biner langsung ke Fonnte (multipart) — Fonnte TIDAK perlu fetch URL ──
-      // Hindari ketergantungan Fonnte men-download r2.dev (rate-limit) / proxy lambat → PDF reliable terkirim sbg file.
-      // Timeout 40s: upload ke Fonnte LAMBAT (~50-70 KB/s) — PDF 1-2MB butuh 20-35s. maxDuration route=60s.
-      // Budget worst: 9s ambil + 40s upload + 9s fallback teks = 58s < 60s.
-      let uploadErrInfo = null; // detail kegagalan upload utk diagnostik
-      const fonnteSendFile = async (fileBuf, fname, mime, timeoutMs = 40000) => {
+      // ── Helper: ambil bytes file dari proxy internal (andal — selalu balas PDF asli) ──
+      const fetchFileBytes = async (url, timeoutMs = 12000) => {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), timeoutMs);
         try {
-          const form = new FormData();
-          form.append("target", target);
-          form.append("message", msg);
-          form.append("countryCode", "62");
-          form.append("file", new Blob([fileBuf], { type: mime }), fname);
+          const fr = await fetch(url, { signal: ctrl.signal });
+          clearTimeout(timer);
+          if (!fr.ok) { console.warn("[send-wa] Ambil file non-OK:", fr.status); return null; }
+          const buf = Buffer.from(await fr.arrayBuffer());
+          console.log("[send-wa] File diambil:", buf.length, "bytes");
+          return buf;
+        } catch (e) {
+          clearTimeout(timer);
+          console.warn("[send-wa] Ambil file gagal:", e.name === "AbortError" ? `timeout ${timeoutMs}ms` : e.message);
+          return null;
+        }
+      };
+
+      // ── Helper: UPLOAD biner ke Fonnte sbg multipart MANUAL (Buffer + Content-Length eksplisit) ──
+      // FormData/Blob via undici dikirim chunked TANPA Content-Length → Fonnte HANG (terbukti
+      // timeout 40s walau file cuma 372KB). Body dirakit manual jadi 1 Buffer + Content-Length →
+      // request well-formed, Fonnte langsung terima file. PDF MURNI terkirim (bukan URL/link).
+      let uploadErrInfo = null;
+      const fonnteSendFile = async (fileBuf, fname, mime, timeoutMs = 30000) => {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+        try {
+          const boundary = "----AcleanBoundary" + Date.now().toString(16);
+          const safeName = String(fname).replace(/[\r\n"]/g, "");
+          const head = Buffer.from(
+            `--${boundary}\r\nContent-Disposition: form-data; name="target"\r\n\r\n${target}\r\n` +
+            `--${boundary}\r\nContent-Disposition: form-data; name="message"\r\n\r\n${msg}\r\n` +
+            `--${boundary}\r\nContent-Disposition: form-data; name="countryCode"\r\n\r\n62\r\n` +
+            `--${boundary}\r\nContent-Disposition: form-data; name="delay"\r\n\r\n2\r\n` +
+            `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
+            `Content-Type: ${mime}\r\n\r\n`,
+            "utf8"
+          );
+          const tail = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
+          const body = Buffer.concat([head, fileBuf, tail]);
           const r = await fetch("https://api.fonnte.com/send", {
-            method: "POST", headers: { "Authorization": FT }, body: form, signal: ctrl.signal,
+            method: "POST",
+            headers: {
+              "Authorization": FT,
+              "Content-Type": `multipart/form-data; boundary=${boundary}`,
+              "Content-Length": String(body.length),
+            },
+            body,
+            signal: ctrl.signal,
           });
           clearTimeout(timer);
           return r;
@@ -221,15 +232,13 @@ export default async function handler(req, res) {
         const mime = /\.pdf(\?|$)/i.test(fname) ? "application/pdf"
           : /\.png(\?|$)/i.test(fname) ? "image/png"
           : /\.(jpe?g)(\?|$)/i.test(fname) ? "image/jpeg" : "application/octet-stream";
-        console.log("[send-wa] Attachment multipart, source:", b.url, "filename:", fname);
-        // Ambil bytes dari proxy internal (andal — selalu balas PDF asli), lalu upload binernya.
-        // r2.dev di-skip sbg sumber bytes: rate-limit & cert kadang bermasalah → tidak reliable.
-        const fileBuf = await fetchFileBytes([b.url], 9000);
+        console.log("[send-wa] Attachment multipart MANUAL, source:", b.url, "filename:", fname);
+        const fileBuf = await fetchFileBytes(b.url);
         if (!fileBuf) {
           attachDebug = "FETCH_BYTES_FAILED";
         } else {
           fonnteRes = await fonnteSendFile(fileBuf, fname, mime);
-          if (!fonnteRes) attachDebug = `UPLOAD_FAILED bytes=${fileBuf.length} mime=${mime} err=${uploadErrInfo}`;
+          if (!fonnteRes) attachDebug = `UPLOAD_FAILED bytes=${fileBuf.length} err=${uploadErrInfo}`;
         }
       }
 
