@@ -793,6 +793,72 @@ const TEAM_SLOTS_BASE = Array.from({ length: 10 }, (_, i) => `Team ${String(i + 
 const MEMBER_ROLES = ["teknisi", "helper"];
 const EMPTY_SLOT = { member1: "", member1_role: "teknisi", member2: "", member2_role: "helper", member3: "", member3_role: "helper", member4: "", member4_role: "helper", confirmed: false };
 
+// Panel assign tim ke project per hari (hanya muncul kalau ada project BERJALAN
+// yang tanggal terpilih masuk rentang mulai→target). Assign → buat order type=Project
+// yang ikut konflik + jadwal + bulk dispatch WA.
+function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTeknisi, onAssign }) {
+  const inRange = (date, mulai, target) => {
+    if (mulai && date < mulai) return false;
+    if (target && date > target) return false;
+    return true;
+  };
+  const active = (runningProjects || []).filter(p => inRange(slotDate, p.mulai, p.target));
+  if (active.length === 0) return null;
+
+  const personNames = (activeTeknisi || []).map(t => t.name);
+  const fmtD = (d) => { try { return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short" }); } catch { return d; } };
+
+  return (
+    <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 16 }}>🏗️</span>
+        <span style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>Project Berjalan — {fmtD(slotDate)}</span>
+        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: cs.ara + "22", color: cs.ara }}>{active.length} aktif</span>
+      </div>
+      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 12 }}>
+        Assign teknisi & helper untuk project di hari ini → tercatat sebagai job (ikut cek konflik, jadwal, & Kirim WA panel tim di atas).
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 12 }}>
+        {active.map(p => {
+          const ord = ordersData.find(o => o.project_id === p.id && o.date === slotDate && o.status !== "CANCELLED");
+          const teknisi = ord?.teknisi || "";
+          const helper = ord?.helper || "";
+          const busyElsewhere = (name) => !!name && ordersData.some(o =>
+            o.date === slotDate && o.id !== ord?.id && !["CANCELLED"].includes(o.status) &&
+            [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean).includes(name));
+          return (
+            <div key={p.id} style={{ border: `1px solid ${ord ? cs.green : cs.border}`, borderRadius: 12, padding: 12, background: cs.surface }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{p.nama}</div>
+              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>
+                📍 {p.lokasi || "—"}{p.mulai || p.target ? ` · ${fmtD(p.mulai)}→${fmtD(p.target)}` : ""}
+              </div>
+              <PersonRow label="T" color="#38bdf8" value={teknisi} names={personNames} warn={busyElsewhere(teknisi)}
+                onChange={(v) => onAssign(p, slotDate, { teknisi: v || null })} />
+              <PersonRow label="H" color={cs.muted} value={helper} names={personNames} warn={busyElsewhere(helper)}
+                onChange={(v) => onAssign(p, slotDate, { helper: v || null })} />
+              {ord && <div style={{ fontSize: 10, color: cs.green, marginTop: 6 }}>✓ Terjadwal sebagai job project hari ini</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PersonRow({ label, color, value, names, warn, onChange }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+      <span style={{ width: 22, height: 22, borderRadius: "50%", background: color + "33", color, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{label}</span>
+      <select value={value} onChange={e => onChange(e.target.value)}
+        style={{ flex: 1, background: cs.card, border: `1px solid ${warn ? cs.yellow : cs.border}`, borderRadius: 8, padding: "7px 9px", color: cs.text, fontSize: 12 }}>
+        <option value="">— kosong —</option>
+        {names.map(n => <option key={n} value={n}>{n}</option>)}
+      </select>
+      {warn && <span title="Sudah ada di job lain hari ini" style={{ fontSize: 12 }}>⚠️</span>}
+    </div>
+  );
+}
+
 const EMPTY_FORM = {
   customer: "", phone: "", service: "Cleaning", type: "", address: "", date: "", time: "09:00",
   time_end: "10:00", team_slot: "", notes: "", status: "PENDING", units: 1,
@@ -820,6 +886,17 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // ── Team presets (teknisi default per slot) ──
   const [teamPresets, setTeamPresets] = useState({}); // slot → teknisi
+
+  // ── Project berjalan (untuk panel assign tim project per hari) ──
+  const [runningProjects, setRunningProjects] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    supabase.from("project_projects")
+      .select("id,nama,lokasi,kategori,status,mulai,target")
+      .eq("status", "BERJALAN")
+      .then(({ data }) => { if (alive) setRunningProjects(data || []); });
+    return () => { alive = false; };
+  }, [supabase]);
 
   // Slot tim aktif: base 10 + tim ekstra dari preset, urut by nomor
   const TEAM_SLOTS = useMemo(() => {
@@ -1033,6 +1110,39 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // ── Bulk WA ke semua teknisi & helper hari ini ──
   const [bulkDispatching, setBulkDispatching] = useState(false);
+
+  // Assign teknisi/helper ke project untuk 1 hari → buat/update/hapus order type=Project.
+  // Order ini ikut deteksi konflik, jadwal, & bulk dispatch WA seperti order biasa.
+  async function saveProjectAssignment(project, date, patch) {
+    const existing = ordersData.find(o => o.project_id === project.id && o.date === date && o.status !== "CANCELLED");
+    const newTeknisi = patch.teknisi !== undefined ? patch.teknisi : existing?.teknisi || null;
+    const newHelper = patch.helper !== undefined ? patch.helper : existing?.helper || null;
+
+    // Kedua kosong → hapus order project hari itu (kalau ada)
+    if (existing && !newTeknisi && !newHelper) {
+      await supabase.from("orders").delete().eq("id", existing.id);
+      setOrdersData(prev => prev.filter(o => o.id !== existing.id));
+      return;
+    }
+    if (existing) {
+      const upd = { ...patch, last_changed_by: auditUserName() };
+      const { error } = await supabase.from("orders").update(upd).eq("id", existing.id);
+      if (error) { showNotif("❌ Gagal simpan: " + error.message); return; }
+      setOrdersData(prev => prev.map(o => o.id === existing.id ? { ...o, ...upd } : o));
+      return;
+    }
+    if (!newTeknisi && !newHelper) return; // tak ada yang di-assign & belum ada order
+    const id = "PRJ-" + Date.now();
+    const payload = {
+      id, customer: project.nama, phone: null, service: "Project", type: project.kategori || "",
+      address: project.lokasi || "", date, time: "09:00", time_end: "17:00",
+      status: "CONFIRMED", units: 1, project_id: project.id,
+      teknisi: newTeknisi, helper: newHelper, last_changed_by: auditUserName(),
+    };
+    const { error } = await insertOrder(supabase, payload);
+    if (error) { showNotif("❌ Gagal simpan: " + error.message); return; }
+    setOrdersData(prev => [{ ...payload, created_at: new Date().toISOString() }, ...prev]);
+  }
 
   async function handleBulkDispatch(date) {
     if (!sendWA) { showNotif("⚠️ sendWA tidak tersedia"); return; }
@@ -1654,6 +1764,15 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         slotLoading={slotLoading} dailySlots={dailySlots}
         ordersData={ordersData} teamPresets={teamPresets}
         onBulkDispatch={handleBulkDispatch} bulkDispatching={bulkDispatching}
+      />
+
+      {/* ═══ PANEL PROJECT BERJALAN (hanya muncul kalau ada project aktif di tanggal ini) ═══ */}
+      <ProjectPlanningPanel
+        slotDate={slotDate}
+        runningProjects={runningProjects}
+        ordersData={ordersData}
+        activeTeknisi={activeTeknisi}
+        onAssign={saveProjectAssignment}
       />
 
       {/* ═══ SAFETY NET PANEL ═══ */}
