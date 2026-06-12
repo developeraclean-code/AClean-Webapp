@@ -88,7 +88,7 @@ export default function ProjectHarianView() {
 
   const setStatus = (id, st) => {
     patchRow("harian", id, { status: st });
-    toast(st === "VERIFIED" ? "Diverifikasi 🔒 hari ini terkunci" : "Laporan " + st);
+    toast(st === "VERIFIED" ? "Diverifikasi 🔒 terkunci & tampil di portal customer" : "Laporan " + st);
   };
 
   const viewSession = (h, sesi) => {

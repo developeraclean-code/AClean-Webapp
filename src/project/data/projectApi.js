@@ -20,7 +20,7 @@ const TABLE = {
 // Peta field JS → kolom DB per entitas. Field jsonb (tim/pagi/sore/items/checklist)
 // & data URL dipetakan apa adanya (passthrough).
 const FIELDS = {
-  projects: { id: "id", nama: "nama", kategori: "kategori", lokasi: "lokasi", pic: "pic", status: "status", progress: "progress", mulai: "mulai", target: "target", nilai: "nilai", rab: "rab", tim: "tim", _prev: "prev_status" },
+  projects: { id: "id", nama: "nama", kategori: "kategori", lokasi: "lokasi", pic: "pic", status: "status", progress: "progress", mulai: "mulai", target: "target", nilai: "nilai", rab: "rab", tim: "tim", _prev: "prev_status", portalToken: "portal_token", tokenActive: "token_active" },
   dp: { id: "id", projectId: "project_id", tanggal: "tanggal", jumlah: "jumlah", ket: "ket" },
   materials: { id: "id", nama: "nama", sub: "sub", satuan: "satuan", gudang: "gudang", min: "min_qty", harga: "harga" },
   alokasi: { id: "id", materialId: "material_id", projectId: "project_id", qty: "qty" },

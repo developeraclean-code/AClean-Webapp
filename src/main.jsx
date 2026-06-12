@@ -32,6 +32,7 @@ setTimeout(() => sessionStorage.removeItem('chunk_reload'), 5000);
 
 const CustomerPortalView = lazy(() => import('./views/CustomerPortalView.jsx'))
 const MaintenancePortalView = lazy(() => import('./views/MaintenancePortalView.jsx'))
+const ProjectPortalView = lazy(() => import('./views/ProjectPortalView.jsx'))
 
 // Deteksi path token portal — render portal tanpa App shell.
 // Customer portal: /status/<48-hex> atau /<48-hex>
@@ -40,11 +41,13 @@ const pathMatch = window.location.pathname.match(/^\/(?:status\/)?([a-f0-9]{48})
 //   Baru: /status/mtk_xxxxx  (status.aclean.id/status/mtk_xxx — sama domain customer portal)
 //   Lama: /m/mtk_xxxxx       (backward compat — QR lama / link yang sudah terlanjur dibagikan)
 const maintMatch = window.location.pathname.match(/^\/(?:status\/|m\/)(mtk_[a-z0-9]{40})$/)
+// Project portal — /p/ptk_xxxxx atau /status/ptk_xxxxx
+const projMatch = window.location.pathname.match(/^\/(?:status\/|p\/)(ptk_[a-z0-9]{40})$/)
 
 // Jika dibuka di domain customer (status.aclean.id) tanpa token yang valid,
 // redirect ke landing page agar tidak tampil halaman login internal
 const isCustomerDomain = window.location.hostname === "status.aclean.id";
-if (isCustomerDomain && !pathMatch && !maintMatch) {
+if (isCustomerDomain && !pathMatch && !maintMatch && !projMatch) {
   window.location.replace("https://aclean.id");
 }
 
@@ -63,6 +66,15 @@ function Root() {
       <Sentry.ErrorBoundary fallback={portalFallback}>
         <Suspense fallback={portalFallback}>
           <MaintenancePortalView token={maintMatch[1]} />
+        </Suspense>
+      </Sentry.ErrorBoundary>
+    )
+  }
+  if (projMatch) {
+    return (
+      <Sentry.ErrorBoundary fallback={portalFallback}>
+        <Suspense fallback={portalFallback}>
+          <ProjectPortalView token={projMatch[1]} />
         </Suspense>
       </Sentry.ErrorBoundary>
     )

@@ -10,7 +10,7 @@ import { expenseDuplicateExists } from "./_expense-dedup.js";
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
-const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal"];
+const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal", "project-portal"];
 
 // ── Reporter: wrap critical write fetch(...) supaya silent fail (ngga sampai DB) tetap ke-track di Sentry. ──
 // Bug 3 Juni style: regex extract OK tapi INSERT silent-fail → biaya hilang.
@@ -3698,6 +3698,53 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
         client: { name: client.name, hide_costs: client.hide_costs },
         units,
         logs,
+      });
+    }
+
+    // ── PROJECT-PORTAL (PUBLIC) — portal customer modul Project, token permanen ──
+    // Gate akses di backend (anon key tak bisa baca tabel langsung). Hanya tampilkan
+    // laporan harian status VERIFIED (approval Owner/Admin = layer pengaman).
+    // TIDAK pernah kirim data finansial (nilai/rab/harga) ke customer.
+    if (route === "project-portal") {
+      if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+      if (!await checkRateLimit(req, res, 30, 60000)) return;
+      const token = String(req.query.token || "").trim();
+      if (!token) return res.status(400).json({ error: "Token diperlukan" });
+
+      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const SK = process.env.SUPABASE_SERVICE_KEY;
+      if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
+      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
+
+      // 1) Validasi token → project (TANPA nilai/rab)
+      const pRes = await fetch(`${SU}/rest/v1/project_projects?portal_token=eq.${encodeURIComponent(token)}&select=id,nama,lokasi,kategori,status,progress,mulai,target,token_active`, { headers });
+      if (!pRes.ok) return res.status(500).json({ error: "DB error" });
+      const pRows = await pRes.json();
+      if (!pRows.length) return res.status(404).json({ error: "Token tidak ditemukan", code: "NOT_FOUND" });
+      const proj = pRows[0];
+      if (!proj.token_active) return res.status(403).json({ error: "Akses portal dinonaktifkan", code: "TOKEN_DISABLED" });
+
+      // 2) Laporan harian VERIFIED saja (approval Owner/Admin)
+      const hRes = await fetch(`${SU}/rest/v1/project_harian?project_id=eq.${proj.id}&status=eq.VERIFIED&select=id,tanggal,oleh,pagi,sore&order=tanggal.desc`, { headers });
+      const harianRaw = hRes.ok ? await hRes.json() : [];
+      const verifiedDates = new Set(harianRaw.map(h => h.tanggal));
+
+      // Strip apapun yang berbau harga dari jsonb pagi/sore (defensive); kirim hanya field aman
+      const pickSesi = (s) => s ? { jam: s.jam || "", progress: s.progress || "", material: s.material || "", alat: s.alat || "", fotos: Array.isArray(s.fotos) ? s.fotos : [], foto: s.foto || 0 } : null;
+      const harian = harianRaw.map(h => ({ id: h.id, tanggal: h.tanggal, oleh: h.oleh, pagi: pickSesi(h.pagi), sore: pickSesi(h.sore) }));
+
+      // 3) Pemakaian material — HANYA untuk tanggal yang harian-nya VERIFIED (ikut gate approval)
+      let usage = [];
+      if (verifiedDates.size > 0) {
+        const uRes = await fetch(`${SU}/rest/v1/project_usage?project_id=eq.${proj.id}&select=id,tanggal,material,qty,oleh&order=tanggal.desc`, { headers });
+        const uRows = uRes.ok ? await uRes.json() : [];
+        usage = uRows.filter(u => verifiedDates.has(u.tanggal)).map(u => ({ tanggal: u.tanggal, material: u.material, qty: u.qty, oleh: u.oleh }));
+      }
+
+      return res.status(200).json({
+        project: { nama: proj.nama, lokasi: proj.lokasi, kategori: proj.kategori, status: proj.status, progress: proj.progress, mulai: proj.mulai, target: proj.target },
+        harian,
+        usage,
       });
     }
 
