@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Suspense } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "./supabaseClient.js";
 import { normalizePhone, samePhone } from "./lib/phone.js";
 import { getLocalDate, getLocalDateObj, getLocalISOString, isWorkingHours } from "./lib/dateTime.js";
 import { safeJsonParse } from "./lib/safeJson.js";
@@ -72,14 +72,8 @@ const LaporanDetailModal = lazy(() => import("./views/LaporanDetailModal.jsx"));
 const ProjectApp = lazy(() => import("./project/ProjectApp.jsx"));
 const MaintenanceView = lazy(() => import("./views/MaintenanceView.jsx"));
 
-const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-// ── Enforce required environment variables at startup ──
-if (!SUPA_URL) throw new Error("[CRITICAL] VITE_SUPABASE_URL env var is required but not set. Check your .env.local file.");
-if (!SUPA_KEY) throw new Error("[CRITICAL] VITE_SUPABASE_ANON_KEY env var is required but not set. Check your .env.local file.");
-
-const supabase = createClient(SUPA_URL, SUPA_KEY);
+// Supabase client tunggal di-import dari ./supabaseClient.js (env divalidasi di sana).
+// Single client → session login Supabase Auth ter-share ke modul Project (RLS authenticated).
 
 // Error boundary — tangkap crash dan tampilkan pesan error
 class ErrorBoundary extends Component {
