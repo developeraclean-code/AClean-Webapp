@@ -304,7 +304,10 @@ async function deleteR2Object(key) {
 }
 
 // ══════════════════════════════════════════════════
-// TASK 4: Cleanup foto lama (>360 hari) dari R2
+// TASK 4: Cleanup LOG DB lama (BUKAN foto/R2)
+// agent_logs 30h, audit_log 30h, dispatch_logs 90h, payment_suggestions 30h.
+// Penghapusan file R2 ada di task terpisah: r2-cleanup-90d, expense-foto-cleanup,
+// snapshot-cleanup, payment-proof-cleanup.
 // ══════════════════════════════════════════════════
 async function taskCleanup() {
   const result = { agent_logs: 0, audit_log: 0, dispatch_logs: 0, payment_suggestions: 0 };
@@ -353,6 +356,14 @@ async function taskCleanup() {
 //   tetap tersimpan (metadata only) dengan r2_purged_at terisi.
 // ══════════════════════════════════════════════════
 async function taskR2Cleanup90d() {
+  // Toggle-gated (default ON kecuali eksplisit "false")
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["r2_cleanup_enabled"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (togMap["r2_cleanup_enabled"] === "false") {
+    await log("R2_CLEANUP_90D", "Dilewati — toggle OFF", "INFO");
+    return { skipped: true };
+  }
+
   const result = { swept: 0, purged: 0, errors: 0 };
   const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
 
@@ -436,6 +447,52 @@ async function taskExpenseFotoCleanup30d() {
     } catch (e) { result.errors++; console.warn("[EXPENSE_FOTO_CLEANUP]", row.id, e.message); }
   }
   await log("EXPENSE_FOTO_CLEANUP", `swept=${result.swept} purged=${result.purged} errors=${result.errors}`, "SUCCESS");
+  return result;
+}
+
+// ══════════════════════════════════════════════════
+// TASK: Payment Proof Cleanup — hapus foto bukti bayar R2 >90 hari (umur file)
+// Invoice TETAP utuh (record keuangan), hanya FILE bukti yang di-purge agar R2 tak numpuk.
+// payment_proof_url di-set sentinel "purged-90d" setelah hapus (bukan null) supaya
+// tidak ikut di-scan ulang taskScanBuktiBayar. Hanya proses URL real "/api/foto?key=..."
+// — sentinel (verified-*, manual-confirmed:*) & URL eksternal di-skip.
+// Umur dihitung dari coalesce(paid_at, created_at).
+// ══════════════════════════════════════════════════
+async function taskPaymentProofCleanup90d() {
+  // Toggle-gated (default ON kecuali eksplisit "false")
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["payment_proof_cleanup_enabled"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (togMap["payment_proof_cleanup_enabled"] === "false") {
+    await log("PAYMENT_PROOF_CLEANUP", "Dilewati — toggle OFF", "INFO");
+    return { skipped: true };
+  }
+
+  const result = { swept: 0, purged: 0, errors: 0, skipped_external: 0 };
+  const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
+  // Hanya bukti real R2 (/api/foto?key=...) yang umurnya >90 hari (pakai paid_at, fallback created_at)
+  const { data: rows, error } = await sb.from("invoices")
+    .select("id, payment_proof_url, paid_at, created_at")
+    .like("payment_proof_url", "/api/foto?key=%")
+    .or(`paid_at.lt.${cutoff},and(paid_at.is.null,created_at.lt.${cutoff})`)
+    .limit(500);
+  if (error) { await log("PAYMENT_PROOF_CLEANUP", "Query gagal: " + error.message, "ERROR"); return { error: error.message }; }
+  result.swept = (rows || []).length;
+  if (result.swept === 0) { await log("PAYMENT_PROOF_CLEANUP", "Tidak ada bukti bayar >90 hari", "INFO"); return result; }
+
+  for (const row of rows) {
+    try {
+      // payment_proof_url format: "/api/foto?key=<encoded>" → ekstrak key
+      let key = null;
+      try { key = new URL("http://x" + row.payment_proof_url).searchParams.get("key"); } catch { key = null; }
+      if (!key) { result.skipped_external++; continue; }
+      const ok = await deleteR2Object(key);
+      if (ok) {
+        await sb.from("invoices").update({ payment_proof_url: "purged-90d", updated_at: new Date().toISOString() }).eq("id", row.id);
+        result.purged++;
+      } else { result.errors++; }
+    } catch (e) { result.errors++; console.warn("[PAYMENT_PROOF_CLEANUP]", row.id, e.message); }
+  }
+  await log("PAYMENT_PROOF_CLEANUP", `swept=${result.swept} purged=${result.purged} errors=${result.errors} skipped=${result.skipped_external}`, "SUCCESS");
   return result;
 }
 
@@ -768,21 +825,43 @@ async function taskWaBackfill(opts = {}) {
 
 // ══════════════════════════════════════════════════
 // TASK: Snapshot cleanup — retention 60 hari
-// Hapus wa_daily_snapshots + objek R2 yg > 60 hari
-// (R2 object cleanup pakai pattern existing taskR2Cleanup90d).
+// Hapus objek R2 (file .json) + row wa_daily_snapshots yg > 60 hari.
+// FIX: dulu hanya hapus row DB & andalkan r2-cleanup-90d, tapi cron itu hanya
+// memproses wa_group_logs → file snapshot orphan selamanya. Sekarang hapus R2 langsung.
 // ══════════════════════════════════════════════════
 async function taskSnapshotCleanup() {
+  // Toggle-gated (default ON kecuali eksplisit "false")
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["snapshot_cleanup_enabled"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (togMap["snapshot_cleanup_enabled"] === "false") {
+    await log("SNAPSHOT_CLEANUP", "Dilewati — toggle OFF", "INFO");
+    return { skipped: true };
+  }
+
   const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
-  // Ambil rows yg expired (utk delete R2 objects nanti)
+  // Ambil rows yg expired (utk delete R2 objects)
   const { data: stale } = await sb.from("wa_daily_snapshots")
     .select("id,snapshot_date,r2_key")
-    .lt("snapshot_date", cutoff);
+    .lt("snapshot_date", cutoff)
+    .limit(500);
   const count = (stale || []).length;
-  if (count === 0) return { ok: true, deleted: 0, cutoff };
-  // Note: R2 object delete via taskR2Cleanup90d (pattern existing); kalau mau lebih cepat
-  // tambah delete object di sini — saat ini cukup hapus manifest, R2 di-purge cron 90d.
+  if (count === 0) {
+    await log("SNAPSHOT_CLEANUP", "Tidak ada snapshot >60 hari", "INFO");
+    return { ok: true, deleted: 0, purged: 0, cutoff };
+  }
+
+  // Hapus file R2 per row (key tersimpan di r2_key, format: wa-snapshots/<date>.json)
+  let purged = 0, errors = 0;
+  for (const row of stale) {
+    if (!row.r2_key) continue;
+    const ok = await deleteR2Object(row.r2_key);
+    if (ok) purged++; else { errors++; console.warn("[SNAPSHOT_CLEANUP] R2 delete gagal:", row.r2_key); }
+  }
+
+  // Hapus row DB setelah R2 dibersihkan
   await sb.from("wa_daily_snapshots").delete().lt("snapshot_date", cutoff);
-  return { ok: true, deleted: count, cutoff, note: "R2 objects akan di-purge cron r2-cleanup-90d" };
+  await log("SNAPSHOT_CLEANUP", `deleted=${count} r2_purged=${purged} errors=${errors} (cutoff ${cutoff})`, "SUCCESS");
+  return { ok: true, deleted: count, purged, errors, cutoff };
 }
 
 // ══════════════════════════════════════════════════
@@ -1856,6 +1935,7 @@ export default async function handler(req, res) {
       "auto-return-brought": taskAutoReturnBrought,
       "r2-cleanup-90d":   taskR2Cleanup90d,
       "expense-foto-cleanup": taskExpenseFotoCleanup30d,
+      "payment-proof-cleanup": taskPaymentProofCleanup90d,
       "wa-snapshot":      taskWaSnapshot,
       "wa-backfill":      () => taskWaBackfill({ from: req.query.from, to: req.query.to }),
       "snapshot-cleanup": taskSnapshotCleanup,

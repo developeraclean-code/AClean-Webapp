@@ -1594,6 +1594,10 @@ return (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#0ea5e918", border: "1px solid #0ea5e944", color: "#0ea5e9", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
                   ✅ Dikonfirmasi Manual
                 </span>
+              ) : inv.payment_proof_url === "purged-90d" ? (
+                <span title="File bukti bayar dihapus otomatis setelah 90 hari untuk hemat storage. Invoice tetap lunas." style={{ display: "inline-flex", alignItems: "center", gap: 5, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
+                  🗑️ Bukti diarsip (90 hari)
+                </span>
               ) : inv.payment_proof_url ? (
                 <button
                   onClick={() => window.open(inv.payment_proof_url.startsWith("/api/") ? window.location.origin + inv.payment_proof_url : inv.payment_proof_url, "_blank")}

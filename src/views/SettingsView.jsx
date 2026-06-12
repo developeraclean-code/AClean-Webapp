@@ -969,6 +969,46 @@ const d = await r.json();
           </div>
         </Card>
 
+        {/* Auto-Cleanup & Retensi File R2 */}
+        {isOwner && (
+        <Card>
+          <CardHeader icon="🧹" title="Auto-Cleanup & Retensi File" subtitle="Hapus otomatis file lama dari storage (R2) agar tidak menumpuk. Record DB tetap utuh — hanya file gambar yang dihapus. Default semua AKTIF." />
+          {[
+            { key: "expense_foto_cleanup_enabled", label: "Foto Pengeluaran Teknisi (30 hari)", desc: "Hapus foto bukti pengeluaran teknisi dari R2 setelah 30 hari. Data nominal & catatan pengeluaran tetap tersimpan.", icon: "🧾" },
+            { key: "payment_proof_cleanup_enabled", label: "Bukti Bayar Customer (90 hari)", desc: "Hapus file foto bukti transfer dari R2 setelah 90 hari (umur file). Invoice & status lunas tetap utuh.", icon: "💳" },
+            { key: "r2_cleanup_enabled", label: "Foto Grup WA (90 hari)", desc: "Hapus mirror foto dari grup WhatsApp di R2 setelah 90 hari. Metadata log tetap tersimpan.", icon: "🖼️" },
+            { key: "snapshot_cleanup_enabled", label: "Snapshot Harian WA (60 hari)", desc: "Hapus file snapshot JSON percakapan WA harian dari R2 setelah 60 hari, beserta manifest-nya.", icon: "📸" },
+          ].map(({ key, label, desc, icon }) => {
+            // Default ON: aktif kecuali eksplisit "false" — sinkron dengan backend cron toggle
+            const isOn = appSettings[key] !== "false";
+            return (
+              <div key={key} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: "1px solid " + cs.border }}>
+                <span style={{ fontSize: 18, minWidth: 24 }}>{icon}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, color: isOn ? cs.text : cs.muted, fontSize: 13 }}>{label}</div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{desc}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: isOn ? cs.green : cs.muted, minWidth: 24 }}>{isOn ? "ON" : "OFF"}</span>
+                  <div onClick={async () => {
+                    const newVal = isOn ? "false" : "true";
+                    setAppSettings(prev => ({ ...prev, [key]: newVal }));
+                    await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
+                    showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
+                  }}
+                    style={{ width: 44, height: 24, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
+                    <div style={{ position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff", top: 2, left: isOn ? 22 : 2, transition: "left .2s", boxShadow: "0 1px 3px #0004" }} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ marginTop: 12, padding: "10px 12px", background: cs.surface, borderRadius: 8, fontSize: 11, color: cs.muted }}>
+            💡 File yang sudah dihapus tidak bisa dikembalikan. Matikan toggle bila perlu menyimpan file lebih lama.
+          </div>
+        </Card>
+        )}
+
         {/* Customer Self-Service Portal */}
         {isOwner && (
           <Card>
