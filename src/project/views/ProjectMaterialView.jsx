@@ -7,8 +7,29 @@ import { matTotal, matAlloc, pName } from "../utils/finance.js";
 import { MAT_SUBS, fmtRp } from "../utils/constants.js";
 
 export default function ProjectMaterialView() {
-  const { db, can, addRows, patchRows, allocateMaterials, deleteRow } = useProject();
+  const { db, can, addRows, patchRows, patchRow, allocateMaterials, deleteRow } = useProject();
   const { openForm, toast } = useModal();
+
+  // Edit material (Owner only) — adjust nama/satuan/stok gudang/min/harga
+  const editMaterial = (m) => openForm({
+    title: `Edit Material — ${m.nama}`,
+    fields: [
+      { name: "nama", label: "Nama", val: m.nama },
+      { name: "sub", label: "Sub-kategori", type: "select", options: MAT_SUBS, val: m.sub },
+      { name: "satuan", label: "Satuan", val: m.satuan },
+      { name: "gudang", label: "Stok Gudang (adjust)", type: "number", val: m.gudang },
+      { name: "min", label: "Min", type: "number", val: m.min },
+      { name: "harga", label: "Harga", type: "number", val: m.harga },
+    ],
+    onSubmit: (d) => {
+      if (!d.nama) return toast("Nama wajib diisi");
+      patchRow("materials", m.id, {
+        nama: d.nama, sub: d.sub || m.sub, satuan: d.satuan,
+        gudang: +d.gudang || 0, min: +d.min || 0, harga: +d.harga || 0,
+      });
+      toast("Material diperbarui");
+    },
+  });
 
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
   const projOptions = db.projects.map((p) => p.nama);
@@ -137,7 +158,10 @@ export default function ProjectMaterialView() {
                       <td style={S.tableStyles.td}>{m.min}</td>
                       <td style={S.tableStyles.td}><span style={S.pill(st)}>{lbl}</span></td>
                       {can.finance && <td style={S.tableStyles.td}>{fmtRp(tot * m.harga)}</td>}
-                      {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm(`Hapus material "${m.nama}" beserta alokasinya?`)) deleteRow("materials", m.id); }}>🗑</button></td>}
+                      {can.delete && <td style={S.tableStyles.td}><div style={S.row}>
+                        <button style={S.btnSm("ghost")} title="Edit material" onClick={() => editMaterial(m)}>✏️</button>
+                        <button style={S.btnSm("ghost")} onClick={() => { if (window.confirm(`Hapus material "${m.nama}" beserta alokasinya?`)) deleteRow("materials", m.id); }}>🗑</button>
+                      </div></td>}
                     </tr>
                   );
                 })}

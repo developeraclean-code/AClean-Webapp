@@ -10,23 +10,30 @@ export default function ProjectUsageView() {
   const { openForm, toast } = useModal();
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
 
+  const MANUAL = "✏️ Ketik manual";
   const addUsage = () => {
     if (!db.projects.length) { toast("Buat project dulu di Daftar Project"); return; }
-    if (!db.materials.length) { toast("Buat material dulu di Stok Material"); return; }
     openForm({
     title: "Catat Pemakaian Material (isi beberapa sekaligus)",
     fields: [
       { name: "projectId", label: "Project", type: "select", options: db.projects.map((p) => p.nama) },
       { name: "oleh", label: "Oleh" },
-      { name: "rows", label: "Pemakaian Material", type: "grid", hint: "pilih material, isi qty & satuan",
-        columns: [{ key: "material", label: "Material", type: "select", options: db.materials.map((m) => m.nama) }, { key: "qty", label: "Qty", type: "number" }, { key: "satuan", label: "Satuan" }] },
+      { name: "rows", label: "Pemakaian Material", type: "grid", hint: "pilih material dari stok ATAU '✏️ Ketik manual' lalu isi nama di kolom Manual (mis. beli satuan)",
+        columns: [
+          { key: "material", label: "Material", type: "select", options: [...db.materials.map((m) => m.nama), MANUAL] },
+          { key: "manual", label: "Nama (jika manual)" },
+          { key: "qty", label: "Qty", type: "number" },
+          { key: "satuan", label: "Satuan" },
+        ] },
     ],
     onSubmit: (d) => {
       const pid = pidByName(d.projectId);
       if (isLocked(db, pid, today)) return toast("🔒 Hari terkunci");
-      const rows = (d.rows || []).filter((r) => r.qty);
-      if (!rows.length) return toast("Isi minimal 1 baris");
-      addRows("usage", rows.map((r) => ({ tanggal: today, projectId: pid, material: r.material, qty: `${r.qty} ${r.satuan || ""}`.trim(), oleh: d.oleh })));
+      const rows = (d.rows || [])
+        .map((r) => ({ ...r, namaFinal: r.material === MANUAL ? (r.manual || "").trim() : r.material }))
+        .filter((r) => r.qty && r.namaFinal);
+      if (!rows.length) return toast("Isi minimal 1 baris (material + qty)");
+      addRows("usage", rows.map((r) => ({ tanggal: today, projectId: pid, material: r.namaFinal, qty: `${r.qty} ${r.satuan || ""}`.trim(), oleh: d.oleh })));
       toast(`${rows.length} pemakaian tercatat`);
     },
   });
