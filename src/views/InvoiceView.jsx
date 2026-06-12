@@ -7,7 +7,214 @@ import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
 import QuotationPDF from "../components/QuotationPDF.jsx";
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
+// ── Modal Lampirkan Bukti Bayar manual ──────────────────────────────────────
+// 3 sumber: (WA) pilih dari payment_suggestions belum ter-match (lintas-nomor),
+// (URL) tempel link, (UPLOAD) file. Confirm → markPaid(inv,...,proofUrl) bila belum
+// lunas / update proof saja bila sudah PAID. Bila dari WA monitor → suggestion
+// di-set CONFIRMED (sekalian mengurangi backlog).
+function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInvoicesData, setPaymentSuggestions, showNotif, currentUser, auditUserName, addAgentLog, fmt, onClose }) {
+  const [tab, setTab] = useState("wa");
+  const [suggs, setSuggs] = useState([]);
+  const [loadingSuggs, setLoadingSuggs] = useState(true);
+  const [search, setSearch] = useState("");
+  const [selSugg, setSelSugg] = useState(null);
+  const [urlInput, setUrlInput] = useState("");
+  const [uploadedUrl, setUploadedUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const invTail = (inv.phone || "").replace(/\D/g, "").slice(-9);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingSuggs(true);
+      try {
+        const { data } = await supabase
+          .from("payment_suggestions")
+          .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id")
+          .is("invoice_id", null)
+          .not("image_url", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(120);
+        if (!cancelled) setSuggs(data || []);
+      } catch { if (!cancelled) setSuggs([]); }
+      finally { if (!cancelled) setLoadingSuggs(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [supabase]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const qd = q.replace(/\D/g, "");
+    let list = suggs;
+    if (q) list = list.filter(s =>
+      (s.sender_name || "").toLowerCase().includes(q) ||
+      (qd && (s.phone || "").replace(/\D/g, "").includes(qd)) ||
+      (qd && String(s.amount || "").includes(qd))
+    );
+    // Bukti dari nomor invoice ini diutamakan tampil di atas
+    return [...list].sort((a, b) => {
+      const am = invTail && (a.phone || "").replace(/\D/g, "").endsWith(invTail) ? 0 : 1;
+      const bm = invTail && (b.phone || "").replace(/\D/g, "").endsWith(invTail) ? 0 : 1;
+      return am - bm;
+    });
+  }, [suggs, search, invTail]);
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const base64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result); r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      const resp = await fetch("/api/upload-foto", {
+        method: "POST", headers: { ...(await apiHeaders()) },
+        body: JSON.stringify({ base64, filename: `proof_${inv.id}_${Date.now()}.jpg`, reportId: "bukti-" + inv.id, mimeType: file.type || "image/jpeg" }),
+      });
+      const d = await resp.json();
+      if (d.success && d.url) { setUploadedUrl(d.url); showNotif("✅ Bukti terupload"); }
+      else showNotif("❌ Upload gagal: " + (d.error || "unknown"));
+    } catch (err) { showNotif("❌ " + err.message); }
+    finally { setUploading(false); e.target.value = ""; }
+  };
+
+  const chosenUrl = tab === "wa" ? (selSugg?.image_url || "") : tab === "url" ? urlInput.trim() : uploadedUrl;
+  const alreadyPaid = inv.status === "PAID";
+
+  const confirm = async () => {
+    if (!chosenUrl) { showNotif("⚠️ Pilih/isi bukti bayar dulu"); return; }
+    setBusy(true);
+    try {
+      const beda = tab === "wa" && selSugg && invTail && !(selSugg.phone || "").replace(/\D/g, "").endsWith(invTail);
+      const srcNote = tab === "wa" && selSugg
+        ? `Bukti manual dari ${selSugg.sender_name || selSugg.phone || "WA"}${beda ? " (nomor beda)" : ""}`
+        : tab === "url" ? "Bukti dilampirkan manual (URL)" : "Bukti dilampirkan manual (upload)";
+
+      if (alreadyPaid) {
+        // Sudah lunas → cukup lampirkan bukti
+        const { error } = await supabase.from("invoices")
+          .update({ payment_proof_url: chosenUrl, updated_at: new Date().toISOString() }).eq("id", inv.id);
+        if (error) throw error;
+        setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, payment_proof_url: chosenUrl } : i));
+      } else {
+        // Belum lunas → tandai lunas sekaligus simpan bukti
+        await markPaid(inv, "transfer", srcNote, false, chosenUrl);
+      }
+
+      if (tab === "wa" && selSugg) {
+        const now = new Date().toISOString();
+        try {
+          await supabase.from("payment_suggestions").update({
+            invoice_id: inv.id, order_id: inv.job_id || null,
+            status: "CONFIRMED", matched_at: now, match_source: "manual",
+            resolved_at: now, resolved_by: currentUser?.name || (auditUserName ? auditUserName() : "Owner"),
+          }).eq("id", selSugg.id);
+        } catch (_) { /* non-blocking */ }
+        setPaymentSuggestions?.(prev => prev.filter(p => p.id !== selSugg.id));
+      }
+      addAgentLog?.("INVOICE_PROOF_ATTACHED", `Bukti bayar dilampirkan manual ke ${inv.id} (${tab})${alreadyPaid ? "" : " + tandai lunas"}`, "SUCCESS");
+      showNotif(`✅ Bukti dilampirkan${alreadyPaid ? "" : ` & ${inv.id} ditandai lunas`}`);
+      onClose();
+    } catch (err) { showNotif("❌ Gagal: " + (err.message || err)); }
+    finally { setBusy(false); }
+  };
+
+  const tabBtn = (k, label) => (
+    <button onClick={() => setTab(k)} style={{
+      flex: 1, padding: "8px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+      background: tab === k ? cs.accent : cs.card, color: tab === k ? "#fff" : cs.muted,
+      border: "1px solid " + (tab === k ? cs.accent : cs.border), borderRadius: 8,
+    }}>{label}</button>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 16, padding: 18, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>🔗 Lampirkan Bukti Bayar</div>
+            <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{inv.id} · {inv.customer} · {fmt(inv.total)}{alreadyPaid ? " · sudah PAID" : ""}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 6, margin: "12px 0" }}>
+          {tabBtn("wa", "📱 Dari WA Monitor")}
+          {tabBtn("url", "🔗 Tempel URL")}
+          {tabBtn("upload", "📤 Upload")}
+        </div>
+
+        {tab === "wa" && (
+          <div>
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Cari nama / nomor / jumlah…"
+              style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box", marginBottom: 8 }} />
+            {loadingSuggs ? (
+              <div style={{ color: cs.muted, fontSize: 12, padding: 12, textAlign: "center" }}>Memuat bukti…</div>
+            ) : filtered.length === 0 ? (
+              <div style={{ color: cs.muted, fontSize: 12, padding: 12, textAlign: "center" }}>Tidak ada bukti belum ter-match.</div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+                {filtered.slice(0, 60).map(s => {
+                  const sel = selSugg?.id === s.id;
+                  const sameNo = invTail && (s.phone || "").replace(/\D/g, "").endsWith(invTail);
+                  return (
+                    <div key={s.id} onClick={() => setSelSugg(sel ? null : s)}
+                      style={{ border: "2px solid " + (sel ? cs.green : cs.border), borderRadius: 10, overflow: "hidden", cursor: "pointer", background: cs.card }}>
+                      <div style={{ position: "relative", width: "100%", height: 100, background: "#0008" }}>
+                        <img src={fotoSrc(s.image_url)} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        {sel && <div style={{ position: "absolute", top: 4, right: 4, background: cs.green, color: "#fff", borderRadius: 99, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>✓</div>}
+                        {sameNo && <div style={{ position: "absolute", top: 4, left: 4, background: "#22c55e", color: "#fff", fontSize: 8, padding: "1px 5px", borderRadius: 99, fontWeight: 700 }}>nomor sama</div>}
+                      </div>
+                      <div style={{ padding: "6px 8px" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: cs.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.sender_name || s.phone || "—"}</div>
+                        <div style={{ fontSize: 10, color: cs.muted }}>{s.amount ? fmt(Number(s.amount)) : "—"} · {s.bank || "?"}</div>
+                        <div style={{ fontSize: 9, color: cs.muted }}>{(s.created_at || "").slice(0, 10)} · {s.phone}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "url" && (
+          <div>
+            <div style={{ fontSize: 11, color: cs.muted, marginBottom: 6 }}>Tempel link gambar bukti (mis. URL dari WA monitor / hosting lain).</div>
+            <input value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="https://…"
+              style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+            {urlInput.trim() && <img src={fotoSrc(urlInput.trim())} alt="" style={{ marginTop: 8, maxWidth: "100%", maxHeight: 180, borderRadius: 8, border: "1px solid " + cs.border }} onError={e => { e.currentTarget.style.display = "none"; }} />}
+          </div>
+        )}
+
+        {tab === "upload" && (
+          <div>
+            <div style={{ fontSize: 11, color: cs.muted, marginBottom: 6 }}>Upload screenshot bukti (mis. bukti via email).</div>
+            <label style={{ display: "inline-block", background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+              {uploading ? "⏳ Mengupload…" : "📤 Pilih File"}
+              <input type="file" accept="image/*" onChange={handleUpload} disabled={uploading} style={{ display: "none" }} />
+            </label>
+            {uploadedUrl && <img src={fotoSrc(uploadedUrl)} alt="" style={{ marginTop: 8, maxWidth: "100%", maxHeight: 180, borderRadius: 8, border: "1px solid " + cs.green }} />}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <button onClick={onClose} style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
+          <button onClick={confirm} disabled={busy || !chosenUrl}
+            style={{ flex: 2, background: chosenUrl && !busy ? cs.green : cs.surface, border: "none", color: chosenUrl && !busy ? "#fff" : cs.muted, padding: "11px", borderRadius: 10, cursor: chosenUrl && !busy ? "pointer" : "not-allowed", fontWeight: 800, fontSize: 13 }}>
+            {busy ? "Proses…" : alreadyPaid ? "✅ Simpan Bukti" : "✅ Simpan Bukti & Tandai Lunas"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, paymentSuggestions, setPaymentSuggestions, fotoSrc, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 const [scanningBukti, setScanningBukti] = useState(false);
@@ -92,6 +299,9 @@ const [mergePreviewing, setMergePreviewing] = useState(false);
 const [mergeConsolidating, setMergeConsolidating] = useState(false);
 // Snapshot invoice list yang terakhir gagal kirim — agar bisa di-retry tanpa hilang state UI
 const [lastFailedMerge, setLastFailedMerge] = useState(null); // { invList, customer, phone, ts }
+
+// Modal "Lampirkan Bukti" — invoice yang sedang dilampiri bukti bayar manual
+const [attachProofInv, setAttachProofInv] = useState(null);
 
 const mergeMode = mergeStage === "select"; // backward-compat untuk card render
 
@@ -543,6 +753,17 @@ return (
         sendWAFn={sendWAFn}
         onOpenPDF={(quo) => setQuoPDFData(quo)}
         uploadQuotationPDFFn={uploadQuotationPDFFn}
+      />
+    )}
+
+    {/* Lampirkan Bukti Bayar manual */}
+    {attachProofInv && (
+      <AttachProofModal
+        inv={attachProofInv}
+        fotoSrc={fotoSrc} apiHeaders={apiHeaders} supabase={supabase}
+        markPaid={markPaid} setInvoicesData={setInvoicesData} setPaymentSuggestions={setPaymentSuggestions}
+        showNotif={showNotif} currentUser={currentUser} auditUserName={auditUserName} addAgentLog={addAgentLog} fmt={fmt}
+        onClose={() => setAttachProofInv(null)}
       />
     )}
 
@@ -1634,6 +1855,16 @@ return (
                   ⚠️ Tanpa Bukti
                 </span>
               ) : null
+            )}
+            {/* Lampirkan bukti bayar manual — Owner, invoice tanpa bukti (bisa lintas-nomor / email) */}
+            {currentUser?.role === "Owner" && inv.total > 0 &&
+              (!inv.payment_proof_url || inv.payment_proof_url === "verified-no-proof") &&
+              !["CANCELLED", "PENDING_APPROVAL"].includes(inv.status) && (
+              <button onClick={() => setAttachProofInv(inv)}
+                title="Lampirkan bukti bayar manual (pilih dari WA monitor / tempel URL / upload) — untuk bukti dari nomor beda atau via email"
+                style={{ background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#38bdf8", padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                🔗 Lampirkan Bukti
+              </button>
             )}
             <button
               onClick={() => setAuditModal({ tableName: "invoices", rowId: inv.id })}
