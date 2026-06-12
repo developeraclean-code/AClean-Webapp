@@ -1594,7 +1594,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   }
 
   // ── Inbox list — hanya today + ke depan; bila gridDate aktif, filter ke hari itu ──
-  const inboxOrders = useMemo(() => {
+  // BASE = semua filter KECUALI filter Tim. Dipakai untuk hitung badge jumlah per chip Tim
+  // (kalau pakai list yang sudah difilter tim, chip tim lain selalu 0 — bug).
+  const inboxOrdersBase = useMemo(() => {
     // Jaring pengaman: pastikan tiap order id unik (cegah tampil dobel apa pun sumbernya).
     const _seen = new Set();
     let list = ordersData.filter(o => {
@@ -1608,7 +1610,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       return true;
     });
     if (filterStatus !== "ALL") list = list.filter(o => o.status === filterStatus);
-    if (filterTeam !== "ALL") list = list.filter(o => (o.team_slot || "") === filterTeam);
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
       list = list.filter(o =>
@@ -1624,7 +1625,13 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       if (dateComp !== 0) return dateComp;
       return (a.time || "").localeCompare(b.time || "");
     });
-  }, [ordersData, filterStatus, filterTeam, searchQ, TODAY, gridDate]);
+  }, [ordersData, filterStatus, searchQ, TODAY, gridDate]);
+
+  // List final yang ditampilkan = base + filter Tim (kalau ada).
+  const inboxOrders = useMemo(() =>
+    filterTeam === "ALL" ? inboxOrdersBase : inboxOrdersBase.filter(o => (o.team_slot || "") === filterTeam),
+    [inboxOrdersBase, filterTeam]
+  );
 
   const inputStyle = {
     background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
@@ -2052,8 +2059,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                 Semua Tim
               </button>
               {teamsInView.map(s => {
-                // Hitung order & konflik untuk tim ini
-                const teamOrders = inboxOrders.filter(o => o.team_slot === s);
+                // Hitung order & konflik untuk tim ini — pakai BASE (tanpa filter tim)
+                // supaya badge tiap chip tetap akurat walau satu tim sedang dipilih.
+                const teamOrders = inboxOrdersBase.filter(o => o.team_slot === s);
                 const hasConflict = teamOrders.some(o => {
                   if (!o.time || !o.teknisi) return false;
                   const same = teamOrders.filter(o2 => o2.teknisi === o.teknisi && o2.id !== o.id && o2.time);

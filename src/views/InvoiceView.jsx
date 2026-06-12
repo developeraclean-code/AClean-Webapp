@@ -1552,8 +1552,8 @@ return (
             {currentUser?.role === "Owner" && inv.status === "PAID" && inv.invoice_type !== "ac_unit_sale" && revertInvoicePaid && (
               <button onClick={() => revertInvoicePaid(inv)}
                 title="Kembalikan ke Belum Bayar agar nilai bisa dikoreksi"
-                style={{ background: "#f9731622", border: "1px solid #f9731644", color: "#f97316", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-                ↩️ Revert ke Belum Bayar
+                style={{ background: "#f9731622", border: "1px solid #f9731644", color: "#f97316", padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                ↩️ Revert
               </button>
             )}
             {/* Kirim Report Card manual — hanya Owner/Admin, status sudah approved, ada laporan terkait */}
@@ -1579,12 +1579,13 @@ return (
                 } finally {
                   if (btn) {
                     btn.disabled = false;
-                    btn.textContent = "📋 Kirim Report Card";
+                    btn.textContent = "📋 Report Card";
                   }
                 }
               }}
-              style={{ background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#38bdf8", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-                📋 Kirim Report Card
+              title="Kirim Service Report Card ke customer via WhatsApp"
+              style={{ background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#38bdf8", padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                📋 Report Card
               </button>
             )}
             {/* Bukti bayar — ada URL: tombol lihat. "verified-no-proof": dikonfirmasi manual. PAID tanpa bukti: warning */}
@@ -1620,13 +1621,13 @@ return (
                       showNotif("❌ Gagal konfirmasi: " + e.message);
                     }
                   }}
-                  title="Tandai lunas tanpa bukti bayar (tanpa kirim WA)"
+                  title="Belum ada bukti bayar — klik untuk tandai lunas paksa (tanpa kirim WA)"
                   style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#f43f5e18", border: "1px solid #f43f5e66", color: "#f43f5e", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                  ⚠️ Belum Ada Bukti — Klik Lunas Paksa
+                  ⚠️ Lunas Paksa
                 </button>
               ) : currentUser?.role === "Admin" ? (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#f43f5e18", border: "1px solid #f43f5e44", color: "#f43f5e", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
-                  ⚠️ Belum Ada Bukti Bayar
+                <span title="Belum ada bukti bayar" style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#f43f5e18", border: "1px solid #f43f5e44", color: "#f43f5e", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
+                  ⚠️ Tanpa Bukti
                 </span>
               ) : null
             )}
