@@ -1,6 +1,7 @@
 import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
+import { reconcileDay, sumReportedUsage, reconStatus } from "../lib/materialRecon.js";
 
 // ───────────────────────────────────────────────
 // Pending AI Material — manual approve only (no auto-insert)
@@ -179,7 +180,136 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
   );
 }
 
-function MatTrackView({ inventoryData, invUnitsData, setInvUnitsData, invTxData, setInvTxData, matTrackFilter, setMatTrackFilter, matTrackSearch, setMatTrackSearch, matTrackDateFrom, setMatTrackDateFrom, matTrackDateTo, setMatTrackDateTo, setModalStok, supabase, fetchInventoryUnits, showNotif, currentUser, setInventoryData }) {
+// ───────────────────────────────────────────────
+// Recon Material Harian — bandingkan material dibawa (pagi) vs dikembalikan (pulang)
+// vs pemakaian yang dilaporkan di laporan job (inventory_transactions). Read-only audit.
+// ───────────────────────────────────────────────
+const FLAG_STYLE = {
+  OK:           { bg: "#10b98122", fg: "#10b981", label: "OK" },
+  OVER:         { bg: "#ef444422", fg: "#ef4444", label: "OVER (tak dilaporkan?)" },
+  UNDER:        { bg: "#f59e0b22", fg: "#f59e0b", label: "UNDER (over-report?)" },
+  MISSING_DATA: { bg: "#6b728022", fg: "#9ca3af", label: "Data belum lengkap" },
+};
+
+function MaterialReconTab({ supabase, appSettings }) {
+  const [date, setDate] = useState(new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" }));
+  const [rows, setRows] = useState([]);        // teknisi_material_checkout
+  const [tx, setTx] = useState([]);            // inventory_transactions usage
+  const [loading, setLoading] = useState(false);
+
+  const tolerances = useMemo(() => {
+    try { return appSettings?.material_recon_tolerances ? JSON.parse(appSettings.material_recon_tolerances) : undefined; }
+    catch { return undefined; }
+  }, [appSettings]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      const [{ data: co }, { data: txn }] = await Promise.all([
+        supabase.from("teknisi_material_checkout").select("*").eq("checkout_date", date),
+        supabase.from("inventory_transactions").select("inventory_code,inventory_name,qty,qty_actual,type,teknisi_name,job_date").eq("job_date", date).eq("type", "usage"),
+      ]);
+      if (!alive) return;
+      setRows(co || []); setTx(txn || []); setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [supabase, date]);
+
+  const byTeknisi = useMemo(() => {
+    const map = new Map();
+    for (const r of rows) {
+      if (!map.has(r.teknisi_name)) map.set(r.teknisi_name, { teknisi: r.teknisi_name, pagi: null, pulang: null });
+      map.get(r.teknisi_name)[r.session_type] = r;
+    }
+    return [...map.values()].map(g => {
+      const txRows = tx.filter(t => (t.teknisi_name || "").trim() === (g.teknisi || "").trim());
+      const lines = reconcileDay(g.pagi?.items || [], g.pulang?.items || [], sumReportedUsage(txRows), tolerances);
+      return { ...g, lines, status: reconStatus(lines) };
+    });
+  }, [rows, tx, tolerances]);
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, color: cs.muted, fontWeight: 600 }}>Tanggal:</span>
+        <input type="date" value={date} onChange={e => setDate(e.target.value)}
+          style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 11px", color: cs.text, fontSize: 13 }} />
+        {loading && <span style={{ fontSize: 12, color: cs.muted }}>memuat…</span>}
+      </div>
+
+      {byTeknisi.length === 0 && !loading && (
+        <div style={{ padding: 24, textAlign: "center", color: cs.muted, fontSize: 13 }}>Belum ada catatan material harian untuk tanggal ini.</div>
+      )}
+
+      {byTeknisi.map(g => (
+        <div key={g.teknisi} style={{ background: cs.panel, border: "1px solid " + cs.border, borderRadius: 12, padding: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: cs.text }}>👷 {g.teknisi}</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {!g.pagi && <span style={{ fontSize: 11, color: cs.muted }}>⚠️ pagi belum diisi</span>}
+              {!g.pulang && <span style={{ fontSize: 11, color: cs.muted }}>⚠️ pulang belum diisi</span>}
+              <span style={{ fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 20,
+                background: g.status === "FLAGGED" ? "#ef444422" : g.status === "WARNING" ? "#f59e0b22" : "#10b98122",
+                color: g.status === "FLAGGED" ? "#ef4444" : g.status === "WARNING" ? "#f59e0b" : "#10b981" }}>
+                {g.status === "FLAGGED" ? "🚩 ADA SELISIH" : g.status === "WARNING" ? "DATA KURANG" : "✓ COCOK"}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ color: cs.muted, textAlign: "right" }}>
+                  <th style={{ textAlign: "left", padding: "4px 6px" }}>Material</th>
+                  <th style={{ padding: "4px 6px" }}>Dibawa</th>
+                  <th style={{ padding: "4px 6px" }}>Kembali</th>
+                  <th style={{ padding: "4px 6px" }}>Terpakai</th>
+                  <th style={{ padding: "4px 6px" }}>Dilaporkan</th>
+                  <th style={{ padding: "4px 6px" }}>Selisih</th>
+                  <th style={{ textAlign: "center", padding: "4px 6px" }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.lines.length === 0 && (
+                  <tr><td colSpan={7} style={{ padding: 10, textAlign: "center", color: cs.muted }}>Tidak ada material tercatat.</td></tr>
+                )}
+                {g.lines.map((l, i) => {
+                  const fs = FLAG_STYLE[l.flag] || FLAG_STYLE.OK;
+                  return (
+                    <tr key={i} style={{ borderTop: "1px solid " + cs.border, textAlign: "right", color: cs.text }}>
+                      <td style={{ textAlign: "left", padding: "5px 6px", fontWeight: 600 }}>{l.label} <span style={{ color: cs.muted, fontWeight: 400 }}>({l.satuan})</span></td>
+                      <td style={{ padding: "5px 6px" }}>{l.brought}</td>
+                      <td style={{ padding: "5px 6px" }}>{l.returned}</td>
+                      <td style={{ padding: "5px 6px", fontWeight: 700 }}>{l.used_implied}</td>
+                      <td style={{ padding: "5px 6px" }}>{l.used_reported == null ? "—" : l.used_reported}</td>
+                      <td style={{ padding: "5px 6px", fontWeight: 700, color: fs.fg }}>{l.selisih == null ? "—" : l.selisih}</td>
+                      <td style={{ textAlign: "center", padding: "5px 6px" }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 12, background: fs.bg, color: fs.fg }}>{fs.label}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Foto bukti pagi/pulang */}
+          <div style={{ display: "flex", gap: 12, marginTop: 10 }}>
+            {["pagi", "pulang"].map(s => g[s]?.photo_url && (
+              <a key={s} href={fotoSrc(g[s].photo_url)} target="_blank" rel="noreferrer" style={{ flex: 1, maxWidth: 160 }}>
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>{s === "pagi" ? "🌅 Pagi" : "🌇 Pulang"}{g[s].source === "wa" ? " (WA)" : ""}</div>
+                <img src={fotoSrc(g[s].photo_url)} alt={s} style={{ width: "100%", height: 90, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }} />
+              </a>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MatTrackView({ inventoryData, invUnitsData, setInvUnitsData, invTxData, setInvTxData, matTrackFilter, setMatTrackFilter, matTrackSearch, setMatTrackSearch, matTrackDateFrom, setMatTrackDateFrom, matTrackDateTo, setMatTrackDateTo, setModalStok, supabase, fetchInventoryUnits, showNotif, currentUser, setInventoryData, appSettings }) {
 const TRACK_ITEMS = inventoryData.filter(item =>
   item.material_type === "freon" ||
   item.material_type === "pipa" ||
@@ -598,6 +728,7 @@ return (
           { id: "laporan_freon",  label: "❄️ Laporan Freon" },
           { id: "laporan_pipa",   label: "🔧 Laporan Pipa" },
           { id: "laporan_kabel",  label: "⚡ Laporan Kabel" },
+          { id: "recon",          label: "🔍 Recon Material" },
         ].map(t => (
           <button key={t.id} onClick={() => setMainTab(t.id)}
             style={{ padding: "7px 16px", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", transition: "all .2s",
@@ -614,6 +745,13 @@ return (
         ═══════════════════════════════════════════════ */}
     {mainTab === "pending_ai" && isOwnerAdmin && (
       <PendingAiMaterialTab supabase={supabase} showNotif={showNotif} currentUser={currentUser} />
+    )}
+
+    {/* ═══════════════════════════════════════════════
+        TAB: RECON MATERIAL HARIAN (pagi vs pulang vs laporan job)
+        ═══════════════════════════════════════════════ */}
+    {mainTab === "recon" && isOwnerAdmin && (
+      <MaterialReconTab supabase={supabase} appSettings={appSettings} />
     )}
 
     {/* ═══════════════════════════════════════════════

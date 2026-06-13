@@ -71,6 +71,7 @@ const KomisiView = lazy(() => import("./views/KomisiView.jsx"));
 const LaporanDetailModal = lazy(() => import("./views/LaporanDetailModal.jsx"));
 const ProjectApp = lazy(() => import("./project/ProjectApp.jsx"));
 const MaintenanceView = lazy(() => import("./views/MaintenanceView.jsx"));
+const MaterialCheckoutView = lazy(() => import("./views/MaterialCheckoutView.jsx"));
 
 // Supabase client tunggal di-import dari ./supabaseClient.js (env divalidasi di sana).
 // Single client → session login Supabase Auth ter-share ke modul Project (RLS authenticated).
@@ -3093,19 +3094,19 @@ ${photoPageHTML}
   const canAccess = (menu) => {
     if (!currentUser) return false;
     const role = currentUser.role;
-    // Owner: semua akses kecuali myreport
-    if (role === "Owner") return menu !== "myreport";
+    // Owner: semua akses kecuali menu khusus teknisi (myreport, matcheckout)
+    if (role === "Owner") return menu !== "myreport" && menu !== "matcheckout";
     // Admin: semua operasional KECUALI pricelist (Owner only per SOP), settings, myreport
     // docs/SOP_ADMIN_ROLE.md: Admin = input & edit only, no delete, no price list, no settings
     // Statistik (reports), Deleted Audit (deletedaudit) → Owner only
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit"];
+      const adminBlocked = ["settings", "myreport", "matcheckout", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit"];
       return !adminBlocked.includes(menu);
     }
-    // Teknisi & Helper: dashboard, jadwal, laporan sendiri, + Komisi Saya (dilindungi PIN per-teknisi
-    // bila Owner set commission_pin — layer-2 anti "intip" data keuangan sensitif)
+    // Teknisi & Helper: dashboard, jadwal, laporan sendiri, material harian, + Komisi Saya (dilindungi PIN
+    // per-teknisi bila Owner set commission_pin — layer-2 anti "intip" data keuangan sensitif)
     if (role === "Teknisi" || role === "Helper")
-      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "komisi";
+      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "matcheckout" || menu === "komisi";
     // Finance: akses finance hub, invoice, biaya, statistik
     if (role === "Finance")
       return ["finance", "invoice", "biaya", "reports"].includes(menu);
@@ -6308,6 +6309,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     { id: "biaya", icon: "💸", label: "Biaya" },
     // Teknisi-only menu (not shown to Owner/Admin)
     { id: "myreport", icon: "📋", label: "Laporan Saya" },
+    { id: "matcheckout", icon: "📥", label: "Material Harian" },
     { id: "komisi", icon: "💰", label: "Komisi Saya" },
   ];
   const menuItems = currentUser ? ALL_MENU.filter(m => canAccess(m.id)) : ALL_MENU;
@@ -6770,7 +6772,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     <MatTrackView inventoryData={inventoryData} invUnitsData={invUnitsData} setInvUnitsData={setInvUnitsData} invTxData={invTxData} setInvTxData={setInvTxData}
       matTrackFilter={matTrackFilter} setMatTrackFilter={setMatTrackFilter} matTrackSearch={matTrackSearch} setMatTrackSearch={setMatTrackSearch}
       matTrackDateFrom={matTrackDateFrom} setMatTrackDateFrom={setMatTrackDateFrom} matTrackDateTo={matTrackDateTo} setMatTrackDateTo={setMatTrackDateTo}
-      setModalStok={setModalStok} supabase={supabase} fetchInventoryUnits={fetchInventoryUnits} showNotif={showNotif} currentUser={currentUser} setInventoryData={setInventoryData} computeStockStatus={computeStockStatus} />
+      setModalStok={setModalStok} supabase={supabase} fetchInventoryUnits={fetchInventoryUnits} showNotif={showNotif} currentUser={currentUser} setInventoryData={setInventoryData} computeStockStatus={computeStockStatus} appSettings={appSettings} />
   );
 
 
@@ -7080,6 +7082,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       case "reports": return renderReports();
       case "deletedaudit": return renderDeletedAudit();
       case "mattrack": return renderMatTrack();
+      case "matcheckout": return (
+        <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
+          <MaterialCheckoutView supabase={supabase} currentUser={currentUser} showNotif={showNotif}
+            fotoSrc={fotoSrc} _apiFetch={_apiFetch} _apiHeaders={_apiHeaders} appSettings={appSettings}
+            notifyOwnerWA={(msg) => userAccounts.filter(u => u.role === "Owner").forEach(u => u.phone && sendWA(u.phone, msg))} />
+        </Suspense>
+      );
       case "biaya": return renderExpenses();
       case "monitoring": return renderMonitoring();
       case "wa_groups": return renderWaGroupMonitor();

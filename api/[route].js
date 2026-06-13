@@ -1242,6 +1242,17 @@ export default async function handler(req, res) {
       })();
       const isToolBagPhoto = !!(toolBagCaption && isMediaMessage);
 
+      // ── DETECT MATERIAL CHECKOUT PHOTO ──
+      // Caption "Material Pagi" / "Material Pulang" + media. AI hitung tabung/roll (bukti),
+      // kuantitas meter/kg diisi via app (menu Material Harian).
+      const materialCheckoutCaption = (() => {
+        const cap = (wb.caption || message || "").trim();
+        if (!cap || cap.length > 50) return null;
+        const m = cap.match(/^material\s+(pagi|pulang)$/i);
+        return m ? { sessionType: m[1].toLowerCase() } : null;
+      })();
+      const isMaterialCheckoutPhoto = !!(materialCheckoutCaption && isMediaMessage);
+
       // ── PAYMENT DETECTION (TEXT) ──
       // Hanya trigger jika ADA keyword bayar DAN ada nominal angka sekaligus (bukan salah satu)
       if (payDetectOn && SU && SK) {
@@ -1688,6 +1699,163 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
             })
           }).catch(()=>{});
         }
+      }
+
+      // ── MATERIAL CHECKOUT ANALYSIS (Foto Material Harian via WA) ──
+      // Trigger: caption "Material Pagi" / "Material Pulang" + media image.
+      // AI vision HITUNG tabung/roll saja (foto tak bisa ukur meter/kg → kuantitas via app).
+      // Merge upsert: hanya set photo/ai (JANGAN timpa items yang sudah diisi di app).
+      if (isMaterialCheckoutPhoto && mediaUrl && SU && SK) {
+        const session = materialCheckoutCaption.sessionType;
+        const dedupKey = "mc_" + (sender || "") + "_" + session + "_" + (mediaUrl || "").slice(-40);
+        let lockAcquired = false;
+        try {
+          const lockRes = await fetch(SU + "/rest/v1/wa_webhook_dedup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+            body: JSON.stringify({ dedup_key: dedupKey })
+          });
+          lockAcquired = lockRes.ok;
+        } catch (e) { console.warn("[MAT_CHECKOUT_DEDUP]", e.message); }
+        if (!lockAcquired) return res.status(200).json({ ok: true, skipped: "duplicate-webhook" });
+        try {
+          const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
+          const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+          // Resolve teknisi dari nomor pengirim (cocokkan format 62xxx & 0xxx)
+          const altPhone = (sender || "").startsWith("62") ? "0" + sender.slice(2) : sender;
+          const profRes = await fetch(
+            SU + "/rest/v1/user_profiles?select=id,name,role&or=(phone.eq." + encodeURIComponent(sender || "") + ",phone.eq." + encodeURIComponent(altPhone || "") + ")&limit=1",
+            { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+          ).catch(() => null);
+          const prof = (profRes?.ok ? await profRes.json() : [])[0] || null;
+          if (!prof) {
+            if (FT) await fetch("https://api.fonnte.com/send", {
+              method: "POST", headers: { Authorization: FT, "Content-Type": "application/json" },
+              body: JSON.stringify({ target: sender, message: "❓ Nomor Anda belum terdaftar sebagai teknisi. Hubungi admin, atau input lewat app menu *Material Harian*.", delay: "1", countryCode: "62" })
+            }).catch(() => {});
+            return res.status(200).json({ ok: true, skipped: "unknown-teknisi" });
+          }
+          const tekName = prof.name;
+
+          // Cari row existing (untuk merge — jangan timpa items dari app)
+          const dupRes = await fetch(
+            SU + "/rest/v1/teknisi_material_checkout?teknisi_name=eq." + encodeURIComponent(tekName) +
+            "&checkout_date=eq." + today + "&session_type=eq." + session + "&select=id&limit=1",
+            { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+          ).catch(() => null);
+          const existingId = (dupRes?.ok ? await dupRes.json() : [])[0]?.id || null;
+
+          // Vision count-only + R2 upload
+          let aiDetected = {}; let aiStatus = "SKIPPED"; let photoR2Path = null; let imgBuf = null; let mimeType = "image/jpeg";
+          if (AK) {
+            const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(15000) });
+            if (imgFetch.ok) {
+              imgBuf = await imgFetch.arrayBuffer();
+              mimeType = (imgFetch.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+              if (imgBuf.byteLength >= 10240) {
+                const base64Img = Buffer.from(imgBuf).toString("base64");
+                const visionPrompt = `Anda menganalisa foto material AC (pipa, kabel, freon) yang dibawa teknisi.
+HITUNG benda yang terlihat jelas:
+- tabung_count: jumlah TABUNG FREON (silinder logam bertekanan)
+- roll_count: jumlah ROLL/GULUNGAN pipa atau kabel
+PENTING: foto TIDAK bisa mengukur panjang meter atau berat kg — JANGAN menebak angka itu.
+Jika foto buram/gelap/tak jelas → photo_quality "unreadable".
+FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":0,"roll_count":0,"confidence":"high|medium|low","notes":"singkat"}`;
+                const visionRes = await fetch("https://api.anthropic.com/v1/messages", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
+                  body: JSON.stringify({
+                    model: "claude-haiku-4-5", max_tokens: 400,
+                    messages: [{ role: "user", content: [
+                      { type: "image", source: { type: "base64", media_type: mimeType, data: base64Img } },
+                      { type: "text", text: visionPrompt }
+                    ] }]
+                  })
+                });
+                if (visionRes.ok) {
+                  const vd = await visionRes.json();
+                  const rawText = (vd.content || []).map(c => c.text || "").join("").trim();
+                  const jm = rawText.match(/\{[\s\S]*\}/);
+                  if (jm) { try { aiDetected = JSON.parse(jm[0]); } catch (_) {} }
+                }
+                const pq = aiDetected.photo_quality;
+                aiStatus = !pq ? "SKIPPED" : (pq === "ok" ? "OK" : "UNREADABLE");
+
+                // Upload R2 (hanya bila foto layak) — SigV4 (mirror tool-bag)
+                if (aiStatus === "OK") {
+                  const r2Key = process.env.R2_ACCESS_KEY, r2Secret = process.env.R2_SECRET_KEY, r2Account = process.env.R2_ACCOUNT_ID, r2Bucket = process.env.R2_BUCKET_NAME || "aclean-files";
+                  if (r2Key && r2Secret && r2Account) {
+                    try {
+                      const crypto = await import("crypto");
+                      const ext = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg";
+                      const tekSlug = String(tekName).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30) || "tek";
+                      const monthStr = today.slice(0, 7);
+                      const r2ObjectKey = `material-checkout/${monthStr}/${tekSlug}/${today}_${session}_${Date.now()}.${ext}`;
+                      const r2Host = r2Account + ".r2.cloudflarestorage.com";
+                      const r2Endpoint = "https://" + r2Host + "/" + r2Bucket + "/" + r2ObjectKey;
+                      const imgBuffer = Buffer.from(imgBuf);
+                      const now2 = new Date();
+                      const dateStr2 = now2.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 8);
+                      const amzDate = now2.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15) + "Z";
+                      const payloadHash = crypto.createHash("sha256").update(imgBuffer).digest("hex");
+                      const canonicalHeaders = "content-type:" + mimeType + "\nhost:" + r2Host + "\nx-amz-content-sha256:" + payloadHash + "\nx-amz-date:" + amzDate + "\n";
+                      const signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
+                      const canonicalUri = "/" + r2Bucket + "/" + encodeURIComponent(r2ObjectKey).replace(/%2F/g, "/");
+                      const canonicalReq = ["PUT", canonicalUri, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
+                      const credScope = dateStr2 + "/auto/s3/aws4_request";
+                      const reqHash = crypto.createHash("sha256").update(canonicalReq).digest("hex");
+                      const strToSign = ["AWS4-HMAC-SHA256", amzDate, credScope, reqHash].join("\n");
+                      const hmac = (k, d) => crypto.createHmac("sha256", k).update(d).digest();
+                      const signingKey = hmac(hmac(hmac(hmac("AWS4" + r2Secret, dateStr2), "auto"), "s3"), "aws4_request");
+                      const signature = crypto.createHmac("sha256", signingKey).update(strToSign).digest("hex");
+                      const authorization = "AWS4-HMAC-SHA256 Credential=" + r2Key + "/" + credScope + ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
+                      const r2UploadRes = await fetch(r2Endpoint, {
+                        method: "PUT",
+                        headers: { "Authorization": authorization, "Content-Type": mimeType, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash, "Content-Length": String(imgBuffer.length) },
+                        body: imgBuffer
+                      });
+                      if (r2UploadRes.ok) photoR2Path = "/api/foto?key=" + encodeURIComponent(r2ObjectKey);
+                    } catch (r2Err) { console.warn("[MAT_CHECKOUT_R2]", r2Err.message); }
+                  }
+                }
+              }
+            }
+          }
+
+          // Merge upsert — set photo/ai saja; items tidak disentuh (diisi via app)
+          const savePayload = { ai_detected: aiDetected, ai_status: aiStatus, sender_phone: sender, source: "wa", updated_at: new Date().toISOString() };
+          if (photoR2Path) savePayload.photo_url = photoR2Path; // jangan null-kan foto existing
+          let saveUrl, saveMethod;
+          if (existingId) { saveUrl = SU + "/rest/v1/teknisi_material_checkout?id=eq." + existingId; saveMethod = "PATCH"; }
+          else {
+            saveUrl = SU + "/rest/v1/teknisi_material_checkout"; saveMethod = "POST";
+            savePayload.teknisi_name = tekName; savePayload.teknisi_id = prof.id; savePayload.checkout_date = today; savePayload.session_type = session; savePayload.items = [];
+          }
+          await fetch(saveUrl, {
+            method: saveMethod,
+            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+            body: JSON.stringify(savePayload)
+          }).catch(() => {});
+
+          // Reply ke teknisi
+          if (FT) {
+            const sLabel = session === "pagi" ? "Pagi 🌅" : "Pulang 🌇";
+            const msg = aiStatus === "UNREADABLE"
+              ? `⚠️ Foto material *${sLabel}* tidak terbaca jelas — foto ulang yang terang & dekat ya. Lalu input jumlah (pipa meter, kabel meter, freon kg) di app → menu *Material Harian*.`
+              : `📥 Foto material *${sLabel}* diterima.\nTerdeteksi: ${aiDetected.tabung_count || 0} tabung, ${aiDetected.roll_count || 0} roll.\n\nJangan lupa input angka (pipa meter, kabel meter, freon kg) di app → menu *Material Harian* agar bisa dicocokkan. Terima kasih!`;
+            await fetch("https://api.fonnte.com/send", {
+              method: "POST", headers: { Authorization: FT, "Content-Type": "application/json" },
+              body: JSON.stringify({ target: sender, message: msg, delay: "2", countryCode: "62" })
+            }).catch(() => {});
+          }
+          // Alert Owner hanya bila foto tak terbaca
+          if (aiStatus === "UNREADABLE" && FT && OP) {
+            await fetch("https://api.fonnte.com/send", {
+              method: "POST", headers: { Authorization: FT, "Content-Type": "application/json" },
+              body: JSON.stringify({ target: OP, message: `⚠️ Foto material ${tekName} (${session}, ${today}) tidak terbaca AI. Minta foto ulang / cek manual.`, delay: "1", countryCode: "62" })
+            }).catch(() => {});
+          }
+        } catch (mcErr) { console.warn("[MAT_CHECKOUT]", mcErr.message); }
       }
 
       // ── IMAGE CLASSIFIER + SELECTIVE R2 UPLOAD (Opsi C) ──
@@ -2456,7 +2624,7 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
       // Tolak: "../...", path absolut, file backup, file env, dll.
       // Prefix yang diizinkan: foto/, tool-bag/, laporan/, invoice/, wa-group/, wa-snapshots/, wa-images/
       // Extension: jpg/jpeg/png/gif/webp/pdf/json
-      const SAFE_KEY_RE = /^(foto|tool-bag|laporan|invoice|invoices|wa-group|wa-snapshots|wa-images|service-reports|orders|materials|payments|projects|maintenance|quotations|customer-photos|expense-photos|expenses|merged-pdfs)\/[a-zA-Z0-9_\-./]{1,200}\.(jpg|jpeg|png|gif|webp|pdf|json)$/i;
+      const SAFE_KEY_RE = /^(foto|tool-bag|material-checkout|laporan|invoice|invoices|wa-group|wa-snapshots|wa-images|service-reports|orders|materials|payments|projects|maintenance|quotations|customer-photos|expense-photos|expenses|merged-pdfs)\/[a-zA-Z0-9_\-./]{1,200}\.(jpg|jpeg|png|gif|webp|pdf|json)$/i;
       // Cek path traversal sekaligus (defense in depth)
       if (!SAFE_KEY_RE.test(key) || key.includes("..") || key.includes("//") || key.startsWith("/")) {
         return res.status(400).json({ error: "key tidak valid" });
