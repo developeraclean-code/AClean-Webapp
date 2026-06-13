@@ -61,19 +61,36 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
     });
   }, [suggs, search, invTail]);
 
+  // Kompres + downscale dulu (canvas) — bukti HP bisa 3-8MB; tanpa ini bisa kena
+  // limit body Vercel ~4.5MB → upload gagal. 1600px @ q0.72 cukup jelas baca nominal.
+  const compressImg = (file) => new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1600;
+        const sc = Math.min(1, MAX / Math.max(img.width, img.height));
+        const w = Math.round(img.width * sc), h = Math.round(img.height * sc);
+        const c = document.createElement("canvas"); c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL("image/jpeg", 0.72));
+      };
+      img.onerror = () => reject(new Error("File bukan gambar yang valid"));
+      img.src = ev.target.result;
+    };
+    fr.onerror = () => reject(new Error("Gagal membaca file"));
+    fr.readAsDataURL(file);
+  });
+
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     try {
-      const base64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result); r.onerror = rej;
-        r.readAsDataURL(file);
-      });
+      const base64 = await compressImg(file);
       const resp = await fetch("/api/upload-foto", {
         method: "POST", headers: { ...(await apiHeaders()) },
-        body: JSON.stringify({ base64, filename: `proof_${inv.id}_${Date.now()}.jpg`, reportId: "bukti-" + inv.id, mimeType: file.type || "image/jpeg" }),
+        body: JSON.stringify({ base64, filename: `proof_${inv.id}_${Date.now()}.jpg`, reportId: "bukti-" + inv.id, mimeType: "image/jpeg" }),
       });
       const d = await resp.json();
       if (d.success && d.url) { setUploadedUrl(d.url); showNotif("✅ Bukti terupload"); }
@@ -101,8 +118,14 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
         if (error) throw error;
         setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, payment_proof_url: chosenUrl } : i));
       } else {
-        // Belum lunas → tandai lunas sekaligus simpan bukti
+        // Belum lunas → tandai lunas sekaligus simpan bukti.
+        // markPaid TIDAK melempar error saat gagal (hanya notif+return), jadi verifikasi
+        // ke DB sebelum lanjut — cegah "false success" & resolve suggestion yang menyesatkan.
         await markPaid(inv, "transfer", srcNote, false, chosenUrl);
+        const { data: chk } = await supabase.from("invoices").select("status").eq("id", inv.id).single();
+        if (!chk || chk.status !== "PAID") {
+          throw new Error("invoice belum tertandai lunas (cek status/izin) — bukti tidak jadi dilampirkan");
+        }
       }
 
       if (tab === "wa" && selSugg) {
