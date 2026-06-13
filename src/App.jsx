@@ -988,13 +988,18 @@ export default function ACleanWebApp() {
     }
 
     const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+    // Tanggal Biaya = tanggal REQUEST kasbon (bukan tanggal approve) agar tidak geser kalau
+    // approve-nya telat (mis. request sore, baru di-ACC besok pagi). Fallback ke hari ini.
+    const kasbonDate = (req.requested_at || req.created_at)
+      ? new Date(req.requested_at || req.created_at).toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" })
+      : today;
     // id expenses dibiarkan default (UUID gen_random_uuid) — jangan kirim id custom (kolom UUID).
     const expPayload = {
       category: "petty_cash",
       subcategory: "Kasbon Karyawan",
       teknisi_name: (req.teknisi_name || "").trim(),
       amount: req.amount,
-      date: today,
+      date: kasbonDate,
       description: "Kasbon: " + (req.reason || ""),
       validation_status: "APPROVED",
       last_changed_by: auditUserName(),
