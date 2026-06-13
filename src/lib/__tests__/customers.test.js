@@ -29,9 +29,13 @@ describe("findCustomer", () => {
     expect(findCustomer(customers, "081234567890", "Bapak Dedy Jelita").id).toBe(1);
     expect(findCustomer(customers, "081234567890", "Bapak Dedy Aruna").id).toBe(2);
   });
-  it("falls back to partial first-name match on same phone", () => {
-    const r = findCustomer(customers, "081234567890", "Bapak Dedy");
-    expect([1, 2]).toContain(r.id);
+  it("refuses partial match when the phone has multiple customers (multi-lokasi)", () => {
+    // 081234567890 dipakai 2 customer → ambigu, jangan menebak (return null)
+    expect(findCustomer(customers, "081234567890", "Bapak Dedy")).toBe(null);
+  });
+  it("allows partial first-name match when the phone has a single customer", () => {
+    const single = [{ id: 5, name: "Bapak Dedy Jelita", phone: "081234567890" }];
+    expect(findCustomer(single, "081234567890", "Bapak Dedy").id).toBe(5);
   });
   it("finds by phone only", () => {
     expect(findCustomer(customers, "085555555555", "").id).toBe(3);

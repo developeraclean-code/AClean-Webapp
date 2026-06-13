@@ -48,13 +48,22 @@ describe("hargaPerUnitFromTipe", () => {
     const db = [{ service: "Cleaning", type: "AC Split 0.5-1PK", price: 99000, is_active: true }];
     expect(hargaPerUnitFromTipe("Cleaning", "1PK", db)).toBe(99000);
   });
-  it("ignores inactive DB rows", () => {
+  it("ignores inactive DB rows and uses the provided fallback", () => {
     const db = [{ service: "Cleaning", type: "AC Split 0.5-1PK", price: 99000, is_active: false }];
-    expect(hargaPerUnitFromTipe("Cleaning", "1PK", db)).toBe(85000); // default
+    const fallback = { Cleaning: { "AC Split 0.5-1PK": 85000, default: 0 } };
+    expect(hargaPerUnitFromTipe("Cleaning", "1PK", db, fallback)).toBe(85000);
   });
-  it("falls back to PRICE_LIST_DEFAULT", () => {
-    expect(hargaPerUnitFromTipe("Cleaning", "2PK", [])).toBe(100000);
-    expect(hargaPerUnitFromTipe("Cleaning", "Cassette 3PK", [])).toBe(300000);
+  it("falls back to the provided priceFallback when no active DB row", () => {
+    const fallback = {
+      Cleaning: { "AC Split 1.5-2.5PK": 100000, "AC Cassette 3PK": 300000, default: 0 },
+    };
+    expect(hargaPerUnitFromTipe("Cleaning", "2PK", [], fallback)).toBe(100000);
+    expect(hargaPerUnitFromTipe("Cleaning", "Cassette 3PK", [], fallback)).toBe(300000);
+  });
+  it("returns 0 with the zero-skeleton PRICE_LIST_DEFAULT (harga live selalu dari DB)", () => {
+    // PRICE_LIST_DEFAULT sengaja skeleton harga 0 — tanpa DB row harga = 0.
+    expect(hargaPerUnitFromTipe("Cleaning", "2PK", [])).toBe(0);
+    expect(hargaPerUnitFromTipe("Cleaning", "Cassette 3PK", [])).toBe(0);
   });
   it("returns 0 for unknown bracket", () => {
     expect(hargaPerUnitFromTipe("Repair", "1PK", [])).toBe(0);
@@ -62,9 +71,13 @@ describe("hargaPerUnitFromTipe", () => {
 });
 
 describe("hitungLaborFromUnits", () => {
-  it("sums per-unit labor correctly", () => {
+  it("sums per-unit labor correctly from active DB prices", () => {
+    const db = [
+      { service: "Cleaning", type: "AC Split 0.5-1PK", price: 85000, is_active: true },
+      { service: "Cleaning", type: "AC Cassette 3PK", price: 300000, is_active: true },
+    ];
     const units = [{ tipe: "Split 1PK" }, { tipe: "Cassette 3PK" }];
-    expect(hitungLaborFromUnits("Cleaning", units)).toBe(85000 + 300000);
+    expect(hitungLaborFromUnits("Cleaning", units, db)).toBe(85000 + 300000);
   });
   it("returns 0 for empty units", () => {
     expect(hitungLaborFromUnits("Cleaning", [])).toBe(0);
@@ -81,7 +94,7 @@ describe("buildPriceListFromDB", () => {
     const pl = buildPriceListFromDB(rows);
     expect(pl.Cleaning["AC Split 0.5-1PK"]).toBe(90000);
     expect(pl.Cleaning["AC Split 1.5-2.5PK"]).toBe(120000);
-    expect(pl.Cleaning.default).toBe(85000); // preserved
+    expect(pl.Cleaning.default).toBe(0); // skeleton default (0) dipertahankan — tak ada DB row untuk "default"
   });
   it("maps freon notes to freon_* keys", () => {
     const rows = [
@@ -97,6 +110,6 @@ describe("buildPriceListFromDB", () => {
       { service: "Cleaning", type: "AC Split 0.5-1PK", price: 99999, is_active: false },
     ];
     const pl = buildPriceListFromDB(rows);
-    expect(pl.Cleaning["AC Split 0.5-1PK"]).toBe(85000); // default preserved
+    expect(pl.Cleaning["AC Split 0.5-1PK"]).toBe(0); // row inactive di-skip → skeleton default (0) dipertahankan
   });
 });
