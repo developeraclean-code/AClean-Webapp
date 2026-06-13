@@ -155,9 +155,6 @@ export const purgeExpense = (supabase, id) =>
 export const insertCustomer = (supabase, payload) =>
   supabase.from("customers").insert(payload).select().single();
 
-export const upsertCustomer = (supabase, payload, onConflict = "phone") =>
-  supabase.from("customers").upsert(payload, { onConflict, ignoreDuplicates: false }).select().single();
-
 export const updateCustomer = (supabase, id, fields) =>
   supabase.from("customers").update(fields).eq("id", id);
 

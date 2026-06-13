@@ -1,21 +1,20 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Suspense } from "react";
 import { supabase } from "./supabaseClient.js";
 import { normalizePhone, samePhone } from "./lib/phone.js";
-import { getLocalDate, getLocalDateObj, getLocalISOString, isWorkingHours } from "./lib/dateTime.js";
+import { getLocalDate, getLocalISOString, isWorkingHours } from "./lib/dateTime.js";
 import { safeJsonParse } from "./lib/safeJson.js";
 import {
-  validateEmail, validatePhone, validateTime, validateDate,
+  validatePhone, validateTime, validateDate,
   validatePositiveNumber, validateAddressLength, validateNameLength,
-  validateFileSize, validationError, validationOk,
 } from "./lib/validators.js";
-import { isFreonItem, displayStock, computeStockStatus } from "./lib/inventory.js";
-import { TECH_PALETTE, getTechColor as getTechColorFromLib } from "./lib/techColor.js";
+import { isFreonItem, computeStockStatus } from "./lib/inventory.js";
+import { getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
-import { detectContinuationCandidates, calcContinuationDayNum } from "./lib/orders.js";
+import { detectContinuationCandidates } from "./lib/orders.js";
 import { resolveMultiDayInvoiceAction, mergeInvoiceDetail, recomputeInvoiceTotals, multiDayProjectKey } from "./lib/invoiceMultiDay.js";
 import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
 import {
-  PRICE_LIST_DEFAULT, tipeToPkNumber, getBracketKey,
+  PRICE_LIST_DEFAULT, getBracketKey,
   hargaPerUnitFromTipe as hargaPerUnitFromTipeLib,
   hitungLaborFromUnits as hitungLaborFromUnitsLib,
   buildPriceListFromDB as buildPriceListFromDBLib,
@@ -38,7 +37,7 @@ import {
   insertInvoice, updateInvoice, markInvoicePaid, revertInvoiceToUnpaid, deleteInvoice,
   updateServiceReport, deleteServiceReport,
   insertExpense, updateExpense, deleteExpense,
-  insertCustomer, upsertCustomer, updateCustomer, deleteCustomer,
+  insertCustomer, updateCustomer, deleteCustomer,
   insertKasbonRequest, updateKasbonRequest,
 } from "./data/writes.js";
 import DashboardView from "./views/DashboardView.jsx";
@@ -4397,16 +4396,6 @@ ${photoPageHTML}
     return { ok: true, newInvoice: created };
   };
 
-  // ── SEC-01: HTML Escape helper untuk prevent XSS di PDF generator ──
-  const escHtml = (str) => {
-    if (!str) return "—";
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  };
 
   // ── GAP 2: Hitung labor dari price list ──
   const hitungLabor = useCallback((service, type, units) => {
@@ -5876,9 +5865,6 @@ ${photoPageHTML}
               if (sl.includes("bongkar")) return "Repair"; // bongkar = repair category
               return "Cleaning"; // default
             };
-            // Validate teknisi ada di DB
-            const _tekValid = (nm) => !nm || teknisiData.some(t => t.name.toLowerCase() === (nm || "").toLowerCase());
-            const _helperValid = (nm) => !nm || teknisiData.some(t => t.role === "Helper" && t.name.toLowerCase() === (nm || "").toLowerCase());
             const normService = _normSvc(act.service);
             const normTeknisi = act.teknisi
               ? (teknisiData.find(t => (t.role === "Teknisi" || t.role === "Helper") && t.name.toLowerCase() === (act.teknisi || "").toLowerCase())?.name || act.teknisi)
@@ -6684,22 +6670,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       console.warn("cekAvailDB catch:", e.message);
       return { ok: true }; // fallback allow jika error network
     }
-  };
-
-  // AREA PELAYANAN — bisa dikonfigurasi via app_settings (area_utama / area_konfirmasi JSON array)
-  const _defaultAreaUtama = ["Alam Sutera", "BSD", "Gading Serpong", "Graha Raya", "Karawaci", "Tangerang", "Tangerang Selatan", "Serpong", "Serpong Utara", "Cipondoh", "Pinang", "Bitung", "Curug"];
-  const _defaultAreaKonfirmasi = ["Jakarta Barat", "Kebon Jeruk", "Palmerah", "Taman Sari", "Kembangan"];
-  const AREA_PELAYANAN = useMemo(() => ({
-    utama: safeJsonParse(appSettings.area_utama, null) || _defaultAreaUtama,
-    konfirmasi: safeJsonParse(appSettings.area_konfirmasi, null) || _defaultAreaKonfirmasi,
-    luar: [],
-  }), [appSettings.area_utama, appSettings.area_konfirmasi]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const cekAreaPelayanan = (area) => {
-    const a = (area || "").toLowerCase();
-    if (AREA_PELAYANAN.utama.some(x => a.includes(x.toLowerCase()))) return "utama";
-    if (AREA_PELAYANAN.konfirmasi.some(x => a.includes(x.toLowerCase()))) return "konfirmasi";
-    return "luar";
   };
 
   // ──────────────────────────────────────────────────────────────
