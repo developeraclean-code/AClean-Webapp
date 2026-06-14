@@ -7,7 +7,8 @@ const KON_OPT = ["baik", "rusak", "servis"];
 
 // Inventori → Alat Kantor. Registry alat (bor, vacuum, tambang) + status keluar/tersedia + riwayat gerak.
 function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
-  const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+  const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin"; // tambah & edit
+  const isOwner = currentUser?.role === "Owner";                                       // hapus only
   const [tools, setTools] = useState([]);
   const [moves, setMoves] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -44,11 +45,14 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
     finally { setBusy(false); }
   };
 
-  const del = (t) => showConfirm(`Hapus alat "${t.nama}"? Riwayat geraknya ikut terhapus.`, async () => {
+  const del = (t) => {
+    if (!isOwner) return showNotif("Hapus alat hanya untuk Owner");
+    showConfirm(`Hapus alat "${t.nama}"? Riwayat geraknya ikut terhapus.`, async () => {
     const { error } = await supabase.from("office_tools").delete().eq("id", t.id);
     if (error) return showNotif("❌ Gagal hapus: " + error.message);
     showNotif("🗑 Alat dihapus"); await load();
-  });
+    });
+  };
 
   const th = { padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: ".5px" };
   const td = { padding: "9px 12px", fontSize: 13, color: cs.text };
@@ -94,7 +98,7 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
                     <td style={td}><span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, fontWeight: 700, background: (t.kondisi === "baik" ? "#10b981" : t.kondisi === "servis" ? cs.yellow : cs.red) + "22", color: t.kondisi === "baik" ? "#10b981" : t.kondisi === "servis" ? cs.yellow : cs.red }}>{t.kondisi}</span></td>
                     {isOwnerAdmin && <td style={td}><div style={{ display: "flex", gap: 6 }}>
                       <button onClick={() => setForm({ id: t.id, nama: t.nama, kategori: t.kategori, qty: t.qty, kondisi: t.kondisi, catatan: t.catatan || "" })} style={{ background: "none", border: "1px solid " + cs.border, borderRadius: 6, cursor: "pointer", padding: "3px 8px", color: cs.muted }}>✏️</button>
-                      <button onClick={() => del(t)} style={{ background: "none", border: "1px solid " + cs.border, borderRadius: 6, cursor: "pointer", padding: "3px 8px", color: cs.red }}>🗑</button>
+                      {isOwner && <button onClick={() => del(t)} style={{ background: "none", border: "1px solid " + cs.border, borderRadius: 6, cursor: "pointer", padding: "3px 8px", color: cs.red }}>🗑</button>}
                     </div></td>}
                   </tr>
                   {open && (
