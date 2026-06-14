@@ -200,6 +200,14 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
     const f = { ...(s.freon || {}) }; const arr = [...(f[code] || [])];
     arr[idx] = { label, kg }; f[code] = arr; return { ...s, freon: f };
   });
+  // Sisa pulang tak boleh > dibawa (cegah "terpakai" negatif) dan tak boleh < 0.
+  const clampSisa = (raw, max) => {
+    if (raw === "" || raw == null) return "";
+    let v = parseFloat(raw);
+    if (!Number.isFinite(v) || v < 0) return "0";
+    if (Number.isFinite(max) && v > max) return String(max);
+    return raw;
+  };
 
   const inp = { width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 11px", color: cs.text, fontSize: 14, outline: "none", boxSizing: "border-box" };
   const lbl = { fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 6 };
@@ -270,7 +278,7 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
           <div style={{ fontSize: 13, fontWeight: 600, color: cs.text }}>{m.name}</div>
           <div style={{ fontSize: 11, color: cs.muted }}>dibawa <b style={{ color: cs.text }}>{dibawa} m</b></div>
         </div>
-        <input type="number" inputMode="decimal" value={pulang[kat]?.[m.code] || ""} onChange={(e) => setMeter(setPulang, kat, m.code, e.target.value)} style={{ ...inp, width: 110 }} placeholder="sisa (m)" />
+        <input type="number" inputMode="decimal" min={0} max={dibawa} value={pulang[kat]?.[m.code] || ""} onChange={(e) => setMeter(setPulang, kat, m.code, clampSisa(e.target.value, parseFloat(dibawa)))} style={{ ...inp, width: 110 }} placeholder="sisa (m)" />
       </div>
     );
   };
@@ -298,7 +306,7 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
                   {(pagi.freon?.[m.code] || []).filter((t) => parseFloat(t.kg) > 0).map((t, i) => (
                     <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
                       <span style={{ fontSize: 12, color: cs.muted, minWidth: 130 }}>{t.label || "Tabung " + (i + 1)} <span style={{ color: cs.text }}>(dibawa {t.kg}kg)</span></span>
-                      <input type="number" inputMode="decimal" value={pulang.freon?.[m.code]?.[i]?.kg || ""} onChange={(e) => setPulangFreon(m.code, i, e.target.value, t.label || "Tabung " + (i + 1))} style={{ ...inp, flex: 1 }} placeholder="sisa kg" />
+                      <input type="number" inputMode="decimal" min={0} max={parseFloat(t.kg)} value={pulang.freon?.[m.code]?.[i]?.kg || ""} onChange={(e) => setPulangFreon(m.code, i, clampSisa(e.target.value, parseFloat(t.kg)), t.label || "Tabung " + (i + 1))} style={{ ...inp, flex: 1 }} placeholder="sisa kg" />
                     </div>
                   ))}
                 </div>

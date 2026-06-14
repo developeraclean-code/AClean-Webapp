@@ -117,6 +117,21 @@ describe("reconcileDay", () => {
     expect(reconcileDay([], [], sumReportedUsage([]))).toEqual([]);
   });
 
+  it("multi-SKU: SKU yg terpakai tapi TIDAK dilaporkan → OVER (bukan pinjam total tipe)", () => {
+    // bawa 2 jenis pipa; hanya SKU022 dilaporkan. SKU023 terpakai 15 tapi tak dilaporkan.
+    const lines = reconcileDay(
+      [pipa(50, "SKU022"), pipa(40, "SKU023")],
+      [pipa(30, "SKU022"), pipa(25, "SKU023")],
+      sumReportedUsage([tx("Pipa AC Hoda 1PK", 20, 20, "SKU022")])
+    );
+    const a = lines.find(l => l.inventory_code === "SKU022");
+    const b = lines.find(l => l.inventory_code === "SKU023");
+    expect(a.used_reported).toBe(20); expect(a.flag).toBe("OK");
+    expect(b.used_reported).toBe(0);  // BUKAN 20 (total tipe)
+    expect(b.used_implied).toBe(15);
+    expect(b.flag).toBe("OVER");      // terpakai tak dilaporkan → terdeteksi
+  });
+
   it("toleransi bisa di-override", () => {
     const lines = reconcileDay([pipa(50)], [pipa(20)], sumReportedUsage([tx("Pipa AC", 18, 18, "SKU022")]), { pipa: 99 });
     expect(lineFor(lines, "pipa").flag).toBe("OK"); // selisih 12 <= tol 99

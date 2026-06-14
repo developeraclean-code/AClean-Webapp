@@ -72,9 +72,14 @@ export function sumReportedUsage(txRows) {
 function lookupReported(reportedUsage, row) {
   const ru = reportedUsage || { byCode: {}, byType: {}, freonUnknown: false };
   if (row.material_type === "freon" && ru.freonUnknown) return { known: false, value: null };
-  if (row.inventory_code && ru.byCode && Object.prototype.hasOwnProperty.call(ru.byCode, row.inventory_code)) {
-    return { known: true, value: ru.byCode[row.inventory_code] };
+  // Baris ber-SKU spesifik → bandingkan PER-SKU. JANGAN jatuh ke byType: kalau SKU ini
+  // tak ada di laporan, pemakaian dilaporkan = 0 (bukan total tipe). Mencegah satu SKU
+  // "meminjam" total tipe & menutupi pemakaian SKU lain yang tak dilaporkan (false UNDER).
+  if (row.inventory_code) {
+    const has = ru.byCode && Object.prototype.hasOwnProperty.call(ru.byCode, row.inventory_code);
+    return { known: true, value: has ? ru.byCode[row.inventory_code] : 0 };
   }
+  // Baris tanpa code (entri generik/legacy/WA) → pakai agregat per tipe.
   if (ru.byType && Object.prototype.hasOwnProperty.call(ru.byType, row.material_type)) {
     return { known: true, value: ru.byType[row.material_type] };
   }
