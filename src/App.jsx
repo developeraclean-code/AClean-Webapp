@@ -62,6 +62,7 @@ const MyReportView = lazy(() => import("./views/MyReportView.jsx"));
 const BAPModal = lazy(() => import("./views/BAPModal.jsx"));
 const MaterialBringModal = lazy(() => import("./views/MaterialBringModal.jsx"));
 const MaterialMovementModal = lazy(() => import("./views/MaterialMovementModal.jsx"));
+const OfficeToolModal = lazy(() => import("./views/OfficeToolModal.jsx"));
 const MatTrackView = lazy(() => import("./views/MatTrackView.jsx"));
 const ExpensesView = lazy(() => import("./views/ExpensesView.jsx"));
 const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
@@ -1053,6 +1054,8 @@ export default function ACleanWebApp() {
   // Material Movement (Bawa/Pulang pipa+kabel per job — Fase 1 cross-check)
   const [materialMoveJob, setMaterialMoveJob] = useState(null);   // { order, mode }
   const openMaterialMove = (order, mode) => setMaterialMoveJob({ order, mode });
+  const [officeToolJob, setOfficeToolJob] = useState(null);       // { job, scope, mode }
+  const openOfficeTool = (job, mode, scope = "order") => setOfficeToolJob({ job, scope, mode });
   // Map job_id → count brought (status BROUGHT/USED), untuk badge tombol Bawa Material
   const [materialsBroughtMap, setMaterialsBroughtMap] = useState({});
   const refreshMaterialsBroughtMap = async () => {
@@ -6341,7 +6344,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           ordersData={ordersData}
           TODAY={TODAY}
           openLaporanModal={openLaporanModal}
-          openMaterialBringModal={openMaterialBringModal} openMaterialMove={openMaterialMove}
+          openMaterialBringModal={openMaterialBringModal} openMaterialMove={openMaterialMove} openOfficeTool={openOfficeTool}
           materialsBroughtMap={materialsBroughtMap}
           updateOrderStatus={updateOrderStatus}
           supabase={supabase}
@@ -6539,7 +6542,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       getTechColor={getTechColor} dispatchStatus={dispatchStatus} sendDispatchWA={sendDispatchWA} dispatchWA={dispatchWA}
       deleteOrder={deleteOrder} addAgentLog={addAgentLog} auditUserName={auditUserName} showConfirm={showConfirm} showNotif={showNotif}
       openWA={openWA} openLaporanModal={openLaporanModal}
-      openMaterialBringModal={openMaterialBringModal} openMaterialMove={openMaterialMove} materialsBroughtMap={materialsBroughtMap}
+      openMaterialBringModal={openMaterialBringModal} openMaterialMove={openMaterialMove} openOfficeTool={openOfficeTool} materialsBroughtMap={materialsBroughtMap}
       sendWA={sendWA} updateOrderStatus={updateOrderStatus}
       hitungJamSelesai={hitungJamSelesai} downloadRekapHarian={downloadRekapHarian} triggerRekapHarian={triggerRekapHarian}
       supabase={supabase} TODAY={TODAY} SCHED_PAGE_SIZE={SCHED_PAGE_SIZE} getLocalDate={getLocalDate} userAccounts={userAccounts}
@@ -13339,6 +13342,21 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             supabase={supabase}
             currentUser={currentUser}
             showNotif={showNotif}
+          />
+        </Suspense>
+      )}
+
+      {officeToolJob && (
+        <Suspense fallback={<div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 9998, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>Memuat...</div>}>
+          <OfficeToolModal
+            job={officeToolJob.job}
+            scope={officeToolJob.scope}
+            mode={officeToolJob.mode}
+            onClose={() => setOfficeToolJob(null)}
+            supabase={supabase}
+            currentUser={currentUser}
+            showNotif={showNotif}
+            teknisiData={teknisiData}
           />
         </Suspense>
       )}

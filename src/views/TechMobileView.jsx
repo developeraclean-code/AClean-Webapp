@@ -13,7 +13,7 @@ const STATUS_CONFIG = {
   COMPLETED:  { label: "Selesai",    color: "#10b981", bg: "#10b98122" },
 };
 
-function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, openMaterialMove, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps }) {
+function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, openMaterialMove, openOfficeTool, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
 
@@ -208,6 +208,18 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
                     <button onClick={() => openMaterialMove(order, "pulang")}
                       style={{ flex: 1, background: "#14b8a622", border: "1px solid #14b8a644", color: "#14b8a6", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
                       📥 Pulang
+                    </button>
+                  </div>
+                )}
+                {openOfficeTool && order.status !== "CANCELLED" && (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => openOfficeTool(order, "bawa", "order")}
+                      style={{ flex: 1, background: "#f59e0b22", border: "1px solid #f59e0b44", color: "#f59e0b", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
+                      🛠 Bawa Alat
+                    </button>
+                    <button onClick={() => openOfficeTool(order, "kembali", "order")}
+                      style={{ flex: 1, background: "#10b98122", border: "1px solid #10b98144", color: "#10b981", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
+                      ↩️ Kembali Alat
                     </button>
                   </div>
                 )}

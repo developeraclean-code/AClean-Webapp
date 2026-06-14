@@ -1,6 +1,8 @@
-import React from "react";
+import React, { useState } from "react";
 import { cs } from "../../theme/cs.js";
 import * as S from "../utils/styles.js";
+import { supabase } from "../../supabaseClient.js";
+import OfficeToolModal from "../../views/OfficeToolModal.jsx";
 import { useProject } from "../context/ProjectContext.jsx";
 import { useModal } from "../context/ModalContext.jsx";
 import { calc, budget, daysLate, pName, weekSummary } from "../utils/finance.js";
@@ -9,8 +11,9 @@ import { StatusPill } from "../components/Bits.jsx";
 import Modal from "../components/Modal.jsx";
 
 export default function ProjectDetailView() {
-  const { db, can, today, activeProject, setActiveProject, setActiveView, toggleHold } = useProject();
+  const { db, can, today, currentUser, activeProject, setActiveProject, setActiveView, toggleHold } = useProject();
   const { openContent, close, toast } = useModal();
+  const [alatMode, setAlatMode] = useState(null); // 'bawa' | 'kembali'
 
   const p = db.projects.find((x) => x.id === activeProject);
   if (!p) {
@@ -84,7 +87,21 @@ export default function ProjectDetailView() {
           </button>
         )}
         <button style={S.btnSm("ghost")} onClick={showWeekly}>📄 Ringkasan Mingguan</button>
+        <button style={S.btnSm("ghost")} onClick={() => setAlatMode("bawa")}>🛠 Bawa Alat</button>
+        <button style={S.btnSm("ghost")} onClick={() => setAlatMode("kembali")}>↩️ Kembali Alat</button>
       </div>
+
+      {alatMode && (
+        <OfficeToolModal
+          job={{ id: p.id, nama: p.nama }}
+          scope="project"
+          mode={alatMode}
+          onClose={() => setAlatMode(null)}
+          supabase={supabase}
+          currentUser={currentUser}
+          showNotif={toast}
+        />
+      )}
 
       {p.status === "HOLD" && (
         <div style={S.alert(true)}>⏸ <b>Project di-HOLD</b> — tim dibebaskan untuk job reguler & laporan harian dijeda sampai dilanjutkan.</div>

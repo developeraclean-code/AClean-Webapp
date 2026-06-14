@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import { displayStock } from "../lib/inventory.js";
 
 const ToolBagView = lazy(() => import("./ToolBagView.jsx"));
+const OfficeToolsView = lazy(() => import("./OfficeToolsView.jsx"));
 
 const INV_PAGE_SIZE = 15;
 
@@ -21,6 +22,17 @@ function InventoryView({
         <InventoryTabs activeTab={activeTab} setActiveTab={setActiveTab} />
         <Suspense fallback={<div style={{ padding: 24, color: cs.muted, fontSize: 13 }}>Loading Tas Teknisi...</div>}>
           <ToolBagView supabase={supabase} currentUser={currentUser} showNotif={showNotif} showConfirm={showConfirm} />
+        </Suspense>
+      </div>
+    );
+  }
+
+  if (activeTab === "alat") {
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <InventoryTabs activeTab={activeTab} setActiveTab={setActiveTab} />
+        <Suspense fallback={<div style={{ padding: 24, color: cs.muted, fontSize: 13 }}>Loading Alat Kantor...</div>}>
+          <OfficeToolsView supabase={supabase} currentUser={currentUser} showNotif={showNotif} showConfirm={showConfirm} />
         </Suspense>
       </div>
     );
@@ -130,7 +142,8 @@ function InventoryView({
 function InventoryTabs({ activeTab, setActiveTab }) {
   const tabs = [
     { id: "material", label: "📦 Inventori Material" },
-    { id: "toolbag",  label: "🎒 Tas Teknisi" }
+    { id: "toolbag",  label: "🎒 Tas Teknisi" },
+    { id: "alat",     label: "🛠 Alat Kantor" }
   ];
   return (
     <div style={{ display: "flex", gap: 4, borderBottom: "1px solid " + cs.border, marginBottom: 4 }}>
