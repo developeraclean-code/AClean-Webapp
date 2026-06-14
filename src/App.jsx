@@ -11,7 +11,7 @@ import { isFreonItem, computeStockStatus } from "./lib/inventory.js";
 import { getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
 import { detectContinuationCandidates } from "./lib/orders.js";
-import { resolveMultiDayInvoiceAction, mergeInvoiceDetail, recomputeInvoiceTotals, multiDayProjectKey } from "./lib/invoiceMultiDay.js";
+import { resolveMultiDayInvoiceAction, multiDayProjectKey } from "./lib/invoiceMultiDay.js";
 import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
 import {
   PRICE_LIST_DEFAULT, getBracketKey,
@@ -8048,58 +8048,17 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         const mdAction = resolveMultiDayInvoiceAction({ report: laporanModal, invoices: grpRows || [] });
         multiDayAnchorJobId = mdAction.anchorJobId;
 
-        if (mdAction.type === "MERGE") {
+        if (mdAction.type === "SKIP") {
+          // Multi-hari: invoice induk SUDAH ADA & belum lunas → JANGAN buat invoice baru
+          // DAN JANGAN tambah nilai otomatis (SOP: laporan harian tumpang-tindih → cegah
+          // dobel-hitung). Cukup tautkan order ini ke invoice induk; Owner edit manual.
           const existing = mdAction.existing;
-          const existingDetail = Array.isArray(existing.materials_detail)
-            ? existing.materials_detail
-            : safeJsonParse(existing.materials_detail, `merge_existing_${existing.id}`, []);
-          const newRows = mDetail.map(r => ({ ...r, source_job_id: laporanModal.id }));
-          const merged = mergeInvoiceDetail(existingDetail, newRows, laporanModal.id);
-          const totals = recomputeInvoiceTotals(merged);
-          const addRowsTxt = newRows.length > 0
-            ? newRows.map(r => `• ${r.nama} ${r.jumlah} ${r.satuan} — ${fmt(r.subtotal)}`).join("\n")
-            : "(tidak ada item tagihan baru di hari ini)";
-          const okMerge = await showConfirm({
-            icon: "🧾",
-            title: "Gabung ke Invoice Multi-hari?",
-            message:
-              `Invoice ${existing.id} untuk pekerjaan ini SUDAH ADA (hari sebelumnya).\n\n` +
-              `Item hari ke-${laporanModal.day_number || "?"} akan DIGABUNG ke invoice itu — BUKAN invoice baru:\n${addRowsTxt}\n\n` +
-              `Total invoice menjadi ${fmt(totals.total)}.`,
-            confirmText: "Gabung ke Invoice",
-          });
-          if (okMerge) {
-            const newExpires = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-            const { error: upErr } = await supabase.from("invoices").update({
-              materials_detail: merged.length > 0 ? JSON.stringify(merged) : null,
-              labor: totals.labor, material: totals.material, total: totals.total,
-              garansi_days: 30, garansi_expires: newExpires,
-              pdf_url: null, pdf_generated_at: null,
-              updated_at: new Date().toISOString(),
-            }).eq("id", existing.id);
-            if (upErr) {
-              console.error("[MULTIDAY_MERGE]", upErr.message);
-              showNotif("❌ Gagal gabung ke invoice grup — coba lagi. Laporan tetap tersimpan.");
-            } else {
-              setInvoicesData(prev => prev.map(i => i.id === existing.id
-                ? { ...i, materials_detail: merged, labor: totals.labor, material: totals.material, total: totals.total, garansi_days: 30, garansi_expires: newExpires, pdf_url: null, pdf_generated_at: null }
-                : i));
-              setOrdersData(prev => prev.map(o => o.id === laporanModal.id ? { ...o, status: "COMPLETED" } : o));
-              try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName()); } catch (_) { }
-              addAgentLog("INVOICE_MERGED",
-                `Laporan ${laporanModal.id} (hari ke-${laporanModal.day_number || "?"}) digabung ke invoice ${existing.id} → total ${fmt(totals.total)}`,
-                "SUCCESS");
-              showNotif(`✅ Item hari ke-${laporanModal.day_number || "?"} digabung ke invoice ${existing.id}. Total: ${fmt(totals.total)}`);
-              const ownerAccs = userAccounts.filter(u => u.role === "Owner");
-              const upMsg = `Invoice Multi-hari Diperbarui\nInvoice: ${existing.id}\nCustomer: ${laporanModal.customer}\nHari ke-${laporanModal.day_number || "?"} digabung.\nTotal: ${fmt(totals.total)} — ARA`;
-              await Promise.all(ownerAccs.map(u => u.phone ? sendWA(u.phone, upMsg) : Promise.resolve()));
-            }
-          } else {
-            addAgentLog("INVOICE_MERGE_DECLINED",
-              `Penggabungan laporan ${laporanModal.id} ke invoice ${existing.id} dibatalkan`, "INFO");
-            showNotif("ℹ️ Penggabungan dibatalkan — invoice grup tidak diubah.");
-          }
-          // MERGE (gabung atau batal) → JANGAN buat invoice baru (cegah duplikat).
+          setOrdersData(prev => prev.map(o => o.id === laporanModal.id ? { ...o, status: "COMPLETED", invoice_id: existing.id } : o));
+          try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName(), { invoice_id: existing.id }); } catch (_) { }
+          addAgentLog("MULTIDAY_SKIP_INVOICE",
+            `Laporan ${laporanModal.id} (hari ke-${laporanModal.day_number || "?"}) — invoice induk ${existing.id} sudah ada, tidak buat/menambah (edit manual bila perlu)`,
+            "INFO");
+          showNotif(`ℹ️ Laporan hari ke-${laporanModal.day_number || "?"} masuk & ditautkan ke invoice induk ${existing.id} (${fmt(existing.total)}). Tidak ada invoice baru — edit invoice induk bila ada tambahan.`);
           didMergeMultiDay = true;
         }
         // CREATE / CREATE_SEPARATE → lanjut ke pembuatan invoice di bawah (anchor = multiDayAnchorJobId).

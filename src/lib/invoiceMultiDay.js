@@ -1,13 +1,16 @@
-// Multi-day job invoice accumulation — pure logic (no React, no Supabase).
+// Multi-day job invoice — pure logic (no React, no Supabase).
 //
-// Aturan bisnis (dikonfirmasi Owner 2026-06-12):
+// Aturan bisnis (direvisi Owner 2026-06-14):
 //  - 1 pekerjaan multi-hari = 1 invoice, di-anchor ke order INDUK (hari-1).
-//  - Tiap laporan harian MENAMBAH item ke invoice itu (akumulasi), bukan invoice baru.
+//  - Laporan harian BERIKUTNYA TIDAK membuat invoice baru DAN TIDAK menambah nilai
+//    otomatis → aksi SKIP. Alasannya: SOP mewajibkan teknisi input ulang pekerjaan
+//    aktual tiap hari, jadi laporan harian saling tumpang-tindih; akumulasi otomatis
+//    akan SELALU dobel-hitung. Owner menentukan nilai final lewat edit manual.
 //  - Jika invoice grup sudah LUNAS (PAID) → pekerjaan dianggap job baru → invoice terpisah.
-//  - Selama belum PAID (PENDING_APPROVAL/APPROVED/UNPAID/dst) → tetap digabung.
-//  - Garansi invoice gabungan dihitung dari hari TERAKHIR (di-set di sisi pemanggil).
+//  - Selama belum PAID (PENDING_APPROVAL/APPROVED/UNPAID/dst) → SKIP (cukup ditautkan).
 //
-// Dipakai oleh submitLaporan() di App.jsx. Lihat unit test di __tests__/invoiceMultiDay.test.js.
+// Dipakai oleh submitLaporan() (App.jsx) & verifikasi di LaporanTimView.
+// Lihat unit test di __tests__/invoiceMultiDay.test.js.
 
 // Status invoice yang masih boleh menerima penggabungan (belum final/lunas).
 export const MERGEABLE_STATUSES = [
@@ -23,10 +26,10 @@ export function multiDayProjectKey(report) {
 
 // Tentukan aksi invoice untuk satu laporan.
 // return {
-//   type: 'CREATE' | 'MERGE' | 'CREATE_SEPARATE',
+//   type: 'CREATE' | 'SKIP' | 'CREATE_SEPARATE',
 //   anchorJobId,   // job_id yang dipakai saat membuat invoice
 //   projectKey,    // kunci grup multi-hari (null kalau non multi-hari)
-//   existing,      // invoice grup yang ditemukan (untuk MERGE/CREATE_SEPARATE)
+//   existing,      // invoice grup yang ditemukan (untuk SKIP/CREATE_SEPARATE)
 //   reason,
 // }
 export function resolveMultiDayInvoiceAction({ report, invoices }) {
@@ -57,8 +60,8 @@ export function resolveMultiDayInvoiceAction({ report, invoices }) {
     return { type: "CREATE_SEPARATE", anchorJobId: report.id, projectKey, existing, reason: "group_paid" };
   }
 
-  // Invoice grup masih aktif → gabungkan ke invoice itu.
-  return { type: "MERGE", anchorJobId: projectKey, projectKey, existing, reason: "merge_active" };
+  // Invoice grup masih aktif → JANGAN buat/tambah. Cukup tautkan; Owner edit manual.
+  return { type: "SKIP", anchorJobId: projectKey, projectKey, existing, reason: "skip_existing_active" };
 }
 
 // Gabung baris detail secara IDEMPOTENT: baris dari sumber yang sama (source_job_id)

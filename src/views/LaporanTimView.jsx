@@ -1,6 +1,7 @@
 import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
+import { resolveMultiDayInvoiceAction } from "../lib/invoiceMultiDay.js";
 
 // ── Survey Kirim Modal ─────────────────────────────────────────────────────────
 function SurveyKirimModal({ r, onClose, sendWA, showNotif, addAgentLog, auditUserName, updateServiceReport, supabase, fotoSrc, downloadServiceReportPDF, invoicesData }) {
@@ -400,6 +401,32 @@ const verifyLaporan = async (r) => {
     })();
   }
 
+  // ── Multi-hari: invoice di-anchor ke order INDUK (parent_job_id), bukan ke job hari ini.
+  // Kalau invoice induk aktif sudah ada → JANGAN buat invoice ke-2 & JANGAN tambah otomatis
+  // (SOP: laporan harian tumpang-tindih → cegah dobel-hitung). Tautkan saja; Owner edit manual.
+  let _multiDayAnchor = null;
+  {
+    const _ordMD = ordersData.find(o => o.id === r.job_id);
+    if (_ordMD?.is_multi_day === true && r.service !== "Survey") {
+      const _md = resolveMultiDayInvoiceAction({
+        report: { id: r.job_id, is_multi_day: true, parent_job_id: _ordMD.parent_job_id },
+        invoices: invoicesData,
+      });
+      _multiDayAnchor = _md.anchorJobId;
+      if (_md.type === "SKIP") {
+        const existing = _md.existing;
+        await updateOrder(supabase, r.job_id, { status: "COMPLETED", invoice_id: existing.id }, auditUserName());
+        setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED", invoice_id: existing.id } : o));
+        if (updateCustomerTierAfterOrder) updateCustomerTierAfterOrder(_ordMD).catch(() => {});
+        addAgentLog("MULTIDAY_SKIP_INVOICE",
+          `Verify laporan ${r.job_id} (hari ke-${_ordMD.day_number || "?"}) — invoice induk ${existing.id} sudah ada, tidak buat/menambah (edit manual bila perlu)`, "INFO");
+        showNotif(`ℹ️ Laporan hari ke-${_ordMD.day_number || "?"} verified & ditautkan ke invoice induk ${existing.id}. Tidak ada invoice baru — edit invoice induk bila ada tambahan.`);
+        return;
+      }
+      // CREATE / CREATE_SEPARATE → lanjut; invoice baru pakai anchor _multiDayAnchor.
+    }
+  }
+
   const existInv = invoicesData.find(i => i.job_id === r.job_id);
   if (existInv) {
     // Pastikan order status COMPLETED meski invoice sudah ada sebelumnya
@@ -530,7 +557,7 @@ const verifyLaporan = async (r) => {
     // Jika total Rp 0 (apapun alasannya: garansi, gratis, atau manual), langsung PAID
     if (totalInv === 0) finalStatus2 = "PAID";
     const newInv = {
-      id: invId, job_id: r.job_id, laporan_id: r.id,
+      id: invId, job_id: (_multiDayAnchor || r.job_id), laporan_id: r.id,
       customer: r.customer, phone: r.phone || ord?.phone || "",
       service: r.service + (ord?.type ? " - " + ord.type : ""),
       units: Array.isArray(r.units) ? r.units.length : (Number(r.units) || Number(ord?.units) || 1),
@@ -545,7 +572,7 @@ const verifyLaporan = async (r) => {
       sent: false, created_at: new Date().toISOString()
     };
     const { data: oldDB, error: fetchOldErr } = await supabase
-      .from("invoices").select("id,invoice_type").eq("job_id", r.job_id);
+      .from("invoices").select("id,invoice_type").eq("job_id", (_multiDayAnchor || r.job_id));
     if (fetchOldErr) {
       console.error("[AUTO_INVOICE] gagal cek existing:", fetchOldErr.message);
       showNotif("❌ Gagal verifikasi invoice existing — coba lagi.");

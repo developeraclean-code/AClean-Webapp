@@ -44,12 +44,12 @@ describe("resolveMultiDayInvoiceAction", () => {
     expect(a.anchorJobId).toBe("JOB-1");
   });
 
-  it("anak hari-2 dgn invoice grup aktif → MERGE anchor induk", () => {
+  it("anak hari-2 dgn invoice grup aktif → SKIP (jangan tambah, anchor induk)", () => {
     const a = resolveMultiDayInvoiceAction({
       report: { id: "JOB-2", parent_job_id: "JOB-1", is_multi_day: true, day_number: 2 },
       invoices: [inv("JOB-1", "PENDING_APPROVAL")],
     });
-    expect(a.type).toBe("MERGE");
+    expect(a.type).toBe("SKIP");
     expect(a.anchorJobId).toBe("JOB-1");
     expect(a.existing.job_id).toBe("JOB-1");
   });
@@ -63,12 +63,12 @@ describe("resolveMultiDayInvoiceAction", () => {
     expect(a.anchorJobId).toBe("JOB-1");
   });
 
-  it("induk diverifikasi SETELAH anak buat invoice grup → MERGE (tutup celah duplikat induk)", () => {
+  it("induk diverifikasi SETELAH anak buat invoice grup → SKIP (tutup celah duplikat induk)", () => {
     const a = resolveMultiDayInvoiceAction({
       report: { id: "JOB-1", is_multi_day: true }, // induk, projectKey = JOB-1
       invoices: [inv("JOB-1", "PENDING_APPROVAL")], // dibuat oleh anak duluan
     });
-    expect(a.type).toBe("MERGE");
+    expect(a.type).toBe("SKIP");
     expect(a.anchorJobId).toBe("JOB-1");
   });
 
@@ -91,13 +91,13 @@ describe("resolveMultiDayInvoiceAction", () => {
   });
 
   it.each(["APPROVED", "UNPAID", "PARTIAL_PAID", "OVERDUE"])(
-    "status %s (belum lunas) → MERGE",
+    "status %s (belum lunas) → SKIP",
     (status) => {
       const a = resolveMultiDayInvoiceAction({
         report: { id: "JOB-2", parent_job_id: "JOB-1", is_multi_day: true },
         invoices: [inv("JOB-1", status)],
       });
-      expect(a.type).toBe("MERGE");
+      expect(a.type).toBe("SKIP");
     }
   );
 
@@ -109,7 +109,7 @@ describe("resolveMultiDayInvoiceAction", () => {
         inv("JOB-1", "PENDING_APPROVAL", { id: "INV-OLD", created_at: "2026-06-01T00:00:00Z" }),
       ],
     });
-    expect(a.type).toBe("MERGE");
+    expect(a.type).toBe("SKIP");
     expect(a.existing.id).toBe("INV-OLD");
   });
 });
