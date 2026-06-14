@@ -8,6 +8,7 @@ import {
   validatePositiveNumber, validateAddressLength, validateNameLength,
 } from "./lib/validators.js";
 import { isFreonItem, computeStockStatus } from "./lib/inventory.js";
+import { classifyMaterial } from "./lib/materialRecon.js";
 import { getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
 import { detectContinuationCandidates } from "./lib/orders.js";
@@ -7662,7 +7663,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // Berlaku submit pertama DAN rewrite — input terakhir selalu yang menang.
     const isRewriteLaporan = !!laporanModal._rewriteId;
     const syncReportId = newReport.id; // selalu pakai ID laporan final (sama untuk rewrite)
-    const materialsForSync = isInstall ? effectiveMaterials : laporanMaterials;
+    // Opsi A: kalau material_confirm_deduct ON, stok pipa/kabel/freon dipotong lewat Material Harian (confirm Owner),
+    // BUKAN dari submit laporan. Jadi keluarkan kategori itu dari deduct laporan (cegah dobel).
+    const confirmDeductOn = appSettings?.material_confirm_deduct_enabled === "true";
+    const isHarianManaged = (m) => ["pipa", "kabel", "freon"].includes(classifyMaterial(m?.nama || ""));
+    const dropHarian = (arr) => confirmDeductOn ? (arr || []).filter((m) => !isHarianManaged(m)) : (arr || []);
+    const materialsForSync = dropHarian(isInstall ? effectiveMaterials : laporanMaterials);
     await syncTrackedStock(
       syncReportId,
       laporanModal.id,
@@ -7675,7 +7681,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // ── 11b. Material non-tracked: deduct via deductInventory (lama, hanya sekali saat submit baru) ──
     const barangAsDeducts = laporanBarangItems.filter(b => b.nama && parseFloat(b.jumlah || 0) > 0)
       .map(b => ({ nama: b.nama, jumlah: parseFloat(b.jumlah) || 1, satuan: b.satuan || "pcs", keterangan: "barang" }));
-    const materialsToDeduct = isInstall ? effectiveMaterials : [...laporanMaterials, ...barangAsDeducts];
+    const materialsToDeduct = dropHarian(isInstall ? effectiveMaterials : [...laporanMaterials, ...barangAsDeducts]);
     const nonTrackedToDeduct = materialsToDeduct.filter(m =>
       !isTrackedByCode(m.inv_code || m._useCode) && !isTrackedByName(m.nama) && !m.freon_tabung_code
     );

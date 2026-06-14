@@ -2,6 +2,7 @@ import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
 import { reconcileDay, sumReportedUsage, reconStatus } from "../lib/materialRecon.js";
+import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
 
 // ───────────────────────────────────────────────
 // Pending AI Material — manual approve only (no auto-insert)
@@ -728,6 +729,7 @@ return (
           { id: "laporan_freon",  label: "❄️ Laporan Freon" },
           { id: "laporan_pipa",   label: "🔧 Laporan Pipa" },
           { id: "laporan_kabel",  label: "⚡ Laporan Kabel" },
+          { id: "konfirmasi",     label: "✅ Konfirmasi Material" },
           { id: "recon",          label: "🔍 Recon Material" },
         ].map(t => (
           <button key={t.id} onClick={() => setMainTab(t.id)}
@@ -750,6 +752,11 @@ return (
     {/* ═══════════════════════════════════════════════
         TAB: RECON MATERIAL HARIAN (pagi vs pulang vs laporan job)
         ═══════════════════════════════════════════════ */}
+    {mainTab === "konfirmasi" && isOwnerAdmin && (
+      <MaterialConfirmTab supabase={supabase} currentUser={currentUser} showNotif={showNotif}
+        fetchInventoryUnits={fetchInventoryUnits} setInvUnitsData={setInvUnitsData} setInventoryData={setInventoryData} />
+    )}
+
     {mainTab === "recon" && isOwnerAdmin && (
       <MaterialReconTab supabase={supabase} appSettings={appSettings} />
     )}

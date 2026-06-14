@@ -46,7 +46,7 @@ const CATS = [
   { key: "freon", title: "🧪 Freon", satuan: "kg" },
 ];
 
-const emptySession = () => ({ pipa: {}, kabel: {}, freon: {}, photos: [], notes: "" });
+const emptySession = () => ({ pipa: {}, kabel: {}, freon: {}, photos: [], notes: "", jobIds: [] });
 
 // state sesi → items[] (per SKU, simpan unit_id tiap unit). qty = total; freon juga isi weight_kg.
 function buildItems(sess, materials) {
@@ -69,6 +69,7 @@ function buildItems(sess, materials) {
 function itemsToSession(row) {
   const s = emptySession();
   s.notes = row.notes || "";
+  s.jobIds = Array.isArray(row.job_ids) ? row.job_ids : [];
   const urls = Array.isArray(row.photo_urls) && row.photo_urls.length ? row.photo_urls : (row.photo_url ? [row.photo_url] : []);
   s.photos = urls.map((u, i) => ({ id: "saved" + i, url: u, preview: "" }));
   (row.items || []).forEach((it) => {
@@ -98,8 +99,10 @@ function presetPulang(pagiSess) {
 function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiFetch, _apiHeaders, notifyOwnerWA, appSettings }) {
   const myName = currentUser?.name || "";
   const date = todayJkt();
+  const confirmMode = appSettings?.material_confirm_deduct_enabled === "true";  // Opsi A
   const [materials, setMaterials] = useState([]);   // [{code,name,kategori,unit,stock}]
   const [units, setUnits] = useState([]);           // inventory_units terlihat teknisi (pipa/kabel/freon)
+  const [myJobs, setMyJobs] = useState([]);         // job hari ini utk teknisi/helper ini (tag di pulang)
   const [pagi, setPagi] = useState(emptySession());
   const [pulang, setPulang] = useState(emptySession());
   const [savedPagi, setSavedPagi] = useState(null);
@@ -122,6 +125,12 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
     const vis = (u || []).filter((x) => codes.includes(x.inventory_code) && x.is_active && !x.archived && Number(x.stock) > 0 && Number(x.stock) >= Number(x.min_visible ?? 3))
       .sort((a, b) => String(a.unit_label).localeCompare(String(b.unit_label)));
     setUnits(vis);
+    // Job hari ini di mana teknisi/helper ini terlibat — utk tag saat pulang.
+    const { data: ords } = await supabase.from("orders")
+      .select("id,customer,service,date,status,teknisi,helper,teknisi2,helper2,teknisi3,helper3")
+      .eq("date", date);
+    const mine = (ords || []).filter((o) => [o.teknisi, o.helper, o.teknisi2, o.helper2, o.teknisi3, o.helper3].some((n) => n && n === myName));
+    setMyJobs(mine);
     const { data: rows } = await supabase.from("teknisi_material_checkout")
       .select("*").eq("teknisi_name", myName).eq("checkout_date", date);
     const p = (rows || []).find((r) => r.session_type === "pagi") || null;
@@ -181,13 +190,19 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
         photo_urls: photoUrls,
       };
       if (photoUrls.length) payload.photo_url = photoUrls[0];  // kompat reader lama / WA
+      if (session === "pulang") {
+        payload.job_ids = sess.jobIds || [];
+        // Opsi A: pulang baru/diubah → PENDING confirm Owner. (Jangan reset kalau sudah CONFIRMED.)
+        if (confirmMode && saved?.confirm_status !== "CONFIRMED") payload.confirm_status = "PENDING";
+      }
       let err;
       if (saved?.id) ({ error: err } = await supabase.from("teknisi_material_checkout").update(payload).eq("id", saved.id));
       else ({ error: err } = await supabase.from("teknisi_material_checkout").insert(payload));
       if (err) throw err;
-      showNotif(`✅ Material ${session} tersimpan`);
+      showNotif(`✅ Material ${session} tersimpan` + (session === "pulang" && confirmMode ? " — menunggu konfirmasi Owner" : ""));
       await load();
-      if (session === "pulang") await runReconAlert();
+      // Recon vs laporan hanya relevan di mode cross-check (Opsi B). Di Opsi A laporan tak deduct.
+      if (session === "pulang" && !confirmMode) await runReconAlert();
     } catch (e) { showNotif("❌ Gagal simpan: " + (e?.message || e)); }
     finally { setBusy(""); }
   };
@@ -246,6 +261,10 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
     const i = arr.findIndex((t) => t.unit_id === unitId);
     if (i >= 0) arr[i] = { ...arr[i], qty }; else arr.push({ unit_id: unitId, label, qty });
     c[code] = arr; return { ...s, [cat]: c };
+  });
+  const toggleJob = (jobId) => setPulang((s) => {
+    const has = (s.jobIds || []).includes(jobId);
+    return { ...s, jobIds: has ? s.jobIds.filter((x) => x !== jobId) : [...(s.jobIds || []), jobId] };
   });
   // Sisa pulang tak boleh > dibawa (cegah "terpakai" negatif) dan tak boleh < 0.
   const clampSisa = (raw, max) => {
@@ -334,6 +353,30 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
         {savedPulang && <span style={{ fontSize: 11, color: cs.green, fontWeight: 700 }}>✓ Tersimpan</span>}
       </div>
       <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>Preset dari unit yang dibawa pagi (default sisa = dibawa). Turunkan kalau kepake. Terpakai = dibawa − sisa.</div>
+
+      {/* Tag pekerjaan hari ini (boleh >1). Bukan pemecah kuantitas — hanya penanda dipakai di job mana. */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={lbl}>📋 Dipakai untuk pekerjaan hari ini {pulang.jobIds?.length > 0 && <span style={{ color: cs.accent }}>({pulang.jobIds.length})</span>}</div>
+        {myJobs.length === 0 ? (
+          <div style={{ fontSize: 12, color: cs.muted }}>Tidak ada job terjadwal untuk Anda hari ini.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 5 }}>
+            {myJobs.map((o) => {
+              const on = (pulang.jobIds || []).includes(o.id);
+              return (
+                <label key={o.id} style={{ display: "flex", gap: 9, alignItems: "center", cursor: "pointer", background: on ? cs.accent + "18" : cs.card, border: "1px solid " + (on ? cs.accent + "55" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
+                  <input type="checkbox" checked={on} onChange={() => toggleJob(o.id)} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: cs.text }}>{o.customer || o.id}</div>
+                    <div style={{ fontSize: 11, color: cs.muted }}>{o.service || "-"} · {o.id}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {!hasBrought ? (
         <div style={{ fontSize: 13, color: cs.muted, padding: "8px 0" }}>Belum ada material dibawa di sesi Pagi. Simpan Pagi dulu.</div>
       ) : (

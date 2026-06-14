@@ -1680,6 +1680,52 @@ async function taskLaporanStaleAlert() {
   return { staleCount: stale.length, waSent };
 }
 
+// TASK: Reminder Material Pulang — 22:00 WIB (15:00 UTC)
+// Teknisi yang pagi-nya catat material tapi belum input "pulang" → WA ke teknisi + helper job-nya.
+// ══════════════════════════════════════════════════
+async function taskMaterialPulangReminder() {
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["material_pulang_reminder_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "material_pulang_reminder_enabled") || togMap["material_pulang_reminder_enabled"] !== "true") {
+    await log("MATERIAL_PULANG_REMINDER", "Dilewati — material_pulang_reminder_enabled OFF", "INFO");
+    return { skipped: true };
+  }
+  const today = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+  const { data: rows } = await sb.from("teknisi_material_checkout")
+    .select("id,teknisi_name,session_type,pulang_reminder_sent").eq("checkout_date", today);
+  const byTek = {};
+  for (const r of rows || []) {
+    const t = (byTek[r.teknisi_name] ||= { name: r.teknisi_name });
+    if (r.session_type === "pagi") t.pagi = r; else t.pulang = r;
+  }
+  // pagi ada, pulang belum, dan belum pernah di-reminder
+  const need = Object.values(byTek).filter(t => t.pagi && !t.pulang && !t.pagi.pulang_reminder_sent);
+  if (!need.length) {
+    await log("MATERIAL_PULANG_REMINDER", "Tidak ada teknisi yang belum konfirmasi pulang", "INFO");
+    return { checked: true, reminded: 0 };
+  }
+  const { data: profs } = await sb.from("user_profiles").select("name,phone");
+  const phoneByName = Object.fromEntries((profs || []).filter(p => p.phone).map(p => [p.name, p.phone]));
+  const { data: ords } = await sb.from("orders").select("teknisi,helper,teknisi2,helper2,teknisi3,helper3").eq("date", today);
+  const msg = `🌙 *Belum Konfirmasi Material Pulang*\nMaterial yang dibawa hari ini (${today}) belum dicatat pengembaliannya.\n\nMohon segera isi *Material Pulang* di app (menu Material Harian) agar stok bisa dicocokkan & dikonfirmasi. — AClean`;
+  let waCount = 0;
+  for (const t of need) {
+    const targets = new Set([t.name]);
+    for (const o of ords || []) {
+      const slots = [o.teknisi, o.helper, o.teknisi2, o.helper2, o.teknisi3, o.helper3];
+      if (slots.includes(t.name)) slots.forEach(n => { if (n) targets.add(n); });
+    }
+    for (const name of targets) {
+      const ph = phoneByName[name];
+      if (ph) { const ok = await sendWA(ph, msg); if (ok) waCount++; }
+    }
+    if (t.pagi?.id) await sb.from("teknisi_material_checkout").update({ pulang_reminder_sent: true }).eq("id", t.pagi.id);
+  }
+  if (OWNER_PHONE) await sendWA(OWNER_PHONE, `🌙 Reminder Material Pulang: ${need.length} teknisi belum konfirmasi (${today}). WA terkirim: ${waCount}.`);
+  await log("MATERIAL_PULANG_REMINDER", `Reminded ${need.length} teknisi, ${waCount} WA`, "SUCCESS");
+  return { reminded: need.length, waCount };
+}
+
 // TASK 8: Weekly Report — Minggu 09:00 WIB (02:00 UTC)
 // Ringkasan 7 hari terakhir: order, revenue, laporan, top teknisi
 // ══════════════════════════════════════════════════
@@ -1930,6 +1976,7 @@ export default async function handler(req, res) {
       "servis-reminder":  taskServisReminder,
       "voucher-expiry":   taskVoucherExpiryReminder,
       "laporan-stale":    taskLaporanStaleAlert,
+      "material-pulang-reminder": taskMaterialPulangReminder,
       "payroll-wa":       taskPayrollWA,
       "log-cleanup":      taskLogCleanup,
       "auto-return-brought": taskAutoReturnBrought,

@@ -106,6 +106,10 @@
       "schedule": "0 3 * * *"
     },
     {
+      "path": "/api/cron-reminder?task=material-pulang-reminder",
+      "schedule": "0 15 * * *"
+    },
+    {
       "path": "/api/cron-reminder?task=payroll-wa",
       "schedule": "0 11 * * 6"
     },
