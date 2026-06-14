@@ -61,6 +61,7 @@ const LaporanTimView = lazy(() => import("./views/LaporanTimView.jsx"));
 const MyReportView = lazy(() => import("./views/MyReportView.jsx"));
 const BAPModal = lazy(() => import("./views/BAPModal.jsx"));
 const MaterialBringModal = lazy(() => import("./views/MaterialBringModal.jsx"));
+const MaterialMovementModal = lazy(() => import("./views/MaterialMovementModal.jsx"));
 const MatTrackView = lazy(() => import("./views/MatTrackView.jsx"));
 const ExpensesView = lazy(() => import("./views/ExpensesView.jsx"));
 const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
@@ -1049,6 +1050,9 @@ export default function ACleanWebApp() {
   // Bawa Material modal — teknisi/helper declare unit material yang dibawa per job
   const [materialBringJob, setMaterialBringJob] = useState(null);
   const openMaterialBringModal = (order) => setMaterialBringJob(order);
+  // Material Movement (Bawa/Pulang pipa+kabel per job — Fase 1 cross-check)
+  const [materialMoveJob, setMaterialMoveJob] = useState(null);   // { order, mode }
+  const openMaterialMove = (order, mode) => setMaterialMoveJob({ order, mode });
   // Map job_id → count brought (status BROUGHT/USED), untuk badge tombol Bawa Material
   const [materialsBroughtMap, setMaterialsBroughtMap] = useState({});
   const refreshMaterialsBroughtMap = async () => {
@@ -6337,7 +6341,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           ordersData={ordersData}
           TODAY={TODAY}
           openLaporanModal={openLaporanModal}
-          openMaterialBringModal={openMaterialBringModal}
+          openMaterialBringModal={openMaterialBringModal} openMaterialMove={openMaterialMove}
           materialsBroughtMap={materialsBroughtMap}
           updateOrderStatus={updateOrderStatus}
           supabase={supabase}
@@ -6371,7 +6375,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       bulanIni={bulanIni} setActiveMenu={setActiveMenu} setInvoiceFilter={setInvoiceFilter} setModalOrder={setModalOrder}
       setWaPanel={setWaPanel} setWaTekTarget={setWaTekTarget} setModalWaTek={setModalWaTek}
       fmt={fmt} getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} bapEnabled={appSettings?.bap_enabled === "true"}
-      openMaterialBringModal={openMaterialBringModal} materialsBroughtMap={materialsBroughtMap} showNotif={showNotif} TODAY={TODAY}
+      openMaterialBringModal={openMaterialBringModal} openMaterialMove={openMaterialMove} materialsBroughtMap={materialsBroughtMap} showNotif={showNotif} TODAY={TODAY}
       sendWA={sendWA} dispatchWA={dispatchWA} addAgentLog={addAgentLog}
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       customersData={customersData} laporanReports={laporanReports} findCustomer={findCustomer}
@@ -6535,7 +6539,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       getTechColor={getTechColor} dispatchStatus={dispatchStatus} sendDispatchWA={sendDispatchWA} dispatchWA={dispatchWA}
       deleteOrder={deleteOrder} addAgentLog={addAgentLog} auditUserName={auditUserName} showConfirm={showConfirm} showNotif={showNotif}
       openWA={openWA} openLaporanModal={openLaporanModal}
-      openMaterialBringModal={openMaterialBringModal} materialsBroughtMap={materialsBroughtMap}
+      openMaterialBringModal={openMaterialBringModal} openMaterialMove={openMaterialMove} materialsBroughtMap={materialsBroughtMap}
       sendWA={sendWA} updateOrderStatus={updateOrderStatus}
       hitungJamSelesai={hitungJamSelesai} downloadRekapHarian={downloadRekapHarian} triggerRekapHarian={triggerRekapHarian}
       supabase={supabase} TODAY={TODAY} SCHED_PAGE_SIZE={SCHED_PAGE_SIZE} getLocalDate={getLocalDate} userAccounts={userAccounts}
@@ -13322,6 +13326,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             supabase={supabase}
             showNotif={showNotif}
             onSaved={() => { refreshMaterialsBroughtMap(); }}
+          />
+        </Suspense>
+      )}
+
+      {materialMoveJob && (
+        <Suspense fallback={<div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 9998, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>Memuat...</div>}>
+          <MaterialMovementModal
+            job={materialMoveJob.order}
+            mode={materialMoveJob.mode}
+            onClose={() => setMaterialMoveJob(null)}
+            supabase={supabase}
+            currentUser={currentUser}
+            showNotif={showNotif}
           />
         </Suspense>
       )}

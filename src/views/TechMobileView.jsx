@@ -13,7 +13,7 @@ const STATUS_CONFIG = {
   COMPLETED:  { label: "Selesai",    color: "#10b981", bg: "#10b98122" },
 };
 
-function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps }) {
+function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, openMaterialMove, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
 
@@ -199,6 +199,18 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
                     </>
                   );
                 })()}
+                {openMaterialMove && order.status !== "CANCELLED" && (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => openMaterialMove(order, "bawa")}
+                      style={{ flex: 1, background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#0ea5e9", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
+                      🔧 Bawa Pipa/Kabel
+                    </button>
+                    <button onClick={() => openMaterialMove(order, "pulang")}
+                      style={{ flex: 1, background: "#14b8a622", border: "1px solid #14b8a644", color: "#14b8a6", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
+                      📥 Pulang
+                    </button>
+                  </div>
+                )}
                 {isDispatched && (
                   <button
                     onClick={() => handleStatus(order, "ON_SITE", "Konfirmasi tiba di lokasi")}

@@ -3,7 +3,7 @@ import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { smartSearchNormalize } from "../lib/phone.js";
 
-function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, currentUser, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, isMobile, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, addAgentLog, auditUserName, showConfirm, showNotif, openWA, openLaporanModal, openMaterialBringModal, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
+function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, currentUser, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, isMobile, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, addAgentLog, auditUserName, showConfirm, showNotif, openWA, openLaporanModal, openMaterialBringModal, openMaterialMove, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
 // Hitung minggu dinamis berdasarkan weekOffset
 const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 const baseDate = new Date();
@@ -345,6 +345,18 @@ return (
                       </button>
                     );
                   })()}
+                  {openMaterialMove && !["CANCELLED"].includes(o.status) && (
+                    <>
+                      <button onClick={() => openMaterialMove(o, "bawa")}
+                        style={{ background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#0ea5e9", padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                        🔧 Bawa Pipa/Kabel
+                      </button>
+                      <button onClick={() => openMaterialMove(o, "pulang")}
+                        style={{ background: "#14b8a622", border: "1px solid #14b8a644", color: "#14b8a6", padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                        📥 Pulang
+                      </button>
+                    </>
+                  )}
                   {o.dispatch && !["COMPLETED", "CANCELLED", "PAID"].includes(o.status) && (
                     <>
                       {o.status !== "ON_SITE" && (
