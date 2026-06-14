@@ -52,7 +52,7 @@ function buildItems(sess, materials) {
     if (parseFloat(v) > 0) items.push({ material_type: "kabel", inventory_code: code, label: nameOf(code), qty: parseFloat(v), satuan: "meter" });
   });
   Object.entries(sess.freon || {}).forEach(([code, tabungs]) => {
-    const arr = (tabungs || []).filter((t) => parseFloat(t.kg) > 0).map((t) => ({ label: t.label || "Tabung", kg: parseFloat(t.kg) }));
+    const arr = (tabungs || []).filter((t) => parseFloat(t.kg) > 0).map((t) => ({ unit_id: t.unit_id || null, label: t.label || "Tabung", kg: parseFloat(t.kg) }));
     if (arr.length > 0) items.push({ material_type: "freon", inventory_code: code, label: nameOf(code), qty: arr.length, satuan: "kg", weight_kg: arr });
   });
   return items;
@@ -68,15 +68,25 @@ function itemsToSession(row) {
     const code = it.inventory_code || it.label;
     if (it.material_type === "pipa") s.pipa[code] = String(it.qty);
     else if (it.material_type === "kabel") s.kabel[code] = String(it.qty);
-    else if (it.material_type === "freon") s.freon[code] = (Array.isArray(it.weight_kg) ? it.weight_kg : []).map((t) => ({ label: t.label, kg: String(t.kg) }));
+    else if (it.material_type === "freon") s.freon[code] = (Array.isArray(it.weight_kg) ? it.weight_kg : []).map((t) => ({ unit_id: t.unit_id || null, label: t.label, kg: String(t.kg) }));
   });
   return s;
+}
+
+// Preset sesi pulang dari pagi: default sisa tiap tabung freon = jumlah yang dibawa (anggap belum kepake).
+function presetPulangFreon(pagiSess) {
+  const f = {};
+  Object.entries(pagiSess.freon || {}).forEach(([code, arr]) => {
+    f[code] = (arr || []).map((t) => ({ unit_id: t.unit_id || null, label: t.label, kg: t.kg }));
+  });
+  return f;
 }
 
 function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiFetch, _apiHeaders, notifyOwnerWA, appSettings }) {
   const myName = currentUser?.name || "";
   const date = todayJkt();
   const [materials, setMaterials] = useState([]);  // [{code,name,kategori,unit,stock}]
+  const [freonUnits, setFreonUnits] = useState([]); // tabung freon (inventory_units) yg terlihat teknisi
   const [pagi, setPagi] = useState(emptySession());
   const [pulang, setPulang] = useState(emptySession());
   const [savedPagi, setSavedPagi] = useState(null);
@@ -92,13 +102,22 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
       .filter((it) => it.kategori)
       .sort((a, b) => a.kategori.localeCompare(b.kategori) || a.name.localeCompare(b.name));
     setMaterials(mats);
+    // Tabung freon (inventory_units) yang terlihat teknisi: aktif, tidak diarsip, stok ≥ min_visible.
+    const { data: units } = await supabase.from("inventory_units")
+      .select("id,inventory_code,unit_label,stock,min_visible,is_active,archived");
+    const fu = (units || []).filter((x) => x.is_active && !x.archived && Number(x.stock) > 0 && Number(x.stock) >= Number(x.min_visible ?? 3))
+      .sort((a, b) => String(a.unit_label).localeCompare(String(b.unit_label)));
+    setFreonUnits(fu);
     const { data: rows } = await supabase.from("teknisi_material_checkout")
       .select("*").eq("teknisi_name", myName).eq("checkout_date", date);
     const p = (rows || []).find((r) => r.session_type === "pagi") || null;
     const u = (rows || []).find((r) => r.session_type === "pulang") || null;
     setSavedPagi(p); setSavedPulang(u);
-    if (p) setPagi(itemsToSession(p));
+    const pagiSess = p ? itemsToSession(p) : emptySession();
+    if (p) setPagi(pagiSess);
+    // Pulang: kalau sudah ada → pakai; kalau belum → preset freon dari pagi (default sisa = dibawa).
     if (u) setPulang(itemsToSession(u));
+    else setPulang({ ...emptySession(), freon: presetPulangFreon(pagiSess) });
   }, [supabase, myName, date]);
 
   useEffect(() => { load(); }, [load]);
@@ -183,22 +202,40 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
 
   // ── setters ──
   const setMeter = (setSess, kat, code, v) => setSess((s) => ({ ...s, [kat]: { ...s[kat], [code]: v } }));
-  const setFreonTabung = (setSess, code, idx, kg) => setSess((s) => {
+  // Tabung freon utk satu SKU yang belum dipilih di pagi.
+  const availableUnitsFor = (code) => {
+    const taken = new Set((pagi.freon?.[code] || []).map((t) => t.unit_id));
+    return freonUnits.filter((u) => u.inventory_code === code && !taken.has(u.id));
+  };
+  const freonStockFor = (code) => freonUnits.filter((u) => u.inventory_code === code).reduce((s, u) => s + Number(u.stock || 0), 0);
+
+  // Tambah tabung (link ke unit nyata). Dibawa = stok tabung saat ini. Seed juga pulang (default sisa = dibawa).
+  const addFreonUnit = (code, unit) => {
+    const row = { unit_id: unit.id, label: unit.unit_label, kg: String(unit.stock) };
+    setPagi((s) => {
+      const f = { ...(s.freon || {}) }; const arr = [...(f[code] || [])];
+      if (arr.some((t) => t.unit_id === unit.id)) return s;
+      f[code] = [...arr, row]; return { ...s, freon: f };
+    });
+    if (!savedPulang) setPulang((s) => {
+      const f = { ...(s.freon || {}) }; const arr = [...(f[code] || [])];
+      if (arr.some((t) => t.unit_id === unit.id)) return s;
+      f[code] = [...arr, { ...row }]; return { ...s, freon: f };  // default sisa = dibawa
+    });
+  };
+  const setPagiFreonKg = (code, unitId, kg) => setPagi((s) => {
+    const f = { ...(s.freon || {}) }; f[code] = (f[code] || []).map((t) => (t.unit_id === unitId ? { ...t, kg } : t)); return { ...s, freon: f };
+  });
+  const removeFreonUnit = (code, unitId) => {
+    setPagi((s) => { const f = { ...(s.freon || {}) }; f[code] = (f[code] || []).filter((t) => t.unit_id !== unitId); return { ...s, freon: f }; });
+    if (!savedPulang) setPulang((s) => { const f = { ...(s.freon || {}) }; f[code] = (f[code] || []).filter((t) => t.unit_id !== unitId); return { ...s, freon: f }; });
+  };
+  // pulang freon: set sisa per unit_id (preset dari pagi)
+  const setPulangFreonKg = (code, unitId, kg, label) => setPulang((s) => {
     const f = { ...(s.freon || {}) }; const arr = [...(f[code] || [])];
-    arr[idx] = { ...arr[idx], kg }; f[code] = arr; return { ...s, freon: f };
-  });
-  const addFreonTabung = (setSess, code) => setSess((s) => {
-    const f = { ...(s.freon || {}) };
-    f[code] = [...(f[code] || []), { label: "Tabung " + ((f[code] || []).length + 1), kg: "" }];
-    return { ...s, freon: f };
-  });
-  const removeFreonTabung = (setSess, code, idx) => setSess((s) => {
-    const f = { ...(s.freon || {}) }; f[code] = (f[code] || []).filter((_, i) => i !== idx); return { ...s, freon: f };
-  });
-  // pulang freon: preset label dari pagi, input sisa
-  const setPulangFreon = (code, idx, kg, label) => setPulang((s) => {
-    const f = { ...(s.freon || {}) }; const arr = [...(f[code] || [])];
-    arr[idx] = { label, kg }; f[code] = arr; return { ...s, freon: f };
+    const i = arr.findIndex((t) => t.unit_id === unitId);
+    if (i >= 0) arr[i] = { ...arr[i], kg }; else arr.push({ unit_id: unitId, label, kg });
+    f[code] = arr; return { ...s, freon: f };
   });
   // Sisa pulang tak boleh > dibawa (cegah "terpakai" negatif) dan tak boleh < 0.
   const clampSisa = (raw, max) => {
@@ -242,22 +279,34 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <div style={lbl}>🧪 Freon (timbang per tabung, kg)</div>
-        {byKat("freon").map((m) => (
-          <div key={m.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: 10, marginBottom: 6 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>{m.name}{stockTag(m)}</span>
-              <button onClick={() => addFreonTabung(setPagi, m.code)} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>+ Tabung</button>
-            </div>
-            {(pagi.freon?.[m.code] || []).map((t, i) => (
-              <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: cs.muted, minWidth: 70 }}>{t.label || "Tabung " + (i + 1)}</span>
-                <input type="number" inputMode="decimal" value={t.kg} onChange={(e) => setFreonTabung(setPagi, m.code, i, e.target.value)} style={{ ...inp, flex: 1 }} placeholder="kg" />
-                <button onClick={() => removeFreonTabung(setPagi, m.code, i)} style={{ background: "none", border: "none", color: cs.red, cursor: "pointer", fontSize: 16 }}>×</button>
+        <div style={lbl}>🧪 Freon — pilih tabung dari stok kantor</div>
+        {byKat("freon").map((m) => {
+          const avail = availableUnitsFor(m.code);
+          const totalKg = freonStockFor(m.code);
+          return (
+            <div key={m.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: 10, marginBottom: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, marginBottom: 6 }}>
+                {m.name} <span style={{ fontSize: 11, fontWeight: 400, color: cs.muted }}>· {freonUnits.filter((u) => u.inventory_code === m.code).length} tabung di kantor · total <b style={{ color: totalKg > 0 ? cs.green : cs.red }}>{Math.round(totalKg * 10) / 10} kg</b></span>
               </div>
-            ))}
-          </div>
-        ))}
+              {(pagi.freon?.[m.code] || []).map((t) => (
+                <div key={t.unit_id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontSize: 13, color: cs.text, flex: 1, fontWeight: 600 }}>🛢 {t.label}</span>
+                  <input type="number" inputMode="decimal" value={t.kg} onChange={(e) => setPagiFreonKg(m.code, t.unit_id, e.target.value)} style={{ ...inp, width: 90 }} placeholder="kg" />
+                  <button onClick={() => removeFreonUnit(m.code, t.unit_id)} style={{ background: "none", border: "none", color: cs.red, cursor: "pointer", fontSize: 18 }}>×</button>
+                </div>
+              ))}
+              {avail.length > 0 ? (
+                <select value="" onChange={(e) => { const u = avail.find((x) => x.id === e.target.value); if (u) addFreonUnit(m.code, u); }}
+                  style={{ ...inp, marginTop: 4, color: cs.accent, fontWeight: 700, cursor: "pointer" }}>
+                  <option value="">+ Tambah tabung…</option>
+                  {avail.map((u) => <option key={u.id} value={u.id} style={{ color: cs.text }}>{u.unit_label} ({Math.round(Number(u.stock) * 10) / 10} kg)</option>)}
+                </select>
+              ) : (
+                <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>{freonUnits.some((u) => u.inventory_code === m.code) ? "Semua tabung sudah dipilih" : "Tidak ada tabung tersedia di kantor"}</div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {renderPhotos("pagi", pagi, setPagi)}
@@ -303,12 +352,15 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
               {broughtFreon().map((m) => (
                 <div key={m.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: 10, marginBottom: 6 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, marginBottom: 6 }}>{m.name}</div>
-                  {(pagi.freon?.[m.code] || []).filter((t) => parseFloat(t.kg) > 0).map((t, i) => (
-                    <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
-                      <span style={{ fontSize: 12, color: cs.muted, minWidth: 130 }}>{t.label || "Tabung " + (i + 1)} <span style={{ color: cs.text }}>(dibawa {t.kg}kg)</span></span>
-                      <input type="number" inputMode="decimal" min={0} max={parseFloat(t.kg)} value={pulang.freon?.[m.code]?.[i]?.kg || ""} onChange={(e) => setPulangFreon(m.code, i, clampSisa(e.target.value, parseFloat(t.kg)), t.label || "Tabung " + (i + 1))} style={{ ...inp, flex: 1 }} placeholder="sisa kg" />
-                    </div>
-                  ))}
+                  {(pagi.freon?.[m.code] || []).filter((t) => parseFloat(t.kg) > 0).map((t) => {
+                    const sisa = (pulang.freon?.[m.code] || []).find((x) => x.unit_id === t.unit_id);
+                    return (
+                      <div key={t.unit_id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: cs.muted, minWidth: 150 }}>🛢 {t.label} <span style={{ color: cs.text }}>(dibawa {t.kg}kg)</span></span>
+                        <input type="number" inputMode="decimal" min={0} max={parseFloat(t.kg)} value={sisa?.kg ?? ""} onChange={(e) => setPulangFreonKg(m.code, t.unit_id, clampSisa(e.target.value, parseFloat(t.kg)), t.label)} style={{ ...inp, flex: 1 }} placeholder="sisa kg" />
+                      </div>
+                    );
+                  })}
                 </div>
               ))}
             </div>
