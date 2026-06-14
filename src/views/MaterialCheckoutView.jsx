@@ -39,54 +39,67 @@ function classifyInv(name) {
   return null;                                 // KLEM PIPA PVC dll → diabaikan
 }
 
+// Kategori material: semua kini berbasis UNIT (unit_id) dari inventory_units.
+const CATS = [
+  { key: "pipa", title: "🔧 Pipa AC", satuan: "m" },
+  { key: "kabel", title: "⚡ Kabel", satuan: "m" },
+  { key: "freon", title: "🧪 Freon", satuan: "kg" },
+];
+
 const emptySession = () => ({ pipa: {}, kabel: {}, freon: {}, photos: [], notes: "" });
 
-// state sesi → items[] standar utk DB + recon (keyed per inventory_code)
+// state sesi → items[] (per SKU, simpan unit_id tiap unit). qty = total; freon juga isi weight_kg.
 function buildItems(sess, materials) {
   const items = [];
   const nameOf = (code) => (materials.find((m) => m.code === code) || {}).name || code;
-  Object.entries(sess.pipa || {}).forEach(([code, v]) => {
-    if (parseFloat(v) > 0) items.push({ material_type: "pipa", inventory_code: code, label: nameOf(code), qty: parseFloat(v), satuan: "meter" });
-  });
-  Object.entries(sess.kabel || {}).forEach(([code, v]) => {
-    if (parseFloat(v) > 0) items.push({ material_type: "kabel", inventory_code: code, label: nameOf(code), qty: parseFloat(v), satuan: "meter" });
-  });
-  Object.entries(sess.freon || {}).forEach(([code, tabungs]) => {
-    const arr = (tabungs || []).filter((t) => parseFloat(t.kg) > 0).map((t) => ({ unit_id: t.unit_id || null, label: t.label || "Tabung", kg: parseFloat(t.kg) }));
-    if (arr.length > 0) items.push({ material_type: "freon", inventory_code: code, label: nameOf(code), qty: arr.length, satuan: "kg", weight_kg: arr });
-  });
+  for (const { key: cat, satuan } of [{ key: "pipa", satuan: "meter" }, { key: "kabel", satuan: "meter" }, { key: "freon", satuan: "kg" }]) {
+    Object.entries(sess[cat] || {}).forEach(([code, units]) => {
+      const arr = (units || []).filter((u) => parseFloat(u.qty) > 0).map((u) => ({ unit_id: u.unit_id || null, label: u.label, qty: parseFloat(u.qty) }));
+      if (!arr.length) return;
+      const total = Math.round(arr.reduce((s, u) => s + u.qty, 0) * 100) / 100;
+      const item = { material_type: cat, inventory_code: code, label: nameOf(code), qty: total, satuan, units: arr };
+      if (cat === "freon") item.weight_kg = arr.map((u) => ({ unit_id: u.unit_id, label: u.label, kg: u.qty }));
+      items.push(item);
+    });
+  }
   return items;
 }
 
-// DB row → state sesi
+// DB row → state sesi (unit-aware; fallback legacy single qty)
 function itemsToSession(row) {
   const s = emptySession();
   s.notes = row.notes || "";
   const urls = Array.isArray(row.photo_urls) && row.photo_urls.length ? row.photo_urls : (row.photo_url ? [row.photo_url] : []);
   s.photos = urls.map((u, i) => ({ id: "saved" + i, url: u, preview: "" }));
   (row.items || []).forEach((it) => {
+    const cat = it.material_type;
+    if (!["pipa", "kabel", "freon"].includes(cat)) return;
     const code = it.inventory_code || it.label;
-    if (it.material_type === "pipa") s.pipa[code] = String(it.qty);
-    else if (it.material_type === "kabel") s.kabel[code] = String(it.qty);
-    else if (it.material_type === "freon") s.freon[code] = (Array.isArray(it.weight_kg) ? it.weight_kg : []).map((t) => ({ unit_id: t.unit_id || null, label: t.label, kg: String(t.kg) }));
+    let units;
+    if (Array.isArray(it.units)) units = it.units.map((u) => ({ unit_id: u.unit_id || null, label: u.label, qty: String(u.qty) }));
+    else if (cat === "freon" && Array.isArray(it.weight_kg)) units = it.weight_kg.map((u) => ({ unit_id: u.unit_id || null, label: u.label, qty: String(u.kg) }));
+    else units = [{ unit_id: null, label: it.label, qty: String(it.qty) }];  // legacy: 1 entri agregat
+    s[cat][code] = units;
   });
   return s;
 }
 
-// Preset sesi pulang dari pagi: default sisa tiap tabung freon = jumlah yang dibawa (anggap belum kepake).
-function presetPulangFreon(pagiSess) {
-  const f = {};
-  Object.entries(pagiSess.freon || {}).forEach(([code, arr]) => {
-    f[code] = (arr || []).map((t) => ({ unit_id: t.unit_id || null, label: t.label, kg: t.kg }));
-  });
-  return f;
+// Preset sesi pulang dari pagi: default sisa tiap unit = jumlah yang dibawa (anggap belum kepake).
+function presetPulang(pagiSess) {
+  const out = { pipa: {}, kabel: {}, freon: {} };
+  for (const cat of ["pipa", "kabel", "freon"]) {
+    Object.entries(pagiSess[cat] || {}).forEach(([code, units]) => {
+      out[cat][code] = (units || []).map((u) => ({ unit_id: u.unit_id || null, label: u.label, qty: u.qty }));
+    });
+  }
+  return out;
 }
 
 function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiFetch, _apiHeaders, notifyOwnerWA, appSettings }) {
   const myName = currentUser?.name || "";
   const date = todayJkt();
-  const [materials, setMaterials] = useState([]);  // [{code,name,kategori,unit,stock}]
-  const [freonUnits, setFreonUnits] = useState([]); // tabung freon (inventory_units) yg terlihat teknisi
+  const [materials, setMaterials] = useState([]);   // [{code,name,kategori,unit,stock}]
+  const [units, setUnits] = useState([]);           // inventory_units terlihat teknisi (pipa/kabel/freon)
   const [pagi, setPagi] = useState(emptySession());
   const [pulang, setPulang] = useState(emptySession());
   const [savedPagi, setSavedPagi] = useState(null);
@@ -102,22 +115,22 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
       .filter((it) => it.kategori)
       .sort((a, b) => a.kategori.localeCompare(b.kategori) || a.name.localeCompare(b.name));
     setMaterials(mats);
-    // Tabung freon (inventory_units) yang terlihat teknisi: aktif, tidak diarsip, stok ≥ min_visible.
-    const { data: units } = await supabase.from("inventory_units")
+    const codes = mats.map((m) => m.code);
+    // Unit fisik (roll pipa/kabel & tabung freon) yang terlihat teknisi: aktif, tak diarsip, stok ≥ min_visible.
+    const { data: u } = await supabase.from("inventory_units")
       .select("id,inventory_code,unit_label,stock,min_visible,is_active,archived");
-    const fu = (units || []).filter((x) => x.is_active && !x.archived && Number(x.stock) > 0 && Number(x.stock) >= Number(x.min_visible ?? 3))
+    const vis = (u || []).filter((x) => codes.includes(x.inventory_code) && x.is_active && !x.archived && Number(x.stock) > 0 && Number(x.stock) >= Number(x.min_visible ?? 3))
       .sort((a, b) => String(a.unit_label).localeCompare(String(b.unit_label)));
-    setFreonUnits(fu);
+    setUnits(vis);
     const { data: rows } = await supabase.from("teknisi_material_checkout")
       .select("*").eq("teknisi_name", myName).eq("checkout_date", date);
     const p = (rows || []).find((r) => r.session_type === "pagi") || null;
-    const u = (rows || []).find((r) => r.session_type === "pulang") || null;
-    setSavedPagi(p); setSavedPulang(u);
+    const pl = (rows || []).find((r) => r.session_type === "pulang") || null;
+    setSavedPagi(p); setSavedPulang(pl);
     const pagiSess = p ? itemsToSession(p) : emptySession();
     if (p) setPagi(pagiSess);
-    // Pulang: kalau sudah ada → pakai; kalau belum → preset freon dari pagi (default sisa = dibawa).
-    if (u) setPulang(itemsToSession(u));
-    else setPulang({ ...emptySession(), freon: presetPulangFreon(pagiSess) });
+    if (pl) setPulang(itemsToSession(pl));
+    else setPulang({ ...emptySession(), ...presetPulang(pagiSess) });
   }, [supabase, myName, date]);
 
   useEffect(() => { load(); }, [load]);
@@ -200,42 +213,39 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
     } catch (e) { console.warn("[recon-alert]", e?.message || e); }
   };
 
-  // ── setters ──
-  const setMeter = (setSess, kat, code, v) => setSess((s) => ({ ...s, [kat]: { ...s[kat], [code]: v } }));
-  // Tabung freon utk satu SKU yang belum dipilih di pagi.
-  const availableUnitsFor = (code) => {
-    const taken = new Set((pagi.freon?.[code] || []).map((t) => t.unit_id));
-    return freonUnits.filter((u) => u.inventory_code === code && !taken.has(u.id));
+  // ── unit helpers (generik utk pipa/kabel/freon) ──
+  const unitsForCode = (code) => units.filter((u) => u.inventory_code === code);
+  const stockFor = (code) => unitsForCode(code).reduce((s, u) => s + Number(u.stock || 0), 0);
+  const availableUnitsFor = (cat, code) => {
+    const taken = new Set((pagi[cat]?.[code] || []).map((t) => t.unit_id));
+    return unitsForCode(code).filter((u) => !taken.has(u.id));
   };
-  const freonStockFor = (code) => freonUnits.filter((u) => u.inventory_code === code).reduce((s, u) => s + Number(u.stock || 0), 0);
 
-  // Tambah tabung (link ke unit nyata). Dibawa = stok tabung saat ini. Seed juga pulang (default sisa = dibawa).
-  const addFreonUnit = (code, unit) => {
-    const row = { unit_id: unit.id, label: unit.unit_label, kg: String(unit.stock) };
+  const addUnit = (cat, code, unit) => {
+    const row = { unit_id: unit.id, label: unit.unit_label, qty: String(unit.stock) };
     setPagi((s) => {
-      const f = { ...(s.freon || {}) }; const arr = [...(f[code] || [])];
+      const c = { ...(s[cat] || {}) }; const arr = [...(c[code] || [])];
       if (arr.some((t) => t.unit_id === unit.id)) return s;
-      f[code] = [...arr, row]; return { ...s, freon: f };
+      c[code] = [...arr, row]; return { ...s, [cat]: c };
     });
     if (!savedPulang) setPulang((s) => {
-      const f = { ...(s.freon || {}) }; const arr = [...(f[code] || [])];
+      const c = { ...(s[cat] || {}) }; const arr = [...(c[code] || [])];
       if (arr.some((t) => t.unit_id === unit.id)) return s;
-      f[code] = [...arr, { ...row }]; return { ...s, freon: f };  // default sisa = dibawa
+      c[code] = [...arr, { ...row }]; return { ...s, [cat]: c };  // default sisa = dibawa
     });
   };
-  const setPagiFreonKg = (code, unitId, kg) => setPagi((s) => {
-    const f = { ...(s.freon || {}) }; f[code] = (f[code] || []).map((t) => (t.unit_id === unitId ? { ...t, kg } : t)); return { ...s, freon: f };
+  const setPagiQty = (cat, code, unitId, qty) => setPagi((s) => {
+    const c = { ...(s[cat] || {}) }; c[code] = (c[code] || []).map((t) => (t.unit_id === unitId ? { ...t, qty } : t)); return { ...s, [cat]: c };
   });
-  const removeFreonUnit = (code, unitId) => {
-    setPagi((s) => { const f = { ...(s.freon || {}) }; f[code] = (f[code] || []).filter((t) => t.unit_id !== unitId); return { ...s, freon: f }; });
-    if (!savedPulang) setPulang((s) => { const f = { ...(s.freon || {}) }; f[code] = (f[code] || []).filter((t) => t.unit_id !== unitId); return { ...s, freon: f }; });
+  const removeUnit = (cat, code, unitId) => {
+    setPagi((s) => { const c = { ...(s[cat] || {}) }; c[code] = (c[code] || []).filter((t) => t.unit_id !== unitId); return { ...s, [cat]: c }; });
+    if (!savedPulang) setPulang((s) => { const c = { ...(s[cat] || {}) }; c[code] = (c[code] || []).filter((t) => t.unit_id !== unitId); return { ...s, [cat]: c }; });
   };
-  // pulang freon: set sisa per unit_id (preset dari pagi)
-  const setPulangFreonKg = (code, unitId, kg, label) => setPulang((s) => {
-    const f = { ...(s.freon || {}) }; const arr = [...(f[code] || [])];
+  const setPulangQty = (cat, code, unitId, qty, label) => setPulang((s) => {
+    const c = { ...(s[cat] || {}) }; const arr = [...(c[code] || [])];
     const i = arr.findIndex((t) => t.unit_id === unitId);
-    if (i >= 0) arr[i] = { ...arr[i], kg }; else arr.push({ unit_id: unitId, label, kg });
-    f[code] = arr; return { ...s, freon: f };
+    if (i >= 0) arr[i] = { ...arr[i], qty }; else arr.push({ unit_id: unitId, label, qty });
+    c[code] = arr; return { ...s, [cat]: c };
   });
   // Sisa pulang tak boleh > dibawa (cegah "terpakai" negatif) dan tak boleh < 0.
   const clampSisa = (raw, max) => {
@@ -248,19 +258,38 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
 
   const inp = { width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 11px", color: cs.text, fontSize: 14, outline: "none", boxSizing: "border-box" };
   const lbl = { fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 6 };
-  const stockTag = (m) => <span style={{ fontSize: 11, color: cs.muted }}> · stok kantor <b style={{ color: Number(m.stock) > 0 ? cs.green : cs.red }}>{m.stock} {m.unit?.toLowerCase()}</b></span>;
 
-  // ── PAGI: semua material dari stok, input qty dibawa ──
+  // ── PAGI: per kategori, pilih unit dari stok kantor (multi, tombol +) ──
   // NB: render-function (dipanggil langsung), bukan komponen JSX → input tak remount/kehilangan fokus.
-  const pagiMeterRow = (kat, m) => (
-    <div key={m.code} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: cs.text }}>{m.name}</div>
-        <div>{stockTag(m)}</div>
+  const pagiCatCard = (cat, satuan, m) => {
+    const sel = pagi[cat]?.[m.code] || [];
+    const avail = availableUnitsFor(cat, m.code);
+    const total = stockFor(m.code);
+    const cnt = unitsForCode(m.code).length;
+    return (
+      <div key={m.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: 10, marginBottom: 6 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, marginBottom: 6 }}>
+          {m.name} <span style={{ fontSize: 11, fontWeight: 400, color: cs.muted }}>· {cnt} unit di kantor · total <b style={{ color: total > 0 ? cs.green : cs.red }}>{Math.round(total * 10) / 10} {satuan}</b></span>
+        </div>
+        {sel.map((t) => (
+          <div key={t.unit_id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
+            <span style={{ fontSize: 13, color: cs.text, flex: 1, fontWeight: 600 }}>📦 {t.label}</span>
+            <input type="number" inputMode="decimal" value={t.qty} onChange={(e) => setPagiQty(cat, m.code, t.unit_id, e.target.value)} style={{ ...inp, width: 90 }} placeholder={satuan} />
+            <button onClick={() => removeUnit(cat, m.code, t.unit_id)} style={{ background: "none", border: "none", color: cs.red, cursor: "pointer", fontSize: 18 }}>×</button>
+          </div>
+        ))}
+        {avail.length > 0 ? (
+          <select value="" onChange={(e) => { const u = avail.find((x) => x.id === e.target.value); if (u) addUnit(cat, m.code, u); }}
+            style={{ ...inp, marginTop: 4, color: cs.accent, fontWeight: 700, cursor: "pointer" }}>
+            <option value="">+ Tambah unit…</option>
+            {avail.map((u) => <option key={u.id} value={u.id} style={{ color: cs.text }}>{u.unit_label} ({Math.round(Number(u.stock) * 10) / 10} {satuan})</option>)}
+          </select>
+        ) : (
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>{cnt > 0 ? "Semua unit sudah dipilih" : "Tidak ada unit tersedia di kantor"}</div>
+        )}
       </div>
-      <input type="number" inputMode="decimal" value={pagi[kat]?.[m.code] || ""} onChange={(e) => setMeter(setPagi, kat, m.code, e.target.value)} style={{ ...inp, width: 110 }} placeholder="meter" />
-    </div>
-  );
+    );
+  };
 
   const renderPagi = () => (
     <div style={{ background: cs.panel, border: "1px solid " + cs.border, borderRadius: 14, padding: 16, marginBottom: 16 }}>
@@ -268,69 +297,35 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
         <div style={{ fontSize: 15, fontWeight: 800, color: cs.text }}>🌅 Pagi — Material Dibawa</div>
         {savedPagi && <span style={{ fontSize: 11, color: cs.green, fontWeight: 700 }}>✓ Tersimpan</span>}
       </div>
-
-      <div style={{ marginBottom: 12 }}>
-        <div style={lbl}>🔧 Pipa AC (meter)</div>
-        {byKat("pipa").length === 0 ? <div style={{ fontSize: 12, color: cs.muted }}>—</div> : byKat("pipa").map((m) => pagiMeterRow("pipa", m))}
-      </div>
-      <div style={{ marginBottom: 12 }}>
-        <div style={lbl}>⚡ Kabel (meter)</div>
-        {byKat("kabel").length === 0 ? <div style={{ fontSize: 12, color: cs.muted }}>—</div> : byKat("kabel").map((m) => pagiMeterRow("kabel", m))}
-      </div>
-
-      <div style={{ marginBottom: 12 }}>
-        <div style={lbl}>🧪 Freon — pilih tabung dari stok kantor</div>
-        {byKat("freon").map((m) => {
-          const avail = availableUnitsFor(m.code);
-          const totalKg = freonStockFor(m.code);
-          return (
-            <div key={m.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: 10, marginBottom: 6 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, marginBottom: 6 }}>
-                {m.name} <span style={{ fontSize: 11, fontWeight: 400, color: cs.muted }}>· {freonUnits.filter((u) => u.inventory_code === m.code).length} tabung di kantor · total <b style={{ color: totalKg > 0 ? cs.green : cs.red }}>{Math.round(totalKg * 10) / 10} kg</b></span>
-              </div>
-              {(pagi.freon?.[m.code] || []).map((t) => (
-                <div key={t.unit_id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
-                  <span style={{ fontSize: 13, color: cs.text, flex: 1, fontWeight: 600 }}>🛢 {t.label}</span>
-                  <input type="number" inputMode="decimal" value={t.kg} onChange={(e) => setPagiFreonKg(m.code, t.unit_id, e.target.value)} style={{ ...inp, width: 90 }} placeholder="kg" />
-                  <button onClick={() => removeFreonUnit(m.code, t.unit_id)} style={{ background: "none", border: "none", color: cs.red, cursor: "pointer", fontSize: 18 }}>×</button>
-                </div>
-              ))}
-              {avail.length > 0 ? (
-                <select value="" onChange={(e) => { const u = avail.find((x) => x.id === e.target.value); if (u) addFreonUnit(m.code, u); }}
-                  style={{ ...inp, marginTop: 4, color: cs.accent, fontWeight: 700, cursor: "pointer" }}>
-                  <option value="">+ Tambah tabung…</option>
-                  {avail.map((u) => <option key={u.id} value={u.id} style={{ color: cs.text }}>{u.unit_label} ({Math.round(Number(u.stock) * 10) / 10} kg)</option>)}
-                </select>
-              ) : (
-                <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>{freonUnits.some((u) => u.inventory_code === m.code) ? "Semua tabung sudah dipilih" : "Tidak ada tabung tersedia di kantor"}</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
+      {CATS.map(({ key, title, satuan }) => (
+        <div key={key} style={{ marginBottom: 12 }}>
+          <div style={lbl}>{title} — pilih unit dari stok kantor</div>
+          {byKat(key).length === 0 ? <div style={{ fontSize: 12, color: cs.muted }}>—</div> : byKat(key).map((m) => pagiCatCard(key, satuan, m))}
+        </div>
+      ))}
       {renderPhotos("pagi", pagi, setPagi)}
       {renderSaveBtn("pagi", savedPagi)}
     </div>
   );
 
-  // ── PULANG: hanya item yang dibawa pagi, input SISA ──
-  const broughtMeters = (kat) => byKat(kat).filter((m) => parseFloat(pagi[kat]?.[m.code]) > 0);
-  const broughtFreon = () => byKat("freon").filter((m) => (pagi.freon?.[m.code] || []).some((t) => parseFloat(t.kg) > 0));
-  const hasBrought = broughtMeters("pipa").length + broughtMeters("kabel").length + broughtFreon().length > 0;
+  // ── PULANG: hanya unit yang dibawa pagi, input SISA (preset = dibawa) ──
+  const broughtSKUs = (cat) => byKat(cat).filter((m) => (pagi[cat]?.[m.code] || []).some((t) => parseFloat(t.qty) > 0));
+  const hasBrought = CATS.some(({ key }) => broughtSKUs(key).length > 0);
 
-  const pulangMeterRow = (kat, m) => {
-    const dibawa = pagi[kat]?.[m.code] || 0;
-    return (
-      <div key={m.code} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: cs.text }}>{m.name}</div>
-          <div style={{ fontSize: 11, color: cs.muted }}>dibawa <b style={{ color: cs.text }}>{dibawa} m</b></div>
-        </div>
-        <input type="number" inputMode="decimal" min={0} max={dibawa} value={pulang[kat]?.[m.code] || ""} onChange={(e) => setMeter(setPulang, kat, m.code, clampSisa(e.target.value, parseFloat(dibawa)))} style={{ ...inp, width: 110 }} placeholder="sisa (m)" />
-      </div>
-    );
-  };
+  const pulangCatCard = (cat, satuan, m) => (
+    <div key={m.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: 10, marginBottom: 6 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, marginBottom: 6 }}>{m.name}</div>
+      {(pagi[cat]?.[m.code] || []).filter((t) => parseFloat(t.qty) > 0).map((t) => {
+        const sisa = (pulang[cat]?.[m.code] || []).find((x) => x.unit_id === t.unit_id);
+        return (
+          <div key={t.unit_id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
+            <span style={{ fontSize: 12, color: cs.muted, minWidth: 150 }}>📦 {t.label} <span style={{ color: cs.text }}>(dibawa {t.qty}{satuan})</span></span>
+            <input type="number" inputMode="decimal" min={0} max={parseFloat(t.qty)} value={sisa?.qty ?? ""} onChange={(e) => setPulangQty(cat, m.code, t.unit_id, clampSisa(e.target.value, parseFloat(t.qty)), t.label)} style={{ ...inp, flex: 1 }} placeholder={"sisa " + satuan} />
+          </div>
+        );
+      })}
+    </div>
+  );
 
   const renderPulang = () => (
     <div style={{ background: cs.panel, border: "1px solid " + cs.border, borderRadius: 14, padding: 16, marginBottom: 16 }}>
@@ -338,36 +333,17 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
         <div style={{ fontSize: 15, fontWeight: 800, color: cs.text }}>🌇 Pulang — Material Dikembalikan</div>
         {savedPulang && <span style={{ fontSize: 11, color: cs.green, fontWeight: 700 }}>✓ Tersimpan</span>}
       </div>
-      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>Preset dari bawaan pagi. Isi <b>sisa aktual</b> yang dikembalikan (meter / kg). Terpakai = dibawa − sisa.</div>
-
+      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>Preset dari unit yang dibawa pagi (default sisa = dibawa). Turunkan kalau kepake. Terpakai = dibawa − sisa.</div>
       {!hasBrought ? (
         <div style={{ fontSize: 13, color: cs.muted, padding: "8px 0" }}>Belum ada material dibawa di sesi Pagi. Simpan Pagi dulu.</div>
       ) : (
-        <>
-          {broughtMeters("pipa").length > 0 && <div style={{ marginBottom: 12 }}><div style={lbl}>🔧 Pipa AC — sisa (meter)</div>{broughtMeters("pipa").map((m) => pulangMeterRow("pipa", m))}</div>}
-          {broughtMeters("kabel").length > 0 && <div style={{ marginBottom: 12 }}><div style={lbl}>⚡ Kabel — sisa (meter)</div>{broughtMeters("kabel").map((m) => pulangMeterRow("kabel", m))}</div>}
-          {broughtFreon().length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={lbl}>🧪 Freon — sisa per tabung (kg)</div>
-              {broughtFreon().map((m) => (
-                <div key={m.code} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: 10, marginBottom: 6 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, marginBottom: 6 }}>{m.name}</div>
-                  {(pagi.freon?.[m.code] || []).filter((t) => parseFloat(t.kg) > 0).map((t) => {
-                    const sisa = (pulang.freon?.[m.code] || []).find((x) => x.unit_id === t.unit_id);
-                    return (
-                      <div key={t.unit_id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
-                        <span style={{ fontSize: 12, color: cs.muted, minWidth: 150 }}>🛢 {t.label} <span style={{ color: cs.text }}>(dibawa {t.kg}kg)</span></span>
-                        <input type="number" inputMode="decimal" min={0} max={parseFloat(t.kg)} value={sisa?.kg ?? ""} onChange={(e) => setPulangFreonKg(m.code, t.unit_id, clampSisa(e.target.value, parseFloat(t.kg)), t.label)} style={{ ...inp, flex: 1 }} placeholder="sisa kg" />
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          )}
-        </>
+        CATS.map(({ key, title, satuan }) => broughtSKUs(key).length > 0 && (
+          <div key={key} style={{ marginBottom: 12 }}>
+            <div style={lbl}>{title} — sisa ({satuan})</div>
+            {broughtSKUs(key).map((m) => pulangCatCard(key, satuan, m))}
+          </div>
+        ))
       )}
-
       {renderPhotos("pulang", pulang, setPulang)}
       {renderSaveBtn("pulang", savedPulang)}
     </div>
@@ -409,7 +385,7 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
         <div style={{ fontSize: 20, fontWeight: 800, color: cs.text }}>📥 Material Harian</div>
         <div style={{ fontSize: 13, color: cs.muted }}>{myName} · {date}</div>
         <div style={{ fontSize: 12, color: cs.muted, marginTop: 6, background: cs.panel, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 11px" }}>
-          Catat material yang <b>dibawa pagi</b> (pilih dari stok kantor) & <b>sisa yang dikembalikan sore</b>. Selisih dicocokkan dengan pemakaian di laporan job. Bisa juga kirim foto via WA: caption <b>"Material Pagi"</b> / <b>"Material Pulang"</b>.
+          Pilih <b>unit yang dibawa</b> dari stok kantor (pipa/kabel/freon — bisa beberapa unit per barang) & isi <b>sisa yang dikembalikan</b> sore. Selisih dicocokkan dengan pemakaian di laporan job. Bisa juga kirim foto via WA: caption <b>"Material Pagi"</b> / <b>"Material Pulang"</b>.
         </div>
       </div>
       {renderPagi()}
