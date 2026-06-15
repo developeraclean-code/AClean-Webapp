@@ -74,7 +74,8 @@ const KomisiView = lazy(() => import("./views/KomisiView.jsx"));
 const LaporanDetailModal = lazy(() => import("./views/LaporanDetailModal.jsx"));
 const ProjectApp = lazy(() => import("./project/ProjectApp.jsx"));
 const MaintenanceView = lazy(() => import("./views/MaintenanceView.jsx"));
-const MaterialCheckoutView = lazy(() => import("./views/MaterialCheckoutView.jsx"));
+const MaterialCheckoutView   = lazy(() => import("./views/MaterialCheckoutView.jsx"));
+const ProjectLaporanModal    = lazy(() => import("./views/ProjectLaporanModal.jsx"));
 
 // Supabase client tunggal di-import dari ./supabaseClient.js (env divalidasi di sana).
 // Single client → session login Supabase Auth ter-share ke modul Project (RLS authenticated).
@@ -11583,10 +11584,26 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         </Suspense>
       )}
 
+      {/* ═══ MODAL BERITA ACARA PROJECT — bypass submitLaporan biasa ═══ */}
+      {laporanModal && !laporanSubmitted && laporanModal.project_id && (
+        <Suspense fallback={null}>
+          <ProjectLaporanModal
+            order={laporanModal}
+            currentUser={currentUser}
+            supabase={supabase}
+            apiFetch={_apiFetch}
+            apiHeaders={_apiHeaders}
+            fotoSrc={fotoSrc}
+            showNotif={showNotif}
+            onClose={() => setLaporanModal(null)}
+          />
+        </Suspense>
+      )}
+
       {/* ═══════════════════════════════════════════════════════
           MODAL LAPORAN TEKNISI v3 — Multi-Unit, Multi-Material, Foto
       ═══════════════════════════════════════════════════════ */}
-      {laporanModal && !laporanSubmitted && (() => {
+      {laporanModal && !laporanSubmitted && !laporanModal.project_id && (() => {
         const incompleteUnits = laporanUnits.filter(u => !isUnitDone(u));
         const totalFreon = laporanUnits.reduce((s, u) => s + (parseFloat(u.freon_ditambah) || 0), 0);
         const presets = MATERIAL_PRESET[laporanModal?.service] || MATERIAL_PRESET.Cleaning;
