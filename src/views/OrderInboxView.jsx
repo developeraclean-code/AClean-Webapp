@@ -1199,14 +1199,18 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   async function saveProjectAssignment(project, date, patch) {
     const ALL_PERSON_FIELDS = [...TFIELDS, ...HFIELDS];
 
-    // Dedup: kalau ada >1 order project untuk tanggal ini, hapus yang ekstra (keep first)
-    const allExisting = ordersData.filter(o => o.project_id === project.id && o.date === date && o.status !== "CANCELLED");
-    if (allExisting.length > 1) {
-      const dupeIds = allExisting.slice(1).map(o => o.id);
+    // Query DB langsung — hindari stale React state saat assign T/T2/H/H2 cepat berurutan.
+    // Sekaligus dedup: kalau ada >1 order project untuk tanggal ini, hapus yang ekstra.
+    const { data: existingRows } = await supabase
+      .from("orders")
+      .select("id,teknisi,teknisi2,teknisi3,helper,helper2,helper3")
+      .eq("project_id", project.id).eq("date", date).neq("status", "CANCELLED");
+    if ((existingRows?.length || 0) > 1) {
+      const dupeIds = (existingRows || []).slice(1).map(o => o.id);
       await supabase.from("orders").delete().in("id", dupeIds);
       setOrdersData(prev => prev.filter(o => !dupeIds.includes(o.id)));
     }
-    const existing = allExisting[0] || null;
+    const existing = existingRows?.[0] || null;
     const resolved = {};
     for (const f of ALL_PERSON_FIELDS)
       resolved[f] = patch[f] !== undefined ? patch[f] : existing?.[f] || null;
