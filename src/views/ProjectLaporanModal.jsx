@@ -31,6 +31,8 @@ function compressFile(file) {
 function canEditReport(existing, currentUser, order) {
   if (!existing) return true; // belum ada → siapa saja bisa submit
   if (existing.status === "VERIFIED") return false; // sudah diverifikasi Owner
+  // Record lama tanpa submitted_by (sebelum migration 092) → izinkan semua tim
+  if (!existing.submitted_by) return true;
   const myName = currentUser?.name || "";
   const isSubmitter  = existing.submitted_by === myName;
   const isLeadTeknis = (order?.teknisi || "") === myName;
