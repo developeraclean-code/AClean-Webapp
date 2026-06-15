@@ -280,6 +280,11 @@ function BeritaAcaraTab({ db, can, toast }) {
                     {r.tanggal} · {r.teknisi_name || "—"}
                     {(r.helper_names || []).length > 0 && ` + ${r.helper_names.join(", ")}`}
                   </div>
+                  {r.submitted_by && (
+                    <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+                      ✍️ Diisi oleh: <b style={{ color: cs.text }}>{r.submitted_by}</b>
+                    </div>
+                  )}
                 </div>
                 <span style={{ fontSize: 11, fontWeight: 700, color: statusColor[r.status] || cs.muted, background: (statusColor[r.status] || cs.muted) + "22", padding: "3px 8px", borderRadius: 6 }}>
                   {r.status}
@@ -365,7 +370,12 @@ function RevisiModal({ row, onClose, onVerify, busy }) {
         <div style={{ fontWeight: 800, fontSize: 15, color: cs.text, marginBottom: 12 }}>
           {isRevisi ? "↩ Minta Revisi" : "📋 Detail Berita Acara"}
         </div>
-        <div style={{ fontSize: 12, color: cs.muted, marginBottom: 10 }}>{row.tanggal} · {row.teknisi_name}</div>
+        <div style={{ fontSize: 12, color: cs.muted, marginBottom: 10 }}>
+          {row.tanggal} · {row.teknisi_name}
+          {row.submitted_by && row.submitted_by !== row.teknisi_name && (
+            <span style={{ marginLeft: 6 }}>✍️ diisi <b>{row.submitted_by}</b></span>
+          )}
+        </div>
         <div style={{ background: cs.card, borderRadius: 8, padding: "8px 10px", marginBottom: 10, fontSize: 13, color: cs.text, lineHeight: 1.5 }}>
           <b style={{ fontSize: 11, color: cs.muted, display: "block", marginBottom: 2 }}>Pekerjaan:</b>{row.pekerjaan}
         </div>
