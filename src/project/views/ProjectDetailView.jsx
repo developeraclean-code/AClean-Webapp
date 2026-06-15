@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { cs } from "../../theme/cs.js";
 import * as S from "../utils/styles.js";
 import { supabase } from "../../supabaseClient.js";
@@ -14,8 +14,35 @@ export default function ProjectDetailView() {
   const { db, can, today, currentUser, activeProject, setActiveProject, setActiveView, toggleHold } = useProject();
   const { openContent, close, toast } = useModal();
   const [alatMode, setAlatMode] = useState(null); // 'bawa' | 'kembali'
+  const [laporanTim, setLaporanTim] = useState([]);
+  const [laporanLoading, setLaporanLoading] = useState(false);
 
   const p = db.projects.find((x) => x.id === activeProject);
+
+  useEffect(() => {
+    if (!p?.id) return;
+    let alive = true;
+    setLaporanLoading(true);
+    (async () => {
+      try {
+        const { data: projOrders } = await supabase
+          .from("orders").select("id,date")
+          .eq("project_id", p.id).neq("status", "CANCELLED");
+        const ids = (projOrders || []).map(o => o.id);
+        if (!ids.length) { if (alive) { setLaporanTim([]); setLaporanLoading(false); } return; }
+        const orderDateMap = Object.fromEntries((projOrders || []).map(o => [o.id, o.date]));
+        const { data: reports } = await supabase
+          .from("service_reports")
+          .select("id,job_id,teknisi,status,submitted_at,catatan_global,total_units,foto_urls")
+          .in("job_id", ids)
+          .order("submitted_at", { ascending: false });
+        if (alive) setLaporanTim((reports || []).map(r => ({ ...r, orderDate: orderDateMap[r.job_id] })));
+      } catch (e) { console.error("[ProjectDetail] laporan fetch gagal:", e); }
+      finally { if (alive) setLaporanLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [p?.id]);
+
   if (!p) {
     return (
       <div style={{ padding: 22 }}>
@@ -178,6 +205,38 @@ export default function ProjectDetailView() {
         </table>
         {last?.sore?.progress && (
           <p style={{ marginTop: 10, color: cs.text }}><b>Progress terakhir:</b> {last.sore.progress}</p>
+        )}
+      </div>
+
+      <div style={{ ...S.card, marginTop: 14 }}>
+        <L>👷 Laporan Tim Teknisi</L>
+        {laporanLoading ? (
+          <div style={{ color: cs.muted, fontSize: 12 }}>Memuat laporan...</div>
+        ) : laporanTim.length === 0 ? (
+          <div style={{ color: cs.muted, fontSize: 12 }}>Belum ada laporan masuk untuk project ini</div>
+        ) : (
+          <table style={{ ...S.tableStyles.table, marginTop: 8 }}>
+            <thead><tr>
+              <th style={S.tableStyles.th}>Tgl</th>
+              <th style={S.tableStyles.th}>Teknisi</th>
+              <th style={S.tableStyles.th}>Status</th>
+              <th style={S.tableStyles.th}>Unit</th>
+              <th style={S.tableStyles.th}>Catatan</th>
+              <th style={S.tableStyles.th}>Foto</th>
+            </tr></thead>
+            <tbody>
+              {laporanTim.map(r => (
+                <tr key={r.id}>
+                  <td style={S.tableStyles.td}>{(r.orderDate || "").slice(5)}</td>
+                  <td style={S.tableStyles.td}>{r.teknisi || "—"}</td>
+                  <td style={S.tableStyles.td}><StatusPill s={r.status} /></td>
+                  <td style={S.tableStyles.td}>{r.total_units ?? "—"}</td>
+                  <td style={S.tableStyles.td}>{r.catatan_global || "—"}</td>
+                  <td style={S.tableStyles.td}>{(r.foto_urls || []).length}📷</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </div>

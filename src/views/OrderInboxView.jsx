@@ -819,28 +819,61 @@ function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTek
         Assign teknisi & helper untuk project di hari ini → tercatat sebagai job (ikut cek konflik, jadwal, & Kirim WA panel tim di atas).
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 12 }}>
-        {active.map(p => {
-          const ord = ordersData.find(o => o.project_id === p.id && o.date === slotDate && o.status !== "CANCELLED");
-          const teknisi = ord?.teknisi || "";
-          const helper = ord?.helper || "";
-          const busyElsewhere = (name) => !!name && ordersData.some(o =>
-            o.date === slotDate && o.id !== ord?.id && !["CANCELLED"].includes(o.status) &&
-            [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean).includes(name));
-          return (
-            <div key={p.id} style={{ border: `1px solid ${ord ? cs.green : cs.border}`, borderRadius: 12, padding: 12, background: cs.surface }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{p.nama}</div>
-              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>
-                📍 {p.lokasi || "—"}{p.mulai || p.target ? ` · ${fmtD(p.mulai)}→${fmtD(p.target)}` : ""}
-              </div>
-              <PersonRow label="T" color="#38bdf8" value={teknisi} names={personNames} warn={busyElsewhere(teknisi)}
-                onChange={(v) => onAssign(p, slotDate, { teknisi: v || null })} />
-              <PersonRow label="H" color={cs.muted} value={helper} names={personNames} warn={busyElsewhere(helper)}
-                onChange={(v) => onAssign(p, slotDate, { helper: v || null })} />
-              {ord && <div style={{ fontSize: 10, color: cs.green, marginTop: 6 }}>✓ Terjadwal sebagai job project hari ini</div>}
-            </div>
-          );
-        })}
+        {active.map(p => (
+          <ProjectCard key={p.id} project={p} slotDate={slotDate} ordersData={ordersData}
+            personNames={personNames} fmtD={fmtD} onAssign={onAssign} />
+        ))}
       </div>
+    </div>
+  );
+}
+
+const TFIELDS = ["teknisi", "teknisi2", "teknisi3"];
+const HFIELDS = ["helper", "helper2", "helper3"];
+
+function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssign }) {
+  const ord = ordersData.find(o => o.project_id === project.id && o.date === slotDate && o.status !== "CANCELLED");
+  const filledT = TFIELDS.filter(f => ord?.[f]).length;
+  const filledH = HFIELDS.filter(f => ord?.[f]).length;
+  const [showT, setShowT] = React.useState(Math.max(1, filledT));
+  const [showH, setShowH] = React.useState(Math.max(1, filledH));
+
+  React.useEffect(() => {
+    setShowT(t => Math.max(t, Math.max(1, filledT)));
+    setShowH(h => Math.max(h, Math.max(1, filledH)));
+  }, [filledT, filledH]);
+
+  const busyElsewhere = (name) => !!name && ordersData.some(o =>
+    o.date === slotDate && o.id !== ord?.id && !["CANCELLED"].includes(o.status) &&
+    [...TFIELDS, ...HFIELDS].map(f => o[f]).filter(Boolean).includes(name));
+
+  const addBtn = (label, onClick) => (
+    <button onClick={onClick} style={{
+      width: "100%", margin: "2px 0 4px", background: "transparent",
+      border: `1px dashed ${cs.border}`, borderRadius: 7, padding: "5px 0",
+      color: cs.muted, fontSize: 11, cursor: "pointer",
+    }}>{label}</button>
+  );
+
+  return (
+    <div style={{ border: `1px solid ${ord ? cs.green : cs.border}`, borderRadius: 12, padding: 12, background: cs.surface }}>
+      <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{project.nama}</div>
+      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>
+        📍 {project.lokasi || "—"}{project.mulai || project.target ? ` · ${fmtD(project.mulai)}→${fmtD(project.target)}` : ""}
+      </div>
+      {TFIELDS.slice(0, showT).map((field, i) => (
+        <PersonRow key={field} label={i === 0 ? "T" : `T${i + 1}`} color="#38bdf8"
+          value={ord?.[field] || ""} names={personNames} warn={busyElsewhere(ord?.[field])}
+          onChange={(v) => onAssign(project, slotDate, { [field]: v || null })} />
+      ))}
+      {showT < 3 && addBtn("+ Teknisi", () => setShowT(t => t + 1))}
+      {HFIELDS.slice(0, showH).map((field, i) => (
+        <PersonRow key={field} label={i === 0 ? "H" : `H${i + 1}`} color={cs.muted}
+          value={ord?.[field] || ""} names={personNames} warn={busyElsewhere(ord?.[field])}
+          onChange={(v) => onAssign(project, slotDate, { [field]: v || null })} />
+      ))}
+      {showH < 3 && addBtn("+ Helper", () => setShowH(h => h + 1))}
+      {ord && <div style={{ fontSize: 10, color: cs.green, marginTop: 6 }}>✓ Terjadwal sebagai job project hari ini</div>}
     </div>
   );
 }
@@ -1114,12 +1147,13 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   // Assign teknisi/helper ke project untuk 1 hari → buat/update/hapus order type=Project.
   // Order ini ikut deteksi konflik, jadwal, & bulk dispatch WA seperti order biasa.
   async function saveProjectAssignment(project, date, patch) {
+    const ALL_PERSON_FIELDS = [...TFIELDS, ...HFIELDS];
     const existing = ordersData.find(o => o.project_id === project.id && o.date === date && o.status !== "CANCELLED");
-    const newTeknisi = patch.teknisi !== undefined ? patch.teknisi : existing?.teknisi || null;
-    const newHelper = patch.helper !== undefined ? patch.helper : existing?.helper || null;
+    const resolved = {};
+    for (const f of ALL_PERSON_FIELDS)
+      resolved[f] = patch[f] !== undefined ? patch[f] : existing?.[f] || null;
 
-    // Kedua kosong → hapus order project hari itu (kalau ada)
-    if (existing && !newTeknisi && !newHelper) {
+    if (existing && ALL_PERSON_FIELDS.every(f => !resolved[f])) {
       await supabase.from("orders").delete().eq("id", existing.id);
       setOrdersData(prev => prev.filter(o => o.id !== existing.id));
       return;
@@ -1131,13 +1165,13 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       setOrdersData(prev => prev.map(o => o.id === existing.id ? { ...o, ...upd } : o));
       return;
     }
-    if (!newTeknisi && !newHelper) return; // tak ada yang di-assign & belum ada order
+    if (ALL_PERSON_FIELDS.every(f => !resolved[f])) return;
     const id = "PRJ-" + Date.now();
     const payload = {
       id, customer: project.nama, phone: null, service: "Project", type: project.kategori || "",
       address: project.lokasi || "", date, time: "09:00", time_end: "17:00",
       status: "CONFIRMED", units: 1, project_id: project.id,
-      teknisi: newTeknisi, helper: newHelper, last_changed_by: auditUserName(),
+      ...resolved, last_changed_by: auditUserName(),
     };
     const { error } = await insertOrder(supabase, payload);
     if (error) { showNotif("❌ Gagal simpan: " + error.message); return; }
