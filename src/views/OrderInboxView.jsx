@@ -796,7 +796,7 @@ const EMPTY_SLOT = { member1: "", member1_role: "teknisi", member2: "", member2_
 // Panel assign tim ke project per hari (hanya muncul kalau ada project BERJALAN
 // yang tanggal terpilih masuk rentang mulai→target). Assign → buat order type=Project
 // yang ikut konflik + jadwal + bulk dispatch WA.
-function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTeknisi, onAssign }) {
+function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTeknisi, onAssign, onConfirm }) {
   const inRange = (date, mulai, target) => {
     if (mulai && date < mulai) return false;
     if (target && date > target) return false;
@@ -821,7 +821,7 @@ function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTek
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 12 }}>
         {active.map(p => (
           <ProjectCard key={p.id} project={p} slotDate={slotDate} ordersData={ordersData}
-            personNames={personNames} fmtD={fmtD} onAssign={onAssign} />
+            personNames={personNames} fmtD={fmtD} onAssign={onAssign} onConfirm={onConfirm} />
         ))}
       </div>
     </div>
@@ -831,17 +831,22 @@ function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTek
 const TFIELDS = ["teknisi", "teknisi2", "teknisi3"];
 const HFIELDS = ["helper", "helper2", "helper3"];
 
-function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssign }) {
+function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssign, onConfirm }) {
   const ord = ordersData.find(o => o.project_id === project.id && o.date === slotDate && o.status !== "CANCELLED");
   const filledT = TFIELDS.filter(f => ord?.[f]).length;
   const filledH = HFIELDS.filter(f => ord?.[f]).length;
   const [showT, setShowT] = useState(Math.max(1, filledT));
   const [showH, setShowH] = useState(Math.max(1, filledH));
+  const [confirmed, setConfirmed] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     setShowT(t => Math.max(t, Math.max(1, filledT)));
     setShowH(h => Math.max(h, Math.max(1, filledH)));
   }, [filledT, filledH]);
+
+  // Reset confirmed state bila ord berubah (assign ulang)
+  useEffect(() => { setConfirmed(false); }, [ord?.id]);
 
   const busyElsewhere = (name) => !!name && ordersData.some(o =>
     o.date === slotDate && o.id !== ord?.id && !["CANCELLED"].includes(o.status) &&
@@ -854,6 +859,29 @@ function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssig
       color: cs.muted, fontSize: 11, cursor: "pointer",
     }}>{label}</button>
   );
+
+  const assignedNames = ord ? [...TFIELDS, ...HFIELDS].map(f => ord[f]).filter(Boolean) : [];
+
+  // Tampilan terkunci setelah Konfirmasi
+  if (confirmed && ord) {
+    return (
+      <div style={{ border: `2px solid ${cs.green}`, borderRadius: 12, padding: 12, background: cs.surface }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{project.nama}</div>
+            <div style={{ fontSize: 11, color: cs.muted }}>📍 {project.lokasi || "—"}</div>
+          </div>
+          <span style={{ fontSize: 18 }}>🔒</span>
+        </div>
+        <div style={{ fontSize: 12, color: cs.green, fontWeight: 700, marginBottom: 6 }}>✅ Terkonfirmasi — WA terkirim</div>
+        <div style={{ fontSize: 12, color: cs.text, marginBottom: 8 }}>👥 {assignedNames.join(", ")}</div>
+        <button onClick={() => setConfirmed(false)}
+          style={{ fontSize: 10, color: cs.muted, background: "transparent", border: `1px solid ${cs.border}`, borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>
+          ✏️ Edit
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div style={{ border: `1px solid ${ord ? cs.green : cs.border}`, borderRadius: 12, padding: 12, background: cs.surface }}>
@@ -873,7 +901,29 @@ function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssig
           onChange={(v) => onAssign(project, slotDate, { [field]: v || null })} />
       ))}
       {showH < 3 && addBtn("+ Helper", () => setShowH(h => h + 1))}
-      {ord && <div style={{ fontSize: 10, color: cs.green, marginTop: 6 }}>✓ Terjadwal sebagai job project hari ini</div>}
+      {ord ? (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 10, color: cs.green, marginBottom: 6 }}>✓ Terjadwal sebagai job project hari ini</div>
+          <button
+            disabled={confirming}
+            onClick={async () => {
+              setConfirming(true);
+              const ok = await onConfirm(project, slotDate, ord);
+              if (ok) setConfirmed(true);
+              setConfirming(false);
+            }}
+            style={{
+              width: "100%", padding: "8px 0", borderRadius: 8, border: "none",
+              cursor: confirming ? "default" : "pointer",
+              background: cs.green, color: "#0a0f1e", fontWeight: 800, fontSize: 12,
+              opacity: confirming ? 0.7 : 1,
+            }}>
+            {confirming ? "Mengirim WA..." : "✅ Konfirmasi & Kirim WA"}
+          </button>
+        </div>
+      ) : (
+        <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>Pilih anggota untuk assign</div>
+      )}
     </div>
   );
 }
@@ -1184,6 +1234,25 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     const { error } = await insertOrder(supabase, payload);
     if (error) { showNotif("❌ Gagal simpan: " + error.message); return; }
     setOrdersData(prev => [{ ...payload, created_at: new Date().toISOString() }, ...prev]);
+  }
+
+  async function handleProjectConfirm(project, date, ord) {
+    if (!sendWA) { showNotif("⚠️ sendWA tidak tersedia"); return false; }
+    const members = [...TFIELDS, ...HFIELDS]
+      .map(f => ord[f] ? { name: ord[f], role: TFIELDS.includes(f) ? "Teknisi" : "Helper" } : null)
+      .filter(Boolean);
+    if (!members.length) { showNotif("⚠️ Belum ada anggota yang di-assign"); return false; }
+    const fmtDate = new Date(date + "T00:00:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
+    let sent = 0;
+    for (const m of members) {
+      const tek = teknisiData.find(t => t.name === m.name);
+      if (!tek?.phone) continue;
+      const msg = `📋 *Jadwal Project — AClean*\n\nHalo *${m.name}* (${m.role}), kamu ditugaskan untuk:\n\n🏗️ *${project.nama}*\n📍 ${project.lokasi || "—"}\n📅 ${fmtDate}\n⏰ 09:00 – 17:00\n\nMohon konfirmasi kehadiran. Terima kasih! 💪`;
+      const ok = await sendWA(tek.phone, msg);
+      if (ok) sent++;
+    }
+    showNotif(`✅ WA terkirim ke ${sent} dari ${members.length} anggota`);
+    return sent > 0;
   }
 
   async function handleBulkDispatch(date) {
@@ -1815,6 +1884,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         ordersData={ordersData}
         activeTeknisi={activeTeknisi}
         onAssign={saveProjectAssignment}
+        onConfirm={handleProjectConfirm}
       />
 
       {/* ═══ SAFETY NET PANEL ═══ */}
@@ -2329,39 +2399,55 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                       <SourceBadge source={o.source} />
                     </td>
 
-                    {/* Tim — dropdown team_slot + preview anggota */}
+                    {/* Tim — project order: tampil nama anggota (read-only); regular: dropdown team_slot */}
                     <td style={{ padding: "8px 10px", minWidth: 160 }}>
-                      <select value={o.team_slot || ""}
-                        onChange={e => handleQuickAssign(o, "team_slot", e.target.value)}
-                        style={{ ...ddStyle, color: o.team_slot ? cs.accent : cs.muted, borderColor: o.team_slot ? cs.accent + "66" : cs.border }}>
-                        <option value="">— Pilih tim —</option>
-                        {TEAM_SLOTS.map(s => {
-                          const slot = getSlotData(o.date, s);
-                          const members = slotMembers(slot);
-                          return (
-                            <option key={s} value={s}>
-                              {s}{members.length > 0 ? " — " + members.join(", ") : ""}
-                            </option>
-                          );
-                        })}
-                      </select>
-                      {o.team_slot && (() => {
-                        const slot = getSlotData(o.date, o.team_slot);
-                        const members = slotMemberRoles(slot);
-                        if (members.length === 0) return (
-                          <div style={{ color: cs.yellow, fontSize: 9, marginTop: 2 }}>⚠️ belum diisi</div>
-                        );
-                        return (
-                          <div style={{ fontSize: 9, marginTop: 2, display: "flex", flexWrap: "wrap", gap: 3 }}>
-                            {members.map(m => (
-                              <span key={m.name} style={{ color: getTechColor(m.name, teknisiData), fontWeight: 600 }}>
-                                {m.name}
-                              </span>
-                            ))}
-                            {slot.confirmed && <span style={{ color: cs.green, marginLeft: 2 }}>✓</span>}
-                          </div>
-                        );
-                      })()}
+                      {o.project_id ? (
+                        <div>
+                          <div style={{ fontSize: 10, color: cs.ara, fontWeight: 700, marginBottom: 3 }}>🏗️ Project</div>
+                          {[...TFIELDS, ...HFIELDS].map((f, i) => o[f] ? (
+                            <div key={f} style={{ fontSize: 11, color: getTechColor(o[f], teknisiData), fontWeight: 600 }}>
+                              {i < 3 ? "T" : "H"}{i % 3 > 0 ? i % 3 + 1 : ""} {o[f]}
+                            </div>
+                          ) : null)}
+                          {![...TFIELDS, ...HFIELDS].some(f => o[f]) && (
+                            <div style={{ fontSize: 10, color: cs.muted }}>Belum ada anggota</div>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <select value={o.team_slot || ""}
+                            onChange={e => handleQuickAssign(o, "team_slot", e.target.value)}
+                            style={{ ...ddStyle, color: o.team_slot ? cs.accent : cs.muted, borderColor: o.team_slot ? cs.accent + "66" : cs.border }}>
+                            <option value="">— Pilih tim —</option>
+                            {TEAM_SLOTS.map(s => {
+                              const slot = getSlotData(o.date, s);
+                              const members = slotMembers(slot);
+                              return (
+                                <option key={s} value={s}>
+                                  {s}{members.length > 0 ? " — " + members.join(", ") : ""}
+                                </option>
+                              );
+                            })}
+                          </select>
+                          {o.team_slot && (() => {
+                            const slot = getSlotData(o.date, o.team_slot);
+                            const members = slotMemberRoles(slot);
+                            if (members.length === 0) return (
+                              <div style={{ color: cs.yellow, fontSize: 9, marginTop: 2 }}>⚠️ belum diisi</div>
+                            );
+                            return (
+                              <div style={{ fontSize: 9, marginTop: 2, display: "flex", flexWrap: "wrap", gap: 3 }}>
+                                {members.map(m => (
+                                  <span key={m.name} style={{ color: getTechColor(m.name, teknisiData), fontWeight: 600 }}>
+                                    {m.name}
+                                  </span>
+                                ))}
+                                {slot.confirmed && <span style={{ color: cs.green, marginLeft: 2 }}>✓</span>}
+                              </div>
+                            );
+                          })()}
+                        </>
+                      )}
                     </td>
 
                     {/* Status — dengan visual Opsi B */}
