@@ -835,10 +835,10 @@ function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssig
   const ord = ordersData.find(o => o.project_id === project.id && o.date === slotDate && o.status !== "CANCELLED");
   const filledT = TFIELDS.filter(f => ord?.[f]).length;
   const filledH = HFIELDS.filter(f => ord?.[f]).length;
-  const [showT, setShowT] = React.useState(Math.max(1, filledT));
-  const [showH, setShowH] = React.useState(Math.max(1, filledH));
+  const [showT, setShowT] = useState(Math.max(1, filledT));
+  const [showH, setShowH] = useState(Math.max(1, filledH));
 
-  React.useEffect(() => {
+  useEffect(() => {
     setShowT(t => Math.max(t, Math.max(1, filledT)));
     setShowH(h => Math.max(h, Math.max(1, filledH)));
   }, [filledT, filledH]);
