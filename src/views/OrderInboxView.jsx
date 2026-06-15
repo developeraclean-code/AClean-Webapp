@@ -796,7 +796,7 @@ const EMPTY_SLOT = { member1: "", member1_role: "teknisi", member2: "", member2_
 // Panel assign tim ke project per hari (hanya muncul kalau ada project BERJALAN
 // yang tanggal terpilih masuk rentang mulai→target). Assign → buat order type=Project
 // yang ikut konflik + jadwal + bulk dispatch WA.
-function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTeknisi, onAssign, onConfirm }) {
+function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTeknisi, onAssign }) {
   const inRange = (date, mulai, target) => {
     if (mulai && date < mulai) return false;
     if (target && date > target) return false;
@@ -821,7 +821,7 @@ function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTek
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 12 }}>
         {active.map(p => (
           <ProjectCard key={p.id} project={p} slotDate={slotDate} ordersData={ordersData}
-            personNames={personNames} fmtD={fmtD} onAssign={onAssign} onConfirm={onConfirm} />
+            personNames={personNames} fmtD={fmtD} onAssign={onAssign} />
         ))}
       </div>
     </div>
@@ -831,14 +831,13 @@ function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTek
 const TFIELDS = ["teknisi", "teknisi2", "teknisi3"];
 const HFIELDS = ["helper", "helper2", "helper3"];
 
-function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssign, onConfirm }) {
+function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssign }) {
   const ord = ordersData.find(o => o.project_id === project.id && o.date === slotDate && o.status !== "CANCELLED");
   const filledT = TFIELDS.filter(f => ord?.[f]).length;
   const filledH = HFIELDS.filter(f => ord?.[f]).length;
   const [showT, setShowT] = useState(Math.max(1, filledT));
   const [showH, setShowH] = useState(Math.max(1, filledH));
   const [confirmed, setConfirmed] = useState(false);
-  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     setShowT(t => Math.max(t, Math.max(1, filledT)));
@@ -905,20 +904,12 @@ function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssig
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 10, color: cs.green, marginBottom: 6 }}>✓ Terjadwal sebagai job project hari ini</div>
           <button
-            disabled={confirming}
-            onClick={async () => {
-              setConfirming(true);
-              const ok = await onConfirm(project, slotDate, ord);
-              if (ok) setConfirmed(true);
-              setConfirming(false);
-            }}
+            onClick={() => setConfirmed(true)}
             style={{
               width: "100%", padding: "8px 0", borderRadius: 8, border: "none",
-              cursor: confirming ? "default" : "pointer",
-              background: cs.green, color: "#0a0f1e", fontWeight: 800, fontSize: 12,
-              opacity: confirming ? 0.7 : 1,
+              cursor: "pointer", background: cs.green, color: "#0a0f1e", fontWeight: 800, fontSize: 12,
             }}>
-            {confirming ? "Mengirim WA..." : "✅ Konfirmasi & Kirim WA"}
+            🔒 Kunci Assignment
           </button>
         </div>
       ) : (
@@ -1238,25 +1229,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     const { error } = await insertOrder(supabase, payload);
     if (error) { showNotif("❌ Gagal simpan: " + error.message); return; }
     setOrdersData(prev => [{ ...payload, created_at: new Date().toISOString() }, ...prev]);
-  }
-
-  async function handleProjectConfirm(project, date, ord) {
-    if (!sendWA) { showNotif("⚠️ sendWA tidak tersedia"); return false; }
-    const members = [...TFIELDS, ...HFIELDS]
-      .map(f => ord[f] ? { name: ord[f], role: TFIELDS.includes(f) ? "Teknisi" : "Helper" } : null)
-      .filter(Boolean);
-    if (!members.length) { showNotif("⚠️ Belum ada anggota yang di-assign"); return false; }
-    const fmtDate = new Date(date + "T00:00:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
-    let sent = 0;
-    for (const m of members) {
-      const tek = teknisiData.find(t => t.name === m.name);
-      if (!tek?.phone) continue;
-      const msg = `📋 *Jadwal Project — AClean*\n\nHalo *${m.name}* (${m.role}), kamu ditugaskan untuk:\n\n🏗️ *${project.nama}*\n📍 ${project.lokasi || "—"}\n📅 ${fmtDate}\n⏰ 09:00 – 17:00\n\nMohon konfirmasi kehadiran. Terima kasih! 💪`;
-      const ok = await sendWA(tek.phone, msg);
-      if (ok) sent++;
-    }
-    showNotif(`✅ WA terkirim ke ${sent} dari ${members.length} anggota`);
-    return sent > 0;
   }
 
   async function handleBulkDispatch(date) {
@@ -1888,7 +1860,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         ordersData={ordersData}
         activeTeknisi={activeTeknisi}
         onAssign={saveProjectAssignment}
-        onConfirm={handleProjectConfirm}
       />
 
       {/* ═══ SAFETY NET PANEL ═══ */}
