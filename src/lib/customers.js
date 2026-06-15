@@ -52,13 +52,22 @@ export const buildCustomerHistory = (customer, ordersData, laporanReports, invoi
   const nm = (s) => (s || "").trim().toLowerCase();
   const matchName = (o) => nm(o.customer) === nm(customer.name);
   const matchPhone = (o) => customer.phone && o.phone && samePhone(o.phone, customer.phone);
+  // LINK PERMANEN: order yang sudah punya customer_id = id customer ini SELALU ikut,
+  // tak peduli phone / nama / alamat customer diedit kemudian. Inilah sumber kebenaran
+  // utama — order yang sudah dibayar/diproses tidak akan lepas dari customernya.
+  const matchId = (o) => o.customer_id && customer.id && o.customer_id === customer.id;
 
   // Deteksi multi-lokasi: 1 nomor HP punya >1 customer (beda nama).
   const isMultiLoc = !!(allCustomers && customer.phone &&
     allCustomers.filter(c => c && c.phone && samePhone(c.phone, customer.phone)).length > 1);
 
   return ordersData
-    .filter(o => isMultiLoc ? matchName(o) : (matchName(o) || matchPhone(o)))
+    .filter(o => {
+      if (matchId(o)) return true;          // tertaut permanen via customer_id
+      if (o.customer_id) return false;      // sudah tertaut ke customer LAIN → jangan klaim by phone/nama
+      // Legacy (order belum punya customer_id) → fallback by nama/phone seperti semula.
+      return isMultiLoc ? matchName(o) : (matchName(o) || matchPhone(o));
+    })
     .map(o => {
       const lap = laporanReports.find(r => r.job_id === o.id);
       const inv = invoicesData

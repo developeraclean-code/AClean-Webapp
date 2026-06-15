@@ -104,4 +104,40 @@ describe("buildCustomerHistory", () => {
       expect(h).toHaveLength(2); // JOB-001 (name) + JOB-002 (phone, nama sama)
     });
   });
+
+  describe("link permanen via customer_id (tahan edit phone/nama)", () => {
+    const cust = { id: "CUST067", name: "BAPAK EDWIN ALBERA", phone: "6281280588882" };
+    it("tetap menarik order via customer_id walau phone customer sudah diedit (beda dari order)", () => {
+      // Order masih simpan phone LAMA, customer sudah ganti phone BARU → tanpa customer_id link putus.
+      const ords = [
+        { id: "JOB-PAID", customer_id: "CUST067", customer: "BAPAK EDWIN ALBERA", phone: "6281111111111", date: "2026-04-07", status: "PAID" },
+      ];
+      const editedCust = { ...cust, phone: "6289999999999" }; // phone baru, beda dari order
+      const h = buildCustomerHistory(editedCust, ords, [], []);
+      expect(h.map(j => j.id)).toEqual(["JOB-PAID"]);
+    });
+    it("tetap menarik order via customer_id walau NAMA customer diedit", () => {
+      const ords = [
+        { id: "JOB-X", customer_id: "CUST067", customer: "EDWIN LAMA", phone: "6281280588882", date: "2026-04-07", status: "PAID" },
+      ];
+      const renamed = { ...cust, name: "BAPAK EDWIN ALBERA (BENAR)" };
+      const h = buildCustomerHistory(renamed, ords, [], []);
+      expect(h.map(j => j.id)).toEqual(["JOB-X"]);
+    });
+    it("TIDAK mengklaim order milik customer lain via phone/nama saat order itu sudah punya customer_id", () => {
+      // Order JOB-OTHER milik CUST999 tapi kebetulan phone sama dengan customer ini.
+      const ords = [
+        { id: "JOB-OTHER", customer_id: "CUST999", customer: "ORANG LAIN", phone: "6281280588882", date: "2026-04-07", status: "PAID" },
+      ];
+      const h = buildCustomerHistory(cust, ords, [], []);
+      expect(h).toHaveLength(0);
+    });
+    it("order legacy tanpa customer_id tetap match by phone/nama (backward compat)", () => {
+      const ords = [
+        { id: "JOB-LEGACY", customer: "BAPAK EDWIN ALBERA", phone: "6281280588882", date: "2026-04-07", status: "PAID" },
+      ];
+      const h = buildCustomerHistory(cust, ords, [], []);
+      expect(h.map(j => j.id)).toEqual(["JOB-LEGACY"]);
+    });
+  });
 });
