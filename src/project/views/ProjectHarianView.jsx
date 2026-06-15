@@ -1,4 +1,20 @@
 import React, { useState, useEffect, useCallback } from "react";
+
+// Mirror logic dari App.jsx fotoSrc — extract R2 key dari full URL, serve via proxy
+function fotoProxySrc(url) {
+  if (!url) return "";
+  if (url.startsWith("/api/foto")) return url;
+  if (url.includes(".r2.dev/")) {
+    const m = url.match(/\.r2\.dev\/(.+)$/);
+    if (m) return "/api/foto?key=" + encodeURIComponent(m[1]);
+  }
+  if (url.includes(".r2.cloudflarestorage.com/")) {
+    const m = url.match(/cloudflarestorage\.com\/[^/]+\/(.+)$/);
+    if (m) return "/api/foto?key=" + encodeURIComponent(m[1]);
+  }
+  if (!url.startsWith("http")) return "/api/foto?key=" + encodeURIComponent(url);
+  return url;
+}
 import { cs } from "../../theme/cs.js";
 import * as S from "../utils/styles.js";
 import { useProject } from "../context/ProjectContext.jsx";
@@ -311,14 +327,15 @@ function BeritaAcaraTab({ db, can, toast }) {
               {/* Foto grid */}
               {(r.foto_urls || []).length > 0 && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))", gap: 6, marginBottom: 8 }}>
-                  {(r.foto_urls || []).slice(0, 20).map((url, i) => (
-                    <a key={i} href={`/api/foto?key=${encodeURIComponent(url.includes("?key=") ? url.split("?key=")[1] : url)}`} target="_blank" rel="noreferrer"
-                       style={{ aspectRatio: 1, borderRadius: 8, overflow: "hidden", border: `1px solid ${cs.border}`, display: "block" }}>
-                      <img src={`/api/foto?key=${encodeURIComponent(url.includes("?key=") ? url.split("?key=")[1] : url)}`}
-                        alt={`foto ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                        onError={e => { e.target.src = url; }} />
-                    </a>
-                  ))}
+                  {(r.foto_urls || []).slice(0, 20).map((url, i) => {
+                    const src = fotoProxySrc(url);
+                    return (
+                      <a key={i} href={src} target="_blank" rel="noreferrer"
+                         style={{ aspectRatio: 1, borderRadius: 8, overflow: "hidden", border: `1px solid ${cs.border}`, display: "block" }}>
+                        <img src={src} alt={`foto ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      </a>
+                    );
+                  })}
                 </div>
               )}
 
@@ -385,10 +402,10 @@ function RevisiModal({ row, onClose, onVerify, busy }) {
         {(row.foto_urls || []).length > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(64px, 1fr))", gap: 6, marginBottom: 12 }}>
             {(row.foto_urls || []).map((url, i) => {
-              const proxyUrl = `/api/foto?key=${encodeURIComponent(url.includes("?key=") ? url.split("?key=")[1] : url)}`;
+              const src = fotoProxySrc(url);
               return (
-                <a key={i} href={proxyUrl} target="_blank" rel="noreferrer" style={{ aspectRatio: 1, borderRadius: 8, overflow: "hidden", border: `1px solid ${cs.border}`, display: "block" }}>
-                  <img src={proxyUrl} alt={`f${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.src = url; }} />
+                <a key={i} href={src} target="_blank" rel="noreferrer" style={{ aspectRatio: 1, borderRadius: 8, overflow: "hidden", border: `1px solid ${cs.border}`, display: "block" }}>
+                  <img src={src} alt={`f${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 </a>
               );
             })}
