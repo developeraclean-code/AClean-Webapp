@@ -1,0 +1,20 @@
+name: Cron Dispatcher
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+concurrency:
+  group: cron-dispatcher
+  cancel-in-progress: false
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping cron dispatcher (task=tick)
+        run: |
+          code=$(curl -sS --max-time 120 -o /tmp/tick.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://a-clean-webapp.vercel.app/api/cron-reminder?task=tick")
+          echo "HTTP $code"; cat /tmp/tick.json || true; echo ""
+          test "$code" = "200"
