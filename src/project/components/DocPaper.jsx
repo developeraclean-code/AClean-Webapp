@@ -1,10 +1,15 @@
 import React from "react";
+import { sumDocTotal, fmtRp, docColumns, docUraianLabel, docSig } from "../utils/constants.js";
 
-// Preview format PDF-like (kertas A4) untuk Surat Penerimaan/Pengiriman & Berita Acara.
+// Preview format PDF-like (kertas A4) untuk semua jenis dokumen project.
 export default function DocPaper({ doc, project }) {
   const isBA = doc.jenis.includes("Berita");
   const cl = doc.checklist || [];
+  const grandTotal = sumDocTotal(doc.items);
   const allDone = cl.length && cl.every((c) => c.done);
+  const cols = docColumns(doc.jenis);
+  const sig = docSig(doc.jenis);
+  const penerima = (doc.kepada || "").split("—")[0];
   return (
     <div style={{ background: "#f8fafc", color: "#0f172a", borderRadius: 8, padding: "28px 30px", fontSize: 12.5, lineHeight: 1.55 }}>
       <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "2px solid #0f172a", paddingBottom: 10, marginBottom: 14 }}>
@@ -25,23 +30,28 @@ export default function DocPaper({ doc, project }) {
         <div><b>Lokasi:</b><br />{project?.lokasi || "-"}</div>
       </div>
       {doc.uraian && (
-        <p style={{ margin: "6px 0" }}>
-          <b>{isBA ? "Uraian Pekerjaan:" : "Keterangan:"}</b> {doc.uraian}
+        <p style={{ margin: "6px 0", whiteSpace: "pre-wrap" }}>
+          <b>{docUraianLabel(doc.jenis)}:</b> {doc.uraian}
         </p>
       )}
       {doc.items?.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse", margin: "8px 0" }}>
           <thead><tr>
-            <th style={paperTh}>No</th><th style={paperTh}>Nama Barang</th><th style={paperTh}>Jumlah</th><th style={paperTh}>Keterangan</th>
+            <th style={{ ...paperTh, width: 32 }}>No</th>
+            {cols.map((c) => <th key={c.key} style={{ ...paperTh, width: `${c.w}%` }}>{c.label}</th>)}
           </tr></thead>
           <tbody>{doc.items.map((it, i) => (
             <tr key={i}>
-              <td style={paperTd}>{i + 1}</td>
-              <td style={paperTd}>{it.nama}</td>
-              <td style={paperTd}>{it.qty}{it.satuan ? " " + it.satuan : ""}</td>
-              <td style={paperTd}>{it.ket || ""}</td>
+              <td style={{ ...paperTd, textAlign: "center" }}>{i + 1}</td>
+              {cols.map((c) => <td key={c.key} style={{ ...paperTd, textAlign: c.align || "left" }}>{it[c.key] || ""}</td>)}
             </tr>
           ))}</tbody>
+          {grandTotal > 0 && cols.some((c) => c.sum) && (
+            <tfoot><tr>
+              <td style={{ ...paperTd, fontWeight: 700, textAlign: "right" }} colSpan={cols.length}>Total</td>
+              <td style={{ ...paperTd, fontWeight: 800, textAlign: "right" }}>{fmtRp(grandTotal)}</td>
+            </tr></tfoot>
+          )}
         </table>
       )}
       {isBA && cl.length > 0 && (
@@ -70,11 +80,11 @@ export default function DocPaper({ doc, project }) {
       )}
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 28 }}>
         <div style={{ textAlign: "center", width: "45%" }}>
-          <div>Diserahkan oleh,<br />Teknisi AClean</div>
+          <div>{sig.lRole}<br />{sig.lName}</div>
           <div style={{ marginTop: 54, borderTop: "1px solid #0f172a", paddingTop: 4, fontWeight: 700 }}>{doc.ttdTeknisi}</div>
         </div>
         <div style={{ textAlign: "center", width: "45%" }}>
-          <div>Diterima oleh,<br />{(doc.kepada || "").split("—")[0]}</div>
+          <div>{sig.rRole}<br />{penerima}</div>
           {doc.ttdCustomerImg && <img alt="ttd" src={doc.ttdCustomerImg} style={{ height: 46, display: "block", margin: "6px auto -8px" }} />}
           <div style={{ marginTop: 54, borderTop: "1px solid #0f172a", paddingTop: 4, fontWeight: 700 }}>{doc.ttdCustomer}</div>
         </div>

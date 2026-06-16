@@ -4,7 +4,7 @@ import * as S from "../utils/styles.js";
 import { useProject } from "../context/ProjectContext.jsx";
 import { useModal } from "../context/ModalContext.jsx";
 import { docSeqNext, ttdStatus, pName } from "../utils/finance.js";
-import { DOC_TYPES, DOC_PRESETS, BA_CHECK_PRESET } from "../utils/constants.js";
+import { DOC_TYPES, DOC_PRESETS, BA_CHECK_PRESET, sumDocTotal, fmtRp, docColumns, docPrefix, docUraianLabel, docItemsLabel } from "../utils/constants.js";
 import Modal from "../components/Modal.jsx";
 import DocPaper from "../components/DocPaper.jsx";
 import SignaturePad from "../components/SignaturePad.jsx";
@@ -28,7 +28,7 @@ export default function ProjectDocsView() {
       { name: "tanggal", label: "Tanggal", type: "date", val: today },
     ],
     onSubmit: (d) => {
-      const pre = d.jenis.includes("Berita") ? "BA" : d.jenis.includes("Pengiriman") ? "SJ" : "TT";
+      const pre = docPrefix(d.jenis);
       const isBA = d.jenis.includes("Berita");
       const id = "d" + Date.now();
       const nomor = docSeqNext(db, pre);
@@ -170,15 +170,20 @@ function DocEditor({ docId }) {
   const [items, setItems] = useState(original.items?.length ? original.items.map((i) => ({ ...i })) : [{}, {}, {}]);
   const [checklist, setChecklist] = useState(original.checklist?.length ? original.checklist.map((c) => ({ ...c })) : (isBA ? [{ done: false, item: "" }] : []));
 
-  const usePreset = () => {
-    if (isBA) setChecklist(BA_CHECK_PRESET.map((it) => ({ item: it, done: false })));
-    else setItems((DOC_PRESETS[original.jenis] || []).map((x) => ({ ...x })));
-    toast("Preset dimuat");
+  const presetItems = () => {
+    setItems((DOC_PRESETS[original.jenis] || []).map((x) => ({ ...x })));
+    toast("Preset baris dimuat");
   };
+  const presetCheck = () => {
+    setChecklist(BA_CHECK_PRESET.map((it) => ({ item: it, done: false })));
+    toast("Preset checklist dimuat");
+  };
+  const cols = docColumns(original.jenis);
   const save = () => {
     const patch = { kepada, nomor, tanggal, periode, uraian };
+    const keys = cols.map((c) => c.key);
+    patch.items = items.filter((it) => keys.some((k) => String(it[k] ?? "").trim() !== ""));
     if (isBA) patch.checklist = checklist.filter((c) => c.item);
-    else patch.items = items.filter((it) => it.nama);
     patchRow("documents", docId, patch);
     close();
     toast("Dokumen tersimpan rapi");
@@ -195,53 +200,53 @@ function DocEditor({ docId }) {
         <Lbl t="Tanggal"><input type="date" style={cellInput} value={tanggal} onChange={(e) => setTanggal(e.target.value)} /></Lbl>
         <Lbl t="Periode (opsional)"><input style={cellInput} value={periode} onChange={(e) => setPeriode(e.target.value)} /></Lbl>
       </div>
-      <Lbl t={isBA ? "Uraian Pekerjaan" : "Keterangan"}>
+      <Lbl t={docUraianLabel(original.jenis)}>
         <textarea style={{ ...cellInput, minHeight: 64 }} value={uraian} onChange={(e) => setUraian(e.target.value)} />
       </Lbl>
 
-      {!isBA && (
-        <>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "8px 0 4px" }}>
-            <label style={{ fontSize: 12, color: cs.muted }}>Daftar Barang — isi per kolom (rapi seperti Excel)</label>
-            <div style={S.row}>
-              <button style={S.btnSm("ghost")} onClick={usePreset}>📋 Preset</button>
-              <button style={S.btnSm()} onClick={() => setItems([...items, {}])}>+ Baris</button>
-            </div>
-          </div>
-          <table style={S.tableStyles.table}>
-            <thead><tr>
-              <th style={{ ...S.tableStyles.th, width: 26 }}>#</th>
-              <th style={S.tableStyles.th}>Nama Barang</th>
-              <th style={{ ...S.tableStyles.th, width: 64 }}>Qty</th>
-              <th style={{ ...S.tableStyles.th, width: 76 }}>Satuan</th>
-              <th style={S.tableStyles.th}>Keterangan</th>
-              <th style={{ ...S.tableStyles.th, width: 28 }}></th>
-            </tr></thead>
-            <tbody>
-              {items.map((r, i) => (
-                <tr key={i}>
-                  <td style={{ ...S.tableStyles.td, color: cs.muted, fontSize: 11, textAlign: "center" }}>{i + 1}</td>
-                  {["nama", "qty", "satuan", "ket"].map((k) => (
-                    <td key={k} style={{ ...S.tableStyles.td, padding: "3px 4px" }}>
-                      <input style={cellInput} value={r[k] ?? ""} onChange={(e) => setItems(items.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} />
-                    </td>
-                  ))}
-                  <td style={{ ...S.tableStyles.td, padding: "3px 4px" }}>
-                    <button style={S.btnSm("ghost")} onClick={() => setItems(items.filter((_, j) => j !== i))}>×</button>
-                  </td>
-                </tr>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "8px 0 4px" }}>
+        <label style={{ fontSize: 12, color: cs.muted }}>{docItemsLabel(original.jenis)}</label>
+        <div style={S.row}>
+          <button style={S.btnSm("ghost")} onClick={presetItems}>📋 Preset</button>
+          <button style={S.btnSm()} onClick={() => setItems([...items, {}])}>+ Baris</button>
+        </div>
+      </div>
+      <table style={S.tableStyles.table}>
+        <thead><tr>
+          <th style={{ ...S.tableStyles.th, width: 26 }}>No</th>
+          {cols.map((c) => <th key={c.key} style={S.tableStyles.th}>{c.label}</th>)}
+          <th style={{ ...S.tableStyles.th, width: 28 }}></th>
+        </tr></thead>
+        <tbody>
+          {items.map((r, i) => (
+            <tr key={i}>
+              <td style={{ ...S.tableStyles.td, color: cs.muted, fontSize: 11, textAlign: "center" }}>{i + 1}</td>
+              {cols.map((c) => (
+                <td key={c.key} style={{ ...S.tableStyles.td, padding: "3px 4px" }}>
+                  <input style={cellInput} value={r[c.key] ?? ""} onChange={(e) => setItems(items.map((x, j) => j === i ? { ...x, [c.key]: e.target.value } : x))} />
+                </td>
               ))}
-            </tbody>
-          </table>
-        </>
-      )}
+              <td style={{ ...S.tableStyles.td, padding: "3px 4px" }}>
+                <button style={S.btnSm("ghost")} onClick={() => setItems(items.filter((_, j) => j !== i))}>×</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        {cols.some((c) => c.sum) && sumDocTotal(items) > 0 && (
+          <tfoot><tr>
+            <td style={{ ...S.tableStyles.td }} colSpan={cols.length}><b style={{ float: "right", color: cs.text }}>Total</b></td>
+            <td style={{ ...S.tableStyles.td, fontWeight: 800, color: cs.text }}>{fmtRp(sumDocTotal(items))}</td>
+            <td style={S.tableStyles.td}></td>
+          </tr></tfoot>
+        )}
+      </table>
 
       {isBA && (
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "8px 0 4px" }}>
             <label style={{ fontSize: 12, color: cs.muted }}>Checklist Serah Terima</label>
             <div style={S.row}>
-              <button style={S.btnSm("ghost")} onClick={usePreset}>📋 Preset</button>
+              <button style={S.btnSm("ghost")} onClick={presetCheck}>📋 Preset</button>
               <button style={S.btnSm()} onClick={() => setChecklist([...checklist, { done: false, item: "" }])}>+ Poin</button>
             </div>
           </div>

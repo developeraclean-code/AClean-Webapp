@@ -2,6 +2,7 @@
 // TTD customer virtual (data URL PNG dari SignaturePad) di-embed via <Image>.
 import React from "react";
 import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
+import { sumDocTotal, fmtRp, docColumns, docUraianLabel, docSig } from "../utils/constants.js";
 
 const s = StyleSheet.create({
   page: { padding: 36, fontSize: 10, color: "#0f172a", fontFamily: "Helvetica" },
@@ -19,7 +20,7 @@ const s = StyleSheet.create({
   tr: { flexDirection: "row" },
   th: { backgroundColor: "#e2e8f0", padding: 5, fontSize: 9, fontWeight: 700, borderRightWidth: 1, borderRightColor: "#cbd5e1", borderBottomWidth: 1, borderBottomColor: "#cbd5e1" },
   td: { padding: 5, fontSize: 9, borderRightWidth: 1, borderRightColor: "#cbd5e1", borderBottomWidth: 1, borderBottomColor: "#cbd5e1" },
-  cNo: { width: "8%" }, cName: { width: "52%" }, cQty: { width: "18%" }, cKet: { width: "22%" },
+  cNo: { width: "8%", textAlign: "center" }, cName: { width: "50%" }, cQty: { width: "20%" }, cKet: { width: "22%", textAlign: "right" },
   ckRow: { flexDirection: "row", marginBottom: 2 },
   signWrap: { flexDirection: "row", justifyContent: "space-between", marginTop: 36 },
   signBox: { width: "45%", alignItems: "center" },
@@ -35,6 +36,9 @@ export default function ProjectDocPDF({ doc, project, appSettings = {}, logoUrl 
   const companyName = appSettings?.company_name || "AClean Service";
   const companyPhone = String(appSettings?.wa_number || appSettings?.company_phone || "6281289898937").replace(/[^\d]/g, "") || "6281289898937";
   const companyAddr = appSettings?.company_addr || appSettings?.company_address || "Alam Sutera, Tangerang Selatan";
+  const cols = docColumns(doc.jenis);
+  const sig = docSig(doc.jenis, companyName);
+  const sumCol = cols.find((c) => c.sum);
   return (
     <Document>
       <Page size="A4" style={s.page}>
@@ -59,25 +63,31 @@ export default function ProjectDocPDF({ doc, project, appSettings = {}, logoUrl 
         </View>
 
         {doc.uraian ? (
-          <Text style={s.para}><Text style={s.label}>{isBA ? "Uraian Pekerjaan: " : "Keterangan: "}</Text>{doc.uraian}</Text>
+          <Text style={s.para}><Text style={s.label}>{docUraianLabel(doc.jenis)}: </Text>{doc.uraian}</Text>
         ) : null}
 
         {items.length > 0 && (
           <View style={s.table}>
             <View style={s.tr}>
               <Text style={[s.th, s.cNo]}>No</Text>
-              <Text style={[s.th, s.cName]}>Nama Barang</Text>
-              <Text style={[s.th, s.cQty]}>Jumlah</Text>
-              <Text style={[s.th, s.cKet]}>Keterangan</Text>
+              {cols.map((c) => (
+                <Text key={c.key} style={[s.th, { width: `${c.w}%`, textAlign: c.align || "left" }]}>{c.label}</Text>
+              ))}
             </View>
             {items.map((it, i) => (
               <View style={s.tr} key={i}>
                 <Text style={[s.td, s.cNo]}>{i + 1}</Text>
-                <Text style={[s.td, s.cName]}>{it.nama}</Text>
-                <Text style={[s.td, s.cQty]}>{it.qty}{it.satuan ? " " + it.satuan : ""}</Text>
-                <Text style={[s.td, s.cKet]}>{it.ket || ""}</Text>
+                {cols.map((c) => (
+                  <Text key={c.key} style={[s.td, { width: `${c.w}%`, textAlign: c.align || "left" }]}>{it[c.key] || ""}</Text>
+                ))}
               </View>
             ))}
+            {sumCol && sumDocTotal(items) > 0 && (
+              <View style={s.tr}>
+                <Text style={[s.td, { width: `${100 - sumCol.w}%`, textAlign: "right", fontFamily: "Helvetica-Bold" }]}>Total</Text>
+                <Text style={[s.td, { width: `${sumCol.w}%`, textAlign: "right", fontFamily: "Helvetica-Bold" }]}>{fmtRp(sumDocTotal(items))}</Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -92,11 +102,11 @@ export default function ProjectDocPDF({ doc, project, appSettings = {}, logoUrl 
 
         <View style={s.signWrap}>
           <View style={s.signBox}>
-            <Text>Diserahkan oleh,{"\n"}Teknisi AClean</Text>
+            <Text>{sig.lRole}{"\n"}{sig.lName}</Text>
             <Text style={s.signLine}>{doc.ttdTeknisi || "( ........... )"}</Text>
           </View>
           <View style={s.signBox}>
-            <Text>Diterima oleh,{"\n"}{penerima}</Text>
+            <Text>{sig.rRole}{"\n"}{penerima}</Text>
             {doc.ttdCustomerImg ? <Image style={s.signImg} src={doc.ttdCustomerImg} /> : null}
             <Text style={s.signLine}>{doc.ttdCustomer && doc.ttdCustomer !== "(belum)" ? doc.ttdCustomer : "( ........... )"}</Text>
           </View>
