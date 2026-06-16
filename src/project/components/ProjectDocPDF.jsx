@@ -5,8 +5,9 @@ import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/render
 
 const s = StyleSheet.create({
   page: { padding: 36, fontSize: 10, color: "#0f172a", fontFamily: "Helvetica" },
-  headRow: { flexDirection: "row", justifyContent: "space-between", borderBottomWidth: 2, borderBottomColor: "#0f172a", paddingBottom: 8, marginBottom: 12 },
-  brand: { fontSize: 15, fontWeight: 700, color: "#0a3a52" },
+  headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", borderBottomWidth: 2, borderBottomColor: "#1E5BA8", paddingBottom: 8, marginBottom: 12 },
+  kopLeft: { flexDirection: "row", alignItems: "center", gap: 9 },
+  brand: { fontSize: 15, fontFamily: "Helvetica-Bold", color: "#1E5BA8" },
   brandSub: { fontSize: 8, color: "#475569", marginTop: 2 },
   metaR: { fontSize: 9, color: "#475569", textAlign: "right" },
   title: { textAlign: "center", fontSize: 13, marginTop: 4, marginBottom: 2, textTransform: "uppercase", letterSpacing: 1 },
@@ -26,18 +27,25 @@ const s = StyleSheet.create({
   signLine: { marginTop: 48, borderTopWidth: 1, borderTopColor: "#0f172a", paddingTop: 3, fontWeight: 700, width: "100%", textAlign: "center" },
 });
 
-export default function ProjectDocPDF({ doc, project }) {
+export default function ProjectDocPDF({ doc, project, appSettings = {}, logoUrl = null }) {
   const isBA = (doc.jenis || "").includes("Berita");
   const items = doc.items || [];
   const cl = doc.checklist || [];
   const penerima = (doc.kepada || "").split("—")[0] || "Penerima";
+  const companyName = appSettings?.company_name || "AClean Service";
+  const companyPhone = String(appSettings?.wa_number || appSettings?.company_phone || "6281289898937").replace(/[^\d]/g, "") || "6281289898937";
+  const companyAddr = appSettings?.company_addr || appSettings?.company_address || "Alam Sutera, Tangerang Selatan";
   return (
     <Document>
       <Page size="A4" style={s.page}>
         <View style={s.headRow}>
-          <View>
-            <Text style={s.brand}>AClean Service AC</Text>
-            <Text style={s.brandSub}>Jl. Contoh No.123, Bekasi · 0812-8989-8937</Text>
+          <View style={s.kopLeft}>
+            {logoUrl ? <Image src={logoUrl} style={{ width: 42, height: 42, objectFit: "contain" }} /> : null}
+            <View>
+              <Text style={s.brand}>{companyName}</Text>
+              <Text style={s.brandSub}>AC Installation & Service Professional</Text>
+              <Text style={s.brandSub}>{companyAddr} · {companyPhone}</Text>
+            </View>
           </View>
           <Text style={s.metaR}>Tanggal: {doc.tanggal || "-"}{"\n"}No: {doc.nomor || "-"}</Text>
         </View>

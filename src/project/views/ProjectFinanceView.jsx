@@ -6,10 +6,22 @@ import { useModal } from "../context/ModalContext.jsx";
 import { calc, budget } from "../utils/finance.js";
 import { fmtRp } from "../utils/constants.js";
 import { StatusPill, Tag, Bar } from "../components/Bits.jsx";
+import { pdf } from "@react-pdf/renderer";
+import ProjectPaperPDF, { loadLogo } from "../components/ProjectPaperPDF.jsx";
+import { supabase } from "../../supabaseClient.js";
 
 export default function ProjectFinanceView() {
-  const { db, can, activeProject, setActiveProject, addRows, deleteRow } = useProject();
+  const { db, can, activeProject, setActiveProject, addRows, deleteRow, appSettings } = useProject();
   const { openForm, toast } = useModal();
+
+  // Download helper: render PDF → unduh
+  const dl = async (node, filename) => {
+    const blob = await pdf(node).toBlob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename.replace(/[^a-zA-Z0-9._-]/g, "_"); a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  };
 
   if (!can.finance) {
     return (
@@ -37,12 +49,57 @@ export default function ProjectFinanceView() {
     },
   });
 
+  const customerName = p.pic || p.nama;
+
+  const cetakKwitansi = async (d, i) => {
+    toast("⏳ Menyiapkan kwitansi…");
+    const logoUrl = await loadLogo();
+    await dl(
+      <ProjectPaperPDF type="KWITANSI" project={p} appSettings={appSettings} logoUrl={logoUrl}
+        kwitansi={{ nomor: `KW-${String(i + 1).padStart(3, "0")}`, tanggal: d.tanggal, jumlah: d.jumlah, ket: d.ket || `Pembayaran project ${p.nama}`, customer: customerName }} />,
+      `Kwitansi_${p.nama}_${d.tanggal}.pdf`);
+    toast("✅ Kwitansi diunduh");
+  };
+
+  const cetakInvoice = async () => {
+    toast("⏳ Menyiapkan invoice…");
+    const logoUrl = await loadLogo();
+    await dl(
+      <ProjectPaperPDF type="INVOICE" project={p} appSettings={appSettings} logoUrl={logoUrl}
+        invoice={{ nomor: `INV-PRJ-${String(p.id).slice(-5)}`, tanggal: new Date().toISOString().slice(0, 10), customer: customerName, nilai: p.nilai, dpList: k.dpList, dpTotal: k.dpTotal, sisa: k.sisaTagihan }} />,
+      `Invoice_${p.nama}.pdf`);
+    toast("✅ Invoice diunduh");
+  };
+
+  const cetakRekap = async () => {
+    toast("⏳ Menyiapkan rekap…");
+    const logoUrl = await loadLogo();
+    const { data: ba } = await supabase.from("project_daily_reports")
+      .select("tanggal,teknisi_name,helper_names,pekerjaan,kendala")
+      .eq("project_id", p.id).eq("status", "VERIFIED").order("tanggal", { ascending: false }).limit(200);
+    const m = {};
+    db.usage.filter((u) => u.projectId === p.id).forEach((u) => {
+      const key = (u.material || "") + "|" + (u.satuan || "");
+      if (!m[key]) m[key] = { nama: u.material, satuan: u.satuan || "", qty: 0 };
+      m[key].qty += Number(u.qty) || 0;
+    });
+    await dl(
+      <ProjectPaperPDF type="REKAP" project={p} appSettings={appSettings} logoUrl={logoUrl}
+        rekap={{ beritaAcara: ba || [], usageSummary: Object.values(m) }} />,
+      `Rekap_${p.nama}.pdf`);
+    toast("✅ Rekap diunduh");
+  };
+
   return (
     <div style={{ padding: 22, maxWidth: 1200 }}>
-      <div style={{ ...S.row, marginBottom: 14 }}>
+      <div style={{ ...S.row, marginBottom: 14, justifyContent: "space-between" }}>
         <select style={S.select} value={activeProject} onChange={(e) => setActiveProject(e.target.value)}>
           {db.projects.map((x) => (<option key={x.id} value={x.id}>{x.nama}</option>))}
         </select>
+        <div style={S.row}>
+          <button style={S.btnSm("ghost")} onClick={cetakInvoice}>📄 Invoice</button>
+          <button style={S.btnSm("ghost")} onClick={cetakRekap}>📊 Rekap PDF</button>
+        </div>
       </div>
       {(b.warn || b.crit) && (
         <div style={S.alert(!b.crit)}>⚠️ <b>{b.crit ? "OVER BUDGET" : "Mendekati RAB (≥85%)"}</b> — biaya {fmtRp(k.aktualBiaya)} dari RAB {fmtRp(p.rab)} ({Math.round(b.ratio * 100)}%). Alert WA ke Owner.</div>
@@ -76,15 +133,18 @@ export default function ProjectFinanceView() {
           <table style={{ ...S.tableStyles.table, marginTop: 8 }}>
             <thead><tr>
               <th style={S.tableStyles.th}>Tgl</th><th style={S.tableStyles.th}>Keterangan</th><th style={S.tableStyles.th}>Jumlah</th>
-              {can.delete && <th style={S.tableStyles.th}></th>}
+              <th style={S.tableStyles.th}></th>
             </tr></thead>
             <tbody>
               {k.dpList.map((d, i) => (
                 <tr key={i}><td style={S.tableStyles.td}>{d.tanggal}</td><td style={S.tableStyles.td}>{d.ket}</td><td style={S.tableStyles.td}>{fmtRp(d.jumlah)}</td>
-                {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus DP/termin ini?")) deleteRow("dp", d.id); }}>🗑</button></td>}
+                <td style={S.tableStyles.td}><div style={S.row}>
+                  <button style={S.btnSm("ghost")} title="Cetak kwitansi" onClick={() => cetakKwitansi(d, i)}>🧾</button>
+                  {can.delete && <button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus DP/termin ini?")) deleteRow("dp", d.id); }}>🗑</button>}
+                </div></td>
                 </tr>
               ))}
-              <tr><td style={S.tableStyles.td}></td><td style={S.tableStyles.td}><b>Total diterima</b></td><td style={S.tableStyles.td}><b style={{ color: cs.green }}>{fmtRp(k.dpTotal)}</b></td>{can.delete && <td style={S.tableStyles.td}></td>}</tr>
+              <tr><td style={S.tableStyles.td}></td><td style={S.tableStyles.td}><b>Total diterima</b></td><td style={S.tableStyles.td}><b style={{ color: cs.green }}>{fmtRp(k.dpTotal)}</b></td><td style={S.tableStyles.td}></td></tr>
             </tbody>
           </table>
         </div>

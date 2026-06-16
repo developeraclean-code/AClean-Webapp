@@ -7074,7 +7074,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       );
       case "project": return (
         <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
-          <ProjectApp currentUser={currentUser} apiFetch={_apiFetch} onBack={() => setActiveMenu("dashboard")} />
+          <ProjectApp currentUser={currentUser} apiFetch={_apiFetch} appSettings={appSettings} onBack={() => setActiveMenu("dashboard")} />
         </Suspense>
       );
       case "myreport": return renderMyReport();

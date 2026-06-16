@@ -52,7 +52,7 @@ export default function ProjectPortalView({ token }) {
   if (state.error === "NOT_FOUND") return <Screen icon="⚠️" title="Tidak Ditemukan" sub="Link portal tidak valid." />;
   if (state.error) return <Screen icon="⚠️" title="Terjadi Kesalahan" sub={state.msg || "Coba muat ulang halaman."} />;
 
-  const { project = {}, usage = [], beritaAcara = [] } = state;
+  const { project = {}, usage = [], beritaAcara = [], documents = [] } = state;
   const [stColor, stLabel] = PSTATUS[project.status] || ["#64748b", project.status || "—"];
 
   // Ringkasan total pemakaian material (jumlahkan qty per nama+satuan)
@@ -123,7 +123,28 @@ export default function ProjectPortalView({ token }) {
           </div>
         )}
 
-        {beritaAcara.length === 0 && (
+        {/* Dokumen Serah Terima / BAST */}
+        {documents.length > 0 && (
+          <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 4px 16px rgba(0,0,0,.06)", padding: 18, marginBottom: 16 }}>
+            <h2 style={{ fontSize: 15, fontWeight: 800, margin: "0 0 12px" }}>📑 Dokumen Serah Terima</h2>
+            <div style={{ display: "grid", gap: 10 }}>
+              {documents.map((d) => (
+                <div key={d.id} style={{ padding: "10px 14px", background: "#f8fafc", borderRadius: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 700, fontSize: 13.5 }}>{d.jenis}</span>
+                    <span style={{ fontSize: 12, color: "#64748b" }}>{fmtDateShort(d.tanggal)}{d.nomor ? ` · ${d.nomor}` : ""}</span>
+                  </div>
+                  {d.uraian ? <div style={{ fontSize: 12.5, color: "#475569", marginTop: 4 }}>{d.uraian}</div> : null}
+                  <div style={{ fontSize: 11.5, marginTop: 6, color: d.ttd_customer ? "#16a34a" : "#b45309" }}>
+                    {d.ttd_customer ? `✅ Ditandatangani: ${d.ttd_customer}` : "⏳ Menunggu tanda tangan"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {beritaAcara.length === 0 && documents.length === 0 && (
           <div style={{ background: "#fff", borderRadius: 16, padding: 28, textAlign: "center", color: "#64748b", fontSize: 14 }}>
             Belum ada laporan harian yang dipublikasikan.
           </div>

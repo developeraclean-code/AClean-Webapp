@@ -5,7 +5,7 @@ import { loadAll, api, genId, ASC } from "../data/projectApi.js";
 const Ctx = createContext(null);
 export const useProject = () => useContext(Ctx);
 
-export function ProjectProvider({ currentUser, apiFetch, children }) {
+export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, children }) {
   const [db, setDb] = useState(() => initialData());
   const [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState(null);
@@ -154,7 +154,7 @@ export function ProjectProvider({ currentUser, apiFetch, children }) {
     role, can, today,
     activeView, setActiveView,
     activeProject, setActiveProject,
-    currentUser,
+    currentUser, appSettings,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

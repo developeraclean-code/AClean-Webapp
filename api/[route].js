@@ -3962,6 +3962,14 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
       const beritaAcara = baRes.ok ? await baRes.json() : [];
       const verifiedDates = new Set(beritaAcara.map(b => b.tanggal));
 
+      // 2b) Dokumen Serah Terima / BAST (transparansi — info & status TTD, tanpa data finansial)
+      const dRes = await fetch(`${SU}/rest/v1/project_documents?project_id=eq.${encodeURIComponent(proj.id)}&select=id,jenis,nomor,tanggal,kepada,uraian,ttd_customer,ttd_teknisi&order=tanggal.desc&limit=50`, { headers });
+      const docsRaw = dRes.ok ? await dRes.json() : [];
+      const documents = docsRaw
+        .filter(d => /berita|bast|serah|terima/i.test(d.jenis || ""))
+        .map(d => ({ id: d.id, jenis: d.jenis, nomor: d.nomor, tanggal: d.tanggal, uraian: d.uraian || "",
+          ttd_teknisi: d.ttd_teknisi || "", ttd_customer: (d.ttd_customer && d.ttd_customer !== "(belum)") ? d.ttd_customer : "" }));
+
       // 3) Pemakaian material — HANYA untuk tanggal yang Berita Acara-nya VERIFIED (ikut gate approval)
       let usage = [];
       if (verifiedDates.size > 0) {
@@ -3974,6 +3982,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
         project: { nama: proj.nama, lokasi: proj.lokasi, kategori: proj.kategori, status: proj.status, progress: proj.progress, mulai: proj.mulai, target: proj.target },
         usage,
         beritaAcara,
+        documents,
       });
     }
 

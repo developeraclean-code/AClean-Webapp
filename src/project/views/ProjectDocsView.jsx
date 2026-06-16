@@ -9,10 +9,11 @@ import Modal from "../components/Modal.jsx";
 import DocPaper from "../components/DocPaper.jsx";
 import SignaturePad from "../components/SignaturePad.jsx";
 import ProjectDocPDF from "../components/ProjectDocPDF.jsx";
+import { loadLogo } from "../components/ProjectPaperPDF.jsx";
 import { pdf } from "@react-pdf/renderer";
 
 export default function ProjectDocsView() {
-  const { db, can, today, addRows, patchRow, deleteRow } = useProject();
+  const { db, can, today, addRows, patchRow, deleteRow, appSettings } = useProject();
   const { openForm, openContent, close, toast } = useModal();
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
 
@@ -123,14 +124,15 @@ export default function ProjectDocsView() {
 
 // ============ DocViewer ============
 function DocViewer({ docId }) {
-  const { db } = useProject();
+  const { db, appSettings } = useProject();
   const { close, toast } = useModal();
   const d = db.documents.find((x) => x.id === docId);
   const p = db.projects.find((x) => x.id === d.projectId);
   const cetak = async () => {
     try {
       toast("⏳ Membuat PDF…");
-      const blob = await pdf(<ProjectDocPDF doc={d} project={p} />).toBlob();
+      const logoUrl = await loadLogo();
+      const blob = await pdf(<ProjectDocPDF doc={d} project={p} appSettings={appSettings} logoUrl={logoUrl} />).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = `${(d.nomor || "dokumen").replace(/[^a-zA-Z0-9._-]/g, "_")}.pdf`;
