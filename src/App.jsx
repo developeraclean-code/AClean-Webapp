@@ -8040,7 +8040,31 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       // Cek invoice grup langsung ke DB (race-safe) → MERGE / CREATE / CREATE_SEPARATE.
       let didMergeMultiDay = false;
       let multiDayAnchorJobId = null;
-      if (laporanModal.is_multi_day === true) {
+      // ── Anti-duplikat invoice (defense-in-depth) ──
+      // (a) order SUDAH tertaut invoice aktif (gabungan manual job_id=null / edit ulang), atau
+      // (b) order hari ke-2+ (day_number>1) yang TIDAK ter-flag is_multi_day (data cacat) →
+      // JANGAN buat invoice baru; cukup tautkan + COMPLETED. (Multi-hari ter-flag benar lanjut
+      // ke resolver di bawah.) Laporan tetap tersimpan — hanya pembuatan invoice yang di-skip.
+      {
+        const _ordDup = ordersData.find(o => o.id === laporanModal.id);
+        const _linkedDup = _ordDup?.invoice_id
+          ? invoicesData.find(i => i.id === _ordDup.invoice_id && String(i.status || "").toUpperCase() !== "CANCELLED")
+          : null;
+        const _orphanMD = laporanModal.is_multi_day !== true && _ordDup?.is_multi_day !== true
+          && Number(laporanModal.day_number || _ordDup?.day_number) > 1;
+        if (laporanModal.service !== "Survey" && (_linkedDup || _orphanMD)) {
+          const _tgt = _linkedDup?.id || _ordDup?.invoice_id || null;
+          setOrdersData(prev => prev.map(o => o.id === laporanModal.id ? { ...o, status: "COMPLETED", ...(_tgt ? { invoice_id: _tgt } : {}) } : o));
+          try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName(), _tgt ? { invoice_id: _tgt } : {}); } catch (_) { }
+          addAgentLog("INVOICE_DUP_GUARD",
+            `Laporan ${laporanModal.id} (hari ke-${laporanModal.day_number || "?"}) — ${_linkedDup ? "tertaut invoice " + _linkedDup.id : "day_number>1 tanpa flag multi-hari"}, TIDAK buat invoice baru`, "INFO");
+          showNotif(_linkedDup
+            ? `ℹ️ Laporan masuk & ditautkan ke invoice ${_linkedDup.id}. Tidak ada invoice baru — edit invoice induk bila perlu.`
+            : `ℹ️ Laporan hari ke-${laporanModal.day_number || "?"} masuk. Tidak buat invoice baru (multi-hari) — tautkan/edit invoice induk manual.`);
+          didMergeMultiDay = true;
+        }
+      }
+      if (!didMergeMultiDay && laporanModal.is_multi_day === true) {
         const projectKey = multiDayProjectKey(laporanModal);
         const { data: grpRows, error: grpErr } = await supabase
           .from("invoices")

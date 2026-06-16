@@ -401,6 +401,32 @@ const verifyLaporan = async (r) => {
     })();
   }
 
+  // ── Anti-duplikat invoice (defense-in-depth) ──
+  // Cegah laporan melahirkan invoice ke-2 saat: (a) order SUDAH tertaut invoice aktif
+  // (invoice gabungan manual job_id=null, atau edit ulang laporan ber-invoice), atau
+  // (b) order hari ke-2+ (day_number>1) yang TIDAK ter-flag is_multi_day (data cacat →
+  // guard multi-hari di bawah tak jalan). Order multi-hari yang ter-flag benar dibiarkan
+  // ke resolver multi-hari di bawah (yang handle SKIP/CREATE/CREATE_SEPARATE).
+  {
+    const _ordDup = ordersData.find(o => o.id === r.job_id);
+    const _linkedDup = _ordDup?.invoice_id
+      ? invoicesData.find(i => i.id === _ordDup.invoice_id && String(i.status || "").toUpperCase() !== "CANCELLED")
+      : null;
+    const _orphanMD = _ordDup?.is_multi_day !== true && Number(_ordDup?.day_number) > 1;
+    if (r.service !== "Survey" && (_linkedDup || _orphanMD)) {
+      const _tgt = _linkedDup?.id || _ordDup?.invoice_id || null;
+      await updateOrder(supabase, r.job_id, { status: "COMPLETED", ...(_tgt ? { invoice_id: _tgt } : {}) }, auditUserName());
+      setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED", ...(_tgt ? { invoice_id: _tgt } : {}) } : o));
+      if (updateCustomerTierAfterOrder && _ordDup) updateCustomerTierAfterOrder(_ordDup).catch(() => {});
+      addAgentLog("INVOICE_DUP_GUARD",
+        `Verify laporan ${r.job_id} (hari ke-${_ordDup?.day_number || "?"}) — ${_linkedDup ? "sudah tertaut invoice " + _linkedDup.id : "day_number>1 tanpa flag multi-hari"}, TIDAK buat invoice baru`, "INFO");
+      showNotif(_linkedDup
+        ? `ℹ️ Laporan verified & ditautkan ke invoice ${_linkedDup.id}. Tidak ada invoice baru — edit invoice induk bila ada tambahan.`
+        : `ℹ️ Laporan hari ke-${_ordDup?.day_number || "?"} verified. Tidak buat invoice baru (multi-hari) — tautkan/edit invoice induk manual.`);
+      return;
+    }
+  }
+
   // ── Multi-hari: invoice di-anchor ke order INDUK (parent_job_id), bukan ke job hari ini.
   // Kalau invoice induk aktif sudah ada → JANGAN buat invoice ke-2 & JANGAN tambah otomatis
   // (SOP: laporan harian tumpang-tindih → cegah dobel-hitung). Tautkan saja; Owner edit manual.
