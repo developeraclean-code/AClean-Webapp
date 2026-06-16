@@ -76,7 +76,19 @@ function KasbonRequestModal({ currentUser, kasbonRequests, setKasbonRequests, in
 export default function KasbonWidget({ currentUser, kasbonRequests, setKasbonRequests, insertKasbonRequest, sendWA, appSettings, userAccounts, supabase, showNotif }) {
   const [showModal, setShowModal] = useState(false);
   const myName = currentUser?.name || "";
-  const myKasbon = (kasbonRequests || []).filter(r => r.teknisi_name === myName).slice(0, 10);
+  // Hanya tampilkan kasbon ≤7 hari terakhir agar UI teknisi/helper rapi (tidak menumpuk).
+  // PENDING selalu ditampilkan walau >7 hari supaya request yang masih nunggu approval tak hilang.
+  // Ini HANYA filter tampilan — data tidak dihapus & tetap lengkap di panel Owner.
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const within7d = (r) => {
+    const t = new Date(r.requested_at || r.created_at).getTime();
+    return isNaN(t) || (Date.now() - t) <= SEVEN_DAYS_MS;
+  };
+  const myKasbon = (kasbonRequests || [])
+    .filter(r => r.teknisi_name === myName)
+    .filter(r => r.status === "PENDING" || within7d(r))
+    .sort((a, b) => new Date(b.requested_at || b.created_at) - new Date(a.requested_at || a.created_at))
+    .slice(0, 10);
   const pendingCount = myKasbon.filter(r => r.status === "PENDING").length;
   const fmtRp = (n) => "Rp " + Number(n || 0).toLocaleString("id-ID");
   const fmtTgl = (d) => { try { return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }); } catch { return d || "—"; } };
