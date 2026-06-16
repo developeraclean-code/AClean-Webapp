@@ -193,7 +193,7 @@ export default function MaintenanceView({
   return (
     <div style={{ padding: 18 }}>
       <button onClick={() => { setSel(null); loadClients(); }} style={{ ...btnGhost, marginBottom: 12 }}>← Semua Perusahaan</button>
-      <ClientHeader sel={sel} units={units} isOwner={isOwner}
+      <ClientHeader sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} isOwner={isOwner}
         onEdit={() => setClientModal(sel)}
         onDelete={() => deleteClient(sel).then(() => setSel(null)).catch(() => {})} />
       {clientModal !== null && (
@@ -245,11 +245,94 @@ export default function MaintenanceView({
 }
 
 // ─────────── CLIENT HEADER ───────────
-function ClientHeader({ sel, units, isOwner, onEdit, onDelete }) {
+function ClientHeader({ sel, units, logs, call, showNotif, isOwner, onEdit, onDelete }) {
   const active = units.filter(u => u.status === "active").length;
   const rusak = units.filter(u => u.status === "rusak").length;
   const contractDays = daysUntil(sel.contract_end_date);
   const contractWarn = contractDays !== null && contractDays <= 30;
+  const [exporting, setExporting] = useState(false);
+
+  const exportExcel = async () => {
+    setExporting(true);
+    try {
+      if (!window.XLSX) {
+        await new Promise((res, rej) => {
+          const s = document.createElement("script");
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+          s.onload = res; s.onerror = rej;
+          document.head.appendChild(s);
+        });
+      }
+      const XLSX = window.XLSX;
+      let invoices = [];
+      try { const j = await call("list-invoices", { client_id: sel.id }); invoices = j.invoices || []; }
+      catch { /* tetap lanjut export tanpa sheet invoice penuh */ }
+
+      const unitRows = units.map((u, i) => ({
+        "No": i + 1, "Kode Unit": u.unit_code || "-", "Lokasi": u.location || "-",
+        "Brand": u.brand || "-", "Tipe AC": u.ac_type || "-", "Kapasitas (PK)": u.capacity_pk || "-",
+        "Refrigerant": u.refrigerant || "-", "Status": u.status || "-",
+        "Tahun Instalasi": u.year_installed || "-", "No Seri": u.serial_no || "-",
+        "Interval Servis (bulan)": u.service_interval_months || "-",
+        "Servis Terakhir": fmtDate(u.last_service_date), "Servis Berikutnya": fmtDate(u.next_service_date),
+        "Catatan": u.notes || "-",
+      }));
+
+      const unitById = Object.fromEntries(units.map(u => [u.id, u]));
+      const logRows = [...logs]
+        .sort((a, b) => (b.service_date || "").localeCompare(a.service_date || ""))
+        .map((l, i) => {
+          const u = unitById[l.unit_id];
+          return {
+            "No": i + 1, "Kode Unit": u?.unit_code || "-", "Lokasi": u?.location || "-",
+            "Tanggal Servis": fmtDate(l.service_date), "Jenis Servis": l.service_type || "-",
+            "Teknisi": l.technician || "-", "Biaya (Rp)": l.cost || 0,
+            "Invoiced": l.invoiced ? "Ya" : "Belum", "Order/Job ID": l.order_id || "-",
+            "Deskripsi": l.description || "-",
+          };
+        });
+
+      const invoiceRows = invoices.map((iv, i) => ({
+        "No": i + 1, "ID Invoice": iv.id || "-", "Tanggal": fmtDate(iv.created_at),
+        "Layanan": iv.service || "-", "Job ID": iv.job_id || "-",
+        "Unit": Array.isArray(iv.units) ? iv.units.length : (iv.units || 0),
+        "Total (Rp)": iv.total || 0, "Status": iv.status || "-",
+      }));
+
+      const recapRows = units.map((u, i) => {
+        const ul = logs.filter(l => l.unit_id === u.id);
+        const lastLog = ul.slice().sort((a, b) => (b.service_date || "").localeCompare(a.service_date || ""))[0];
+        return {
+          "No": i + 1, "Kode Unit": u.unit_code || "-", "Lokasi": u.location || "-",
+          "Status Unit": u.status || "-", "Jumlah Log": ul.length,
+          "Servis Terakhir (Log)": lastLog ? fmtDate(lastLog.service_date) : "-",
+          "Total Biaya Log (Rp)": ul.reduce((s, l) => s + (Number(l.cost) || 0), 0),
+          "Log Belum Invoiced": ul.filter(l => !l.invoiced).length,
+        };
+      });
+
+      const wb = XLSX.utils.book_new();
+      const ws1 = XLSX.utils.json_to_sheet(unitRows);
+      ws1["!cols"] = [{ wch: 4 }, { wch: 12 }, { wch: 22 }, { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 11 }, { wch: 9 }, { wch: 13 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 26 }];
+      const ws2 = XLSX.utils.json_to_sheet(logRows);
+      ws2["!cols"] = [{ wch: 4 }, { wch: 12 }, { wch: 22 }, { wch: 13 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 9 }, { wch: 16 }, { wch: 34 }];
+      const ws3 = XLSX.utils.json_to_sheet(invoiceRows);
+      ws3["!cols"] = [{ wch: 4 }, { wch: 22 }, { wch: 13 }, { wch: 30 }, { wch: 16 }, { wch: 6 }, { wch: 14 }, { wch: 16 }];
+      const ws4 = XLSX.utils.json_to_sheet(recapRows);
+      ws4["!cols"] = [{ wch: 4 }, { wch: 12 }, { wch: 22 }, { wch: 11 }, { wch: 10 }, { wch: 18 }, { wch: 16 }, { wch: 14 }];
+
+      XLSX.utils.book_append_sheet(wb, ws1, "Unit");
+      XLSX.utils.book_append_sheet(wb, ws2, "Log Servis");
+      XLSX.utils.book_append_sheet(wb, ws3, "Invoice");
+      XLSX.utils.book_append_sheet(wb, ws4, "Rekap per Unit");
+
+      const fname = `Maintenance_${sel.name.replace(/[^a-z0-9]+/gi, "_")}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      XLSX.writeFile(wb, fname);
+      showNotif("✅ Export Excel berhasil!");
+    } catch (err) { showNotif("❌ Export gagal: " + err.message); }
+    finally { setExporting(false); }
+  };
+
   return (
     <div style={{ ...card, marginBottom: 0 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
@@ -282,6 +365,9 @@ function ClientHeader({ sel, units, isOwner, onEdit, onDelete }) {
           <Kpi n={active} l="Aktif" c={cs.green} />
           <Kpi n={rusak} l="Rusak" c={cs.red} />
           <div style={{ borderLeft: "1px solid " + cs.border, paddingLeft: 10, display: "flex", gap: 6 }}>
+            <button onClick={exportExcel} disabled={exporting} style={{ ...btnGhost, padding: "6px 12px", fontSize: 12, color: cs.green, borderColor: cs.green + "55", opacity: exporting ? 0.6 : 1 }} title="Export Unit, Log Servis, Invoice & Rekap ke Excel">
+              {exporting ? "⏳ Export…" : "📊 Export Excel"}
+            </button>
             <button onClick={onEdit} style={{ ...btnGhost, padding: "6px 12px", fontSize: 12 }}>✏️ Edit</button>
             {isOwner && <button onClick={onDelete} style={{ ...btnGhost, padding: "6px 12px", fontSize: 12, color: cs.red, borderColor: cs.red + "55" }}>🗑 Hapus</button>}
           </div>
@@ -1191,40 +1277,196 @@ function KpiCard({ label, value, sub, color }) {
 }
 
 // ─────────── INVOICE B2B TAB ───────────
+// Harga fallback per PK (sinkron dengan price_list DB)
+const MAINT_PRICE = { p1: 95000, p2: 100000, p3: 300000, p4: 400000 };
+function maintPrice(pk) {
+  const n = parseFloat(pk) || 1;
+  if (n <= 1) return MAINT_PRICE.p1;
+  if (n <= 2.5) return MAINT_PRICE.p2;
+  if (n <= 3.5) return MAINT_PRICE.p3;
+  return MAINT_PRICE.p4;
+}
+
 function InvoiceTab({ sel, units, logs, call, showNotif }) {
   const [picked, setPicked] = useState({});
-  const uncosted = logs.filter(l => !l.invoiced);
-  const unitName = (uid) => units.find(u => u.id === uid)?.unit_code || "?";
-  const total = uncosted.filter(l => picked[l.id]).reduce((s, l) => s + (Number(l.cost) || 0), 0);
-  const count = Object.values(picked).filter(Boolean).length;
+  const [filterDate, setFilterDate] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [discount, setDiscount] = useState(0);
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const create = async () => {
-    const ids = Object.keys(picked).filter(k => picked[k]);
-    if (!ids.length) { showNotif("❌ Pilih minimal 1 servis"); return; }
-    try {
-      const j = await call("create-invoice", { client_id: sel.id, log_ids: ids });
-      showNotif(`✅ Invoice ${j.invoice.id} dibuat (PENDING_APPROVAL) — cek menu Invoice`);
+  const unitById = Object.fromEntries(units.map(u => [u.id, u]));
+  const calcPrice = (l) => Number(l.cost) > 0 ? Number(l.cost) : maintPrice(unitById[l.unit_id]?.capacity_pk);
+
+  // Semua log belum di-invoice; showAll juga tampilkan yang sudah di-invoice (untuk re-group)
+  const eligible = logs.filter(l => showAll ? true : !l.invoiced);
+  const filtered = filterDate ? eligible.filter(l => l.service_date?.startsWith(filterDate)) : eligible;
+
+  const pickedIds = Object.keys(picked).filter(k => picked[k]);
+  const pickedLogs = filtered.filter(l => picked[l.id]);
+  const subtotal = pickedLogs.reduce((s, l) => s + calcPrice(l), 0);
+  const totalAfterDisc = Math.max(0, subtotal - Number(discount));
+
+  // Group picked logs by service_date untuk preview
+  const byDate = {};
+  for (const l of pickedLogs) {
+    const d = l.service_date || "-";
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(l);
+  }
+
+  const toggleAll = () => {
+    if (pickedIds.length === filtered.length) {
       setPicked({});
+    } else {
+      const all = {};
+      filtered.forEach(l => { all[l.id] = true; });
+      setPicked(all);
+    }
+  };
+
+  const doPreview = async () => {
+    if (!pickedIds.length) { showNotif("❌ Pilih minimal 1 servis"); return; }
+    try {
+      const j = await call("preview-invoice", { client_id: sel.id, log_ids: pickedIds, discount: Number(discount) });
+      setPreview(j);
     } catch (e) { showNotif("❌ " + e.message); }
   };
 
+  const create = async () => {
+    if (!pickedIds.length) { showNotif("❌ Pilih minimal 1 servis"); return; }
+    setBusy(true);
+    try {
+      const j = await call("create-invoice", { client_id: sel.id, log_ids: pickedIds, discount: Number(discount), notes: notes || null });
+      showNotif(`✅ Invoice ${j.invoice.id} dibuat (Rp ${j.total.toLocaleString("id")}) — cek menu Invoice`);
+      setPicked({}); setPreview(null); setDiscount(0); setNotes("");
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setBusy(false); }
+  };
+
+  // Tanggal-tanggal unik untuk quick filter
+  const availDates = [...new Set(eligible.map(l => l.service_date?.slice(0, 7)).filter(Boolean))].sort().reverse();
+
   return (
-    <div>
-      <div style={{ color: cs.muted, fontSize: 12, marginBottom: 12 }}>Pilih servis yang belum di-invoice untuk dijadikan 1 invoice B2B.</div>
-      {uncosted.length === 0 ? <div style={{ color: cs.muted }}>Tidak ada servis yang belum di-invoice.</div> :
-        <div style={{ ...card, padding: 0, overflow: "hidden" }}>
-          {uncosted.map(l => (
-            <label key={l.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px 14px", borderBottom: "1px solid " + cs.border, cursor: "pointer" }}>
-              <input type="checkbox" checked={!!picked[l.id]} onChange={e => setPicked(p => ({ ...p, [l.id]: e.target.checked }))} />
-              <b style={{ color: cs.text }}>{unitName(l.unit_id)}</b>
-              <span style={{ color: cs.muted, fontSize: 12 }}>{l.service_type} · {l.service_date}</span>
-              <span style={{ marginLeft: "auto", color: cs.text }}>{fmtRp(l.cost)}</span>
-            </label>
-          ))}
-        </div>}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 14 }}>
-        <div style={{ color: cs.text }}>Dipilih: <b>{count}</b> servis · Total <b style={{ color: cs.green }}>{fmtRp(total)}</b></div>
-        <button onClick={create} disabled={!count} style={{ ...btn, marginLeft: "auto", opacity: count ? 1 : .5 }}>🧾 Buat Invoice B2B</button>
+    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
+      {/* Kiri: daftar log */}
+      <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+        {/* Filter bar */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+          <span style={{ color: cs.muted, fontSize: 12 }}>Filter bulan:</span>
+          <select value={filterDate} onChange={e => setFilterDate(e.target.value)}
+            style={{ ...inp, width: "auto", fontSize: 12, padding: "4px 8px" }}>
+            <option value="">Semua</option>
+            {availDates.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: cs.muted, cursor: "pointer" }}>
+            <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />
+            Tampilkan yg sudah di-invoice
+          </label>
+          <button onClick={toggleAll} style={{ ...btnGhost, fontSize: 12, padding: "4px 10px", marginLeft: "auto" }}>
+            {pickedIds.length === filtered.length && filtered.length > 0 ? "Batal semua" : `Pilih semua (${filtered.length})`}
+          </button>
+        </div>
+
+        {filtered.length === 0
+          ? <div style={{ color: cs.muted, padding: 16 }}>Tidak ada servis yang memenuhi filter.</div>
+          : <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+            {filtered.map(l => {
+              const u = unitById[l.unit_id] || {};
+              const price = calcPrice(l);
+              return (
+                <label key={l.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 14px", borderBottom: "1px solid " + cs.border, cursor: "pointer", opacity: l.invoiced ? 0.6 : 1 }}>
+                  <input type="checkbox" checked={!!picked[l.id]} onChange={e => setPicked(p => ({ ...p, [l.id]: e.target.checked }))} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: cs.text, fontWeight: 600, fontSize: 13 }}>{u.unit_code || "?"}</div>
+                    <div style={{ color: cs.muted, fontSize: 11 }}>{u.location} · {u.brand} {u.capacity_pk}PK · {l.service_type} · {l.service_date}</div>
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ color: cs.green, fontWeight: 600, fontSize: 13 }}>{fmtRp(price)}</div>
+                    {l.invoiced && <div style={{ color: cs.muted, fontSize: 10 }}>✓ invoiced</div>}
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        }
+      </div>
+
+      {/* Kanan: ringkasan & aksi */}
+      <div style={{ width: 260, flexShrink: 0 }}>
+        <div style={{ ...card }}>
+          <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12 }}>🧾 Ringkasan Invoice</div>
+
+          {pickedIds.length === 0
+            ? <div style={{ color: cs.muted, fontSize: 13 }}>Belum ada unit dipilih</div>
+            : <>
+              {Object.entries(byDate).map(([d, items]) => (
+                <div key={d} style={{ marginBottom: 8 }}>
+                  <div style={{ color: cs.muted, fontSize: 11, marginBottom: 3 }}>{d}</div>
+                  {items.map(l => {
+                    const u = unitById[l.unit_id] || {};
+                    return (
+                      <div key={l.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: cs.text, padding: "2px 0" }}>
+                        <span>{u.unit_code} {u.brand} {u.capacity_pk}PK</span>
+                        <span>{fmtRp(calcPrice(l))}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+              <div style={{ borderTop: "1px solid " + cs.border, paddingTop: 8, marginTop: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: cs.text }}>
+                  <span>Subtotal ({pickedIds.length} unit)</span>
+                  <span style={{ fontWeight: 600 }}>{fmtRp(subtotal)}</span>
+                </div>
+              </div>
+            </>
+          }
+
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Diskon (Rp)</div>
+            <input type="number" min="0" value={discount} onChange={e => setDiscount(e.target.value)}
+              style={{ ...inp, fontSize: 13 }} placeholder="0" />
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Catatan invoice</div>
+            <input type="text" value={notes} onChange={e => setNotes(e.target.value)}
+              style={{ ...inp, fontSize: 13 }} placeholder="Opsional" />
+          </div>
+
+          {pickedIds.length > 0 && (
+            <div style={{ marginTop: 10, padding: "8px 0", borderTop: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+              <b style={{ color: cs.text }}>Total</b>
+              <b style={{ color: cs.green }}>{fmtRp(totalAfterDisc)}</b>
+            </div>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+            <button onClick={doPreview} disabled={!pickedIds.length} style={{ ...btnGhost, opacity: pickedIds.length ? 1 : .4, fontSize: 13 }}>
+              👁 Preview (dari server)
+            </button>
+            <button onClick={create} disabled={!pickedIds.length || busy} style={{ ...btn, opacity: (pickedIds.length && !busy) ? 1 : .4, fontSize: 13 }}>
+              {busy ? "Membuat..." : "🧾 Buat Invoice Grup"}
+            </button>
+          </div>
+
+          {preview && (
+            <div style={{ marginTop: 14, fontSize: 12, color: cs.muted }}>
+              <div style={{ fontWeight: 600, color: cs.text, marginBottom: 6 }}>Preview server:</div>
+              {preview.line_items?.map((i, idx) => (
+                <div key={idx} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
+                  <span>{i.unit_code} {i.brand} {i.pk}PK</span>
+                  <span style={{ color: cs.green }}>{fmtRp(i.price)}</span>
+                </div>
+              ))}
+              <div style={{ borderTop: "1px solid " + cs.border, marginTop: 6, paddingTop: 6, display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
+                <span style={{ color: cs.text }}>Total</span>
+                <span style={{ color: cs.green }}>{fmtRp(preview.total)}</span>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
