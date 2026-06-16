@@ -3440,6 +3440,50 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           return res.status(200).json({ ok: true });
         }
 
+        // ---- DOCUMENTS (BA / Commissioning / Garansi / Surat Barang) ----
+        if (action === "list-documents") {
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          const r = await fetch(REST("maintenance_documents?maintenance_client_id=eq." + encodeURIComponent(body.client_id) + "&select=*&order=created_at.desc"), { headers });
+          if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
+          return res.status(200).json({ documents: await r.json() });
+        }
+        if (action === "create-document") {
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          if (!body.jenis) return res.status(400).json({ error: "jenis wajib" });
+          const payload = {
+            maintenance_client_id: body.client_id,
+            jenis: body.jenis,
+            nomor: body.nomor || null,
+            tanggal: body.tanggal || null,
+            kepada: body.kepada || null,
+            periode: body.periode || null,
+            uraian: body.uraian || null,
+            items: Array.isArray(body.items) ? body.items : [],
+            checklist: Array.isArray(body.checklist) ? body.checklist : [],
+            foto: Number(body.foto) || 0,
+          };
+          const r = await fetch(REST("maintenance_documents"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
+          if (!r.ok) return res.status(400).json({ error: "Gagal buat dokumen", detail: await r.text() });
+          return res.status(200).json({ document: (await r.json())[0] });
+        }
+        if (action === "update-document") {
+          if (!body.id) return res.status(400).json({ error: "id wajib" });
+          const upd = {};
+          ["jenis", "nomor", "tanggal", "kepada", "periode", "uraian", "ttd_teknisi", "ttd_customer", "ttd_customer_img"].forEach(k => { if (body[k] !== undefined) upd[k] = body[k] || null; });
+          if (body.items !== undefined) upd.items = Array.isArray(body.items) ? body.items : [];
+          if (body.checklist !== undefined) upd.checklist = Array.isArray(body.checklist) ? body.checklist : [];
+          if (body.foto !== undefined) upd.foto = Number(body.foto) || 0;
+          const r = await fetch(REST("maintenance_documents?id=eq." + encodeURIComponent(body.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(upd) });
+          if (!r.ok) return res.status(400).json({ error: "Gagal update dokumen", detail: await r.text() });
+          return res.status(200).json({ document: (await r.json())[0] });
+        }
+        if (action === "delete-document") {
+          if (!body.id) return res.status(400).json({ error: "id wajib" });
+          const r = await fetch(REST("maintenance_documents?id=eq." + encodeURIComponent(body.id)), { method: "DELETE", headers });
+          if (!r.ok) return res.status(400).json({ error: "Gagal hapus dokumen", detail: await r.text() });
+          return res.status(200).json({ ok: true });
+        }
+
         // ---- UNITS ----
         if (action === "list-units") {
           if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });

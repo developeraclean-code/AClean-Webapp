@@ -9,6 +9,7 @@ const pillBlue = { background: cs.accent + "22", color: cs.accent, padding: "2px
 const pillYellow = { background: (cs.yellow || "#eab308") + "22", color: cs.yellow || "#eab308", padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 };
 
 const QuotationModal = lazy(() => import("./QuotationModal.jsx"));
+const MaintenanceDocsView = lazy(() => import("./MaintenanceDocsView.jsx"));
 const QuotationPDFModule = lazy(() =>
   Promise.all([
     import("./QuotationModal.jsx"),
@@ -85,6 +86,7 @@ export default function MaintenanceView({
   const [units, setUnits] = useState([]);
   const [logs, setLogs] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [docsMode, setDocsMode] = useState(false);
 
   const call = useCallback(async (action, payload = {}) => {
     const r = await apiFetch("/api/maintenance", {
@@ -143,12 +145,24 @@ export default function MaintenanceView({
     catch (e) { showNotif("❌ " + e.message); }
   };
 
+  if (docsMode) {
+    return (
+      <Suspense fallback={<div style={{ color: cs.muted, padding: 40, textAlign: "center" }}>Memuat dokumen…</div>}>
+        <MaintenanceDocsView
+          clients={clients} call={call} showNotif={showNotif} showConfirm={showConfirm}
+          isOwner={isOwner} appSettings={appSettings} onBack={() => setDocsMode(false)}
+        />
+      </Suspense>
+    );
+  }
+
   if (!sel) {
     return (
       <div style={{ padding: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           <h2 style={{ color: cs.text, margin: 0 }}>🏢 Maintenance — Customer Korporat</h2>
-          <button onClick={() => setClientModal({})} style={{ ...btn, marginLeft: "auto" }}>+ Tambah Perusahaan</button>
+          <button onClick={() => setDocsMode(true)} style={{ ...btnGhost, marginLeft: "auto" }}>📄 Dokumen</button>
+          <button onClick={() => setClientModal({})} style={btn}>+ Tambah Perusahaan</button>
         </div>
         {loading ? <div style={{ color: cs.muted }}>Memuat…</div> :
           clients.length === 0 ? <div style={{ color: cs.muted }}>Belum ada perusahaan. Klik "+ Tambah Perusahaan".</div> :
