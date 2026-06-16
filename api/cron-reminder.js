@@ -1250,7 +1250,7 @@ async function taskBackupData() {
   }
 
   const now = new Date(Date.now() + 7 * 3600000); // WIB
-  const yearMonth = now.toISOString().slice(0, 7); // "2026-05"
+  const dateStr = now.toISOString().slice(0, 10); // "2026-06-16" — folder ber-tanggal (riwayat point-in-time)
   const tables = ["invoices", "orders", "customers", "service_reports"];
   const results = {};
 
@@ -1273,7 +1273,7 @@ async function taskBackupData() {
       const { data, error } = await fetchAllRows(table);
       if (error) { results[table] = "ERROR: " + error.message; continue; }
       const body = JSON.stringify({ exported_at: new Date().toISOString(), table, count: data.length, data });
-      const r2Key2 = "backup/" + yearMonth + "/" + table + ".json";
+      const r2Key2 = "backup/" + dateStr + "/" + table + ".json";
       const { url, headers } = sigV4Put(r2Key2, body, "application/json");
       const putRes = await fetch(url, { method: "PUT", headers, body });
       results[table] = putRes.ok ? data.length + " rows" : "PUT_FAIL:" + putRes.status;
@@ -1282,21 +1282,39 @@ async function taskBackupData() {
     }
   }
 
-  // Catat ke backup_log
+  // Catat ke backup_log (notes = path folder, dipakai untuk retensi di bawah)
   const successTables = tables.filter(t => results[t] && !results[t].startsWith("ERROR") && !results[t].startsWith("PUT_FAIL") && !results[t].startsWith("EXCEPTION"));
   try {
     await sb.from("backup_log").insert({
-      type: "auto-r2-monthly",
+      type: "auto-r2-weekly",
       tables: successTables,           // ARRAY column — jangan join
       row_counts: results,             // jsonb column — pass object langsung
       exported_by: "CRON",
-      notes: "Backup bulanan ke R2: backup/" + yearMonth + "/"
+      notes: "backup/" + dateStr + "/"
     });
   } catch(e) { console.error("[BACKUP_LOG]", e.message); }
 
-  const summary = "Backup " + yearMonth + ": " + Object.entries(results).map(([t, r]) => t + "=" + r).join(", ");
+  // ── Retensi 60 hari (2 bulan): hapus folder backup lama dari R2 + backup_log ──
+  // Folder ber-tanggal di-track via backup_log.notes ("backup/YYYY-MM-DD/"). Format lama
+  // (yearMonth / notes non-tanggal) di-skip aman — tidak ikut terhapus.
+  let purgedBackups = 0;
+  try {
+    const cutoffISO = new Date(Date.now() - 60 * 86400000).toISOString();
+    const { data: oldLogs } = await sb.from("backup_log")
+      .select("id, tables, notes").lt("created_at", cutoffISO).limit(50);
+    for (const bl of oldLogs || []) {
+      const folder = String(bl.notes || "").trim().replace(/^backup\//, "").replace(/\/$/, "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(folder)) continue; // hanya folder ber-tanggal
+      const tbls = (Array.isArray(bl.tables) && bl.tables.length) ? bl.tables : tables;
+      for (const t of tbls) { await deleteR2Object("backup/" + folder + "/" + t + ".json"); }
+      await sb.from("backup_log").delete().eq("id", bl.id);
+      purgedBackups++;
+    }
+  } catch(e) { console.error("[BACKUP_RETENTION]", e.message); }
+
+  const summary = "Backup " + dateStr + ": " + Object.entries(results).map(([t, r]) => t + "=" + r).join(", ") + (purgedBackups ? ` | retensi: hapus ${purgedBackups} backup >60h` : "");
   await log("BACKUP_DATA", summary, successTables.length === tables.length ? "SUCCESS" : "WARNING");
-  return { yearMonth, results };
+  return { dateStr, results, purgedBackups };
 }
 
 // ══════════════════════════════════════════════════

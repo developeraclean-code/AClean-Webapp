@@ -49,17 +49,17 @@ async function fetchAll(table) {
 }
 
 const now = new Date(Date.now() + 7 * 3600000); // WIB
-const yearMonth = now.toISOString().slice(0, 7);
+const dateStr = now.toISOString().slice(0, 10); // "2026-06-16" — folder ber-tanggal (point-in-time)
 const tables = ["invoices", "orders", "customers", "service_reports"];
 const results = {};
 
-console.log(`\n📦 Backup → R2 bucket "${r2Bucket}" prefix backup/${yearMonth}/\n`);
+console.log(`\n📦 Backup → R2 bucket "${r2Bucket}" prefix backup/${dateStr}/\n`);
 for (const table of tables) {
   try {
     const { data, error } = await fetchAll(table);
     if (error) { results[table] = "ERROR: " + error.message; console.log(`  ❌ ${table}: ${results[table]}`); continue; }
     const body = JSON.stringify({ exported_at: new Date().toISOString(), table, count: data.length, data });
-    const r2Path = "backup/" + yearMonth + "/" + table + ".json";
+    const r2Path = "backup/" + dateStr + "/" + table + ".json";
     const { url, headers } = sigV4Put(r2Path, body, "application/json");
     const putRes = await fetch(url, { method: "PUT", headers, body });
     if (putRes.ok) {
@@ -73,6 +73,14 @@ for (const table of tables) {
   } catch (e) { results[table] = "EXCEPTION: " + e.message; console.log(`  ❌ ${table}: ${results[table]}`); }
 }
 
-const ok = tables.filter(t => /rows/.test(results[t] || "")).length;
-console.log(`\n${ok === tables.length ? "✅ SEMUA SUKSES" : "⚠️ SEBAGIAN GAGAL"} — ${ok}/${tables.length} tabel ter-backup ke backup/${yearMonth}/\n`);
+const successTables = tables.filter(t => /rows/.test(results[t] || ""));
+const ok = successTables.length;
+// Track ke backup_log agar ikut retensi 60 hari yang dijalankan cron backup.
+try {
+  await sb.from("backup_log").insert({
+    type: "manual-r2-weekly", tables: successTables, row_counts: results,
+    exported_by: "MANUAL", notes: "backup/" + dateStr + "/",
+  });
+} catch (e) { console.log("  ⚠️ backup_log insert gagal:", e.message); }
+console.log(`\n${ok === tables.length ? "✅ SEMUA SUKSES" : "⚠️ SEBAGIAN GAGAL"} — ${ok}/${tables.length} tabel ter-backup ke backup/${dateStr}/\n`);
 process.exit(ok === tables.length ? 0 : 1);
