@@ -8,7 +8,7 @@ import { EXP_CATS, fmtRp } from "../utils/constants.js";
 import { MiniCard, Tag } from "../components/Bits.jsx";
 
 export default function ProjectExpenseView() {
-  const { db, role, can, today, addRows, deleteRow } = useProject();
+  const { db, role, can, today, addRows, patchRow, deleteRow } = useProject();
   const { openForm, toast } = useModal();
   const [filterProj, setFilterProj] = useState("Semua");
   const [filterCat, setFilterCat] = useState("Semua");
@@ -20,6 +20,21 @@ export default function ProjectExpenseView() {
   if (filterCat !== "Semua") rows = rows.filter((e) => e.kategori === filterCat);
   const total = rows.reduce((s, e) => s + e.nominal, 0);
   const byCat = {}; rows.forEach((e) => byCat[e.kategori] = (byCat[e.kategori] || 0) + e.nominal);
+
+  // Edit pengeluaran (Owner only) — Admin hanya bisa input baru, tidak bisa ubah
+  const editExpense = (e) => openForm({
+    title: "Edit Pengeluaran",
+    fields: [
+      { name: "kategori", label: "Kategori", type: "select", options: EXP_CATS, val: e.kategori },
+      { name: "ket", label: "Keterangan", val: e.ket },
+      { name: "nominal", label: "Nominal (Rp)", type: "number", val: e.nominal },
+    ],
+    onSubmit: (d) => {
+      if (!d.nominal) return toast("Nominal wajib diisi");
+      patchRow("expenses", e.id, { kategori: d.kategori || e.kategori, ket: d.ket, nominal: +d.nominal });
+      toast("Pengeluaran diperbarui");
+    },
+  });
 
   const addExpense = () => {
     if (!db.projects.length) { toast("Buat project dulu di Daftar Project"); return; }
@@ -44,7 +59,7 @@ export default function ProjectExpenseView() {
   return (
     <div style={{ padding: 22, maxWidth: 1200 }}>
       <div style={S.note}>
-        <b>Admin boleh input</b> pengeluaran. Filter per project & kategori di bawah. Baris ber-🔒 = hari diverifikasi & terkunci.
+        <b>Admin boleh input</b> pengeluaran, <b>edit/hapus khusus Owner</b>. Filter per project & kategori di bawah. Baris ber-🔒 = hari diverifikasi & terkunci.
       </div>
       <div style={{ ...S.between, marginBottom: 10 }}>
         <div style={S.row}>
@@ -82,7 +97,10 @@ export default function ProjectExpenseView() {
                 <td style={S.tableStyles.td}>{e.ket}</td>
                 <td style={S.tableStyles.td}>{fmtRp(e.nominal)}</td>
                 <td style={S.tableStyles.td}>{e.oleh}</td>
-                {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus pengeluaran ini?")) deleteRow("expenses", e.id); }}>🗑</button></td>}
+                {can.delete && <td style={S.tableStyles.td}><div style={S.row}>
+                  <button style={S.btnSm("ghost")} title="Edit pengeluaran" onClick={() => editExpense(e)}>✏️</button>
+                  <button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus pengeluaran ini?")) deleteRow("expenses", e.id); }}>🗑</button>
+                </div></td>}
               </tr>
             )) : <tr><td colSpan={can.delete ? 7 : 6} style={{ ...S.tableStyles.td, ...S.muted, textAlign: "center", padding: 18 }}>Tidak ada data untuk filter ini</td></tr>}
           </tbody>
