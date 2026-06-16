@@ -2026,6 +2026,77 @@ async function taskLogCleanup() {
 }
 
 // ══════════════════════════════════════════════════
+// TASK: tick — DISPATCHER untuk Vercel Hobby (cron native tak andal, maks 2/hari).
+// Dipanggil sering dari luar (GitHub Actions per jam). Cek jam WIB → jalankan task yang
+// jadwalnya sudah tiba hari ini & BELUM sukses hari ini (catch-up, idempoten via cron_runs).
+// Cap per-invocation agar tidak timeout; sisa task tertangani tick berikutnya.
+// bukti-bayar: jalan tiap tick jam kerja (idempoten internal, tak perlu guard harian).
+// ══════════════════════════════════════════════════
+async function taskTick() {
+  const nowWib = new Date(Date.now() + 7 * 3600000);
+  const hour = nowWib.getUTCHours();   // jam WIB
+  const dow  = nowWib.getUTCDay();     // 0=Min..6=Sab (WIB)
+  const dom  = nowWib.getUTCDate();    // tanggal WIB
+  const CAP  = 6;                       // maks task non-bukti per tick
+
+  // Jadwal: jam WIB tiap task (konversi dari skema lama UTC+7). dow/dom opsional.
+  const schedule = [
+    { t: "cleanup",                  fn: taskCleanup,                h: 2,  dom: 1 },
+    { t: "r2-cleanup-90d",           fn: taskR2Cleanup90d,           h: 3 },
+    { t: "expense-foto-cleanup",     fn: taskExpenseFotoCleanup30d,  h: 3 },
+    { t: "log-cleanup",              fn: taskLogCleanup,             h: 3,  dow: 0 },
+    { t: "payment-proof-cleanup",    fn: taskPaymentProofCleanup90d, h: 3 },
+    { t: "stock",                    fn: taskStock,                  h: 8 },
+    { t: "servis-reminder",          fn: taskServisReminder,         h: 8,  dow: 1 },
+    { t: "weekly",                   fn: taskWeeklyReport,           h: 8,  dow: 0 },
+    { t: "backup",                   fn: taskBackupData,             h: 8,  dow: 1 },
+    { t: "wa-cleanup",               fn: taskWaCleanup,              h: 9 },
+    { t: "rating-prompt",            fn: taskRatingPrompt,           h: 9 },
+    { t: "project-alerts",           fn: taskProjectAlerts,          h: 9 },
+    { t: "morning-dispatch",         fn: taskMorningDispatch,        h: 9 },
+    { t: "reminder",                 fn: taskReminder,               h: 10 },
+    { t: "voucher-expiry",           fn: taskVoucherExpiryReminder,  h: 10 },
+    { t: "laporan-stale",            fn: taskLaporanStaleAlert,      h: 10 },
+    { t: "snapshot-cleanup",         fn: taskSnapshotCleanup,        h: 10 },
+    { t: "payroll-wa",               fn: taskPayrollWA,              h: 18, dow: 6 },
+    { t: "wa-snapshot",              fn: taskWaSnapshot,             h: 20 },
+    { t: "daily",                    fn: taskDaily,                  h: 21 },
+    { t: "auto-return-brought",      fn: taskAutoReturnBrought,      h: 22 },
+    { t: "material-pulang-reminder", fn: taskMaterialPulangReminder, h: 22 },
+  ];
+
+  const ran = [];
+  // bukti-bayar: scan tiap tick jam kerja 9-18 WIB
+  if (hour >= 9 && hour <= 18) {
+    try { await runWithCronLogging(sb, "bukti-bayar", () => taskScanBuktiBayar()); ran.push("bukti-bayar"); }
+    catch (e) { console.error("[TICK] bukti-bayar", e.message); }
+  }
+
+  // Task due hari ini (jamnya sudah tiba) & cocok dow/dom
+  const due = schedule.filter(s =>
+    hour >= s.h &&
+    (s.dow === undefined || s.dow === dow) &&
+    (s.dom === undefined || s.dom === dom)
+  );
+
+  // Mana yang BELUM jalan hari ini (cron_runs since WIB-midnight) → catch-up idempoten
+  const midnightWibUtc = new Date(Date.UTC(nowWib.getUTCFullYear(), nowWib.getUTCMonth(), nowWib.getUTCDate()) - 7 * 3600000).toISOString();
+  const { data: todayRuns } = await sb.from("cron_runs").select("task_name").gte("started_at", midnightWibUtc);
+  const alreadyRan = new Set((todayRuns || []).map(r => r.task_name));
+
+  let count = 0, pending = 0;
+  for (const s of due) {
+    if (alreadyRan.has(s.t)) continue;
+    if (count >= CAP) { pending++; continue; }
+    try { await runWithCronLogging(sb, s.t, () => s.fn()); ran.push(s.t); count++; }
+    catch (e) { console.error("[TICK]", s.t, e.message); }
+  }
+
+  await log("TICK", `${hour}:00 WIB — jalan: ${ran.join(", ") || "(tidak ada/selesai)"}${pending ? ` | sisa ${pending} (tick berikutnya)` : ""}`, "INFO");
+  return { hourWib: hour, ran, pending };
+}
+
+// ══════════════════════════════════════════════════
 // MAIN HANDLER
 // ══════════════════════════════════════════════════
 export default async function handler(req, res) {
@@ -2100,6 +2171,7 @@ export default async function handler(req, res) {
       "snapshot-cleanup": taskSnapshotCleanup,
       "project-alerts":   taskProjectAlerts,
       "reminder":         taskReminder,
+      "tick":             taskTick,
     };
     const handler = taskMap[task] || taskReminder;
     const taskKey = taskMap[task] ? task : "reminder";
