@@ -39,6 +39,12 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
     return () => { alive = false; };
   }, [reload]);
 
+  // Default activeProject ke project pertama bila belum ada yang dipilih
+  // (mis. user klik langsung "Keuangan Project"/"Detail Project" dari menu, belum lewat Daftar Project).
+  useEffect(() => {
+    if (!activeProject && db.projects.length) setActiveProject(db.projects[0].id);
+  }, [db.projects, activeProject]);
+
   // ── helpers state lokal (optimistic) ──────────────────────────────────────
   const update = useCallback((fn) => setDb((cur) => { const next = { ...cur }; fn(next); return next; }), []);
 

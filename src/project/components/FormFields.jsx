@@ -13,6 +13,7 @@ export default function FormFields({ title, fields, onSubmit, onClose, today, gp
       if (f.type === "grid") r[f.name] = (f.rows && f.rows.length ? f.rows : [{}, {}, {}]).map((x) => ({ ...x }));
       else if (f.type === "checks") r[f.name] = [];
       else if (f.type === "photo") r[f.name + "_files"] = [];
+      else if (f.type === "select" && f.val === undefined && f.options?.length) r[f.name] = f.options[0];
       else r[f.name] = f.val ?? "";
     });
     return r;
