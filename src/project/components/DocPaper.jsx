@@ -21,13 +21,12 @@ export default function DocPaper({ doc, project }) {
           Tanggal: {doc.tanggal}<br />No: {doc.nomor}
         </div>
       </div>
-      <h4 style={{ textAlign: "center", fontSize: 14, textTransform: "uppercase", letterSpacing: "0.04em", margin: "6px 0 2px" }}>{doc.jenis}</h4>
-      <div style={{ textAlign: "center", color: "#475569", marginBottom: 14, fontSize: 11 }}>
-        Project: {project?.nama || "-"}{doc.periode ? ` · Periode: ${doc.periode}` : ""}
-      </div>
-      <div style={{ display: "flex", gap: 24, marginBottom: 8 }}>
-        <div><b>Kepada:</b><br />{doc.kepada}</div>
-        <div><b>Lokasi:</b><br />{project?.lokasi || "-"}</div>
+      <h4 style={{ textAlign: "center", fontSize: 14, textTransform: "uppercase", letterSpacing: "0.04em", margin: "6px 0 14px" }}>{doc.jenis}</h4>
+      <div style={{ marginBottom: 10, lineHeight: 1.7 }}>
+        <div><b>Nama Customer:</b> {project?.nama || "-"}</div>
+        <div><b>Lokasi:</b> {project?.lokasi || "-"}</div>
+        <div><b>Kepada:</b> {doc.kepada || "-"}</div>
+        {doc.periode ? <div><b>Periode:</b> {doc.periode}</div> : null}
       </div>
       {doc.uraian && (
         <p style={{ margin: "6px 0", whiteSpace: "pre-wrap" }}>

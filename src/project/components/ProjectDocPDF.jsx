@@ -11,9 +11,11 @@ const s = StyleSheet.create({
   brand: { fontSize: 15, fontFamily: "Helvetica-Bold", color: "#1E5BA8" },
   brandSub: { fontSize: 8, color: "#475569", marginTop: 2 },
   metaR: { fontSize: 9, color: "#475569", textAlign: "right" },
-  title: { textAlign: "center", fontSize: 13, marginTop: 4, marginBottom: 2, textTransform: "uppercase", letterSpacing: 1 },
+  title: { textAlign: "center", fontSize: 13, marginTop: 4, marginBottom: 14, textTransform: "uppercase", letterSpacing: 1 },
   sub: { textAlign: "center", fontSize: 9, color: "#475569", marginBottom: 12 },
   twoCol: { flexDirection: "row", gap: 24, marginBottom: 8 },
+  infoBlock: { marginBottom: 10 },
+  infoRow: { marginBottom: 3, lineHeight: 1.4 },
   label: { fontWeight: 700 },
   para: { marginVertical: 6, lineHeight: 1.4 },
   table: { borderWidth: 1, borderColor: "#cbd5e1", marginVertical: 8 },
@@ -55,11 +57,12 @@ export default function ProjectDocPDF({ doc, project, appSettings = {}, logoUrl 
         </View>
 
         <Text style={s.title}>{doc.jenis}</Text>
-        <Text style={s.sub}>Project: {project?.nama || "-"}{doc.periode ? ` · Periode: ${doc.periode}` : ""}</Text>
 
-        <View style={s.twoCol}>
-          <Text><Text style={s.label}>Kepada:</Text>{"\n"}{doc.kepada || "-"}</Text>
-          <Text><Text style={s.label}>Lokasi:</Text>{"\n"}{project?.lokasi || "-"}</Text>
+        <View style={s.infoBlock}>
+          <Text style={s.infoRow}><Text style={s.label}>Nama Customer: </Text>{project?.nama || "-"}</Text>
+          <Text style={s.infoRow}><Text style={s.label}>Lokasi: </Text>{project?.lokasi || "-"}</Text>
+          <Text style={s.infoRow}><Text style={s.label}>Kepada: </Text>{doc.kepada || "-"}</Text>
+          {doc.periode ? <Text style={s.infoRow}><Text style={s.label}>Periode: </Text>{doc.periode}</Text> : null}
         </View>
 
         {doc.uraian ? (
