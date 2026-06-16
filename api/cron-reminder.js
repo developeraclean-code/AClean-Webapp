@@ -824,6 +824,64 @@ async function taskWaBackfill(opts = {}) {
 }
 
 // ══════════════════════════════════════════════════
+// TASK: Project Alerts — WA ke Owner untuk modul Project
+// (1) project telat dari target, (2) Berita Acara PENDING >3 hari,
+// (3) biaya aktual ≥85% RAB. Toggle: project_alerts_enabled (default ON).
+// ══════════════════════════════════════════════════
+async function taskProjectAlerts() {
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["project_alerts_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "project_alerts_enabled")) {
+    await log("PROJECT_ALERTS", "Dilewati — toggle OFF", "INFO");
+    return { skipped: true };
+  }
+  if (!OWNER_PHONE) { await log("PROJECT_ALERTS", "OWNER_PHONE belum diset", "INFO"); return { skipped: true }; }
+
+  const wib = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+  const [pRes, baRes, eRes, puRes] = await Promise.all([
+    sb.from("project_projects").select("id,nama,status,target,rab"),
+    sb.from("project_daily_reports").select("project_id,tanggal,status,submitted_at,teknisi_name").eq("status", "PENDING"),
+    sb.from("project_expenses").select("project_id,nominal"),
+    sb.from("project_purchases").select("project_id,total"),
+  ]);
+  const projects = pRes.data || [];
+  const active = projects.filter(p => ["BERJALAN", "FINISHING"].includes(p.status));
+  const pName = id => (projects.find(p => p.id === id) || {}).nama || id;
+
+  // 1) Telat dari target
+  const late = active.filter(p => p.target && p.target < wib)
+    .map(p => ({ nama: p.nama, days: Math.round((new Date(wib) - new Date(p.target)) / 86400000) }));
+
+  // 2) Berita Acara PENDING > 3 hari
+  const STALE_DAYS = 3;
+  const cutoff = new Date(Date.now() - STALE_DAYS * 86400_000).toISOString();
+  const stale = (baRes.data || []).filter(b => (b.submitted_at || b.tanggal || "") < cutoff)
+    .map(b => ({ proj: pName(b.project_id), tanggal: b.tanggal, teknisi: b.teknisi_name || "-" }));
+
+  // 3) Biaya aktual ≥85% RAB
+  const cost = {};
+  (eRes.data || []).forEach(e => cost[e.project_id] = (cost[e.project_id] || 0) + (e.nominal || 0));
+  (puRes.data || []).forEach(x => cost[x.project_id] = (cost[x.project_id] || 0) + (x.total || 0));
+  const overBudget = active.filter(p => p.rab > 0 && (cost[p.id] || 0) >= 0.85 * p.rab)
+    .map(p => ({ nama: p.nama, cost: cost[p.id] || 0, ratio: Math.round((cost[p.id] || 0) / p.rab * 100) }));
+
+  if (!late.length && !stale.length && !overBudget.length) {
+    await log("PROJECT_ALERTS", "Tidak ada alert", "INFO");
+    return { late: 0, stale: 0, overBudget: 0 };
+  }
+
+  let msg = "🏗️ *Alert Project — AClean*\n";
+  if (late.length) msg += `\n⏰ *Telat dari target:*\n` + late.map(p => `• ${p.nama} — telat ${p.days} hari`).join("\n") + "\n";
+  if (stale.length) msg += `\n📝 *Berita Acara belum diverifikasi (>${STALE_DAYS} hari):*\n` + stale.map(b => `• ${b.proj} — ${b.tanggal} (${b.teknisi})`).join("\n") + "\n";
+  if (overBudget.length) msg += `\n💸 *Biaya ≥85% RAB:*\n` + overBudget.map(p => `• ${p.nama} — ${fmt(p.cost)} (${p.ratio}% RAB)`).join("\n") + "\n";
+  msg += `\nCek modul Project untuk tindak lanjut.`;
+
+  await sendWA(OWNER_PHONE, msg);
+  await log("PROJECT_ALERTS", `late=${late.length} stale=${stale.length} overBudget=${overBudget.length}`, "SUCCESS");
+  return { late: late.length, stale: stale.length, overBudget: overBudget.length };
+}
+
+// ══════════════════════════════════════════════════
 // TASK: Snapshot cleanup — retention 60 hari
 // Hapus objek R2 (file .json) + row wa_daily_snapshots yg > 60 hari.
 // FIX: dulu hanya hapus row DB & andalkan r2-cleanup-90d, tapi cron itu hanya
@@ -1986,6 +2044,7 @@ export default async function handler(req, res) {
       "wa-snapshot":      taskWaSnapshot,
       "wa-backfill":      () => taskWaBackfill({ from: req.query.from, to: req.query.to }),
       "snapshot-cleanup": taskSnapshotCleanup,
+      "project-alerts":   taskProjectAlerts,
       "reminder":         taskReminder,
     };
     const handler = taskMap[task] || taskReminder;

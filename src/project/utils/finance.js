@@ -49,9 +49,12 @@ export const matTotal = (db, m) => m.gudang + db.alokasi.filter((a) => a.materia
 export const matAlloc = (db, m) => db.alokasi.filter((a) => a.materialId === m.id);
 
 export function docSeqNext(db, prefix) {
-  const nums = db.documents.filter((d) => d.nomor.startsWith(prefix + "/")).map((d) => parseInt(d.nomor.split("/").pop()) || 0);
+  const nums = db.documents.filter((d) => (d.nomor || "").startsWith(prefix + "/")).map((d) => parseInt(d.nomor.split("/").pop()) || 0);
   const next = (nums.length ? Math.max(...nums) : 0) + 1;
-  return `${prefix}/AC/2026/05/${String(next).padStart(3, "0")}`;
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  return `${prefix}/AC/${yyyy}/${mm}/${String(next).padStart(3, "0")}`;
 }
 
 export const ttdStatus = (d) => (d.ttdCustomer && d.ttdCustomer !== "(belum)" ? "lengkap" : "belum");
