@@ -3956,30 +3956,22 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
       const proj = pRows[0];
       if (!proj.token_active) return res.status(403).json({ error: "Akses portal dinonaktifkan", code: "TOKEN_DISABLED" });
 
-      // 2) Laporan harian VERIFIED saja (approval Owner/Admin)
-      const hRes = await fetch(`${SU}/rest/v1/project_harian?project_id=eq.${proj.id}&status=eq.VERIFIED&select=id,tanggal,oleh,pagi,sore&order=tanggal.desc`, { headers });
-      const harianRaw = hRes.ok ? await hRes.json() : [];
-      const verifiedDates = new Set(harianRaw.map(h => h.tanggal));
-
-      // Strip apapun yang berbau harga dari jsonb pagi/sore (defensive); kirim hanya field aman
-      const pickSesi = (s) => s ? { jam: s.jam || "", progress: s.progress || "", material: s.material || "", alat: s.alat || "", fotos: Array.isArray(s.fotos) ? s.fotos : [], foto: s.foto || 0 } : null;
-      const harian = harianRaw.map(h => ({ id: h.id, tanggal: h.tanggal, oleh: h.oleh, pagi: pickSesi(h.pagi), sore: pickSesi(h.sore) }));
-
-      // 3) Pemakaian material — HANYA untuk tanggal yang harian-nya VERIFIED (ikut gate approval)
-      let usage = [];
-      if (verifiedDates.size > 0) {
-        const uRes = await fetch(`${SU}/rest/v1/project_usage?project_id=eq.${proj.id}&select=id,tanggal,material,qty,oleh&order=tanggal.desc`, { headers });
-        const uRows = uRes.ok ? await uRes.json() : [];
-        usage = uRows.filter(u => verifiedDates.has(u.tanggal)).map(u => ({ tanggal: u.tanggal, material: u.material, qty: u.qty, oleh: u.oleh }));
-      }
-
-      // 4) Berita Acara Harian VERIFIED — laporan teknisi per hari kerja (project_daily_reports)
+      // 2) Berita Acara Harian VERIFIED — sumber laporan harian tunggal yang dilihat customer
+      //    (project_daily_reports; di-submit teknisi via Laporan Saya, diverifikasi Owner/Admin).
       const baRes = await fetch(`${SU}/rest/v1/project_daily_reports?project_id=eq.${encodeURIComponent(proj.id)}&status=eq.VERIFIED&select=id,tanggal,teknisi_name,helper_names,pekerjaan,kendala,foto_urls,verified_at&order=tanggal.desc&limit=200`, { headers });
       const beritaAcara = baRes.ok ? await baRes.json() : [];
+      const verifiedDates = new Set(beritaAcara.map(b => b.tanggal));
+
+      // 3) Pemakaian material — HANYA untuk tanggal yang Berita Acara-nya VERIFIED (ikut gate approval)
+      let usage = [];
+      if (verifiedDates.size > 0) {
+        const uRes = await fetch(`${SU}/rest/v1/project_usage?project_id=eq.${proj.id}&select=id,tanggal,material,qty,satuan,oleh&order=tanggal.desc`, { headers });
+        const uRows = uRes.ok ? await uRes.json() : [];
+        usage = uRows.filter(u => verifiedDates.has(u.tanggal)).map(u => ({ tanggal: u.tanggal, material: u.material, qty: u.qty, satuan: u.satuan || "", oleh: u.oleh }));
+      }
 
       return res.status(200).json({
         project: { nama: proj.nama, lokasi: proj.lokasi, kategori: proj.kategori, status: proj.status, progress: proj.progress, mulai: proj.mulai, target: proj.target },
-        harian,
         usage,
         beritaAcara,
       });

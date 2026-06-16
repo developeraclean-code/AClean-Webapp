@@ -52,18 +52,20 @@ export default function ProjectPortalView({ token }) {
   if (state.error === "NOT_FOUND") return <Screen icon="⚠️" title="Tidak Ditemukan" sub="Link portal tidak valid." />;
   if (state.error) return <Screen icon="⚠️" title="Terjadi Kesalahan" sub={state.msg || "Coba muat ulang halaman."} />;
 
-  const { project = {}, harian = [], usage = [], beritaAcara = [] } = state;
+  const { project = {}, usage = [], beritaAcara = [] } = state;
   const [stColor, stLabel] = PSTATUS[project.status] || ["#64748b", project.status || "—"];
 
-  // Ringkasan total pemakaian material (jumlahkan qty per nama material)
+  // Ringkasan total pemakaian material (jumlahkan qty per nama+satuan)
   const usageSummary = (() => {
-    const m = {};
+    const m = {}; // key "nama|satuan" → { nama, satuan, qty }
     usage.forEach(u => {
-      const key = (u.material || "—").trim();
-      if (!m[key]) m[key] = 0;
-      m[key] += Number(u.qty) || 0;
+      const nama = (u.material || "—").trim();
+      const satuan = (u.satuan || "").trim();
+      const key = nama + "|" + satuan;
+      if (!m[key]) m[key] = { nama, satuan, qty: 0 };
+      m[key].qty += Number(u.qty) || 0;
     });
-    return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0]));
+    return Object.values(m).sort((a, b) => a.nama.localeCompare(b.nama));
   })();
 
   return (
@@ -111,27 +113,17 @@ export default function ProjectPortalView({ token }) {
           <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 4px 16px rgba(0,0,0,.06)", padding: 18, marginBottom: 16 }}>
             <h2 style={{ fontSize: 15, fontWeight: 800, margin: "0 0 12px" }}>📦 Pemakaian Material</h2>
             <div style={{ display: "grid", gap: 8 }}>
-              {usageSummary.map(([nama, qty]) => (
-                <div key={nama} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "8px 12px", background: "#f8fafc", borderRadius: 10 }}>
-                  <span>{nama}</span>
-                  <b style={{ color: "#2563eb" }}>{qty}</b>
+              {usageSummary.map((u) => (
+                <div key={u.nama + "|" + u.satuan} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "8px 12px", background: "#f8fafc", borderRadius: 10 }}>
+                  <span>{u.nama}</span>
+                  <b style={{ color: "#2563eb" }}>{u.qty}{u.satuan ? ` ${u.satuan}` : ""}</b>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Timeline laporan harian */}
-        {harian.length > 0 && (
-          <>
-            <h2 style={{ fontSize: 15, fontWeight: 800, margin: "20px 4px 12px" }}>🗓️ Laporan Harian ({harian.length})</h2>
-            <div style={{ display: "grid", gap: 14 }}>
-              {harian.map(h => <DayCard key={h.id} h={h} />)}
-            </div>
-          </>
-        )}
-
-        {beritaAcara.length === 0 && harian.length === 0 && (
+        {beritaAcara.length === 0 && (
           <div style={{ background: "#fff", borderRadius: 16, padding: 28, textAlign: "center", color: "#64748b", fontSize: 14 }}>
             Belum ada laporan harian yang dipublikasikan.
           </div>
@@ -200,46 +192,6 @@ function BeritaAcaraCard({ ba }) {
           style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,.88)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, cursor: "zoom-out" }}>
           <img src={fotoSrc(lightbox)} alt="foto besar" style={{ maxWidth: "100%", maxHeight: "90vh", borderRadius: 12, objectFit: "contain", boxShadow: "0 24px 80px rgba(0,0,0,.6)" }} />
           <button onClick={() => setLightbox(null)} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.15)", border: "none", color: "#fff", fontSize: 22, width: 40, height: 40, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DayCard({ h }) {
-  const allFotos = [...(h.pagi?.fotos || []), ...(h.sore?.fotos || [])];
-  const materials = [h.pagi?.material, h.sore?.material].filter(m => m && m !== "-");
-  return (
-    <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 4px 16px rgba(0,0,0,.06)", padding: 18 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 6 }}>
-        <span style={{ fontSize: 14, fontWeight: 800 }}>{fmtDate(h.tanggal)}</span>
-        {h.oleh ? <span style={{ fontSize: 12, color: "#64748b" }}>👷 {h.oleh}</span> : null}
-      </div>
-
-      {h.sore?.progress ? (
-        <div style={{ fontSize: 14, lineHeight: 1.5, background: "#eff6ff", border: "1px solid #dbeafe", borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
-          <b style={{ color: "#1e40af" }}>Progres hari ini:</b> {h.sore.progress}
-        </div>
-      ) : null}
-
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "#475569", marginBottom: allFotos.length ? 12 : 0 }}>
-        {h.pagi?.jam ? <span>🌅 Mulai {h.pagi.jam}</span> : null}
-        {h.sore?.jam ? <span>🌇 Selesai {h.sore.jam}</span> : null}
-      </div>
-
-      {materials.length > 0 && (
-        <div style={{ fontSize: 12.5, color: "#475569", marginBottom: allFotos.length ? 12 : 0 }}>
-          <b>Material:</b> {materials.join(" · ")}
-        </div>
-      )}
-
-      {allFotos.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(90px,1fr))", gap: 8 }}>
-          {allFotos.map((url, i) => (
-            <a key={i} href={url} target="_blank" rel="noreferrer" style={{ aspectRatio: 1, borderRadius: 10, overflow: "hidden", border: "1px solid #e2e8f0", display: "block" }}>
-              <img alt={`foto ${i + 1}`} src={url} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            </a>
-          ))}
         </div>
       )}
     </div>

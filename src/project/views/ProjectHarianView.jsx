@@ -27,7 +27,7 @@ import { supabase } from "../../supabaseClient.js";
 export default function ProjectHarianView() {
   const { db, can, today, upsertHarian, patchRow, uploadPhotos, deleteRow } = useProject();
   const { openForm, openContent, close, toast } = useModal();
-  const [activeTab, setActiveTab] = useState("harian");
+  const [activeTab, setActiveTab] = useState("berita_acara");
 
   const findHarian = (pid, tgl) => db.harian.find((h) => h.projectId === pid && h.tanggal === tgl);
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
@@ -160,8 +160,8 @@ export default function ProjectHarianView() {
       {/* Tab switcher */}
       <div style={{ display: "flex", gap: 4, background: cs.surface, borderRadius: 10, padding: 4, width: "fit-content", marginBottom: 20 }}>
         {[
-          { id: "harian", label: "📋 Laporan Harian (Pagi/Sore)" },
           { id: "berita_acara", label: "📝 Berita Acara Harian" },
+          { id: "harian", label: "🔧 Log Alat (internal)" },
         ].map((t) => (
           <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
             padding: "7px 16px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 700,
@@ -174,7 +174,7 @@ export default function ProjectHarianView() {
       {activeTab === "harian" && (
         <>
           <div style={S.note}>
-            1 laporan / hari / project. <b>Alat dipilih dari daftar</b> (bukan ketik) → posisi alat akurat di <b>Alat Kerja</b>. Foto per sesi di <b>R2</b>.
+            ℹ️ <b>Internal</b> — tidak tampil ke customer. Customer melihat <b>Berita Acara Harian</b>. Tab ini untuk lacak posisi alat (pagi dibawa → <b>di lokasi</b>, sore balik → <b>gudang</b>). 1 log / hari / project.
           </div>
           <div style={{ ...S.between, marginBottom: 14 }}>
             <div style={S.sectionTitle}><h2 style={S.sectionTitleH}>Laporan Harian</h2></div>

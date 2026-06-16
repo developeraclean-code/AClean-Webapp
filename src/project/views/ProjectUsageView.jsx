@@ -6,7 +6,7 @@ import { useModal } from "../context/ModalContext.jsx";
 import { isLocked, pName } from "../utils/finance.js";
 
 export default function ProjectUsageView() {
-  const { db, can, today, addRows, deleteRow } = useProject();
+  const { db, can, today, addRows, patchRows, deleteRow } = useProject();
   const { openForm, toast } = useModal();
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
 
@@ -30,11 +30,25 @@ export default function ProjectUsageView() {
       const pid = pidByName(d.projectId);
       if (isLocked(db, pid, today)) return toast("🔒 Hari terkunci");
       const rows = (d.rows || [])
-        .map((r) => ({ ...r, namaFinal: r.material === MANUAL ? (r.manual || "").trim() : r.material }))
-        .filter((r) => r.qty && r.namaFinal);
+        .map((r) => ({ ...r, namaFinal: r.material === MANUAL ? (r.manual || "").trim() : r.material, qtyNum: Number(r.qty) || 0 }))
+        .filter((r) => r.qtyNum > 0 && r.namaFinal);
       if (!rows.length) return toast("Isi minimal 1 baris (material + qty)");
-      addRows("usage", rows.map((r) => ({ tanggal: today, projectId: pid, material: r.namaFinal, qty: `${r.qty} ${r.satuan || ""}`.trim(), oleh: d.oleh })));
-      toast(`${rows.length} pemakaian tercatat`);
+      // Catat pemakaian: qty angka + satuan terpisah
+      addRows("usage", rows.map((r) => ({ tanggal: today, projectId: pid, material: r.namaFinal, qty: String(r.qtyNum), satuan: r.satuan || "", oleh: d.oleh })));
+      // Potong alokasi untuk material dari stok (match nama). Material manual → skip (beli on-site).
+      const alokasiUpd = {};
+      rows.forEach((r) => {
+        if (r.material === MANUAL) return;
+        const mat = db.materials.find((m) => m.nama === r.namaFinal);
+        if (!mat) return;
+        const al = db.alokasi.find((a) => a.materialId === mat.id && a.projectId === pid);
+        if (!al) return; // belum dialokasikan → hanya log, tak ada yang dipotong
+        const base = alokasiUpd[al.id] !== undefined ? alokasiUpd[al.id] : al.qty;
+        alokasiUpd[al.id] = Math.max(0, base - r.qtyNum);
+      });
+      const updates = Object.entries(alokasiUpd).map(([id, qty]) => ({ id, qty }));
+      if (updates.length) patchRows("alokasi", updates);
+      toast(`${rows.length} pemakaian tercatat${updates.length ? ` · alokasi ${updates.length} material diperbarui` : ""}`);
     },
   });
   };
@@ -59,7 +73,7 @@ export default function ProjectUsageView() {
                 <td style={S.tableStyles.td}>{u.tanggal.slice(5)}</td>
                 <td style={S.tableStyles.td}>{pName(db, u.projectId)} {isLocked(db, u.projectId, u.tanggal) && <span style={S.pill("gray")}>🔒</span>}</td>
                 <td style={S.tableStyles.td}>{u.material}</td>
-                <td style={S.tableStyles.td}>{u.qty}</td>
+                <td style={S.tableStyles.td}>{u.qty}{u.satuan ? ` ${u.satuan}` : ""}</td>
                 <td style={S.tableStyles.td}>{u.oleh}</td>
                 {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus catatan pemakaian ini?")) deleteRow("usage", u.id); }}>🗑</button></td>}
               </tr>

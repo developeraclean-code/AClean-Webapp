@@ -24,7 +24,7 @@ const FIELDS = {
   dp: { id: "id", projectId: "project_id", tanggal: "tanggal", jumlah: "jumlah", ket: "ket" },
   materials: { id: "id", nama: "nama", sub: "sub", satuan: "satuan", gudang: "gudang", min: "min_qty", harga: "harga" },
   alokasi: { id: "id", materialId: "material_id", projectId: "project_id", qty: "qty" },
-  usage: { id: "id", projectId: "project_id", tanggal: "tanggal", material: "material", qty: "qty", oleh: "oleh" },
+  usage: { id: "id", projectId: "project_id", tanggal: "tanggal", material: "material", qty: "qty", satuan: "satuan", oleh: "oleh" },
   tools: { id: "id", nama: "nama", jumlah: "jumlah", status: "status", lokasi: "lokasi", projectId: "project_id" },
   expenses: { id: "id", projectId: "project_id", tanggal: "tanggal", kategori: "kategori", ket: "ket", nominal: "nominal", oleh: "oleh" },
   purchases: { id: "id", projectId: "project_id", tanggal: "tanggal", jenis: "jenis", item: "item", qty: "qty", total: "total", nota: "nota" },
