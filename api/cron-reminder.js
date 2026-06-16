@@ -934,6 +934,26 @@ async function taskWaCleanup() {
     return { skipped: true };
   }
 
+  // ── Rekonsiliasi status payment_suggestion (cegah PENDING basi) ──
+  // PENDING yang invoice-nya sudah PAID → CONFIRMED. Kalau dibiarkan, status nyangkut PENDING
+  // selamanya → proteksi cleanup melebar (hapus 0 pesan) + antrian payment numpuk. Jalan harian.
+  try {
+    const { data: pend } = await sb.from("payment_suggestions")
+      .select("id, invoice_id").eq("status", "PENDING").not("invoice_id", "is", null);
+    const invIds = [...new Set((pend || []).map(p => p.invoice_id).filter(Boolean))];
+    if (invIds.length > 0) {
+      const { data: invs } = await sb.from("invoices").select("id, status").in("id", invIds);
+      const paidSet = new Set((invs || []).filter(i => i.status === "PAID").map(i => i.id));
+      const toConfirm = (pend || []).filter(p => paidSet.has(p.invoice_id)).map(p => p.id);
+      if (toConfirm.length > 0) {
+        await sb.from("payment_suggestions")
+          .update({ status: "CONFIRMED", resolved_at: new Date().toISOString(), resolved_by: "system::auto-reconcile" })
+          .in("id", toConfirm);
+        await log("PAYMENT_RECONCILE", `${toConfirm.length} payment_suggestion PENDING→CONFIRMED (invoice sudah PAID)`);
+      }
+    }
+  } catch (e) { console.error("[PAYMENT_RECONCILE]", e.message); }
+
   const cutoff = new Date(Date.now() - 14 * 86400000).toISOString();
 
   // Lindungi HANYA nomor dengan payment_suggestion PENDING yang masih BARU (<14 hari).
@@ -1934,15 +1954,29 @@ async function taskLogCleanup() {
       });
       return { error: error.message };
     }
-    const summary = (data || []).map(r => `${r.table_name}=${r.deleted_count}`).join(", ");
+    // Tabel di luar RPC observability — bersihkan langsung supaya tidak tumbuh tanpa batas:
+    // audit_log (retensi 60h via changed_at) & wa_webhook_raw (payload mentah Fonnte, retensi 7h).
+    const extra = [];
+    try {
+      const auditCutoff = new Date(Date.now() - 60 * 86400000).toISOString();
+      const { count: auditDel } = await sb.from("audit_log").delete({ count: "exact" }).lt("changed_at", auditCutoff);
+      extra.push(`audit_log=${auditDel || 0}`);
+    } catch (e) { console.error("[LOG_CLEANUP_AUDIT]", e.message); }
+    try {
+      const rawCutoff = new Date(Date.now() - 7 * 86400000).toISOString();
+      const { count: rawDel } = await sb.from("wa_webhook_raw").delete({ count: "exact" }).lt("created_at", rawCutoff);
+      extra.push(`wa_webhook_raw=${rawDel || 0}`);
+    } catch (e) { console.error("[LOG_CLEANUP_RAW]", e.message); }
+
+    const summary = [...(data || []).map(r => `${r.table_name}=${r.deleted_count}`), ...extra].join(", ");
     await logStructured(sb, {
       action: "LOG_CLEANUP",
       severity: "info",
       category: "cron",
       detail: summary || "Tidak ada log yang perlu dihapus",
-      metadata: { deleted: data },
+      metadata: { deleted: data, extra },
     });
-    return { deleted: data, summary };
+    return { deleted: data, extra, summary };
   } catch (err) {
     await logStructured(sb, {
       action: "LOG_CLEANUP",
