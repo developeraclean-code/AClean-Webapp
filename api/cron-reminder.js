@@ -936,46 +936,29 @@ async function taskWaCleanup() {
 
   const cutoff = new Date(Date.now() - 14 * 86400000).toISOString();
 
-  // Hapus wa_messages lama — kecuali yang masih ada payment_suggestions PENDING terkait
-  // Ambil phone yang masih punya suggestion aktif agar tidak dihapus dulu
+  // Lindungi HANYA nomor dengan payment_suggestion PENDING yang masih BARU (<14 hari).
+  // PENTING: dulu melindungi SEMUA PENDING (termasuk yang basi >14h = artefak antrian, invoice
+  // sebenarnya sudah lunas tapi status tak pernah jadi CONFIRMED). Akibatnya ratusan nomor basi
+  // melindungi hampir semua chat lama → cleanup hapus 0 pesan & data numpuk. Batasi ke <14h.
   const { data: pendingSugg } = await sb.from("payment_suggestions")
-    .select("phone").eq("status", "PENDING");
-  const protectedPhones = [...new Set((pendingSugg || []).map(p => p.phone))];
+    .select("phone").eq("status", "PENDING").gte("created_at", cutoff);
+  const protectedPhones = [...new Set((pendingSugg || []).map(p => p.phone).filter(Boolean))];
 
-  // Hapus messages lama — batchkan per phone yang tidak dilindungi
-  let msgsDeleted = 0;
-  const { data: oldMsgs, error: msgErr } = await sb.from("wa_messages")
-    .select("id, phone")
-    .lt("created_at", cutoff)
-    .limit(500);
+  // Hapus SEMUA wa_messages >14 hari sekaligus (kecuali nomor terlindungi) — DELETE by-condition,
+  // bukan fetch+limit kecil, supaya backlog tidak pernah menumpuk. Postgres tangani puluhan ribu
+  // baris dalam milidetik.
+  let msgQ = sb.from("wa_messages").delete({ count: "exact" }).lt("created_at", cutoff);
+  if (protectedPhones.length > 0) msgQ = msgQ.not("phone", "in", `(${protectedPhones.join(",")})`);
+  const { error: msgErr, count: msgsDeleted } = await msgQ;
+  if (msgErr) console.error("[WA_CLEANUP_MSG]", msgErr.message);
 
-  if (!msgErr && oldMsgs?.length > 0) {
-    const toDelete = oldMsgs.filter(m => !protectedPhones.includes(m.phone)).map(m => m.id);
-    if (toDelete.length > 0) {
-      const { error: delMsgErr } = await sb.from("wa_messages").delete().in("id", toDelete);
-      if (!delMsgErr) msgsDeleted = toDelete.length;
-      else console.error("[WA_CLEANUP_MSG]", delMsgErr.message);
-    }
-  }
+  let convQ = sb.from("wa_conversations").delete({ count: "exact" }).lt("updated_at", cutoff);
+  if (protectedPhones.length > 0) convQ = convQ.not("phone", "in", `(${protectedPhones.join(",")})`);
+  const { error: convErr, count: convsDeleted } = await convQ;
+  if (convErr) console.error("[WA_CLEANUP_CONV]", convErr.message);
 
-  // Hapus wa_conversations lama — updated_at > 14 hari dan bukan di protected phones
-  let convsDeleted = 0;
-  const { data: oldConvs, error: convErr } = await sb.from("wa_conversations")
-    .select("id, phone")
-    .lt("updated_at", cutoff)
-    .limit(200);
-
-  if (!convErr && oldConvs?.length > 0) {
-    const toDeleteConv = oldConvs.filter(c => !protectedPhones.includes(c.phone)).map(c => c.id);
-    if (toDeleteConv.length > 0) {
-      const { error: delConvErr } = await sb.from("wa_conversations").delete().in("id", toDeleteConv);
-      if (!delConvErr) convsDeleted = toDeleteConv.length;
-      else console.error("[WA_CLEANUP_CONV]", delConvErr.message);
-    }
-  }
-
-  await log("WA_CLEANUP", `${msgsDeleted} pesan & ${convsDeleted} conversations dihapus (>14 hari). ${protectedPhones.length} phone dilindungi (ada payment pending).`);
-  return { msgsDeleted, convsDeleted, protectedPhones: protectedPhones.length };
+  await log("WA_CLEANUP", `${msgsDeleted || 0} pesan & ${convsDeleted || 0} conversations dihapus (>14 hari). ${protectedPhones.length} phone dilindungi (payment pending <14h).`);
+  return { msgsDeleted: msgsDeleted || 0, convsDeleted: convsDeleted || 0, protectedPhones: protectedPhones.length };
 }
 
 // ══════════════════════════════════════════════════
