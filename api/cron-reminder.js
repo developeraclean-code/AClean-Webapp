@@ -2139,6 +2139,27 @@ export default async function handler(req, res) {
   if (!cronSecret && !internalSecret) return res.status(500).json({error:"Auth not configured"});
   if (!authorized) return res.status(401).json({error:"Unauthorized"});
 
+  // ── task=notify: relay teks → WA Owner (dipakai cloud agent terjadwal: Morning Brief / Ops Review) ──
+  // Tujuan SELALU OWNER_PHONE — bukan relay umum, jadi blast radius terbatas walau secret bocor.
+  // Tidak di-track di cron_runs (bukan scheduled task). Body: { "message": "..." }.
+  if ((req.query.task || "") === "notify") {
+    if (req.method !== "POST") return res.status(405).json({ ok:false, error:"POST required" });
+    try {
+      let body = req.body;
+      if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
+      if (!body || typeof body !== "object") body = {};
+      let message = (body.message ?? "").toString().trim();
+      if (!message) return res.status(400).json({ ok:false, error:"message kosong" });
+      if (message.length > 3500) message = message.slice(0, 3490) + "\n…(dipotong)";
+      const sent = await sendWA(OWNER_PHONE, message);
+      await log("NOTIFY", `WA ke Owner ${sent ? "terkirim" : "GAGAL"} (${message.length} char)`, sent ? "INFO" : "WARN");
+      return res.status(200).json({ ok: sent, task: "notify", chars: message.length });
+    } catch (err) {
+      await log("NOTIFY", `error: ${err.message}`, "ERROR");
+      return res.status(200).json({ ok:false, task:"notify", error: err.message });
+    }
+  }
+
   const task = req.query.task || "reminder";
 
   try {
