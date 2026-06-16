@@ -1254,9 +1254,23 @@ async function taskBackupData() {
   const tables = ["invoices", "orders", "customers", "service_reports"];
   const results = {};
 
+  // PostgREST membatasi 1000 baris/response → .limit(5000) TIDAK berlaku. Paginate via .range()
+  // agar backup LENGKAP (sebelumnya tabel >1000 baris terpotong diam-diam).
+  async function fetchAllRows(table) {
+    const PAGE = 1000;
+    const all = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await sb.from(table).select("*").order("created_at", { ascending: false }).range(from, from + PAGE - 1);
+      if (error) return { error };
+      all.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    return { data: all };
+  }
+
   for (const table of tables) {
     try {
-      const { data, error } = await sb.from(table).select("*").order("created_at", { ascending: false }).limit(5000);
+      const { data, error } = await fetchAllRows(table);
       if (error) { results[table] = "ERROR: " + error.message; continue; }
       const body = JSON.stringify({ exported_at: new Date().toISOString(), table, count: data.length, data });
       const r2Key2 = "backup/" + yearMonth + "/" + table + ".json";
@@ -1929,10 +1943,15 @@ async function taskPayrollWA() {
   }
 
   // Auto-update PENDING → ELIGIBLE bonuses yang sudah >30 hari
-  await sb.rpc("fn_auto_eligible_bonuses").catch(e => {
+  // PENTING: builder Supabase TIDAK punya .catch (cuma thenable) — pakai .catch langsung = crash
+  // "catch is not a function" (bug yang sama yang dulu bikin task backup gagal). Pakai await+try/catch.
+  try {
+    const { error: bonErr } = await sb.rpc("fn_auto_eligible_bonuses");
+    if (bonErr) throw new Error(bonErr.message);
+  } catch (e) {
     try { Sentry.captureException(e, { tags: { op: "fn_auto_eligible_bonuses" } }); } catch (_) {}
     console.error("[PAYROLL_WA] fn_auto_eligible_bonuses fail:", e.message);
-  });
+  }
 
   await log("PAYROLL_WA", `Sent=${sent} Failed=${failed} period=${periodStart}`, sent > 0 ? "SUCCESS" : "WARN");
   return { sent, failed, period: periodStart };
