@@ -17,134 +17,29 @@
     }
   ],
   "crons": [
-    {
-      "path": "/api/cron-reminder?task=stock",
-      "schedule": "0 1 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=reminder",
-      "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=daily",
-      "schedule": "0 14 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=weekly",
-      "schedule": "0 2 * * 0"
-    },
-    {
-      "path": "/api/cron-reminder?task=cleanup",
-      "schedule": "0 19 1 * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=wa-cleanup",
-      "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=bukti-bayar",
-      "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=bukti-bayar",
-      "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=bukti-bayar",
-      "schedule": "0 4 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=bukti-bayar",
-      "schedule": "0 5 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=bukti-bayar",
-      "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=bukti-bayar",
-      "schedule": "0 7 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=bukti-bayar",
-      "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=bukti-bayar",
-      "schedule": "0 9 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=bukti-bayar",
-      "schedule": "0 10 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=bukti-bayar",
-      "schedule": "0 11 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=backup",
-      "schedule": "0 2 * * 1"
-    },
-    {
-      "path": "/api/cron-reminder?task=auto-return-brought",
-      "schedule": "0 15 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=rating-prompt",
-      "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=servis-reminder",
-      "schedule": "0 1 * * 1"
-    },
-    {
-      "path": "/api/cron-reminder?task=voucher-expiry",
-      "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=laporan-stale",
-      "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=material-pulang-reminder",
-      "schedule": "0 15 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=payroll-wa",
-      "schedule": "0 11 * * 6"
-    },
-    {
-      "path": "/api/cron-reminder?task=log-cleanup",
-      "schedule": "30 20 * * 0"
-    },
-    {
-      "path": "/api/cron-reminder?task=morning-dispatch",
-      "schedule": "30 2 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=r2-cleanup-90d",
-      "schedule": "0 20 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=expense-foto-cleanup",
-      "schedule": "30 20 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=payment-proof-cleanup",
-      "schedule": "45 20 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=wa-snapshot",
-      "schedule": "0 13 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=snapshot-cleanup",
-      "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/cron-reminder?task=project-alerts",
-      "schedule": "15 2 * * *"
-    }
+    { "path": "/api/cron-reminder?task=stock",                    "schedule": "0 1 * * *" },
+    { "path": "/api/cron-reminder?task=servis-reminder",          "schedule": "20 1 * * 1" },
+    { "path": "/api/cron-reminder?task=weekly",                   "schedule": "40 1 * * 0" },
+    { "path": "/api/cron-reminder?task=backup",                   "schedule": "50 1 * * 1" },
+    { "path": "/api/cron-reminder?task=wa-cleanup",               "schedule": "0 2 * * *" },
+    { "path": "/api/cron-reminder?task=rating-prompt",            "schedule": "10 2 * * *" },
+    { "path": "/api/cron-reminder?task=project-alerts",           "schedule": "15 2 * * *" },
+    { "path": "/api/cron-reminder?task=morning-dispatch",         "schedule": "30 2 * * *" },
+    { "path": "/api/cron-reminder?task=reminder",                 "schedule": "0 3 * * *" },
+    { "path": "/api/cron-reminder?task=voucher-expiry",           "schedule": "15 3 * * *" },
+    { "path": "/api/cron-reminder?task=laporan-stale",            "schedule": "30 3 * * *" },
+    { "path": "/api/cron-reminder?task=snapshot-cleanup",         "schedule": "45 3 * * *" },
+    { "path": "/api/cron-reminder?task=payroll-wa",               "schedule": "30 11 * * 6" },
+    { "path": "/api/cron-reminder?task=wa-snapshot",              "schedule": "0 13 * * *" },
+    { "path": "/api/cron-reminder?task=daily",                    "schedule": "0 14 * * *" },
+    { "path": "/api/cron-reminder?task=auto-return-brought",      "schedule": "0 15 * * *" },
+    { "path": "/api/cron-reminder?task=material-pulang-reminder", "schedule": "20 15 * * *" },
+    { "path": "/api/cron-reminder?task=cleanup",                  "schedule": "0 19 1 * *" },
+    { "path": "/api/cron-reminder?task=r2-cleanup-90d",           "schedule": "0 20 * * *" },
+    { "path": "/api/cron-reminder?task=expense-foto-cleanup",     "schedule": "15 20 * * *" },
+    { "path": "/api/cron-reminder?task=log-cleanup",              "schedule": "30 20 * * 0" },
+    { "path": "/api/cron-reminder?task=payment-proof-cleanup",    "schedule": "45 20 * * *" },
+    { "path": "/api/cron-reminder?task=bukti-bayar",              "schedule": "0 2-11 * * *" }
   ],
   "functions": {
     "api/[route].js": {
