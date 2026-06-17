@@ -96,9 +96,9 @@ function minToPercent(minutes) {
 }
 
 // onDateChange: callback ke parent agar Planning Order ikut filter
-function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi, weekOrders, teknisiData, expandedId, setExpandedId, TODAY, onDateChange, onDragReassign }) {
+function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, weekOrders, teknisiData, dailySlots, expandedId, setExpandedId, TODAY, onDateChange, onDragReassign }) {
   const [selectedDate, setSelectedDate] = useState(weekDays.find(d => d.date === TODAY)?.date || weekDays[0]?.date);
-  const [dragOverTek, setDragOverTek] = useState(null); // nama teknisi yang sedang jadi drop target
+  const [dragOverSlot, setDragOverSlot] = useState(null); // nama slot yang sedang jadi drop target
 
   function selectDate(d) {
     setSelectedDate(d);
@@ -107,6 +107,18 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
 
   const currentDate = weekDays.find(d => d.date === selectedDate) ? selectedDate : weekDays[0]?.date;
   const dayOrders = weekOrders.filter(o => o.date === currentDate);
+
+  // Helper: ambil anggota slot untuk hari ini
+  function getSlotMembers(slotName) {
+    const s = (dailySlots || []).find(d => d.date === currentDate && d.slot === slotName);
+    if (!s) return [];
+    return [
+      s.member1 ? { name: s.member1, role: s.member1_role || "teknisi" } : null,
+      s.member2 ? { name: s.member2, role: s.member2_role || "helper" } : null,
+      s.member3 ? { name: s.member3, role: s.member3_role || "helper" } : null,
+      s.member4 ? { name: s.member4, role: s.member4_role || "helper" } : null,
+    ].filter(Boolean);
+  }
 
   return (
     <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
@@ -159,14 +171,14 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
       </div>
 
       {/* Timeline grid */}
-      {gridTeknisi.length === 0 ? (
+      {(teamSlots.every(s => dayOrders.filter(o => o.team_slot === s).length === 0) && dayOrders.filter(o => o.team_slot).length === 0) ? (
         <div style={{ textAlign: "center", color: cs.muted, padding: 32, fontSize: 13 }}>
-          Belum ada teknisi atau jadwal minggu ini
+          Belum ada jadwal hari ini
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
           {/* Header jam */}
-          <div style={{ display: "flex", marginLeft: 90, marginBottom: 4, position: "relative", minWidth: 560 }}>
+          <div style={{ display: "flex", marginLeft: 110, marginBottom: 4, position: "relative", minWidth: 560 }}>
             {GRID_HOURS.map(h => (
               <div key={h} style={{
                 flex: h === GRID_END ? "0 0 0px" : 1,
@@ -182,29 +194,38 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
             ))}
           </div>
 
-          {/* Baris per teknisi */}
-          {gridTeknisi.map(tek => {
-            const color = getTechColor(tek, teknisiData);
-            // Job selesai (REPORT_SUBMITTED/COMPLETED/dst) tetap ditampilkan tapi redup (lihat isDone),
-            // agar grid tidak terlihat kosong saat siang. Hanya CANCELLED yang disembunyikan.
-            const tekOrders = dayOrders.filter(o =>
-              hasValidTime(o.time) && o.teknisi === tek && o.status !== "CANCELLED"
+          {/* Baris per slot tim (Team/Project/Maintenance) */}
+          {teamSlots.map(slotName => {
+            const isProject = slotName.startsWith("Project");
+            const isMaintenance = slotName.startsWith("Maintenance");
+            const slotColor = isProject ? cs.ara : isMaintenance ? cs.yellow : cs.accent;
+
+            const members = getSlotMembers(slotName);
+            const slotOrders = dayOrders.filter(o =>
+              hasValidTime(o.time) && o.team_slot === slotName && o.status !== "CANCELLED"
             );
 
+            // Sembunyikan slot yang kosong (tidak ada order dan tidak ada anggota hari ini)
+            if (slotOrders.length === 0 && members.length === 0) return null;
 
             return (
-              <div key={tek} style={{ display: "flex", alignItems: "stretch", marginBottom: 6, minWidth: 650 }}>
-                {/* Nama teknisi */}
-                <div style={{ width: 90, flexShrink: 0, fontWeight: 700, color, fontSize: 11, paddingRight: 8, display: "flex", alignItems: "center", whiteSpace: "nowrap" }}>
-                  {tek}
+              <div key={slotName} style={{ display: "flex", alignItems: "stretch", marginBottom: 6, minWidth: 650 }}>
+                {/* Label slot */}
+                <div style={{ width: 110, flexShrink: 0, paddingRight: 8, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                  <div style={{ fontWeight: 800, color: slotColor, fontSize: 11, whiteSpace: "nowrap" }}>{slotName}</div>
+                  {members.length > 0 && (
+                    <div style={{ fontSize: 9, color: cs.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 100 }}>
+                      {members.map(m => m.name).join(" · ")}
+                    </div>
+                  )}
                 </div>
 
-                {/* Timeline bar — drop target untuk drag-and-drop reassign teknisi */}
+                {/* Timeline bar — drop target drag-and-drop pindah slot */}
                 <div
-                  style={{ flex: 1, position: "relative", height: 48, background: dragOverTek === tek ? cs.accent + "15" : "#22c55e08", border: "1px solid " + (dragOverTek === tek ? cs.accent + "88" : cs.border + "44"), borderRadius: 8, overflow: "visible", transition: "background 0.12s, border-color 0.12s" }}
-                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTek(tek); }}
-                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverTek(null); }}
-                  onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("orderId"); setDragOverTek(null); if (id && onDragReassign) onDragReassign(id, tek); }}
+                  style={{ flex: 1, position: "relative", height: 52, background: dragOverSlot === slotName ? cs.accent + "15" : "#22c55e08", border: "1px solid " + (dragOverSlot === slotName ? cs.accent + "88" : cs.border + "44"), borderRadius: 8, overflow: "visible", transition: "background 0.12s, border-color 0.12s" }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverSlot(slotName); }}
+                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverSlot(null); }}
+                  onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("orderId"); setDragOverSlot(null); if (id && onDragReassign) onDragReassign(id, slotName); }}
                 >
                   {/* Grid garis jam */}
                   {GRID_HOURS.map(h => (
@@ -224,25 +245,21 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                   }} />
 
                   {/* Order blocks */}
-                  {tekOrders.map(o => {
+                  {slotOrders.map(o => {
                     const startMin = toMinutes(o.time);
                     if (startMin === null) return null;
-                    // Pakai time_end manual jika ada, fallback ke durasi otomatis
                     const timeEndMin = toMinutes(o.time_end);
                     const durMin = (timeEndMin !== null && timeEndMin > startMin)
                       ? timeEndMin - startMin
                       : Math.round(hitungDurasi(o.service, o.units) * 60);
                     const endMin = startMin + durMin;
 
-                    // Clamp ke grid
                     const leftPct = minToPercent(startMin);
                     const widthPct = minToPercent(endMin) - leftPct;
 
-                    // Job yang sudah selesai/jalan ke tahap akhir → tampil redup, tidak ikut cek konflik
                     const isDone = ["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED"].includes(o.status);
 
-                    // Konflik: overlap dengan order AKTIF lain di teknisi yang sama (job selesai diabaikan)
-                    const isConflict = !isDone && tekOrders.some(o2 => {
+                    const isConflict = !isDone && slotOrders.some(o2 => {
                       if (o2.id === o.id) return false;
                       if (["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED","CANCELLED"].includes(o2.status)) return false;
                       const s2 = toMinutes(o2.time);
@@ -254,24 +271,24 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                       return startMin < e2 && endMin > s2;
                     });
 
-                    // Jam selesai display
                     const endH = Math.floor(endMin / 60);
                     const endM = endMin % 60;
                     const endStr = String(endH).padStart(2,"0") + ":" + String(endM).padStart(2,"0");
+                    const blockColor = o.teknisi ? getTechColor(o.teknisi, teknisiData) : slotColor;
 
                     return (
                       <div key={o.id}
                         draggable={!isDone && !!onDragReassign}
                         onDragStart={(e) => { e.dataTransfer.setData("orderId", o.id); e.dataTransfer.effectAllowed = "move"; }}
                         onClick={() => setExpandedId(expandedId === o.id ? null : o.id)}
-                        title={`${o.customer} · ${o.time?.slice(0,5)}–${endStr} · ${o.service}${o.units > 1 ? " ×"+o.units : ""}${onDragReassign && !isDone ? "\n⟵ Drag ke baris teknisi lain untuk reassign" : ""}`}
+                        title={`${o.customer} · ${o.time?.slice(0,5)}–${endStr} · ${o.service}${o.units > 1 ? " ×"+o.units : ""}${onDragReassign && !isDone ? "\n⟵ Drag ke baris tim lain untuk pindah slot" : ""}`}
                         style={{
                           position: "absolute",
                           left: leftPct + "%",
                           width: Math.max(widthPct, 2) + "%",
                           top: 3, bottom: 3,
-                          background: isDone ? cs.muted + "1f" : (isConflict ? cs.red + "33" : color + "28"),
-                          border: "2px solid " + (isDone ? cs.border : (isConflict ? cs.red + "99" : color + "88")),
+                          background: isDone ? cs.muted + "1f" : (isConflict ? cs.red + "33" : blockColor + "28"),
+                          border: "2px solid " + (isDone ? cs.border : (isConflict ? cs.red + "99" : blockColor + "88")),
                           borderRadius: 6,
                           cursor: isDone ? "default" : onDragReassign ? "grab" : "pointer",
                           overflow: "hidden",
@@ -281,27 +298,26 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                           zIndex: isConflict ? 2 : 1,
                           boxSizing: "border-box",
                         }}>
-                        <div style={{ color: isDone ? cs.muted : color, fontWeight: 800, fontSize: 9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {isDone && "✓ "}{o.time?.slice(0,5)}–{endStr}
-                          {isConflict && " ⚠️"}
+                        <div style={{ color: isDone ? cs.muted : blockColor, fontWeight: 800, fontSize: 9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {isDone && "✓ "}{o.time?.slice(0,5)}–{endStr}{isConflict && " ⚠️"}
                         </div>
                         <div style={{ color: cs.text, fontWeight: 700, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: isDone ? "line-through" : "none" }}>
                           {o.customer}
                         </div>
-                        <div style={{ color: cs.muted, fontSize: 9, whiteSpace: "nowrap" }}>
-                          {o.service}{o.units > 1 ? ` ×${o.units}` : ""}
+                        <div style={{ color: cs.muted, fontSize: 9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {o.teknisi || "?"} · {o.service}{o.units > 1 ? ` ×${o.units}` : ""}
                         </div>
 
-                        {/* Expanded detail */}
                         {expandedId === o.id && (
                           <div style={{
                             position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 4,
-                            background: cs.surface, border: "1px solid " + (isConflict ? cs.red + "88" : color + "66"),
-                            borderRadius: 8, padding: "8px 10px", minWidth: 180, boxShadow: "0 4px 20px #0008",
+                            background: cs.surface, border: "1px solid " + (isConflict ? cs.red + "88" : blockColor + "66"),
+                            borderRadius: 8, padding: "8px 10px", minWidth: 190, boxShadow: "0 4px 20px #0008",
                           }} onClick={e => e.stopPropagation()}>
                             <div style={{ fontWeight: 800, fontSize: 12, color: cs.text, marginBottom: 4 }}>{o.customer}</div>
                             <div style={{ fontSize: 11, color: cs.muted }}>{o.time?.slice(0,5)} – {endStr} ({Math.round(durMin/60*10)/10} jam)</div>
                             <div style={{ fontSize: 11, color: cs.muted }}>{o.service}{o.units > 1 ? ` · ${o.units} unit` : ""}</div>
+                            {o.teknisi && <div style={{ fontSize: 11, color: blockColor, fontWeight: 700, marginTop: 2 }}>{o.teknisi}{o.helper ? ` · ${o.helper}` : ""}</div>}
                             {o.address && <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{o.address}</div>}
                             <div style={{ marginTop: 4 }}><StatusBadge status={o.status} /></div>
                             {isConflict && <div style={{ color: cs.red, fontSize: 10, fontWeight: 800, marginTop: 4 }}>⚠️ Waktu bentrok dengan order lain</div>}
@@ -315,16 +331,16 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
             );
           })}
 
-          {/* Baris "Belum Diassign" — order di hari ini yang belum punya teknisi atau jam */}
+          {/* Baris "Belum Diassign" — order tanpa team_slot atau tanpa jam */}
           {(() => {
             const unassigned = dayOrders.filter(o =>
-              (!o.teknisi || !hasValidTime(o.time)) &&
+              (!o.team_slot || !hasValidTime(o.time)) &&
               !["CANCELLED","COMPLETED","VERIFIED","REPORT_SUBMITTED"].includes(o.status)
             );
             if (unassigned.length === 0) return null;
             return (
               <div style={{ display: "flex", alignItems: "center", marginTop: 8, minWidth: 650 }}>
-                <div style={{ width: 90, flexShrink: 0, fontWeight: 700, color: cs.yellow, fontSize: 11, paddingRight: 8, whiteSpace: "nowrap" }}>
+                <div style={{ width: 110, flexShrink: 0, fontWeight: 700, color: cs.yellow, fontSize: 11, paddingRight: 8, whiteSpace: "nowrap" }}>
                   ⚠️ Belum
                 </div>
                 <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: 5, background: cs.yellow + "08", border: "1px dashed " + cs.yellow + "55", borderRadius: 8, padding: "6px 8px", minHeight: 36 }}>
@@ -333,7 +349,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                       onClick={() => setExpandedId(expandedId === o.id ? null : o.id)}
                       style={{ background: cs.yellow + "18", border: "1px solid " + cs.yellow + "55", borderRadius: 6, padding: "3px 8px", cursor: "pointer", position: "relative" }}>
                       <div style={{ fontSize: 9, color: cs.yellow, fontWeight: 800 }}>
-                        {o.time ? o.time.slice(0,5) : "—:——"} · {o.teknisi || "Teknisi?"}
+                        {o.time ? o.time.slice(0,5) : "—:——"} · {o.team_slot || o.teknisi || "Tim?"}
                       </div>
                       <div style={{ fontSize: 10, color: cs.text, fontWeight: 700 }}>{o.customer}</div>
                       <div style={{ fontSize: 9, color: cs.muted }}>{o.service}{o.units > 1 ? ` ×${o.units}` : ""}</div>
@@ -342,13 +358,13 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                           onClick={e => e.stopPropagation()}>
                           <div style={{ fontWeight: 800, fontSize: 12, color: cs.text, marginBottom: 4 }}>{o.customer}</div>
                           <div style={{ fontSize: 11, color: cs.yellow }}>
-                            {!o.teknisi && "⚠️ Belum ada teknisi"}
-                            {!o.time && (!o.teknisi ? " · " : "") + "⚠️ Belum ada jam"}
+                            {!o.team_slot && "⚠️ Belum ada tim"}
+                            {!o.time && (!o.team_slot ? " · " : "") + "⚠️ Belum ada jam"}
                           </div>
                           <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{o.service}{o.units > 1 ? ` · ${o.units} unit` : ""}</div>
                           {o.address && <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{o.address}</div>}
                           <div style={{ marginTop: 4 }}><StatusBadge status={o.status} /></div>
-                          <div style={{ fontSize: 10, color: cs.muted, marginTop: 4, fontStyle: "italic" }}>Edit di Planning Order di bawah untuk assign teknisi & jam</div>
+                          <div style={{ fontSize: 10, color: cs.muted, marginTop: 4, fontStyle: "italic" }}>Edit di Planning Order di bawah untuk assign tim & jam</div>
                         </div>
                       )}
                     </div>
@@ -797,8 +813,12 @@ function calcTimeEnd(timeStart, service, units) {
   return String(nh).padStart(2, "0") + ":" + String(nm).padStart(2, "0");
 }
 
-// Minimal 10 slot tim; tim ekstra (>10) ditambah dinamis dari team_presets
-const TEAM_SLOTS_BASE = Array.from({ length: 10 }, (_, i) => `Team ${String(i + 1).padStart(2, "0")}`);
+// Slot tim tetap: Team 01-10 + Project 01-03 + Maintenance 01-02; ekstra dari team_presets
+const TEAM_SLOTS_BASE = [
+  ...Array.from({ length: 10 }, (_, i) => `Team ${String(i + 1).padStart(2, "0")}`),
+  "Project 01", "Project 02", "Project 03",
+  "Maintenance 01", "Maintenance 02",
+];
 const MEMBER_ROLES = ["teknisi", "helper"];
 const EMPTY_SLOT = { member1: "", member1_role: "teknisi", member2: "", member2_role: "helper", member3: "", member3_role: "helper", member4: "", member4_role: "helper", confirmed: false };
 
@@ -1800,16 +1820,14 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     setOrdersData(prev => prev.map(o => o.id === order.id ? { ...o, ...update } : o));
   }
 
-  // ── Drag-and-drop reassign: geser blok order ke baris teknisi lain di TimeGrid ──
-  async function handleDragReassign(orderId, newTeknisi) {
+  // ── Drag-and-drop: geser blok order ke baris slot lain di TimeGrid ──
+  // Memanggil handleQuickAssign("team_slot") sehingga teknisi/helper otomatis ter-propagate
+  // dari anggota slot tujuan (sama persis dengan update manual di DailyTeamPanel).
+  async function handleDragReassign(orderId, newSlot) {
     const order = ordersData.find(o => o.id === orderId);
-    if (!order || order.teknisi === newTeknisi) return;
-    const { error } = await supabase.from("orders")
-      .update({ teknisi: newTeknisi, last_changed_by: auditUserName() })
-      .eq("id", orderId);
-    if (error) return showNotif("Gagal reassign: " + error.message, "error");
-    setOrdersData(prev => prev.map(o => o.id === orderId ? { ...o, teknisi: newTeknisi } : o));
-    showNotif(`${order.customer} → ${newTeknisi}`);
+    if (!order || order.team_slot === newSlot) return;
+    await handleQuickAssign(order, "team_slot", newSlot);
+    showNotif(`${order.customer} → ${newSlot}`);
   }
 
   // ── Inbox list — hanya today + ke depan; bila gridDate aktif, filter ke hari itu ──
@@ -2194,8 +2212,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       {/* ═══ TIME GRID JADWAL MINGGUAN ═══ */}
       <TimeGrid
         weekDays={weekDays} weekLabel={weekLabel} weekOffset={weekOffset}
-        setWeekOffset={setWeekOffset} gridTeknisi={gridTeknisi}
+        setWeekOffset={setWeekOffset} teamSlots={TEAM_SLOTS}
         weekOrders={weekOrders} teknisiData={teknisiData}
+        dailySlots={dailySlots}
         expandedId={expandedId} setExpandedId={setExpandedId}
         TODAY={TODAY}
         onDateChange={d => setGridDate(d)}
