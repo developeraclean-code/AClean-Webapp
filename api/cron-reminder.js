@@ -2026,6 +2026,80 @@ async function taskLogCleanup() {
 }
 
 // ══════════════════════════════════════════════════
+// TASK: maintenance-followup-alert — 10:00 WIB harian
+// Cari followup maintenance dengan status 'open' lebih dari 3 hari → WA alert ke Owner.
+// Pattern: sama seperti laporan-stale. Toggle: maintenance_followup_alert_enabled
+// ══════════════════════════════════════════════════
+async function taskMaintenanceFollowupAlert() {
+  const { data: togData } = await sb.from("app_settings").select("key,value")
+    .in("key", ["maintenance_followup_alert_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "maintenance_followup_alert_enabled") || togMap["maintenance_followup_alert_enabled"] !== "true") {
+    await log("MAINTENANCE_FOLLOWUP_ALERT", "Dilewati — maintenance_followup_alert_enabled OFF", "INFO");
+    return { skipped: true };
+  }
+
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const { data: stale } = await sb
+    .from("maintenance_followups")
+    .select("id,issue_type,description,found_date,found_by,priority,maintenance_units(unit_code,location),maintenance_clients(name)")
+    .eq("status", "open")
+    .lte("found_date", threeDaysAgo)
+    .order("priority", { ascending: true })   // critical dulu
+    .order("found_date", { ascending: true })
+    .limit(30);
+
+  if (!stale?.length) {
+    await log("MAINTENANCE_FOLLOWUP_ALERT", "Tidak ada followup open >3 hari", "INFO");
+    return { checked: true, staleCount: 0 };
+  }
+
+  const ISSUE_LABEL = {
+    kapasitor_rusak: "Kapasitor Rusak",
+    bocor_freon: "Bocor Freon",
+    kompresor_lemah: "Kompresor Lemah",
+    drain_tersumbat: "Drain Tersumbat",
+    pcb_rusak: "PCB Rusak",
+    filter_buntu: "Filter Buntu",
+    fan_motor_lemah: "Fan Motor Lemah",
+    lainnya: "Temuan Lain",
+  };
+  const PRIORITY_ICON = { critical: "🔴", high: "🟠", normal: "🟡", low: "⚪" };
+
+  const tgl = new Date(Date.now() + 7 * 60 * 60 * 1000).toLocaleDateString("id-ID", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  let msg = `🔧 *FOLLOWUP MAINTENANCE BELUM DITANGANI*\n${tgl}\n\n`;
+  msg += `${stale.length} temuan lapangan sudah >3 hari belum selesai:\n\n`;
+
+  stale.forEach((f, i) => {
+    const unit = f.maintenance_units;
+    const client = f.maintenance_clients;
+    const hariLewat = Math.floor((Date.now() - new Date(f.found_date).getTime()) / (1000 * 60 * 60 * 24));
+    const icon = PRIORITY_ICON[f.priority] || "🟡";
+    msg += `${i + 1}. ${icon} *${ISSUE_LABEL[f.issue_type] || f.issue_type}*\n`;
+    msg += `   Unit: ${unit?.unit_code || "?"} — ${unit?.location || "?"}\n`;
+    if (client?.name) msg += `   Klien: ${client.name}\n`;
+    msg += `   Ditemukan: ${f.found_date} (${hariLewat} hari lalu)`;
+    if (f.found_by) msg += ` oleh ${f.found_by}`;
+    msg += "\n";
+    if (f.description) msg += `   Catatan: ${f.description}\n`;
+    msg += "\n";
+  });
+
+  msg += `_Segera tindak lanjuti atau buat quotasi ke klien. — ARA AClean_`;
+
+  // Tandai wa_alerted_at untuk semua yang baru saja di-alert (anti spam harian)
+  const alertIds = stale.map(f => f.id);
+  await sb.from("maintenance_followups")
+    .update({ wa_alerted_at: new Date().toISOString() })
+    .in("id", alertIds)
+    .is("wa_alerted_at", null);   // hanya yang belum pernah di-alert hari ini
+
+  const waSent = await sendWA(OWNER_PHONE, msg);
+  await log("MAINTENANCE_FOLLOWUP_ALERT", `Alert: ${stale.length} followup open >3 hari`, waSent ? "SUCCESS" : "WARNING");
+  return { staleCount: stale.length, waSent };
+}
+
+// ══════════════════════════════════════════════════
 // TASK: tick — DISPATCHER untuk Vercel Hobby (cron native tak andal, maks 2/hari).
 // Dipanggil sering dari luar (GitHub Actions per jam). Cek jam WIB → jalankan task yang
 // jadwalnya sudah tiba hari ini & BELUM sukses hari ini (catch-up, idempoten via cron_runs).
@@ -2056,8 +2130,9 @@ async function taskTick() {
     { t: "morning-dispatch",         fn: taskMorningDispatch,        h: 9 },
     { t: "reminder",                 fn: taskReminder,               h: 10 },
     { t: "voucher-expiry",           fn: taskVoucherExpiryReminder,  h: 10 },
-    { t: "laporan-stale",            fn: taskLaporanStaleAlert,      h: 10 },
-    { t: "snapshot-cleanup",         fn: taskSnapshotCleanup,        h: 10 },
+    { t: "laporan-stale",              fn: taskLaporanStaleAlert,          h: 10 },
+    { t: "maintenance-followup-alert", fn: taskMaintenanceFollowupAlert,   h: 10 },
+    { t: "snapshot-cleanup",           fn: taskSnapshotCleanup,            h: 10 },
     { t: "payroll-wa",               fn: taskPayrollWA,              h: 18, dow: 6 },
     { t: "wa-snapshot",              fn: taskWaSnapshot,             h: 20 },
     { t: "daily",                    fn: taskDaily,                  h: 21 },
@@ -2179,8 +2254,9 @@ export default async function handler(req, res) {
       "rating-prompt":    taskRatingPrompt,
       "servis-reminder":  taskServisReminder,
       "voucher-expiry":   taskVoucherExpiryReminder,
-      "laporan-stale":    taskLaporanStaleAlert,
-      "material-pulang-reminder": taskMaterialPulangReminder,
+      "laporan-stale":              taskLaporanStaleAlert,
+      "maintenance-followup-alert": taskMaintenanceFollowupAlert,
+      "material-pulang-reminder":   taskMaterialPulangReminder,
       "payroll-wa":       taskPayrollWA,
       "log-cleanup":      taskLogCleanup,
       "auto-return-brought": taskAutoReturnBrought,

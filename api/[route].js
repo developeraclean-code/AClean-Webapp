@@ -3648,6 +3648,71 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           return res.status(200).json({ ok: true });
         }
 
+        // ---- FOLLOW-UP ACTIONS ----
+        // Tracking temuan lapangan (kapasitor rusak, bocor freon, dll) per unit.
+        if (action === "list-followups") {
+          const { client_id, unit_id, status: fStatus } = body;
+          if (!client_id) return res.status(400).json({ error: "client_id wajib" });
+          let q = "maintenance_followups?client_id=eq." + encodeURIComponent(client_id) + "&order=found_date.desc&select=*,maintenance_units(unit_code,location,brand)";
+          if (unit_id) q += "&unit_id=eq." + encodeURIComponent(unit_id);
+          if (fStatus) q += "&status=eq." + encodeURIComponent(fStatus);
+          const fRes = await fetch(REST(q), { headers });
+          if (!fRes.ok) return res.status(400).json({ error: "Gagal fetch followups" });
+          return res.status(200).json({ followups: await fRes.json() });
+        }
+        if (action === "create-followup") {
+          const { unit_id, client_id, issue_type, description: fDesc, found_by, priority, log_id, estimated_cost } = body;
+          if (!unit_id || !client_id || !issue_type) return res.status(400).json({ error: "unit_id, client_id, issue_type wajib" });
+          const payload = { unit_id, client_id, issue_type, found_by: found_by || null, priority: priority || "normal", status: "open", found_date: body.found_date || new Date().toISOString().slice(0, 10) };
+          if (fDesc) payload.description = fDesc;
+          if (log_id) payload.log_id = log_id;
+          if (estimated_cost) payload.estimated_cost = estimated_cost;
+          const fRes = await fetch(REST("maintenance_followups"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
+          if (!fRes.ok) return res.status(400).json({ error: "Gagal buat followup", detail: await fRes.text() });
+          return res.status(200).json({ followup: (await fRes.json())[0] });
+        }
+        if (action === "update-followup") {
+          const { id: fId, status: fStatus, resolved_by, resolution } = body;
+          if (!fId) return res.status(400).json({ error: "id wajib" });
+          const patch = {};
+          if (fStatus) patch.status = fStatus;
+          if (resolved_by) patch.resolved_by = resolved_by;
+          if (resolution) patch.resolution = resolution;
+          if (fStatus === "done" && !patch.resolved_date) patch.resolved_date = new Date().toISOString().slice(0, 10);
+          const fRes = await fetch(REST("maintenance_followups?id=eq." + encodeURIComponent(fId)), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(patch) });
+          if (!fRes.ok) return res.status(400).json({ error: "Gagal update followup", detail: await fRes.text() });
+          return res.status(200).json({ followup: (await fRes.json())[0] });
+        }
+
+        // ---- PRE-SERVICE MANIFEST ----
+        // Perencanaan penugasan tim SEBELUM berangkat ke lokasi.
+        if (action === "create-manifest") {
+          const { client_id, service_date, order_id: mOid, notes: mNotes, items } = body;
+          if (!client_id || !service_date) return res.status(400).json({ error: "client_id & service_date wajib" });
+          // Upsert manifest (1 per klien per hari)
+          const mPayload = { client_id, service_date, status: "draft" };
+          if (mOid) mPayload.order_id = mOid;
+          if (mNotes) mPayload.notes = mNotes;
+          if (body.created_by) mPayload.created_by = body.created_by;
+          const mRes = await fetch(REST("pre_service_manifests"), { method: "POST", headers: { ...headers, Prefer: "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(mPayload) });
+          if (!mRes.ok) return res.status(400).json({ error: "Gagal buat manifest", detail: await mRes.text() });
+          const manifest = (await mRes.json())[0];
+          // Insert items jika dikirim sekaligus
+          if (Array.isArray(items) && items.length) {
+            const itemRows = items.map(it => ({ manifest_id: manifest.id, unit_id: it.unit_id, team_label: it.team_label || null, technician: it.technician || null, helper: it.helper || null, service_category: it.service_category || "cuci_rutin" }));
+            await fetch(REST("pre_service_manifest_items"), { method: "POST", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify(itemRows) });
+          }
+          return res.status(200).json({ manifest });
+        }
+        if (action === "get-manifest") {
+          const { client_id, service_date } = body;
+          if (!client_id || !service_date) return res.status(400).json({ error: "client_id & service_date wajib" });
+          const mRes = await fetch(REST("pre_service_manifests?client_id=eq." + encodeURIComponent(client_id) + "&service_date=eq." + encodeURIComponent(service_date) + "&select=*,pre_service_manifest_items(*)&limit=1"), { headers });
+          if (!mRes.ok) return res.status(400).json({ error: "Gagal fetch manifest" });
+          const rows = await mRes.json();
+          return res.status(200).json({ manifest: rows[0] || null });
+        }
+
         // ---- INVOICE B2B (GROUP) ----
         // Buat 1 invoice gabungan dari beberapa log servis yang dipilih.
         // Harga per unit: l.cost jika ada; fallback ke price_list (Cleaning, PK-based).
@@ -3893,8 +3958,25 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           const SVC_MAP = { "Cleaning": "Cuci", "Cuci AC": "Cuci", "Install": "Pasang", "Pasang": "Pasang", "Bongkar Pasang": "Pasang", "Repair": "Perbaikan", "Perbaikan": "Perbaikan", "Isi Freon": "Isi Freon", "Survey": "Cek" };
           const svcType = SVC_MAP[order.service] || order.service || "Maintenance";
 
-          // Buat 1 log per unit — units_json positional sejajar maintenance_unit_ids (preset dari Planning Order)
-          const rows = unitIds.map((uid, i) => {
+          // Cap unitIds ke jumlah unit yang benar-benar dilaporkan di laporan teknisi.
+          // Tanpa ini: 12 unit direncanakan tapi 10 dilaporkan → 12 log dibuat (2 log hantu).
+          // Jika repUnits kosong (laporan belum masuk), tetap pakai semua unitIds.
+          const effectiveUnitIds = repUnits.length > 0 && repUnits.length < unitIds.length
+            ? unitIds.slice(0, repUnits.length)
+            : unitIds;
+
+          // Map svcType → service_category (billing classifier)
+          const SVC_CATEGORY_MAP = {
+            "Cuci": "cuci_rutin", "Cuci AC": "cuci_rutin",
+            "Perbaikan": "perbaikan", "Repair": "perbaikan",
+            "Pasang": "perbaikan", "Bongkar Pasang": "perbaikan",
+            "Isi Freon": "perbaikan",
+            "Cek": "pengecekan", "Survey": "pengecekan", "Inspeksi": "inspeksi",
+          };
+          const svcCategory = SVC_CATEGORY_MAP[svcType] || "cuci_rutin";
+
+          // Buat 1 log per unit yang benar-benar dikerjakan (effectiveUnitIds, bukan semua planned)
+          const rows = effectiveUnitIds.map((uid, i) => {
             const lu = repUnits[i] || null;
             // Deskripsi per-AC dari laporan
             let desc = `Servis via order ${order.id}`;
@@ -3920,6 +4002,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
               client_id: clientId,
               service_date: order.date || new Date().toISOString().slice(0, 10),
               service_type: svcType,
+              service_category: svcCategory,
               technician: order.teknisi || null,
               description: desc,
               materials: mats,
@@ -3931,7 +4014,12 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           });
           const r = await fetch(REST("maintenance_logs"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(rows) });
           if (!r.ok) return res.status(400).json({ error: "Gagal auto-log", detail: await r.text() });
-          return res.status(200).json({ created: (await r.json()).length, enriched: { photos: repFotos.length, units_detail: repUnits.length } });
+          const capped = repUnits.length > 0 && repUnits.length < unitIds.length;
+          return res.status(200).json({
+            created: (await r.json()).length,
+            enriched: { photos: repFotos.length, units_detail: repUnits.length },
+            ...(capped ? { capped_from: unitIds.length, capped_to: effectiveUnitIds.length, reason: "hanya unit yang dilaporkan di laporan teknisi" } : {}),
+          });
         }
 
         return res.status(400).json({ error: "Action tidak dikenal: " + action });
