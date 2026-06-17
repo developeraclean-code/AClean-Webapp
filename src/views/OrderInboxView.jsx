@@ -1787,9 +1787,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   async function handleQuickAssign(order, field, value) {
     let update = { [field]: value || null, last_changed_by: auditUserName() };
 
-    // Jika ganti team_slot → propagate teknisi & helper dari anggota slot baru ke order
-    // Prioritas: slot harian → teamPresets
-    if (field === "team_slot" && value) {
+    // Project order: team_slot hanya sebagai pengelompokan di Time Grid —
+    // JANGAN overwrite teknisi/helper yang sudah diisi lewat ProjectCard
+    if (field === "team_slot" && order.project_id) {
+      // hanya update team_slot, biarkan TFIELDS/HFIELDS tetap
+    } else if (field === "team_slot" && value) {
+      // Regular order: propagate anggota slot → teknisi & helper
       const slot = getSlotData(order.date, value);
       const members = slot ? slotMemberRoles(slot) : [];
       if (members.length > 0) {
@@ -1803,14 +1806,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           helper3: helpers[2]?.name || null,
         };
       } else if (teamPresets[value]) {
-        // Fallback ke preset
         update = { ...update, teknisi: teamPresets[value], helper: null, helper2: null, helper3: null };
       } else {
         showNotif("⚠️ Tim " + value + " belum punya anggota & belum ada preset", "warning");
       }
-    }
-    // Jika clear team_slot → reset teknisi & helper juga
-    if (field === "team_slot" && !value) {
+    } else if (field === "team_slot" && !value && !order.project_id) {
+      // Clear team_slot pada regular order → reset teknisi & helper juga
       update = { ...update, teknisi: null, helper: null, helper2: null, helper3: null };
     }
 
@@ -2471,7 +2472,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                           </div>
                         )}
                       </>
-                      )}
                     </td>
 
                     {/* Status — dengan visual Opsi B */}
