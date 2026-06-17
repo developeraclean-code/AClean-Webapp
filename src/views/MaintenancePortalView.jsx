@@ -7,7 +7,17 @@ const API = "/api";
 function fmtRp(n) { return n == null ? "" : "Rp " + Number(n).toLocaleString("id-ID"); }
 function fmtDate(d) { if (!d) return "—"; try { return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }); } catch { return d; } }
 
-const STATUS = { active: ["#16a34a", "Aktif"], rusak: ["#dc2626", "Rusak"], retired: ["#64748b", "Retired"] };
+const STATUS = {
+  active:          ["#16a34a", "Aktif"],
+  baru:            ["#0369a1", "AC Baru"],
+  perlu_perbaikan: ["#dc2626", "Perlu Perbaikan"],
+  dalam_perbaikan: ["#b45309", "Sedang Diperbaiki"],
+  nonaktif:        ["#64748b", "Nonaktif"],
+  rusak:           ["#dc2626", "Rusak"],
+  retired:         ["#64748b", "Retired"],
+};
+const ISSUE_LABEL = { kapasitor_rusak: "Kapasitor Rusak", bocor_freon: "Bocor Freon", kompresor_lemah: "Kompresor Lemah", drain_tersumbat: "Drain Tersumbat", pcb_rusak: "PCB Rusak", filter_buntu: "Filter Buntu", fan_motor_lemah: "Motor Kipas", lainnya: "Lainnya" };
+const PRIORITY_COLOR = { critical: "#dc2626", high: "#ea580c", normal: "#ca8a04", low: "#16a34a" };
 
 function daysUntil(dateStr) {
   if (!dateStr) return null;
@@ -51,20 +61,22 @@ export default function MaintenancePortalView({ token }) {
   if (state.error === "TOKEN_EXPIRED") return <Screen icon="⏳" title="Link Kedaluwarsa" sub="Masa berlaku portal sudah berakhir. Minta link baru ke Aclean." />;
   if (state.error) return <Screen icon="⚠️" title="Tidak Ditemukan" sub={state.msg || "Link portal tidak valid."} />;
 
-  const { client, units = [], logs = [] } = state;
+  const { client, units = [], logs = [], followups = [], contract = null, summary = {} } = state;
   const active = units.filter(u => u.status === "active").length;
   const logsOf = (uid) => logs.filter(l => l.unit_id === uid);
+  const followupsOf = (uid) => followups.filter(f => f.unit_id === uid);
   const shown = units.filter(u =>
     (u.unit_code + (u.location || "") + (u.brand || "")).toLowerCase().includes(q.toLowerCase()));
 
   // Hitung ringkasan PM
   const today = new Date().toISOString().slice(0, 10);
-  const overdueCount = units.filter(u => u.next_service_date && u.next_service_date < today).length;
-  const dueSoonCount = units.filter(u => {
+  const overdueCount = summary.overdue ?? units.filter(u => u.next_service_date && u.next_service_date < today && u.status === "active").length;
+  const dueSoonCount = summary.due_soon ?? units.filter(u => {
     if (!u.next_service_date) return false;
     const d = daysUntil(u.next_service_date);
     return d !== null && d >= 0 && d <= 14;
   }).length;
+  const [portalTab, setPortalTab] = useState("dashboard");
 
   return (
     <div style={{ minHeight: "100vh", background: "#f1f5f9", fontFamily: "system-ui,-apple-system,sans-serif" }}>
@@ -77,25 +89,101 @@ export default function MaintenancePortalView({ token }) {
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
             <Stat n={units.length} l="Unit" />
             <Stat n={active} l="Aktif" />
-            <Stat n={logs.length} l="Servis" />
+            <Stat n={summary.perlu_perbaikan ?? units.filter(u => u.status === "perlu_perbaikan").length} l="Perlu Perbaikan" warn={summary.perlu_perbaikan > 0} />
             {overdueCount > 0 && <Stat n={overdueCount} l="PM Terlambat" warn />}
-            {dueSoonCount > 0 && <Stat n={dueSoonCount} l="Due 14hr" soon />}
+            {(summary.open_issues ?? 0) > 0 && <Stat n={summary.open_issues} l="Temuan" soon />}
           </div>
         </div>
 
+        {/* Tab nav */}
+        <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", background: "#fff" }}>
+          {[["dashboard","📊 Ringkasan"],["units","📋 Unit"],["issues","🔧 Temuan"]].map(([k,l]) => (
+            <button key={k} onClick={() => setPortalTab(k)}
+              style={{ flex:1, padding:"12px 6px", fontSize:12, fontWeight:700, background:"none", border:"none", borderBottom: portalTab===k ? "2px solid #0369a1" : "2px solid transparent", color: portalTab===k ? "#0369a1" : "#64748b", cursor:"pointer" }}>
+              {l}
+            </button>
+          ))}
+        </div>
+
         <div style={{ padding: 16 }}>
-          {/* Alert PM overdue */}
-          {overdueCount > 0 && (
-            <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13 }}>
-              <b style={{ color: "#dc2626" }}>⚠️ {overdueCount} unit perlu dijadwalkan service</b>
-              <div style={{ color: "#6b7280", fontSize: 12, marginTop: 2 }}>Hubungi tim AClean untuk menjadwalkan perawatan.</div>
+
+          {/* ── DASHBOARD TAB ── */}
+          {portalTab === "dashboard" && (
+            <div>
+              {/* Alert PM overdue */}
+              {overdueCount > 0 && (
+                <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13 }}>
+                  <b style={{ color: "#dc2626" }}>⚠️ {overdueCount} unit PM sudah terlewat</b>
+                  <div style={{ color: "#6b7280", fontSize: 12, marginTop: 2 }}>Hubungi tim AClean untuk menjadwalkan perawatan segera.</div>
+                </div>
+              )}
+              {(summary.critical_issues ?? 0) > 0 && (
+                <div style={{ background: "#fff7ed", border: "1px solid #fdba74", borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13 }}>
+                  <b style={{ color: "#ea580c" }}>🔧 {summary.critical_issues} temuan prioritas tinggi perlu tindak lanjut</b>
+                </div>
+              )}
+
+              {/* Status breakdown */}
+              <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 14, marginBottom: 10 }}>Status Aset</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 20 }}>
+                {[
+                  ["Aktif", summary.active ?? active, "#16a34a"],
+                  ["AC Baru", summary.baru ?? units.filter(u=>u.status==="baru").length, "#0369a1"],
+                  ["Perlu Perbaikan", summary.perlu_perbaikan ?? units.filter(u=>u.status==="perlu_perbaikan").length, "#dc2626"],
+                  ["Sedang Diperbaiki", units.filter(u=>u.status==="dalam_perbaikan").length, "#b45309"],
+                  ["PM Terlambat", overdueCount, "#dc2626"],
+                  ["Due 30 Hari", summary.due_soon ?? dueSoonCount, "#ca8a04"],
+                ].map(([l,n,c]) => (
+                  <div key={l} style={{ background: c+"0f", border:"1px solid "+c+"33", borderRadius:10, padding:"12px 10px", textAlign:"center" }}>
+                    <div style={{ fontSize:22, fontWeight:800, color:c }}>{n}</div>
+                    <div style={{ fontSize:10, color:"#64748b", marginTop:2, lineHeight:1.3 }}>{l}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Kontrak */}
+              {contract && (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 14, marginBottom: 8 }}>📝 Kontrak Aktif</div>
+                  <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
+                    <div style={{ fontWeight: 700, color: "#0369a1" }}>{contract.title || contract.contract_number}</div>
+                    <div style={{ color: "#64748b", marginTop: 4 }}>
+                      Berlaku: {fmtDate(contract.start_date)} — {fmtDate(contract.end_date)}
+                      {(() => { const d = daysUntil(contract.end_date); return d !== null && d <= 60 ? <span style={{ color:"#dc2626", fontWeight:700, marginLeft:6 }}>({d < 0 ? "Expired" : d+"h lagi"})</span> : null; })()}
+                    </div>
+                    <div style={{ marginTop:4, color:"#64748b" }}>{contract.visits_per_year}x kunjungan/tahun · Layanan: {(contract.services_included||[]).join(", ")}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* PM Timeline — unit sorted by next_service_date */}
+              <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 14, marginBottom: 8 }}>📅 Jadwal PM Berikutnya</div>
+              {units.filter(u => u.next_service_date && u.status === "active").sort((a,b) => a.next_service_date.localeCompare(b.next_service_date)).slice(0,8).map(u => {
+                const d = daysUntil(u.next_service_date);
+                const overdue = d !== null && d < 0;
+                const soon = d !== null && d >= 0 && d <= 30;
+                return (
+                  <div key={u.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #f1f5f9" }}>
+                    <div>
+                      <span style={{ fontWeight:600, color:"#0f172a", fontSize:13 }}>{u.unit_code}</span>
+                      <span style={{ color:"#94a3b8", fontSize:12, marginLeft:6 }}>{u.location}</span>
+                    </div>
+                    <span style={{ fontSize:12, fontWeight:700, color: overdue?"#dc2626":soon?"#b45309":"#64748b", background: overdue?"#fef2f2":soon?"#fef3c7":"#f1f5f9", padding:"2px 8px", borderRadius:99 }}>
+                      {overdue ? "Terlambat" : d===0 ? "Hari ini" : `${d}h lagi`} · {fmtDate(u.next_service_date)}
+                    </span>
+                  </div>
+                );
+              })}
+              {summary.last_service && <div style={{ color:"#94a3b8", fontSize:12, marginTop:12, textAlign:"right" }}>Servis terakhir: {fmtDate(summary.last_service)}</div>}
             </div>
           )}
 
+          {/* ── UNITS TAB ── */}
+          {portalTab === "units" && (<>
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Cari unit / lokasi / brand…"
             style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 14, marginBottom: 14, boxSizing: "border-box" }} />
 
-          {shown.length === 0 ? <div style={{ textAlign: "center", color: "#94a3b8", padding: 30 }}>Tidak ada unit.</div> :
+          {shown.length === 0 ? <div style={{ textAlign: "center", color: "#94a3b8", padding: 30 }}>Tidak ada unit ditemukan.</div> :
             shown.map(u => {
               const ul = logsOf(u.id);
               const isOpen = open === u.id;
@@ -180,7 +268,46 @@ export default function MaintenancePortalView({ token }) {
                 </div>
               );
             })}
-          <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 12, padding: "18px 0" }}>
+          <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 12, padding: "10px 0 4px" }}>
+            Data dikelola & diperbarui oleh tim Aclean
+          </div>
+          </>)}
+
+          {/* ── ISSUES TAB ── */}
+          {portalTab === "issues" && (
+            <div>
+              {followups.length === 0 ? (
+                <div style={{ textAlign:"center", padding:40, color:"#94a3b8" }}>
+                  <div style={{ fontSize:36 }}>✅</div>
+                  <div style={{ marginTop:8 }}>Tidak ada temuan aktif saat ini</div>
+                </div>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  {followups.map(f => {
+                    const unit = units.find(u => u.id === f.unit_id);
+                    const pc = PRIORITY_COLOR[f.priority] || "#64748b";
+                    return (
+                      <div key={f.id} style={{ border:"1px solid #e2e8f0", borderLeft:`3px solid ${pc}`, borderRadius:10, padding:"12px 14px" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                          <div>
+                            <div style={{ fontWeight:700, color:"#0f172a", fontSize:13 }}>{ISSUE_LABEL[f.issue_type] || f.issue_type}</div>
+                            {unit && <div style={{ color:"#64748b", fontSize:12 }}>{unit.unit_code} · {unit.location}</div>}
+                          </div>
+                          <span style={{ background:pc+"15", color:pc, padding:"2px 8px", borderRadius:99, fontSize:11, fontWeight:700 }}>
+                            {f.priority === "critical" ? "Kritis" : f.priority === "high" ? "Tinggi" : f.priority === "normal" ? "Normal" : "Rendah"}
+                          </span>
+                        </div>
+                        {f.description && <div style={{ fontSize:12, color:"#475569", marginTop:6 }}>{f.description}</div>}
+                        <div style={{ fontSize:11, color:"#94a3b8", marginTop:4 }}>Ditemukan: {fmtDate(f.found_date)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 12, padding: "14px 0 4px" }}>
             Data dikelola & diperbarui oleh tim Aclean
           </div>
         </div>

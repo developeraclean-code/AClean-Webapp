@@ -4036,12 +4036,182 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           });
           const r = await fetch(REST("maintenance_logs"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(rows) });
           if (!r.ok) return res.status(400).json({ error: "Gagal auto-log", detail: await r.text() });
+          const createdLogs = await r.json();
+
+          // Auto-detect followup dari description tiap log
+          const FOLLOWUP_DETECT = [
+            { re: /bocor|bocoran|kebocoran|freon\s*habis|leak/i,        type: "bocor_freon",      priority: "high"   },
+            { re: /kapasitor|kondensator|capacitor/i,                    type: "kapasitor_rusak",  priority: "high"   },
+            { re: /kompresor|compressor/i,                               type: "kompresor_lemah",  priority: "high"   },
+            { re: /drain.*(mampet|buntu)|mampet.*drain|saluran.*buntu/i, type: "drain_tersumbat",  priority: "normal" },
+            { re: /pcb\s*rusak|modul\s*rusak|board\s*rusak/i,           type: "pcb_rusak",        priority: "high"   },
+            { re: /filter.*(buntu|kotor|ganti)/i,                        type: "filter_buntu",     priority: "normal" },
+            { re: /fan[\s-]?motor|motor[\s-]?kipas/i,                    type: "fan_motor_lemah",  priority: "normal" },
+            { re: /indikasi|perlu\s*perbaikan|butuh\s*perbaikan|perlu\s*diganti/i, type: "lainnya", priority: "normal" },
+          ];
+          const followupRows = [];
+          for (const log of createdLogs) {
+            const desc = log.description || "";
+            const svcDate = log.service_date;
+            for (const rule of FOLLOWUP_DETECT) {
+              if (rule.re.test(desc)) {
+                followupRows.push({
+                  unit_id:     log.unit_id,
+                  client_id:   log.client_id,
+                  log_id:      log.id,
+                  issue_type:  rule.type,
+                  description: desc,
+                  found_date:  svcDate,
+                  found_by:    log.technician || null,
+                  status:      "open",
+                  priority:    rule.priority,
+                });
+                break; // 1 log → max 1 followup (issue paling spesifik)
+              }
+            }
+          }
+          let followupsCreated = 0;
+          if (followupRows.length > 0) {
+            // ON CONFLICT DO NOTHING — hindari duplikat jika autolog dipanggil ulang
+            const fRes = await fetch(
+              REST("maintenance_followups"),
+              { method: "POST", headers: { ...headers, Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify(followupRows) }
+            );
+            if (fRes.ok) followupsCreated = (await fRes.json()).length;
+            else console.warn("[autolog] followup insert warn:", await fRes.text());
+          }
+
           const capped = repUnits.length > 0 && repUnits.length < unitIds.length;
           return res.status(200).json({
-            created: (await r.json()).length,
+            created: createdLogs.length,
+            followups_created: followupsCreated,
             enriched: { photos: repFotos.length, units_detail: repUnits.length },
             ...(capped ? { capped_from: unitIds.length, capped_to: effectiveUnitIds.length, reason: "hanya unit yang dilaporkan di laporan teknisi" } : {}),
           });
+        }
+
+        // ── CONTRACTS ──────────────────────────────────────────────────
+        if (action === "list-contracts") {
+          const { client_id } = body;
+          if (!client_id) return res.status(400).json({ error: "client_id wajib" });
+          const r = await fetch(REST(`maintenance_contracts?client_id=eq.${client_id}&order=start_date.desc`), { headers });
+          if (!r.ok) return res.status(400).json({ error: await r.text() });
+          return res.status(200).json({ contracts: await r.json() });
+        }
+
+        if (action === "create-contract") {
+          const { client_id, contract_number, title, start_date, end_date, value, billing_cycle, billing_amount, services_included, visits_per_year, notes, auto_invoice } = body;
+          if (!client_id || !contract_number || !start_date || !end_date) return res.status(400).json({ error: "client_id, contract_number, start_date, end_date wajib" });
+          const r = await fetch(REST("maintenance_contracts"), {
+            method: "POST", headers: { ...headers, Prefer: "return=representation" },
+            body: JSON.stringify({ client_id, contract_number, title, start_date, end_date, value, billing_cycle, billing_amount, services_included, visits_per_year, notes, auto_invoice, created_by: body.created_by || "admin" }),
+          });
+          if (!r.ok) return res.status(400).json({ error: await r.text() });
+          return res.status(200).json({ contract: (await r.json())[0] });
+        }
+
+        if (action === "update-contract") {
+          const { id, ...patch } = body;
+          if (!id) return res.status(400).json({ error: "id wajib" });
+          const allowed = ["title","start_date","end_date","value","billing_cycle","billing_amount","services_included","visits_per_year","notes","status","auto_invoice","contract_number"];
+          const clean = Object.fromEntries(Object.entries(patch).filter(([k]) => allowed.includes(k)));
+          const r = await fetch(REST(`maintenance_contracts?id=eq.${id}`), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(clean) });
+          if (!r.ok) return res.status(400).json({ error: await r.text() });
+          return res.status(200).json({ contract: (await r.json())[0] });
+        }
+
+        if (action === "delete-contract") {
+          const { id } = body;
+          if (!id) return res.status(400).json({ error: "id wajib" });
+          const r = await fetch(REST(`maintenance_contracts?id=eq.${id}`), { method: "DELETE", headers });
+          if (!r.ok) return res.status(400).json({ error: await r.text() });
+          return res.status(200).json({ ok: true });
+        }
+
+        // ── WORK ORDERS ─────────────────────────────────────────────────
+        if (action === "list-work-orders") {
+          const { client_id } = body;
+          if (!client_id) return res.status(400).json({ error: "client_id wajib" });
+          const r = await fetch(REST(`maintenance_work_orders?client_id=eq.${client_id}&order=created_at.desc`), { headers });
+          if (!r.ok) return res.status(400).json({ error: await r.text() });
+          return res.status(200).json({ work_orders: await r.json() });
+        }
+
+        if (action === "create-work-order") {
+          const { client_id } = body;
+          if (!client_id || !body.title) return res.status(400).json({ error: "client_id dan title wajib" });
+          // Generate WO number: WO-{client_code}-{YYYY}-{NNN}
+          const cRes = await fetch(REST(`maintenance_clients?id=eq.${client_id}&select=name`), { headers });
+          const cData = await cRes.json();
+          const clientCode = ((cData[0]?.name || "CLT").replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 5));
+          const year = new Date().getFullYear();
+          const countRes = await fetch(REST(`maintenance_work_orders?client_id=eq.${client_id}&select=id`), { headers });
+          const countData = await countRes.json();
+          const seq = String((countData?.length || 0) + 1).padStart(3, "0");
+          const wo_number = `WO-${clientCode}-${year}-${seq}`;
+          const fields = { client_id, wo_number, title: body.title, description: body.description, wo_type: body.wo_type || "preventive", scheduled_date: body.scheduled_date, unit_ids: body.unit_ids || [], assigned_to: body.assigned_to, estimated_cost: body.estimated_cost, contract_id: body.contract_id || null, followup_id: body.followup_id || null, notes: body.notes, created_by: body.created_by || "admin", status: "draft" };
+          const r = await fetch(REST("maintenance_work_orders"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(fields) });
+          if (!r.ok) return res.status(400).json({ error: await r.text() });
+          return res.status(200).json({ work_order: (await r.json())[0] });
+        }
+
+        if (action === "update-work-order") {
+          const { id, ...patch } = body;
+          if (!id) return res.status(400).json({ error: "id wajib" });
+          const allowed = ["title","description","wo_type","scheduled_date","unit_ids","assigned_to","status","estimated_cost","actual_cost","approved_by","approved_at","completed_at","invoice_id","notes","contract_id","followup_id"];
+          const clean = Object.fromEntries(Object.entries(patch).filter(([k]) => allowed.includes(k)));
+          if (clean.status === "approved" && !clean.approved_at) clean.approved_at = new Date().toISOString();
+          if (clean.status === "done" && !clean.completed_at) clean.completed_at = new Date().toISOString();
+          const r = await fetch(REST(`maintenance_work_orders?id=eq.${id}`), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(clean) });
+          if (!r.ok) return res.status(400).json({ error: await r.text() });
+          return res.status(200).json({ work_order: (await r.json())[0] });
+        }
+
+        // ── PPM CALENDAR — global lintas klien ──────────────────────────
+        if (action === "ppm-calendar") {
+          const { months_ahead = 3 } = body;
+          const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() + months_ahead);
+          const r = await fetch(REST(`maintenance_units?select=id,unit_code,location,client_id,next_service_date,last_service_date,status,service_interval_months&next_service_date=lte.${cutoff.toISOString().slice(0,10)}&status=not.in.(retired,rusak)&order=next_service_date.asc&limit=200`), { headers });
+          if (!r.ok) return res.status(400).json({ error: await r.text() });
+          const units = await r.json();
+          // Ambil client info
+          const clientIds = [...new Set(units.map(u => u.client_id).filter(Boolean))];
+          let clientMap = {};
+          if (clientIds.length) {
+            const cRes = await fetch(REST(`maintenance_clients?id=in.(${clientIds.join(",")})&select=id,name,pic_phone`), { headers });
+            if (cRes.ok) { const cd = await cRes.json(); cd.forEach(c => { clientMap[c.id] = c; }); }
+          }
+          const events = units.map(u => ({
+            unit_id: u.id, unit_code: u.unit_code, location: u.location,
+            client_id: u.client_id, client_name: clientMap[u.client_id]?.name || "—",
+            next_service_date: u.next_service_date, last_service_date: u.last_service_date,
+            status: u.status, interval_months: u.service_interval_months,
+          }));
+          return res.status(200).json({ events });
+        }
+
+        // ── AUTO-INVOICE dari kontrak ────────────────────────────────────
+        if (action === "generate-contract-invoice") {
+          const { contract_id, client_id, period_label, unit_count, amount, notes: invNotes } = body;
+          if (!client_id || !amount) return res.status(400).json({ error: "client_id dan amount wajib" });
+          // Ambil data klien
+          const cRes = await fetch(REST(`maintenance_clients?id=eq.${client_id}&select=name,pic_name,pic_phone`), { headers });
+          const cData = await cRes.json();
+          const client = cData[0] || {};
+          // Generate invoice number
+          const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+          const inv_id = `INV-M-${today}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+          const inv = {
+            id: inv_id, type: "maintenance", maintenance_client_id: client_id,
+            customer: client.name, phone: client.pic_phone || "",
+            amount: Number(amount), status: "UNPAID",
+            description: `${period_label || "Maintenance"} — ${unit_count || 0} unit`,
+            notes: invNotes || null, contract_id: contract_id || null,
+            created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          };
+          const r = await fetch(REST("invoices"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(inv) });
+          if (!r.ok) return res.status(400).json({ error: await r.text() });
+          return res.status(200).json({ invoice: (await r.json())[0] || inv });
         }
 
         return res.status(400).json({ error: "Action tidak dikenal: " + action });
@@ -4076,21 +4246,41 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
       if (client.token_expires_at && new Date(client.token_expires_at) < new Date())
         return res.status(401).json({ error: "Link portal sudah expired", code: "TOKEN_EXPIRED" });
 
-      // Ambil unit + logs
-      const [uRes, lRes] = await Promise.all([
-        fetch(`${SU}/rest/v1/maintenance_units?client_id=eq.${client.id}&select=id,unit_code,location,brand,ac_type,capacity_pk,refrigerant,status,last_service_date,next_service_date,service_interval_months&order=unit_code.asc`, { headers }),
+      // Ambil unit + logs + followups (open only) + kontrak aktif
+      const [uRes, lRes, fRes, ctrRes] = await Promise.all([
+        fetch(`${SU}/rest/v1/maintenance_units?client_id=eq.${client.id}&select=id,unit_code,location,brand,ac_type,capacity_pk,refrigerant,status,last_service_date,next_service_date,service_interval_months,notes&order=unit_code.asc`, { headers }),
         fetch(`${SU}/rest/v1/maintenance_logs?client_id=eq.${client.id}&select=id,unit_id,service_date,service_type,technician,description,cost,photos,materials&order=service_date.desc`, { headers }),
+        fetch(`${SU}/rest/v1/maintenance_followups?client_id=eq.${client.id}&status=eq.open&select=id,unit_id,issue_type,priority,description,found_date,status`, { headers }),
+        fetch(`${SU}/rest/v1/maintenance_contracts?client_id=eq.${client.id}&status=eq.active&select=id,contract_number,title,start_date,end_date,visits_per_year,services_included&order=end_date.desc&limit=1`, { headers }),
       ]);
       const units = uRes.ok ? await uRes.json() : [];
       let logs = lRes.ok ? await lRes.json() : [];
+      const followups = fRes.ok ? await fRes.json() : [];
+      const contracts = ctrRes.ok ? await ctrRes.json() : [];
 
       // STRIP COST di backend kalau hide_costs (jangan andalkan CSS frontend)
       if (client.hide_costs) logs = logs.map(({ cost, ...rest }) => rest);
 
+      // Build dashboard summary
+      const now = new Date().toISOString().slice(0, 10);
+      const summary = {
+        total: units.length,
+        active: units.filter(u => u.status === "active").length,
+        baru: units.filter(u => u.status === "baru").length,
+        perlu_perbaikan: units.filter(u => u.status === "perlu_perbaikan").length,
+        dalam_perbaikan: units.filter(u => u.status === "dalam_perbaikan").length,
+        overdue: units.filter(u => u.next_service_date && u.next_service_date < now && u.status === "active").length,
+        due_soon: units.filter(u => u.next_service_date && u.next_service_date >= now && u.next_service_date <= new Date(Date.now() + 30*86400000).toISOString().slice(0,10) && u.status === "active").length,
+        open_issues: followups.length,
+        critical_issues: followups.filter(f => f.priority === "critical" || f.priority === "high").length,
+        last_service: logs[0]?.service_date || null,
+      };
+
       return res.status(200).json({
         client: { name: client.name, hide_costs: client.hide_costs },
-        units,
-        logs,
+        units, logs, followups,
+        contract: contracts[0] || null,
+        summary,
       });
     }
 

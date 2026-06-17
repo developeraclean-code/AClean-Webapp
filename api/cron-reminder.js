@@ -2026,6 +2026,43 @@ async function taskLogCleanup() {
 }
 
 // ══════════════════════════════════════════════════
+// TASK: maintenance-contract-expiry — Senin 10:00 WIB
+// Alert Owner 30 hari dan 7 hari sebelum kontrak maintenance expired.
+// ══════════════════════════════════════════════════
+async function taskMaintenanceContractExpiry() {
+  const ownerPhone = process.env.OWNER_PHONE;
+  if (!ownerPhone) return { skipped: true, reason: "OWNER_PHONE not set" };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const in7  = new Date(Date.now() + 7  * 86400000).toISOString().slice(0, 10);
+  const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+
+  const { data: expiring } = await sb
+    .from("maintenance_contracts")
+    .select("id, contract_number, title, end_date, client_id, maintenance_clients(name)")
+    .eq("status", "active")
+    .lte("end_date", in30)
+    .gte("end_date", today)
+    .order("end_date");
+
+  if (!expiring?.length) {
+    await log("MAINTENANCE_CONTRACT_EXPIRY", "Tidak ada kontrak yang akan expired dalam 30 hari", "INFO");
+    return { ok: true, checked: 0 };
+  }
+
+  const lines = expiring.map(c => {
+    const daysLeft = Math.ceil((new Date(c.end_date) - new Date()) / 86400000);
+    const urgency = daysLeft <= 7 ? "🔴 MENDESAK" : "⚠️ Perhatian";
+    const clientName = c.maintenance_clients?.name || c.client_id;
+    return `${urgency} ${clientName}\n  Kontrak: ${c.contract_number}\n  Berakhir: ${c.end_date} (${daysLeft} hari lagi)`;
+  });
+
+  const msg = `📋 *KONTRAK MAINTENANCE — AKAN EXPIRED*\n\n${lines.join("\n\n")}\n\nSegera hubungi klien untuk perpanjangan kontrak.`;
+  await sendWA(ownerPhone, msg);
+  await log("MAINTENANCE_CONTRACT_EXPIRY", `Alert ${expiring.length} kontrak — ${expiring.map(c=>c.contract_number).join(",")}`, "INFO");
+  return { ok: true, alerted: expiring.length };
+}
+
 // TASK: maintenance-followup-alert — 10:00 WIB harian
 // Cari followup maintenance dengan status 'open' lebih dari 3 hari → WA alert ke Owner.
 // Pattern: sama seperti laporan-stale. Toggle: maintenance_followup_alert_enabled
@@ -2132,6 +2169,7 @@ async function taskTick() {
     { t: "voucher-expiry",           fn: taskVoucherExpiryReminder,  h: 10 },
     { t: "laporan-stale",              fn: taskLaporanStaleAlert,          h: 10 },
     { t: "maintenance-followup-alert", fn: taskMaintenanceFollowupAlert,   h: 10 },
+    { t: "maintenance-contract-expiry", fn: taskMaintenanceContractExpiry, h: 10, dow: 1 },
     { t: "snapshot-cleanup",           fn: taskSnapshotCleanup,            h: 10 },
     { t: "payroll-wa",               fn: taskPayrollWA,              h: 18, dow: 6 },
     { t: "wa-snapshot",              fn: taskWaSnapshot,             h: 20 },
@@ -2255,7 +2293,8 @@ export default async function handler(req, res) {
       "servis-reminder":  taskServisReminder,
       "voucher-expiry":   taskVoucherExpiryReminder,
       "laporan-stale":              taskLaporanStaleAlert,
-      "maintenance-followup-alert": taskMaintenanceFollowupAlert,
+      "maintenance-followup-alert":  taskMaintenanceFollowupAlert,
+      "maintenance-contract-expiry": taskMaintenanceContractExpiry,
       "material-pulang-reminder":   taskMaterialPulangReminder,
       "payroll-wa":       taskPayrollWA,
       "log-cleanup":      taskLogCleanup,

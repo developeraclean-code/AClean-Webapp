@@ -165,12 +165,19 @@ export default function MaintenanceView({
     );
   }
 
+  const [ppmMode, setPpmMode] = useState(false);
+
+  if (ppmMode) {
+    return <PPMCalendar call={call} showNotif={showNotif} onBack={() => setPpmMode(false)} />;
+  }
+
   if (!sel) {
     return (
       <div style={{ padding: 18 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           <h2 style={{ color: cs.text, margin: 0 }}>🏢 Maintenance — Customer Korporat</h2>
-          <button onClick={() => setDocsMode(true)} style={{ ...btnGhost, marginLeft: "auto" }}>📄 Dokumen</button>
+          <button onClick={() => setPpmMode(true)} style={{ ...btnGhost }}>📅 PPM Calendar</button>
+          <button onClick={() => setDocsMode(true)} style={{ ...btnGhost }}>📄 Dokumen</button>
           <button onClick={() => setClientModal({})} style={btn}>+ Tambah Perusahaan</button>
         </div>
         {loading ? <div style={{ color: cs.muted }}>Memuat…</div> :
@@ -231,15 +238,17 @@ export default function MaintenanceView({
           <>
             <div style={{ display: "flex", gap: 6, margin: "14px 0", flexWrap: "wrap" }}>
               {[
-                ["unit",     `📋 Unit (${units.length})`],
-                ["history",  "🕑 History"],
-                ["followup", "🔧 Follow-up"],
-                ["manifest", "📋 Manifest"],
+                ["unit",      `📋 Unit (${units.length})`],
+                ["history",   "🕑 History"],
+                ["followup",  "🔧 Follow-up"],
+                ["manifest",  "📋 Manifest"],
+                ["contract",  "📝 Kontrak"],
+                ["workorder", "🔨 Work Order"],
                 ["svchistory","🧾 History Service"],
-                ["stats",    "📊 Statistik"],
-                ["quotation",`📄 Quotasi (${clientQuotations.length})`],
-                ["invoice",  "🧾 Invoice B2B"],
-                ["portal",   "🔗 Portal & Akses"],
+                ["stats",     "📊 Statistik"],
+                ["quotation", `📄 Quotasi (${clientQuotations.length})`],
+                ["invoice",   "🧾 Invoice B2B"],
+                ["portal",    "🔗 Portal & Akses"],
               ].map(([k, l]) => (
                 <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
               ))}
@@ -247,7 +256,9 @@ export default function MaintenanceView({
             {tab === "unit"     && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
             {tab === "history"  && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
             {tab === "followup" && <FollowupTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
-            {tab === "manifest" && <ManifestTab sel={sel} units={units} call={call} showNotif={showNotif} />}
+            {tab === "manifest"  && <ManifestTab sel={sel} units={units} call={call} showNotif={showNotif} />}
+            {tab === "contract"  && <ContractTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
+            {tab === "workorder" && <WorkOrderTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
             {tab === "svchistory" && <HistoryServiceTab sel={sel} call={call} showNotif={showNotif} />}
             {tab === "stats"    && <StatsTab units={units} logs={logs} sel={sel} />}
             {tab === "quotation" && (
@@ -2216,6 +2227,495 @@ function ManifestTab({ sel, units, call, showNotif }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ─────────── PPM CALENDAR (global lintas klien) ───────────
+function PPMCalendar({ call, showNotif, onBack }) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [months, setMonths] = useState(3);
+  const [filterClient, setFilterClient] = useState("");
+
+  useEffect(() => {
+    setLoading(true);
+    call("ppm-calendar", { months_ahead: months })
+      .then(j => setEvents(j.events || []))
+      .catch(e => showNotif("❌ " + e.message))
+      .finally(() => setLoading(false));
+  }, [call, months, showNotif]);
+
+  const clients = [...new Set(events.map(e => e.client_name))].sort();
+  const filtered = filterClient ? events.filter(e => e.client_name === filterClient) : events;
+
+  // Group by month
+  const byMonth = {};
+  filtered.forEach(ev => {
+    const m = ev.next_service_date?.slice(0, 7) || "?";
+    if (!byMonth[m]) byMonth[m] = [];
+    byMonth[m].push(ev);
+  });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const statusDot = (s) => ({ active: "🟢", baru: "🔵", perlu_perbaikan: "🔴", dalam_perbaikan: "🟡", nonaktif: "⚫", rusak: "🔴", retired: "⚫" }[s] || "⚪");
+
+  return (
+    <div style={{ padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={onBack} style={btnGhost}>← Semua Perusahaan</button>
+        <h2 style={{ color: cs.text, margin: 0, flex: 1 }}>📅 PPM Calendar — Jadwal Maintenance Semua Klien</h2>
+        <select value={months} onChange={e => setMonths(Number(e.target.value))} style={{ ...inp, width: "auto" }}>
+          <option value={1}>1 bulan ke depan</option>
+          <option value={2}>2 bulan ke depan</option>
+          <option value={3}>3 bulan ke depan</option>
+          <option value={6}>6 bulan ke depan</option>
+        </select>
+        <select value={filterClient} onChange={e => setFilterClient(e.target.value)} style={{ ...inp, width: "auto" }}>
+          <option value="">Semua klien</option>
+          {clients.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      {loading ? <div style={{ color: cs.muted, textAlign: "center", padding: 40 }}>Memuat…</div> : filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 40, color: cs.muted }}>
+          <div style={{ fontSize: 40 }}>✅</div>
+          <div>Tidak ada unit yang jatuh tempo dalam periode ini</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([month, evs]) => {
+            const [y, m] = month.split("-");
+            const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+            const isOverdue = month < today.slice(0, 7);
+            const clientGroups = {};
+            evs.forEach(e => {
+              if (!clientGroups[e.client_name]) clientGroups[e.client_name] = [];
+              clientGroups[e.client_name].push(e);
+            });
+            return (
+              <div key={month}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: isOverdue ? cs.red : cs.text }}>{label}</div>
+                  {isOverdue && <span style={{ background: cs.red + "22", color: cs.red, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700 }}>OVERDUE</span>}
+                  <div style={{ background: cs.accent + "22", color: cs.accent, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700 }}>{evs.length} unit</div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 10 }}>
+                  {Object.entries(clientGroups).map(([cname, cevs]) => (
+                    <div key={cname} style={{ ...card, borderLeft: `3px solid ${isOverdue ? cs.red : cs.accent}` }}>
+                      <div style={{ fontWeight: 700, color: cs.text, fontSize: 13, marginBottom: 8 }}>🏢 {cname}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {cevs.map(ev => (
+                          <span key={ev.unit_id} title={`${ev.location} — Due: ${ev.next_service_date}`}
+                            style={{ background: cs.surface, border: "1px solid " + cs.border, padding: "3px 7px", borderRadius: 6, fontSize: 11, color: cs.text }}>
+                            {statusDot(ev.status)} {ev.unit_code}
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{ color: cs.muted, fontSize: 11, marginTop: 8 }}>
+                        Due: {fmtDate(cevs[0].next_service_date)} · {cevs.length} unit
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────── CONTRACT TAB ───────────
+const BILLING_CYCLE_LABELS = { monthly: "Bulanan", quarterly: "Kuartalan", biannual: "6 Bulanan", annual: "Tahunan", per_visit: "Per Kunjungan" };
+
+function ContractTab({ sel, call, showNotif, showConfirm, isOwner, currentUser }) {
+  const [contracts, setContracts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(null);
+  const [genModal, setGenModal] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const j = await call("list-contracts", { client_id: sel.id }); setContracts(j.contracts || []); }
+    catch (e) { showNotif("❌ " + e.message); }
+    finally { setLoading(false); }
+  }, [call, sel.id, showNotif]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const saveContract = async (form) => {
+    setBusy(true);
+    try {
+      if (form.id) {
+        const j = await call("update-contract", { ...form });
+        setContracts(p => p.map(c => c.id === j.contract.id ? j.contract : c));
+        showNotif("✅ Kontrak diperbarui");
+      } else {
+        const j = await call("create-contract", { ...form, client_id: sel.id, created_by: currentUser?.name || "admin" });
+        setContracts(p => [j.contract, ...p]);
+        showNotif("✅ Kontrak dibuat");
+      }
+      setModal(null);
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setBusy(false); }
+  };
+
+  const deleteContract = async (c) => {
+    const ok = await showConfirm({ title: "Hapus kontrak?", message: `Hapus kontrak ${c.contract_number}? Tindakan tidak bisa diurungkan.` });
+    if (!ok) return;
+    try { await call("delete-contract", { id: c.id }); setContracts(p => p.filter(x => x.id !== c.id)); showNotif("✅ Kontrak dihapus"); }
+    catch (e) { showNotif("❌ " + e.message); }
+  };
+
+  const generateInvoice = async (form) => {
+    setBusy(true);
+    try {
+      const j = await call("generate-contract-invoice", { ...form, client_id: sel.id });
+      showNotif("✅ Invoice " + (j.invoice?.id || "") + " berhasil dibuat");
+      setGenModal(null);
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setBusy(false); }
+  };
+
+  if (loading) return <div style={{ color: cs.muted, padding: 24, textAlign: "center" }}>Memuat…</div>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 14 }}>
+        {isOwner && <button onClick={() => setModal({})} style={btn}>+ Tambah Kontrak</button>}
+      </div>
+
+      {contracts.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 40, color: cs.muted }}>
+          <div style={{ fontSize: 36 }}>📝</div>
+          <div>Belum ada kontrak. Klik "+ Tambah Kontrak" untuk membuat.</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {contracts.map(c => {
+            const days = daysUntil(c.end_date);
+            const expired = days !== null && days < 0;
+            const warn = days !== null && days <= 30 && days >= 0;
+            const statusColor = c.status === "active" ? cs.green : c.status === "expired" ? cs.red : cs.muted;
+            return (
+              <div key={c.id} style={{ ...card, borderLeft: `3px solid ${statusColor}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                      <span style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>{c.contract_number}</span>
+                      <span style={{ background: statusColor + "22", color: statusColor, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700 }}>
+                        {c.status === "active" ? "● Aktif" : c.status === "expired" ? "Expired" : c.status}
+                      </span>
+                      {warn && <span style={{ background: (cs.yellow || "#eab308") + "22", color: cs.yellow || "#eab308", padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700 }}>⚠️ {days}h lagi</span>}
+                      {expired && <span style={{ background: cs.red + "22", color: cs.red, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700 }}>🔴 EXPIRED</span>}
+                    </div>
+                    {c.title && <div style={{ color: cs.muted, fontSize: 13, marginBottom: 6 }}>{c.title}</div>}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: "4px 16px", fontSize: 12 }}>
+                      <div><span style={{ color: cs.muted }}>Periode: </span><b style={{ color: cs.text }}>{fmtDate(c.start_date)} – {fmtDate(c.end_date)}</b></div>
+                      <div><span style={{ color: cs.muted }}>Nilai: </span><b style={{ color: cs.accent }}>{fmtRp(c.value)}</b></div>
+                      <div><span style={{ color: cs.muted }}>Siklus: </span><b style={{ color: cs.text }}>{BILLING_CYCLE_LABELS[c.billing_cycle] || c.billing_cycle} · {fmtRp(c.billing_amount)}</b></div>
+                      <div><span style={{ color: cs.muted }}>Kunjungan: </span><b style={{ color: cs.text }}>{c.visits_per_year}x/tahun</b></div>
+                      <div><span style={{ color: cs.muted }}>Layanan: </span><b style={{ color: cs.text }}>{(c.services_included || []).join(", ")}</b></div>
+                    </div>
+                    {c.notes && <div style={{ marginTop: 6, fontSize: 12, color: cs.muted, fontStyle: "italic" }}>{c.notes}</div>}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+                    <button onClick={() => setGenModal({ contract_id: c.id, amount: c.billing_amount, billing_cycle: c.billing_cycle })} style={{ ...miniBtn, color: cs.accent }} title="Generate Invoice">💰 Invoice</button>
+                    {isOwner && <button onClick={() => setModal(c)} style={miniBtn} title="Edit">✏️</button>}
+                    {isOwner && <button onClick={() => deleteContract(c)} style={{ ...miniBtn, color: cs.red }} title="Hapus">🗑</button>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {modal !== null && (
+        <ContractModal contract={modal} onClose={() => setModal(null)} onSave={saveContract} busy={busy} clientId={sel.id} />
+      )}
+      {genModal !== null && (
+        <GenInvoiceModal data={genModal} onClose={() => setGenModal(null)} onGenerate={generateInvoice} busy={busy} clientName={sel.name} />
+      )}
+    </div>
+  );
+}
+
+function ContractModal({ contract, onClose, onSave, busy, clientId }) {
+  const isNew = !contract.id;
+  const [form, setForm] = useState({
+    contract_number: contract.contract_number || "",
+    title: contract.title || "",
+    start_date: contract.start_date || new Date().toISOString().slice(0, 10),
+    end_date: contract.end_date || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
+    value: contract.value || "",
+    billing_cycle: contract.billing_cycle || "quarterly",
+    billing_amount: contract.billing_amount || "",
+    visits_per_year: contract.visits_per_year || 4,
+    services_included: (contract.services_included || ["cuci_rutin"]).join(", "),
+    notes: contract.notes || "",
+    status: contract.status || "active",
+    auto_invoice: contract.auto_invoice || false,
+    ...(contract.id ? { id: contract.id } : {}),
+  });
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <b style={{ color: cs.text }}>{isNew ? "Tambah Kontrak" : "Edit Kontrak"}</b>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field l="No. Kontrak"><input value={form.contract_number} onChange={e => set("contract_number", e.target.value)} style={inp} placeholder="KTR-2026-01" /></Field>
+          <Field l="Status">
+            <select value={form.status} onChange={e => set("status", e.target.value)} style={inp}>
+              {["draft","active","expired","cancelled","renewed"].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+        </div>
+        <Field l="Judul Kontrak"><input value={form.title} onChange={e => set("title", e.target.value)} style={inp} placeholder="Kontrak Maintenance AC 2026" /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field l="Tanggal Mulai"><input type="date" value={form.start_date} onChange={e => set("start_date", e.target.value)} style={inp} /></Field>
+          <Field l="Tanggal Selesai"><input type="date" value={form.end_date} onChange={e => set("end_date", e.target.value)} style={inp} /></Field>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+          <Field l="Nilai Kontrak (Rp)"><input type="number" value={form.value} onChange={e => set("value", e.target.value)} style={inp} placeholder="32520000" /></Field>
+          <Field l="Siklus Billing">
+            <select value={form.billing_cycle} onChange={e => set("billing_cycle", e.target.value)} style={inp}>
+              {Object.entries(BILLING_CYCLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Field>
+          <Field l="Nominal per Siklus (Rp)"><input type="number" value={form.billing_amount} onChange={e => set("billing_amount", e.target.value)} style={inp} placeholder="8130000" /></Field>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field l="Kunjungan per Tahun"><input type="number" min={1} max={52} value={form.visits_per_year} onChange={e => set("visits_per_year", e.target.value)} style={inp} /></Field>
+          <Field l="Layanan Tercakup (pisah koma)"><input value={form.services_included} onChange={e => set("services_included", e.target.value)} style={inp} placeholder="cuci_rutin, inspeksi" /></Field>
+        </div>
+        <Field l="Catatan"><textarea value={form.notes} onChange={e => set("notes", e.target.value)} style={{ ...inp, minHeight: 60 }} /></Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        <button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Batal</button>
+        <button disabled={busy} onClick={() => onSave({ ...form, value: Number(form.value) || null, billing_amount: Number(form.billing_amount) || null, visits_per_year: Number(form.visits_per_year), services_included: form.services_included.split(",").map(s => s.trim()).filter(Boolean) })}
+          style={{ ...btn, flex: 2, opacity: busy ? .5 : 1 }}>
+          {busy ? "Menyimpan…" : isNew ? "Buat Kontrak" : "Simpan Perubahan"}
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+function GenInvoiceModal({ data, onClose, onGenerate, busy, clientName }) {
+  const today = new Date();
+  const monthNames = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+  const defaultLabel = `Maintenance ${monthNames[today.getMonth()]} ${today.getFullYear()}`;
+  const [form, setForm] = useState({
+    contract_id: data.contract_id || null,
+    amount: data.amount || "",
+    period_label: defaultLabel,
+    unit_count: "",
+    notes: "",
+  });
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <b style={{ color: cs.text }}>💰 Generate Invoice dari Kontrak</b>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+      </div>
+      <div style={{ color: cs.muted, fontSize: 12, marginBottom: 12 }}>Klien: <b style={{ color: cs.text }}>{clientName}</b></div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Field l="Label Periode"><input value={form.period_label} onChange={e => set("period_label", e.target.value)} style={inp} /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field l="Jumlah Unit Aktual"><input type="number" value={form.unit_count} onChange={e => set("unit_count", e.target.value)} style={inp} placeholder="28" /></Field>
+          <Field l="Nominal Invoice (Rp)"><input type="number" value={form.amount} onChange={e => set("amount", e.target.value)} style={inp} /></Field>
+        </div>
+        <Field l="Catatan tambahan"><textarea value={form.notes} onChange={e => set("notes", e.target.value)} style={{ ...inp, minHeight: 50 }} placeholder="Opsional — muncul di invoice" /></Field>
+        <div style={{ background: cs.surface, borderRadius: 8, padding: 10, fontSize: 12, color: cs.muted }}>
+          Invoice akan dibuat dengan status <b style={{ color: cs.text }}>UNPAID</b> dan bisa diedit sebelum dikirim ke klien.
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        <button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Batal</button>
+        <button disabled={busy || !form.amount} onClick={() => onGenerate(form)} style={{ ...btn, flex: 2, opacity: (busy || !form.amount) ? .5 : 1 }}>
+          {busy ? "Membuat…" : "🧾 Buat Invoice"}
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+// ─────────── WORK ORDER TAB ───────────
+const WO_TYPE_LABELS = { preventive: "Preventif", corrective: "Korektif", emergency: "Darurat", inspection: "Inspeksi" };
+const WO_STATUS_COLOR = { draft: cs.muted, approved: cs.accent, in_progress: cs.yellow || "#eab308", done: cs.green, cancelled: cs.red };
+
+function WorkOrderTab({ sel, units, call, showNotif, showConfirm, isOwner, currentUser }) {
+  const [wos, setWos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const j = await call("list-work-orders", { client_id: sel.id }); setWos(j.work_orders || []); }
+    catch (e) { showNotif("❌ " + e.message); }
+    finally { setLoading(false); }
+  }, [call, sel.id, showNotif]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const saveWO = async (form) => {
+    setBusy(true);
+    try {
+      if (form.id) {
+        const j = await call("update-work-order", { ...form });
+        setWos(p => p.map(w => w.id === j.work_order.id ? j.work_order : w));
+        showNotif("✅ Work Order diperbarui");
+      } else {
+        const j = await call("create-work-order", { ...form, client_id: sel.id, created_by: currentUser?.name || "admin" });
+        setWos(p => [j.work_order, ...p]);
+        showNotif("✅ Work Order " + j.work_order.wo_number + " dibuat");
+      }
+      setModal(null);
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setBusy(false); }
+  };
+
+  const updateStatus = async (wo, status) => {
+    try {
+      const j = await call("update-work-order", { id: wo.id, status, ...(status === "approved" ? { approved_by: currentUser?.name || "Owner" } : {}) });
+      setWos(p => p.map(w => w.id === j.work_order.id ? j.work_order : w));
+      showNotif("✅ Status diperbarui");
+    } catch (e) { showNotif("❌ " + e.message); }
+  };
+
+  if (loading) return <div style={{ color: cs.muted, padding: 24, textAlign: "center" }}>Memuat…</div>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 14 }}>
+        <button onClick={() => setModal({})} style={btn}>+ Buat Work Order</button>
+      </div>
+
+      {wos.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 40, color: cs.muted }}>
+          <div style={{ fontSize: 36 }}>🔨</div>
+          <div>Belum ada Work Order. Buat WO baru untuk merencanakan kunjungan servis.</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {wos.map(wo => {
+            const sc = WO_STATUS_COLOR[wo.status] || cs.muted;
+            const unitCodes = (wo.unit_ids || []).map(uid => units.find(u => u.id === uid)?.unit_code || uid.slice(0, 6)).join(", ");
+            return (
+              <div key={wo.id} style={{ ...card, borderLeft: `3px solid ${sc}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                      <span style={{ fontWeight: 700, color: cs.accent, fontSize: 13 }}>{wo.wo_number}</span>
+                      <span style={{ background: sc + "22", color: sc, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700 }}>
+                        {wo.status === "draft" ? "Draft" : wo.status === "approved" ? "Disetujui" : wo.status === "in_progress" ? "Berjalan" : wo.status === "done" ? "Selesai" : "Dibatalkan"}
+                      </span>
+                      <span style={{ background: cs.surface, padding: "2px 8px", borderRadius: 99, fontSize: 11, color: cs.muted }}>
+                        {WO_TYPE_LABELS[wo.wo_type] || wo.wo_type}
+                      </span>
+                    </div>
+                    <div style={{ fontWeight: 600, color: cs.text, fontSize: 14, marginBottom: 4 }}>{wo.title}</div>
+                    {wo.description && <div style={{ color: cs.muted, fontSize: 12, marginBottom: 4 }}>{wo.description}</div>}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: "3px 12px", fontSize: 12 }}>
+                      {wo.scheduled_date && <div><span style={{ color: cs.muted }}>Jadwal: </span><b style={{ color: cs.text }}>{fmtDate(wo.scheduled_date)}</b></div>}
+                      {wo.assigned_to && <div><span style={{ color: cs.muted }}>Teknisi: </span><b style={{ color: cs.text }}>{wo.assigned_to}</b></div>}
+                      {wo.estimated_cost && <div><span style={{ color: cs.muted }}>Estimasi: </span><b style={{ color: cs.text }}>{fmtRp(wo.estimated_cost)}</b></div>}
+                      {unitCodes && <div><span style={{ color: cs.muted }}>Unit: </span><span style={{ color: cs.text, fontSize: 11 }}>{unitCodes || "—"}</span></div>}
+                    </div>
+                    {wo.approved_by && <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>Disetujui oleh: {wo.approved_by} · {fmtDate(wo.approved_at)}</div>}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+                    {wo.status === "draft" && isOwner && <button onClick={() => updateStatus(wo, "approved")} style={{ ...miniBtn, color: cs.green, fontSize: 11 }}>✅ Approve</button>}
+                    {wo.status === "approved" && <button onClick={() => updateStatus(wo, "in_progress")} style={{ ...miniBtn, color: cs.accent, fontSize: 11 }}>▶️ Mulai</button>}
+                    {wo.status === "in_progress" && <button onClick={() => updateStatus(wo, "done")} style={{ ...miniBtn, color: cs.green, fontSize: 11 }}>✔️ Selesai</button>}
+                    <button onClick={() => setModal(wo)} style={{ ...miniBtn, fontSize: 11 }}>✏️ Edit</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {modal !== null && (
+        <WorkOrderModal wo={modal} units={units} onClose={() => setModal(null)} onSave={saveWO} busy={busy} />
+      )}
+    </div>
+  );
+}
+
+function WorkOrderModal({ wo, units, onClose, onSave, busy }) {
+  const isNew = !wo.id;
+  const [form, setForm] = useState({
+    title: wo.title || "",
+    description: wo.description || "",
+    wo_type: wo.wo_type || "preventive",
+    scheduled_date: wo.scheduled_date || "",
+    assigned_to: wo.assigned_to || "",
+    estimated_cost: wo.estimated_cost || "",
+    unit_ids: wo.unit_ids || [],
+    notes: wo.notes || "",
+    status: wo.status || "draft",
+    ...(wo.id ? { id: wo.id } : {}),
+  });
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const toggleUnit = (uid) => setForm(p => ({ ...p, unit_ids: p.unit_ids.includes(uid) ? p.unit_ids.filter(x => x !== uid) : [...p.unit_ids, uid] }));
+
+  const activeUnits = units.filter(u => u.status !== "retired");
+
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <b style={{ color: cs.text }}>{isNew ? "Buat Work Order" : "Edit Work Order"}</b>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Field l="Judul WO"><input value={form.title} onChange={e => set("title", e.target.value)} style={inp} placeholder="Cuci Rutin Q3 2026" /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field l="Tipe WO">
+            <select value={form.wo_type} onChange={e => set("wo_type", e.target.value)} style={inp}>
+              {Object.entries(WO_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Field>
+          <Field l="Tanggal Jadwal"><input type="date" value={form.scheduled_date} onChange={e => set("scheduled_date", e.target.value)} style={inp} /></Field>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field l="Teknisi Assigned"><input value={form.assigned_to} onChange={e => set("assigned_to", e.target.value)} style={inp} placeholder="Rey" /></Field>
+          <Field l="Estimasi Biaya (Rp)"><input type="number" value={form.estimated_cost} onChange={e => set("estimated_cost", e.target.value)} style={inp} /></Field>
+        </div>
+        <Field l="Deskripsi"><textarea value={form.description} onChange={e => set("description", e.target.value)} style={{ ...inp, minHeight: 50 }} /></Field>
+        <div>
+          <div style={{ fontSize: 12, color: cs.muted, marginBottom: 6 }}>Unit yang dikerjakan ({form.unit_ids.length} dipilih)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, maxHeight: 120, overflowY: "auto" }}>
+            {activeUnits.map(u => {
+              const sel = form.unit_ids.includes(u.id);
+              return (
+                <button key={u.id} onClick={() => toggleUnit(u.id)}
+                  style={{ padding: "3px 8px", borderRadius: 6, fontSize: 11, cursor: "pointer", fontWeight: sel ? 700 : 400, background: sel ? cs.accent + "33" : cs.surface, color: sel ? cs.accent : cs.muted, border: `1px solid ${sel ? cs.accent : cs.border}` }}>
+                  {u.unit_code}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        <button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Batal</button>
+        <button disabled={busy || !form.title} onClick={() => onSave({ ...form, estimated_cost: Number(form.estimated_cost) || null })}
+          style={{ ...btn, flex: 2, opacity: (busy || !form.title) ? .5 : 1 }}>
+          {busy ? "Menyimpan…" : isNew ? "Buat WO" : "Simpan"}
+        </button>
+      </div>
+    </Overlay>
   );
 }
 
