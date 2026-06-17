@@ -1240,8 +1240,19 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       setOrdersData(prev => prev.filter(o => o.id !== existing.id));
       return;
     }
+    // Auto-detect team_slot: cari slot harian yang memiliki teknisi utama sebagai anggota
+    const primaryTeknisi = patch.teknisi !== undefined ? patch.teknisi : existing?.teknisi;
+    const autoSlot = primaryTeknisi
+      ? (dailySlots.find(s => s.date === date &&
+          [s.member1, s.member2, s.member3, s.member4].includes(primaryTeknisi))?.slot || null)
+      : null;
+
     if (existing) {
-      const upd = { ...patch, last_changed_by: auditUserName() };
+      const upd = {
+        ...patch,
+        ...(autoSlot ? { team_slot: autoSlot } : {}),
+        last_changed_by: auditUserName(),
+      };
       const { error } = await supabase.from("orders").update(upd).eq("id", existing.id);
       if (error) { showNotif("❌ Gagal simpan: " + error.message); return; }
       setOrdersData(prev => prev.map(o => o.id === existing.id ? { ...o, ...upd } : o));
@@ -1253,6 +1264,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       id, customer: project.nama, phone: null, service: "Project", type: project.kategori || "",
       address: project.lokasi || "", date, time: "09:00", time_end: "17:00",
       status: "CONFIRMED", units: 1, project_id: project.id,
+      team_slot: autoSlot,
       ...resolved, last_changed_by: auditUserName(),
     };
     const { error } = await insertOrder(supabase, payload);
