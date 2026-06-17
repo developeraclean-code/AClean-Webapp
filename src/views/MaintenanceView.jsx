@@ -53,15 +53,24 @@ const PORTAL_BASE = "https://status.aclean.id/status/";
 const AC_TYPES = ["split", "cassette", "standing", "floor"];
 const AC_TYPE_LABELS = { split: "Split Wall", cassette: "Cassette", standing: "Floor Standing", floor: "Split Duct" };
 const REFRIGERANTS = ["R32", "R410A", "R22"];
-const STATUSES = ["active", "rusak", "retired"];
+const STATUSES = ["active", "baru", "perlu_perbaikan", "dalam_perbaikan", "nonaktif", "rusak", "retired"];
 const SERVICE_TYPES_LOG = ["Cuci Rutin", "Cuci Besar", "Perbaikan", "Isi Freon", "Ganti Sparepart", "Instalasi", "Cek & Check-Up", "Lainnya"];
+const SERVICE_CATEGORY_LABELS = { cuci_rutin: "Cuci Rutin", inspeksi: "Inspeksi", perbaikan: "Perbaikan", pengecekan: "Cek Saja" };
 const MATERIAL_UNITS = ["kg", "gram", "liter", "pcs", "meter", "set"];
 
 function fmtRp(n) { return n == null ? "—" : "Rp " + Number(n).toLocaleString("id-ID"); }
 function fmtDate(d) { if (!d) return "—"; try { return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }); } catch { return d; } }
 
 function statusPill(s) {
-  const map = { active: [cs.green, "Aktif"], rusak: [cs.red, "Rusak"], retired: [cs.muted, "Retired"] };
+  const map = {
+    active:          [cs.green,              "Aktif"],
+    baru:            [cs.accent,             "AC Baru"],
+    perlu_perbaikan: [cs.red,                "Perlu Perbaikan"],
+    dalam_perbaikan: [cs.yellow || "#eab308","Dikerjakan"],
+    nonaktif:        [cs.muted,              "Nonaktif"],
+    rusak:           [cs.red,                "Rusak"],
+    retired:         [cs.muted,              "Retired"],
+  };
   const [c, l] = map[s] || [cs.muted, s];
   return <span style={{ background: c + "22", color: c, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>{l}</span>;
 }
@@ -222,21 +231,25 @@ export default function MaintenanceView({
           <>
             <div style={{ display: "flex", gap: 6, margin: "14px 0", flexWrap: "wrap" }}>
               {[
-                ["unit", `📋 Unit (${units.length})`],
-                ["history", "🕑 History"],
-                ["svchistory", "🧾 History Service"],
-                ["stats", "📊 Statistik"],
-                ["quotation", `📄 Quotasi (${clientQuotations.length})`],
-                ["invoice", "🧾 Invoice B2B"],
-                ["portal", "🔗 Portal & Akses"],
+                ["unit",     `📋 Unit (${units.length})`],
+                ["history",  "🕑 History"],
+                ["followup", "🔧 Follow-up"],
+                ["manifest", "📋 Manifest"],
+                ["svchistory","🧾 History Service"],
+                ["stats",    "📊 Statistik"],
+                ["quotation",`📄 Quotasi (${clientQuotations.length})`],
+                ["invoice",  "🧾 Invoice B2B"],
+                ["portal",   "🔗 Portal & Akses"],
               ].map(([k, l]) => (
                 <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
               ))}
             </div>
-            {tab === "unit" && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
-            {tab === "history" && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
+            {tab === "unit"     && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
+            {tab === "history"  && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
+            {tab === "followup" && <FollowupTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
+            {tab === "manifest" && <ManifestTab sel={sel} units={units} call={call} showNotif={showNotif} />}
             {tab === "svchistory" && <HistoryServiceTab sel={sel} call={call} showNotif={showNotif} />}
-            {tab === "stats" && <StatsTab units={units} logs={logs} sel={sel} />}
+            {tab === "stats"    && <StatsTab units={units} logs={logs} sel={sel} />}
             {tab === "quotation" && (
               <QuotasiTab
                 sel={sel} quotations={clientQuotations}
@@ -876,11 +889,38 @@ function CsvImportModal({ sel, call, setUnits, showNotif, onClose }) {
 function HistoryTab({ units, logs, setLogs, sel, call, showNotif, showConfirm, isOwner, apiFetch }) {
   const [open, setOpen] = useState(null);
   const [addFor, setAddFor] = useState(null);
-  const logsByUnit = (uid) => logs.filter(l => l.unit_id === uid).sort((a, b) => (b.service_date || "").localeCompare(a.service_date || ""));
+  const [catFilter, setCatFilter] = useState("all");
+  const [uploadingLogId, setUploadingLogId] = useState(null);
+
+  const logsByUnit = (uid) => {
+    let ul = logs.filter(l => l.unit_id === uid);
+    if (catFilter !== "all") ul = ul.filter(l => (l.service_category || "cuci_rutin") === catFilter);
+    return ul.sort((a, b) => (b.service_date || "").localeCompare(a.service_date || ""));
+  };
+
+  const uploadLogPhoto = async (logId, currentPhotos, file) => {
+    setUploadingLogId(logId);
+    try {
+      const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+      const up = await apiFetch("/api/upload-foto", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base64: b64, filename: file.name, mimeType: file.type, folder: `maintenance/${sel.id}` }) });
+      const uj = await up.json().catch(() => ({}));
+      if (!uj.key) { showNotif("❌ Upload gagal"); return; }
+      const newPhotos = [...(Array.isArray(currentPhotos) ? currentPhotos : []), uj.key];
+      const j = await call("update-log", { id: logId, photos: newPhotos });
+      setLogs(p => p.map(l => l.id === logId ? { ...l, photos: newPhotos } : l));
+      showNotif("✅ Foto ditambahkan");
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setUploadingLogId(null); }
+  };
 
   return (
     <div>
-      <div style={{ color: cs.muted, fontSize: 12, marginBottom: 10 }}>Klik unit untuk lihat riwayat servis. Tombol + untuk tambah log.</div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 12, color: cs.muted, marginRight: 4 }}>Filter:</span>
+        {[["all","Semua"],["cuci_rutin","Cuci Rutin"],["inspeksi","Inspeksi"],["perbaikan","Perbaikan"],["pengecekan","Cek Saja"]].map(([k,l]) => (
+          <button key={k} onClick={() => setCatFilter(k)} style={catFilter === k ? { ...tabActive, padding: "4px 10px", fontSize: 12 } : { ...tabBtn, padding: "4px 10px", fontSize: 12 }}>{l}</button>
+        ))}
+      </div>
       {units.map(u => {
         const ul = logsByUnit(u.id);
         const isOpen = open === u.id;
@@ -905,14 +945,25 @@ function HistoryTab({ units, logs, setLogs, sel, call, showNotif, showConfirm, i
                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                           <b style={{ color: cs.text }}>{l.service_type || "Servis"}</b>
                           <span style={{ color: cs.muted, fontSize: 12 }}>{fmtDate(l.service_date)}</span>
+                          {l.service_category && l.service_category !== "cuci_rutin" && (
+                            <span style={{ background: cs.accent + "15", color: cs.accent, padding: "1px 8px", borderRadius: 6, fontSize: 11 }}>
+                              {SERVICE_CATEGORY_LABELS[l.service_category] || l.service_category}
+                            </span>
+                          )}
+                          {l.service_category === "pengecekan" && <span style={pillGray}>Non-billable</span>}
                           {l.cost > 0 && <span style={pillYellow}>{fmtRp(l.cost)}</span>}
                           {l.invoiced && <span style={pillGreen}>✓ Invoiced</span>}
+                          <label style={{ ...miniBtn, cursor: "pointer", opacity: uploadingLogId === l.id ? .5 : 1, marginLeft: "auto" }} title="Tambah foto">
+                            {uploadingLogId === l.id ? "⏳" : "📷"}
+                            <input type="file" accept="image/*" style={{ display: "none" }} disabled={uploadingLogId === l.id}
+                              onChange={e => { if (e.target.files[0]) uploadLogPhoto(l.id, l.photos, e.target.files[0]); e.target.value = ""; }} />
+                          </label>
                           {isOwner && (
                             <button onClick={async () => {
                               if (!(await showConfirm({ title: "Hapus log?", message: "Hapus riwayat ini?" }))) return;
                               try { await call("delete-log", { id: l.id }); setLogs(p => p.filter(x => x.id !== l.id)); showNotif("✅ Dihapus"); }
                               catch (e) { showNotif("❌ " + e.message); }
-                            }} style={{ ...miniBtn, color: cs.red, marginLeft: "auto" }}>🗑</button>
+                            }} style={{ ...miniBtn, color: cs.red }}>🗑</button>
                           )}
                         </div>
                         {l.description && <div style={{ fontSize: 13, color: cs.text, margin: "3px 0" }}>{l.description}</div>}
@@ -1879,6 +1930,290 @@ function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, setOrd
         }>
           <QuotationPDFModule quo={previewQ} appSettings={appSettings || {}} logoUrl={logoUrl} onClose={() => setPreviewQ(null)} />
         </Suspense>
+      )}
+    </div>
+  );
+}
+
+// ─────────── FOLLOWUP TAB ───────────
+const ISSUE_LABELS = { kapasitor_rusak: "⚡ Kapasitor Rusak", bocor_freon: "❄️ Bocor Freon", kompresor_lemah: "🔧 Kompresor Lemah", drain_tersumbat: "💧 Drain Tersumbat", pcb_rusak: "🔌 PCB Rusak", filter_buntu: "🌫️ Filter Buntu", fan_motor_lemah: "💨 Fan Motor Lemah", lainnya: "📋 Lainnya" };
+const PRIORITY_COLORS = { critical: "#ef4444", high: "#f97316", normal: "#eab308", low: "#6b7280" };
+const FU_STATUS_LABELS = { open: "Terbuka", scheduled: "Terjadwal", in_progress: "Dikerjakan", done: "Selesai", cancelled: "Dibatalkan" };
+const FU_STATUS_COLORS = { open: "#ef4444", scheduled: "#38bdf8", in_progress: "#eab308", done: "#22c55e", cancelled: "#6b7280" };
+
+function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, currentUser }) {
+  const [followups, setFollowups] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [catFilter, setCatFilter] = useState("open");
+  const [addModal, setAddModal] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!sel) return;
+    setLoading(true);
+    try {
+      const payload = { client_id: sel.id };
+      if (catFilter !== "all") payload.status = catFilter;
+      const j = await call("list-followups", payload);
+      setFollowups(j.followups || []);
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setLoading(false); }
+  }, [sel, call, showNotif, catFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const updateStatus = async (id, newStatus) => {
+    try {
+      const patch = { id, status: newStatus };
+      if (newStatus === "done") patch.resolved_by = currentUser?.name || "Admin";
+      await call("update-followup", patch);
+      setFollowups(p => catFilter !== "all"
+        ? p.filter(x => x.id !== id)
+        : p.map(x => x.id === id ? { ...x, status: newStatus } : x));
+      showNotif("✅ Status diperbarui");
+    } catch (e) { showNotif("❌ " + e.message); }
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        {[["open","🔴 Terbuka"],["scheduled","📅 Terjadwal"],["in_progress","🔧 Dikerjakan"],["done","✅ Selesai"],["all","Semua"]].map(([k,l]) => (
+          <button key={k} onClick={() => setCatFilter(k)} style={catFilter === k ? { ...tabActive, padding: "5px 12px", fontSize: 12 } : { ...tabBtn, padding: "5px 12px", fontSize: 12 }}>{l}</button>
+        ))}
+        <button onClick={() => setAddModal(true)} style={{ ...btn, marginLeft: "auto" }}>+ Catat Temuan</button>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 32, color: cs.muted }}>Memuat…</div>
+      ) : followups.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 40, color: cs.muted }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>{catFilter === "open" ? "✅" : "📋"}</div>
+          {catFilter === "open" ? "Tidak ada temuan yang perlu ditindaklanjuti" : "Tidak ada data"}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {followups.map(f => {
+            const unit = f.maintenance_units || units.find(u => u.id === f.unit_id);
+            const prioColor = PRIORITY_COLORS[f.priority] || cs.muted;
+            const stColor = FU_STATUS_COLORS[f.status] || cs.muted;
+            return (
+              <div key={f.id} style={{ ...card, borderLeft: "4px solid " + prioColor }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start", justifyContent: "space-between" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                      <span style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>{ISSUE_LABELS[f.issue_type] || f.issue_type}</span>
+                      <span style={{ background: stColor + "22", color: stColor, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>{FU_STATUS_LABELS[f.status] || f.status}</span>
+                      <span style={{ background: prioColor + "22", color: prioColor, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 600 }}>{f.priority}</span>
+                    </div>
+                    <div style={{ color: cs.muted, fontSize: 12 }}>📍 {unit?.unit_code || "?"} — {unit?.location || ""} · {unit?.brand} {unit?.capacity_pk}PK</div>
+                    {f.description && <div style={{ fontSize: 13, color: cs.text, marginTop: 5 }}>{f.description}</div>}
+                    <div style={{ color: cs.muted, fontSize: 12, marginTop: 4 }}>
+                      Ditemukan: {fmtDate(f.found_date)}{f.found_by ? ` oleh ${f.found_by}` : ""}
+                    </div>
+                    {f.estimated_cost > 0 && <div style={{ fontSize: 12, color: cs.yellow || "#eab308", marginTop: 2 }}>💰 Est. biaya: {fmtRp(f.estimated_cost)}</div>}
+                    {f.status === "done" && f.resolution && (
+                      <div style={{ marginTop: 8, padding: "6px 10px", background: cs.green + "11", borderRadius: 8, fontSize: 12, color: cs.green }}>
+                        ✅ Resolusi: {f.resolution} {f.resolved_date ? `(${fmtDate(f.resolved_date)})` : ""}
+                      </div>
+                    )}
+                  </div>
+                  {f.status !== "done" && f.status !== "cancelled" && (
+                    <select value={f.status} onChange={e => updateStatus(f.id, e.target.value)}
+                      style={{ ...inp, width: "auto", fontSize: 12, padding: "5px 8px", flexShrink: 0 }}>
+                      {["open","scheduled","in_progress","done","cancelled"].map(s => (
+                        <option key={s} value={s}>{FU_STATUS_LABELS[s]}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {addModal && (
+        <FollowupModal units={units} sel={sel} call={call} showNotif={showNotif}
+          onClose={() => setAddModal(false)}
+          onSave={f => { if (catFilter === "open" || catFilter === "all") setFollowups(p => [f, ...p]); setAddModal(false); showNotif("✅ Temuan dicatat"); }} />
+      )}
+    </div>
+  );
+}
+
+function FollowupModal({ units, sel, call, showNotif, onClose, onSave }) {
+  const [f, setF] = useState({ unit_id: "", issue_type: "kapasitor_rusak", description: "", found_by: "", priority: "normal", found_date: new Date().toISOString().slice(0, 10), estimated_cost: "" });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const doSave = async () => {
+    if (!f.unit_id || !f.issue_type) { showNotif("❌ Unit dan jenis masalah wajib"); return; }
+    setBusy(true);
+    try {
+      const payload = { unit_id: f.unit_id, client_id: sel.id, issue_type: f.issue_type, found_by: f.found_by || null, priority: f.priority, found_date: f.found_date };
+      if (f.description) payload.description = f.description;
+      if (f.estimated_cost) payload.estimated_cost = Number(f.estimated_cost);
+      const j = await call("create-followup", payload);
+      onSave(j.followup);
+    } catch (e) { showNotif("❌ " + e.message); setBusy(false); }
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ fontWeight: 700, color: cs.text, fontSize: 16, marginBottom: 12 }}>Catat Temuan Lapangan</div>
+      <Field l="Unit *">
+        <select value={f.unit_id} onChange={e => set("unit_id", e.target.value)} style={inp}>
+          <option value="">— Pilih Unit —</option>
+          {units.map(u => <option key={u.id} value={u.id}>{u.unit_code} — {u.location}</option>)}
+        </select>
+      </Field>
+      <Field l="Jenis Masalah *">
+        <select value={f.issue_type} onChange={e => set("issue_type", e.target.value)} style={inp}>
+          {Object.entries(ISSUE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field l="Tanggal Ditemukan">
+          <input type="date" value={f.found_date} onChange={e => set("found_date", e.target.value)} style={inp} />
+        </Field>
+        <Field l="Prioritas">
+          <select value={f.priority} onChange={e => set("priority", e.target.value)} style={inp}>
+            <option value="critical">🔴 Critical</option>
+            <option value="high">🟠 High</option>
+            <option value="normal">🟡 Normal</option>
+            <option value="low">⚪ Low</option>
+          </select>
+        </Field>
+      </div>
+      <Field l="Ditemukan oleh (Teknisi)">
+        <input value={f.found_by} onChange={e => set("found_by", e.target.value)} placeholder="Nama teknisi" style={inp} />
+      </Field>
+      <Field l="Deskripsi / Detail Masalah">
+        <textarea value={f.description} onChange={e => set("description", e.target.value)} rows={3} placeholder="Jelaskan kondisi yang ditemukan di lapangan..." style={{ ...inp, resize: "vertical" }} />
+      </Field>
+      <Field l="Estimasi Biaya Perbaikan (opsional)">
+        <input type="number" value={f.estimated_cost} onChange={e => set("estimated_cost", e.target.value)} placeholder="0" style={inp} />
+      </Field>
+      <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+        <button onClick={onClose} style={btnGhost}>Batal</button>
+        <button onClick={doSave} disabled={busy} style={{ ...btn, opacity: busy ? .5 : 1 }}>{busy ? "Menyimpan…" : "💾 Simpan Temuan"}</button>
+      </div>
+    </Overlay>
+  );
+}
+
+// ─────────── MANIFEST TAB ───────────
+function ManifestTab({ sel, units, call, showNotif }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
+  const [manifest, setManifest] = useState(null);
+  const [assignments, setAssignments] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!sel || !date) return;
+    setLoaded(false);
+    try {
+      const j = await call("get-manifest", { client_id: sel.id, service_date: date });
+      setManifest(j.manifest || null);
+      const map = {};
+      (j.manifest?.pre_service_manifest_items || []).forEach(it => {
+        map[it.unit_id] = { team_label: it.team_label || "", technician: it.technician || "", service_category: it.service_category || "cuci_rutin" };
+      });
+      setAssignments(map);
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setLoaded(true); }
+  }, [sel, date, call, showNotif]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const setAssign = (uid, key, val) => setAssignments(p => ({ ...p, [uid]: { ...(p[uid] || {}), [key]: val } }));
+
+  const activeUnits = units.filter(u => u.status !== "baru" && u.status !== "retired" && u.status !== "nonaktif");
+  const baruUnits = units.filter(u => u.status === "baru");
+
+  const doSave = async () => {
+    setBusy(true);
+    try {
+      const items = activeUnits.filter(u => assignments[u.id]?.team_label || assignments[u.id]?.technician)
+        .map(u => ({ unit_id: u.id, team_label: assignments[u.id]?.team_label || null, technician: assignments[u.id]?.technician || null, service_category: assignments[u.id]?.service_category || "cuci_rutin" }));
+      const j = await call("create-manifest", { client_id: sel.id, service_date: date, items, created_by: "admin" });
+      setManifest(j.manifest);
+      showNotif("✅ Manifest disimpan — " + items.length + " unit terassign");
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setBusy(false); }
+  };
+
+  const teams = [...new Set(Object.values(assignments).map(a => a.team_label).filter(Boolean))];
+  const assigned = activeUnits.filter(u => assignments[u.id]?.team_label).length;
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Tanggal Servis</div>
+          <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ ...inp, width: "auto" }} />
+        </div>
+        {manifest && <span style={{ ...pillGreen }}>✅ Tersimpan</span>}
+        {assigned > 0 && !manifest && <span style={{ ...pillBlue }}>{assigned} unit terassign</span>}
+        {teams.length > 0 && <span style={{ color: cs.muted, fontSize: 12 }}>Tim: {teams.join(", ")}</span>}
+        <button onClick={doSave} disabled={busy} style={{ ...btn, marginLeft: "auto", opacity: busy ? .5 : 1 }}>
+          {busy ? "Menyimpan…" : "💾 Simpan Manifest"}
+        </button>
+      </div>
+
+      <div style={{ color: cs.muted, fontSize: 12, marginBottom: 10 }}>
+        Isi kolom Tim (misal: Tim Rey, LT1) dan Teknisi per unit sebelum berangkat.
+        Unit berstatus <strong>AC Baru</strong> otomatis di-skip dari penugasan.
+      </div>
+
+      {!loaded ? <div style={{ textAlign: "center", padding: 24, color: cs.muted }}>Memuat…</div> : (
+        <div style={{ overflow: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr>
+                {["Unit","Lokasi","PK","Status","Tim","Teknisi","Kategori"].map(h => <th key={h} style={th}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {activeUnits.map(u => {
+                const a = assignments[u.id] || {};
+                return (
+                  <tr key={u.id}>
+                    <td style={td}><b>{u.unit_code}</b></td>
+                    <td style={{ ...td, color: cs.muted, fontSize: 12 }}>{u.location || "—"}</td>
+                    <td style={td}>{u.capacity_pk}PK</td>
+                    <td style={td}>{statusPill(u.status)}</td>
+                    <td style={td}>
+                      <input value={a.team_label || ""} onChange={e => setAssign(u.id, "team_label", e.target.value)}
+                        placeholder="Tim A" style={{ ...inp, width: 80, padding: "4px 7px", fontSize: 12 }} />
+                    </td>
+                    <td style={td}>
+                      <input value={a.technician || ""} onChange={e => setAssign(u.id, "technician", e.target.value)}
+                        placeholder="Nama" style={{ ...inp, width: 90, padding: "4px 7px", fontSize: 12 }} />
+                    </td>
+                    <td style={td}>
+                      <select value={a.service_category || "cuci_rutin"} onChange={e => setAssign(u.id, "service_category", e.target.value)}
+                        style={{ ...inp, width: 110, padding: "4px 7px", fontSize: 12 }}>
+                        <option value="cuci_rutin">Cuci Rutin</option>
+                        <option value="inspeksi">Inspeksi</option>
+                        <option value="perbaikan">Perbaikan</option>
+                        <option value="pengecekan">Cek Saja</option>
+                      </select>
+                    </td>
+                  </tr>
+                );
+              })}
+              {baruUnits.length > 0 && (
+                <tr>
+                  <td colSpan={7} style={{ ...td, color: cs.muted, fontSize: 12, fontStyle: "italic", textAlign: "center", paddingTop: 12 }}>
+                    {baruUnits.length} unit AC Baru ({baruUnits.map(u => u.unit_code).join(", ")}) — otomatis di-skip, tidak memerlukan penugasan
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

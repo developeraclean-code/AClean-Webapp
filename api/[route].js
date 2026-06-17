@@ -3641,6 +3641,15 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           if (!r.ok) return res.status(400).json({ error: "Gagal simpan log", detail: await r.text() });
           return res.status(200).json({ log: (await r.json())[0] });
         }
+        if (action === "update-log") {
+          if (!body.id) return res.status(400).json({ error: "id wajib" });
+          const allowed = ["description", "technician", "cost", "service_type", "service_category", "photos", "materials", "invoiced"];
+          const patch = Object.fromEntries(Object.entries(body).filter(([k]) => allowed.includes(k)));
+          if (!Object.keys(patch).length) return res.status(400).json({ error: "Tidak ada field yang diupdate" });
+          const r = await fetch(REST("maintenance_logs?id=eq." + encodeURIComponent(body.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(patch) });
+          if (!r.ok) return res.status(400).json({ error: "Gagal update log", detail: await r.text() });
+          return res.status(200).json({ log: (await r.json())[0] });
+        }
         if (action === "delete-log") {
           if (!body.id) return res.status(400).json({ error: "id wajib" });
           const r = await fetch(REST("maintenance_logs?id=eq." + encodeURIComponent(body.id)), { method: "DELETE", headers });
@@ -3862,7 +3871,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
             return res.status(200).json({ skipped: true, reason: "servis non-cleaning — admin pilih unit dulu", client_linked: clientId });
           }
 
-          // Cleaning tanpa pilihan eksplisit → default semua unit aktif.
+          // Cleaning tanpa pilihan eksplisit → default semua unit aktif (bukan baru/nonaktif/rusak).
           if (!unitIds.length) {
             try {
               const auRes = await fetch(REST("maintenance_units?client_id=eq." + encodeURIComponent(clientId) + "&status=eq.active&select=id&order=unit_code.asc"), { headers });
@@ -3871,6 +3880,19 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
             } catch (_) {}
           }
           if (!unitIds.length) return res.status(200).json({ skipped: true, reason: "klien maintenance tanpa unit aktif" });
+
+          // Filter unit berstatus 'baru' dari daftar (AC BARU tidak perlu service).
+          // Berlaku untuk unitIds eksplisit maupun auto-fetch — cegah log hantu ke AC yang belum aktif.
+          try {
+            const stRes = await fetch(REST("maintenance_units?id=in.(" + encodeURIComponent(unitIds.join(",")) + ")&select=id,status"), { headers });
+            const stData = await stRes.json();
+            const baruIds = new Set((Array.isArray(stData) ? stData : []).filter(u => u.status === "baru").map(u => u.id));
+            if (baruIds.size > 0) {
+              unitIds = unitIds.filter(id => !baruIds.has(id));
+              console.log(`[autolog] Skip ${baruIds.size} unit status=baru`);
+            }
+          } catch (_) {}
+          if (!unitIds.length) return res.status(200).json({ skipped: true, reason: "semua unit berstatus baru — tidak perlu log" });
 
           // Persist hasil resolusi balik ke order → order tampil ter-link di UI (non-blocking).
           if (!order.maintenance_client_id) {
