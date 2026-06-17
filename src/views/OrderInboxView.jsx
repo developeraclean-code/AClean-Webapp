@@ -2423,54 +2423,54 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                       <SourceBadge source={o.source} />
                     </td>
 
-                    {/* Tim — project order: tampil nama anggota (read-only); regular: dropdown team_slot */}
+                    {/* Tim — dropdown team_slot untuk semua order (termasuk Project) */}
                     <td style={{ padding: "8px 10px", minWidth: 160 }}>
-                      {o.project_id ? (
-                        <div>
-                          <div style={{ fontSize: 10, color: cs.ara, fontWeight: 700, marginBottom: 3 }}>🏗️ Project</div>
-                          {[...TFIELDS, ...HFIELDS].map((f, i) => o[f] ? (
-                            <div key={f} style={{ fontSize: 11, color: getTechColor(o[f], teknisiData), fontWeight: 600 }}>
-                              {i < 3 ? "T" : "H"}{i % 3 > 0 ? i % 3 + 1 : ""} {o[f]}
-                            </div>
-                          ) : null)}
-                          {![...TFIELDS, ...HFIELDS].some(f => o[f]) && (
-                            <div style={{ fontSize: 10, color: cs.muted }}>Belum ada anggota</div>
-                          )}
-                        </div>
-                      ) : (
-                        <>
-                          <select value={o.team_slot || ""}
-                            onChange={e => handleQuickAssign(o, "team_slot", e.target.value)}
-                            style={{ ...ddStyle, color: o.team_slot ? cs.accent : cs.muted, borderColor: o.team_slot ? cs.accent + "66" : cs.border }}>
-                            <option value="">— Pilih tim —</option>
-                            {TEAM_SLOTS.map(s => {
-                              const slot = getSlotData(o.date, s);
-                              const members = slotMembers(slot);
-                              return (
-                                <option key={s} value={s}>
-                                  {s}{members.length > 0 ? " — " + members.join(", ") : ""}
-                                </option>
-                              );
-                            })}
-                          </select>
-                          {o.team_slot && (() => {
-                            const slot = getSlotData(o.date, o.team_slot);
-                            const members = slotMemberRoles(slot);
-                            if (members.length === 0) return (
-                              <div style={{ color: cs.yellow, fontSize: 9, marginTop: 2 }}>⚠️ belum diisi</div>
-                            );
+                      <>
+                        {o.project_id && (
+                          <div style={{ fontSize: 10, color: cs.ara, fontWeight: 700, marginBottom: 4 }}>🏗️ Project</div>
+                        )}
+                        <select value={o.team_slot || ""}
+                          onChange={e => handleQuickAssign(o, "team_slot", e.target.value)}
+                          style={{ ...ddStyle, color: o.team_slot ? cs.accent : cs.muted, borderColor: o.team_slot ? cs.accent + "66" : cs.border }}>
+                          <option value="">— Pilih tim —</option>
+                          {TEAM_SLOTS.map(s => {
+                            const slot = getSlotData(o.date, s);
+                            const members = slotMembers(slot);
                             return (
-                              <div style={{ fontSize: 9, marginTop: 2, display: "flex", flexWrap: "wrap", gap: 3 }}>
-                                {members.map(m => (
-                                  <span key={m.name} style={{ color: getTechColor(m.name, teknisiData), fontWeight: 600 }}>
-                                    {m.name}
-                                  </span>
-                                ))}
-                                {slot.confirmed && <span style={{ color: cs.green, marginLeft: 2 }}>✓</span>}
-                              </div>
+                              <option key={s} value={s}>
+                                {s}{members.length > 0 ? " — " + members.join(", ") : ""}
+                              </option>
                             );
-                          })()}
-                        </>
+                          })}
+                        </select>
+                        {o.team_slot && (() => {
+                          const slot = getSlotData(o.date, o.team_slot);
+                          const members = slotMemberRoles(slot);
+                          if (members.length === 0) return (
+                            <div style={{ color: cs.yellow, fontSize: 9, marginTop: 2 }}>⚠️ belum diisi</div>
+                          );
+                          return (
+                            <div style={{ fontSize: 9, marginTop: 2, display: "flex", flexWrap: "wrap", gap: 3 }}>
+                              {members.map(m => (
+                                <span key={m.name} style={{ color: getTechColor(m.name, teknisiData), fontWeight: 600 }}>
+                                  {m.name}
+                                </span>
+                              ))}
+                              {slot.confirmed && <span style={{ color: cs.green, marginLeft: 2 }}>✓</span>}
+                            </div>
+                          );
+                        })()}
+                        {/* Project: tampil anggota langsung (T/H fields) sebagai info tambahan */}
+                        {o.project_id && [...TFIELDS, ...HFIELDS].some(f => o[f]) && (
+                          <div style={{ marginTop: 4, borderTop: "1px solid " + cs.border + "44", paddingTop: 3 }}>
+                            {[...TFIELDS, ...HFIELDS].map((f, i) => o[f] ? (
+                              <div key={f} style={{ fontSize: 9, color: getTechColor(o[f], teknisiData) }}>
+                                {i < 3 ? "T" : "H"}{i % 3 > 0 ? i % 3 + 1 : ""} {o[f]}
+                              </div>
+                            ) : null)}
+                          </div>
+                        )}
+                      </>
                       )}
                     </td>
 
