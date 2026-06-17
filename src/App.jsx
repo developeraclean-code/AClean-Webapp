@@ -13,7 +13,7 @@ import { getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
 import { detectContinuationCandidates } from "./lib/orders.js";
 import { resolveMultiDayInvoiceAction, multiDayProjectKey } from "./lib/invoiceMultiDay.js";
-import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine } from "./lib/invoicing.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryOf, LINE_CATEGORY } from "./lib/invoicing.js";
 import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
 import {
   PRICE_LIST_DEFAULT, getBracketKey,
@@ -4368,17 +4368,24 @@ ${photoPageHTML}
     const first = sorted[0];
     const sourceIds = sorted.map(i => i.id).join(", ");
 
-    // Gabungkan materials_detail dari semua invoice
-    const mergedMaterials = sorted.flatMap(inv => {
-      const md = inv.materials_detail;
-      if (!md) return [];
-      try { return Array.isArray(md) ? md : JSON.parse(md); } catch { return []; }
-    });
+    // Gabungkan materials_detail dari semua invoice. Sumber tanpa line item (legacy)
+    // disintesis dari field labor/material agar nilainya tidak hilang saat merge.
+    const mergedMaterials = normalizeLines(sorted.flatMap(inv => {
+      let md = inv.materials_detail;
+      if (typeof md === "string") { try { md = JSON.parse(md); } catch { md = null; } }
+      if (Array.isArray(md) && md.length > 0) return md;
+      const synth = [];
+      if (Number(inv.labor) > 0) synth.push({ nama: inv.service || "Jasa", jumlah: 1, satuan: "unit", harga_satuan: Number(inv.labor), subtotal: Number(inv.labor), keterangan: "jasa" });
+      if (Number(inv.material) > 0) synth.push({ nama: "Material", jumlah: 1, satuan: "unit", harga_satuan: Number(inv.material), subtotal: Number(inv.material), keterangan: "barang" });
+      return synth;
+    }));
 
-    const totalLabor    = sorted.reduce((s, i) => s + (Number(i.labor) || 0), 0);
-    const totalMaterial = sorted.reduce((s, i) => s + (Number(i.material) || 0), 0);
+    // Ringkasan diturunkan dari line item gabungan (single source of truth via summarize).
     const totalDiscount = sorted.reduce((s, i) => s + (Number(i.discount) || 0), 0);
-    const grandTotal    = sorted.reduce((s, i) => s + (Number(i.total) || 0), 0);
+    const _mergedSum    = summarize(mergedMaterials, { discount: totalDiscount });
+    const totalLabor    = _mergedSum.labor;
+    const totalMaterial = _mergedSum.material;
+    const grandTotal    = _mergedSum.total;
     const dueDates      = sorted.map(i => i.due).filter(Boolean);
     const dueLatest     = dueDates.length ? dueDates.sort((a, b) => new Date(b) - new Date(a))[0] : null;
     const serviceNames  = [...new Set(sorted.map(i => i.service).filter(Boolean))].join(" + ");
@@ -4410,6 +4417,12 @@ ${photoPageHTML}
       sent:            false,
       created_at:      new Date().toISOString(),
     };
+
+    // Guard invarian (observasional)
+    {
+      const _chk = checkInvoiceConsistency({ ...newInv, lines: mergedMaterials });
+      if (!_chk.ok) addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, newInv.id) + " (gabungan)", "WARNING");
+    }
 
     const { data: created, error } = await supabase.from("invoices").insert([newInv]).select().single();
     if (error || !created) {
@@ -6057,34 +6070,51 @@ ${photoPageHTML}
 
               const totalInv = laborTotal + materialCost;
 
-              // Build materials_detail for ARA invoice from laporan
-              const _araMatDetail = (() => {
-                if (!lapRep) return null;
+              // Build line item ARA: 1 baris jasa (labor) + baris material dari laporan
+              // (harga di-resolve dari inventory/PRICE_LIST seperti perhitungan materialCost),
+              // lalu ringkasan diturunkan dari line item via summarize (single source of truth).
+              const _resolveMatPrice = (m) => {
+                const _mNama = (m.nama || "").toLowerCase();
+                const _invItem = inventoryData.find(inv =>
+                  inv.name.toLowerCase().includes(_mNama) || _mNama.includes(inv.name.toLowerCase()));
+                let harga = parseFloat(m.harga_satuan) || _invItem?.price || m.harga || m.price || 0;
+                if (!harga) {
+                  if (_mNama.includes("r-22") || _mNama.includes("r22")) harga = PRICE_LIST["freon_R22"] || 150000;
+                  else if (_mNama.includes("r-32") || _mNama.includes("r32")) harga = PRICE_LIST["freon_R32"] || 450000;
+                  else if (_mNama.includes("r-410") || _mNama.includes("r410")) harga = PRICE_LIST["freon_R410A"] || 450000;
+                }
+                return harga;
+              };
+              const _araLines = (() => {
+                const lines = [];
+                if (laborTotal > 0) lines.push({
+                  nama: ord.service + (ord.type ? " - " + ord.type : ""), jumlah: ord.units || 1, satuan: "unit",
+                  harga_satuan: Math.round(laborTotal / (ord.units || 1)), subtotal: laborTotal, keterangan: "jasa",
+                });
                 const mats = (() => {
-                  if (lapRep.materials_json) { try { return JSON.parse(lapRep.materials_json); } catch (_) { } }
-                  return safeArr(lapRep.materials);
+                  if (lapRep?.materials_json) { try { return JSON.parse(lapRep.materials_json); } catch (_) { } }
+                  return safeArr(lapRep?.materials);
                 })().filter(m => m.nama && parseFloat(m.jumlah || 0) > 0);
-                if (!mats.length) return null;
-                return JSON.stringify(mats.map(m => ({
-                  nama: m.nama, jumlah: parseFloat(m.jumlah) || 1,
-                  satuan: m.satuan || "pcs",
-                  harga_satuan: parseFloat(m.harga_satuan) || 0,
-                  subtotal: (parseFloat(m.harga_satuan) || 0) * (parseFloat(m.jumlah) || 1),
-                  keterangan: m.keterangan || ""
-                })));
+                mats.forEach(m => {
+                  const qty = parseFloat(m.jumlah) || 1;
+                  const harga = _resolveMatPrice(m);
+                  lines.push({ nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: harga, subtotal: harga * qty, keterangan: m.keterangan || "barang" });
+                });
+                return normalizeLines(lines);
               })();
+              const _araSum = summarize(_araLines);
               const newInv = {
                 id: invId, job_id: ord.id,
                 customer: ord.customer, phone: ord.phone || "",
                 service: ord.service + (ord.type ? " - " + ord.type : ""),
                 units: ord.units || 1,
-                labor: laborTotal,
-                material: materialCost,
-                materials_detail: _araMatDetail,
+                labor: _araSum.labor,
+                material: _araSum.material,
+                materials_detail: _araLines.length > 0 ? JSON.stringify(_araLines) : null,
                 discount: 0,
                 trade_in: false,
                 trade_in_amount: 0,
-                total: totalInv,
+                total: _araSum.total,
                 status: "PENDING",
                 garansi_days: 30,
                 garansi_expires: new Date(Date.now() + 30 * 86400000 + 7 * 60 * 60 * 1000).toISOString().slice(0, 10),
@@ -6092,6 +6122,10 @@ ${photoPageHTML}
                 due: new Date(Date.now() + 3 * 86400000 + 7 * 60 * 60 * 1000).toISOString().slice(0, 10),
                 sent: false, created_at: getLocalISOString()
               };
+              {
+                const _chk = checkInvoiceConsistency({ ...newInv, lines: _araLines });
+                if (!_chk.ok) addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, newInv.id) + " (ARA)", "WARNING");
+              }
               invalidateCache("invoices", "orders");
               setInvoicesData(prev => [...prev, newInv]);
               const { error: invErr } = await insertInvoice(supabase, newInv);
@@ -10479,31 +10513,42 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     Batal
                   </button>
                   <button onClick={async () => {
-                    const jasaTotal3 = editJasaItems.reduce((s, m) => s + (m.subtotal || 0), 0);
-                    const matTotal3 = editInvoiceItems.reduce((s, m) => s + (m.subtotal || 0), 0);
-                    const labor = jasaTotal3;
                     const discountFinal = parseInt(editInvoiceForm.discount || 0) || 0;
                     const tradeInFinal = !!editInvoiceForm.trade_in;
                     const tradeInAmtFinal = tradeInFinal ? (parseInt(editInvoiceForm.trade_in_amount) || 0) : 0;
-                    const newTotalFinal = Math.max(0, jasaTotal3 + matTotal3 - discountFinal - tradeInAmtFinal);
+                    // Section = otoritas split: jasa section → keterangan "jasa"; material section → barang/freon/diskon.
+                    // category dibersihkan agar normalizeLines menetapkannya ulang dari katalog/keterangan.
+                    const jasaRows = editJasaItems.filter(m => m.nama && (m.jumlah || 0) > 0)
+                      .map(({ category, ...rest }) => ({ ...rest, keterangan: "jasa" }));
+                    const matRows = editInvoiceItems.filter(m => m.nama && (m.jumlah || 0) > 0)
+                      .map(({ category, ...rest }) => {
+                        const ket = String(rest.keterangan || "").toLowerCase();
+                        return { ...rest, keterangan: ["barang", "freon", "diskon"].includes(ket) ? rest.keterangan : "barang" };
+                      });
+                    const newMD = normalizeLines([...jasaRows, ...matRows]);
+                    // SINGLE SOURCE OF TRUTH: labor/material/total diturunkan dari newMD via summarize.
+                    const _s = summarize(newMD, { discount: discountFinal, tradeIn: tradeInAmtFinal });
+                    const labor = _s.labor;
+                    const material = _s.material;
+                    const newTotalFinal = _s.total;
                     if (newTotalFinal <= 0 && !tradeInFinal && discountFinal === 0) { showNotif("⚠️ Total tidak boleh 0"); return; }
-                    const newMD = [
-                      ...editJasaItems.filter(m => m.nama && (m.jumlah || 0) > 0),
-                      ...editInvoiceItems.filter(m => m.nama && (m.jumlah || 0) > 0)
-                    ];
                     const billingName = (editInvoiceForm.billing_name ?? editInvoiceData.customer) || editInvoiceData.customer;
                     const billingAddress = editInvoiceForm.billing_address ?? (editInvoiceData.address || "");
                     setInvoicesData(prev => prev.map(i => i.id === editInvoiceData.id
-                      ? { ...i, labor, material: matTotal3, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, materials_detail: newMD, customer: billingName, address: billingAddress } : i));
+                      ? { ...i, labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, materials_detail: newMD, customer: billingName, address: billingAddress } : i));
+                    {
+                      const _chk = checkInvoiceConsistency({ ...editInvoiceData, lines: newMD, labor, material, discount: discountFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal });
+                      if (!_chk.ok) addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, editInvoiceData.id) + " (edit nilai)", "WARNING");
+                    }
                     let saved = false;
                     {
                       const { error: e1 } = await updateInvoice(supabase, editInvoiceData.id, {
-                        labor, material: matTotal3, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal,
+                        labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal,
                         materials_detail: JSON.stringify(newMD), customer: billingName, address: billingAddress
                       }, auditUserName()); if (!e1) saved = true; else console.warn("editInv e1:", e1.message);
                     }
                     if (!saved) {
-                      const { error: e2 } = await updateInvoice(supabase, editInvoiceData.id, { labor, material: matTotal3, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal }, auditUserName());
+                      const { error: e2 } = await updateInvoice(supabase, editInvoiceData.id, { labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal }, auditUserName());
                       if (!e2) saved = true;
                     }
                     if (!saved) await updateInvoice(supabase, editInvoiceData.id, { total: newTotalFinal }, auditUserName());
@@ -10698,7 +10743,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 )}
                 {liveInv.status === "PENDING_APPROVAL" &&
                   (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, discount: liveInv.discount || 0, trade_in: liveInv.trade_in || false, trade_in_amount: liveInv.trade_in_amount || 250000, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => jasaSvcNames.some(s => (m.nama || "").includes(s))); const _mLv = _aLv.filter(m => !jasaSvcNames.some(s => (m.nama || "").includes(s))); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setVoucherCheckCode(""); setVoucherCheckResult(null); setVoucherApplied(null); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
+                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, discount: liveInv.discount || 0, trade_in: liveInv.trade_in || false, trade_in_amount: liveInv.trade_in_amount || 250000, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR); const _mLv = _aLv.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setVoucherCheckCode(""); setVoucherCheckResult(null); setVoucherApplied(null); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
                   )}
               </div>
             </div>

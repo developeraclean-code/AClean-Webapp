@@ -2,6 +2,7 @@ import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 import { smartSearchNormalize, samePhone } from "../lib/phone.js";
+import { categoryOf, LINE_CATEGORY } from "../lib/invoicing.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
@@ -1551,8 +1552,9 @@ return (
                 (currentUser?.role === "Admin" && inv.status === "PENDING_APPROVAL")) && (
                 <button onClick={() => {
                   setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, discount: inv.discount || 0, trade_in: inv.trade_in || false, trade_in_amount: inv.trade_in_amount || 250000, notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
-                  const _jasaItems = _allItems.filter(m => jasaSvcNames.some(s => (m.nama || "").includes(s)));
-                  const _matItems = _allItems.filter(m => !jasaSvcNames.some(s => (m.nama || "").includes(s)));
+                  // Split via kategori billing (bukan tebak-nama): LABOR/FEE → section jasa, sisanya → material
+                  const _jasaItems = _allItems.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR);
+                  const _matItems = _allItems.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR);
                   setEditJasaItems(_jasaItems);
                   setEditInvoiceItems(_matItems); setModalEditInvoice(true);
                 }}
