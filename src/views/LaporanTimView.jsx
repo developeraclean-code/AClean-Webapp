@@ -2,6 +2,7 @@ import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
 import { resolveMultiDayInvoiceAction } from "../lib/invoiceMultiDay.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency } from "../lib/invoicing.js";
 
 // ── Survey Kirim Modal ─────────────────────────────────────────────────────────
 function SurveyKirimModal({ r, onClose, sendWA, showNotif, addAgentLog, auditUserName, updateServiceReport, supabase, fotoSrc, downloadServiceReportPDF, invoicesData }) {
@@ -548,8 +549,12 @@ const verifyLaporan = async (r) => {
       }
     }
 
-    const laborV = vMDetail.filter(m => m.keterangan === "jasa" || m.keterangan === "repair").reduce((s, m) => s + m.subtotal, 0) || hitungLabor(r.service, ord?.type, (Array.isArray(r.units) ? r.units.length : r.units) || ord?.units || 1);
-    const matV = vMDetail.filter(m => m.keterangan !== "jasa" && m.keterangan !== "repair" && m.keterangan !== "freon").reduce((s, m) => s + m.subtotal, 0);
+    // Ringkasan diturunkan dari vMDetail (single source of truth via lib/invoicing).
+    // CATATAN: matV kini TERMASUK freon — dulu freon dikecualikan dari matV & total
+    // sehingga baris freon tampil di invoice tapi tidak ikut ditagih.
+    const _sumV = summarize(vMDetail);
+    const laborV = _sumV.labor || hitungLabor(r.service, ord?.type, (Array.isArray(r.units) ? r.units.length : r.units) || ord?.units || 1);
+    const matV = _sumV.material;
 
     const todayInv2 = new Date().toISOString().slice(0, 10);
     const isComplainSvc2 = r.service === "Complain";
@@ -565,8 +570,10 @@ const verifyLaporan = async (r) => {
     let finalMat2 = matV;
     let finalTotal2 = laborV + matV;
     let finalStatus2 = "PENDING_APPROVAL";
+    let waiverV = 0; // nilai jasa yang di-waive garansi (P3: jadikan baris diskon)
 
     if (isComplainSvc2 && prevGaransiActive2) {
+      waiverV = laborV; // jasa ditanggung garansi
       finalLabor2 = 0;
       finalTotal2 = matV;
       if (finalTotal2 === 0) finalStatus2 = "PAID";
@@ -575,6 +582,8 @@ const verifyLaporan = async (r) => {
         const pl = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
         return (pl && pl.price > 0) ? pl.price : 100000;
       })();
+      // Masukkan sbg line item supaya materials_detail konsisten dgn total (dulu kosong → mismatch)
+      vMDetail.push({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: BIAYA_CEK2, subtotal: BIAYA_CEK2, keterangan: "jasa" });
       finalLabor2 = BIAYA_CEK2;
       finalTotal2 = BIAYA_CEK2;
     }
@@ -648,6 +657,14 @@ const verifyLaporan = async (r) => {
           newInv.member_discount = memberDisc2;
           newInv.total = Math.max(0, newInv.total - memberDisc2);
         }
+      }
+    }
+    // ── GUARD INVARIAN (observasional, non-blocking) — pakai vMDetail (array) sbg lines ──
+    {
+      const _chk = checkInvoiceConsistency({ ...newInv, lines: vMDetail }, { waiverAmount: waiverV });
+      if (!_chk.ok) {
+        console.warn("[INVOICE_INVARIANT]", describeInconsistency(_chk, newInv.id));
+        addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, newInv.id) + " (verify laporan)", "WARNING");
       }
     }
     setInvoicesData(prev => [...prev, newInv]);

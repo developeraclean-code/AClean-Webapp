@@ -13,6 +13,7 @@ import { getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
 import { detectContinuationCandidates } from "./lib/orders.js";
 import { resolveMultiDayInvoiceAction, multiDayProjectKey } from "./lib/invoiceMultiDay.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency } from "./lib/invoicing.js";
 import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
 import {
   PRICE_LIST_DEFAULT, getBracketKey,
@@ -7913,8 +7914,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         mDetail.push(mkRow(r.nama, r.jumlah || 1, r.satuan || "pcs", r.harga_satuan || 0, "repair"));
       });
 
-      // C. Material rows — laporanMaterials adalah stok tracking saja (TIDAK masuk invoice).
-      // Freon/vacum yang ditagih diinput via laporanJasaItems (Jasa section), bukan di sini.
+      // C. Barang/Sparepart rows (dari section "📦 Sparepart & Material") — keterangan: "barang"
+      //    FIX: dulu item Barang HANYA mengisi field `material` & dipotong stok, tapi TIDAK
+      //    dimasukkan ke mDetail → total invoice kurang tagih & line item hilang dari PDF.
+      //    Sekarang Barang jadi line item resmi (ikut total). laporanMaterials (stok murni) tetap
+      //    tidak ditagih.
+      laporanBarangItems.filter(b => b.nama && parseFloat(b.jumlah || 0) > 0).forEach(b => {
+        mDetail.push(mkRow(b.nama, b.jumlah || 1, b.satuan || "pcs", b.harga_satuan || 0, "barang"));
+      });
 
       // D. Install rows — build dari laporanInstallItems dengan keterangan yang benar
       if (isInstallSvc) {
@@ -8032,8 +8039,15 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         ? (prevGaransiActive ? (matTotalInv > 0 ? 'GARANSI_DENGAN_MATERIAL' : 'GARANSI_AKTIF')
           : prevGaransiExpired ? 'GARANSI_EXPIRED' : 'NO_GARANSI')
         : null;
-      // Recalculate total dari mDetail (menangkap inject transport fee dll yang bisa merubah total)
-      const finalTotalFromDetail = mDetail.reduce((s, r) => s + (r.subtotal || 0), 0);
+      // ── SINGLE SOURCE OF TRUTH: ringkasan DITURUNKAN dari mDetail via lib/invoicing ──
+      // Dulu labor=finalLabor & material=matTotalInv dihitung dari variabel terpisah → desync
+      // (transport/biaya-cek/barang inject tak terhitung). Sekarang summarize() = satu-satunya
+      // perhitungan: jasa/repair = labor, sisanya (barang/freon/material) = material,
+      // total = jumlah semua baris. Konsisten di semua jalur invoice.
+      const _summary = summarize(mDetail);
+      const finalTotalFromDetail = _summary.lineTotal;
+      const laborFromDetail = _summary.labor;
+      const matFromDetail = _summary.material;
 
       // ── MULTI-HARI: akumulasi ke 1 invoice INDUK, bukan invoice ganda ───────────────
       // Hanya untuk laporan is_multi_day. Flow normal & team-split tidak terpengaruh sama sekali.
@@ -8114,8 +8128,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         phone: laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
         service: laporanModal.service + (laporanModal.type ? " - " + laporanModal.type : ""),
         units: laporanUnits.length,
-        labor: finalLabor,
-        material: matTotalInv,
+        labor: laborFromDetail,
+        material: matFromDetail,
         materials_detail: detailToStore,     // array untuk state/display (tagged source_job_id utk multi-hari)
         garansi_status: garansiStatusLocal,  // hanya state, tidak ke DB
         repair_gratis: isRepairGratis ? laporanRepairType : undefined,  // NEW: store repair type (gratis-garansi/gratis-customer)
@@ -8191,6 +8205,17 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         // Semua delete sukses baru update local state
         setInvoicesData(prev => prev.filter(i => i.job_id !== laporanModal.id));
         addAgentLog("INVOICE_REWRITE", `${existingDB.length} invoice lama dihapus untuk ${laporanModal.id} (rewrite)`, "INFO");
+      }
+      // ── GUARD INVARIAN (observasional, non-blocking): pastikan total = Σ line item ──
+      // Garansi Complain mewaive jasa lewat override total (belum jadi baris diskon = P3),
+      // jadi waiverAmount disetel agar tidak false-positive.
+      {
+        const _waiver = (isComplainSvc && prevGaransiActive) ? laborFromDetail : 0;
+        const _chk = checkInvoiceConsistency(newInvoice, { waiverAmount: _waiver });
+        if (!_chk.ok) {
+          console.warn("[INVOICE_INVARIANT]", describeInconsistency(_chk, newInvoice.id));
+          addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, newInvoice.id) + " (submit laporan)", "WARNING");
+        }
       }
       const { error: invErr } = await insertInvoice(supabase, invPayload);
       if (invErr) {
