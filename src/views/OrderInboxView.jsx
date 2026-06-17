@@ -813,10 +813,9 @@ function calcTimeEnd(timeStart, service, units) {
   return String(nh).padStart(2, "0") + ":" + String(nm).padStart(2, "0");
 }
 
-// Slot tim tetap: Team 01-10 + Project 01-03 + Maintenance 01-02; ekstra dari team_presets
+// Slot tim tetap: Team 01-10 (utama) + Maintenance 01-02 (paling akhir); ekstra dari team_presets
 const TEAM_SLOTS_BASE = [
   ...Array.from({ length: 10 }, (_, i) => `Team ${String(i + 1).padStart(2, "0")}`),
-  "Project 01", "Project 02", "Project 03",
   "Maintenance 01", "Maintenance 02",
 ];
 const MEMBER_ROLES = ["teknisi", "helper"];
