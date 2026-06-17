@@ -1,11 +1,17 @@
 import { describe, it, expect } from "vitest";
 import {
   LINE_CATEGORY,
+  BILLING_CATEGORY,
   categoryOf,
+  lineCategory,
   lineSubtotal,
   summarize,
   checkInvoiceConsistency,
   describeInconsistency,
+  normalizeLine,
+  buildWarrantyDiscountLine,
+  buildFreonAdjustmentLine,
+  auditInvoices,
 } from "../invoicing.js";
 
 describe("categoryOf", () => {
@@ -82,8 +88,11 @@ describe("summarize", () => {
   });
 
   it("input kosong/invalid → nol", () => {
-    expect(summarize(null)).toEqual({ labor: 0, material: 0, lineTotal: 0, total: 0 });
-    expect(summarize([])).toEqual({ labor: 0, material: 0, lineTotal: 0, total: 0 });
+    const z = summarize(null);
+    expect(z.labor).toBe(0);
+    expect(z.material).toBe(0);
+    expect(z.total).toBe(0);
+    expect(summarize([]).total).toBe(0);
   });
 });
 
@@ -136,5 +145,91 @@ describe("checkInvoiceConsistency", () => {
     expect(describeInconsistency(checkInvoiceConsistency(okInv), "INV-OK")).toBe("");
     const badInv = { materials_detail: [{ keterangan: "jasa", subtotal: 100000 }], labor: 0, material: 999, total: 50 };
     expect(describeInconsistency(checkInvoiceConsistency(badInv), "INV-BAD")).toContain("INV-BAD");
+  });
+});
+
+// ── P1: kategori billing eksplisit ───────────────────────────────────────────
+describe("P1 lineCategory", () => {
+  it("prioritaskan category eksplisit", () => {
+    expect(lineCategory({ category: "FREON", keterangan: "jasa" })).toBe(BILLING_CATEGORY.FREON);
+    expect(lineCategory({ category: "part" })).toBe(BILLING_CATEGORY.PART);
+  });
+  it("biaya pengecekan/transport → FEE", () => {
+    expect(lineCategory({ nama: "Biaya Pengecekan AC", keterangan: "jasa" })).toBe(BILLING_CATEGORY.FEE);
+    expect(lineCategory({ nama: "Biaya Transport Bila 1 Unit", keterangan: "jasa" })).toBe(BILLING_CATEGORY.FEE);
+  });
+  it("jasa biasa → LABOR; barang → PART; freon → FREON", () => {
+    expect(lineCategory({ nama: "Cleaning 1.5PK", keterangan: "jasa" })).toBe(BILLING_CATEGORY.LABOR);
+    expect(lineCategory({ nama: "Pipa AC", keterangan: "barang" })).toBe(BILLING_CATEGORY.PART);
+    expect(lineCategory({ nama: "Kuras Vacum Freon R32/R410", keterangan: "barang" })).toBe(BILLING_CATEGORY.FREON);
+  });
+  it("freon-as-jasa tetap LABOR (vacum saat install)", () => {
+    expect(lineCategory({ nama: "Vacum + isi Freon R32", keterangan: "jasa" })).toBe(BILLING_CATEGORY.LABOR);
+  });
+  it("subtotal negatif / keterangan diskon → DISCOUNT", () => {
+    expect(lineCategory({ nama: "Voucher", subtotal: -50000 })).toBe(BILLING_CATEGORY.DISCOUNT);
+    expect(lineCategory({ keterangan: "diskon", subtotal: 50000 })).toBe(BILLING_CATEGORY.DISCOUNT);
+  });
+  it("categoryOf (kasar) konsisten: FEE→LABOR, FREON→MATERIAL", () => {
+    expect(categoryOf({ nama: "Biaya Pengecekan AC", keterangan: "jasa" })).toBe(LINE_CATEGORY.LABOR);
+    expect(categoryOf({ nama: "Freon R-410A", keterangan: "barang" })).toBe(LINE_CATEGORY.MATERIAL);
+  });
+});
+
+describe("P1 normalizeLine", () => {
+  it("set category eksplisit", () => {
+    expect(normalizeLine({ nama: "Pipa", keterangan: "barang" }).category).toBe("PART");
+  });
+  it("pindahkan catatan bebas dari keterangan ke note + standarkan keterangan", () => {
+    const n = normalizeLine({ nama: "Freon R-410A", keterangan: "Aktual: 0.5 kg → dibulatkan 1 kg", subtotal: 450000 });
+    expect(n.note).toBe("Aktual: 0.5 kg → dibulatkan 1 kg");
+    expect(n.keterangan).toBe("barang"); // tag kategori lama
+    expect(n.category).toBe("FREON");
+  });
+  it("keterangan tag valid tidak diubah", () => {
+    expect(normalizeLine({ nama: "Cleaning", keterangan: "jasa" }).keterangan).toBe("jasa");
+  });
+});
+
+// ── P3: garansi sbg baris diskon + freon true-up ─────────────────────────────
+describe("P3 baris diskon & freon", () => {
+  it("buildWarrantyDiscountLine: negatif, DISCOUNT, total konsisten tanpa waiver", () => {
+    const lines = [
+      { nama: "Jasa servis", keterangan: "jasa", subtotal: 200000 },
+      { nama: "Sparepart", keterangan: "barang", subtotal: 500000 },
+      buildWarrantyDiscountLine(200000),
+    ];
+    const s = summarize(lines);
+    expect(s.labor).toBe(200000);
+    expect(s.material).toBe(500000);
+    expect(s.lineDiscount).toBe(200000);
+    expect(s.total).toBe(500000); // jasa di-waive lewat baris diskon
+    // Model: kolom `discount` = member/manual saja; waiver garansi = baris DISCOUNT.
+    // labor disimpan GROSS, discount kolom = 0 → konsisten TANPA waiverAmount.
+    const inv = { materials_detail: lines, labor: 200000, material: 500000, discount: 0, total: 500000 };
+    expect(checkInvoiceConsistency(inv).ok).toBe(true);
+  });
+  it("buildFreonAdjustmentLine: delta minus = diskon, plus = freon", () => {
+    expect(buildFreonAdjustmentLine(-150000).category).toBe("DISCOUNT");
+    expect(buildFreonAdjustmentLine(150000).category).toBe("FREON");
+    const s = summarize([{ keterangan: "jasa", subtotal: 100000 }, buildFreonAdjustmentLine(-150000)]);
+    expect(s.total).toBe(0); // 100rb - 150rb, clamp 0
+  });
+});
+
+// ── P2: audit massal ─────────────────────────────────────────────────────────
+describe("P2 auditInvoices", () => {
+  it("hanya kembalikan yang melanggar, urut Δ terbesar", () => {
+    const invoices = [
+      { id: "OK", materials_detail: [{ keterangan: "jasa", subtotal: 100000 }], labor: 100000, material: 0, total: 100000 },
+      { id: "BUG1", materials_detail: JSON.stringify([{ keterangan: "jasa", subtotal: 100000 }]), labor: 0, material: 1270000, total: 100000 },
+      { id: "BUG2", materials_detail: [{ keterangan: "jasa", subtotal: 480000 }], labor: 480000, material: 500000, total: 480000 },
+    ];
+    const out = auditInvoices(invoices);
+    expect(out.map(o => o.id)).toEqual(["BUG1", "BUG2"]); // OK tersaring, BUG1 (Δ besar) duluan
+  });
+  it("skipCancelled mengabaikan invoice CANCELLED", () => {
+    const invoices = [{ id: "C", status: "CANCELLED", materials_detail: [{ keterangan: "jasa", subtotal: 1 }], labor: 0, material: 9, total: 9 }];
+    expect(auditInvoices(invoices, { skipCancelled: true })).toHaveLength(0);
   });
 });

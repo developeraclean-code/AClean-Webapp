@@ -6,6 +6,7 @@ import {
   fetchAgentLogsFiltered,
   fetchWaDeliverySummary,
 } from "../data/reads.js";
+import { auditInvoices } from "../lib/invoicing.js";
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -720,6 +721,97 @@ function TabWaObservations({ supabase }) {
 // ─────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// Tab: Rekonsiliasi Invoice (P2) — daftar invoice yang melanggar invarian
+// (total ≠ Σ line item, atau labor/material desync). Read-only, sumber: tabel invoices.
+// ─────────────────────────────────────────────
+function TabInvoiceRecon({ supabase }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [scanned, setScanned] = useState(0);
+  const [days, setDays] = useState(30);
+
+  const load = async () => {
+    if (!supabase) return;
+    setLoading(true);
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+    const { data, error } = await supabase
+      .from("invoices")
+      .select("id,customer,service,status,labor,material,total,discount,trade_in_amount,materials_detail,created_at")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(3000);
+    if (!error && data) {
+      setScanned(data.length);
+      setRows(auditInvoices(data, { skipCancelled: true }));
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { if (supabase) load(); }, [supabase, days]);
+
+  const totalGap = rows.reduce((s, r) => s + Math.abs(r.diff.total || 0), 0);
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>🧾 Rekonsiliasi Invoice</div>
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={selectStyle()}>
+          <option value={7}>7 hari</option>
+          <option value={30}>30 hari</option>
+          <option value={90}>90 hari</option>
+          <option value={3650}>Semua</option>
+        </select>
+        <button onClick={load} disabled={loading} style={{ padding: "6px 12px", borderRadius: 8, background: cs.accent + "22", border: `1px solid ${cs.accent}33`, color: cs.accent, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+          {loading ? "⏳" : "🔄"}
+        </button>
+        <span style={{ fontSize: 11, color: cs.muted, marginLeft: "auto" }}>
+          {scanned} invoice dipindai • <b style={{ color: rows.length ? "#f59e0b" : "#22c55e" }}>{rows.length} tidak konsisten</b>
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 160, background: cs.surface, borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontSize: 11, color: cs.muted }}>Invoice bermasalah</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: rows.length ? "#f59e0b" : "#22c55e" }}>{rows.length}</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 160, background: cs.surface, borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontSize: 11, color: cs.muted }}>Total selisih nilai</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: cs.text }}>{fmtIDR(totalGap)}</div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gap: 6, maxHeight: 600, overflowY: "auto" }}>
+        {rows.length === 0 ? (
+          <Empty msg={loading ? "⏳ Memindai..." : "✅ Semua invoice konsisten untuk rentang ini."} />
+        ) : rows.map(r => (
+          <div key={r.id} style={{ display: "grid", gridTemplateColumns: "150px 1fr 90px", alignItems: "start", gap: 8, padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11 }}>
+            <div>
+              <div style={{ color: cs.text, fontWeight: 700, fontFamily: "monospace" }}>{r.id}</div>
+              <div style={{ color: cs.muted, fontSize: 10 }}>{r.status} · {r.service}</div>
+            </div>
+            <div style={{ color: cs.muted }}>
+              <div style={{ color: cs.text }}>{r.customer}</div>
+              <div style={{ fontSize: 10 }}>
+                {!r.hasLines && <span style={{ color: "#ef4444" }}>⚠ tanpa line item · </span>}
+                total {fmtIDR(r.actual.total)} (harusnya {fmtIDR(r.expected.total)})
+                {r.diff.material !== 0 && <> · material Δ{fmtIDR(r.diff.material)}</>}
+                {r.diff.labor !== 0 && <> · jasa Δ{fmtIDR(r.diff.labor)}</>}
+              </div>
+            </div>
+            <span style={{ color: Math.abs(r.diff.total) > 0 ? "#ef4444" : "#f59e0b", fontWeight: 800, textAlign: "right" }}>
+              Δ{fmtIDR(Math.abs(r.diff.total) || Math.abs(r.diff.material))}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 10, color: cs.muted }}>
+        Catatan: jalur baru (submit & verify laporan) sudah konsisten otomatis. Sisa temuan biasanya dari Edit Nilai / Invoice Gabungan / ARA / data lama (sebelum P0).
+      </div>
+    </div>
+  );
+}
+
 function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHeaders, supabase }) {
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -741,6 +833,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
     { id: "wa",           label: "📱 WA Delivery" },
     { id: "snapshots",    label: "📸 WA Snapshots" },
     { id: "observations", label: "🧪 AI Observations" },
+    { id: "recon",        label: "🧾 Rekonsiliasi Invoice" },
     { id: "audit",        label: "📜 Audit Log" },
   ];
 
@@ -776,6 +869,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
       {activeTab === "wa"        && <TabWa supabase={supabase} />}
       {activeTab === "snapshots"    && <TabWaSnapshots supabase={supabase} apiHeaders={_apiHeaders} />}
       {activeTab === "observations" && <TabWaObservations supabase={supabase} />}
+      {activeTab === "recon"     && <TabInvoiceRecon supabase={supabase} />}
       {activeTab === "audit"     && <TabAudit supabase={supabase} />}
     </div>
   );

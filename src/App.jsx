@@ -13,7 +13,7 @@ import { getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
 import { detectContinuationCandidates } from "./lib/orders.js";
 import { resolveMultiDayInvoiceAction, multiDayProjectKey } from "./lib/invoiceMultiDay.js";
-import { summarize, checkInvoiceConsistency, describeInconsistency } from "./lib/invoicing.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine } from "./lib/invoicing.js";
 import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
 import {
   PRICE_LIST_DEFAULT, getBracketKey,
@@ -8039,6 +8039,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         ? (prevGaransiActive ? (matTotalInv > 0 ? 'GARANSI_DENGAN_MATERIAL' : 'GARANSI_AKTIF')
           : prevGaransiExpired ? 'GARANSI_EXPIRED' : 'NO_GARANSI')
         : null;
+      // ── P3: Complain dalam garansi → jasa ditanggung = baris DISKON (paritas dgn verify) ──
+      if (isComplainSvc && prevGaransiActive) {
+        const _g = summarize(mDetail);
+        if (_g.labor > 0) mDetail.push(buildWarrantyDiscountLine(_g.labor, prevGaransiActive.id));
+      }
       // ── SINGLE SOURCE OF TRUTH: ringkasan DITURUNKAN dari mDetail via lib/invoicing ──
       // Dulu labor=finalLabor & material=matTotalInv dihitung dari variabel terpisah → desync
       // (transport/biaya-cek/barang inject tak terhitung). Sekarang summarize() = satu-satunya
@@ -8111,10 +8116,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       }
 
       if (!didMergeMultiDay) {
+      // P1: simpan kategori billing eksplisit per baris (bukan tebak nama saat baca).
+      const _normDetail = normalizeLines(mDetail);
       // Multi-hari (CREATE): tag tiap baris dgn source_job_id agar idempotent untuk akumulasi berikutnya.
       const detailToStore = laporanModal.is_multi_day === true
-        ? mDetail.map(r => ({ ...r, source_job_id: laporanModal.id }))
-        : mDetail;
+        ? _normDetail.map(r => ({ ...r, source_job_id: laporanModal.id }))
+        : _normDetail;
       const newInvoice = {
         id: invId,
         // Multi-hari → anchor dari resolveMultiDayInvoiceAction (induk utk CREATE, id order sendiri
@@ -8207,11 +8214,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         addAgentLog("INVOICE_REWRITE", `${existingDB.length} invoice lama dihapus untuk ${laporanModal.id} (rewrite)`, "INFO");
       }
       // ── GUARD INVARIAN (observasional, non-blocking): pastikan total = Σ line item ──
-      // Garansi Complain mewaive jasa lewat override total (belum jadi baris diskon = P3),
-      // jadi waiverAmount disetel agar tidak false-positive.
+      // Garansi kini dimodelkan sbg baris diskon (P3), jadi invarian konsisten tanpa waiver.
       {
-        const _waiver = (isComplainSvc && prevGaransiActive) ? laborFromDetail : 0;
-        const _chk = checkInvoiceConsistency(newInvoice, { waiverAmount: _waiver });
+        const _chk = checkInvoiceConsistency(newInvoice);
         if (!_chk.ok) {
           console.warn("[INVOICE_INVARIANT]", describeInconsistency(_chk, newInvoice.id));
           addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, newInvoice.id) + " (submit laporan)", "WARNING");

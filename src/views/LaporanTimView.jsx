@@ -2,7 +2,7 @@ import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
 import { resolveMultiDayInvoiceAction } from "../lib/invoiceMultiDay.js";
-import { summarize, checkInvoiceConsistency, describeInconsistency } from "../lib/invoicing.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine } from "../lib/invoicing.js";
 
 // ── Survey Kirim Modal ─────────────────────────────────────────────────────────
 function SurveyKirimModal({ r, onClose, sendWA, showNotif, addAgentLog, auditUserName, updateServiceReport, supabase, fotoSrc, downloadServiceReportPDF, invoicesData }) {
@@ -553,8 +553,6 @@ const verifyLaporan = async (r) => {
     // CATATAN: matV kini TERMASUK freon — dulu freon dikecualikan dari matV & total
     // sehingga baris freon tampil di invoice tapi tidak ikut ditagih.
     const _sumV = summarize(vMDetail);
-    const laborV = _sumV.labor || hitungLabor(r.service, ord?.type, (Array.isArray(r.units) ? r.units.length : r.units) || ord?.units || 1);
-    const matV = _sumV.material;
 
     const todayInv2 = new Date().toISOString().slice(0, 10);
     const isComplainSvc2 = r.service === "Complain";
@@ -566,30 +564,25 @@ const verifyLaporan = async (r) => {
       ).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
       : null;
 
-    let finalLabor2 = laborV;
-    let finalMat2 = matV;
-    let finalTotal2 = laborV + matV;
+    // ── Penyesuaian khusus Complain DIMODELKAN SEBAGAI LINE ITEM (P3), bukan override ──
     let finalStatus2 = "PENDING_APPROVAL";
-    let waiverV = 0; // nilai jasa yang di-waive garansi (P3: jadikan baris diskon)
-
-    if (isComplainSvc2 && prevGaransiActive2) {
-      waiverV = laborV; // jasa ditanggung garansi
-      finalLabor2 = 0;
-      finalTotal2 = matV;
-      if (finalTotal2 === 0) finalStatus2 = "PAID";
-    } else if (isComplainSvc2 && laborV + matV === 0) {
+    if (isComplainSvc2 && prevGaransiActive2 && _sumV.labor > 0) {
+      // Jasa ditanggung garansi → baris DISKON negatif (transparan di invoice, total konsisten)
+      vMDetail.push(buildWarrantyDiscountLine(_sumV.labor, prevGaransiActive2.id));
+    } else if (isComplainSvc2 && _sumV.lineTotal === 0) {
       const BIAYA_CEK2 = (() => {
         const pl = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
         return (pl && pl.price > 0) ? pl.price : 100000;
       })();
-      // Masukkan sbg line item supaya materials_detail konsisten dgn total (dulu kosong → mismatch)
       vMDetail.push({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: BIAYA_CEK2, subtotal: BIAYA_CEK2, keterangan: "jasa" });
-      finalLabor2 = BIAYA_CEK2;
-      finalTotal2 = BIAYA_CEK2;
     }
 
-    const totalInv = finalTotal2;
-    // Jika total Rp 0 (apapun alasannya: garansi, gratis, atau manual), langsung PAID
+    // ── Ringkasan FINAL = turunan vMDetail (termasuk baris diskon/biaya-cek di atas) ──
+    const _finalSum = summarize(vMDetail);
+    const finalLabor2 = _finalSum.labor;
+    const finalMat2 = _finalSum.material;
+    const totalInv = _finalSum.total;
+    const waiverV = 0; // waiver sudah jadi baris diskon → tidak perlu lagi
     if (totalInv === 0) finalStatus2 = "PAID";
     const newInv = {
       id: invId, job_id: (_multiDayAnchor || r.job_id), laporan_id: r.id,
@@ -598,7 +591,7 @@ const verifyLaporan = async (r) => {
       units: Array.isArray(r.units) ? r.units.length : (Number(r.units) || Number(ord?.units) || 1),
       teknisi: r.teknisi || "",
       labor: finalLabor2, material: finalMat2,
-      materials_detail: vMDetail.length > 0 ? JSON.stringify(vMDetail) : null,
+      materials_detail: vMDetail.length > 0 ? JSON.stringify(normalizeLines(vMDetail)) : null,
       discount: 0, trade_in: false, trade_in_amount: 0,
       total: totalInv,
       status: finalStatus2,
