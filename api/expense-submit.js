@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { validateInternalToken, checkRateLimit, setCorsHeaders } from "./_auth.js";
 import { uploadBufferToR2, hasR2Config } from "./_r2-upload.js";
 import { classifyImage } from "./_ai-vision.js";
-import { expenseDuplicateExists } from "./_expense-dedup.js";
+import { expenseDuplicateExists, buildExpenseDedupKey } from "./_expense-dedup.js";
 
 const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SK = process.env.SUPABASE_SERVICE_KEY;
@@ -144,15 +144,17 @@ export default async function handler(req, res) {
       const aiRow = aiRes.ok ? (await aiRes.json())[0] : null;
       const extractionId = aiRow?.id || null;
 
-      // ── Insert expenses ──
+      // ── Insert expenses (dedup_key = garis pertahanan atomic terakhir, migrasi 094) ──
       const expBody = {
         category: "petty_cash", subcategory: category,
         amount: typedAmount, date: today,
         description: `${category} (input teknisi)${reason ? " — " + reason : ""}`,
         teknisi_name: teknisiName, created_by: teknisiName,
         validation_status: validation, ai_extraction_id: extractionId,
+        dedup_key: buildExpenseDedupKey({ teknisiName, amount: typedAmount, date: today, subcategory: category }),
       };
       const expRes = await fetch(REST("expenses"), { method: "POST", headers: { ...H, Prefer: "return=representation" }, body: JSON.stringify(expBody) });
+      if (expRes.status === 409) { out.status = "DUPLICATE"; out.reason = "Biaya ini sudah tercatat (race condition dicegah di level DB)"; return out; }
       const expRow = expRes.ok ? (await expRes.json())[0] : null;
       if (!expRow) { out.status = "ERROR"; out.reason = "Gagal simpan ke Biaya"; return out; }
       out.expense_id = expRow.id;

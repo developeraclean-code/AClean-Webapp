@@ -3,7 +3,7 @@
 // Output: saves to ai_extractions + creates pending row di expenses / payment_suggestions
 // sesuai intent yang dideteksi.
 
-import { expenseDuplicateExists } from "./_expense-dedup.js";
+import { expenseDuplicateExists, buildExpenseDedupKey } from "./_expense-dedup.js";
 import * as Sentry from "@sentry/node";
 
 // Helper: ganti `.catch(() => {})` agar exception ke-track di Sentry
@@ -264,13 +264,16 @@ export async function persistClassification({ SU, SK, classification, sender, gr
       created_by: "wa_group_ai",
       validation_status: "PENDING_AI",
       ai_extraction_id: extractionId,
+      dedup_key: buildExpenseDedupKey({ teknisiName: sender.name, amount: aiAmount, date: safeDate, subcategory: sub }),
     };
     const r = await fetch(SU + "/rest/v1/expenses", {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=representation" },
       body: JSON.stringify(expBody),
     });
-    if (r.ok) {
+    if (r.status === 409) {
+      console.log("[AI_VISION_EXPENSE] skip duplikat (DB constraint):", sender.name, aiAmount, safeDate);
+    } else if (r.ok) {
       const rows = await r.json().catch(() => []);
       expenseId = rows[0]?.id || null;
       if (expenseId) {

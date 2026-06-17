@@ -5,6 +5,7 @@ import { statusColor, statusLabel } from "../constants/status.js";
 import { normalizePhone, samePhone } from "../lib/phone.js";
 import { getTechColor } from "../lib/techColor.js";
 import { detectContinuationCandidates, calcContinuationDayNum } from "../lib/orders.js";
+import QuickScheduleModal from "../components/QuickScheduleModal.jsx";
 
 // ── Durasi estimasi (jam) — sama dengan logic di App.jsx ──
 function hitungDurasi(service, units) {
@@ -95,8 +96,9 @@ function minToPercent(minutes) {
 }
 
 // onDateChange: callback ke parent agar Planning Order ikut filter
-function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi, weekOrders, teknisiData, expandedId, setExpandedId, TODAY, onDateChange }) {
+function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi, weekOrders, teknisiData, expandedId, setExpandedId, TODAY, onDateChange, onDragReassign }) {
   const [selectedDate, setSelectedDate] = useState(weekDays.find(d => d.date === TODAY)?.date || weekDays[0]?.date);
+  const [dragOverTek, setDragOverTek] = useState(null); // nama teknisi yang sedang jadi drop target
 
   function selectDate(d) {
     setSelectedDate(d);
@@ -197,8 +199,13 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                   {tek}
                 </div>
 
-                {/* Timeline bar */}
-                <div style={{ flex: 1, position: "relative", height: 48, background: "#22c55e08", border: "1px solid " + cs.border + "44", borderRadius: 8, overflow: "visible" }}>
+                {/* Timeline bar — drop target untuk drag-and-drop reassign teknisi */}
+                <div
+                  style={{ flex: 1, position: "relative", height: 48, background: dragOverTek === tek ? cs.accent + "15" : "#22c55e08", border: "1px solid " + (dragOverTek === tek ? cs.accent + "88" : cs.border + "44"), borderRadius: 8, overflow: "visible", transition: "background 0.12s, border-color 0.12s" }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTek(tek); }}
+                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverTek(null); }}
+                  onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("orderId"); setDragOverTek(null); if (id && onDragReassign) onDragReassign(id, tek); }}
+                >
                   {/* Grid garis jam */}
                   {GRID_HOURS.map(h => (
                     <div key={h} style={{
@@ -254,8 +261,10 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
 
                     return (
                       <div key={o.id}
+                        draggable={!isDone && !!onDragReassign}
+                        onDragStart={(e) => { e.dataTransfer.setData("orderId", o.id); e.dataTransfer.effectAllowed = "move"; }}
                         onClick={() => setExpandedId(expandedId === o.id ? null : o.id)}
-                        title={`${o.customer} · ${o.time?.slice(0,5)}–${endStr} · ${o.service}${o.units > 1 ? " ×"+o.units : ""}`}
+                        title={`${o.customer} · ${o.time?.slice(0,5)}–${endStr} · ${o.service}${o.units > 1 ? " ×"+o.units : ""}${onDragReassign && !isDone ? "\n⟵ Drag ke baris teknisi lain untuk reassign" : ""}`}
                         style={{
                           position: "absolute",
                           left: leftPct + "%",
@@ -264,7 +273,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, gridTeknisi,
                           background: isDone ? cs.muted + "1f" : (isConflict ? cs.red + "33" : color + "28"),
                           border: "2px solid " + (isDone ? cs.border : (isConflict ? cs.red + "99" : color + "88")),
                           borderRadius: 6,
-                          cursor: "pointer",
+                          cursor: isDone ? "default" : onDragReassign ? "grab" : "pointer",
                           overflow: "hidden",
                           display: "flex", flexDirection: "column", justifyContent: "center",
                           padding: "0 5px",
@@ -942,6 +951,7 @@ const EMPTY_FORM = {
 export default function OrderInboxView({ ordersData, setOrdersData, customersData, setCustomersData, teknisiData, currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY, sendWA, showUndoToast, insertOrder, apiHeaders }) {
   const [form, setForm] = useState({ ...EMPTY_FORM, date: TODAY });
   const [saving, setSaving] = useState(false);
+  const [showQuickPaste, setShowQuickPaste] = useState(false);
   const [editId, setEditId] = useState(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [filterStatus, setFilterStatus] = useState("ALL");
@@ -1790,6 +1800,18 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     setOrdersData(prev => prev.map(o => o.id === order.id ? { ...o, ...update } : o));
   }
 
+  // ── Drag-and-drop reassign: geser blok order ke baris teknisi lain di TimeGrid ──
+  async function handleDragReassign(orderId, newTeknisi) {
+    const order = ordersData.find(o => o.id === orderId);
+    if (!order || order.teknisi === newTeknisi) return;
+    const { error } = await supabase.from("orders")
+      .update({ teknisi: newTeknisi, last_changed_by: auditUserName() })
+      .eq("id", orderId);
+    if (error) return showNotif("Gagal reassign: " + error.message, "error");
+    setOrdersData(prev => prev.map(o => o.id === orderId ? { ...o, teknisi: newTeknisi } : o));
+    showNotif(`${order.customer} → ${newTeknisi}`);
+  }
+
   // ── Inbox list — hanya today + ke depan; bila gridDate aktif, filter ke hari itu ──
   // BASE = semua filter KECUALI filter Tim. Dipakai untuk hitung badge jumlah per chip Tim
   // (kalau pakai list yang sudah difilter tim, chip tim lain selalu 0 — bug).
@@ -1879,8 +1901,16 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
       {/* ═══ FORM QUICK ENTRY ═══ */}
       <div style={{ background: cs.surface, border: "1px solid " + (editId ? cs.yellow : continuationFrom ? "#f97316" : cs.border), borderRadius: 14, padding: 20 }}>
-        <div style={{ fontWeight: 800, fontSize: 15, color: editId ? cs.yellow : continuationFrom ? "#f97316" : cs.text, marginBottom: continuationFrom ? 8 : 16 }}>
-          {editId ? "✏️ Edit Planning — " + editId : continuationFrom ? `🔗 Buat Order Lanjutan (Hari ${continuationFrom._dayNum})` : "➕ Tambah Planning Order"}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: continuationFrom ? 8 : 16 }}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: editId ? cs.yellow : continuationFrom ? "#f97316" : cs.text }}>
+            {editId ? "✏️ Edit Planning — " + editId : continuationFrom ? `🔗 Buat Order Lanjutan (Hari ${continuationFrom._dayNum})` : "➕ Tambah Planning Order"}
+          </div>
+          {!editId && !continuationFrom && (
+            <button onClick={() => setShowQuickPaste(true)} style={{
+              background: cs.accent + "18", border: "1px solid " + cs.accent + "55", color: cs.accent,
+              borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", fontWeight: 700,
+            }}>📋 Tempel Jadwal</button>
+          )}
         </div>
 
         {/* Banner: order lanjutan dari parent */}
@@ -2169,6 +2199,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         expandedId={expandedId} setExpandedId={setExpandedId}
         TODAY={TODAY}
         onDateChange={d => setGridDate(d)}
+        onDragReassign={handleDragReassign}
       />
 
       {/* ═══ DAFTAR ORDER INBOX (today + ke depan) ═══ */}
@@ -2546,6 +2577,20 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           </div>
         </div>
       )}
+
+      {/* ── Modal: Tempel Jadwal (fast entry tanpa AI/API) ── */}
+      <QuickScheduleModal
+        open={showQuickPaste}
+        onClose={() => setShowQuickPaste(false)}
+        TODAY={TODAY}
+        supabase={supabase}
+        insertOrder={insertOrder}
+        showNotif={showNotif}
+        customersData={customersData}
+        setOrdersData={setOrdersData}
+        setCustomersData={setCustomersData}
+        auditUserName={auditUserName}
+      />
     </div>
   );
 }

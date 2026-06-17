@@ -6,7 +6,7 @@ import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "./_r2-upload.js
 import { md5Buffer, checkImageDuplicate } from "./_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage } from "./_kasbon-parser.js";
 import { parseCarrierFromCaption, matchCarrierName, parseLaporanTeam, matchLaporanToOrder, parseBiayaExtended } from "./_shadow-parsers.js";
-import { expenseDuplicateExists } from "./_expense-dedup.js";
+import { expenseDuplicateExists, buildExpenseDedupKey } from "./_expense-dedup.js";
 import * as Sentry from "@sentry/node";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
@@ -23,7 +23,11 @@ const sentryCatch = (op, extra) => (e) => {
 async function criticalFetch(op, url, opts, ctx = {}) {
   try {
     const r = await fetch(url, opts);
-    if (!r.ok) {
+    if (r.status === 409) {
+      // Unique constraint conflict (mis. expenses.dedup_key, migrasi 094) — duplikat
+      // tertangkap di level DB, bukan kegagalan write. Log info, jangan Sentry warning.
+      console.log(`[CRITICAL_WRITE_${op.toUpperCase()}] HTTP 409 (duplicate, dicegah DB constraint)`, ctx);
+    } else if (!r.ok) {
       const body = await r.text().catch(() => "");
       Sentry.captureMessage(`[CRITICAL_WRITE_${op.toUpperCase()}] HTTP ${r.status}: ${body.slice(0, 300)}`, {
         level: "warning",
@@ -584,7 +588,8 @@ export default async function handler(req, res) {
                     amount: parsedAmount,
                     teknisi_name: profileName,
                     created_by: "wa_group",
-                    validation_status: "PENDING_AI"
+                    validation_status: "PENDING_AI",
+                    dedup_key: buildExpenseDedupKey({ teknisiName: profileName, amount: parsedAmount, date: today, subcategory: biayaSub }),
                   })
                 }, { teknisi: profileName, amount: parsedAmount, subcategory: biayaSub, date: today });
               }
@@ -624,6 +629,7 @@ export default async function handler(req, res) {
                       description: `Kasbon ${mRes.matched.name} (via WA Finance grup, dari ${profileName})`,
                       created_by: "wa_group_kasbon",
                       validation_status: "PENDING_AI",
+                      dedup_key: buildExpenseDedupKey({ teknisiName: mRes.matched.name, amount: it.amount, date: today, subcategory: "Kasbon Karyawan" }),
                     };
                     await criticalFetch("wa_kasbon_multi_insert", SU_g + "/rest/v1/expenses", {
                       method: "POST",
@@ -699,6 +705,7 @@ export default async function handler(req, res) {
                     description: `Kasbon ${matchRes.matched.name} (via WA Finance grup, dari ${profileName})`,
                     created_by: "wa_group_kasbon",
                     validation_status: "PENDING_AI",
+                    dedup_key: buildExpenseDedupKey({ teknisiName: matchRes.matched.name, amount: kasbonParsed.amount, date: today, subcategory: "Kasbon Karyawan" }),
                   };
                   await criticalFetch("wa_kasbon_single_insert", SU_g + "/rest/v1/expenses", {
                     method: "POST",

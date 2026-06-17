@@ -17,6 +17,19 @@
 // terblokir (data hilang). Duplikat asli dari >1 channel selalu punya subcategory sama
 // (bensin → "Bensin Motor" di semua jalur), jadi tetap tertangkap.
 //
+// Key deterministik untuk kolom expenses.dedup_key (migrasi 094) — partial unique
+// index di DB (WHERE dedup_key IS NOT NULL) jadi garis pertahanan atomic terakhir
+// menutup race condition SELECT-then-INSERT di bawah ini. Hanya jalur otomatis yang
+// boleh isi dedup_key; input manual via ExpensesView selalu NULL (tidak pernah ikut
+// constraint ini).
+export function buildExpenseDedupKey({ teknisiName, amount, date, subcategory }) {
+  const name = String(teknisiName || "").trim().toLowerCase();
+  const sub = String(subcategory || "").trim().toLowerCase();
+  const amt = Number(amount);
+  if (!name || !sub || !amt || !date) return null;
+  return `${name}|${date}|${amt}|${sub}`;
+}
+
 // Fail-open: kalau query gagal, kembalikan false (izinkan insert) supaya data tidak hilang.
 export async function expenseDuplicateExists({ SU, SK, teknisiName, amount, date, subcategory }) {
   const name = String(teknisiName || "").trim();
