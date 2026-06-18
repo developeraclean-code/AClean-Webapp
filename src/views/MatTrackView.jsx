@@ -577,6 +577,27 @@ async function saveActualQty(tx) {
       }
     }
 
+    // 5. FREON TRUE-UP — FLAG SAJA (tidak mengubah invoice; admin koreksi manual via Edit Nilai).
+    //    Jika ada invoice utk job ini & selisih signifikan → catat ke audit log + notif.
+    if (Math.abs(diff) >= 0.1 && tx.order_id) {
+      try {
+        const { data: inv } = await supabase.from("invoices")
+          .select("id,total,status").eq("job_id", tx.order_id)
+          .neq("status", "CANCELLED").limit(1).maybeSingle();
+        if (inv) {
+          const pricePerKg = (inventoryData.find(i => i.code === tx.inventory_code)?.price) || 0;
+          const deltaRp = Math.round(diff * pricePerKg);
+          const rpStr = (deltaRp >= 0 ? "+" : "-") + "Rp" + Math.abs(deltaRp).toLocaleString("id-ID");
+          await supabase.from("agent_logs").insert({
+            action: "FREON_TRUEUP_FLAG", severity: "warn", category: "invoice",
+            user_name: currentUser?.name || "Admin",
+            detail: `Invoice ${inv.id} (${inv.status}) — ${tx.inventory_name} aktual ${actual}kg vs estimasi ${Math.abs(tx.qty)}kg (selisih ${diff >= 0 ? "+" : ""}${diff}kg ≈ ${rpStr}). Tinjau & koreksi manual bila perlu.`,
+          });
+          showNotif(`⚠️ Invoice ${inv.id} perlu ditinjau: selisih freon ${diff >= 0 ? "+" : ""}${diff}kg (≈ ${rpStr}). Koreksi manual via Edit Nilai.`);
+        }
+      } catch (_) { /* flag best-effort, jangan ganggu simpan timbang */ }
+    }
+
     showNotif(`✅ Timbang disimpan: ${actual} kg (selisih ${diff >= 0 ? "+" : ""}${diff.toFixed(1)} kg)`);
     setTimbangId(null);
     setTimbangVal("");
