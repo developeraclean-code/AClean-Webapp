@@ -288,11 +288,45 @@ export async function persistClassification({ SU, SK, classification, sender, gr
 
   if (classification.intent === "payment" && groupCfg.ai_payment_enabled) {
     const d = classification.data || {};
+
+    // ── GUARD UMUR BUKTI BAYAR ──────────────────────────────────────────────
+    // Tolak bukti bayar yang transfer_date-nya terlalu lama (mis. bon/struk lama
+    // 1 tahun yang difoto ulang) → cegah masuk payment suggestion keliru.
+    // Window configurable via app_settings.payment_max_age_days (default 30 hari).
+    // transfer_date null/tak terbaca → tetap diproses (tak bisa tentukan umur).
+    const maxAgeDays = await (async () => {
+      try {
+        const sr = await fetch(SU + "/rest/v1/app_settings?key=eq.payment_max_age_days&select=value", { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+        const rows = await sr.json().catch(() => []);
+        const v = parseInt(rows?.[0]?.value, 10);
+        return Number.isFinite(v) && v > 0 ? v : 30;
+      } catch { return 30; }
+    })();
+    let tooOld = false;
+    if (d.transfer_date) {
+      const td = new Date(String(d.transfer_date) + "T00:00:00Z");
+      if (!isNaN(td.getTime())) {
+        const ageDays = Math.floor((Date.now() - td.getTime()) / 86400000);
+        if (ageDays > maxAgeDays) tooOld = true;
+      }
+    }
+    if (tooOld) {
+      await fetch(SU + "/rest/v1/agent_logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
+        body: JSON.stringify({
+          action: "PAYMENT_SUGGESTION_SKIPPED_OLD", severity: "info", category: "payment",
+          detail: `Bukti bayar dari ${sender.name || sender.phone} tgl ${d.transfer_date} > ${maxAgeDays} hari (kemungkinan bon lama) → TIDAK dibuat payment suggestion.`,
+        }),
+      }).catch(sentryCatch("ai_payment_skip_old", { phone: sender.phone, transfer_date: d.transfer_date }));
+    }
+
     const parseAmtP = (v) => {
       if (typeof v === "number" && Number.isFinite(v)) return Math.abs(v);
       const digits = String(v || "").replace(/[^\d]/g, "");
       return digits ? parseInt(digits, 10) : null;
     };
+    if (!tooOld) {
     const sugBody = {
       phone: sender.phone,
       sender_name: sender.name,
@@ -322,6 +356,7 @@ export async function persistClassification({ SU, SK, classification, sender, gr
         }).catch(sentryCatch("ai_extract_link_payment", { extractionId, paymentSuggestionId }));
       }
     }
+    } // end if (!tooOld)
   }
 
   // Material intent — OBSERVE-ONLY mode (per Owner directive 2026-06-06).
