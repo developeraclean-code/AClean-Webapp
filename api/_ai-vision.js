@@ -18,6 +18,12 @@ const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 const PRICE_IN_PER_MTOK  = 1.00;
 const PRICE_OUT_PER_MTOK = 5.00;
 
+// Gating confidence — draft (expense/payment) hanya dibuat bila confidence >= ambang.
+const CONF_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3 };
+function meetsMinConfidence(conf, min) {
+  return (CONF_RANK[String(conf || "LOW").toUpperCase()] || 1) >= (CONF_RANK[String(min || "MEDIUM").toUpperCase()] || 2);
+}
+
 function buildPrompt(groupCfg) {
   const enabled = [];
   if (groupCfg.ai_expense_enabled)   enabled.push('"expense" — foto struk / nota / kwitansi belanja operasional');
@@ -215,8 +221,33 @@ export async function persistClassification({ SU, SK, classification, sender, gr
 
   let expenseId = null, paymentSuggestionId = null;
 
+  // ── GATE CONFIDENCE (configurable app_settings.ai_min_confidence, default MEDIUM) ──
+  // Draft expense/payment HANYA dibuat bila confidence >= ambang. LOW → tidak dibuat,
+  // hanya tersimpan di ai_extractions utk review → kurangi draft keliru.
+  const isDraftIntent = classification.intent === "expense" || classification.intent === "payment";
+  let minConf = "MEDIUM";
+  if (isDraftIntent) {
+    try {
+      const sr = await fetch(SU + "/rest/v1/app_settings?key=eq.ai_min_confidence&select=value", { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+      const rows = await sr.json().catch(() => []);
+      const v = String(rows?.[0]?.value || "").toUpperCase();
+      if (["LOW", "MEDIUM", "HIGH"].includes(v)) minConf = v;
+    } catch (_) {}
+  }
+  const confOK = meetsMinConfidence(classification.confidence, minConf);
+  if (isDraftIntent && !confOK) {
+    await fetch(SU + "/rest/v1/agent_logs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
+      body: JSON.stringify({
+        action: "AI_LOW_CONFIDENCE_SKIP", severity: "info", category: "ai",
+        detail: `Foto ${classification.intent} dari ${sender.name || sender.phone} confidence ${classification.confidence} < ${minConf} → draft TIDAK dibuat (tersimpan di ai_extractions ${extractionId} untuk review).`,
+      }),
+    }).catch(sentryCatch("ai_low_conf_skip", { extractionId, intent: classification.intent }));
+  }
+
   // Branch by intent + group toggle
-  if (classification.intent === "expense" && groupCfg.ai_expense_enabled) {
+  if (classification.intent === "expense" && groupCfg.ai_expense_enabled && confOK) {
     const d = classification.data || {};
     const today = new Date().toISOString().slice(0, 10);
     // Normalisasi category → wajib salah satu dari 2 enum existing app
@@ -238,14 +269,15 @@ export async function persistClassification({ SU, SK, classification, sender, gr
     const descParts = [`[AI] ${d.merchant || "Foto struk"}`];
     if (messageText) descParts.push(messageText);
     // Date guard: AI bisa salah baca tanggal struk (mis. 2025 atau bulan terbalik).
-    // Kalau AI date di luar ±7 hari dari today, fallback ke today. Owner bisa edit saat approve.
+    // Kalau AI date di luar ±30 hari dari today, fallback ke today (disamakan dgn window
+    // payment 30h). Owner bisa edit saat approve.
     let safeDate = today;
     if (d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date)) {
       const aiTs = Date.parse(d.date + "T00:00:00+07:00");
       const todayTs = Date.parse(today + "T00:00:00+07:00");
       if (Number.isFinite(aiTs)) {
         const diffDays = Math.abs((aiTs - todayTs) / 86400000);
-        if (diffDays <= 7) safeDate = d.date;
+        if (diffDays <= 30) safeDate = d.date;
       }
     }
     const aiAmount = parseAmt(d.amount);
@@ -286,7 +318,7 @@ export async function persistClassification({ SU, SK, classification, sender, gr
     }
   }
 
-  if (classification.intent === "payment" && groupCfg.ai_payment_enabled) {
+  if (classification.intent === "payment" && groupCfg.ai_payment_enabled && confOK) {
     const d = classification.data || {};
 
     // ── GUARD UMUR BUKTI BAYAR ──────────────────────────────────────────────
