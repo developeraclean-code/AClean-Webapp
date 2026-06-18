@@ -12587,24 +12587,58 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       </div>
                     )}
 
+                    {/* ══ UNIFIED ITEM PICKER (1 picker pintar — auto-rute ke grup yg benar) ══ */}
+                    {!isInstallJob && (() => {
+                      const dedupe = (arr) => arr.filter((v, i, a) => a.findIndex(x => x.nama === v.nama) === i);
+                      const isJasaCat = (r) => {
+                        if (r.category === "Jasa") return true;
+                        const c = (r.category || "").toLowerCase(); if (c.startsWith("freon")) return true;
+                        const t = (r.type || "").toLowerCase();
+                        return t.includes("kuras vacum") || t.includes("tambah freon") || t.includes("penambahan freon") || t.includes("biaya transport") || t.includes("biaya pengecekan");
+                      };
+                      const isBarangCat = (r) => {
+                        if (r.category === "Barang") return true;
+                        const c = (r.category || "").toLowerCase(); if (c.startsWith("freon")) return true;
+                        const t = (r.type || "").toLowerCase();
+                        return ["kapasitor", "naple", "breket", "dinabolt", "armaflex", "freon r-", "freon r3", "freon r4", "freon r2", "pipa ac", "kabel listrik", "duct tape"].some(k => t.includes(k));
+                      };
+                      const jasaOpt = dedupe(priceListData.filter(r => isJasaCat(r) && parseInt(r.price || 0) > 0).map(r => ({ nama: r.type, satuan: r.unit || "pcs", harga: parseInt(r.price || 0) }))).slice(0, 150);
+                      const barangOpt = dedupe(priceListData.filter(r => isBarangCat(r) && parseInt(r.price || 0) > 0).map(r => ({ nama: r.type, satuan: r.unit || "pcs", harga: parseInt(r.price || 0) }))).slice(0, 150);
+                      return (
+                        <div style={{ display: "grid", gap: 6, background: cs.surface, borderRadius: 10, padding: "10px 12px", border: "1px solid " + cs.border }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>➕ Tambah Item</div>
+                          <select value="" onChange={e => {
+                            const v = e.target.value; if (!v) return;
+                            if (v === "__manual_jasa__") setLaporanJasaItems(p => [...p, { id: Date.now(), nama: "__manual__", _isManual: true, jumlah: 1, satuan: "pcs", harga_satuan: 0 }]);
+                            else if (v === "__manual_barang__") setLaporanBarangItems(p => [...p, { id: Date.now(), nama: "__manual__", _isManual: true, jumlah: 1, satuan: "pcs", harga_satuan: 0 }]);
+                            else {
+                              const sel = [...jasaOpt, ...barangOpt].find(x => x.nama === v);
+                              if (sel) {
+                                const cat = categoryFromCatalog(v, priceListData);
+                                const row = { id: Date.now() + Math.floor(Math.random() * 1000), nama: sel.nama, jumlah: 1, satuan: sel.satuan, harga_satuan: sel.harga, _isManual: false, category: cat };
+                                if (cat === "LABOR" || cat === "FEE") setLaporanJasaItems(p => [...p, row]);
+                                else setLaporanBarangItems(p => [...p, row]);
+                              }
+                            }
+                            e.target.value = "";
+                          }} style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 10px", color: cs.text, fontSize: 13 }}>
+                            <option value="">— Pilih item dari katalog —</option>
+                            <optgroup label="⚡ Jasa / Layanan">{jasaOpt.map(o => <option key={"j_" + o.nama} value={o.nama}>{o.nama}</option>)}</optgroup>
+                            <optgroup label="📦 Sparepart & Material">{barangOpt.map(o => <option key={"b_" + o.nama} value={o.nama}>{o.nama}</option>)}</optgroup>
+                            <option value="__manual_jasa__">✏️ Jasa manual…</option>
+                            <option value="__manual_barang__">✏️ Barang manual…</option>
+                          </select>
+                          <div style={{ fontSize: 11, color: cs.muted }}>💡 Kategori item terdeteksi dari katalog → otomatis masuk grup yang tepat di bawah. Tak perlu pilih section.</div>
+                        </div>
+                      );
+                    })()}
+
                     {/* ══ JASA SECTION: [+] Jasa ══ */}
                     {!isInstallJob && (
                       <div style={{ display: "grid", gap: 8 }}>
                         <div>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                             <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent }}>⚡ Jasa / Layanan ({laporanJasaItems.length})</div>
-                            <button onClick={() => {
-                              // Note: Jangan filter by service — items dari semua service (Cleaning, Repair, Install, dll) bisa digunakan
-                              if (laporanJasaItems.length < 10) setLaporanJasaItems(p => [...p, {
-                                id: Date.now(), nama: "", jumlah: 1, satuan: "pcs", harga_satuan: 0
-                              }]);
-                            }}
-                              style={{
-                                fontSize: 11, background: cs.accent + "15", border: "1px solid " + cs.accent + "33", color: cs.accent,
-                                borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700
-                              }}>
-                              + Tambah Jasa
-                            </button>
                           </div>
                           <div style={{ fontSize: 11, color: cs.muted, background: cs.surface, borderRadius: 8, padding: "8px 10px", lineHeight: "1.4" }}>
                             💡 <strong>Pekerjaan yang ditagih.</strong> Contoh: Biaya cek AC, kuras vacum, pasang kompresor, jasa pemasangan, dll.
@@ -12615,7 +12649,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             textAlign: "center", padding: "10px 0", fontSize: 12, color: cs.muted,
                             background: cs.surface, borderRadius: 8, border: "1px dashed " + cs.border
                           }}>
-                            Belum ada jasa. Klik + Tambah Jasa untuk input biaya layanan.
+                            Belum ada jasa. Pakai "➕ Tambah Item" di atas untuk input biaya layanan.
                           </div>
                         )}
                         {laporanJasaItems.map((item, idx) => {
@@ -12726,17 +12760,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         <div>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                             <div style={{ fontSize: 12, fontWeight: 700, color: cs.cyan }}>📦 Sparepart & Material ({laporanBarangItems.length})</div>
-                            <button onClick={() => {
-                              if (laporanBarangItems.length < 10) setLaporanBarangItems(p => [...p, {
-                                id: Date.now(), nama: "", jumlah: 1, satuan: "pcs", harga_satuan: 0, _isManual: false
-                              }]);
-                            }}
-                              style={{
-                                fontSize: 11, background: cs.cyan + "15", border: "1px solid " + cs.cyan + "33", color: cs.cyan,
-                                borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700
-                              }}>
-                              + Tambah Barang
-                            </button>
                           </div>
                           <div style={{ fontSize: 11, color: cs.muted, background: cs.surface, borderRadius: 8, padding: "8px 10px", lineHeight: "1.4" }}>
                             💡 <strong>Barang fisik yang ditagih.</strong> Contoh: Kapasitor, pipa AC, kabel, NAPLE, paralon, armaplex, dll.
@@ -12748,7 +12771,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                             textAlign: "center", padding: "10px 0", fontSize: 12, color: cs.muted,
                             background: cs.surface, borderRadius: 8, border: "1px dashed " + cs.border
                           }}>
-                            Belum ada barang. Klik + Tambah Barang untuk input sparepart/material yang ditagih.
+                            Belum ada barang. Pakai "➕ Tambah Item" di atas untuk input sparepart/material yang ditagih.
                           </div>
                         )}
                         {laporanBarangItems.map((bItem, bIdx) => {
