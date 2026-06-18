@@ -28,6 +28,7 @@ export default function MaintenancePortalView({ token }) {
   const [state, setState] = useState({ loading: true });
   const [open, setOpen] = useState(null);
   const [q, setQ] = useState("");
+  const [portalTab, setPortalTab] = useState("dashboard");
 
   // Highlight unit dari QR code: /m/<token>?unit=AC-01
   const highlightUnit = typeof window !== "undefined"
@@ -76,7 +77,6 @@ export default function MaintenancePortalView({ token }) {
     const d = daysUntil(u.next_service_date);
     return d !== null && d >= 0 && d <= 14;
   }).length;
-  const [portalTab, setPortalTab] = useState("dashboard");
 
   return (
     <div style={{ minHeight: "100vh", background: "#f1f5f9", fontFamily: "system-ui,-apple-system,sans-serif" }}>
