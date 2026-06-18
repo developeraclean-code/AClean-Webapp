@@ -462,6 +462,13 @@ function RevisiModal({ row, onClose, onVerify, busy }) {
 
 const KV = ({ l, v }) => <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0" }}><span style={{ color: cs.muted }}>{l}</span><b>{v}</b></div>;
 
+const _taStyle = {
+  width: "100%", background: cs.surface, border: `1px solid ${cs.border}`,
+  borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13,
+  resize: "vertical", boxSizing: "border-box", outline: "none",
+  fontFamily: "inherit", lineHeight: 1.55,
+};
+
 function EditLaporanModal({ row, onClose, onSave }) {
   const [pekerjaan, setPekerjaan] = useState(row.pekerjaan || "");
   const [kendala, setKendala]     = useState(row.kendala || "");
@@ -480,15 +487,6 @@ function EditLaporanModal({ row, onClose, onSave }) {
     if (error) { setErr("Gagal menyimpan: " + error.message); return; }
     onSave({ id: row.id, pekerjaan: pekerjaan.trim(), kendala: kendala.trim() || null });
   };
-
-  const TA = (props) => (
-    <textarea {...props} style={{
-      width: "100%", background: cs.surface, border: `1px solid ${cs.border}`,
-      borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13,
-      resize: "vertical", boxSizing: "border-box", outline: "none",
-      fontFamily: "inherit", lineHeight: 1.55, ...props.style,
-    }} />
-  );
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
@@ -517,16 +515,16 @@ function EditLaporanModal({ row, onClose, onSave }) {
             <label style={{ fontSize: 11, color: cs.muted, fontWeight: 600, display: "block", marginBottom: 6 }}>
               Deskripsi Pekerjaan <span style={{ color: "#ef4444" }}>*</span>
             </label>
-            <TA value={pekerjaan} onChange={e => setPekerjaan(e.target.value)} rows={5}
-                placeholder="Jelaskan pekerjaan yang sudah dilakukan hari ini..." />
+            <textarea value={pekerjaan} onChange={e => setPekerjaan(e.target.value)} rows={5}
+                placeholder="Jelaskan pekerjaan yang sudah dilakukan hari ini..." style={_taStyle} />
           </div>
 
           <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, padding: 14 }}>
             <label style={{ fontSize: 11, color: cs.muted, fontWeight: 600, display: "block", marginBottom: 6 }}>
               Kendala / Catatan <span style={{ fontSize: 10 }}>(opsional)</span>
             </label>
-            <TA value={kendala} onChange={e => setKendala(e.target.value)} rows={3}
-                placeholder="Kendala yang dihadapi atau catatan tambahan..." />
+            <textarea value={kendala} onChange={e => setKendala(e.target.value)} rows={3}
+                placeholder="Kendala yang dihadapi atau catatan tambahan..." style={_taStyle} />
           </div>
         </div>
 
