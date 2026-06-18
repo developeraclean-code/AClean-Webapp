@@ -255,53 +255,75 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
 
       {/* Modal Tambah */}
       {addModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 16, padding: 24, width: "100%", maxWidth: 400 }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontWeight: 800, fontSize: 16, color: cs.text, marginBottom: 16 }}>🖥️ Tambah Harga Unit AC</div>
-            <div style={{ display: "grid", gap: 10 }}>
-              {[
-                { label: "Brand", key: "brand", type: "select", opts: BRAND_LIST },
-                { label: "Tipe", key: "tipe",  type: "select", opts: TIPE_LIST },
-                { label: "Kapasitas", key: "kapasitas", type: "select", opts: KAP_LIST },
-              ].map(({ label, key, opts }) => (
-                <div key={key}>
-                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>{label}</div>
-                  <select value={addForm[key]} onChange={e => setAddForm(f => ({ ...f, [key]: e.target.value }))}
-                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13 }}>
-                    {opts.map(o => <option key={o}>{o}</option>)}
-                  </select>
-                </div>
-              ))}
-              {[
-                { label: "Seri (opsional)", key: "seri", ph: "contoh: FTKQ, CS-LN, AH-X6" },
-                { label: "Nama Varian (opsional)", key: "nama_varian", ph: "contoh: Flash Inverter, Low Watt" },
-              ].map(({ label, key, ph }) => (
-                <div key={key}>
-                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>{label}</div>
-                  <input type="text" value={addForm[key]} placeholder={ph}
-                    onChange={e => setAddForm(f => ({ ...f, [key]: e.target.value }))}
-                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
-                </div>
-              ))}
-              {[
-                { label: "Harga Unit (Rp) *", key: "harga_unit", ph: "contoh: 4100000" },
-                { label: "Harga Inc. Pasang (Rp)", key: "harga_inc_pasang", ph: "contoh: 5500000" },
-              ].map(({ label, key, ph }) => (
-                <div key={key}>
-                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>{label}</div>
-                  <input type="number" value={addForm[key]} placeholder={ph}
-                    onChange={e => setAddForm(f => ({ ...f, [key]: e.target.value }))}
-                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
-                </div>
-              ))}
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.78)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => setAddModal(false)}>
+          <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 420, maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+            onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{ padding: "16px 20px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid " + cs.border + "55", flexShrink: 0 }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>🖥️ Tambah Harga Unit AC</div>
+                <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Brand, spesifikasi, dan harga unit</div>
+              </div>
+              <button onClick={() => setAddModal(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer", lineHeight: 1, padding: "0 0 0 12px", flexShrink: 0 }}>×</button>
             </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            {/* Body */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+              {/* Card 1 — Spesifikasi */}
+              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: cs.muted, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 10 }}>Spesifikasi</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[{ label: "Brand", key: "brand", opts: BRAND_LIST }, { label: "Tipe", key: "tipe", opts: TIPE_LIST }, { label: "Kapasitas", key: "kapasitas", opts: KAP_LIST }].map(({ label, key, opts }) => (
+                    <div key={key}>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4, fontWeight: 600 }}>{label}</div>
+                      <select value={addForm[key]} onChange={e => setAddForm(f => ({ ...f, [key]: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13 }}>
+                        {opts.map(o => <option key={o}>{o}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* Card 2 — Identifikasi */}
+              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: cs.muted, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 10 }}>Identifikasi <span style={{ fontSize: 9, fontWeight: 400 }}>(opsional)</span></div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[{ label: "Seri", key: "seri", ph: "contoh: FTKQ, CS-LN, AH-X6" }, { label: "Nama Varian", key: "nama_varian", ph: "contoh: Flash Inverter, Low Watt" }].map(({ label, key, ph }) => (
+                    <div key={key}>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4, fontWeight: 600 }}>{label}</div>
+                      <input type="text" value={addForm[key]} placeholder={ph}
+                        onChange={e => setAddForm(f => ({ ...f, [key]: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* Card 3 — Harga */}
+              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: cs.muted, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 10 }}>Harga</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[{ label: "Harga Unit (Rp) *", key: "harga_unit", ph: "4100000" }, { label: "Harga Inc. Pasang (Rp)", key: "harga_inc_pasang", ph: "5500000" }].map(({ label, key, ph }) => (
+                    <div key={key}>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4, fontWeight: 600 }}>{label}</div>
+                      <input type="number" value={addForm[key]} placeholder={ph}
+                        onChange={e => setAddForm(f => ({ ...f, [key]: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
+                    </div>
+                  ))}
+                  <div style={{ background: cs.surface, border: "1px solid " + cs.border + "88", borderRadius: 8, padding: "7px 10px", fontSize: 10, color: cs.muted }}>
+                    ℹ️ Inc. Pasang tidak boleh lebih kecil dari Harga Unit
+                  </div>
+                </div>
+              </div>
+            </div>
+            {/* Footer */}
+            <div style={{ borderTop: "1px solid " + cs.border + "55", padding: "12px 20px", display: "flex", gap: 10, flexShrink: 0 }}>
               <button onClick={() => setAddModal(false)}
-                style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: 10, borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>
+                style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
                 Batal
               </button>
               <button onClick={handleAdd} disabled={saving}
-                style={{ flex: 2, background: "linear-gradient(135deg,#f59e0b,#d97706)", border: "none", color: "#000", padding: 10, borderRadius: 8, cursor: "pointer", fontWeight: 700 }}>
+                style={{ flex: 2, background: saving ? "#f59e0b88" : "linear-gradient(135deg,#f59e0b,#d97706)", border: "none", color: "#fff", padding: "11px", borderRadius: 10, cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 13, opacity: saving ? 0.7 : 1 }}>
                 {saving ? "Menyimpan..." : "💾 Simpan"}
               </button>
             </div>
@@ -547,35 +569,81 @@ function PriceListView({ priceListData, setPriceListData, priceListSvcTab, setPr
 
         {/* Modal Tambah Item PriceList */}
         {plAddModal && (
-          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-            <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 16, padding: 24, width: "100%", maxWidth: 420 }}>
-              <div style={{ fontWeight: 800, fontSize: 16, color: cs.text, marginBottom: 16 }}>➕ Tambah Item Harga Baru</div>
-              {[
-                { label: "Jenis Layanan", key: "service", type: "select", opts: SVC_TABS.filter(t => t !== "Semua") },
-                { label: "Kategori", key: "category", type: "select", opts: ["", "Jasa", "Barang"] },
-                { label: "Tipe AC / Nama Item", key: "type", type: "text", ph: "contoh: AC 1 PK, AC 2 PK" },
-                { label: "Kode", key: "code", type: "text", ph: "contoh: CLN-1PK" },
-                { label: "Harga (Rp)", key: "price", type: "number", ph: "contoh: 150000" },
-                { label: "Satuan", key: "unit", type: "text", ph: "contoh: unit, set, meter" },
-                { label: "Catatan", key: "notes", type: "text", ph: "opsional" },
-              ].map(({ label, key, type, ph, opts }) => (
-                <div key={key} style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>{label}</div>
-                  {type === "select" ? (
-                    <select value={plNewForm[key]} onChange={e => setPlNewForm(f => ({ ...f, [key]: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 13 }}>
-                      {opts.map(o => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  ) : (
-                    <input type={type} value={plNewForm[key]} placeholder={ph || ""}
-                      onChange={e => setPlNewForm(f => ({ ...f, [key]: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
-                  )}
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.78)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+            onClick={() => setPlAddModal(false)}>
+            <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 440, maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+              onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div style={{ padding: "16px 20px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid " + cs.border + "55", flexShrink: 0 }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>➕ Tambah Item Harga</div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Jasa atau material dengan harga satuan</div>
                 </div>
-              ))}
-              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                <button onClick={() => setPlAddModal(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer", lineHeight: 1, padding: "0 0 0 12px", flexShrink: 0 }}>×</button>
+              </div>
+              {/* Body */}
+              <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+                {/* Card 1 — Tipe & Layanan */}
+                <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "12px 14px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: cs.muted, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 10 }}>Tipe & Layanan</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4, fontWeight: 600 }}>Jenis Layanan</div>
+                      <select value={plNewForm.service} onChange={e => setPlNewForm(f => ({ ...f, service: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13 }}>
+                        {SVC_TABS.filter(t => t !== "Semua").map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4, fontWeight: 600 }}>Kategori</div>
+                      <select value={plNewForm.category} onChange={e => setPlNewForm(f => ({ ...f, category: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13 }}>
+                        {["", "Jasa", "Barang"].map(o => <option key={o} value={o}>{o || "— Pilih —"}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4, fontWeight: 600 }}>Tipe AC / Nama Item <span style={{ color: cs.red }}>*</span></div>
+                      <input type="text" value={plNewForm.type} placeholder="contoh: AC 1 PK, AC 2 PK"
+                        onChange={e => setPlNewForm(f => ({ ...f, type: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4, fontWeight: 600 }}>Kode <span style={{ fontWeight: 400 }}>(opsional)</span></div>
+                      <input type="text" value={plNewForm.code || ""} placeholder="contoh: CLN-1PK"
+                        onChange={e => setPlNewForm(f => ({ ...f, code: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
+                    </div>
+                  </div>
+                </div>
+                {/* Card 2 — Harga & Satuan */}
+                <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "12px 14px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: cs.muted, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 10 }}>Harga & Satuan</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4, fontWeight: 600 }}>Harga (Rp) <span style={{ color: cs.red }}>*</span></div>
+                      <input type="number" value={plNewForm.price} placeholder="contoh: 150000"
+                        onChange={e => setPlNewForm(f => ({ ...f, price: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4, fontWeight: 600 }}>Satuan</div>
+                      <input type="text" value={plNewForm.unit} placeholder="contoh: unit, set, meter"
+                        onChange={e => setPlNewForm(f => ({ ...f, unit: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4, fontWeight: 600 }}>Catatan <span style={{ fontWeight: 400 }}>(opsional)</span></div>
+                      <input type="text" value={plNewForm.notes} placeholder="opsional"
+                        onChange={e => setPlNewForm(f => ({ ...f, notes: e.target.value }))}
+                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {/* Footer */}
+              <div style={{ borderTop: "1px solid " + cs.border + "55", padding: "12px 20px", display: "flex", gap: 10, flexShrink: 0 }}>
                 <button onClick={() => setPlAddModal(false)}
-                  style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "10px", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>
+                  style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
                   Batal
                 </button>
                 <button onClick={async () => {
@@ -584,15 +652,7 @@ function PriceListView({ priceListData, setPriceListData, priceListSvcTab, setPr
                   const typeTrimmed = plNewForm.type.trim();
                   const duplikat = priceListData.find(r => r.service === plNewForm.service && r.type.trim().toLowerCase() === typeTrimmed.toLowerCase());
                   if (duplikat) { showNotif(`❌ Item "${typeTrimmed}" di layanan ${plNewForm.service} sudah ada. Edit item tersebut jika ingin ubah harga.`); return; }
-                  const newItem = {
-                    service: plNewForm.service,
-                    category: plNewForm.category || null,
-                    type: typeTrimmed,
-                    price: Number(plNewForm.price),
-                    unit: plNewForm.unit.trim() || "unit",
-                    notes: plNewForm.notes.trim() || null,
-                    is_active: true,
-                  };
+                  const newItem = { service: plNewForm.service, category: plNewForm.category || null, type: typeTrimmed, price: Number(plNewForm.price), unit: plNewForm.unit.trim() || "unit", notes: plNewForm.notes.trim() || null, is_active: true };
                   const { data, error } = await supabase.from("price_list").insert(newItem).select().single();
                   if (error) { showNotif("❌ Gagal simpan: " + (error.message || error.code)); return; }
                   setPriceListData(prev => [...prev, data || newItem]);
@@ -601,7 +661,7 @@ function PriceListView({ priceListData, setPriceListData, priceListSvcTab, setPr
                   showNotif("✅ Item harga baru berhasil ditambah!");
                   setPlAddModal(false);
                 }}
-                  style={{ flex: 2, background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "10px", borderRadius: 8, cursor: "pointer", fontWeight: 700 }}>
+                  style={{ flex: 2, background: `linear-gradient(135deg,${cs.accent},#3b82f6)`, border: "none", color: "#fff", padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 13 }}>
                   💾 Simpan Item
                 </button>
               </div>

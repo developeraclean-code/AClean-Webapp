@@ -2,6 +2,7 @@ import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { fetchDeletedExpenses } from "../data/reads.js";
 import { restoreExpense, purgeExpense } from "../data/writes.js";
+import ExpenseFormModal, { BudgetModal } from "./ExpenseFormModal.jsx";
 
 // ── Kasbon Section (Owner/Admin) — approve request → otomatis masuk ke Biaya ──
 function KasbonSection({ currentUser, kasbonRequests, approveKasbon, rejectKasbon }) {
@@ -298,7 +299,7 @@ const openEdit = (item) => {
 
 const saveExpense = async () => {
   const f = newExpenseForm;
-  if (!f.subcategory || !f.amount || !f.date) { alert("Isi subkategori, jumlah, dan tanggal."); return; }
+  if (!f.subcategory || !f.amount || !f.date) { showNotif?.("⚠️ Isi subkategori, jumlah, dan tanggal."); return; }
   const payload = {
     category: f.category, subcategory: f.subcategory, amount: Number(f.amount),
     date: f.date, description: f.description,
@@ -470,48 +471,15 @@ return (
     )}
 
     {/* Modal Set Budget */}
-    {budgetForm !== null && isOwner && (
-      <div style={{ position: "fixed", inset: 0, background: "#00000088", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-        onClick={e => { if (e.target === e.currentTarget) setBudgetForm(null); }}>
-        <div style={{ background: cs.bg, border: "1px solid " + cs.border, borderRadius: 14, padding: 24, width: "100%", maxWidth: 380 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: cs.text, marginBottom: 16 }}>
-            Set Budget Bulanan
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Kategori</label>
-            <select value={budgetForm.category} onChange={e => setBudgetForm(f => ({ ...f, category: e.target.value, subcategory: null }))}
-              style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, color: cs.text, padding: "8px 10px", fontSize: 13 }}>
-              <option value="petty_cash">💰 Petty Cash</option>
-              <option value="material_purchase">🔧 Pembelian Material</option>
-            </select>
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Sub-kategori (kosongkan = semua)</label>
-            <select value={budgetForm.subcategory || ""} onChange={e => setBudgetForm(f => ({ ...f, subcategory: e.target.value || null }))}
-              style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, color: cs.text, padding: "8px 10px", fontSize: 13 }}>
-              <option value="">-- Semua --</option>
-              {(budgetForm.category === "material_purchase" ? MATERIAL_SUBS : PETTY_CASH_SUBS).map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Budget per Bulan (Rp)</label>
-            <input type="number" min="0" value={budgetForm.amount} onChange={e => setBudgetForm(f => ({ ...f, amount: e.target.value }))}
-              placeholder="500000" autoFocus
-              style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, color: cs.text, padding: "9px 12px", fontSize: 13, boxSizing: "border-box" }} />
-            <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>Kosongkan / isi 0 untuk hapus budget</div>
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setBudgetForm(null)}
-              style={{ flex: 1, background: "transparent", border: "1px solid " + cs.border, borderRadius: 9, color: cs.muted, padding: 10, cursor: "pointer", fontSize: 13 }}>Batal</button>
-            <button onClick={saveBudget} disabled={budgetSaving}
-              style={{ flex: 2, background: cs.accent, border: "none", color: "#0a0f1e", padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13, opacity: budgetSaving ? 0.7 : 1 }}>
-              {budgetSaving ? "⏳ Menyimpan..." : "✅ Simpan Budget"}
-            </button>
-          </div>
-        </div>
-      </div>
+    {isOwner && (
+      <BudgetModal
+        open={budgetForm !== null}
+        onClose={() => setBudgetForm(null)}
+        budgetForm={budgetForm}
+        setBudgetForm={setBudgetForm}
+        saveBudget={saveBudget}
+        budgetSaving={budgetSaving}
+      />
     )}
 
     {/* Tab bar */}
@@ -769,155 +737,25 @@ return (
     </>}
 
     {/* Modal Add/Edit */}
-    {modalExpense && (
-      <div style={{
-        position: "fixed", inset: 0, background: "#00000099", zIndex: 1000,
-        display: "flex", alignItems: "center", justifyContent: "center", padding: 16
-      }}
-        onClick={e => { if (e.target === e.currentTarget) { setModalExpense(false); resetForm(); } }}>
-        <div style={{
-          background: cs.bg, border: "1px solid " + cs.border, borderRadius: 16,
-          padding: 24, width: "100%", maxWidth: 460, maxHeight: "90vh", overflowY: "auto"
-        }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: cs.text, marginBottom: 16 }}>
-            {editExpenseItem ? "✏️ Edit Biaya" : "➕ Tambah Biaya"}
-          </div>
-          {/* Category */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Kategori</label>
-            <select value={newExpenseForm.category}
-              onChange={e => setNewExpenseForm(p => ({ ...p, category: e.target.value, subcategory: "" }))}
-              style={{
-                width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
-                color: cs.text, padding: "9px 12px", fontSize: 13
-              }}>
-              <option value="petty_cash">💰 Petty Cash</option>
-              <option value="material_purchase">🔧 Pembelian Material</option>
-            </select>
-          </div>
-          {/* Subcategory */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Sub-kategori *</label>
-            <select value={newExpenseForm.subcategory}
-              onChange={e => setNewExpenseForm(p => ({ ...p, subcategory: e.target.value }))}
-              style={{
-                width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
-                color: cs.text, padding: "9px 12px", fontSize: 13
-              }}>
-              <option value="">-- Pilih --</option>
-              {(newExpenseForm.category === "material_purchase" ? MATERIAL_SUBS : PETTY_CASH_SUBS).map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-          {/* Amount */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Jumlah (Rp) *</label>
-            <input type="number" value={newExpenseForm.amount}
-              onChange={e => setNewExpenseForm(p => ({ ...p, amount: e.target.value }))}
-              placeholder="50000"
-              style={{
-                width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
-                color: cs.text, padding: "9px 12px", fontSize: 13, boxSizing: "border-box"
-              }} />
-          </div>
-          {/* Date */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Tanggal *</label>
-            <input type="date" value={newExpenseForm.date}
-              onChange={e => setNewExpenseForm(p => ({ ...p, date: e.target.value }))}
-              style={{
-                width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
-                color: cs.text, padding: "9px 12px", fontSize: 13, boxSizing: "border-box"
-              }} />
-          </div>
-          {/* Teknisi name (for petty_cash like Kasbon/Lembur/Bonus) */}
-          {newExpenseForm.category === "petty_cash" && ["Kasbon Karyawan", "Lembur", "Bonus"].includes(newExpenseForm.subcategory) && (() => {
-            // Gabung teknisiData + userAccounts (Teknisi/Helper), dedupe by canonical name
-            const namesSet = new Set();
-            [...(teknisiData || []), ...(userAccounts || [])]
-              .filter(u => ["Teknisi", "Helper"].includes(u.role))
-              .forEach(u => { if (u.name) namesSet.add(u.name.trim()); });
-            const nameOptions = [...namesSet].sort((a, b) => a.localeCompare(b));
-            return (
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Nama Karyawan</label>
-                <select value={newExpenseForm.teknisi_name}
-                  onChange={e => setNewExpenseForm(p => ({ ...p, teknisi_name: e.target.value }))}
-                  style={{
-                    width: "100%", background: cs.card, border: "1px solid " + (newExpenseForm.teknisi_name ? cs.border : cs.red + "55"),
-                    borderRadius: 8, color: cs.text, padding: "9px 12px", fontSize: 13, boxSizing: "border-box"
-                  }}>
-                  <option value="">— Pilih teknisi/helper —</option>
-                  {nameOptions.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-                <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>
-                  Pilih dari preset — supaya kasbon otomatis terhitung di payroll mingguan.
-                </div>
-              </div>
-            );
-          })()}
-          {/* Item name + freon type for material */}
-          {newExpenseForm.category === "material_purchase" && (
-            <>
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Nama / Spesifikasi Barang</label>
-                <input value={newExpenseForm.item_name}
-                  onChange={e => setNewExpenseForm(p => ({ ...p, item_name: e.target.value }))}
-                  placeholder="misal: Pipa 3/8 × 5/8 — 15m"
-                  style={{
-                    width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
-                    color: cs.text, padding: "9px 12px", fontSize: 13, boxSizing: "border-box"
-                  }} />
-              </div>
-              {newExpenseForm.subcategory === "Freon" && (
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Jenis Freon</label>
-                  <select value={newExpenseForm.freon_type}
-                    onChange={e => setNewExpenseForm(p => ({ ...p, freon_type: e.target.value }))}
-                    style={{
-                      width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
-                      color: cs.text, padding: "9px 12px", fontSize: 13
-                    }}>
-                    <option value="">-- Pilih --</option>
-                    {["R22", "R32", "R410A", "R134a", "R404A", "Lainnya"].map(f => <option key={f} value={f}>{f}</option>)}
-                  </select>
-                </div>
-              )}
-            </>
-          )}
-          {/* Description */}
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ fontSize: 12, color: cs.muted, display: "block", marginBottom: 4 }}>Keterangan</label>
-            <textarea value={newExpenseForm.description}
-              onChange={e => setNewExpenseForm(p => ({ ...p, description: e.target.value }))}
-              placeholder="Keterangan tambahan..."
-              rows={3}
-              style={{
-                width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8,
-                color: cs.text, padding: "9px 12px", fontSize: 13, resize: "vertical", boxSizing: "border-box"
-              }} />
-          </div>
-          {/* Actions */}
-          <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => { setModalExpense(false); resetForm(); }}
-              style={{
-                flex: 1, background: "transparent", border: "1px solid " + cs.border, borderRadius: 10,
-                color: cs.muted, padding: "10px", cursor: "pointer", fontSize: 13
-              }}>
-              Batal
-            </button>
-            <button onClick={saveExpense}
-              style={{
-                flex: 2, background: "linear-gradient(135deg," + cs.accent + "," + cs.ara + ")", border: "none",
-                color: "#fff", padding: "10px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13
-              }}>
-              {editExpenseItem ? "Simpan Perubahan" : "Simpan"}
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
+    <ExpenseFormModal
+      open={modalExpense}
+      onClose={() => { setModalExpense(false); resetForm(); }}
+      editExpenseItem={editExpenseItem}
+      newExpenseForm={newExpenseForm}
+      setNewExpenseForm={setNewExpenseForm}
+      teknisiData={teknisiData}
+      userAccounts={userAccounts}
+      currentUser={currentUser}
+      supabase={supabase}
+      insertExpense={insertExpense}
+      updateExpense={updateExpense}
+      auditUserName={auditUserName}
+      showNotif={showNotif}
+      TODAY={TODAY}
+      setExpensesData={setExpensesData}
+      setPendingAi={setPendingAi}
+      fmt={fmt}
+    />
   </div>
 );
 }

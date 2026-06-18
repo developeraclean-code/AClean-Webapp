@@ -232,6 +232,7 @@ function BeritaAcaraTab({ db, can, toast }) {
   const [loading, setLoading] = useState(true);
   const [filterPid, setFilterPid] = useState("all");
   const [viewRow, setViewRow] = useState(null);
+  const [editRow, setEditRow] = useState(null);
   const [busy, setBusy]       = useState("");
 
   const load = useCallback(async () => {
@@ -339,31 +340,40 @@ function BeritaAcaraTab({ db, can, toast }) {
                 </div>
               )}
 
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                 <div style={{ fontSize: 11, color: cs.muted }}>
                   {(r.foto_urls || []).length} foto · {r.order_id || "—"} · submit {r.submitted_at ? new Date(r.submitted_at).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
                 </div>
-                {can.verify && r.status === "PENDING" && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button disabled={busy === r.id} onClick={() => setViewRow(r)}
-                      style={{ padding: "5px 14px", borderRadius: 8, border: `1px solid ${cs.border}`, background: "transparent", color: cs.muted, fontSize: 12, cursor: "pointer" }}>
-                      Detail
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {/* Edit — Owner/Admin bisa edit isi laporan kapan saja */}
+                  {can.manage && (
+                    <button disabled={busy === r.id} onClick={() => setEditRow(r)}
+                      style={{ padding: "5px 12px", borderRadius: 8, border: `1px solid ${cs.border}`, background: "transparent", color: cs.muted, fontSize: 12, cursor: "pointer" }}>
+                      ✏️ Edit
                     </button>
-                    <button disabled={busy === r.id} onClick={() => verify(r, "VERIFIED")}
-                      style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: cs.green, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                      ✓ Verifikasi
-                    </button>
-                    <button disabled={busy === r.id} onClick={() => setViewRow({ ...r, _askRevision: true })}
-                      style={{ padding: "5px 14px", borderRadius: 8, border: `1px solid #ef444466`, background: "transparent", color: "#ef4444", fontSize: 12, cursor: "pointer" }}>
-                      ↩ Revisi
-                    </button>
-                  </div>
-                )}
-                {r.status !== "PENDING" && (
-                  <div style={{ fontSize: 11, color: cs.muted }}>
-                    {r.status === "VERIFIED" ? `✓ ${r.verified_at ? new Date(r.verified_at).toLocaleDateString("id-ID") : ""}` : ""}
-                  </div>
-                )}
+                  )}
+                  {can.verify && r.status === "PENDING" && (
+                    <>
+                      <button disabled={busy === r.id} onClick={() => setViewRow(r)}
+                        style={{ padding: "5px 12px", borderRadius: 8, border: `1px solid ${cs.border}`, background: "transparent", color: cs.muted, fontSize: 12, cursor: "pointer" }}>
+                        Detail
+                      </button>
+                      <button disabled={busy === r.id} onClick={() => verify(r, "VERIFIED")}
+                        style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: cs.green, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        ✓ Verifikasi
+                      </button>
+                      <button disabled={busy === r.id} onClick={() => setViewRow({ ...r, _askRevision: true })}
+                        style={{ padding: "5px 12px", borderRadius: 8, border: `1px solid #ef444466`, background: "transparent", color: "#ef4444", fontSize: 12, cursor: "pointer" }}>
+                        ↩ Revisi
+                      </button>
+                    </>
+                  )}
+                  {r.status === "VERIFIED" && (
+                    <div style={{ fontSize: 11, color: cs.muted, alignSelf: "center" }}>
+                      ✓ {r.verified_at ? new Date(r.verified_at).toLocaleDateString("id-ID") : ""}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -373,6 +383,19 @@ function BeritaAcaraTab({ db, can, toast }) {
       {/* Modal detail + verifikasi / revisi */}
       {viewRow && (
         <RevisiModal row={viewRow} onClose={() => setViewRow(null)} onVerify={verify} busy={busy} />
+      )}
+
+      {/* Modal edit isi laporan */}
+      {editRow && (
+        <EditLaporanModal
+          row={editRow}
+          onClose={() => setEditRow(null)}
+          onSave={(updated) => {
+            setRows(prev => prev.map(r => r.id === updated.id ? { ...r, ...updated } : r));
+            setEditRow(null);
+            toast("✅ Laporan diperbarui");
+          }}
+        />
       )}
     </div>
   );
@@ -438,3 +461,89 @@ function RevisiModal({ row, onClose, onVerify, busy }) {
 }
 
 const KV = ({ l, v }) => <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0" }}><span style={{ color: cs.muted }}>{l}</span><b>{v}</b></div>;
+
+function EditLaporanModal({ row, onClose, onSave }) {
+  const [pekerjaan, setPekerjaan] = useState(row.pekerjaan || "");
+  const [kendala, setKendala]     = useState(row.kendala || "");
+  const [saving, setSaving]       = useState(false);
+  const [err, setErr]             = useState("");
+
+  const handleSave = async () => {
+    if (!pekerjaan.trim()) { setErr("Isi deskripsi pekerjaan."); return; }
+    setSaving(true);
+    setErr("");
+    const { error } = await supabase
+      .from("project_daily_reports")
+      .update({ pekerjaan: pekerjaan.trim(), kendala: kendala.trim() || null })
+      .eq("id", row.id);
+    setSaving(false);
+    if (error) { setErr("Gagal menyimpan: " + error.message); return; }
+    onSave({ id: row.id, pekerjaan: pekerjaan.trim(), kendala: kendala.trim() || null });
+  };
+
+  const TA = (props) => (
+    <textarea {...props} style={{
+      width: "100%", background: cs.surface, border: `1px solid ${cs.border}`,
+      borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13,
+      resize: "vertical", boxSizing: "border-box", outline: "none",
+      fontFamily: "inherit", lineHeight: 1.55, ...props.style,
+    }} />
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: cs.surface, border: `1px solid ${cs.border}`, borderRadius: 20, width: "100%", maxWidth: 520, maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* Header */}
+        <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `1px solid ${cs.border}55` }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>✏️ Edit Laporan Harian</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>
+              {row.tanggal} · {row.teknisi_name || "—"}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 20, cursor: "pointer", lineHeight: 1, padding: "0 4px" }}>×</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+          {err && (
+            <div style={{ background: "#ef444418", border: "1px solid #ef444444", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#ef4444" }}>
+              ⚠️ {err}
+            </div>
+          )}
+
+          <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, padding: 14 }}>
+            <label style={{ fontSize: 11, color: cs.muted, fontWeight: 600, display: "block", marginBottom: 6 }}>
+              Deskripsi Pekerjaan <span style={{ color: "#ef4444" }}>*</span>
+            </label>
+            <TA value={pekerjaan} onChange={e => setPekerjaan(e.target.value)} rows={5}
+                placeholder="Jelaskan pekerjaan yang sudah dilakukan hari ini..." />
+          </div>
+
+          <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, padding: 14 }}>
+            <label style={{ fontSize: 11, color: cs.muted, fontWeight: 600, display: "block", marginBottom: 6 }}>
+              Kendala / Catatan <span style={{ fontSize: 10 }}>(opsional)</span>
+            </label>
+            <TA value={kendala} onChange={e => setKendala(e.target.value)} rows={3}
+                placeholder="Kendala yang dihadapi atau catatan tambahan..." />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ borderTop: `1px solid ${cs.border}55`, padding: "12px 20px", display: "flex", gap: 10 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "10px 0", borderRadius: 9, border: `1px solid ${cs.border}`, background: "transparent", color: cs.muted, fontWeight: 600, cursor: "pointer" }}>
+            Batal
+          </button>
+          <button onClick={handleSave} disabled={saving || !pekerjaan.trim()} style={{
+            flex: 2, padding: "10px 0", borderRadius: 9, border: "none",
+            background: saving || !pekerjaan.trim() ? cs.border : "linear-gradient(135deg, #10b981, #059669)",
+            color: "#fff", fontWeight: 800, cursor: saving || !pekerjaan.trim() ? "not-allowed" : "pointer",
+          }}>
+            {saving ? "Menyimpan…" : "💾 Simpan Perubahan"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
