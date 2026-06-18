@@ -10,8 +10,8 @@ const INV_PAGE_SIZE = 15;
 function InventoryView({
   inventoryData, searchInventory, setSearchInventory, inventoryPage, setInventoryPage,
   currentUser, supabase, fmt, showConfirm, showNotif,
-  setModalStok, setEditStokItem, setNewStokForm, setModalEditStok, setInventoryData,
-  setModalRestock, setRestockItem, setRestockForm, TODAY,
+  setModalStok, setEditStokItem, setModalEditStok, setInventoryData,
+  setModalRestock, setRestockItem, TODAY,
 }) {
   const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
   const [activeTab, setActiveTab] = useState("material");
@@ -97,12 +97,11 @@ function InventoryView({
                         {/* Restock — tombol utama */}
                         <button onClick={() => {
                           setRestockItem(item);
-                          setRestockForm({ qty: "", harga: String(item.price || ""), tanggal: TODAY, keterangan: "", catetBiaya: true });
                           setModalRestock(true);
                         }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
                           📥 Restock
                         </button>
-                        <button onClick={() => { setEditStokItem({ ...item }); setNewStokForm({ name: item.name, unit: item.unit, price: item.price, stock: item.stock, reorder: item.reorder, min_alert: item.min_alert }); setModalEditStok(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>✏️</button>
+                        <button onClick={() => { setEditStokItem({ ...item }); setModalEditStok(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>✏️</button>
                         <button onClick={async () => {
                           if (!await showConfirm({ icon: "🗑️", title: "Hapus Material?", danger: true, message: "Hapus material " + item.name + "? Tidak bisa dibatalkan.", confirmText: "Hapus" })) return;
                           const delQuery = item.id && !String(item.id).startsWith("INV")

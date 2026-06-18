@@ -82,6 +82,8 @@ const EditOrderModal         = lazy(() => import("./views/EditOrderModal.jsx"));
 const CustomerFormModal      = lazy(() => import("./views/CustomerFormModal.jsx"));
 const TeknisiFormModal       = lazy(() => import("./views/TeknisiFormModal.jsx"));
 const UserFormModal          = lazy(() => import("./views/UserFormModal.jsx"));
+const MaterialFormModal      = lazy(() => import("./views/MaterialFormModal.jsx"));
+const RestockModal           = lazy(() => import("./views/RestockModal.jsx"));
 
 // Supabase client tunggal di-import dari ./supabaseClient.js (env divalidasi di sana).
 // Single client → session login Supabase Auth ter-share ke modul Project (RLS authenticated).
@@ -858,7 +860,6 @@ export default function ACleanWebApp() {
   const [editStokItem, setEditStokItem] = useState(null);
   const [modalRestock, setModalRestock] = useState(false);
   const [restockItem, setRestockItem] = useState(null);
-  const [restockForm, setRestockForm] = useState({ qty: "", harga: "", tanggal: "", keterangan: "", catetBiaya: true });
   const [modalBrainEdit, setModalBrainEdit] = useState(false);
 
   // ── Form laporan (teknisi) — v3 multi-unit ──
@@ -956,7 +957,6 @@ export default function ACleanWebApp() {
   // Auto-detect pekerjaan lanjutan: order OPEN customer yg sama dalam H-3
   const [continuationSuggestion, setContinuationSuggestion] = useState([]); // kandidat parent jobs
   const [continuationParentId, setContinuationParentId] = useState(null);   // null=belum pilih, ""=decline, "JOB-x"=confirmed
-  const [newStokForm, setNewStokForm] = useState({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" });
   const [newTeknisiForm, setNewTeknisiForm] = useState({ name: "", role: "Teknisi", phone: "", skills: [], email: "", password: "", buatAkun: false });
   const [modalAddCustomer, setModalAddCustomer] = useState(false);
   const [newCustomerForm, setNewCustomerForm] = useState({ name: "", phone: "", address: "", area: "", notes: "", is_vip: false });
@@ -6587,8 +6587,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     <InventoryView inventoryData={inventoryData} searchInventory={searchInventory} setSearchInventory={setSearchInventory}
       inventoryPage={inventoryPage} setInventoryPage={setInventoryPage} currentUser={currentUser} supabase={supabase} fmt={fmt}
       showConfirm={showConfirm} showNotif={showNotif} setModalStok={setModalStok} setEditStokItem={setEditStokItem}
-      setNewStokForm={setNewStokForm} setModalEditStok={setModalEditStok} setInventoryData={setInventoryData}
-      setModalRestock={setModalRestock} setRestockItem={setRestockItem} setRestockForm={setRestockForm} TODAY={TODAY} />
+      setModalEditStok={setModalEditStok} setInventoryData={setInventoryData}
+      setModalRestock={setModalRestock} setRestockItem={setRestockItem} TODAY={TODAY} />
   );
 
   // ============================================================
@@ -9244,9 +9244,36 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       )}
 
       {/* ══════════════════════════════════════════════════════ */}
-      {/* MODAL — TAMBAH MATERIAL */}
+      {/* MODAL — MATERIAL (Add/Edit) + RESTOCK — SFM */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalStok && (
+      <Suspense fallback={null}>
+        <MaterialFormModal
+          open={modalStok || modalEditStok}
+          mode={modalStok ? "add" : "edit"}
+          editItem={editStokItem}
+          onClose={() => { setModalStok(false); setModalEditStok(false); setEditStokItem(null); }}
+          inventoryData={inventoryData}
+          setInventoryData={setInventoryData}
+          currentUser={currentUser}
+          showNotif={showNotif}
+          addAgentLog={addAgentLog}
+          supabase={supabase}
+        />
+      </Suspense>
+      <Suspense fallback={null}>
+        <RestockModal
+          open={modalRestock}
+          item={restockItem}
+          onClose={() => { setModalRestock(false); setRestockItem(null); }}
+          setInventoryData={setInventoryData}
+          currentUser={currentUser}
+          showNotif={showNotif}
+          addAgentLog={addAgentLog}
+          supabase={supabase}
+          TODAY={TODAY}
+        />
+      </Suspense>
+      {false && modalStok && (
         <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setModalStok(false)}>
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 460, padding: 24, maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
@@ -9368,7 +9395,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — EDIT STOK */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalEditStok && editStokItem && (() => {
+      {false && modalEditStok && editStokItem && (() => {
         const isF = isFreonItem(editStokItem);
         const parseStock = v => isF ? (parseFloat(v) || 0) : (parseInt(v) || 0);
         const tambah = parseStock(newStokForm.tambah);
@@ -9446,7 +9473,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — RESTOCK MATERIAL */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalRestock && restockItem && (() => {
+      {false && modalRestock && restockItem && (() => {
         const isF = isFreonItem(restockItem);
         const qtyNum = isF ? parseFloat(restockForm.qty) || 0 : parseInt(restockForm.qty) || 0;
         const hargaNum = parseInt(restockForm.harga) || 0;
@@ -11297,219 +11324,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           _apiHeaders={_apiHeaders}
         />
       </Suspense>
-      {false && modalAddUser && (() => {
-        // Auto-password berdasarkan role
-        const roleConfig = {
-          "Owner": { color: "#f59e0b", icon: "👑", desc: "Akses semua menu & pengaturan", autoPass: null },
-          "Admin": { color: "#38bdf8", icon: "🛠️", desc: "Semua menu kecuali Pengaturan", autoPass: null },
-          "Finance": { color: "#10b981", icon: "💰", desc: "Akses Finance, Invoice, Biaya & Statistik", autoPass: null },
-          "Teknisi": { color: "#22c55e", icon: "👷", desc: "Hanya Jadwal & Laporan", autoPass: "teknisi123" },
-          "Helper": { color: "#a78bfa", icon: "🤝", desc: "Hanya Jadwal & Laporan", autoPass: "helper123" },
-        };
-        const cfg = roleConfig[newUserForm.role] || roleConfig["Admin"];
-        const isAutoPass = ["Teknisi", "Helper"].includes(newUserForm.role);
-        const effectivePass = isAutoPass ? cfg.autoPass : newUserForm.password;
-
-        const isUUID = (id) => id && /^[0-9a-f-]{36}$/.test(String(id).toLowerCase());
-        const isEditMode = !!(newUserForm.id && isUUID(newUserForm.id));
-
-        const callManageUser = async (body) => {
-          let resolvedRole = currentUser?.role || "";
-          if (!resolvedRole) {
-            try {
-              const saved = JSON.parse(localStorage.getItem("localSession") || "{}");
-              resolvedRole = saved?.role || "";
-            } catch {}
-          }
-          const res = await fetch("/api/manage-user", {
-            method: "POST",
-            headers: await _apiHeaders(),
-            body: JSON.stringify({ ...body, callerRole: resolvedRole })
-          });
-          return res.json();
-        };
-
-        const handleSaveUser = async () => {
-          if (!newUserForm.name || !newUserForm.email) { showNotif("Nama dan email wajib diisi"); return; }
-          if (!isEditMode && !isAutoPass && !newUserForm.password) { showNotif("Password wajib diisi"); return; }
-
-          const avatar = newUserForm.name.charAt(0).toUpperCase();
-          const colorMap = { "Owner": "#f59e0b", "Admin": "#38bdf8", "Finance": "#10b981", "Teknisi": "#22c55e", "Helper": "#a78bfa" };
-          const color = colorMap[newUserForm.role] || "#38bdf8";
-
-          if (isEditMode) {
-            // ── EDIT via backend API ──
-            const result = await callManageUser({ action: "update", userId: newUserForm.id, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "" });
-            if (!result.ok) { showNotif("⚠️ " + (result.error || "Update gagal")); return; }
-            setUserAccounts(prev => prev.map(u => u.id === newUserForm.id ? { ...u, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "", avatar, color } : u));
-            // Sync Tim Teknisi: update jika sudah ada, tambah jika role berubah jadi Teknisi/Helper
-            if (["Teknisi", "Helper"].includes(newUserForm.role)) {
-              setTeknisiData(prev => {
-                const exists = prev.find(t => t.id === newUserForm.id);
-                if (exists) return prev.map(t => t.id === newUserForm.id ? { ...t, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "", color } : t);
-                return [...prev, { id: newUserForm.id, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "", skills: [], jobs_today: 0, status: "active", color, avatar }];
-              });
-            } else {
-              // Jika role berubah dari Teknisi/Helper ke lain → hapus dari tim
-              setTeknisiData(prev => prev.filter(t => t.id !== newUserForm.id));
-            }
-            addAgentLog("USER_UPDATED", "Akun " + newUserForm.name + " diupdate", "SUCCESS");
-            showNotif("✅ Akun " + newUserForm.name + " berhasil diupdate");
-
-          } else {
-            // ── BUAT user baru via backend API (tanpa perlu konfirmasi email) ──
-            const password = effectivePass;
-            const result = await callManageUser({ action: "create", email: newUserForm.email, password, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "" });
-            if (!result.ok) { showNotif("❌ " + (result.error || "Gagal buat akun")); return; }
-            const uid = result.user?.id;
-            const newAcc = { id: uid, name: newUserForm.name, email: newUserForm.email, role: newUserForm.role, phone: newUserForm.phone || "", avatar, color, active: true, lastLogin: "Belum login" };
-            setUserAccounts(prev => [...prev, newAcc]);
-            // Auto-sync Tim Teknisi jika role Teknisi atau Helper
-            if (["Teknisi", "Helper"].includes(newUserForm.role)) {
-              setTeknisiData(prev => {
-                if (prev.find(t => t.id === uid)) return prev;
-                return [...prev, { id: uid, name: newUserForm.name, role: newUserForm.role, phone: newUserForm.phone || "", skills: [], jobs_today: 0, status: "active", color, avatar }];
-              });
-            }
-            addAgentLog("USER_CREATED", "Akun baru: " + newUserForm.name + " (" + newUserForm.role + ")", "SUCCESS");
-            showNotif(`✅ Akun ${newUserForm.name} dibuat — langsung aktif — password: ${password}`);
-          }
-          setModalAddUser(false); setNewUserForm({ name: "", email: "", role: "Admin", password: "", phone: "" });
-        };
-
-        const handleToggleActive = async () => {
-          if (!isEditMode || newUserForm.role === "Owner") return;
-          const isCurrentlyActive = newUserForm.active !== false;
-          const label = isCurrentlyActive ? "Nonaktifkan" : "Aktifkan";
-          if (!await showConfirm({ icon: isCurrentlyActive ? "🔒" : "🔓", title: label + " Akun?", danger: isCurrentlyActive, message: `${label} akun ${newUserForm.name}?\n${isCurrentlyActive ? "User tidak bisa login sampai diaktifkan kembali." : "User bisa login kembali."}`, confirmText: label })) return;
-          const result = await callManageUser({ action: "toggle-active", userId: newUserForm.id, active: !isCurrentlyActive });
-          if (!result.ok) { showNotif("⚠️ " + (result.error || "Gagal")); return; }
-          setUserAccounts(prev => prev.map(u => u.id === newUserForm.id ? { ...u, active: !isCurrentlyActive } : u));
-          addAgentLog(isCurrentlyActive ? "USER_DEACTIVATED" : "USER_ACTIVATED", "Akun " + newUserForm.name + " " + (isCurrentlyActive ? "dinonaktifkan" : "diaktifkan"), "WARNING");
-          showNotif((isCurrentlyActive ? "🔒 Akun dinonaktifkan: " : "🔓 Akun diaktifkan: ") + newUserForm.name);
-          setModalAddUser(false); setNewUserForm({ name: "", email: "", role: "Admin", password: "", phone: "" });
-        };
-
-        const handleResetPassword = async () => {
-          if (!isEditMode) return;
-          const newPass = window.prompt(`Reset password untuk ${newUserForm.name}:\n(minimal 6 karakter)`);
-          if (!newPass) return;
-          if (newPass.length < 6) { showNotif("⚠️ Password minimal 6 karakter"); return; }
-          const result = await callManageUser({ action: "reset-password", userId: newUserForm.id, password: newPass });
-          if (!result.ok) { showNotif("⚠️ " + (result.error || "Reset gagal")); return; }
-          addAgentLog("USER_RESET_PWD", "Password " + newUserForm.name + " direset oleh " + auditUserName(), "WARNING");
-          showNotif("🔑 Password " + newUserForm.name + " berhasil direset");
-        };
-
-        const handleDeleteUser = async () => {
-          if (!isEditMode || newUserForm.role === "Owner") return;
-          if (!await showConfirm({ icon: "🗑️", title: "Hapus Permanen?", danger: true, message: `Hapus akun ${newUserForm.name} dari sistem?\n\nAkun dihapus dari Supabase Auth. Data order/laporan tetap ada.\n\nGunakan "Nonaktifkan" jika hanya ingin blokir login.`, confirmText: "Hapus Permanen" })) return;
-          const result = await callManageUser({ action: "delete", userId: newUserForm.id });
-          if (!result.ok) { showNotif("⚠️ " + (result.error || "Hapus gagal")); return; }
-          setUserAccounts(prev => prev.filter(u => u.id !== newUserForm.id));
-          addAgentLog("USER_DELETED", "Akun " + newUserForm.name + " dihapus permanen", "WARNING");
-          showNotif("🗑️ Akun " + newUserForm.name + " dihapus permanen");
-          setModalAddUser(false); setNewUserForm({ name: "", email: "", role: "Admin", password: "", phone: "" });
-        };
-
-        return (
-          <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setModalAddUser(false)}>
-            <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 480, padding: 28, maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>{newUserForm.id ? "Edit Pengguna" : "Tambah Anggota Tim"}</div>
-                  <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>Hanya Owner yang dapat mengelola akun</div>
-                </div>
-                <button onClick={() => setModalAddUser(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>✕</button>
-              </div>
-
-              <div style={{ display: "grid", gap: 14 }}>
-                {/* Role Selector — 4 role */}
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 8 }}>Role / Hak Akses</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
-                    {Object.entries(roleConfig).map(([role, cfg]) => (
-                      <div key={role}
-                        onClick={() => setNewUserForm(f => ({ ...f, role, password: cfg.autoPass || "" }))}
-                        style={{ background: newUserForm.role === role ? cfg.color + "18" : cs.card, border: "2px solid " + (newUserForm.role === role ? cfg.color : cs.border), borderRadius: 10, padding: "12px 10px", cursor: "pointer" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                          <span style={{ fontSize: 16 }}>{cfg.icon}</span>
-                          <span style={{ fontSize: 12, fontWeight: 800, color: newUserForm.role === role ? cfg.color : cs.text }}>{role}</span>
-                        </div>
-                        <div style={{ fontSize: 10, color: cs.muted }}>{cfg.desc}</div>
-                        {cfg.autoPass && <div style={{ fontSize: 10, color: cfg.color, marginTop: 4, fontWeight: 700 }}>🔑 Password otomatis: {cfg.autoPass}</div>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Form fields */}
-                {[["Nama Lengkap", "name", "text", "Nama lengkap anggota"], ["Email Login", "email", "email", "nama@aclean.id"], ["Nomor HP", "phone", "text", "628812xxx"]].map(([label, key, type, ph]) => (
-                  <div key={key}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>{label}</div>
-                    <input type={type} value={newUserForm[key] || ""} onChange={e => setNewUserForm(f => ({ ...f, [key]: e.target.value }))}
-                      placeholder={ph}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                ))}
-
-                {/* Password — auto atau manual */}
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Password</div>
-                  {isAutoPass ? (
-                    <div style={{ background: cfg.color + "15", border: "1px solid " + cfg.color + "44", borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ fontSize: 18 }}>🔑</span>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 800, color: cfg.color }}>{cfg.autoPass}</div>
-                        <div style={{ fontSize: 10, color: cs.muted }}>Password standar untuk semua {newUserForm.role}. Beritahu anggota password ini.</div>
-                      </div>
-                    </div>
-                  ) : (
-                    <input id="field_password_23" type="password" value={newUserForm.password || ""} onChange={e => setNewUserForm(f => ({ ...f, password: e.target.value }))}
-                      placeholder="min 8 karakter"
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                  )}
-                </div>
-
-                {/* Info role */}
-                <div style={{ background: cfg.color + "10", border: "1px solid " + cfg.color + "22", borderRadius: 8, padding: "10px 14px", fontSize: 11, color: cs.muted }}>
-                  {newUserForm.role === "Owner" && "👑 Akses penuh: semua menu, pengaturan, manajemen akun, dan data keuangan."}
-                  {newUserForm.role === "Admin" && "🛠️ Akses operasional: order, invoice, customer, inventory, laporan. Tidak bisa buka Pengaturan."}
-                  {newUserForm.role === "Finance" && "💰 Akses keuangan: Finance dashboard, Invoice, Biaya Operasional, dan Statistik. Tidak bisa akses data operasional lapangan."}
-                  {newUserForm.role === "Teknisi" && "👷 Akses terbatas: Dashboard, Jadwal, dan Laporan Sendiri saja. Nominal transaksi disembunyikan."}
-                  {newUserForm.role === "Helper" && "🤝 Akses terbatas: Dashboard, Jadwal, dan Laporan Sendiri saja. Sama seperti Teknisi."}
-                </div>
-
-                {/* Tombol manage — hanya saat edit user UUID valid, bukan Owner */}
-                {isEditMode && newUserForm.role !== "Owner" && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    <button onClick={handleResetPassword}
-                      style={{ background: "#f59e0b18", border: "1px solid #f59e0b44", color: "#f59e0b", padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 11 }}>
-                      🔑 Reset Password
-                    </button>
-                    <button onClick={handleToggleActive}
-                      style={{ background: newUserForm.active !== false ? cs.red + "18" : "#22c55e18", border: "1px solid " + (newUserForm.active !== false ? cs.red + "44" : "#22c55e44"), color: newUserForm.active !== false ? cs.red : "#22c55e", padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 11 }}>
-                      {newUserForm.active !== false ? "🔒 Nonaktifkan" : "🔓 Aktifkan"}
-                    </button>
-                    <button onClick={handleDeleteUser}
-                      style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "10px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 11, gridColumn: "1/-1" }}>
-                      🗑️ Hapus Permanen dari Supabase Auth
-                    </button>
-                  </div>
-                )}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginTop: 4 }}>
-                  <button onClick={() => setModalAddUser(false)}
-                    style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
-                  <button onClick={handleSaveUser}
-                    style={{ background: "linear-gradient(135deg," + cfg.color + "," + cfg.color + "99)", border: "none", color: "#fff", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>
-                    {cfg.icon} {isEditMode ? "Simpan Perubahan" : "Buat Akun " + newUserForm.role}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* ═══════ MODAL CUSTOMER — CustomerFormModal ═══════ */}
       <Suspense fallback={null}>
