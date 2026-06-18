@@ -34,11 +34,17 @@ let myReps = [...submittedReps, ...pendingAsDraft]
     return db.localeCompare(da);
   });
 
-// ── AUTO-HIDE VERIFIED untuk Teknisi & Helper (hide laporan yang sudah selesai) ──
+// ── AUTO-HIDE VERIFIED untuk Teknisi & Helper ──
+// Laporan VERIFIED hari ini tetap muncul (untuk keperluan edit/revisi).
+// Laporan VERIFIED hari lain disembunyikan agar tidak menumpuk.
 const userRole = currentUser?.role?.toLowerCase() || "";
 const isTeknisiOrHelper = userRole === "teknisi" || userRole === "helper";
 if (isTeknisiOrHelper) {
-  myReps = myReps.filter(r => (r.status || "").toUpperCase() !== "VERIFIED");
+  myReps = myReps.filter(r => {
+    if ((r.status || "").toUpperCase() !== "VERIFIED") return true;
+    const repDate = (r.date || r.submitted_at || "").slice(0, 10);
+    return repDate === TODAY;
+  });
 }
 
 // CUTOFF_DATE dihapus — tampilkan semua belum-laporan yang real, tanpa filter tanggal.
