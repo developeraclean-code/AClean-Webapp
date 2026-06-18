@@ -13,7 +13,7 @@ import { getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
 import { detectContinuationCandidates } from "./lib/orders.js";
 import { resolveMultiDayInvoiceAction, multiDayProjectKey } from "./lib/invoiceMultiDay.js";
-import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryOf, LINE_CATEGORY, categoryFromCatalog } from "./lib/invoicing.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryOf, LINE_CATEGORY, categoryFromCatalog, computePph23 } from "./lib/invoicing.js";
 import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
 import {
   PRICE_LIST_DEFAULT, getBracketKey,
@@ -10479,6 +10479,29 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                       </div>
                     )}
                   </div>
+
+                  {/* ── PPh 23 (AClean Non-PKP, gross-up — terima full price list) ── */}
+                  {(() => {
+                    const rate = parseFloat(appSettings?.pph23_rate) || 0.025;
+                    const pph = computePph23(newTotal, rate);
+                    return (
+                      <div style={{ background: editInvoiceForm.pph23 ? "#0ea5e912" : cs.surface, border: "1px solid " + (editInvoiceForm.pph23 ? "#0ea5e944" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: cs.text }}>
+                          <input type="checkbox" checked={!!editInvoiceForm.pph23}
+                            onChange={e => setEditInvoiceForm(f => ({ ...f, pph23: e.target.checked }))}
+                            style={{ width: 16, height: 16, accentColor: "#0ea5e9" }} />
+                          <div style={{ fontWeight: 700 }}>Customer potong PPh 23 ({(rate * 100).toLocaleString("id-ID")}%)</div>
+                        </label>
+                        {editInvoiceForm.pph23 && (
+                          <div style={{ marginTop: 8, fontSize: 12, color: cs.muted, display: "grid", gap: 3 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between" }}><span>Nilai Jasa (DPP)</span><b style={{ color: cs.text, fontFamily: "monospace" }}>{fmt(pph.dpp)}</b></div>
+                            <div style={{ display: "flex", justifyContent: "space-between" }}><span>PPh 23 dipotong</span><b style={{ color: "#0ea5e9", fontFamily: "monospace" }}>- {fmt(pph.amount)}</b></div>
+                            <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid " + cs.border, paddingTop: 3 }}><span>Diterima AClean</span><b style={{ color: cs.green, fontFamily: "monospace" }}>{fmt(newTotal)}</b></div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* ── Total preview ── */}
@@ -10533,10 +10556,14 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     const material = _s.material;
                     const newTotalFinal = _s.total;
                     if (newTotalFinal <= 0 && !tradeInFinal && discountFinal === 0) { showNotif("⚠️ Total tidak boleh 0"); return; }
+                    // PPh 23 gross-up (Non-PKP): total (diterima AClean) tetap = newTotalFinal,
+                    // simpan flag + nominal PPh utk faktur/bukti potong.
+                    const pph23On = !!editInvoiceForm.pph23;
+                    const pph23Amt = pph23On ? computePph23(newTotalFinal, parseFloat(appSettings?.pph23_rate) || 0.025).amount : 0;
                     const billingName = (editInvoiceForm.billing_name ?? editInvoiceData.customer) || editInvoiceData.customer;
                     const billingAddress = editInvoiceForm.billing_address ?? (editInvoiceData.address || "");
                     setInvoicesData(prev => prev.map(i => i.id === editInvoiceData.id
-                      ? { ...i, labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, materials_detail: newMD, customer: billingName, address: billingAddress } : i));
+                      ? { ...i, labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, pph23: pph23On, pph23_amount: pph23Amt, materials_detail: newMD, customer: billingName, address: billingAddress } : i));
                     {
                       const _chk = checkInvoiceConsistency({ ...editInvoiceData, lines: newMD, labor, material, discount: discountFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal });
                       if (!_chk.ok) addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, editInvoiceData.id) + " (edit nilai)", "WARNING");
@@ -10545,6 +10572,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     {
                       const { error: e1 } = await updateInvoice(supabase, editInvoiceData.id, {
                         labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal,
+                        pph23: pph23On, pph23_amount: pph23Amt,
                         materials_detail: JSON.stringify(newMD), customer: billingName, address: billingAddress
                       }, auditUserName()); if (!e1) saved = true; else console.warn("editInv e1:", e1.message);
                     }
@@ -10710,8 +10738,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         <td style={{ padding: "8px 10px", color: "#be123c", fontFamily: "monospace", fontWeight: 600 }}>-{(liveInv.trade_in_amount || 0).toLocaleString("id-ID")}</td>
                       </tr>
                     )}
+                    {liveInv.pph23 && (liveInv.pph23_amount || 0) > 0 && (
+                      <>
+                        <tr>
+                          <td colSpan={3} style={{ padding: "8px 10px", color: "#475569" }}>Nilai Jasa (DPP)</td>
+                          <td style={{ padding: "8px 10px", color: "#1e293b", fontFamily: "monospace" }}>{((liveInv.total || 0) + (liveInv.pph23_amount || 0)).toLocaleString("id-ID")}</td>
+                        </tr>
+                        <tr>
+                          <td colSpan={3} style={{ padding: "8px 10px", color: "#0369a1" }}>PPh 23 (2,5%) dipotong customer</td>
+                          <td style={{ padding: "8px 10px", color: "#0369a1", fontFamily: "monospace", fontWeight: 600 }}>-{(liveInv.pph23_amount || 0).toLocaleString("id-ID")}</td>
+                        </tr>
+                      </>
+                    )}
                     <tr style={{ background: "#1E3A5F" }}>
-                      <td colSpan={3} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700 }}>TOTAL TAGIHAN</td>
+                      <td colSpan={3} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700 }}>{liveInv.pph23 && (liveInv.pph23_amount || 0) > 0 ? "DIBAYAR KE ACLEAN" : "TOTAL TAGIHAN"}</td>
                       <td style={{ padding: "8px 10px", color: "#fff", fontFamily: "monospace", fontWeight: 800, fontSize: 14 }}>Rp {liveInv.total.toLocaleString("id-ID")}</td>
                     </tr>
                   </tbody>
@@ -10744,7 +10784,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 )}
                 {liveInv.status === "PENDING_APPROVAL" &&
                   (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, discount: liveInv.discount || 0, trade_in: liveInv.trade_in || false, trade_in_amount: liveInv.trade_in_amount || 250000, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR); const _mLv = _aLv.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setVoucherCheckCode(""); setVoucherCheckResult(null); setVoucherApplied(null); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
+                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, discount: liveInv.discount || 0, trade_in: liveInv.trade_in || false, trade_in_amount: liveInv.trade_in_amount || 250000, pph23: liveInv.pph23 || false, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR); const _mLv = _aLv.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setVoucherCheckCode(""); setVoucherCheckResult(null); setVoucherApplied(null); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
                   )}
               </div>
             </div>

@@ -1551,7 +1551,7 @@ return (
               (currentUser?.role === "Owner" ||
                 (currentUser?.role === "Admin" && inv.status === "PENDING_APPROVAL")) && (
                 <button onClick={() => {
-                  setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, discount: inv.discount || 0, trade_in: inv.trade_in || false, trade_in_amount: inv.trade_in_amount || 250000, notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
+                  setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, discount: inv.discount || 0, trade_in: inv.trade_in || false, trade_in_amount: inv.trade_in_amount || 250000, pph23: inv.pph23 || false, notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
                   // Split via kategori billing (bukan tebak-nama): LABOR/FEE → section jasa, sisanya → material
                   const _jasaItems = _allItems.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR);
                   const _matItems = _allItems.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR);

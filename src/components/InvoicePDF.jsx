@@ -344,8 +344,24 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
                   <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(inv.trade_in_amount || 0).toLocaleString("id-ID")}</Text>
                 </View>
               )}
+              {inv.pph23 && (inv.pph23_amount || 0) > 0 && (
+                <>
+                  <View style={s.tr}>
+                    <Text style={[s.td, { flex: 1 }]}>Nilai Jasa (DPP)</Text>
+                    <Text style={[s.td, { width: 60 }]}>—</Text>
+                    <Text style={[s.td, { width: 80 }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{((inv.total || 0) + (inv.pph23_amount || 0)).toLocaleString("id-ID")}</Text>
+                  </View>
+                  <View style={[s.tr, { backgroundColor: "#f0f9ff" }]}>
+                    <Text style={[s.td, { flex: 1, color: "#0369a1", fontStyle: "italic" }]}>PPh 23 (2,5%) dipotong customer</Text>
+                    <Text style={[s.td, { width: 60 }]}>—</Text>
+                    <Text style={[s.td, { width: 80 }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#0369a1" }]}>-{(inv.pph23_amount || 0).toLocaleString("id-ID")}</Text>
+                  </View>
+                </>
+              )}
               <View style={s.totalRow}>
-                <Text style={[s.totalTd, { flex: 1 }]}>TOTAL TAGIHAN</Text>
+                <Text style={[s.totalTd, { flex: 1 }]}>{inv.pph23 && (inv.pph23_amount || 0) > 0 ? "DIBAYAR KE ACLEAN" : "TOTAL TAGIHAN"}</Text>
                 <Text style={[s.totalTd, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>Rp {(inv.total || 0).toLocaleString("id-ID")}</Text>
               </View>
               {(inv.paid_amount || 0) > 0 && inv.status !== "PAID" && (
@@ -437,8 +453,24 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
                   <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#be123c" }]}>-{(inv.trade_in_amount || 0).toLocaleString("id-ID")}</Text>
                 </View>
               )}
+              {inv.pph23 && (inv.pph23_amount || 0) > 0 && (
+                <>
+                  <View style={s.tr}>
+                    <Text style={[s.td, { flex: 1 }]}>Nilai Jasa (DPP)</Text>
+                    <Text style={[s.td, { width: 60 }]}>—</Text>
+                    <Text style={[s.td, { width: 80 }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>{((inv.total || 0) + (inv.pph23_amount || 0)).toLocaleString("id-ID")}</Text>
+                  </View>
+                  <View style={[s.tr, { backgroundColor: "#f0f9ff" }]}>
+                    <Text style={[s.td, { flex: 1, color: "#0369a1", fontStyle: "italic" }]}>PPh 23 (2,5%) dipotong customer</Text>
+                    <Text style={[s.td, { width: 60 }]}>—</Text>
+                    <Text style={[s.td, { width: 80 }]}>—</Text>
+                    <Text style={[s.td, { width: 80, textAlign: "right", fontFamily: "Courier-Bold", color: "#0369a1" }]}>-{(inv.pph23_amount || 0).toLocaleString("id-ID")}</Text>
+                  </View>
+                </>
+              )}
               <View style={s.totalRow}>
-                <Text style={[s.totalTd, { flex: 1 }]}>TOTAL TAGIHAN</Text>
+                <Text style={[s.totalTd, { flex: 1 }]}>{inv.pph23 && (inv.pph23_amount || 0) > 0 ? "DIBAYAR KE ACLEAN" : "TOTAL TAGIHAN"}</Text>
                 <Text style={[s.totalTd, { width: 80, textAlign: "right", fontFamily: "Courier-Bold" }]}>Rp {(inv.total || 0).toLocaleString("id-ID")}</Text>
               </View>
             </>

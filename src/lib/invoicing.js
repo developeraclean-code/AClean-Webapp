@@ -240,6 +240,20 @@ export function auditInvoices(invoices, options = {}) {
   return out.sort((a, b) => Math.abs(b.diff.total) - Math.abs(a.diff.total));
 }
 
+// ── PPh 23 gross-up (AClean Non-PKP) ─────────────────────────────────────────
+// netTotal = nilai yang ingin DITERIMA AClean (= price list, kolom `total`).
+// Gross-up agar setelah customer memotong PPh 23, AClean tetap terima netTotal.
+//   dpp    = round(netTotal / (1 - rate))   ← nilai jasa bruto di faktur
+//   amount = dpp - netTotal                 ← PPh 23 yang dipotong (disetor customer)
+// Catatan: `total` invoice (receivable AClean) TIDAK berubah = netTotal.
+export function computePph23(netTotal, rate = 0.025) {
+  const net = Math.max(0, Math.round(Number(netTotal) || 0));
+  const r = Number(rate) || 0;
+  if (net <= 0 || r <= 0 || r >= 1) return { dpp: net, amount: 0, rate: r };
+  const dpp = Math.round(net / (1 - r));
+  return { dpp, amount: dpp - net, rate: r };
+}
+
 // ── P2/D: deviasi Invoice vs Quotation ───────────────────────────────────────
 // Cocokkan quotation→invoice via quotation.invoice_id, fallback job_id. Flag bila
 // total invoice menyimpang dari total quote di luar toleransi. Quote tanpa invoice
