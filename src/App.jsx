@@ -77,6 +77,9 @@ const ProjectApp = lazy(() => import("./project/ProjectApp.jsx"));
 const MaintenanceView = lazy(() => import("./views/MaintenanceView.jsx"));
 const MaterialCheckoutView   = lazy(() => import("./views/MaterialCheckoutView.jsx"));
 const ProjectLaporanModal    = lazy(() => import("./views/ProjectLaporanModal.jsx"));
+const OrderFormModal         = lazy(() => import("./views/OrderFormModal.jsx"));
+const EditOrderModal         = lazy(() => import("./views/EditOrderModal.jsx"));
+const CustomerFormModal      = lazy(() => import("./views/CustomerFormModal.jsx"));
 
 // Supabase client tunggal di-import dari ./supabaseClient.js (env divalidasi di sana).
 // Single client → session login Supabase Auth ter-share ke modul Project (RLS authenticated).
@@ -6783,6 +6786,30 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     return { pref, availability };
   };
 
+  // ── handleOrderSubmit: dipanggil oleh OrderFormModal.onSubmit ──
+  const handleOrderSubmit = async (form) => {
+    if (_orderSubmitLock.current) return;
+    _orderSubmitLock.current = true;
+    setIsSubmittingOrder(true);
+    try {
+      if (!form.customer) { showNotif("Nama customer wajib diisi"); return; }
+      if (!form.teknisi) { showNotif("Pilih teknisi dulu"); return; }
+      if (!form.date) { showNotif("Pilih tanggal dulu"); return; }
+      if (form.teknisi && form.date && form.time) {
+        const dbOk = await cekTeknisiAvailableDB(form.teknisi, form.date, form.time, form.service, form.units);
+        if (!dbOk.ok) { showNotif("🚫 " + (dbOk.reason || "Jadwal bentrok, cek ulang")); return; }
+      }
+      setModalOrder(false);
+      setContinuationSuggestion([]);
+      setContinuationParentId(null);
+      setNewOrderForm({ customer: "", phone: "", address: "", area: "", service: "Cleaning", type: "AC Split 0.5-1PK", units: 1, teknisi: "", helper: "", team_slot: "", date: "", time: "09:00", notes: "", maintenance_client_id: "", maintenance_unit_ids: [] });
+      await createOrder(form);
+    } finally {
+      _orderSubmitLock.current = false;
+      setIsSubmittingOrder(false);
+    }
+  };
+
   // ============================================================
   // RENDER ARA CHAT (GAP 8)
   // ============================================================
@@ -8596,7 +8623,29 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — BUAT ORDER */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalOrder && (
+      {/* ═══════ MODAL BUAT ORDER — OrderFormModal ═══════ */}
+      <Suspense fallback={null}>
+        <OrderFormModal
+          open={modalOrder}
+          onClose={() => setModalOrder(false)}
+          form={newOrderForm} setForm={setNewOrderForm}
+          onSubmit={handleOrderSubmit} isSubmitting={isSubmittingOrder}
+          customersData={customersData} ordersData={ordersData} teknisiData={teknisiData}
+          laporanReports={laporanReports} invoicesData={invoicesData} quotationsData={quotationsData}
+          maintClientsForOrder={maintClientsForOrder} maintUnitsForOrder={maintUnitsForOrder}
+          orderPhoneLookup={orderPhoneLookup}
+          teamDailyCache={teamDailyCache} loadTeamDaily={loadTeamDaily}
+          continuationSuggestion={continuationSuggestion} setContinuationSuggestion={setContinuationSuggestion}
+          continuationParentId={continuationParentId} setContinuationParentId={setContinuationParentId}
+          effectiveServiceTypes={effectiveServiceTypes}
+          MAX_LOKASI_PER_HARI={MAX_LOKASI_PER_HARI}
+          hitungJamSelesai={hitungJamSelesai} hitungDurasi={hitungDurasi}
+          cekTeknisiAvailable={cekTeknisiAvailable} cariSlotKosong={cariSlotKosong}
+          araSchedulingSuggest={araSchedulingSuggest}
+          showNotif={showNotif} setActiveMenu={setActiveMenu}
+        />
+      </Suspense>
+      {false && (
         <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setModalOrder(false)}>
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 500, maxHeight: "90vh", overflowY: "auto", padding: 28 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -11424,8 +11473,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         );
       })()}
 
-      {/* ═══════ MODAL TAMBAH CUSTOMER ═══════ */}
-      {modalAddCustomer && (
+      {/* ═══════ MODAL CUSTOMER — CustomerFormModal ═══════ */}
+      <Suspense fallback={null}>
+        <CustomerFormModal
+          open={modalAddCustomer}
+          onClose={() => { setModalAddCustomer(false); setNewCustomerForm({ name: "", phone: "", address: "", area: "", notes: "", is_vip: false }); }}
+          selectedCustomer={selectedCustomer}
+          customersData={customersData}
+          ordersData={ordersData}
+          showNotif={showNotif}
+          addAgentLog={addAgentLog}
+          setCustomersData={setCustomersData}
+          setSelectedCustomer={setSelectedCustomer}
+          setOrdersData={setOrdersData}
+          setInvoicesData={setInvoicesData}
+        />
+      </Suspense>
+      {false && modalAddCustomer && (
         <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setModalAddCustomer(false)}>
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 460, padding: 28 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -11559,8 +11623,30 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         </div>
       )}
 
-      {/* ═══════ MODAL EDIT ORDER / JADWAL (Owner & Admin) ═══════ */}
-      {modalEditOrder && editOrderItem && (
+      {/* ═══════ MODAL EDIT ORDER — EditOrderModal ═══════ */}
+      <Suspense fallback={null}>
+        <EditOrderModal
+          open={modalEditOrder}
+          onClose={() => { setModalEditOrder(false); setEditOrderItem(null); }}
+          editOrderItem={editOrderItem}
+          ordersData={ordersData}
+          teknisiData={teknisiData}
+          priceListData={priceListData}
+          effectiveServiceTypes={effectiveServiceTypes}
+          hitungJamSelesai={hitungJamSelesai}
+          hitungDurasi={hitungDurasi}
+          cekTeknisiAvailable={cekTeknisiAvailable}
+          araSchedulingSuggest={araSchedulingSuggest}
+          cekTeknisiAvailableDB={cekTeknisiAvailableDB}
+          sendWA={sendWA}
+          addAgentLog={addAgentLog}
+          auditUserName={auditUserName}
+          appSettings={appSettings}
+          showNotif={showNotif}
+          setOrdersData={setOrdersData}
+        />
+      </Suspense>
+      {false && modalEditOrder && editOrderItem && (
         <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setModalEditOrder(false); setEditOrderItem(null); }}>
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto", padding: 28 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
