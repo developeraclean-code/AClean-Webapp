@@ -80,6 +80,8 @@ const ProjectLaporanModal    = lazy(() => import("./views/ProjectLaporanModal.js
 const OrderFormModal         = lazy(() => import("./views/OrderFormModal.jsx"));
 const EditOrderModal         = lazy(() => import("./views/EditOrderModal.jsx"));
 const CustomerFormModal      = lazy(() => import("./views/CustomerFormModal.jsx"));
+const TeknisiFormModal       = lazy(() => import("./views/TeknisiFormModal.jsx"));
+const UserFormModal          = lazy(() => import("./views/UserFormModal.jsx"));
 
 // Supabase client tunggal di-import dari ./supabaseClient.js (env divalidasi di sana).
 // Single client → session login Supabase Auth ter-share ke modul Project (RLS authenticated).
@@ -787,6 +789,7 @@ export default function ACleanWebApp() {
 
   // ── Laporan Tim ──
   const [laporanReports, setLaporanReports] = useState([]);
+  const [projectDailyReports, setProjectDailyReports] = useState([]); // laporan harian project (project_daily_reports)
   const [selectedLaporan, setSelectedLaporan] = useState(null);
   const [modalLaporanDetail, setModalLaporanDetail] = useState(false);
   const [editLaporanMode, setEditLaporanMode] = useState(false);
@@ -3439,8 +3442,9 @@ ${photoPageHTML}
           cachedFetch("service_reports", () => fetchServiceReports(supabase)),
           cachedFetch("inv_tx", () => fetchInventoryTransactions(supabase)),
           cachedFetch("inv_units", () => fetchInventoryUnits(supabase)),
+          cachedFetch("project_daily_reports", () => supabase.from("project_daily_reports").select("id,order_id,project_id,tanggal,status,submitted_by").order("tanggal", { ascending: false }).limit(1000)),
         ]);
-        const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, invTxRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
+        const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, invTxRes, invUnitsRes, pdrRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
         // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
         // Jika error = fallback ke demo data yang sudah di-init
         if (!ordersRes.error && ordersRes.data) setOrdersData(ordersRes.data);
@@ -3486,6 +3490,7 @@ ${photoPageHTML}
           });
           setLaporanReports(Array.from(dedupedMap.values()));
         }
+        if (!pdrRes?.error && pdrRes?.data) setProjectDailyReports(pdrRes.data);
         // Jika DB error total, keep demo data (already in useState init)
         // agent_logs: diakses lewat Monitoring → tab Audit Log (server-side)
 
@@ -6864,7 +6869,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // RENDER MY REPORT  (Teknisi & Helper — laporan sendiri + edit)
   // ============================================================
   const renderMyReport = () => (
-    <MyReportView laporanReports={laporanReports} ordersData={ordersData} invoicesData={invoicesData} currentUser={currentUser}
+    <MyReportView laporanReports={laporanReports} projectDailyReports={projectDailyReports} ordersData={ordersData} invoicesData={invoicesData} currentUser={currentUser}
       searchLaporan={searchLaporan} setSearchLaporan={setSearchLaporan} setSelectedLaporan={setSelectedLaporan} setEditLaporanMode={setEditLaporanMode}
       setModalLaporanDetail={setModalLaporanDetail} setEditLaporanForm={setEditLaporanForm} setLaporanBarangItems={setLaporanBarangItems}
       setEditRepairType={setEditRepairType} setEditGratisAlasan={setEditGratisAlasan} setActiveEditUnitIdx={setActiveEditUnitIdx}
@@ -9565,7 +9570,24 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — TAMBAH/EDIT TEKNISI */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalTeknisi && (
+      <Suspense fallback={null}>
+        <TeknisiFormModal
+          open={modalTeknisi}
+          onClose={() => { setModalTeknisi(false); setEditTeknisi(null); setNewTeknisiForm({ name: "", role: "Teknisi", phone: "", skills: [], email: "", password: "", buatAkun: false }); }}
+          editTeknisi={editTeknisi}
+          newTeknisiForm={newTeknisiForm}
+          setNewTeknisiForm={setNewTeknisiForm}
+          teknisiData={teknisiData}
+          setTeknisiData={setTeknisiData}
+          setUserAccounts={setUserAccounts}
+          currentUser={currentUser}
+          showNotif={showNotif}
+          showConfirm={showConfirm}
+          addAgentLog={addAgentLog}
+          _apiHeaders={_apiHeaders}
+        />
+      </Suspense>
+      {false && modalTeknisi && (
         <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setModalTeknisi(false); setEditTeknisi(null); }}>
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 420, padding: 28 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -11259,7 +11281,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       })()}
 
       {/* ═══════ MODAL TAMBAH/EDIT PENGGUNA ═══════ */}
-      {modalAddUser && (() => {
+      <Suspense fallback={null}>
+        <UserFormModal
+          open={modalAddUser}
+          onClose={() => { setModalAddUser(false); setNewUserForm({ name: "", email: "", role: "Admin", password: "", phone: "" }); }}
+          newUserForm={newUserForm}
+          setNewUserForm={setNewUserForm}
+          userAccounts={userAccounts}
+          setUserAccounts={setUserAccounts}
+          setTeknisiData={setTeknisiData}
+          currentUser={currentUser}
+          showNotif={showNotif}
+          showConfirm={showConfirm}
+          addAgentLog={addAgentLog}
+          _apiHeaders={_apiHeaders}
+        />
+      </Suspense>
+      {false && modalAddUser && (() => {
         // Auto-password berdasarkan role
         const roleConfig = {
           "Owner": { color: "#f59e0b", icon: "👑", desc: "Akses semua menu & pengaturan", autoPass: null },

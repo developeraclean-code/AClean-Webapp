@@ -1,22 +1,23 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
 
-function MyReportView({ laporanReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, openLaporanModal, openBAPModal, bapEnabled, safeArr, TODAY, INSTALL_ITEMS, downloadServiceReportPDF }) {
+function MyReportView({ laporanReports, projectDailyReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, openLaporanModal, openBAPModal, bapEnabled, safeArr, TODAY, INSTALL_ITEMS, downloadServiceReportPDF }) {
 const myName = currentUser?.name || "";
-// Get all submitted reports
+// Get all submitted reports (service_reports → order biasa)
 const submittedReps = laporanReports.filter(r => r.teknisi === myName || r.helper === myName);
-// Get my ORDERS_DATA jobs that don't have a report yet — show as pending
-// Include all teknisi/helper slots (teknisi2/3, helper2/3 for multi-person teams)
+// Get my ORDERS_DATA jobs — include all teknisi/helper slots (teknisi2/3, helper2/3 for multi-person teams)
 const myJobs = ordersData.filter(o =>
   o.teknisi === myName || o.helper === myName ||
   o.teknisi2 === myName || o.helper2 === myName ||
   o.teknisi3 === myName || o.helper3 === myName
 );
-const reportedJobIds = submittedReps.map(r => r.job_id);
+// Job IDs yang sudah dilaporkan: service_reports (order biasa) + project_daily_reports (order project)
+const pdrByOrderId = new Set((projectDailyReports || []).map(r => r.order_id).filter(Boolean));
+const reportedJobIds = new Set(submittedReps.map(r => r.job_id));
 const pendingJobs = myJobs.filter(o =>
-  !reportedJobIds.includes(o.id) &&
-  (o.date || "") <= TODAY &&
-  !o.project_id  // Project orders punya alur laporan sendiri via Project → Laporan Harian (project_daily_reports)
+  !reportedJobIds.has(o.id) &&
+  !(o.project_id && pdrByOrderId.has(o.id)) && // project order sudah punya laporan harian → skip
+  (o.date || "") <= TODAY
 );
 const pendingAsDraft = pendingJobs.map(o => ({
   id: "PENDING_" + o.id, job_id: o.id, teknisi: o.teknisi, helper: o.helper || null,
