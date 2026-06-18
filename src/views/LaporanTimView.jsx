@@ -510,7 +510,8 @@ const verifyLaporan = async (r) => {
       if (card34Empty) {
         const biayaCekItem = priceListData.find(p => p.service === "Repair" && p.type === "Biaya Pengecekan AC");
         const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 100000;
-        vMDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek, keterangan: "jasa" });
+        const cekQty = Math.max(1, (Array.isArray(r.units) ? r.units.length : Number(r.units)) || Number(ord?.units) || 1); // biaya pengecekan PER UNIT
+        vMDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: cekQty, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek * cekQty, keterangan: "jasa" });
       }
       // jika ada isi di card 3/4 → hitung apa adanya, tidak inject apapun
     } else if (isCleaningMaintV && !vMDetail.some(m => m.keterangan === "jasa")) {

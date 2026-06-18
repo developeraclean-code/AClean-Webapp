@@ -8090,7 +8090,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         if (isRepairSvc && !isRepairGratis && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa")) {
           const biayaCekItem = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
           const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 0;
-          mDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek, keterangan: "jasa" });
+          const cekQty = Math.max(1, (laporanUnits || []).length || 1); // biaya pengecekan PER UNIT
+          mDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: cekQty, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek * cekQty, keterangan: "jasa" });
         }
 
         // ── Complain biaya cek: inject dari finalLabor (tanpa garansi) ──
