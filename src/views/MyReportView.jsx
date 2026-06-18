@@ -6,10 +6,17 @@ const myName = currentUser?.name || "";
 // Get all submitted reports
 const submittedReps = laporanReports.filter(r => r.teknisi === myName || r.helper === myName);
 // Get my ORDERS_DATA jobs that don't have a report yet — show as pending
-const myJobs = ordersData.filter(o => o.teknisi === myName || o.helper === myName);
+// Include all teknisi/helper slots (teknisi2/3, helper2/3 for multi-person teams)
+const myJobs = ordersData.filter(o =>
+  o.teknisi === myName || o.helper === myName ||
+  o.teknisi2 === myName || o.helper2 === myName ||
+  o.teknisi3 === myName || o.helper3 === myName
+);
 const reportedJobIds = submittedReps.map(r => r.job_id);
 const pendingJobs = myJobs.filter(o =>
-  !reportedJobIds.includes(o.id) && (o.date || "") <= TODAY
+  !reportedJobIds.includes(o.id) &&
+  (o.date || "") <= TODAY &&
+  !o.project_id  // Project orders punya alur laporan sendiri via Project → Laporan Harian (project_daily_reports)
 );
 const pendingAsDraft = pendingJobs.map(o => ({
   id: "PENDING_" + o.id, job_id: o.id, teknisi: o.teknisi, helper: o.helper || null,
