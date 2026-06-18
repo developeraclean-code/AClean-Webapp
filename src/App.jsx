@@ -10619,6 +10619,29 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <button onClick={() => setModalPDF(false)} style={{ background: "none", border: "1px solid #ffffff44", color: "#fff", padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>× Tutup</button>
                 </div>
               </div>
+              {/* Kontrol cepat PPh 23 (area non-cetak) — berlaku utk SEMUA invoice/customer */}
+              {(() => {
+                const rate = parseFloat(appSettings?.pph23_rate) || 0.025;
+                const pph = computePph23(liveInv.total, rate);
+                return (
+                  <div style={{ background: "#ecfeff", borderBottom: "1px solid #cffafe", padding: "8px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: "#0e7490", fontWeight: 700 }}>
+                      <input type="checkbox" checked={!!liveInv.pph23}
+                        onChange={async e => {
+                          const on = e.target.checked;
+                          const amt = on ? pph.amount : 0;
+                          setInvoicesData(prev => prev.map(i => i.id === liveInv.id ? { ...i, pph23: on, pph23_amount: amt } : i));
+                          const { error } = await updateInvoice(supabase, liveInv.id, { pph23: on, pph23_amount: amt }, auditUserName());
+                          if (error) showNotif("⚠️ Gagal simpan PPh 23: " + error.message);
+                          else showNotif(on ? `✅ PPh 23 aktif — DPP ${fmt(pph.dpp)}, dipotong ${fmt(pph.amount)}` : "PPh 23 dinonaktifkan");
+                        }}
+                        style={{ width: 15, height: 15, accentColor: "#0891b2" }} />
+                      Customer potong PPh 23 ({(rate * 100).toLocaleString("id-ID")}%)
+                    </label>
+                    {liveInv.pph23 && <span style={{ fontSize: 11, color: "#0e7490", fontFamily: "monospace" }}>DPP {fmt(pph.dpp)} · PPh −{fmt(pph.amount)} · diterima {fmt(liveInv.total)}</span>}
+                  </div>
+                );
+              })()}
               {/* Invoice body */}
               <div style={{ padding: 20, background: "#f8fafc" }}>
                 {/* Header */}
