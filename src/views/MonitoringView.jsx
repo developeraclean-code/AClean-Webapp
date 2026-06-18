@@ -6,7 +6,7 @@ import {
   fetchAgentLogsFiltered,
   fetchWaDeliverySummary,
 } from "../data/reads.js";
-import { auditInvoices } from "../lib/invoicing.js";
+import { auditInvoices, auditQuoteDeviation } from "../lib/invoicing.js";
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -727,6 +727,7 @@ function TabWaObservations({ supabase }) {
 // ─────────────────────────────────────────────
 function TabInvoiceRecon({ supabase }) {
   const [rows, setRows] = useState([]);
+  const [devRows, setDevRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [scanned, setScanned] = useState(0);
   const [days, setDays] = useState(30);
@@ -737,13 +738,20 @@ function TabInvoiceRecon({ supabase }) {
     const since = new Date(Date.now() - days * 86400000).toISOString();
     const { data, error } = await supabase
       .from("invoices")
-      .select("id,customer,service,status,labor,material,total,discount,trade_in_amount,materials_detail,created_at")
+      .select("id,customer,service,status,labor,material,total,discount,trade_in_amount,materials_detail,job_id,quotation_id,created_at")
       .gte("created_at", since)
       .order("created_at", { ascending: false })
       .limit(3000);
     if (!error && data) {
       setScanned(data.length);
       setRows(auditInvoices(data, { skipCancelled: true }));
+      // Deviasi vs Quotation
+      const { data: quos } = await supabase
+        .from("quotations")
+        .select("id,customer,total,invoice_id,job_id,status")
+        .gt("total", 0)
+        .limit(2000);
+      setDevRows(auditQuoteDeviation(data, quos || []));
     }
     setLoading(false);
   };
@@ -805,8 +813,35 @@ function TabInvoiceRecon({ supabase }) {
           </div>
         ))}
       </div>
+      {/* ── Deviasi Invoice vs Quotation ── */}
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: cs.text, marginBottom: 6 }}>
+          📋 Invoice menyimpang dari Quotation <span style={{ fontSize: 11, color: devRows.length ? "#f59e0b" : "#22c55e", fontWeight: 800 }}>({devRows.length})</span>
+        </div>
+        <div style={{ display: "grid", gap: 6, maxHeight: 360, overflowY: "auto" }}>
+          {devRows.length === 0 ? (
+            <Empty msg="✅ Tidak ada invoice yang menyimpang dari quotation." />
+          ) : devRows.map(d => (
+            <div key={d.quotationId + d.invoiceId} style={{ display: "grid", gridTemplateColumns: "1fr 110px", alignItems: "start", gap: 8, padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11 }}>
+              <div>
+                <div style={{ color: cs.text, fontWeight: 700 }}>{d.customer || "—"}</div>
+                <div style={{ color: cs.muted, fontSize: 10, fontFamily: "monospace" }}>
+                  {d.quotationId} → {d.invoiceId} · {d.status} · cocok via {d.matchedBy}
+                </div>
+                <div style={{ fontSize: 10, color: cs.muted }}>
+                  quote {fmtIDR(d.quoteTotal)} → invoice {fmtIDR(d.invoiceTotal)}
+                </div>
+              </div>
+              <span style={{ color: d.diff > 0 ? "#22c55e" : "#ef4444", fontWeight: 800, textAlign: "right" }}>
+                {d.diff > 0 ? "+" : ""}{fmtIDR(d.diff)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div style={{ fontSize: 10, color: cs.muted }}>
-        Catatan: jalur baru (submit & verify laporan) sudah konsisten otomatis. Sisa temuan biasanya dari Edit Nilai / Invoice Gabungan / ARA / data lama (sebelum P0).
+        Catatan: jalur baru (submit & verify laporan) sudah konsisten otomatis. Sisa temuan biasanya dari Edit Nilai / Invoice Gabungan / ARA / data lama (sebelum P0). Deviasi quotation = invoice yang totalnya beda dari penawaran (tambahan/kurang di lapangan) — perlu dicek manual.
       </div>
     </div>
   );

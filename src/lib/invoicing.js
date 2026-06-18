@@ -239,3 +239,29 @@ export function auditInvoices(invoices, options = {}) {
   }
   return out.sort((a, b) => Math.abs(b.diff.total) - Math.abs(a.diff.total));
 }
+
+// ── P2/D: deviasi Invoice vs Quotation ───────────────────────────────────────
+// Cocokkan quotation→invoice via quotation.invoice_id, fallback job_id. Flag bila
+// total invoice menyimpang dari total quote di luar toleransi. Quote tanpa invoice
+// (belum dikerjakan) di-skip. Tidak mengubah nilai apa pun — murni visibilitas.
+export function auditQuoteDeviation(invoices, quotations, options = {}) {
+  const tolerance = Number.isFinite(options.tolerance) ? options.tolerance : 1;
+  const invArr = Array.isArray(invoices) ? invoices : [];
+  const quoArr = Array.isArray(quotations) ? quotations : [];
+  const notCancelled = (i) => String(i.status || "").toUpperCase() !== "CANCELLED";
+  const out = [];
+  for (const q of quoArr) {
+    const qTotal = Number(q.total) || 0;
+    if (qTotal <= 0) continue;
+    let inv = q.invoice_id ? invArr.find(i => i.id === q.invoice_id) : null;
+    let matchedBy = inv ? "invoice_id" : null;
+    if (!inv && q.job_id) { inv = invArr.find(i => i.job_id === q.job_id && notCancelled(i)); if (inv) matchedBy = "job_id"; }
+    if (!inv) continue;
+    const iTotal = Number(inv.total) || 0;
+    const diff = iTotal - qTotal;
+    if (Math.abs(diff) > tolerance) {
+      out.push({ quotationId: q.id, invoiceId: inv.id, customer: q.customer || inv.customer, status: inv.status, quoteTotal: qTotal, invoiceTotal: iTotal, diff, matchedBy });
+    }
+  }
+  return out.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+}

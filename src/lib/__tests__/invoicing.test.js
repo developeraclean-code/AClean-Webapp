@@ -13,6 +13,7 @@ import {
   buildFreonAdjustmentLine,
   auditInvoices,
   categoryFromCatalog,
+  auditQuoteDeviation,
 } from "../invoicing.js";
 
 describe("categoryOf", () => {
@@ -260,5 +261,34 @@ describe("P2 auditInvoices", () => {
   it("skipCancelled mengabaikan invoice CANCELLED", () => {
     const invoices = [{ id: "C", status: "CANCELLED", materials_detail: [{ keterangan: "jasa", subtotal: 1 }], labor: 0, material: 9, total: 9 }];
     expect(auditInvoices(invoices, { skipCancelled: true })).toHaveLength(0);
+  });
+});
+
+describe("D auditQuoteDeviation", () => {
+  const invoices = [
+    { id: "INV-A", job_id: "JOB-1", total: 1000000, status: "UNPAID" },
+    { id: "INV-B", job_id: "JOB-2", total: 500000, status: "PAID" },
+    { id: "INV-C", job_id: "JOB-3", total: 800000, status: "CANCELLED" },
+  ];
+  it("flag bila total invoice menyimpang dari quote (match invoice_id)", () => {
+    const quos = [{ id: "Q1", invoice_id: "INV-A", total: 750000, customer: "PT X" }];
+    const out = auditQuoteDeviation(invoices, quos);
+    expect(out).toHaveLength(1);
+    expect(out[0].diff).toBe(250000);
+    expect(out[0].matchedBy).toBe("invoice_id");
+  });
+  it("fallback match by job_id", () => {
+    const quos = [{ id: "Q2", job_id: "JOB-2", total: 500000 }, { id: "Q3", job_id: "JOB-1", total: 900000 }];
+    const out = auditQuoteDeviation(invoices, quos);
+    expect(out.map(o => o.quotationId)).toEqual(["Q3"]); // Q2 cocok persis, Q3 selisih 100rb
+    expect(out[0].matchedBy).toBe("job_id");
+  });
+  it("quote tanpa invoice / total 0 / invoice cancelled → skip", () => {
+    const quos = [
+      { id: "Q4", job_id: "JOB-X", total: 999 },        // tak ada invoice
+      { id: "Q5", job_id: "JOB-1", total: 0 },          // total 0
+      { id: "Q6", job_id: "JOB-3", total: 100 },        // invoice cancelled
+    ];
+    expect(auditQuoteDeviation(invoices, quos)).toHaveLength(0);
   });
 });
