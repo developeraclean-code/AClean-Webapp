@@ -66,6 +66,27 @@ export function lineCategory(line) {
   return BILLING_CATEGORY.PART;
 }
 
+// Kategori dari KATALOG price_list (anti tebak-nama). Cocokkan `nama` ke `price_list.type`,
+// petakan `price_list.category` ("Jasa"/"Barang"/"Freon…") ke BILLING_CATEGORY.
+// Fallback ke heuristik nama (lineCategory) bila item tak ada di katalog.
+// priceList = array baris price_list ({ type, category, ... }).
+export function categoryFromCatalog(nama, priceList) {
+  const n = String(nama || "").trim().toLowerCase();
+  if (!n) return lineCategory({ nama });
+  const arr = Array.isArray(priceList) ? priceList : [];
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  const hit =
+    arr.find(p => norm(p.type) === n) ||
+    arr.find(p => { const t = norm(p.type); return t && (n.includes(t) || t.includes(n)); });
+  if (hit) {
+    const cat = norm(hit.category);
+    if (cat.startsWith("freon")) return BILLING_CATEGORY.FREON;
+    if (cat === "barang") return FREON_RE.test(n) ? BILLING_CATEGORY.FREON : BILLING_CATEGORY.PART;
+    if (cat === "jasa") return FEE_RE.test(n) ? BILLING_CATEGORY.FEE : BILLING_CATEGORY.LABOR;
+  }
+  return lineCategory({ nama });
+}
+
 // Bucket kasar (kompat lama): jasa/fee → LABOR, sisanya → MATERIAL.
 export function categoryOf(line) {
   const c = lineCategory(line);

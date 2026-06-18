@@ -12,6 +12,7 @@ import {
   buildWarrantyDiscountLine,
   buildFreonAdjustmentLine,
   auditInvoices,
+  categoryFromCatalog,
 } from "../invoicing.js";
 
 describe("categoryOf", () => {
@@ -173,6 +174,34 @@ describe("P1 lineCategory", () => {
   it("categoryOf (kasar) konsisten: FEE→LABOR, FREON→MATERIAL", () => {
     expect(categoryOf({ nama: "Biaya Pengecekan AC", keterangan: "jasa" })).toBe(LINE_CATEGORY.LABOR);
     expect(categoryOf({ nama: "Freon R-410A", keterangan: "barang" })).toBe(LINE_CATEGORY.MATERIAL);
+  });
+});
+
+describe("P1 categoryFromCatalog", () => {
+  const catalog = [
+    { type: "Cleaning AC Split 1.5-2.5PK", category: "Jasa" },
+    { type: "Biaya Pengecekan AC", category: "Jasa" },
+    { type: "Pipa AC Hoda 1PK", category: "Barang" },
+    { type: "Freon R-410A", category: "Barang" },
+    { type: "Freon R32 Refill", category: "Freon Gas" },
+  ];
+  it("Jasa → LABOR, kecuali fee → FEE", () => {
+    expect(categoryFromCatalog("Cleaning AC Split 1.5-2.5PK", catalog)).toBe(BILLING_CATEGORY.LABOR);
+    expect(categoryFromCatalog("Biaya Pengecekan AC", catalog)).toBe(BILLING_CATEGORY.FEE);
+  });
+  it("Barang → PART, kecuali nama freon → FREON", () => {
+    expect(categoryFromCatalog("Pipa AC Hoda 1PK", catalog)).toBe(BILLING_CATEGORY.PART);
+    expect(categoryFromCatalog("Freon R-410A", catalog)).toBe(BILLING_CATEGORY.FREON);
+  });
+  it("category Freon* → FREON", () => {
+    expect(categoryFromCatalog("Freon R32 Refill", catalog)).toBe(BILLING_CATEGORY.FREON);
+  });
+  it("match fuzzy via includes (nama invoice ada embel-embel lokasi)", () => {
+    expect(categoryFromCatalog("Cleaning AC Split 1.5-2.5PK (Kamar utama)", catalog)).toBe(BILLING_CATEGORY.LABOR);
+  });
+  it("tak ada di katalog → fallback heuristik nama", () => {
+    expect(categoryFromCatalog("Barang Aneh XYZ", catalog)).toBe(BILLING_CATEGORY.PART);
+    expect(categoryFromCatalog("Freon R-22 manual", [])).toBe(BILLING_CATEGORY.FREON);
   });
 });
 

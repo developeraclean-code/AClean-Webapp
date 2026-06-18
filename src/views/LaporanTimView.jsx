@@ -2,7 +2,7 @@ import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
 import { resolveMultiDayInvoiceAction } from "../lib/invoiceMultiDay.js";
-import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine } from "../lib/invoicing.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryFromCatalog } from "../lib/invoicing.js";
 
 // ── Survey Kirim Modal ─────────────────────────────────────────────────────────
 function SurveyKirimModal({ r, onClose, sendWA, showNotif, addAgentLog, auditUserName, updateServiceReport, supabase, fotoSrc, downloadServiceReportPDF, invoicesData }) {
@@ -498,7 +498,7 @@ const verifyLaporan = async (r) => {
         else if (["repair", "perbaikan", "kapasitor", "kompresor", "sparepart", "pcb"].some(k => nama2.includes(k))) ket = "repair";
         else if (["cleaning", "maintenance", "cuci", "jasa", "service", "servis", "pemasangan", "bongkar", "instalasi", "vacum", "kuras"].some(k => nama2.includes(k))) ket = "jasa";
       }
-      return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket };
+      return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket, category: categoryFromCatalog(m.nama, priceListData) };
     });
 
     const isRepairSvcV = r.service === "Repair";
