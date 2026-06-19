@@ -286,7 +286,13 @@ export default async function handler(req, res) {
     if (route === "receive-wa") {
       if (req.method === "GET") return res.status(200).json({ status: "ok", service: "AClean WA Webhook" });
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-      if (!await checkRateLimit(req, res, 60, 60000)) return;
+      // SEMUA webhook Fonnte datang dari IP yang SAMA (server Fonnte) → rate-limit per-IP
+      // menghitung gabungan SEMUA inbound WA (customer + teknisi + grup) + retry Fonnte
+      // (AI vision 8-12s memicu retry). Limit 60/mnt jebol saat sesi ramai (mis. foto "Pagi/
+      // Pulang Tas") → 429 → webhook ditolak → tool bag & flow lain berhenti. Dinaikkan ke 600/mnt
+      // (Fonnte = sumber tepercaya, sudah diproteksi FONNTE_WEBHOOK_SECRET + dedup mutex).
+      // TODO: idealnya rate-limit per-pengirim (nomor WA), bukan per-IP.
+      if (!await checkRateLimit(req, res, 600, 60000)) return;
 
       // M-01: Verifikasi asal webhook lewat secret token di URL.
       // Fonnte TIDAK kirim signature HMAC (dikonfirmasi dari docs.fonnte.com), tapi kita bebas
