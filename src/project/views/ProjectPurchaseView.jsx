@@ -23,7 +23,6 @@ export default function ProjectPurchaseView() {
   const totAlat = rows.filter((x) => x.jenis === "Alat").reduce((s, x) => s + x.total, 0);
 
   const addPurchase = () => {
-    if (!db.projects.length) { toast("Buat project dulu di Daftar Project (atau pilih '(umum)' kalau pembelian tidak terkait project)"); return; }
     openForm({
     title: "Catat Pembelian (isi beberapa sekaligus)",
     fields: [

@@ -88,6 +88,9 @@ const ApproveInvoiceModal    = lazy(() => import("./views/ApproveInvoiceModal.js
 const EditPasswordModal      = lazy(() => import("./views/EditPasswordModal.jsx"));
 const BrainEditModal         = lazy(() => import("./views/BrainEditModal.jsx"));
 const WaTekModal             = lazy(() => import("./views/WaTekModal.jsx"));
+const BrainCustomerModal     = lazy(() => import("./views/BrainCustomerModal.jsx"));
+const EditInvoiceModal       = lazy(() => import("./views/EditInvoiceModal.jsx"));
+const InvoicePreviewModal    = lazy(() => import("./views/InvoicePreviewModal.jsx"));
 
 // Supabase client tunggal di-import dari ./supabaseClient.js (env divalidasi di sana).
 // Single client → session login Supabase Auth ter-share ke modul Project (RLS authenticated).
@@ -1149,13 +1152,8 @@ export default function ACleanWebApp() {
   const [modalEditPwd, setModalEditPwd] = useState(false);
   const [editPwdTarget, setEditPwdTarget] = useState(null); // {id, name}
   const [editPwdForm, setEditPwdForm] = useState({ newPwd: "", confirmPwd: "" });
-  const [editAddType, setEditAddType] = useState(''); // 'jasa' | 'material'
-  const [editAddSearch, setEditAddSearch] = useState('');
   const [editJasaItems, setEditJasaItems] = useState([]); // jasa items per-row
-  const [voucherCheckCode, setVoucherCheckCode] = useState("");
-  const [voucherCheckResult, setVoucherCheckResult] = useState(null); // null | { valid, voucher } | { error }
-  const [voucherCheckLoading, setVoucherCheckLoading] = useState(false);
-  const [voucherApplied, setVoucherApplied] = useState(null); // voucher yang sudah diterapkan
+  // editAddType/editAddSearch/voucher state → dipindahkan ke EditInvoiceModal.jsx
 
   // GAP 7/8 — ARA Chat state (live LLM)
   const [araPanel, setAraPanel] = useState(false);
@@ -9527,71 +9525,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — EDIT BRAIN CUSTOMER */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalBrainCustomerEdit && (
-        <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 500, display: "flex", alignItems: isMobile ? "flex-end" : "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ background: cs.surface, border: "1px solid #22c55e44", borderRadius: isMobile ? "16px 16px 0 0" : 20, width: "100%", maxWidth: isMobile ? "100%" : 700, maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ background: "#22c55e12", borderBottom: "1px solid #22c55e33", padding: "16px 22px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 16, color: "#22c55e" }}>💬 Edit Brain Customer Bot</div>
-                <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>System prompt khusus untuk customer via WhatsApp — TERPISAH dari Brain Owner/Admin</div>
-              </div>
-              <button onClick={() => setModalBrainCustomerEdit(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>✕</button>
-            </div>
-            <div style={{ background: "#22c55e08", borderBottom: "1px solid " + cs.border, padding: "8px 22px", display: "flex", gap: 16, fontSize: 11 }}>
-              <span style={{ color: cs.muted }}>📝 Baris: <strong style={{ color: cs.text }}>{brainMdCustomer.split("\n").length}</strong></span>
-              <span style={{ color: cs.muted }}>🔤 Karakter: <strong style={{ color: cs.text }}>{brainMdCustomer.length}</strong></span>
-              <span style={{ color: "#22c55e" }}>💡 Hanya aksi terbatas: booking, cek status, feedback</span>
-            </div>
-            <textarea value={brainMdCustomer} onChange={e => setBrainMdCustomer(e.target.value)}
-              style={{ flex: 1, background: cs.bg, border: "none", padding: "18px 22px", color: cs.text, fontSize: 13, fontFamily: "monospace", resize: "none", outline: "none", lineHeight: 1.7 }}
-              placeholder="Isi Brain Customer Bot di sini...&#10;&#10;Panduan: tentukan identitas, layanan & harga, SOP booking, batasan yang boleh/tidak boleh dilakukan ARA saat chat dengan customer via WA."
-            />
-            <div style={{ background: cs.surface, borderTop: "1px solid " + cs.border, padding: "14px 22px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <button onClick={() => { setBrainMdCustomer('# ARA CUSTOMER BRAIN v1.0 — AClean Service\n\n## IDENTITAS\nNama: ARA, asisten virtual AClean Service — Jasa Cuci, Servis & Pasang AC.\nArea: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan.\nJam operasional: Senin–Sabtu 08:00–17:00 WIB.\n\n## TUGASMU\n1. Jawab pertanyaan layanan, harga, area AClean\n2. Bantu booking order baru\n3. Bantu cek status order customer (by nomor HP)\n4. Terima & catat komplain/feedback\n\n## BATASAN KERAS\n- JANGAN tampilkan data customer lain\n- JANGAN lakukan aksi admin (cancel, approve, update invoice, dll)\n- Jika tidak yakin: arahkan ke admin\n\n## LAYANAN & HARGA\n- Cuci AC: Rp 80.000/unit\n- Freon R22: Rp 150.000/unit | Freon R32: Rp 200.000/unit\n- Perbaikan AC: mulai Rp 100.000 (tergantung kerusakan)\n- Pasang AC Baru: Rp 300.000/unit | Bongkar AC: Rp 150.000/unit\n- Service AC: Rp 120.000/unit | Booking H-0: +Rp 50.000\n\n## FORMAT JAWABAN\n- Bahasa Indonesia ramah, maks 5 kalimat per respons\n- Gunakan emoji: 😊 ✅ 🔧 📱\n- Jika tidak bisa jawab: arahkan ke admin'); showNotif("Brain Customer direset ke default"); }}
-                style={{ background: "#ef444418", border: "1px solid #ef444433", color: "#ef4444", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-                🔄 Reset Default
-              </button>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => setModalBrainCustomerEdit(false)} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>Batal</button>
-                <button onClick={async () => {
-                  showNotif("⏳ Menyimpan Brain Customer ke Supabase...");
-                  _lsSave("brainMdCustomer", brainMdCustomer);
-                  let dbOk = false;
-                  try {
-                    const payload = { key: "brain_customer", value: brainMdCustomer, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() };
-                    const { error: e1 } = await supabase.from("ara_brain").upsert(payload, { onConflict: "key" });
-                    if (!e1) { dbOk = true; }
-                    else {
-                      const { error: e2 } = await supabase.from("ara_brain")
-                        .update({ value: brainMdCustomer, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() })
-                        .eq("key", "brain_customer");
-                      if (!e2) { dbOk = true; }
-                      else {
-                        const { error: e3 } = await supabase.from("ara_brain")
-                          .insert({ key: "brain_customer", value: brainMdCustomer, updated_by: currentUser?.name || "Owner" });
-                        if (!e3) dbOk = true;
-                        else throw new Error("Upsert: " + e1.message + " | Update: " + e2.message + " | Insert: " + e3.message);
-                      }
-                    }
-                  } catch (e) {
-                    showNotif("⚠️ DB error: " + (e?.message || "") + " — Tersimpan lokal. Jalankan fix_ara_brain_table.sql di Supabase.");
-                    addAgentLog("BRAIN_CUST_SAVE_ERROR", "Brain Customer gagal ke DB: " + (e?.message || ""), "ERROR");
-                    setModalBrainCustomerEdit(false); return;
-                  }
-                  if (dbOk) {
-                    addAgentLog("BRAIN_CUSTOMER_SAVED", "Brain Customer disimpan ke Supabase (" + brainMdCustomer.length + " karakter)", "SUCCESS");
-                    showNotif("✅ Brain Customer tersimpan permanen di Supabase + localStorage!");
-                  }
-                  setModalBrainCustomerEdit(false);
-                }}
-                  style={{ background: "linear-gradient(135deg,#22c55e,#16a34a)", border: "none", color: "#fff", padding: "9px 22px", borderRadius: 8, cursor: "pointer", fontWeight: 800, fontSize: 13 }}>
-                  💾 Simpan Brain Customer
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <Suspense fallback={null}>
+        <BrainCustomerModal
+          open={modalBrainCustomerEdit}
+          onClose={() => setModalBrainCustomerEdit(false)}
+          brainMdCustomer={brainMdCustomer}
+          setBrainMdCustomer={setBrainMdCustomer}
+          currentUser={currentUser}
+          showNotif={showNotif}
+          addAgentLog={addAgentLog}
+          supabase={supabase}
+          isMobile={isMobile}
+          _lsSave={_lsSave}
+        />
+      </Suspense>}
 
 
       {/* ══════════════════════════════════════════════════════ */}
@@ -9796,682 +9743,68 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         />
       </Suspense>
 
-      {modalEditInvoice && editInvoiceData && (() => {
-        // Build lookup lists dari priceListData + inventoryData
-        const jasaLookup = priceListData
-          .filter(r => r.service !== 'Material' && (r.price || 0) > 0)
-          .map(r => ({ label: r.service + ' / ' + r.type, harga: r.price || 0, satuan: r.unit || 'Unit' }));
-        const matLookup = (() => {
-          const seen = new Set();
-          const items = [];
-          inventoryData.forEach(r => {
-            const harga = lookupHargaGlobal(r.name, r.unit);
-            items.push({ label: r.name, harga, satuan: r.unit || 'pcs' });
-            seen.add(r.name);
-          });
-          priceListData.filter(r => r.service === 'Material' || r.service === 'Install')
-            .forEach(r => {
-              if (r.type && !seen.has(r.type)) {
-                items.push({ label: r.type, harga: r.price || 0, satuan: r.unit || 'pcs' });
-                seen.add(r.type);
-              }
-            });
-          return items;
-        })();
-
-        const filteredJasa = jasaLookup.filter(x =>
-          x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
-        const filteredMat = matLookup.filter(x =>
-          x.label.toLowerCase().includes(editAddSearch.toLowerCase()));
-
-        const jasaTotal = editJasaItems.reduce((s, m) => s + (m.subtotal || 0), 0);
-        const matTotal = editInvoiceItems.reduce((s, m) => s + (m.subtotal || 0), 0);
-        const editDiscount = parseInt(editInvoiceForm.discount || 0) || 0;
-        const editTradeIn = !!editInvoiceForm.trade_in;
-        const editTradeInAmt = editTradeIn ? (parseInt(editInvoiceForm.trade_in_amount) || 0) : 0;
-        const newTotal = jasaTotal + matTotal - editDiscount - editTradeInAmt;
-        return (
-          <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 450, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-            <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", padding: 20 }}>
-
-              {/* Header */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>✏️ Edit Invoice</div>
-                  <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{editInvoiceData.id} · {editInvoiceData.customer}</div>
-                </div>
-                <button onClick={() => { setModalEditInvoice(false); setEditAddType(''); setEditAddSearch(''); }}
-                  style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
-              </div>
-
-              <div style={{ display: "grid", gap: 14 }}>
-
-                {/* ── ATAS NAMA & ALAMAT INVOICE ── */}
-                {(() => {
-                  const samePhoneCusts = customersData.filter(c => c.phone === editInvoiceData.phone && c.name !== editInvoiceData.customer);
-                  return (
-                    <div style={{ background: cs.card, border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "12px 14px", display: "grid", gap: 10 }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent }}>🏢 Atas Nama Invoice</div>
-                      <div>
-                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Nama / Perusahaan *</div>
-                        <input value={editInvoiceForm.billing_name ?? editInvoiceData.customer}
-                          onChange={e => setEditInvoiceForm(f => ({ ...f, billing_name: e.target.value }))}
-                          list="billing-name-opts"
-                          placeholder={editInvoiceData.customer}
-                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
-                        {samePhoneCusts.length > 0 && (
-                          <datalist id="billing-name-opts">
-                            <option value={editInvoiceData.customer} />
-                            {samePhoneCusts.map(c => <option key={c.id} value={c.name} />)}
-                          </datalist>
-                        )}
-                        {samePhoneCusts.length > 0 && (
-                          <div style={{ fontSize: 10, color: cs.muted, marginTop: 4 }}>
-                            💡 Lokasi lain di nomor ini: {samePhoneCusts.map(c => c.name).join(", ")}
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Alamat</div>
-                        <input value={editInvoiceForm.billing_address ?? (editInvoiceData.address || "")}
-                          onChange={e => setEditInvoiceForm(f => ({ ...f, billing_address: e.target.value }))}
-                          placeholder="Alamat lengkap untuk invoice..."
-                          style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* ── JASA / LABOR section ── */}
-                <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 14px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent }}>🔧 Jasa / Labor</div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button onClick={() => { setEditJasaItems(prev => [...prev, { nama: '', jumlah: 1, satuan: 'Unit', harga_satuan: 0, subtotal: 0, _idx: Date.now() }]); setEditAddType(''); setEditAddSearch(''); }}
-                        style={{ fontSize: 11, background: cs.card, border: "1px solid " + cs.accent + "66", color: cs.accent, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>
-                        + Manual
-                      </button>
-                      <button onClick={() => { setEditAddType(editAddType === 'jasa' ? '' : 'jasa'); setEditAddSearch(''); }}
-                        style={{ fontSize: 11, background: cs.accent + "20", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>
-                        {editAddType === 'jasa' ? '✕ Tutup' : '+ Dari List'}
-                      </button>
-                    </div>
-                  </div>
-                  {editAddType === 'jasa' && (
-                    <div style={{ marginBottom: 10 }}>
-                      <input id="ei_search_jasa" autoFocus value={editAddSearch}
-                        onChange={e => setEditAddSearch(e.target.value)}
-                        placeholder="Cari jasa... (Cleaning, Install, Repair...)"
-                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12, marginBottom: 6 }}
-                      />
-                      <div style={{ maxHeight: 180, overflowY: "auto", background: cs.surface, borderRadius: 8, border: "1px solid " + cs.border }}>
-                        {filteredJasa.slice(0, 25).map((item, idx) => (
-                          <div key={idx} onClick={() => {
-                            setEditJasaItems(prev => [...prev, {
-                              nama: item.label, jumlah: 1, satuan: item.satuan || 'Unit',
-                              harga_satuan: item.harga, subtotal: item.harga, _idx: Date.now() + idx
-                            }]);
-                            setEditAddType(''); setEditAddSearch('');
-                          }}
-                            style={{
-                              padding: "8px 12px", cursor: "pointer", fontSize: 12, color: cs.text,
-                              borderBottom: "1px solid " + cs.border + "44", display: "flex", justifyContent: "space-between"
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.background = cs.accent + "15"}
-                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                          >
-                            <span>{item.label}</span>
-                            <span style={{ fontFamily: "monospace", color: cs.accent, fontWeight: 700 }}>{fmt(item.harga)}</span>
-                          </div>
-                        ))}
-                        {filteredJasa.length === 0 && <div style={{ padding: "10px 12px", color: cs.muted, fontSize: 12 }}>Tidak ada hasil</div>}
-                      </div>
-                    </div>
-                  )}
-                  {editJasaItems.length > 0 && (
-                    <div style={{ marginBottom: 8 }}>
-                      {editJasaItems.map((m, mi) => (
-                        <div key={m._idx || mi} style={{ display: "grid", gridTemplateColumns: "1fr 55px 30px 100px 28px", gap: 5, alignItems: "center", marginBottom: 6, padding: "6px 8px", background: cs.surface, borderRadius: 8 }}>
-                          <input id={"ej_name_" + mi} value={m.nama || ''} onChange={e => setEditJasaItems(prev => prev.map((x, xi) => xi === mi ? { ...x, nama: e.target.value } : x))}
-                            style={{ background: "transparent", border: "none", borderBottom: "1px solid " + cs.border, color: cs.text, fontSize: 12, padding: "2px 4px" }} />
-                          <input id={"ej_qty_" + mi} type="number" min="0" step="0.1" value={m.jumlah || 1}
-                            onChange={e => setEditJasaItems(prev => prev.map((x, xi) => xi === mi ? { ...x, jumlah: parseFloat(e.target.value) || 0, subtotal: (parseFloat(e.target.value) || 0) * (x.harga_satuan || 0) } : x))}
-                            style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 5, padding: "4px 5px", color: cs.text, fontSize: 11, textAlign: "center" }} />
-                          <span style={{ fontSize: 10, color: cs.muted, textAlign: "center" }}>{m.satuan}</span>
-                          <input id={"ej_harga_" + mi} type="number" min="0" value={m.harga_satuan || 0}
-                            onChange={e => setEditJasaItems(prev => prev.map((x, xi) => xi === mi ? { ...x, harga_satuan: parseInt(e.target.value) || 0, subtotal: (parseInt(e.target.value) || 0) * (x.jumlah || 0) } : x))}
-                            style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 5, padding: "4px 5px", color: cs.text, fontSize: 11, fontFamily: "monospace", textAlign: "right" }} />
-                          <button onClick={() => setEditJasaItems(prev => prev.filter((_x, xi) => xi !== mi))}
-                            style={{ background: "#ef444420", border: "none", color: "#ef4444", borderRadius: 5, padding: "4px 6px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ fontSize: 11, color: cs.muted, textAlign: "right" }}>
-                    Subtotal jasa: <strong style={{ color: cs.accent, fontFamily: "monospace" }}>{fmt(editJasaItems.reduce((s, m) => s + (m.subtotal || 0), 0))}</strong>
-                  </div>
-                </div>
-
-                {/* ── MATERIAL section ── */}
-                <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 14px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>📦 Material</div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button onClick={() => { setEditInvoiceItems(prev => [...prev, { nama: '', jumlah: 1, satuan: 'Pcs', harga_satuan: 0, subtotal: 0, _idx: Date.now() }]); setEditAddType(''); setEditAddSearch(''); }}
-                        style={{ fontSize: 11, background: cs.card, border: "1px solid " + cs.green + "66", color: cs.green, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>
-                        + Manual
-                      </button>
-                      <button onClick={() => { setEditAddType(editAddType === 'material' ? '' : 'material'); setEditAddSearch(''); }}
-                        style={{ fontSize: 11, background: cs.green + "20", border: "1px solid " + cs.green + "44", color: cs.green, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>
-                        {editAddType === 'material' ? '✕ Tutup' : '+ Dari List'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Lookup material */}
-                  {editAddType === 'material' && (
-                    <div style={{ marginBottom: 10 }}>
-                      <input id="ei_search_mat" autoFocus value={editAddSearch}
-                        onChange={e => setEditAddSearch(e.target.value)}
-                        placeholder="Cari material... (Freon, Pipa, Kabel...)"
-                        style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12, marginBottom: 6 }}
-                      />
-                      <div style={{ maxHeight: 160, overflowY: "auto", background: cs.surface, borderRadius: 8, border: "1px solid " + cs.border }}>
-                        {filteredMat.slice(0, 20).map((item, idx) => (
-                          <div key={idx} onClick={() => {
-                            setEditInvoiceItems(prev => [...prev, {
-                              nama: item.label, jumlah: 1, satuan: item.satuan,
-                              harga_satuan: item.harga, subtotal: item.harga, _idx: Date.now() + idx
-                            }]);
-                            setEditAddType(''); setEditAddSearch('');
-                          }}
-                            style={{
-                              padding: "8px 12px", cursor: "pointer", fontSize: 12, color: cs.text, borderBottom: "1px solid " + cs.border + "44",
-                              display: "flex", justifyContent: "space-between", alignItems: "center"
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.background = cs.green + "10"}
-                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                          >
-                            <span>{item.label} <span style={{ fontSize: 10, color: cs.muted }}>/ {item.satuan}</span></span>
-                            <span style={{ fontFamily: "monospace", color: cs.green, fontWeight: 700 }}>{fmt(item.harga)}</span>
-                          </div>
-                        ))}
-                        {filteredMat.length === 0 && (
-                          <div style={{ padding: "10px 12px", color: cs.muted, fontSize: 12 }}>Tidak ada hasil</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Item list — editable */}
-                  {editInvoiceItems.length > 0 && (
-                    <div style={{ marginBottom: 8 }}>
-                      {editInvoiceItems.map((m, mi) => (
-                        <div key={m._idx || mi} style={{ display: "grid", gridTemplateColumns: "1fr 60px 30px 100px 28px", gap: 5, alignItems: "center", marginBottom: 6, padding: "6px 8px", background: cs.surface, borderRadius: 8 }}>
-                          <input id={"ei_name_" + mi} value={m.nama || ''} onChange={e => setEditInvoiceItems(prev => prev.map((x, xi) => xi === mi ? { ...x, nama: e.target.value } : x))}
-                            style={{ background: "transparent", border: "none", borderBottom: "1px solid " + cs.border, color: cs.text, fontSize: 12, padding: "2px 4px" }} />
-                          <input id={"ei_qty_" + mi} type="number" min="0" step="0.1" value={m.jumlah || 1}
-                            onChange={e => setEditInvoiceItems(prev => prev.map((x, xi) => xi === mi ? { ...x, jumlah: parseFloat(e.target.value) || 0, subtotal: (parseFloat(e.target.value) || 0) * (x.harga_satuan || 0) } : x))}
-                            style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 5, padding: "4px 5px", color: cs.text, fontSize: 11, textAlign: "center" }} />
-                          <span style={{ fontSize: 10, color: cs.muted, textAlign: "center" }}>{m.satuan}</span>
-                          <input id={"ei_harga_" + mi} type="number" min="0" value={m.harga_satuan || 0}
-                            onChange={e => setEditInvoiceItems(prev => prev.map((x, xi) => xi === mi ? { ...x, harga_satuan: parseInt(e.target.value) || 0, subtotal: (parseInt(e.target.value) || 0) * (x.jumlah || 0) } : x))}
-                            style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 5, padding: "4px 5px", color: cs.text, fontSize: 11, fontFamily: "monospace", textAlign: "right" }} />
-                          <button onClick={() => setEditInvoiceItems(prev => prev.filter((_, xi) => xi !== mi))}
-                            style={{ background: "#ef444420", border: "none", color: "#ef4444", borderRadius: 5, padding: "4px 6px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div style={{ fontSize: 11, color: cs.muted, textAlign: "right" }}>
-                    Subtotal material: <strong style={{ color: cs.green, fontFamily: "monospace" }}>{fmt(matTotal)}</strong>
-                  </div>
-                </div>
-
-                {/* ── Potongan: Discount & Trade-In ── */}
-                <div style={{ background: cs.card, border: "1px solid #be123c33", borderRadius: 10, padding: "12px 14px", display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#f43f5e" }}>🏷️ Potongan Harga</div>
-
-                  {/* Discount manual */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: cs.text }}>
-                      <input type="checkbox"
-                        checked={!!(editInvoiceForm.discount > 0)}
-                        onChange={e => setEditInvoiceForm(f => ({ ...f, discount: e.target.checked ? (f._discountVal || 0) : 0, _discountVal: e.target.checked ? (f._discountVal || 0) : f.discount }))}
-                        style={{ width: 16, height: 16, accentColor: "#f43f5e" }} />
-                      Discount
-                    </label>
-                    <input type="number" min="0" step="10000"
-                      value={editInvoiceForm.discount || ""}
-                      onChange={e => setEditInvoiceForm(f => ({ ...f, discount: parseInt(e.target.value) || 0, _discountVal: parseInt(e.target.value) || 0 }))}
-                      placeholder="Rp 0"
-                      style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: "#f43f5e", fontSize: 13, fontFamily: "monospace", fontWeight: 700 }} />
-                  </div>
-
-                  {/* Cek Voucher Loyalty */}
-                  <div style={{ borderTop: "1px dashed #be123c33", paddingTop: 10 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#f43f5e", marginBottom: 6 }}>🎁 Voucher Loyalty</div>
-                    {voucherApplied ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, padding: "8px 10px" }}>
-                        <span style={{ fontSize: 14 }}>✅</span>
-                        <div style={{ flex: 1, fontSize: 12 }}>
-                          <strong style={{ color: "#15803d" }}>{voucherApplied.code}</strong>
-                          <span style={{ color: "#16a34a", marginLeft: 6 }}>{voucherApplied.type_label}</span>
-                        </div>
-                        <button onClick={() => { setVoucherApplied(null); setVoucherCheckResult(null); setVoucherCheckCode(""); setEditInvoiceForm(f => ({ ...f, discount: 0 })); }}
-                          style={{ fontSize: 11, color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}>Hapus</button>
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <input value={voucherCheckCode}
-                          onChange={e => { setVoucherCheckCode(e.target.value.toUpperCase()); setVoucherCheckResult(null); }}
-                          placeholder="Kode voucher (cth: ACL-K3M9P2)"
-                          style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 12, fontFamily: "monospace" }} />
-                        <button
-                          disabled={voucherCheckLoading || !voucherCheckCode.trim()}
-                          onClick={async () => {
-                            if (!voucherCheckCode.trim() || !editInvoiceData?.phone) return;
-                            setVoucherCheckLoading(true);
-                            setVoucherCheckResult(null);
-                            try {
-                              const hdrs = await _apiHeaders();
-                              const r = await fetch("/api/validate-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ code: voucherCheckCode.trim(), phone: editInvoiceData.phone, invoice_id: editInvoiceData.id }) });
-                              const d = await r.json();
-                              if (r.ok && d.valid) setVoucherCheckResult({ valid: true, voucher: d.voucher });
-                              else setVoucherCheckResult({ error: d.error || "Voucher tidak valid" });
-                            } catch { setVoucherCheckResult({ error: "Gagal cek voucher" }); }
-                            finally { setVoucherCheckLoading(false); }
-                          }}
-                          style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: voucherCheckLoading ? cs.border : "#f43f5e", color: "#fff", cursor: voucherCheckLoading ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}>
-                          {voucherCheckLoading ? "..." : "Cek"}
-                        </button>
-                      </div>
-                    )}
-                    {voucherCheckResult?.error && (
-                      <div style={{ marginTop: 6, fontSize: 11, color: "#f87171", padding: "6px 10px", background: "#fef2f2", borderRadius: 6 }}>❌ {voucherCheckResult.error}</div>
-                    )}
-                    {voucherCheckResult?.valid && !voucherApplied && (
-                      <div style={{ marginTop: 6, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, padding: "8px 12px" }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: "#15803d", marginBottom: 4 }}>✅ Voucher Valid — {voucherCheckResult.voucher.type_label}</div>
-                        <div style={{ fontSize: 11, color: "#16a34a" }}>{voucherCheckResult.voucher.customer_name} · {voucherCheckResult.voucher.description}</div>
-                        <button onClick={async () => {
-                          const v = voucherCheckResult.voucher;
-                          // Hitung diskon: discount_pct = % dari total invoice, free_unit = gratis per unit (0 rupiah)
-                          let discountAmt = 0;
-                          if (v.type === "discount_pct") discountAmt = Math.round((newTotal * v.value) / 100);
-                          else if (v.type === "free_unit") discountAmt = 0; // free unit dicatat terpisah
-                          setEditInvoiceForm(f => ({ ...f, discount: discountAmt }));
-                          setVoucherApplied(v);
-                          setVoucherCheckResult(null);
-                          // Klaim voucher di DB
-                          try {
-                            const hdrs = await _apiHeaders();
-                            await fetch("/api/claim-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ code: v.code, invoice_id: editInvoiceData.id }) });
-                          } catch { /* silent, voucher tetap tercatat di DB nanti saat save invoice */ }
-                        }}
-                          style={{ marginTop: 8, padding: "7px 0", width: "100%", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-                          Terapkan Voucher
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Trade-In AC Lama */}
-                  <div style={{ background: editInvoiceForm.trade_in ? "#be123c12" : cs.surface, border: "1px solid " + (editInvoiceForm.trade_in ? "#be123c44" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: cs.text }}>
-                      <input type="checkbox"
-                        checked={!!editInvoiceForm.trade_in}
-                        onChange={e => setEditInvoiceForm(f => ({ ...f, trade_in: e.target.checked, trade_in_amount: e.target.checked ? (parseInt(f.trade_in_amount) || 250000) : f.trade_in_amount }))}
-                        style={{ width: 16, height: 16, accentColor: "#f43f5e" }} />
-                      <div style={{ fontWeight: 700 }}>Trade-In AC Lama</div>
-                    </label>
-                    {editInvoiceForm.trade_in && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-                        <span style={{ fontSize: 12, color: "#f43f5e", fontWeight: 700 }}>- Rp</span>
-                        <input type="number" min="0"
-                          value={editInvoiceForm.trade_in_amount ?? ""}
-                          onChange={e => setEditInvoiceForm(f => ({ ...f, trade_in_amount: e.target.value }))}
-                          placeholder="250000"
-                          style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 13, fontFamily: "monospace", outline: "none", boxSizing: "border-box" }} />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ── PPh 23 (AClean Non-PKP, gross-up — terima full price list) ── */}
-                  {(() => {
-                    const rate = parseFloat(appSettings?.pph23_rate) || 0.025;
-                    const pph = computePph23(newTotal, rate);
-                    return (
-                      <div style={{ background: editInvoiceForm.pph23 ? "#0ea5e912" : cs.surface, border: "1px solid " + (editInvoiceForm.pph23 ? "#0ea5e944" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
-                        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: cs.text }}>
-                          <input type="checkbox" checked={!!editInvoiceForm.pph23}
-                            onChange={e => setEditInvoiceForm(f => ({ ...f, pph23: e.target.checked }))}
-                            style={{ width: 16, height: 16, accentColor: "#0ea5e9" }} />
-                          <div style={{ fontWeight: 700 }}>Customer potong PPh 23 ({(rate * 100).toLocaleString("id-ID")}%)</div>
-                        </label>
-                        {editInvoiceForm.pph23 && (
-                          <div style={{ marginTop: 8, fontSize: 12, color: cs.muted, display: "grid", gap: 3 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between" }}><span>Nilai Jasa (DPP)</span><b style={{ color: cs.text, fontFamily: "monospace" }}>{fmt(pph.dpp)}</b></div>
-                            <div style={{ display: "flex", justifyContent: "space-between" }}><span>PPh 23 dipotong</span><b style={{ color: "#0ea5e9", fontFamily: "monospace" }}>- {fmt(pph.amount)}</b></div>
-                            <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid " + cs.border, paddingTop: 3 }}><span>Diterima AClean</span><b style={{ color: cs.green, fontFamily: "monospace" }}>{fmt(newTotal)}</b></div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                {/* ── Total preview ── */}
-                <div style={{ background: cs.accent + "12", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: 14 }}>
-                  <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Total Invoice Baru</div>
-                  <div style={{ fontWeight: 800, fontSize: 22, color: cs.accent, fontFamily: "monospace" }}>{fmt(newTotal)}</div>
-                  {(editDiscount > 0 || editTradeIn) && (
-                    <div style={{ fontSize: 11, color: "#f43f5e", marginTop: 4 }}>
-                      Potongan: {editDiscount > 0 ? `Discount ${fmt(editDiscount)}` : ""}{editDiscount > 0 && editTradeIn ? " + " : ""}{editTradeIn ? `Trade-In ${fmt(editTradeInAmt)}` : ""}
-                    </div>
-                  )}
-                  {newTotal !== editInvoiceData.total && (
-                    <div style={{ fontSize: 11, color: cs.yellow, marginTop: 4 }}>
-                      Perubahan: {fmt(newTotal - editInvoiceData.total)} dari sebelumnya {fmt(editInvoiceData.total)}
-                    </div>
-                  )}
-                </div>
-
-                {/* ── Catatan ── */}
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Catatan Perubahan</div>
-                  <input id="ei_notes" value={editInvoiceForm.notes || ''}
-                    onChange={e => setEditInvoiceForm(f => ({ ...f, notes: e.target.value }))}
-                    placeholder="Alasan perubahan nilai..."
-                    style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13 }}
-                  />
-                </div>
-
-                {/* ── Action buttons ── */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
-                  <button onClick={() => { setModalEditInvoice(false); setEditAddType(''); setEditAddSearch(''); setVoucherCheckCode(""); setVoucherCheckResult(null); setVoucherApplied(null); }}
-                    style={{ padding: "11px", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, color: cs.text, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
-                    Batal
-                  </button>
-                  <button onClick={async () => {
-                    const discountFinal = parseInt(editInvoiceForm.discount || 0) || 0;
-                    const tradeInFinal = !!editInvoiceForm.trade_in;
-                    const tradeInAmtFinal = tradeInFinal ? (parseInt(editInvoiceForm.trade_in_amount) || 0) : 0;
-                    // Section = otoritas split: jasa section → keterangan "jasa"; material section → barang/freon/diskon.
-                    // category dibersihkan agar normalizeLines menetapkannya ulang dari katalog/keterangan.
-                    const jasaRows = editJasaItems.filter(m => m.nama && (m.jumlah || 0) > 0)
-                      .map(({ category, ...rest }) => ({ ...rest, keterangan: "jasa" }));
-                    const matRows = editInvoiceItems.filter(m => m.nama && (m.jumlah || 0) > 0)
-                      .map(({ category, ...rest }) => {
-                        const ket = String(rest.keterangan || "").toLowerCase();
-                        return { ...rest, keterangan: ["barang", "freon", "diskon"].includes(ket) ? rest.keterangan : "barang" };
-                      });
-                    const newMD = normalizeLines([...jasaRows, ...matRows]);
-                    // SINGLE SOURCE OF TRUTH: labor/material/total diturunkan dari newMD via summarize.
-                    const _s = summarize(newMD, { discount: discountFinal, tradeIn: tradeInAmtFinal });
-                    const labor = _s.labor;
-                    const material = _s.material;
-                    const newTotalFinal = _s.total;
-                    if (newTotalFinal <= 0 && !tradeInFinal && discountFinal === 0) { showNotif("⚠️ Total tidak boleh 0"); return; }
-                    // PPh 23 gross-up (Non-PKP): total (diterima AClean) tetap = newTotalFinal,
-                    // simpan flag + nominal PPh utk faktur/bukti potong.
-                    const pph23On = !!editInvoiceForm.pph23;
-                    const pph23Amt = pph23On ? computePph23(newTotalFinal, parseFloat(appSettings?.pph23_rate) || 0.025).amount : 0;
-                    const billingName = (editInvoiceForm.billing_name ?? editInvoiceData.customer) || editInvoiceData.customer;
-                    const billingAddress = editInvoiceForm.billing_address ?? (editInvoiceData.address || "");
-                    setInvoicesData(prev => prev.map(i => i.id === editInvoiceData.id
-                      ? { ...i, labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, pph23: pph23On, pph23_amount: pph23Amt, materials_detail: newMD, customer: billingName, address: billingAddress } : i));
-                    {
-                      const _chk = checkInvoiceConsistency({ ...editInvoiceData, lines: newMD, labor, material, discount: discountFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal });
-                      if (!_chk.ok) addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, editInvoiceData.id) + " (edit nilai)", "WARNING");
-                    }
-                    let saved = false;
-                    {
-                      const { error: e1 } = await updateInvoice(supabase, editInvoiceData.id, {
-                        labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal,
-                        pph23: pph23On, pph23_amount: pph23Amt,
-                        materials_detail: JSON.stringify(newMD), customer: billingName, address: billingAddress
-                      }, auditUserName()); if (!e1) saved = true; else console.warn("editInv e1:", e1.message);
-                    }
-                    if (!saved) {
-                      const { error: e2 } = await updateInvoice(supabase, editInvoiceData.id, { labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal }, auditUserName());
-                      if (!e2) saved = true;
-                    }
-                    if (!saved) await updateInvoice(supabase, editInvoiceData.id, { total: newTotalFinal }, auditUserName());
-                    addAgentLog("INVOICE_EDITED", `Invoice ${editInvoiceData.id} diedit → ${fmt(newTotalFinal)}` + (editInvoiceForm.notes ? ` (${editInvoiceForm.notes})` : "") + ` by Owner`, "SUCCESS");
-                    showNotif(`✅ Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotalFinal)}`);
-                    setModalEditInvoice(false); setEditInvoiceData(null);
-                    setEditAddType(''); setEditAddSearch('');
-                  }} style={{ padding: "11px", background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", borderRadius: 10, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-                    💾 Simpan Perubahan
-                  </button>
-                </div>
-
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      <Suspense fallback={null}>
+        <EditInvoiceModal
+          open={modalEditInvoice}
+          onClose={() => { setModalEditInvoice(false); setEditInvoiceData(null); }}
+          editInvoiceData={editInvoiceData}
+          editInvoiceForm={editInvoiceForm}
+          setEditInvoiceForm={setEditInvoiceForm}
+          editInvoiceItems={editInvoiceItems}
+          setEditInvoiceItems={setEditInvoiceItems}
+          editJasaItems={editJasaItems}
+          setEditJasaItems={setEditJasaItems}
+          priceListData={priceListData}
+          inventoryData={inventoryData}
+          customersData={customersData}
+          lookupHargaGlobal={lookupHargaGlobal}
+          parseMD={parseMD}
+          fmt={fmt}
+          appSettings={appSettings}
+          currentUser={currentUser}
+          supabase={supabase}
+          showNotif={showNotif}
+          addAgentLog={addAgentLog}
+          updateInvoice={updateInvoice}
+          setInvoicesData={setInvoicesData}
+          auditUserName={auditUserName}
+          _apiHeaders={_apiHeaders}
+        />
+      </Suspense>
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — INVOICE PREVIEW */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalPDF && selectedInvoice && (() => {
-        // Always use latest data from invoicesData state
-        const liveInv = invoicesData.find(i => i.id === selectedInvoice.id) || selectedInvoice;
-        return (
-          <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setModalPDF(false)}>
-            <div style={{ background: "#f8fafc", borderRadius: 20, width: "100%", maxWidth: 680, maxHeight: "92vh", overflowY: "auto", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
-              {/* Toolbar */}
-              <div style={{ background: "#1E3A5F", padding: "12px 20px", borderRadius: "20px 20px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-                <div>
-                  <div style={{ fontWeight: 800, color: "#fff", fontSize: 14 }}>Preview Invoice — {liveInv.id}</div>
-                  <div style={{ fontSize: 11, color: "#93c5fd" }}>Format standar AClean · Dikirim sebagai PDF ke customer</div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {liveInv.status === "PENDING_APPROVAL" && (
-                    <button onClick={() => { setModalPDF(false); setTimeout(() => approveInvoice(liveInv), 100); }}
-                      style={{ background: "#22c55e", border: "none", color: "#fff", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>✓ Approve Invoice</button>
-                  )}
-                  <button onClick={() => setModalPDF(false)} style={{ background: "none", border: "1px solid #ffffff44", color: "#fff", padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>× Tutup</button>
-                </div>
-              </div>
-              {/* Kontrol cepat PPh 23 (area non-cetak) — berlaku utk SEMUA invoice/customer */}
-              {(() => {
-                const rate = parseFloat(appSettings?.pph23_rate) || 0.025;
-                const pph = computePph23(liveInv.total, rate);
-                return (
-                  <div style={{ background: "#ecfeff", borderBottom: "1px solid #cffafe", padding: "8px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: "#0e7490", fontWeight: 700 }}>
-                      <input type="checkbox" checked={!!liveInv.pph23}
-                        onChange={async e => {
-                          const on = e.target.checked;
-                          const amt = on ? pph.amount : 0;
-                          setInvoicesData(prev => prev.map(i => i.id === liveInv.id ? { ...i, pph23: on, pph23_amount: amt } : i));
-                          const { error } = await updateInvoice(supabase, liveInv.id, { pph23: on, pph23_amount: amt }, auditUserName());
-                          if (error) showNotif("⚠️ Gagal simpan PPh 23: " + error.message);
-                          else showNotif(on ? `✅ PPh 23 aktif — DPP ${fmt(pph.dpp)}, dipotong ${fmt(pph.amount)}` : "PPh 23 dinonaktifkan");
-                        }}
-                        style={{ width: 15, height: 15, accentColor: "#0891b2" }} />
-                      Customer potong PPh 23 ({(rate * 100).toLocaleString("id-ID")}%)
-                    </label>
-                    {liveInv.pph23 && <span style={{ fontSize: 11, color: "#0e7490", fontFamily: "monospace" }}>DPP {fmt(pph.dpp)} · PPh −{fmt(pph.amount)} · diterima {fmt(liveInv.total)}</span>}
-                  </div>
-                );
-              })()}
-              {/* Invoice body */}
-              <div style={{ padding: 20, background: "#f8fafc" }}>
-                {/* Header */}
-                <div style={{ background: "#1E3A5F", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
-                  <div style={{ height: 4, background: "#2563EB" }} />
-                  <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontWeight: 800, color: "#fff", fontSize: 18 }}>
-                        <span style={{ color: "#60a5fa" }}>AC</span>lean Service
-                      </div>
-                      <div style={{ fontSize: 11, color: "#93c5fd", marginTop: 3 }}>Jasa Servis &amp; Perawatan AC Profesional</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 10, color: "#93c5fd", fontWeight: 600 }}>INVOICE</div>
-                      <div style={{ background: "#2563EB", color: "#fff", padding: "4px 10px", borderRadius: 6, fontFamily: "monospace", fontWeight: 800, fontSize: 13 }}>{liveInv.id}</div>
-                    </div>
-                  </div>
-                  <div style={{ background: "#0f2744", padding: "8px 20px", display: "flex", gap: 20, fontSize: 10, color: "#94a3b8" }}>
-                    <span>📍 ${appSettings.company_addr}</span>
-                    <span>🏦 ${appSettings.bank_name} ${appSettings.bank_number} a.n. ${appSettings.bank_holder}</span>
-                  </div>
-                </div>
-                {/* Detail Grid */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-                  <div style={{ background: "#EFF6FF", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#1e40af", marginBottom: 8, textTransform: "uppercase" }}>Detail Invoice</div>
-                    {[
-                      ["Tgl Invoice", liveInv.created_at ? new Date(liveInv.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }) : (liveInv.sent_at ? new Date(liveInv.sent_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }) : "—")],
-                      ["Issued", new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })],
-                      ["No. Invoice", liveInv.id],
-                      ["No. Order", liveInv.job_id || "—"],
-                    ].map(([k, v]) => (
-                      <div key={k} style={{ display: "flex", gap: 8, marginBottom: 4, fontSize: 11 }}>
-                        <span style={{ color: "#64748b", minWidth: 80 }}>{k}</span>
-                        <span style={{ color: "#1e293b", fontWeight: 600 }}>{v}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#1e40af", marginBottom: 8, textTransform: "uppercase" }}>Tagihan Kepada</div>
-                    <div style={{ fontWeight: 700, color: "#1e293b", fontSize: 13, marginBottom: 4 }}>{liveInv.customer}</div>
-                    <div style={{ fontSize: 11, color: "#64748b" }}>📱 {liveInv.phone}</div>
-                  </div>
-                </div>
-                {/* Service Table */}
-                <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 14, fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ background: "#1E3A5F" }}>
-                      {[["Deskripsi", "auto"], ["Jml Unit", "72px"], ["Harga Satuan", "100px"], ["Subtotal", "100px"]].map(([h, w]) => (
-                        <th key={h} style={{ padding: "8px 10px", textAlign: h === "Deskripsi" ? "left" : "right", color: "#fff", fontWeight: 700, width: w, fontSize: 10 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {liveInv.labor > 0 && parseMD(liveInv.materials_detail).length === 0 && (
-                      <tr style={{ background: "#fff" }}>
-                        <td style={{ padding: "8px 10px", color: "#1e293b" }}>{liveInv.service}</td>
-                        <td style={{ padding: "8px 10px", color: "#475569", textAlign: "center" }}>{liveInv.units}</td>
-                        <td style={{ padding: "8px 10px", color: "#475569", fontFamily: "monospace" }}>{((liveInv.labor || 0) / (liveInv.units || 1)).toLocaleString("id-ID")}</td>
-                        <td style={{ padding: "8px 10px", color: "#1e293b", fontFamily: "monospace", fontWeight: 600 }}>{liveInv.labor.toLocaleString("id-ID")}</td>
-                      </tr>
-                    )}
-                    {/* Per-item material dari materials_detail */}
-                    {(() => {
-                      const md = liveInv.materials_detail;
-                      const mArr = Array.isArray(md) ? md
-                        : (typeof md === "string" && md)
-                          ? (() => { try { return JSON.parse(md); } catch (_) { return []; } })()
-                          : [];
-                      if (mArr.length > 0) {
-                        return mArr.map((m, mi) => (
-                          <tr key={mi} style={{ background: mi % 2 === 0 ? "#f0f9ff" : "#fff" }}>
-                            <td style={{ padding: "8px 10px", color: "#1e293b" }}>
-                              {m.nama}
-                              {m.keterangan && <span style={{ fontSize: 10, color: "#64748b", marginLeft: 4 }}>({m.keterangan})</span>}
-                            </td>
-                            <td style={{ padding: "8px 10px", textAlign: "right", color: "#475569", width: "72px" }}>{m.jumlah} {m.satuan}</td>
-                            <td style={{ padding: "8px 10px", fontFamily: "monospace", color: "#475569", textAlign: "right" }}>
-                              {(() => {
-                                const hF = m.harga_satuan > 0 ? m.harga_satuan
-                                  : (m.subtotal > 0 && m.jumlah > 0 ? Math.round(m.subtotal / m.jumlah) : 0);
-                                return hF > 0 ? hF.toLocaleString("id-ID") : "—";
-                              })()}
-                            </td>
-                            <td style={{ padding: "8px 10px", fontFamily: "monospace", fontWeight: 600, color: "#1e293b", textAlign: "right" }}>
-                              {m.subtotal > 0 ? m.subtotal.toLocaleString("id-ID") : "—"}
-                            </td>
-                          </tr>
-                        ));
-                      }
-                      // Fallback: materials_detail kosong → tampil 1 baris total
-                      if ((liveInv.material || 0) > 0) return (
-                        <tr style={{ background: "#f0f9ff" }}>
-                          <td style={{ padding: "8px 10px", color: "#64748b", fontStyle: "italic" }}>Material &amp; Spare Part</td>
-                          <td style={{ padding: "8px 10px", textAlign: "center" }}>—</td>
-                          <td style={{ padding: "8px 10px" }}>—</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "monospace", fontWeight: 600, color: "#1e293b", textAlign: "right" }}>
-                            {(liveInv.material || 0).toLocaleString("id-ID")}
-                          </td>
-                        </tr>
-                      );
-                      return null;
-                    })()}
-                    {(liveInv.discount || 0) > 0 && (
-                      <tr style={{ background: "#fff1f2" }}>
-                        <td style={{ padding: "8px 10px", color: "#be123c", fontStyle: "italic" }}>Discount</td>
-                        <td style={{ padding: "8px 10px", textAlign: "center", color: "#be123c" }}>—</td>
-                        <td style={{ padding: "8px 10px", color: "#be123c" }}>—</td>
-                        <td style={{ padding: "8px 10px", color: "#be123c", fontFamily: "monospace", fontWeight: 600 }}>-{liveInv.discount.toLocaleString("id-ID")}</td>
-                      </tr>
-                    )}
-                    {liveInv.trade_in && (liveInv.trade_in_amount || 0) > 0 && (
-                      <tr style={{ background: "#fff1f2" }}>
-                        <td style={{ padding: "8px 10px", color: "#be123c", fontStyle: "italic" }}>Trade-In AC Lama</td>
-                        <td style={{ padding: "8px 10px", textAlign: "center", color: "#be123c" }}>—</td>
-                        <td style={{ padding: "8px 10px", color: "#be123c" }}>—</td>
-                        <td style={{ padding: "8px 10px", color: "#be123c", fontFamily: "monospace", fontWeight: 600 }}>-{(liveInv.trade_in_amount || 0).toLocaleString("id-ID")}</td>
-                      </tr>
-                    )}
-                    {liveInv.pph23 && (liveInv.pph23_amount || 0) > 0 && (
-                      <>
-                        <tr>
-                          <td colSpan={3} style={{ padding: "8px 10px", color: "#475569" }}>Nilai Jasa (DPP)</td>
-                          <td style={{ padding: "8px 10px", color: "#1e293b", fontFamily: "monospace" }}>{((liveInv.total || 0) + (liveInv.pph23_amount || 0)).toLocaleString("id-ID")}</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={3} style={{ padding: "8px 10px", color: "#0369a1" }}>PPh 23 (2,5%) dipotong customer</td>
-                          <td style={{ padding: "8px 10px", color: "#0369a1", fontFamily: "monospace", fontWeight: 600 }}>-{(liveInv.pph23_amount || 0).toLocaleString("id-ID")}</td>
-                        </tr>
-                      </>
-                    )}
-                    <tr style={{ background: "#1E3A5F" }}>
-                      <td colSpan={3} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700 }}>{liveInv.pph23 && (liveInv.pph23_amount || 0) > 0 ? "DIBAYAR KE ACLEAN" : "TOTAL TAGIHAN"}</td>
-                      <td style={{ padding: "8px 10px", color: "#fff", fontFamily: "monospace", fontWeight: 800, fontSize: 14 }}>Rp {liveInv.total.toLocaleString("id-ID")}</td>
-                    </tr>
-                  </tbody>
-                </table>
-                {/* Footer */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-                  <div style={{ background: "#EFF6FF", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#1e40af", marginBottom: 6 }}>Informasi Pembayaran</div>
-                    <div style={{ fontSize: 11, color: "#475569" }}>Transfer Bank BCA</div>
-                    <div style={{ fontWeight: 800, color: "#1e293b", fontSize: 13, marginTop: 4 }}>{appSettings.bank_number}</div>
-                    <div style={{ fontSize: 11, color: "#475569" }}>a.n. {appSettings.bank_holder}</div>
-                  </div>
-                  <div style={{ background: liveInv.status === "OVERDUE" ? "#FEF2F2" : liveInv.status === "PAID" ? "#F0FDF4" : "#FFFBEB", borderRadius: 8, padding: "12px 14px", border: "1px solid " + (liveInv.status === "OVERDUE" ? "#fca5a5" : liveInv.status === "PAID" ? "#86efac" : "#fde68a") }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", marginBottom: 6 }}>Jatuh Tempo</div>
-                    <div style={{ fontWeight: 700, color: "#1e293b" }}>{liveInv.due || "Menunggu Approval"}</div>
-                    {liveInv.status === "OVERDUE" && <div style={{ fontSize: 11, color: "#dc2626", fontWeight: 700, marginTop: 4 }}>⚠️ SUDAH JATUH TEMPO</div>}
-                    {liveInv.status === "PAID" && <div style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, marginTop: 4 }}>✅ LUNAS</div>}
-                  </div>
-                </div>
-                <div style={{ textAlign: "center", padding: "10px 0", borderTop: "1px solid #e2e8f0" }}>
-                  <div style={{ fontSize: 11, color: "#64748b" }}>Pertanyaan? Hubungi kami via WA: ${appSettings.wa_number}</div>
-                  <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", marginTop: 4 }}>Terima kasih telah mempercayakan perawatan AC Anda kepada ${appSettings.company_name}</div>
-                </div>
-              </div>
-              {/* Action bar */}
-              <div style={{ background: "#f1f5f9", padding: "12px 20px", borderTop: "1px solid #e2e8f0", display: "flex", gap: 10, justifyContent: "flex-end", borderRadius: "0 0 20px 20px", flexShrink: 0 }}>
-                <button onClick={() => downloadInvoicePDF(liveInv)} style={{ background: "#EFF6FF", border: "1px solid #bfdbfe", color: "#1d4ed8", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📥 Download PDF</button>
-                {liveInv.status === "UNPAID" && (
-                  <button onClick={() => { invoiceReminderWA(liveInv); setModalPDF(false); }} style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📱 Kirim via WA</button>
-                )}
-                {liveInv.status === "PENDING_APPROVAL" &&
-                  (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-                    <button onClick={() => { setEditInvoiceData(liveInv); setEditInvoiceForm({ labor: liveInv.labor, material: liveInv.material, discount: liveInv.discount || 0, trade_in: liveInv.trade_in || false, trade_in_amount: liveInv.trade_in_amount || 250000, pph23: liveInv.pph23 || false, notes: "" }); const _aLv = parseMD(liveInv.materials_detail).map((m, idx) => ({ ...m, _idx: idx })); const _jLv = _aLv.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR); const _mLv = _aLv.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR); setEditJasaItems(_jLv); setEditInvoiceItems(_mLv); setModalPDF(false); setVoucherCheckCode(""); setVoucherCheckResult(null); setVoucherApplied(null); setModalEditInvoice(true); }} style={{ background: "#fef9c322", border: "1px solid #fde68a", color: "#92400e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit Nilai</button>
-                  )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      <Suspense fallback={null}>
+        <InvoicePreviewModal
+          open={modalPDF}
+          onClose={() => setModalPDF(false)}
+          selectedInvoice={selectedInvoice}
+          invoicesData={invoicesData}
+          setInvoicesData={setInvoicesData}
+          appSettings={appSettings}
+          currentUser={currentUser}
+          supabase={supabase}
+          showNotif={showNotif}
+          approveInvoice={approveInvoice}
+          downloadInvoicePDF={downloadInvoicePDF}
+          invoiceReminderWA={invoiceReminderWA}
+          computePph23={computePph23}
+          updateInvoice={updateInvoice}
+          parseMD={parseMD}
+          fmt={fmt}
+          auditUserName={auditUserName}
+          onOpenEditInvoice={(invoice) => {
+            setEditInvoiceData(invoice);
+            setEditInvoiceForm({ labor: invoice.labor, material: invoice.material, discount: invoice.discount || 0, trade_in: invoice.trade_in || false, trade_in_amount: invoice.trade_in_amount || 250000, pph23: invoice.pph23 || false, notes: "" });
+            const _aLv = parseMD(invoice.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
+            setEditJasaItems(_aLv.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR));
+            setEditInvoiceItems(_aLv.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR));
+            setModalPDF(false);
+            setModalEditInvoice(true);
+          }}
+        />
+      </Suspense>
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — APPROVE INVOICE — ApproveInvoiceModal */}
