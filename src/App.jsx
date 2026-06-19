@@ -84,6 +84,10 @@ const TeknisiFormModal       = lazy(() => import("./views/TeknisiFormModal.jsx")
 const UserFormModal          = lazy(() => import("./views/UserFormModal.jsx"));
 const MaterialFormModal      = lazy(() => import("./views/MaterialFormModal.jsx"));
 const RestockModal           = lazy(() => import("./views/RestockModal.jsx"));
+const ApproveInvoiceModal    = lazy(() => import("./views/ApproveInvoiceModal.jsx"));
+const EditPasswordModal      = lazy(() => import("./views/EditPasswordModal.jsx"));
+const BrainEditModal         = lazy(() => import("./views/BrainEditModal.jsx"));
+const WaTekModal             = lazy(() => import("./views/WaTekModal.jsx"));
 
 // Supabase client tunggal di-import dari ./supabaseClient.js (env divalidasi di sana).
 // Single client → session login Supabase Auth ter-share ke modul Project (RLS authenticated).
@@ -9273,327 +9277,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           TODAY={TODAY}
         />
       </Suspense>
-      {false && modalStok && (
-        <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setModalStok(false)}>
-          <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 460, padding: 24, maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-              <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>📦 Tambah Material Baru</div>
-              <button onClick={() => { setModalStok(false); setNewStokForm({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" }); }} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
-            </div>
-            <div style={{ display: "grid", gap: 10 }}>
-              {/* Nama + Kode berdampingan */}
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Nama Material <span style={{ color: cs.red }}>*</span></div>
-                  <input type="text" placeholder="cth: Freon R32, Pipa 1/4" value={newStokForm.name || ""} onChange={e => setNewStokForm(f => ({ ...f, name: e.target.value }))}
-                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Kode Manual</div>
-                  <input type="text" placeholder="cth: FRN-R32" value={newStokForm.code || ""} onChange={e => setNewStokForm(f => ({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9\-_]/g, "") }))}
-                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "monospace" }} />
-                  <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>Kosong = auto</div>
-                </div>
-              </div>
-              {/* Tipe Material */}
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>Tipe Material</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {[["freon","❄️ Freon"], ["pipa","🔧 Pipa"], ["kabel","⚡ Kabel"], ["sparepart","🔩 Sparepart"], ["other","📦 Lainnya"]].map(([val, lbl]) => (
-                    <button key={val} onClick={() => setNewStokForm(f => ({ ...f, material_type: val }))}
-                      style={{ padding: "5px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", border: "1px solid " + (newStokForm.material_type === val ? cs.accent : cs.border), background: newStokForm.material_type === val ? cs.accent + "22" : cs.surface, color: newStokForm.material_type === val ? cs.accent : cs.muted, fontWeight: newStokForm.material_type === val ? 700 : 400 }}>
-                      {lbl}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* Satuan + Harga */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Satuan</div>
-                  <select value={newStokForm.unit || "pcs"} onChange={e => setNewStokForm(f => ({ ...f, unit: e.target.value }))}
-                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none" }}>
-                    {["pcs","kg","m","roll","botol","set","liter","unit"].map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga/Unit (Rp)</div>
-                  <input type="number" min="0" placeholder="0" value={newStokForm.price || ""} onChange={e => setNewStokForm(f => ({ ...f, price: e.target.value }))}
-                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                </div>
-              </div>
-              {/* Stok aktual saat ini */}
-              <div style={{ background: cs.accent + "10", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "12px 14px" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent, marginBottom: 6 }}>📥 Stok Aktual Saat Ini (migrasi dari manual)</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Jumlah Stok Fisik</div>
-                    <input type="number" min="0" step={newStokForm.material_type === "freon" ? "0.1" : "1"} placeholder="0" value={newStokForm.stock || ""} onChange={e => setNewStokForm(f => ({ ...f, stock: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Reorder Point</div>
-                    <input type="number" min="0" placeholder="5" value={newStokForm.reorder || ""} onChange={e => setNewStokForm(f => ({ ...f, reorder: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                </div>
-                <div style={{ fontSize: 11, color: cs.muted, marginTop: 8 }}>
-                  Min Alert: <input type="number" min="0" placeholder="2" value={newStokForm.min_alert || ""} onChange={e => setNewStokForm(f => ({ ...f, min_alert: e.target.value }))}
-                    style={{ width: 60, background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, padding: "4px 8px", color: cs.text, fontSize: 12, outline: "none", marginLeft: 6 }} />
-                  <span style={{ marginLeft: 8 }}>{newStokForm.unit || "pcs"} (kirim WA alert)</span>
-                </div>
-              </div>
-              {/* Preview status */}
-              {(newStokForm.stock !== "" || newStokForm.reorder !== "") && (() => {
-                const s = parseFloat(newStokForm.stock) || 0;
-                const r = parseInt(newStokForm.reorder) || 5;
-                const st = computeStockStatus(s, r);
-                const stCol = st === "OK" ? cs.green : st === "OUT" ? cs.red : cs.yellow;
-                return (
-                  <div style={{ background: stCol + "12", border: "1px solid " + stCol + "33", borderRadius: 8, padding: "8px 12px", fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontWeight: 700, color: stCol }}>{st}</span>
-                    <span style={{ color: cs.muted }}>Stok {s} {newStokForm.unit || "pcs"} · Reorder saat &lt; {r}</span>
-                  </div>
-                );
-              })()}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginTop: 4 }}>
-                <button onClick={() => { setModalStok(false); setNewStokForm({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" }); }} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 700 }}>Batal</button>
-                <button onClick={async () => {
-                  if (!validateNameLength(newStokForm.name)) { showNotif("❌ Nama material harus 2-100 karakter"); return; }
-                  const stokAwal = parseFloat(newStokForm.stock) || 0;
-                  if (stokAwal < 0) { showNotif("❌ Stok tidak boleh negatif"); return; }
-                  const price = parseInt(newStokForm.price) || 0;
-                  if (price < 0 || price > 100000000) { showNotif("❌ Harga tidak valid"); return; }
-                  const reorderPt = parseInt(newStokForm.reorder) || 5;
-                  const minAlert = parseInt(newStokForm.min_alert) || 2;
-                  // Kode: manual jika diisi, auto-generate jika kosong
-                  const rawCode = (newStokForm.code || "").trim().toUpperCase();
-                  const codeExists = rawCode && inventoryData.some(i => i.code === rawCode);
-                  if (codeExists) { showNotif("❌ Kode " + rawCode + " sudah digunakan"); return; }
-                  const newCode = rawCode || ("MAT" + Date.now().toString(36).slice(-4).toUpperCase());
-                  const stokStatus = computeStockStatus(stokAwal, reorderPt);
-                  const newItem = { code: newCode, name: newStokForm.name.trim(), unit: newStokForm.unit || "pcs", price, stock: stokAwal, reorder: reorderPt, min_alert: minAlert, status: stokStatus, material_type: newStokForm.material_type || "other" };
-                  setInventoryData(prev => [...prev, newItem]);
-                  const insertPayload = { ...newItem };
-                  delete insertPayload.status;
-                  const { error: invErr } = await supabase.from("inventory").insert(insertPayload);
-                  if (!invErr && stokAwal > 0) {
-                    await supabase.from("inventory").update({ stock: stokAwal }).eq("code", newCode);
-                    // Catat sebagai opening stock transaction
-                    await supabase.from("inventory_transactions").insert({ inventory_code: newCode, inventory_name: newItem.name, qty: stokAwal, type: "restock", notes: "Stok awal (migrasi manual)", created_by: currentUser?.id || null, created_by_name: currentUser?.name || "" }).then(() => {});
-                  }
-                  if (invErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: " + invErr.message);
-                  else { addAgentLog("STOCK_ADDED", `Material baru: ${newItem.name} [${newCode}] stok: ${stokAwal} ${newItem.unit}`, "SUCCESS"); showNotif("✅ " + newItem.name + " ditambahkan [" + newCode + "]"); }
-                  setModalStok(false); setNewStokForm({ name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "" });
-                }} style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>✓ Simpan Material</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* MODAL — EDIT STOK */}
-      {/* ══════════════════════════════════════════════════════ */}
-      {false && modalEditStok && editStokItem && (() => {
-        const isF = isFreonItem(editStokItem);
-        const parseStock = v => isF ? (parseFloat(v) || 0) : (parseInt(v) || 0);
-        const tambah = parseStock(newStokForm.tambah);
-        const stokBaru = parseStock(newStokForm.stock ?? editStokItem.stock);
-        const hargaBaru = parseInt(newStokForm.price ?? editStokItem.price) || 0;
-        const reorderBaru = parseInt(newStokForm.reorder ?? editStokItem.reorder) || 5;
-        const stokFinal = stokBaru + tambah;
-        const statusBaru = computeStockStatus(stokFinal, reorderBaru);
-        return (
-          <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setModalEditStok(false); setEditStokItem(null); setNewStokForm({ name: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "", tambah: "" }); }}>
-            <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 420, padding: 28 }} onClick={e => e.stopPropagation()}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>✏️ Edit Stok — {editStokItem.name}</div>
-                <button onClick={() => { setModalEditStok(false); setEditStokItem(null); setNewStokForm({ name: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "", tambah: "" }); }} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
-              </div>
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Stok Saat Ini {isF && <span style={{ color: cs.accent, fontSize: 10 }}>(decimal kg)</span>}</div>
-                    <input id="field_number_12" type="number" step={isF ? "0.1" : "1"} value={newStokForm.stock ?? editStokItem.stock} onChange={e => setNewStokForm(f => ({ ...f, stock: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Tambah (+)</div>
-                    <input id="field_number_13" type="number" step={isF ? "0.1" : "1"} min="0" placeholder="0" value={newStokForm.tambah || ""} onChange={e => setNewStokForm(f => ({ ...f, tambah: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga/Unit</div>
-                    <input id="field_number_14" type="number" value={newStokForm.price ?? editStokItem.price} onChange={e => setNewStokForm(f => ({ ...f, price: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Reorder Point</div>
-                    <input id="field_number_15" type="number" value={newStokForm.reorder ?? editStokItem.reorder} onChange={e => setNewStokForm(f => ({ ...f, reorder: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                </div>
-                <div style={{ background: stokFinal <= editStokItem.min_alert ? cs.red + "12" : cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", fontSize: 12, color: cs.muted }}>
-                  Stok setelah update: <strong style={{ color: statusBaru === "OK" ? cs.green : statusBaru === "OUT" ? cs.red : cs.yellow }}>{stokFinal} {editStokItem.unit}</strong> · Status: <strong style={{ color: statusBaru === "OK" ? cs.green : statusBaru === "OUT" ? cs.red : cs.yellow }}>{statusBaru}</strong>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginTop: 4 }}>
-                  <button onClick={() => { setModalEditStok(false); setEditStokItem(null); setNewStokForm({ name: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "", tambah: "" }); }} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 700 }}>Batal</button>
-                  <button onClick={async () => {
-                    const updated = { ...editStokItem, stock: stokFinal, price: hargaBaru, reorder: reorderBaru, status: statusBaru };
-                    setInventoryData(prev => prev.map(i => i.code === editStokItem.code ? updated : i));
-                    // GAP 2: catat perubahan stok ke inventory_transactions
-                    const deltaStok = stokFinal - editStokItem.stock;
-                    if (deltaStok !== 0) {
-                      await supabase.from("inventory_transactions").insert({
-                        inventory_code: editStokItem.code,
-                        inventory_name: editStokItem.name,
-                        qty: deltaStok,
-                        type: deltaStok > 0 ? "restock" : "correction",
-                        notes: `Update manual oleh ${currentUser?.name || "Admin"}`,
-                        created_by: currentUser?.id || null,
-                        created_by_name: currentUser?.name || "",
-                      });
-                      // ignore inventory_transactions error (tabel opsional)
-                    }
-                    const { error: eErr } = await supabase.from("inventory").update({ stock: stokFinal, price: hargaBaru, reorder: reorderBaru, updated_at: new Date().toISOString() }).eq("code", editStokItem.code);
-                    if (eErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
-                    else { addAgentLog("STOCK_UPDATED", `Stok ${editStokItem.name}: ${editStokItem.stock}→${stokFinal} ${editStokItem.unit} (${statusBaru})`, "SUCCESS"); showNotif("✅ Stok " + editStokItem.name + " diupdate → " + stokFinal + " " + editStokItem.unit); }
-                    setModalEditStok(false); setEditStokItem(null); setNewStokForm({ name: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "", tambah: "" });
-                  }} style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>✓ Simpan Perubahan</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* MODAL — RESTOCK MATERIAL */}
-      {/* ══════════════════════════════════════════════════════ */}
-      {false && modalRestock && restockItem && (() => {
-        const isF = isFreonItem(restockItem);
-        const qtyNum = isF ? parseFloat(restockForm.qty) || 0 : parseInt(restockForm.qty) || 0;
-        const hargaNum = parseInt(restockForm.harga) || 0;
-        const totalBeli = qtyNum * hargaNum;
-        const stokBaru = restockItem.stock + qtyNum;
-        const closeRestock = () => { setModalRestock(false); setRestockItem(null); setRestockForm({ qty: "", harga: "", tanggal: TODAY, keterangan: "", catetBiaya: true }); };
-        return (
-          <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={closeRestock}>
-            <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 20, width: "100%", maxWidth: 440, padding: 24 }} onClick={e => e.stopPropagation()}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>📥 Restock Material</div>
-                  <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{restockItem.name} <span style={{ fontFamily: "monospace", fontSize: 10 }}>[{restockItem.code}]</span></div>
-                </div>
-                <button onClick={closeRestock} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
-              </div>
-              {/* Stok sekarang */}
-              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", justifyContent: "space-between" }}>
-                <div><div style={{ fontSize: 11, color: cs.muted }}>Stok Sekarang</div><div style={{ fontWeight: 800, fontSize: 18, color: restockItem.status === "OUT" ? cs.red : restockItem.status === "CRITICAL" ? cs.yellow : cs.green }}>{restockItem.stock} {restockItem.unit}</div></div>
-                {qtyNum > 0 && <div style={{ textAlign: "right" }}><div style={{ fontSize: 11, color: cs.muted }}>Setelah Restock</div><div style={{ fontWeight: 800, fontSize: 18, color: cs.green }}>+{qtyNum} → {stokBaru} {restockItem.unit}</div></div>}
-              </div>
-              <div style={{ display: "grid", gap: 10 }}>
-                {/* Qty + Harga */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Qty Masuk ({restockItem.unit}) <span style={{ color: cs.red }}>*</span></div>
-                    <input type="number" min="0" step={isF ? "0.1" : "1"} autoFocus placeholder="0"
-                      value={restockForm.qty} onChange={e => setRestockForm(f => ({ ...f, qty: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.green + "66", borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 14, outline: "none", boxSizing: "border-box", fontWeight: 700 }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga Beli/Unit (Rp)</div>
-                    <input type="number" min="0" placeholder={restockItem.price || "0"}
-                      value={restockForm.harga} onChange={e => setRestockForm(f => ({ ...f, harga: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                </div>
-                {/* Total & tanggal */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Tanggal Beli</div>
-                    <input type="date" value={restockForm.tanggal} onChange={e => setRestockForm(f => ({ ...f, tanggal: e.target.value }))}
-                      style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", colorScheme: "dark" }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Total Beli</div>
-                    <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", fontSize: 14, fontWeight: 800, color: totalBeli > 0 ? cs.green : cs.muted }}>
-                      {totalBeli > 0 ? "Rp" + totalBeli.toLocaleString("id-ID") : "—"}
-                    </div>
-                  </div>
-                </div>
-                {/* Keterangan */}
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Keterangan (opsional)</div>
-                  <input type="text" placeholder="cth: Beli di Toko Sejahtera, no faktur 001" value={restockForm.keterangan}
-                    onChange={e => setRestockForm(f => ({ ...f, keterangan: e.target.value }))}
-                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                </div>
-                {/* Toggle: catat biaya otomatis */}
-                <div style={{ background: cs.green + "10", border: "1px solid " + cs.green + "33", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>💳 Catat ke Biaya Otomatis</div>
-                    <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Akan buat expense material_purchase sekaligus</div>
-                  </div>
-                  <button onClick={() => setRestockForm(f => ({ ...f, catetBiaya: !f.catetBiaya }))}
-                    style={{ width: 44, height: 24, borderRadius: 99, border: "none", cursor: "pointer", background: restockForm.catetBiaya ? cs.green : cs.border, transition: "background .2s", position: "relative", flexShrink: 0 }}>
-                    <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: restockForm.catetBiaya ? 23 : 3, transition: "left .2s" }} />
-                  </button>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginTop: 4 }}>
-                  <button onClick={closeRestock} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 700 }}>Batal</button>
-                  <button onClick={async () => {
-                    if (qtyNum <= 0) { showNotif("❌ Qty harus lebih dari 0"); return; }
-                    // 1. Update stok inventory
-                    const newStatus = computeStockStatus(stokBaru, restockItem.reorder);
-                    setInventoryData(prev => prev.map(i => i.code === restockItem.code ? { ...i, stock: stokBaru, status: newStatus } : i));
-                    // Insert restock transaction
-                    await supabase.from("inventory_transactions").insert({
-                      inventory_code: restockItem.code,
-                      inventory_name: restockItem.name,
-                      qty: qtyNum,
-                      type: "restock",
-                      notes: restockForm.keterangan || ("Restock manual oleh " + (currentUser?.name || "Owner")),
-                      created_by: currentUser?.id || null,
-                      created_by_name: currentUser?.name || "",
-                    }).then(() => {});
-                    // Update stock di DB
-                    const { error: invErr } = await supabase.from("inventory").update({ stock: stokBaru, updated_at: new Date().toISOString() }).eq("code", restockItem.code);
-                    if (invErr) showNotif("⚠️ Stok tersimpan lokal, sync DB gagal: " + invErr.message);
-                    // 2. Jika toggle aktif dan ada harga: buat expense material_purchase
-                    if (restockForm.catetBiaya && hargaNum > 0 && totalBeli > 0) {
-                      const subcat = isFreonItem(restockItem) ? "Freon" : restockItem.material_type === "pipa" ? "Pipa AC" : restockItem.material_type === "kabel" ? "Kabel" : "Material Lain";
-                      const expPayload = {
-                        category: "material_purchase",
-                        subcategory: subcat,
-                        amount: totalBeli,
-                        date: restockForm.tanggal || TODAY,
-                        description: restockForm.keterangan || `Restock ${restockItem.name} ${qtyNum} ${restockItem.unit}`,
-                        item_name: restockItem.name + " " + qtyNum + " " + restockItem.unit,
-                        freon_type: isFreonItem(restockItem) ? (restockItem.name.includes("R22") ? "R22" : restockItem.name.includes("R410") ? "R410A" : "R32") : null,
-                        created_by: currentUser?.name || "Owner",
-                        last_changed_by: currentUser?.name || "Owner",
-                      };
-                      const { error: expErr } = await supabase.from("expenses").insert(expPayload);
-                      if (expErr) showNotif("⚠️ Stok berhasil, expense gagal: " + expErr.message);
-                      else addAgentLog("RESTOCK_EXPENSE", `Restock ${restockItem.name} +${qtyNum} ${restockItem.unit} — Rp${totalBeli.toLocaleString("id-ID")} dicatat ke biaya`, "SUCCESS");
-                    }
-                    addAgentLog("STOCK_RESTOCK", `Restock ${restockItem.name}: +${qtyNum} → ${stokBaru} ${restockItem.unit}`, "SUCCESS");
-                    showNotif("✅ Restock " + restockItem.name + " +" + qtyNum + " " + restockItem.unit + (restockForm.catetBiaya && totalBeli > 0 ? " · biaya Rp" + totalBeli.toLocaleString("id-ID") + " dicatat" : ""));
-                    closeRestock();
-                  }} style={{ background: "linear-gradient(135deg," + cs.green + ",#10b981)", border: "none", color: "#fff", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>
-                    📥 Simpan Restock{restockForm.catetBiaya && totalBeli > 0 ? " + Catat Biaya" : ""}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — TAMBAH/EDIT TEKNISI */}
       {/* ══════════════════════════════════════════════════════ */}
@@ -9823,81 +9506,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       )}
 
       {/* ══════════════════════════════════════════════════════ */}
-      {/* MODAL — BRAIN.MD EDITOR */}
+      {/* MODAL — BRAIN.MD EDITOR — BrainEditModal */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalBrainEdit && (
-        <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 500, display: "flex", alignItems: isMobile ? "flex-end" : "center", justifyContent: "center", padding: 16 }} onClick={() => setModalBrainEdit(false)}>
-          <div style={{ background: cs.surface, border: "1px solid " + cs.ara + "44", borderRadius: isMobile ? "16px 16px 0 0" : 20, width: "100%", maxWidth: isMobile ? "100%" : 780, maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
-            <div style={{ background: cs.ara + "15", borderBottom: "1px solid " + cs.ara + "33", padding: "16px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-              <div>
-                <div style={{ fontWeight: 800, color: cs.ara, fontSize: 16 }}>🧠 Edit Brain.md — Memori Permanen ARA</div>
-                <div style={{ fontSize: 12, color: cs.muted, marginTop: 3 }}>
-                  {localStorage.getItem("aclean_brainMd") ? "💾 Backup lokal: ✅" : "💾 Backup lokal: ✗"}&nbsp;·&nbsp;
-                  ☁️ Supabase: tersimpan permanen · Sync semua device
-                </div>
-              </div>
-              <button onClick={() => setModalBrainEdit(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 24, cursor: "pointer" }}>×</button>
-            </div>
-            <div style={{ background: cs.ara + "08", borderBottom: "1px solid " + cs.border, padding: "8px 22px", display: "flex", gap: 20, fontSize: 11, flexShrink: 0 }}>
-              <span style={{ color: cs.muted }}>📝 Baris: <strong style={{ color: cs.text }}>{(typeof brainMd === "string" ? brainMd : "").split("\n").length}</strong></span>
-              <span style={{ color: cs.muted }}>🔤 Karakter: <strong style={{ color: cs.text }}>{typeof brainMd === "string" ? brainMd.length : 0}</strong></span>
-              <span style={{ color: cs.muted }}>💡 Gunakan # untuk heading</span>
-            </div>
-            <textarea value={brainMd} onChange={e => setBrainMd(e.target.value)}
-              style={{ flex: 1, background: cs.bg, border: "none", padding: "18px 22px", color: cs.text, fontSize: 13, fontFamily: "monospace", lineHeight: 1.7, outline: "none", resize: "none", minHeight: 400 }} />
-            <div style={{ background: cs.surface, borderTop: "1px solid " + cs.border, padding: "10px 22px", display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
-              <span style={{ fontSize: 11, color: cs.muted, alignSelf: "center" }}>Tambah section:</span>
-              {[["Harga Baru", "\n## Harga Update\n- Cleaning 1PK: Rp XX.000\n"], ["Aturan Baru", "\n## Aturan Tambahan\n- Aturan: ...\n"], ["Promo Aktif", "\n## Promo\n- Diskon X% untuk Y unit\n"]].map(([label, snippet]) => (
-                <button key={label} onClick={() => setBrainMd(prev => prev + snippet)}
-                  style={{ background: cs.ara + "18", border: "1px solid " + cs.ara + "33", color: cs.ara, padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>+ {label}</button>
-              ))}
-            </div>
-            <div style={{ background: cs.surface, borderTop: "1px solid " + cs.border, padding: "14px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-              <button onClick={() => { setBrainMd(BRAIN_MD_DEFAULT); showNotif("Brain.md direset ke default"); }}
-                style={{ background: cs.red + "18", border: "1px solid " + cs.red + "33", color: cs.red, padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>🔄 Reset ke Default</button>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => setModalBrainEdit(false)} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>Batal</button>
-                <button onClick={async () => {
-                  showNotif("⏳ Menyimpan Brain.md ke Supabase...");
-                  // Selalu simpan ke localStorage dulu sebagai backup instan
-                  _lsSave("brainMd", brainMd);
-                  let dbOk = false;
-                  // Attempt 1: upsert (insert or update on conflict)
-                  try {
-                    const payload = { key: "brain_md", value: brainMd, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() };
-                    const { error: e1 } = await supabase.from("ara_brain").upsert(payload, { onConflict: "key" });
-                    if (!e1) { dbOk = true; }
-                    else {
-                      // Attempt 2: coba UPDATE saja (jika row sudah ada)
-                      const { error: e2 } = await supabase.from("ara_brain")
-                        .update({ value: brainMd, updated_by: currentUser?.name || "Owner", updated_at: new Date().toISOString() })
-                        .eq("key", "brain_md");
-                      if (!e2) { dbOk = true; }
-                      else {
-                        // Attempt 3: INSERT baru (jika row belum ada)
-                        const { error: e3 } = await supabase.from("ara_brain")
-                          .insert({ key: "brain_md", value: brainMd, updated_by: currentUser?.name || "Owner" });
-                        if (!e3) dbOk = true;
-                        else throw new Error("Upsert: " + e1.message + " | Update: " + e2.message + " | Insert: " + e3.message);
-                      }
-                    }
-                  } catch (e) {
-                    showNotif("⚠️ DB error: " + (e?.message || "") + " — Tersimpan di localStorage saja. Jalankan fix_ara_brain_table.sql di Supabase.");
-                    addAgentLog("BRAIN_SAVE_ERROR", "Brain.md gagal ke DB: " + (e?.message || ""), "ERROR");
-                    setModalBrainEdit(false); return;
-                  }
-                  if (dbOk) {
-                    addAgentLog("BRAIN_SAVED", "Brain.md disimpan ke Supabase (" + brainMd.length + " karakter)", "SUCCESS");
-                    showNotif("✅ Brain.md tersimpan permanen di Supabase + localStorage!");
-                  }
-                  setModalBrainEdit(false);
-                }}
-                  style={{ background: "linear-gradient(135deg," + cs.ara + ",#7c3aed)", border: "none", color: "#fff", padding: "9px 22px", borderRadius: 8, cursor: "pointer", fontWeight: 800, fontSize: 13 }}>💾 Simpan Brain.md</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <Suspense fallback={null}>
+        <BrainEditModal
+          open={modalBrainEdit}
+          onClose={() => setModalBrainEdit(false)}
+          brainMd={brainMd}
+          setBrainMd={setBrainMd}
+          BRAIN_MD_DEFAULT={BRAIN_MD_DEFAULT}
+          currentUser={currentUser}
+          showNotif={showNotif}
+          addAgentLog={addAgentLog}
+          supabase={supabase}
+          isMobile={isMobile}
+          _lsSave={_lsSave}
+        />
+      </Suspense>
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODAL — EDIT BRAIN CUSTOMER */}
@@ -10158,83 +9783,18 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         </div>
       )}
 
-      {/* ══ MODAL EDIT PASSWORD (Owner only) ══ */}
-      {modalEditPwd && editPwdTarget && (
-        <div style={{
-          position: "fixed", inset: 0, background: "#000d", zIndex: 500,
-          display: "flex", alignItems: "center", justifyContent: "center", padding: 16
-        }}>
-          <div style={{
-            background: cs.surface, border: "1px solid " + cs.border,
-            borderRadius: 16, width: "100%", maxWidth: 380, padding: 24
-          }}>
-            <div style={{ fontWeight: 800, fontSize: 15, color: cs.text, marginBottom: 4 }}>🔑 Ganti Password</div>
-            <div style={{ fontSize: 12, color: cs.muted, marginBottom: 20 }}>Akun: <strong style={{ color: cs.accent }}>{editPwdTarget.name}</strong></div>
-            <div style={{ display: "grid", gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Password Baru</div>
-                <input id="epwd_new" type="password" value={editPwdForm.newPwd}
-                  onChange={e => setEditPwdForm(f => ({ ...f, newPwd: e.target.value }))}
-                  placeholder="Minimal 8 karakter"
-                  style={{
-                    width: "100%", background: cs.card, border: "1px solid " + cs.border,
-                    borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13
-                  }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 5 }}>Konfirmasi Password</div>
-                <input id="epwd_confirm" type="password" value={editPwdForm.confirmPwd}
-                  onChange={e => setEditPwdForm(f => ({ ...f, confirmPwd: e.target.value }))}
-                  placeholder="Ulangi password baru"
-                  style={{
-                    width: "100%", background: cs.card, border: "1px solid " + cs.border,
-                    borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13
-                  }} />
-              </div>
-              {editPwdForm.newPwd && editPwdForm.confirmPwd && editPwdForm.newPwd !== editPwdForm.confirmPwd && (
-                <div style={{ fontSize: 11, color: cs.red }}>⚠️ Password tidak cocok</div>
-              )}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginTop: 4 }}>
-                <button onClick={() => { setModalEditPwd(false); setEditPwdTarget(null); }}
-                  style={{
-                    padding: "10px", background: cs.surface, border: "1px solid " + cs.border,
-                    borderRadius: 10, color: cs.text, cursor: "pointer", fontWeight: 600
-                  }}>Batal</button>
-                <button onClick={async () => {
-                  const p = editPwdForm.newPwd.trim();
-                  const c = editPwdForm.confirmPwd.trim();
-                  if (!p || p.length < 8) { showNotif("⚠️ Password minimal 8 karakter"); return; }
-                  if (p !== c) { showNotif("⚠️ Password tidak cocok"); return; }
-                  // Password login = Supabase Auth (auth.users), BUKAN kolom user_profiles.password.
-                  // Wajib lewat /api/manage-user reset-password → admin.updateUserById, kalau tidak
-                  // password lama tetap bisa login & password baru tidak pernah aktif.
-                  const isUUID = /^[0-9a-f-]{36}$/.test(String(editPwdTarget.id || "").toLowerCase());
-                  if (!isUUID) { showNotif("⚠️ User ini tidak punya akun Supabase Auth — password tidak bisa diubah"); return; }
-                  try {
-                    const res = await fetch("/api/manage-user", {
-                      method: "POST",
-                      headers: await _apiHeaders(),
-                      body: JSON.stringify({ action: "reset-password", userId: editPwdTarget.id, password: p, callerRole: currentUser?.role || "" })
-                    });
-                    const result = await res.json();
-                    if (!res.ok || result.error) { showNotif("❌ Gagal ubah password: " + (result.error || res.status)); return; }
-                    addAgentLog("PWD_CHANGED", `Password ${editPwdTarget.name} diubah oleh Owner`, "SUCCESS");
-                    showNotif("✅ Password " + editPwdTarget.name + " berhasil diubah");
-                    setModalEditPwd(false); setEditPwdTarget(null);
-                  } catch (err) {
-                    showNotif("❌ Gagal ubah password: " + (err.message || err));
-                  }
-                }} style={{
-                  padding: "10px", background: "linear-gradient(135deg,#f59e0b,#f97316)",
-                  border: "none", borderRadius: 10, color: "#fff", cursor: "pointer", fontWeight: 700
-                }}>
-                  💾 Simpan Password
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ══ MODAL EDIT PASSWORD (Owner only) — EditPasswordModal ══ */}
+      <Suspense fallback={null}>
+        <EditPasswordModal
+          open={modalEditPwd}
+          target={editPwdTarget}
+          onClose={() => { setModalEditPwd(false); setEditPwdTarget(null); }}
+          currentUser={currentUser}
+          showNotif={showNotif}
+          addAgentLog={addAgentLog}
+          _apiHeaders={_apiHeaders}
+        />
+      </Suspense>
 
       {modalEditInvoice && editInvoiceData && (() => {
         // Build lookup lists dari priceListData + inventoryData
@@ -10914,177 +10474,31 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       })()}
 
       {/* ══════════════════════════════════════════════════════ */}
-      {/* MODAL — APPROVE INVOICE (pilihan kirim/simpan) */}
+      {/* MODAL — APPROVE INVOICE — ApproveInvoiceModal */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalApproveInv && pendingApproveInv && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 500,
-          display: "flex", alignItems: "center", justifyContent: "center", padding: 20
-        }}
-          onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}>
-          <div style={{
-            background: cs.surface, border: "1px solid " + cs.border, borderRadius: 18,
-            padding: 28, width: "100%", maxWidth: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.4)"
-          }}
-            onClick={e => e.stopPropagation()}>
-
-            {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>✅ Approve Invoice</div>
-                <div style={{ fontSize: 12, color: cs.muted, marginTop: 4 }}>Setelah approve, invoice tidak bisa diedit lagi</div>
-              </div>
-              <button onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}
-                style={{ background: "none", border: "none", color: cs.muted, fontSize: 20, cursor: "pointer", lineHeight: 1 }}>×</button>
-            </div>
-
-            {/* Info invoice */}
-            <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px", marginBottom: 20 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                <span style={{ fontFamily: "monospace", fontWeight: 800, color: cs.accent, fontSize: 14 }}>{pendingApproveInv.id}</span>
-                <span style={{ fontWeight: 800, color: cs.green, fontSize: 14 }}>{fmt(pendingApproveInv.total)}</span>
-              </div>
-              <div style={{ fontSize: 12, color: cs.muted }}>👤 {pendingApproveInv.customer}</div>
-              <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>🔧 {pendingApproveInv.service}</div>
-              <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>📱 {pendingApproveInv.phone}</div>
-            </div>
-
-            {/* Pilihan */}
-            <div style={{ display: "grid", gap: 10 }}>
-              {/* Opsi 1 — Kirim ke Customer */}
-              <button onClick={() => approveAndSend(pendingApproveInv)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 14, background: "linear-gradient(135deg," + cs.green + ",#059669)",
-                  border: "none", borderRadius: 12, padding: "14px 18px", cursor: "pointer", textAlign: "left"
-                }}>
-                <span style={{ fontSize: 24 }}>📤</span>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 14, color: "#fff" }}>Approve & Kirim ke Customer</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 2 }}>Invoice langsung dikirim via WA ke {pendingApproveInv.phone}</div>
-                </div>
-              </button>
-
-              {/* Opsi 2 — Simpan Dahulu */}
-              <button onClick={() => approveSaveOnly(pendingApproveInv)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 14, background: cs.card,
-                  border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 18px", cursor: "pointer", textAlign: "left"
-                }}>
-                <span style={{ fontSize: 24 }}>💾</span>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>Approve & Simpan Dahulu</div>
-                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Invoice diapprove tapi belum dikirim — kirim manual nanti dari halaman Invoice</div>
-                </div>
-              </button>
-
-              <button onClick={() => { setModalApproveInv(false); setPendingApproveInv(null); }}
-                style={{ background: "none", border: "none", color: cs.muted, fontSize: 12, cursor: "pointer", padding: "6px 0" }}>
-                Batal
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Suspense fallback={null}>
+        <ApproveInvoiceModal
+          open={modalApproveInv}
+          invoice={pendingApproveInv}
+          onClose={() => { setModalApproveInv(false); setPendingApproveInv(null); }}
+          approveAndSend={approveAndSend}
+          approveSaveOnly={approveSaveOnly}
+          fmt={fmt}
+        />
+      </Suspense>
 
       {/* ══════════════════════════════════════════════════════ */}
-      {/* MODAL — WA TEKNISI KE CUSTOMER (pilihan pesan) */}
+      {/* MODAL — WA TEKNISI KE CUSTOMER — WaTekModal */}
       {/* ══════════════════════════════════════════════════════ */}
-      {modalWaTek && waTekTarget && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 600,
-          display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 0 0 0"
-        }}
-          onClick={() => { setModalWaTek(false); setWaTekTarget(null); }}>
-          <div style={{
-            background: cs.surface, borderRadius: "18px 18px 0 0", width: "100%", maxWidth: 480,
-            padding: "24px 20px 32px", border: "1px solid " + cs.border
-          }}
-            onClick={e => e.stopPropagation()}>
-
-            {/* Handle bar */}
-            <div style={{ width: 40, height: 4, background: cs.border, borderRadius: 99, margin: "0 auto 18px" }} />
-
-            {/* Header */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>📱 WA ke Customer</div>
-              <div style={{ fontSize: 12, color: cs.muted, marginTop: 3 }}>
-                {waTekTarget.customer} · {waTekTarget.phone}
-              </div>
-              <div style={{ fontSize: 11, color: cs.muted, marginTop: 1 }}>🔧 {waTekTarget.service}</div>
-            </div>
-
-            {/* Pilihan pesan */}
-            <div style={{ display: "grid", gap: 8 }}>
-              {[
-                {
-                  icon: "🚗",
-                  label: "Konfirmasi sedang menuju",
-                  msg: `Halo ${waTekTarget.customer}, saya dari ${appSettings.app_name || "AClean"} Service sedang dalam perjalanan menuju lokasi Anda. Estimasi tiba pkl ${waTekTarget.time || "sebentar lagi"}. Mohon ditunggu ya! 🙏`
-                },
-                {
-                  icon: "📍",
-                  label: "Tanya patokan / lokasi",
-                  msg: `Halo ${waTekTarget.customer}, saya teknisi ${appSettings.app_name || "AClean"} yang akan servis hari ini. Boleh minta patokan lokasi rumah Bapak/Ibu? Alamat yang tercatat: ${waTekTarget.address || "—"}. Terima kasih 🙏`
-                },
-                {
-                  icon: "✅",
-                  label: "Konfirmasi jadwal hari ini",
-                  msg: `Halo ${waTekTarget.customer}, kami konfirmasi jadwal servis AC dari ${appSettings.app_name || "AClean"} hari ini pkl ${waTekTarget.time || "—"} untuk ${waTekTarget.service || "servis AC"}. Apakah masih bisa? 🙏`
-                },
-                {
-                  icon: "⏰",
-                  label: "Info terlambat / minta reschedule",
-                  msg: `Halo ${waTekTarget.customer}, mohon maaf kami dari ${appSettings.app_name || "AClean"} ada keterlambatan. Kami akan tiba sedikit lebih lama dari jadwal. Terima kasih atas pengertiannya 🙏`
-                },
-                {
-                  icon: "✔️",
-                  label: "Pekerjaan selesai — terima kasih",
-                  msg: `Halo ${waTekTarget.customer}, pekerjaan servis AC (${waTekTarget.service || "—"}) telah selesai. Terima kasih sudah mempercayakan ke ${appSettings.app_name || "AClean"} Service. Semoga AC-nya nyaman kembali! 😊`
-                },
-              ].map(({ icon, label, msg }) => (
-                <button key={label} onClick={async () => {
-                  setModalWaTek(false);
-                  setWaTekTarget(null);
-                  await openWA(waTekTarget.phone, msg);
-                }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 12, background: cs.card,
-                    border: "1px solid " + cs.border, borderRadius: 12, padding: "12px 14px",
-                    cursor: "pointer", textAlign: "left", width: "100%"
-                  }}>
-                  <span style={{ fontSize: 20, flexShrink: 0 }}>{icon}</span>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>{label}</div>
-                    <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{msg.slice(0, 60)}...</div>
-                  </div>
-                </button>
-              ))}
-
-              {/* Ketik manual */}
-              <button onClick={() => {
-                setModalWaTek(false); setWaTekTarget(null);
-                window.open("https://wa.me/" + String(waTekTarget.phone).replace(/^0/, "62").replace(/[^0-9]/g, ""), "_blank");
-              }}
-                style={{
-                  display: "flex", alignItems: "center", gap: 12, background: "#25D36615",
-                  border: "1px solid #25D36633", borderRadius: 12, padding: "12px 14px",
-                  cursor: "pointer", textAlign: "left", width: "100%"
-                }}>
-                <span style={{ fontSize: 20 }}>💬</span>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#25D366" }}>Ketik pesan sendiri</div>
-                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Buka WhatsApp — tulis pesan bebas</div>
-                </div>
-              </button>
-
-              <button onClick={() => { setModalWaTek(false); setWaTekTarget(null); }}
-                style={{ background: "none", border: "none", color: cs.muted, fontSize: 12, cursor: "pointer", padding: "6px 0", marginTop: 4 }}>
-                Batal
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Suspense fallback={null}>
+        <WaTekModal
+          open={modalWaTek}
+          target={waTekTarget}
+          onClose={() => { setModalWaTek(false); setWaTekTarget(null); }}
+          appName={appSettings.app_name}
+          openWA={openWA}
+        />
+      </Suspense>
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* WA PANEL */}
