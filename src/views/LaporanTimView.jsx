@@ -1,7 +1,7 @@
 import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
-import { resolveMultiDayInvoiceAction } from "../lib/invoiceMultiDay.js";
+import { resolveMultiDayInvoiceAction, mergeInvoiceDetail, tagDetailSource, recomputeInvoiceTotals } from "../lib/invoiceMultiDay.js";
 import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryFromCatalog } from "../lib/invoicing.js";
 
 // ── Survey Kirim Modal ─────────────────────────────────────────────────────────
@@ -461,12 +461,114 @@ const verifyLaporan = async (r) => {
       _multiDayAnchor = _md.anchorJobId;
       if (_md.type === "SKIP") {
         const existing = _md.existing;
+        const dayNum = _ordMD?.day_number || "?";
+
+        // ── Kalkulasi items dari laporan hari ini (sama seperti day-1) ──
+        const _ordDay = ordersData.find(o => o.id === r.job_id);
+        const _rawMatsD = (() => {
+          if (r.materials_json) { try { return JSON.parse(r.materials_json); } catch (_) {} }
+          return safeArr(r.materials);
+        })();
+        const vMDetailD = _rawMatsD
+          .filter(m => m.nama && parseFloat(m.jumlah || 0) > 0)
+          .map(m => {
+            const nm = (m.nama || "").toLowerCase();
+            const isF = ["freon","r-22","r-32","r-410","r22","r32","r410"].some(k => nm.includes(k));
+            const qty = isF ? Math.max(1, Math.ceil(parseFloat(m.jumlah) || 0)) : (parseFloat(m.jumlah) || 0);
+            let hSat = parseFloat(m.harga_satuan) || 0;
+            if (!hSat) hSat = lookupHargaGlobal(m.nama, m.satuan);
+            let ket = m.keterangan || "";
+            if (!ket) {
+              if (isF) ket = "freon";
+              else if (["repair","perbaikan","kapasitor","kompresor","sparepart","pcb"].some(k => nm.includes(k))) ket = "repair";
+              else if (["cleaning","maintenance","cuci","jasa","service","servis","pemasangan","bongkar","instalasi","vacum","kuras"].some(k => nm.includes(k))) ket = "jasa";
+            }
+            return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket, category: categoryFromCatalog(m.nama, priceListData) };
+          });
+
+        // Inject labor (Cleaning/Maintenance)
+        const isCleanMaintD = r.service === "Cleaning" || r.service === "Maintenance";
+        if (isCleanMaintD && !vMDetailD.some(m => m.keterangan === "jasa")) {
+          const rUnitsD = Array.isArray(r.units) ? r.units : [];
+          const withTipeD = rUnitsD.filter(u => u && u.tipe);
+          if (withTipeD.length > 0) {
+            withTipeD.forEach(u => {
+              const hp = hargaPerUnitFromTipe(r.service, u.tipe, priceListData);
+              if (hp > 0) {
+                const lbl = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
+                const bk = getBracketKey(r.service, u.tipe) || u.tipe;
+                vMDetailD.unshift({ nama: r.service + " " + bk + " (" + lbl + ")", jumlah: 1, satuan: "unit", harga_satuan: hp, subtotal: hp, keterangan: "jasa" });
+              }
+            });
+          } else {
+            const sf = hitungLabor(r.service, _ordDay?.type, (Array.isArray(r.units) ? r.units.length : r.units) || _ordDay?.units || 1);
+            if (sf > 0) {
+              const uc = Math.max(1, (Array.isArray(r.units) ? r.units.length : parseInt(r.units)) || parseInt(_ordDay?.units) || 1);
+              vMDetailD.unshift({ nama: (r.service || "") + (_ordDay?.type ? " - " + _ordDay.type : "") + " (Servis)", jumlah: uc, satuan: "unit", harga_satuan: Math.round(sf / uc), subtotal: sf, keterangan: "jasa" });
+            }
+          }
+        }
+        // Inject Biaya Pengecekan (Repair)
+        if (r.service === "Repair" && !vMDetailD.some(m => m.keterangan === "jasa" || m.keterangan === "repair")) {
+          const bcItem = priceListData.find(p => p.service === "Repair" && p.type === "Biaya Pengecekan AC");
+          const bc = (bcItem && bcItem.price > 0) ? bcItem.price : 100000;
+          const ucD = Math.max(1, (Array.isArray(r.units) ? r.units.length : Number(r.units)) || Number(_ordDay?.units) || 1);
+          vMDetailD.unshift({ nama: "Biaya Pengecekan AC", jumlah: ucD, satuan: "unit", harga_satuan: bc, subtotal: bc * ucD, keterangan: "jasa" });
+        }
+
+        const _sumD = summarize(vMDetailD);
+        const hasItemsD = vMDetailD.length > 0 && _sumD.total > 0;
+
+        // Tautkan order ke invoice induk (selalu dilakukan terlepas merge/skip)
         await updateOrder(supabase, r.job_id, { status: "COMPLETED", invoice_id: existing.id }, auditUserName());
         setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED", invoice_id: existing.id } : o));
         if (updateCustomerTierAfterOrder) updateCustomerTierAfterOrder(_ordMD).catch(() => {});
-        addAgentLog("MULTIDAY_SKIP_INVOICE",
-          `Verify laporan ${r.job_id} (hari ke-${_ordMD.day_number || "?"}) — invoice induk ${existing.id} sudah ada, tidak buat/menambah (edit manual bila perlu)`, "INFO");
-        showNotif(`ℹ️ Laporan hari ke-${_ordMD.day_number || "?"} verified & ditautkan ke invoice induk ${existing.id}. Tidak ada invoice baru — edit invoice induk bila ada tambahan.`);
+
+        if (!hasItemsD) {
+          addAgentLog("MULTIDAY_SKIP_INVOICE", `Verify laporan ${r.job_id} (hari ke-${dayNum}) — tidak ada item baru, ditautkan ke ${existing.id}`, "INFO");
+          showNotif(`✅ Laporan hari ke-${dayNum} verified & ditautkan ke invoice induk ${existing.id}. Tidak ada item baru.`);
+          return;
+        }
+
+        // Ada items → tanya Owner apakah mau digabung
+        const itemPreview = vMDetailD.slice(0, 4).map(m => `• ${m.nama} × ${m.jumlah} — ${fmt(m.subtotal)}`).join("\n")
+          + (vMDetailD.length > 4 ? `\n  …dan ${vMDetailD.length - 4} item lainnya` : "");
+
+        const ok = await showConfirm({
+          icon: "📋",
+          title: `Gabungkan ke Invoice Induk?`,
+          message: `Laporan hari ke-${dayNum} sudah verified.\nJob: ${r.job_id} → Invoice induk: ${existing.id}\n\nItem pekerjaan hari ini (${vMDetailD.length} item, total ${fmt(_sumD.total)}):\n${itemPreview}\n\nTambahkan ke invoice ${existing.id}?`,
+          confirmText: "Ya, Gabungkan",
+        });
+
+        if (ok) {
+          const existDetail = (() => { try { return JSON.parse(existing.materials_detail || "[]"); } catch (_) { return []; } })();
+          const tagged = tagDetailSource(vMDetailD, r.job_id);
+          const merged = mergeInvoiceDetail(existDetail, tagged, r.job_id);
+          const newTotals = recomputeInvoiceTotals(merged);
+
+          const { error: mergeErr } = await supabase.from("invoices").update({
+            materials_detail: JSON.stringify(normalizeLines(merged)),
+            labor: newTotals.labor,
+            material: newTotals.material,
+            total: newTotals.total,
+          }).eq("id", existing.id);
+
+          if (mergeErr) {
+            showNotif("❌ Gagal menggabungkan items: " + mergeErr.message);
+            addAgentLog("MULTIDAY_MERGE_ERROR", `Gagal merge laporan ${r.job_id} ke invoice ${existing.id}: ${mergeErr.message}`, "ERROR");
+          } else {
+            const mergedStr = JSON.stringify(normalizeLines(merged));
+            setInvoicesData(prev => prev.map(inv => inv.id === existing.id
+              ? { ...inv, materials_detail: mergedStr, labor: newTotals.labor, material: newTotals.material, total: newTotals.total }
+              : inv));
+            showNotif(`✅ ${vMDetailD.length} item dari laporan hari ke-${dayNum} digabungkan ke invoice ${existing.id}. Total baru: ${fmt(newTotals.total)}`);
+            addAgentLog("MULTIDAY_MERGE_SUCCESS", `Merge laporan ${r.job_id} (hari ke-${dayNum}) ke invoice ${existing.id}: ${vMDetailD.length} item, total ${newTotals.total}`, "INFO");
+          }
+        } else {
+          addAgentLog("MULTIDAY_SKIP_INVOICE", `Verify laporan ${r.job_id} (hari ke-${dayNum}) — Owner skip merge, ditautkan ke ${existing.id}`, "INFO");
+          showNotif(`✅ Laporan hari ke-${dayNum} verified & ditautkan ke invoice induk ${existing.id}. Item tidak digabungkan.`);
+        }
         return;
       }
       // CREATE / CREATE_SEPARATE → lanjut; invoice baru pakai anchor _multiDayAnchor.
