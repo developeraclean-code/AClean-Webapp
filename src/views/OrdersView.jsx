@@ -8,6 +8,7 @@ function OrdersView({ ordersData, setOrdersData, searchLoading, orderFilter, set
 const allTekOrd = ["Semua", ...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
 const sMap2 = { "Pending": "PENDING", "Confirmed": "CONFIRMED", "In Progress": "IN_PROGRESS", "Completed": "COMPLETED", "Cancelled": "CANCELLED" };
 // Opsi B: order WA yang masih PENDING = draft di Inbox, belum naik ke sini
+// Dedup id ganda dijaga global di App.jsx (lihat useEffect "jaring pengaman ordersData").
 let filtered = ordersData.filter(o =>
   !(o.source === "whatsapp" && o.status === "PENDING")
 );

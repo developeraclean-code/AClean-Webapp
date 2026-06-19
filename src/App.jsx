@@ -1351,6 +1351,25 @@ export default function ACleanWebApp() {
     return extras.length ? [...ordersData, ...extras] : ordersData;
   }, [ordersData, searchOrdExt]);
 
+  // ── Jaring pengaman global: ordersData tak pernah simpan id ganda. ──
+  // Beberapa jalur (realtime INSERT + create/confirm order WA) sesekali menyisipkan
+  // entri dobel ke state → bikin baris dobel di Order Masuk DAN salah-hitung di
+  // stats/Dashboard. Dedup di satu titik ini menjaga semua view + agregasi bersih.
+  // Guard `uniq.length === prev.length ? prev` mencegah loop re-render.
+  useEffect(() => {
+    setOrdersData(prev => {
+      if (!Array.isArray(prev) || prev.length < 2) return prev;
+      const seen = new Set();
+      const uniq = prev.filter(o => {
+        if (!o || !o.id) return true;
+        if (seen.has(o.id)) return false;
+        seen.add(o.id);
+        return true;
+      });
+      return uniq.length === prev.length ? prev : uniq;
+    });
+  }, [ordersData]);
+
   // BAP offline sync worker — trigger flush + refresh counter
   const triggerBAPSync = async () => {
     if (bapSyncing) return;
