@@ -88,8 +88,8 @@ async function taskReminder() {
     .in("key", ["bank_name","bank_number","bank_holder","company_name","invoice_reminder_enabled","cron_jobs"]);
   const bankMap = Object.fromEntries((bankData||[]).map(s=>[s.key, s.value]));
 
-  // Cek toggle — prioritas: cron_jobs JSON > key lama invoice_reminder_enabled
-  const isEnabled = isCronJobEnabled(bankMap, "invoice_reminder_enabled");
+  // Cek toggle — AND-logic: cron_jobs JSON DAN standalone key harus aktif
+  const isEnabled = isCronJobEnabled(bankMap, "invoice_reminder_enabled") && bankMap["invoice_reminder_enabled"] !== "false";
   if (!isEnabled) {
     await log("CRON_REMINDER", "Dilewati — Payment Reminder dinonaktifkan via Settings", "INFO");
     return { skipped: true, reason: "Payment Reminder dinonaktifkan via Settings" };
@@ -159,7 +159,7 @@ async function taskDaily() {
   // Cek toggle — prioritas: cron_jobs JSON > key lama daily_report_enabled
   const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["daily_report_enabled","cron_jobs"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
-  if (!isCronJobEnabled(togMap, "daily_report_enabled")) {
+  if (!isCronJobEnabled(togMap, "daily_report_enabled") || togMap["daily_report_enabled"] !== "true") {
     await log("DAILY_REPORT", "Dilewati — Laporan Harian dinonaktifkan via Settings", "INFO");
     return { skipped: true };
   }
@@ -233,7 +233,7 @@ async function taskStock() {
   // Cek toggle — prioritas: cron_jobs JSON > key lama stock_alert_enabled
   const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["stock_alert_enabled","cron_jobs"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
-  if (!isCronJobEnabled(togMap, "stock_alert_enabled")) {
+  if (!isCronJobEnabled(togMap, "stock_alert_enabled") || togMap["stock_alert_enabled"] !== "true") {
     await log("STOCK_ALERT", "Dilewati — Stok Alert dinonaktifkan via Settings", "INFO");
     return { skipped: true };
   }
@@ -831,7 +831,7 @@ async function taskWaBackfill(opts = {}) {
 async function taskProjectAlerts() {
   const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["project_alerts_enabled", "cron_jobs"]);
   const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
-  if (!isCronJobEnabled(togMap, "project_alerts_enabled")) {
+  if (!isCronJobEnabled(togMap, "project_alerts_enabled") || togMap["project_alerts_enabled"] !== "true") {
     await log("PROJECT_ALERTS", "Dilewati — toggle OFF", "INFO");
     return { skipped: true };
   }
@@ -1729,7 +1729,7 @@ async function taskVoucherExpiryReminder() {
 async function taskLaporanStaleAlert() {
   const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["laporan_stale_alert_enabled", "cron_jobs"]);
   const togMap = Object.fromEntries((togData||[]).map(s => [s.key, s.value]));
-  if (!isCronJobEnabled(togMap, "laporan_stale_alert_enabled")) {
+  if (!isCronJobEnabled(togMap, "laporan_stale_alert_enabled") || togMap["laporan_stale_alert_enabled"] !== "true") {
     await log("LAPORAN_STALE", "Dilewati — laporan_stale_alert_enabled OFF", "INFO");
     return { skipped: true };
   }
@@ -1825,7 +1825,7 @@ async function taskMaterialPulangReminder() {
 async function taskWeeklyReport() {
   const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["weekly_report_enabled","cron_jobs"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
-  if (!isCronJobEnabled(togMap, "weekly_report_enabled")) {
+  if (!isCronJobEnabled(togMap, "weekly_report_enabled") || togMap["weekly_report_enabled"] !== "true") {
     await log("WEEKLY_REPORT", "Dilewati — Laporan Mingguan dinonaktifkan via Settings", "INFO");
     return { skipped: true };
   }

@@ -435,14 +435,23 @@ const verifyLaporan = async (r) => {
     const _orphanMD = _ordDup?.is_multi_day !== true && Number(_ordDup?.day_number) > 1;
     if (r.service !== "Survey" && (_linkedDup || _orphanMD)) {
       const _tgt = _linkedDup?.id || _ordDup?.invoice_id || null;
-      await updateOrder(supabase, r.job_id, { status: "COMPLETED", ...(_tgt ? { invoice_id: _tgt } : {}) }, auditUserName());
-      setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED", ...(_tgt ? { invoice_id: _tgt } : {}) } : o));
-      if (updateCustomerTierAfterOrder && _ordDup) updateCustomerTierAfterOrder(_ordDup).catch(() => {});
+      // H-2 fix: cek hasil updateOrder
+      const { error: _dupOrdE } = await updateOrder(supabase, r.job_id, { status: "COMPLETED", ...(_tgt ? { invoice_id: _tgt } : {}) }, auditUserName());
+      if (_dupOrdE) {
+        addAgentLog("ORDER_STATUS_ERROR", `Gagal update order ${r.job_id} ke COMPLETED (dup guard): ${_dupOrdE.message}`, "ERROR");
+        showNotif(`⚠️ Laporan verified tapi status order gagal diperbarui — refresh & cek manual.`);
+      } else {
+        setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED", ...(_tgt ? { invoice_id: _tgt } : {}) } : o));
+        if (updateCustomerTierAfterOrder && _ordDup) updateCustomerTierAfterOrder(_ordDup).catch(() => {});
+      }
       addAgentLog("INVOICE_DUP_GUARD",
         `Verify laporan ${r.job_id} (hari ke-${_ordDup?.day_number || "?"}) — ${_linkedDup ? "sudah tertaut invoice " + _linkedDup.id : "day_number>1 tanpa flag multi-hari"}, TIDAK buat invoice baru`, "INFO");
-      showNotif(_linkedDup
-        ? `ℹ️ Laporan verified & ditautkan ke invoice ${_linkedDup.id}. Tidak ada invoice baru — edit invoice induk bila ada tambahan.`
-        : `ℹ️ Laporan hari ke-${_ordDup?.day_number || "?"} verified. Tidak buat invoice baru (multi-hari) — tautkan/edit invoice induk manual.`);
+      // M-2 fix: tawarkan merge prompt untuk path _linkedDup (sudah ada invoice tertaut)
+      if (_linkedDup) {
+        showNotif(`✅ Laporan verified & ditautkan ke invoice ${_linkedDup.id}. Gunakan tombol "Edit" di Invoice untuk tambah item jika ada pekerjaan baru.`);
+      } else {
+        showNotif(`ℹ️ Laporan hari ke-${_ordDup?.day_number || "?"} verified. Tidak buat invoice baru (data multi-hari tidak lengkap) — tautkan/edit invoice induk manual.`);
+      }
       return;
     }
   }
@@ -580,15 +589,25 @@ const verifyLaporan = async (r) => {
     // Pastikan order status COMPLETED meski invoice sudah ada sebelumnya
     const ord0 = ordersData.find(o => o.id === r.job_id);
     if (ord0 && ["DISPATCHED","ON_SITE"].includes(ord0.status)) {
-      await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
-      setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
-      if (updateCustomerTierAfterOrder) updateCustomerTierAfterOrder(ord0).catch(() => {});
+      const { error: ordE0 } = await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
+      if (ordE0) {
+        addAgentLog("ORDER_STATUS_ERROR", `Gagal update order ${r.job_id} ke COMPLETED (existInv path): ${ordE0.message}`, "ERROR");
+        showNotif(`⚠️ Laporan verified tapi status order gagal diperbarui — refresh & cek manual.`);
+      } else {
+        setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+        if (updateCustomerTierAfterOrder) updateCustomerTierAfterOrder(ord0).catch(() => {});
+      }
     }
     showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
   } else if (r.service === "Survey") {
     // Survey tidak buat invoice — hanya update order status ke COMPLETED
-    await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
-    setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+    const { error: survE } = await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
+    if (survE) {
+      addAgentLog("ORDER_STATUS_ERROR", `Gagal update order Survey ${r.job_id} ke COMPLETED: ${survE.message}`, "ERROR");
+      showNotif(`⚠️ Laporan Survey verified tapi status order gagal diperbarui — refresh & cek manual.`);
+    } else {
+      setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+    }
     if (updateCustomerTierAfterOrder) {
       const ord0 = ordersData.find(o => o.id === r.job_id);
       if (ord0) updateCustomerTierAfterOrder(ord0).catch(() => {});
@@ -739,9 +758,13 @@ const verifyLaporan = async (r) => {
       // Tetap update order status COMPLETED
       const ord0 = ordersData.find(o => o.id === r.job_id);
       if (ord0 && ["DISPATCHED","ON_SITE"].includes(ord0.status)) {
-        await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
-        setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
-        if (updateCustomerTierAfterOrder) updateCustomerTierAfterOrder(ord0).catch(() => {});
+        const { error: acOrdE } = await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
+        if (acOrdE) {
+          addAgentLog("ORDER_STATUS_ERROR", `Gagal update order ${r.job_id} ke COMPLETED (AC sale path): ${acOrdE.message}`, "ERROR");
+        } else {
+          setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
+          if (updateCustomerTierAfterOrder) updateCustomerTierAfterOrder(ord0).catch(() => {});
+        }
       }
       return;
     }
@@ -774,20 +797,31 @@ const verifyLaporan = async (r) => {
         }
       }
     }
-    // ── GUARD INVARIAN (observasional, non-blocking) — pakai vMDetail (array) sbg lines ──
+    // ── GUARD INVARIAN — tampilkan warning ke Owner jika total tidak match line items ──
     {
       const _chk = checkInvoiceConsistency({ ...newInv, lines: vMDetail }, { waiverAmount: waiverV });
       if (!_chk.ok) {
-        console.warn("[INVOICE_INVARIANT]", describeInconsistency(_chk, newInv.id));
-        addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, newInv.id) + " (verify laporan)", "WARNING");
+        const _desc = describeInconsistency(_chk, newInv.id);
+        console.warn("[INVOICE_INVARIANT]", _desc);
+        addAgentLog("INVOICE_INVARIANT", _desc + " (verify laporan)", "WARNING");
+        showNotif("⚠️ Invoice dibuat tapi total tidak konsisten dengan item — cek di Monitoring. " + _desc.slice(0, 60));
       }
     }
-    setInvoicesData(prev => [...prev, newInv]);
+    // H-1 fix: DB write DULU, state update SETELAH konfirmasi berhasil (tidak ada ghost invoice)
     const { error: iErr } = await insertInvoice(supabase, newInv);
-    if (iErr) showNotif("⚠️ Invoice gagal simpan: " + iErr.message);
-    else {
-      await updateOrder(supabase, r.job_id, { invoice_id: invId, status: "COMPLETED" }, auditUserName());
-      setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, invoice_id: invId, status: "COMPLETED" } : o));
+    if (iErr) {
+      addAgentLog("AUTO_INVOICE_ERROR", `Gagal simpan invoice ${invId} untuk laporan ${r.job_id}: ${iErr.message}`, "ERROR");
+      showNotif("❌ Invoice gagal disimpan: " + iErr.message);
+    } else {
+      // H-2 fix: cek hasil updateOrder, notif + log jika gagal
+      const { error: ordErr } = await updateOrder(supabase, r.job_id, { invoice_id: invId, status: "COMPLETED" }, auditUserName());
+      if (ordErr) {
+        addAgentLog("ORDER_STATUS_ERROR", `Invoice ${invId} tersimpan tapi gagal update order ${r.job_id}: ${ordErr.message}`, "ERROR");
+        showNotif(`⚠️ Invoice ${invId} tersimpan, tapi status order gagal diperbarui — refresh & cek manual.`);
+      } else {
+        setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, invoice_id: invId, status: "COMPLETED" } : o));
+      }
+      setInvoicesData(prev => [...prev, newInv]);
       if (updateCustomerTierAfterOrder) {
         const ord = ordersData.find(o => o.id === r.job_id);
         if (ord) updateCustomerTierAfterOrder(ord).catch(() => {});
