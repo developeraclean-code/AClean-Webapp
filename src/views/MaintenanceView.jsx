@@ -96,6 +96,7 @@ export default function MaintenanceView({
   const [logs, setLogs] = useState([]);
   const [busy, setBusy] = useState(false);
   const [docsMode, setDocsMode] = useState(false);
+  const [ppmMode, setPpmMode] = useState(false);
 
   const call = useCallback(async (action, payload = {}) => {
     const r = await apiFetch("/api/maintenance", {
@@ -164,8 +165,6 @@ export default function MaintenanceView({
       </Suspense>
     );
   }
-
-  const [ppmMode, setPpmMode] = useState(false);
 
   if (ppmMode) {
     return <PPMCalendar call={call} showNotif={showNotif} onBack={() => setPpmMode(false)} />;
