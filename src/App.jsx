@@ -67,8 +67,7 @@ const LaporanTimView = lazy(() => import("./views/LaporanTimView.jsx"));
 const MyReportView = lazy(() => import("./views/MyReportView.jsx"));
 const BAPModal = lazy(() => import("./views/BAPModal.jsx"));
 const MaterialBringModal = lazy(() => import("./views/MaterialBringModal.jsx"));
-const MaterialMovementModal = lazy(() => import("./views/MaterialMovementModal.jsx"));
-const OfficeToolModal = lazy(() => import("./views/OfficeToolModal.jsx"));
+const JobReportFlow = lazy(() => import("./views/JobReportFlow.jsx"));
 const MatTrackView = lazy(() => import("./views/MatTrackView.jsx"));
 const ExpensesView = lazy(() => import("./views/ExpensesView.jsx"));
 const SettingsView = lazy(() => import("./views/SettingsView.jsx"));
@@ -80,6 +79,7 @@ const LaporanDetailModal = lazy(() => import("./views/LaporanDetailModal.jsx"));
 const ProjectApp = lazy(() => import("./project/ProjectApp.jsx"));
 const MaintenanceView = lazy(() => import("./views/MaintenanceView.jsx"));
 const MaterialCheckoutView   = lazy(() => import("./views/MaterialCheckoutView.jsx"));
+const MyToolsView            = lazy(() => import("./views/MyToolsView.jsx"));
 const ProjectLaporanModal    = lazy(() => import("./views/ProjectLaporanModal.jsx"));
 const OrderFormModal         = lazy(() => import("./views/OrderFormModal.jsx"));
 const EditOrderModal         = lazy(() => import("./views/EditOrderModal.jsx"));
@@ -1103,11 +1103,9 @@ export default function ACleanWebApp() {
   // Bawa Material modal — teknisi/helper declare unit material yang dibawa per job
   const [materialBringJob, setMaterialBringJob] = useState(null);
   const openMaterialBringModal = (order) => setMaterialBringJob(order);
-  // Material Movement (Bawa/Pulang pipa+kabel per job — Fase 1 cross-check)
-  const [materialMoveJob, setMaterialMoveJob] = useState(null);   // { order, mode }
-  const openMaterialMove = (order, mode) => setMaterialMoveJob({ order, mode });
-  const [officeToolJob, setOfficeToolJob] = useState(null);       // { job, scope, mode }
-  const openOfficeTool = (job, mode, scope = "order") => setOfficeToolJob({ job, scope, mode });
+  // SATU PINTU laporan & material per job (Fase 2) — hub yang membuka bring + laporan
+  const [jobReportJob, setJobReportJob] = useState(null);
+  const openJobReport = (order) => setJobReportJob(order);
   // Map job_id → count brought (status BROUGHT/USED), untuk badge tombol Bawa Material
   const [materialsBroughtMap, setMaterialsBroughtMap] = useState({});
   const refreshMaterialsBroughtMap = async () => {
@@ -2959,18 +2957,18 @@ ${photoPageHTML}
     if (!currentUser) return false;
     const role = currentUser.role;
     // Owner: semua akses kecuali menu khusus teknisi (myreport, matcheckout)
-    if (role === "Owner") return menu !== "myreport" && menu !== "matcheckout";
+    if (role === "Owner") return menu !== "myreport" && menu !== "matcheckout" && menu !== "alatsaya";
     // Admin: semua operasional KECUALI pricelist (Owner only per SOP), settings, myreport
     // docs/SOP_ADMIN_ROLE.md: Admin = input & edit only, no delete, no price list, no settings
     // Statistik (reports), Deleted Audit (deletedaudit) → Owner only
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport", "matcheckout", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit"];
+      const adminBlocked = ["settings", "myreport", "matcheckout", "alatsaya", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit"];
       return !adminBlocked.includes(menu);
     }
     // Teknisi & Helper: dashboard, jadwal, laporan sendiri, material harian, + Komisi Saya (dilindungi PIN
     // per-teknisi bila Owner set commission_pin — layer-2 anti "intip" data keuangan sensitif)
     if (role === "Teknisi" || role === "Helper")
-      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "matcheckout" || menu === "komisi";
+      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "matcheckout" || menu === "alatsaya" || menu === "komisi";
     // Finance: akses finance hub, invoice, biaya, statistik
     if (role === "Finance")
       return ["finance", "invoice", "biaya", "reports"].includes(menu);
@@ -6217,6 +6215,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // Teknisi-only menu (not shown to Owner/Admin)
     { id: "myreport", icon: "📋", label: "Laporan Saya" },
     { id: "matcheckout", icon: "📥", label: "Material Harian" },
+    { id: "alatsaya", icon: "🧰", label: "Alat Saya" },
     { id: "komisi", icon: "💰", label: "Komisi Saya" },
   ];
   const menuItems = currentUser ? ALL_MENU.filter(m => canAccess(m.id)) : ALL_MENU;
@@ -6239,7 +6238,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           ordersData={ordersData}
           TODAY={TODAY}
           openLaporanModal={openLaporanModal}
-          openMaterialBringModal={openMaterialBringModal} openMaterialMove={openMaterialMove} openOfficeTool={openOfficeTool}
+          openMaterialBringModal={openMaterialBringModal} openJobReport={openJobReport}
           materialsBroughtMap={materialsBroughtMap}
           updateOrderStatus={updateOrderStatus}
           supabase={supabase}
@@ -6273,7 +6272,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       bulanIni={bulanIni} setActiveMenu={setActiveMenu} setInvoiceFilter={setInvoiceFilter} setModalOrder={setModalOrder}
       setWaPanel={setWaPanel} setWaTekTarget={setWaTekTarget} setModalWaTek={setModalWaTek}
       fmt={fmt} getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} bapEnabled={appSettings?.bap_enabled === "true"}
-      openMaterialBringModal={openMaterialBringModal} openMaterialMove={openMaterialMove} materialsBroughtMap={materialsBroughtMap} showNotif={showNotif} TODAY={TODAY}
+      openMaterialBringModal={openMaterialBringModal} openJobReport={openJobReport} materialsBroughtMap={materialsBroughtMap} showNotif={showNotif} TODAY={TODAY}
       sendWA={sendWA} dispatchWA={dispatchWA} addAgentLog={addAgentLog}
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       customersData={customersData} laporanReports={laporanReports} findCustomer={findCustomer}
@@ -6438,7 +6437,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       getTechColor={getTechColor} dispatchStatus={dispatchStatus} sendDispatchWA={sendDispatchWA} dispatchWA={dispatchWA}
       deleteOrder={deleteOrder} addAgentLog={addAgentLog} auditUserName={auditUserName} showConfirm={showConfirm} showNotif={showNotif}
       openWA={openWA} openLaporanModal={openLaporanModal}
-      openMaterialBringModal={openMaterialBringModal} openMaterialMove={openMaterialMove} openOfficeTool={openOfficeTool} materialsBroughtMap={materialsBroughtMap}
+      openMaterialBringModal={openMaterialBringModal} openJobReport={openJobReport} materialsBroughtMap={materialsBroughtMap}
       sendWA={sendWA} updateOrderStatus={updateOrderStatus}
       hitungJamSelesai={hitungJamSelesai} downloadRekapHarian={downloadRekapHarian} triggerRekapHarian={triggerRekapHarian}
       supabase={supabase} TODAY={TODAY} SCHED_PAGE_SIZE={SCHED_PAGE_SIZE} getLocalDate={getLocalDate} userAccounts={userAccounts}
@@ -7019,6 +7018,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           <MaterialCheckoutView supabase={supabase} currentUser={currentUser} showNotif={showNotif}
             fotoSrc={fotoSrc} _apiFetch={_apiFetch} _apiHeaders={_apiHeaders} appSettings={appSettings}
             notifyOwnerWA={(msg) => userAccounts.filter(u => u.role === "Owner").forEach(u => u.phone && sendWA(u.phone, msg))} />
+        </Suspense>
+      );
+      case "alatsaya": return (
+        <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
+          <MyToolsView supabase={supabase} currentUser={currentUser} showNotif={showNotif}
+            teknisiData={teknisiData} TODAY={TODAY} />
         </Suspense>
       );
       case "biaya": return renderExpenses();
@@ -10406,30 +10411,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         </Suspense>
       )}
 
-      {materialMoveJob && (
+      {/* SATU PINTU: Laporan & Material per job (hub) */}
+      {jobReportJob && (
         <Suspense fallback={<div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 9998, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>Memuat...</div>}>
-          <MaterialMovementModal
-            job={materialMoveJob.order}
-            mode={materialMoveJob.mode}
-            onClose={() => setMaterialMoveJob(null)}
-            supabase={supabase}
+          <JobReportFlow
+            open={!!jobReportJob}
+            job={jobReportJob}
+            onClose={() => setJobReportJob(null)}
             currentUser={currentUser}
-            showNotif={showNotif}
-          />
-        </Suspense>
-      )}
-
-      {officeToolJob && (
-        <Suspense fallback={<div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 9998, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>Memuat...</div>}>
-          <OfficeToolModal
-            job={officeToolJob.job}
-            scope={officeToolJob.scope}
-            mode={officeToolJob.mode}
-            onClose={() => setOfficeToolJob(null)}
             supabase={supabase}
-            currentUser={currentUser}
-            showNotif={showNotif}
-            teknisiData={teknisiData}
+            materialsBroughtMap={materialsBroughtMap}
+            laporanReports={laporanReports}
+            onOpenBring={(o) => setMaterialBringJob(o)}
+            onOpenLaporan={(o) => openLaporanModal(o)}
           />
         </Suspense>
       )}

@@ -4,7 +4,7 @@ import { statusColor, statusLabel } from "../constants/status.js";
 import { displayStock } from "../lib/inventory.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 
-function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, materialsBroughtMap, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData, supabase, apiHeaders, bapEnabled }) {
+function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData, supabase, apiHeaders, bapEnabled }) {
 const role = currentUser?.role || "Admin";
 const [gridDate, setGridDate] = useState(TODAY);
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -100,12 +100,12 @@ if (role === "Teknisi" || role === "Helper") {
                           style={{ background: cs.ara + "22", border: "1px solid " + cs.ara + "44", color: cs.ara, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📝 Detail Laporan</button>
                       );
                     })()}
-                    {openMaterialBringModal && (() => {
+                    {(openJobReport || openMaterialBringModal) && (() => {
                       const bCount = (materialsBroughtMap || {})[o.id] || 0;
                       return (
-                        <button onClick={() => openMaterialBringModal(o)}
+                        <button onClick={() => (openJobReport || openMaterialBringModal)(o)}
                           style={{ background: "#a855f722", border: "1px solid #a855f744", color: "#a855f7", padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 700, position: "relative" }}>
-                          📦 Bawa Material
+                          📝 Laporan & Material
                           {bCount > 0 && <span style={{
                             position: "absolute", top: -5, right: -5, background: "#a855f7", color: "#fff",
                             fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 99,

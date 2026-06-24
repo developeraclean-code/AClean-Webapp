@@ -43,6 +43,13 @@ export function outMovementsForRef(movements = [], scope, refId) {
   return movements.filter((m) => isOut(m) && (m.scope || "order") === scope && String(m.ref_id) === String(refId));
 }
 
+// Movement aktif (OUT) yang sedang dipegang seorang teknisi — utk layar "Alat Saya" (daily).
+export function outMovementsForCarrier(movements = [], carrierName) {
+  const n = String(carrierName || "").trim().toLowerCase();
+  if (!n) return [];
+  return movements.filter((m) => isOut(m) && String(m.carried_by || "").trim().toLowerCase() === n);
+}
+
 // Jumlah alat (unit) yang sedang dibawa untuk satu job — utk badge tombol.
 export function outCountForRef(movements = [], scope, refId) {
   return outMovementsForRef(movements, scope, refId).reduce((s, m) => s + num(m.qty), 0);

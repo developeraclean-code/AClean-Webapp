@@ -85,6 +85,30 @@ function itemsToSession(row) {
   return s;
 }
 
+// job_materials_brought rows → state sesi "pagi" (auto-seed, hindari double-entry per-job vs harian).
+// Mapping identik dgn itemsToSession: s[cat][code] = [{unit_id,label,qty}].
+function broughtToSession(rows) {
+  const s = emptySession();
+  for (const r of (rows || [])) {
+    const cat = String(r.material_type || "").toLowerCase();
+    if (!["pipa", "kabel", "freon"].includes(cat)) continue;
+    const code = r.inventory_code || r.unit_label;
+    if (!code) continue;
+    if (!s[cat][code]) s[cat][code] = [];
+    s[cat][code].push({
+      unit_id: r.unit_id || null,
+      label: r.unit_label || code,
+      qty: r.qty_estimate != null ? String(r.qty_estimate) : "",
+    });
+  }
+  return s;
+}
+
+function sessionHasUnit(sess) {
+  return ["pipa", "kabel", "freon"].some((cat) =>
+    Object.values(sess[cat] || {}).some((arr) => (arr || []).length > 0));
+}
+
 // Preset sesi pulang dari pagi: default sisa tiap unit = jumlah yang dibawa (anggap belum kepake).
 function presetPulang(pagiSess) {
   const out = { pipa: {}, kabel: {}, freon: {} };
@@ -107,6 +131,7 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
   const [pulang, setPulang] = useState(emptySession());
   const [savedPagi, setSavedPagi] = useState(null);
   const [savedPulang, setSavedPulang] = useState(null);
+  const [pagiFromJob, setPagiFromJob] = useState(false); // pagi auto-seed dari job_materials_brought
   const [busy, setBusy] = useState("");
 
   const byKat = (k) => materials.filter((m) => m.kategori === k);
@@ -131,13 +156,26 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
       .eq("date", date);
     const mine = (ords || []).filter((o) => [o.teknisi, o.helper, o.teknisi2, o.helper2, o.teknisi3, o.helper3].some((n) => n && n === myName));
     setMyJobs(mine);
+    // Auto-seed "Pagi" dari material yang DIBAWA per-job (job_materials_brought) → satu sumber,
+    // teknisi tak input dua kali. Hanya brought_by = saya, dipakai bila sesi pagi belum tersimpan.
+    let broughtSess = null;
+    const jobIds = mine.map((o) => o.id);
+    if (jobIds.length) {
+      const { data: brought } = await supabase.from("job_materials_brought")
+        .select("inventory_code,unit_id,unit_label,material_type,qty_estimate,status,brought_by,job_id")
+        .in("job_id", jobIds).neq("status", "CANCELLED").eq("brought_by", myName);
+      const bs = broughtToSession(brought || []);
+      if (sessionHasUnit(bs)) broughtSess = bs;
+    }
     const { data: rows } = await supabase.from("teknisi_material_checkout")
       .select("*").eq("teknisi_name", myName).eq("checkout_date", date);
     const p = (rows || []).find((r) => r.session_type === "pagi") || null;
     const pl = (rows || []).find((r) => r.session_type === "pulang") || null;
     setSavedPagi(p); setSavedPulang(pl);
-    const pagiSess = p ? itemsToSession(p) : emptySession();
-    if (p) setPagi(pagiSess);
+    // Prioritas: sesi pagi tersimpan > auto-seed dari job > kosong.
+    const pagiSess = p ? itemsToSession(p) : (broughtSess || emptySession());
+    setPagi(pagiSess);
+    setPagiFromJob(!p && !!broughtSess);
     if (pl) setPulang(itemsToSession(pl));
     else setPulang({ ...emptySession(), ...presetPulang(pagiSess) });
   }, [supabase, myName, date]);
@@ -314,8 +352,16 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
     <div style={{ background: cs.panel, border: "1px solid " + cs.border, borderRadius: 14, padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: cs.text }}>🌅 Pagi — Material Dibawa</div>
-        {savedPagi && <span style={{ fontSize: 11, color: cs.green, fontWeight: 700 }}>✓ Tersimpan</span>}
+        {savedPagi
+          ? <span style={{ fontSize: 11, color: cs.green, fontWeight: 700 }}>✓ Tersimpan</span>
+          : pagiFromJob && <span style={{ fontSize: 11, color: cs.accent, fontWeight: 700 }}>↺ otomatis dari job</span>}
       </div>
+      {pagiFromJob && !savedPagi && (
+        <div style={{ fontSize: 11, color: cs.accent, background: cs.accent + "12", border: "1px solid " + cs.accent + "33", borderRadius: 8, padding: "8px 11px", marginBottom: 12, lineHeight: 1.5 }}>
+          ↺ Terisi otomatis dari material yang kamu <b>bawa per-job</b> (tombol "📝 Laporan & Material").
+          Cek angkanya lalu <b>Simpan</b> — tidak perlu input ulang.
+        </div>
+      )}
       {CATS.map(({ key, title, satuan }) => (
         <div key={key} style={{ marginBottom: 12 }}>
           <div style={lbl}>{title} — pilih unit dari stok kantor</div>
@@ -427,6 +473,12 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 20, fontWeight: 800, color: cs.text }}>📥 Material Harian</div>
         <div style={{ fontSize: 13, color: cs.muted }}>{myName} · {date}</div>
+        {/* Banner arah satu-pintu: input utama kini per-job lewat kartu jadwal (Fase 3) */}
+        <div style={{ fontSize: 12, color: cs.accent, marginTop: 8, background: cs.accent + "12", border: "1px solid " + cs.accent + "44", borderRadius: 8, padding: "9px 12px", lineHeight: 1.5 }}>
+          💡 <b>Cara baru:</b> input material sekarang lewat tombol <b>"📝 Laporan & Material"</b> di
+          tiap kartu job (Dashboard/Jadwal) — otomatis ke-link ke customer yang benar.
+          Halaman ini untuk <b>material borongan harian</b> & rekonsiliasi sisa.
+        </div>
         <div style={{ fontSize: 12, color: cs.muted, marginTop: 6, background: cs.panel, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 11px" }}>
           Pilih <b>unit yang dibawa</b> dari stok kantor (pipa/kabel/freon — bisa beberapa unit per barang) & isi <b>sisa yang dikembalikan</b> sore. Selisih dicocokkan dengan pemakaian di laporan job. Bisa juga kirim foto via WA: caption <b>"Material Pagi"</b> / <b>"Material Pulang"</b>.
         </div>
