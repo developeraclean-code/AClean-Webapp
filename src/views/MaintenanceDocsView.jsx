@@ -49,7 +49,7 @@ const th = { textAlign: "left", padding: "9px 10px", borderBottom: "1px solid " 
 const td = { padding: "9px 10px", borderBottom: "1px solid " + cs.border, color: cs.text };
 const pill = (bg, c) => ({ background: bg + "22", color: c, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 });
 
-export default function MaintenanceDocsView({ clients = [], call, showNotif, showConfirm, isOwner, appSettings = {}, onBack }) {
+export default function MaintenanceDocsView({ clients = [], call, showNotif, showConfirm, isOwner, canManage = isOwner, appSettings = {}, onBack }) {
   const [clientId, setClientId] = useState(clients[0]?.id || "");
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -169,7 +169,7 @@ export default function MaintenanceDocsView({ clients = [], call, showNotif, sho
                     <button style={miniBtn} onClick={() => setViewId(d.id)}>Lihat</button>
                     <button style={miniBtn} onClick={() => setEditId(d.id)}>Edit</button>
                     {ttdStatus(d) === "belum" && <button style={{ ...miniBtn, color: cs.green, borderColor: cs.green + "55" }} onClick={() => setSignId(d.id)}>Tanda Tangani</button>}
-                    {isOwner && <button style={{ ...miniBtn, color: cs.red }} onClick={() => removeDoc(d)}>🗑</button>}
+                    {canManage && <button style={{ ...miniBtn, color: cs.red }} onClick={() => removeDoc(d)}>🗑</button>}
                   </div>
                 </td>
               </tr>

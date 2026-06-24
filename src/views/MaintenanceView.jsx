@@ -160,7 +160,7 @@ export default function MaintenanceView({
       <Suspense fallback={<div style={{ color: cs.muted, padding: 40, textAlign: "center" }}>Memuat dokumen…</div>}>
         <MaintenanceDocsView
           clients={clients} call={call} showNotif={showNotif} showConfirm={showConfirm}
-          isOwner={isOwner} appSettings={appSettings} onBack={() => setDocsMode(false)}
+          isOwner={isOwner} canManage={isOwner || currentUser?.role === "Admin"} appSettings={appSettings} onBack={() => setDocsMode(false)}
         />
       </Suspense>
     );
