@@ -6238,7 +6238,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           ordersData={ordersData}
           TODAY={TODAY}
           openLaporanModal={openLaporanModal}
-          openMaterialBringModal={openMaterialBringModal} openJobReport={openJobReport}
+          openJobReport={openJobReport}
           materialsBroughtMap={materialsBroughtMap}
           updateOrderStatus={updateOrderStatus}
           supabase={supabase}
@@ -6437,7 +6437,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       getTechColor={getTechColor} dispatchStatus={dispatchStatus} sendDispatchWA={sendDispatchWA} dispatchWA={dispatchWA}
       deleteOrder={deleteOrder} addAgentLog={addAgentLog} auditUserName={auditUserName} showConfirm={showConfirm} showNotif={showNotif}
       openWA={openWA} openLaporanModal={openLaporanModal}
-      openMaterialBringModal={openMaterialBringModal} openJobReport={openJobReport} materialsBroughtMap={materialsBroughtMap}
+      openJobReport={openJobReport} materialsBroughtMap={materialsBroughtMap}
       sendWA={sendWA} updateOrderStatus={updateOrderStatus}
       hitungJamSelesai={hitungJamSelesai} downloadRekapHarian={downloadRekapHarian} triggerRekapHarian={triggerRekapHarian}
       supabase={supabase} TODAY={TODAY} SCHED_PAGE_SIZE={SCHED_PAGE_SIZE} getLocalDate={getLocalDate} userAccounts={userAccounts}
