@@ -169,6 +169,7 @@ return (
                     <div style={{ display: "flex", gap: 5 }}>
                       {cu.phone && <button onClick={() => openWA(cu.phone, "")} style={{ flex: 1, background: "#25D36615", border: "1px solid #25D36633", color: "#25D366", borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>WA</button>}
                       {!isTekHelper && <button onClick={() => { setNewOrderForm(f => ({ ...f, customer: cu.name, phone: normalizePhone(cu.phone) || cu.phone, address: cu.address || "", service: "Cleaning" })); setModalOrder(true); }} style={{ flex: 1, background: cs.green + "15", border: "1px solid " + cs.green + "33", color: cs.green, borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>Order</button>}
+                      {!isTekHelper && cu.phone && <button title="Tambah lokasi lain dgn nomor HP sama" onClick={() => { setSelectedCustomer(null); setNewCustomerForm({ name: "", phone: normalizePhone(cu.phone) || cu.phone, address: "", area: cu.area || "", notes: "", is_vip: false }); setModalAddCustomer(true); }} style={{ flex: 1, background: cs.accent + "15", border: "1px solid " + cs.accent + "33", color: cs.accent, borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>+ Lokasi</button>}
                       {currentUser?.role === "Owner" && (
                         <button onClick={async () => {
                           if (!await showConfirm({ icon: "🗑️", title: "Hapus Customer?", danger: true, message: `Hapus "${cu.name}"?\nHistory order tetap ada.`, confirmText: "Hapus" })) return;
@@ -196,6 +197,13 @@ return (
                     <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>📱 {group[0].phone}</div>
                     <div style={{ fontSize: 10, color: cs.muted, marginTop: 1 }}>{group.length} Lokasi</div>
                   </div>
+                  {!isTekHelper && (
+                    <button onClick={() => {
+                      setSelectedCustomer(null);
+                      setNewCustomerForm({ name: "", phone: normalizePhone(group[0].phone) || group[0].phone, address: "", area: group[0].area || "", notes: "", is_vip: false });
+                      setModalAddCustomer(true);
+                    }} style={{ background: cs.accent + "15", border: "1px solid " + cs.accent + "33", color: cs.accent, borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700, flexShrink: 0 }}>+ Lokasi</button>
+                  )}
                   {group[0].phone && (
                     <button onClick={() => openWA(group[0].phone, "")} style={{ background: "#25D36615", border: "1px solid #25D36633", color: "#25D366", borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 11, fontWeight: 600, flexShrink: 0 }}>WA</button>
                   )}
