@@ -3,7 +3,7 @@ import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { smartSearchNormalize } from "../lib/phone.js";
 
-function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, currentUser, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, isMobile, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, addAgentLog, auditUserName, showConfirm, showNotif, openWA, openLaporanModal, openMaterialBringModal, openJobReport, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
+function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, currentUser, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, isMobile, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, addAgentLog, auditUserName, showConfirm, showNotif, openWA, openLaporanModal, openJobReport, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
 // Hitung minggu dinamis berdasarkan weekOffset
 const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 const baseDate = new Date();
@@ -331,45 +331,35 @@ return (
                     style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
                     📱 WA
                   </button>
-                  {/* Bawa Material — selalu tampil (juga sebelum dispatch) supaya teknisi bisa siap-siap */}
-                  {openMaterialBringModal && !["COMPLETED", "CANCELLED", "PAID"].includes(o.status) && (() => {
+                  {/* Material per-job & alat per-job dihapus dari kartu jadwal. Material (bawa + pakai)
+                      kini lewat satu pintu "📝 Laporan & Material" (hub). Alat via menu "🧰 Alat Saya". */}
+                  {/* Hub satu-pintu: selalu tersedia (juga sebelum dispatch) supaya teknisi bisa
+                      siapkan material lebih awal. Tombol On Site tetap kontekstual (sesudah dispatch). */}
+                  {!["COMPLETED", "CANCELLED", "PAID"].includes(o.status) && (() => {
                     const bCount = (materialsBroughtMap || {})[o.id] || 0;
                     return (
-                      <button onClick={() => openMaterialBringModal(o)}
-                        style={{ background: "#a855f722", border: "1px solid #a855f744", color: "#a855f7", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, position: "relative" }}>
-                        📦 Bawa Material
-                        {bCount > 0 && <span style={{
-                          position: "absolute", top: -5, right: -5, background: "#a855f7", color: "#fff",
-                          fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 99,
-                        }}>{bCount}</span>}
+                      <button onClick={() => (openJobReport || openLaporanModal)(o)}
+                        style={{ background: cs.ara + "22", border: "1px solid " + cs.ara + "44", color: cs.ara, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, position: "relative" }}>
+                        📝 Laporan & Material
+                        {bCount > 0 && <span style={{ position: "absolute", top: -5, right: -5, background: "#a855f7", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 99 }}>{bCount}</span>}
                       </button>
                     );
                   })()}
-                  {/* Material & alat per-job dihapus dari kartu jadwal — material via "📝 Laporan &
-                      Material", alat via menu harian "🧰 Alat Saya". Konsisten dgn dashboard teknisi. */}
-                  {o.dispatch && !["COMPLETED", "CANCELLED", "PAID"].includes(o.status) && (
-                    <>
-                      {o.status !== "ON_SITE" && (
-                        <button onClick={async () => {
-                          await updateOrderStatus(supabase, o.id, "ON_SITE", auditUserName());
-                          setOrdersData(prev => prev.map(ord => ord.id === o.id ? { ...ord, status: "ON_SITE" } : ord));
-                          showNotif("✅ Status → On Site!");
-                          const admins = teknisiData.filter(u => u.role === "Admin" || u.role === "Owner")
-                            .concat((userAccounts || []).filter(u => u.role === "Admin" || u.role === "Owner"));
-                          const msg =
-                            "Teknisi di Lokasi\n"
-                            + "Job: " + o.id + " - " + o.customer + "\n"
-                            + "Teknisi: " + myTekName;
-                          admins.forEach(adm => { if (adm?.phone) sendWA(adm.phone, msg); });
-                        }} style={{ background: "#22c55e22", border: "1px solid #22c55e44", color: "#22c55e", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
-                          ✅ On Site
-                        </button>
-                      )}
-                      <button onClick={() => (openJobReport || openLaporanModal)(o)}
-                        style={{ background: cs.ara + "22", border: "1px solid " + cs.ara + "44", color: cs.ara, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
-                        📝 Laporan & Material
-                      </button>
-                    </>
+                  {o.dispatch && o.status !== "ON_SITE" && !["COMPLETED", "CANCELLED", "PAID"].includes(o.status) && (
+                    <button onClick={async () => {
+                      await updateOrderStatus(supabase, o.id, "ON_SITE", auditUserName());
+                      setOrdersData(prev => prev.map(ord => ord.id === o.id ? { ...ord, status: "ON_SITE" } : ord));
+                      showNotif("✅ Status → On Site!");
+                      const admins = teknisiData.filter(u => u.role === "Admin" || u.role === "Owner")
+                        .concat((userAccounts || []).filter(u => u.role === "Admin" || u.role === "Owner"));
+                      const msg =
+                        "Teknisi di Lokasi\n"
+                        + "Job: " + o.id + " - " + o.customer + "\n"
+                        + "Teknisi: " + myTekName;
+                      admins.forEach(adm => { if (adm?.phone) sendWA(adm.phone, msg); });
+                    }} style={{ background: "#22c55e22", border: "1px solid #22c55e44", color: "#22c55e", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                      ✅ On Site
+                    </button>
                   )}
                   {!o.dispatch && (
                     <span style={{ fontSize: 10, color: cs.muted, textAlign: "center", padding: "4px 8px" }}>Menunggu dispatch</span>

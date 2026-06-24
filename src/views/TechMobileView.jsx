@@ -13,7 +13,7 @@ const STATUS_CONFIG = {
   COMPLETED:  { label: "Selesai",    color: "#10b981", bg: "#10b98122" },
 };
 
-function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps }) {
+function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
 
@@ -126,6 +126,7 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
           const isOnSite = order.status === "ON_SITE";
           const isDispatched = order.status === "DISPATCHED" || order.status === "IN_PROGRESS";
           const isPending = order.status === "PENDING" || order.status === "CONFIRMED";
+          const bCount = (materialsBroughtMap || {})[order.id] || 0;
           const helperNote = [order.helper, order.helper2, order.helper3].filter(Boolean).join(", ");
           const team2 = [order.teknisi2, order.teknisi3].filter(Boolean).join(", ");
 
@@ -170,49 +171,17 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
 
               {/* Action Buttons */}
               <div style={{ padding: "12px 16px", display: "grid", gap: 8 }}>
-                {/* Primary CTA — berubah per status & berdasarkan bawa material */}
-                {isPending && (() => {
-                  const bCount = (materialsBroughtMap || {})[order.id] || 0;
-                  // Step 1: belum declare bawa material → primary = Bawa Material (ungu)
-                  if (bCount === 0 && openMaterialBringModal) {
-                    return (
-                      <>
-                        <button
-                          onClick={() => openMaterialBringModal(order)}
-                          style={{ width: "100%", background: "#a855f7", border: "none", color: "#fff", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
-                          📦 Bawa Material Dulu
-                        </button>
-                        <button
-                          onClick={() => handleStatus(order, "DISPATCHED", "Status diupdate: Berangkat (tanpa bawa material)")}
-                          disabled={isUpdating}
-                          style={{ width: "100%", background: "transparent", border: "1px solid " + cs.border, color: cs.muted, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", opacity: isUpdating ? 0.6 : 1 }}>
-                          {isUpdating ? "⏳ Memproses..." : "Lewati & Berangkat →"}
-                        </button>
-                      </>
-                    );
-                  }
-                  // Step 2: sudah declare → primary = Berangkat (orange), secondary = edit bawa
-                  return (
-                    <>
-                      <button
-                        onClick={() => handleStatus(order, "DISPATCHED", "Status diupdate: Berangkat")}
-                        disabled={isUpdating}
-                        style={{ width: "100%", background: "#f59e0b", border: "none", color: "#0a0f1e", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 800, cursor: "pointer", opacity: isUpdating ? 0.6 : 1 }}>
-                        {isUpdating ? "⏳ Memproses..." : "🚀 Konfirmasi Berangkat"}
-                      </button>
-                      {openMaterialBringModal && (
-                        <button
-                          onClick={() => openMaterialBringModal(order)}
-                          style={{ width: "100%", background: "#a855f722", border: "1px solid #a855f744", color: "#a855f7", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-                          📦 {bCount} material dibawa — Edit
-                        </button>
-                      )}
-                    </>
-                  );
-                })()}
-                {/* "Bawa Pipa/Kabel"+"Pulang" (openMaterialMove) & "Bawa/Kembali Alat" per-job
-                    (openOfficeTool) dihapus dari kartu. Material → satu pintu "📝 Laporan & Material".
-                    Alat → checkout HARIAN per teknisi di menu "🧰 Alat Saya". */}
+                {/* Primary CTA per status. Material TIDAK lagi pakai tombol terpisah —
+                    satu pintu "📝 Laporan & Material" (di bawah) yang urus bawa + pakai material.
+                    Alat → menu harian "🧰 Alat Saya". */}
+                {isPending && (
+                  <button
+                    onClick={() => handleStatus(order, "DISPATCHED", "Status diupdate: Berangkat")}
+                    disabled={isUpdating}
+                    style={{ width: "100%", background: "#f59e0b", border: "none", color: "#0a0f1e", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 800, cursor: "pointer", opacity: isUpdating ? 0.6 : 1 }}>
+                    {isUpdating ? "⏳ Memproses..." : "🚀 Konfirmasi Berangkat"}
+                  </button>
+                )}
                 {isDispatched && (
                   <button
                     onClick={() => handleStatus(order, "ON_SITE", "Konfirmasi tiba di lokasi")}
@@ -242,8 +211,9 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
                   </button>
                   {!isCompleted && (
                     <button onClick={() => (openJobReport || openLaporanModal)(order)}
-                      style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
+                      style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", fontWeight: 600, position: "relative" }}>
                       📝 Laporan & Material
+                      {bCount > 0 && <span style={{ position: "absolute", top: -6, right: -6, background: "#a855f7", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 99 }}>{bCount}</span>}
                     </button>
                   )}
                   {isCompleted && (
