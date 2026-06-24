@@ -2833,7 +2833,10 @@ ${photoPageHTML}
     setShowMatPreset(false);
 
     // ── Smart Unit Preset: Cek customer history ──
-    const customer = findCustomer(customersData, order.phone, order.customer);
+    // Order maintenance B2B: unit sudah pasti dari registry (di-preset di blok corporate
+    // di atas, lengkap dengan unit_code + maint_unit_id). History-picker malah mubazir &
+    // membingungkan (unit history tak punya kode unit) → lewati untuk order maintenance.
+    const customer = order.maintenance_client_id ? null : findCustomer(customersData, order.phone, order.customer);
     if (customer) {
       const custHistory = buildCustomerHistory(customer, ordersData, laporanReports, invoicesData, customersData);
       // Ambil unit detail dari job sebelumnya (terbaru)
