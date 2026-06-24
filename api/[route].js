@@ -4003,9 +4003,35 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           };
           const svcCategory = SVC_CATEGORY_MAP[svcType] || "cuci_rutin";
 
-          // Buat 1 log per unit yang benar-benar dikerjakan (effectiveUnitIds, bukan semua planned)
-          const rows = effectiveUnitIds.map((uid, i) => {
-            const lu = repUnits[i] || null;
+          // ── Keterikatan per-unit: utamakan maint_unit_id dari laporan, bukan posisi array ──
+          // Laporan maintenance membawa maint_unit_id per unit (di-preset dari registry saat
+          // modal dibuka). Mencocokkan log ke AC lewat ID itu = tahan terhadap urutan berbeda
+          // atau unit ditambah/dihapus teknisi di lapangan (pencocokan posisi lama bisa salah AC).
+          // Laporan lama tanpa maint_unit_id → fallback ke pencocokan posisi (perilaku lama).
+          const reportedMaintIds = [...new Set(repUnits.map(ru => (ru && ru.maint_unit_id) || null).filter(Boolean))];
+          let unitPairs; // [{ uid, lu }] — lu = unit laporan (boleh null)
+          if (reportedMaintIds.length) {
+            // Validasi: hanya terima unit aktif (non-baru) milik klien ini — termasuk unit yang
+            // ditambah teknisi via "Tambah dari Daftar Maintenance" (belum tentu ada di unitIds).
+            const candidateIds = [...new Set([...unitIds, ...reportedMaintIds])];
+            let validSet = new Set(candidateIds);
+            try {
+              const vRes = await fetch(REST("maintenance_units?id=in.(" + encodeURIComponent(candidateIds.join(",")) + ")&client_id=eq." + encodeURIComponent(clientId) + "&select=id,status"), { headers });
+              const vData = await vRes.json();
+              if (Array.isArray(vData)) validSet = new Set(vData.filter(u => u.status !== "baru").map(u => u.id));
+            } catch (_) {}
+            const seen = new Set();
+            unitPairs = repUnits
+              .filter(ru => ru && ru.maint_unit_id && validSet.has(ru.maint_unit_id))
+              .filter(ru => (seen.has(ru.maint_unit_id) ? false : (seen.add(ru.maint_unit_id), true)))
+              .map(ru => ({ uid: ru.maint_unit_id, lu: ru }));
+          } else {
+            unitPairs = effectiveUnitIds.map((uid, i) => ({ uid, lu: repUnits[i] || null }));
+          }
+          if (!unitPairs.length) return res.status(200).json({ skipped: true, reason: "tidak ada unit valid untuk dicatat" });
+
+          // Buat 1 log per unit yang benar-benar dikerjakan
+          const rows = unitPairs.map(({ uid, lu }, i) => {
             // Deskripsi per-AC dari laporan
             let desc = `Servis via order ${order.id}`;
             if (lu) {

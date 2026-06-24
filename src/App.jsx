@@ -3045,7 +3045,10 @@ ${photoPageHTML}
     setShowMatPreset(false);
 
     // ── Smart Unit Preset: Cek customer history ──
-    const customer = findCustomer(customersData, order.phone, order.customer);
+    // Order maintenance B2B: unit sudah pasti dari registry (di-preset di blok corporate
+    // di atas, lengkap dengan unit_code + maint_unit_id). History-picker malah mubazir &
+    // membingungkan (unit history tak punya kode unit) → lewati untuk order maintenance.
+    const customer = order.maintenance_client_id ? null : findCustomer(customersData, order.phone, order.customer);
     if (customer) {
       const custHistory = buildCustomerHistory(customer, ordersData, laporanReports, invoicesData, customersData);
       // Ambil unit detail dari job sebelumnya (terbaru)
@@ -10628,8 +10631,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                   <h3 style={{ fontWeight: 800, fontSize: 16, color: cs.text, margin: 0 }}>🏢 Tambah Unit dari Daftar Maintenance</h3>
                   <button onClick={() => setShowAddMaintUnitModal(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 20, cursor: "pointer" }}>×</button>
                 </div>
-                <div style={{ fontSize: 12, color: cs.muted, marginBottom: 14 }}>
-                  Unit terdaftar yang belum ada di laporan. Centang yang dikerjakan di lapangan — data langsung terisi otomatis.
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                  <div style={{ fontSize: 12, color: cs.muted }}>
+                    Unit terdaftar yang belum ada di laporan. Centang yang dikerjakan di lapangan — data langsung terisi otomatis.
+                  </div>
+                  {available.length > 0 && (
+                    <button onClick={() => setAddMaintSelected(addMaintSelected.size === available.length ? new Set() : new Set(available.map(mu => mu.id)))}
+                      style={{ flexShrink: 0, background: cs.border, color: cs.text, border: "none", borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontWeight: 600, fontSize: 11 }}>
+                      {addMaintSelected.size === available.length ? "Hapus semua" : "Pilih semua"}
+                    </button>
+                  )}
                 </div>
                 {available.length === 0 ? (
                   <div style={{ fontSize: 12, color: cs.muted, fontStyle: "italic", marginBottom: 16 }}>Semua unit terdaftar sudah ada di laporan.</div>
@@ -10908,8 +10919,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         {laporanUnits.map((u, idx) => (
                           <div key={idx} style={{ background: cs.surface, borderRadius: 10, border: "1px solid " + (TIPE_AC_OPT.includes(u.tipe) && u.label && u.label.trim() && u.merk && u.merk.trim() ? cs.green + "33" : cs.border), overflow: "hidden" }}>
                             {/* Card header with unit number */}
-                            <div style={{ fontSize: 10, fontWeight: 700, color: cs.accent, padding: "8px 12px", background: cs.card + "33", borderBottom: "1px solid " + cs.border + "22" }}>
-                              Unit {u.unit_no}
+                            <div style={{ fontSize: 10, fontWeight: 700, color: cs.accent, padding: "8px 12px", background: cs.card + "33", borderBottom: "1px solid " + cs.border + "22", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              <span>Unit {u.unit_no}</span>
+                              {u.maint_unit_id && (
+                                <span style={{ fontSize: 10, background: cs.green + "18", color: cs.green, padding: "1px 8px", borderRadius: 99, fontWeight: 700 }}>
+                                  🏢 {u.label || "Unit Maintenance"}
+                                </span>
+                              )}
                             </div>
 
                             {/* Row 1: Nama Ruangan + Delete button */}
