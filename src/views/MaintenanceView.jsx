@@ -96,6 +96,7 @@ export default function MaintenanceView({
   const [logs, setLogs] = useState([]);
   const [busy, setBusy] = useState(false);
   const [docsMode, setDocsMode] = useState(false);
+  const [ppmMode, setPpmMode] = useState(false);
 
   const call = useCallback(async (action, payload = {}) => {
     const r = await apiFetch("/api/maintenance", {
@@ -159,13 +160,11 @@ export default function MaintenanceView({
       <Suspense fallback={<div style={{ color: cs.muted, padding: 40, textAlign: "center" }}>Memuat dokumen…</div>}>
         <MaintenanceDocsView
           clients={clients} call={call} showNotif={showNotif} showConfirm={showConfirm}
-          isOwner={isOwner} appSettings={appSettings} onBack={() => setDocsMode(false)}
+          isOwner={isOwner} canManage={isOwner || currentUser?.role === "Admin"} appSettings={appSettings} onBack={() => setDocsMode(false)}
         />
       </Suspense>
     );
   }
-
-  const [ppmMode, setPpmMode] = useState(false);
 
   if (ppmMode) {
     return <PPMCalendar call={call} showNotif={showNotif} onBack={() => setPpmMode(false)} />;
