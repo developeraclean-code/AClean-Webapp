@@ -416,6 +416,11 @@ const verifyLaporan = async (r) => {
         if (resp.ok && jj.created > 0) {
           showNotif(`🏢 ${jj.created} unit maintenance tercatat ke history`);
           addAgentLog("MAINTENANCE_AUTOLOG", `${jj.created} log dibuat dari order ${r.job_id}`, "SUCCESS");
+        } else if (resp.ok && jj.needs_unit_selection) {
+          // Order maintenance tapi unit belum ditentukan di mana pun → history TIDAK terisi.
+          // Beri alert merah ke admin supaya link tidak diam-diam putus.
+          showNotif(`⚠️ Laporan ${r.job_id} = customer maintenance tapi unitnya belum dipilih — history unit TIDAK tercatat. Pilih AC di order (atau teknisi pilih via "Tambah dari Daftar Maintenance"), lalu verifikasi ulang. Cek Monitoring → Link Maintenance.`);
+          addAgentLog("MAINTENANCE_AUTOLOG_SKIP", `Order ${r.job_id} maintenance tapi unit belum dipilih — 0 log`, "WARNING");
         }
       } catch (_) { /* non-blocking — verifikasi tetap sukses */ }
     })();

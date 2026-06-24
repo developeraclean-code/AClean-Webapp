@@ -847,6 +847,122 @@ function TabInvoiceRecon({ supabase }) {
   );
 }
 
+// 🏢 Link Maintenance — pemeriksa missing-link: order maintenance yang putus link unit/client/invoice
+function TabMaintLink({ apiHeaders }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [days, setDays] = useState(120);
+  const [err, setErr] = useState("");
+
+  const load = async () => {
+    if (!apiHeaders) { setErr("Auth header tidak tersedia."); return; }
+    setLoading(true); setErr("");
+    try {
+      const h = await apiHeaders();
+      const resp = await fetch("/api/maintenance", {
+        method: "POST",
+        headers: { ...h, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "link-audit", days }),
+      });
+      const jj = await resp.json();
+      if (!resp.ok) { setErr(jj.error || "Gagal memuat audit"); setData(null); }
+      else setData(jj);
+    } catch (e) { setErr(String(e?.message || e)); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { if (apiHeaders) load(); /* eslint-disable-next-line */ }, [apiHeaders, days]);
+
+  const s = data?.summary || {};
+  const totalIssues = (s.missing_logs || 0) + (s.unverified || 0) + (s.invoice_unlinked || 0) + (s.unlinked_candidates || 0);
+
+  const Section = ({ title, hint, color, rows, render }) => (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 13, color: cs.text, marginBottom: 2 }}>
+        {title} <span style={{ fontSize: 11, color: rows.length ? color : "#22c55e", fontWeight: 800 }}>({rows.length})</span>
+      </div>
+      {hint && <div style={{ fontSize: 10, color: cs.muted, marginBottom: 6 }}>{hint}</div>}
+      <div style={{ display: "grid", gap: 6, maxHeight: 320, overflowY: "auto", marginBottom: 12 }}>
+        {rows.length === 0 ? <Empty msg="✅ Bersih." /> : rows.map(render)}
+      </div>
+    </div>
+  );
+
+  const card = (key, main, sub, badge, badgeColor) => (
+    <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8, padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11 }}>
+      <div>
+        <div style={{ color: cs.text, fontWeight: 700 }}>{main}</div>
+        <div style={{ color: cs.muted, fontSize: 10, fontFamily: "monospace" }}>{sub}</div>
+      </div>
+      {badge && <span style={{ color: badgeColor, fontWeight: 800, fontSize: 10, whiteSpace: "nowrap" }}>{badge}</span>}
+    </div>
+  );
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>🏢 Pemeriksa Link Maintenance</div>
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={selectStyle()}>
+          <option value={30}>30 hari</option>
+          <option value={120}>120 hari</option>
+          <option value={365}>1 tahun</option>
+          <option value={3650}>Semua</option>
+        </select>
+        <button onClick={load} disabled={loading} style={{ padding: "6px 12px", borderRadius: 8, background: cs.accent + "22", border: `1px solid ${cs.accent}33`, color: cs.accent, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+          {loading ? "⏳" : "🔄"}
+        </button>
+        <span style={{ fontSize: 11, color: cs.muted, marginLeft: "auto" }}>
+          <b style={{ color: totalIssues ? "#ef4444" : "#22c55e" }}>{totalIssues} perlu tindakan</b>
+        </span>
+      </div>
+
+      {err && <div style={{ fontSize: 11, color: "#ef4444" }}>⚠ {err}</div>}
+      {!data ? <Empty msg={loading ? "⏳ Memindai..." : "—"} /> : (
+        <>
+          <Section
+            title="🔴 History unit kosong (laporan VERIFIED, 0 log)"
+            hint="Pekerjaan selesai & terverifikasi tapi belum tercatat ke unit mana pun. Pilih unit di order lalu verifikasi ulang laporan."
+            color="#ef4444"
+            rows={data.missing_logs || []}
+            render={(r) => card(r.order_id, `${r.customer} — ${r.client}`, `${r.order_id} · ${r.service} · ${r.date} · ${r.status}`, "0 log", "#ef4444")}
+          />
+          <Section
+            title="🟠 Order belum di-link (HP cocok perusahaan)"
+            hint="Nomor HP order cocok dengan PIC perusahaan maintenance tapi order belum ditautkan. Tautkan supaya history tercatat."
+            color="#f59e0b"
+            rows={data.unlinked_candidates || []}
+            render={(r) => card(r.order_id, `${r.customer} → ${r.suggest_client}`, `${r.order_id} · ${r.service} · ${r.date} · ${r.status}`, "perlu link", "#f59e0b")}
+          />
+          <Section
+            title="🟡 Laporan maintenance belum diverifikasi"
+            hint="Autolog baru jalan saat laporan diverifikasi. Verifikasi di Laporan Tim agar history terisi."
+            color="#eab308"
+            rows={data.unverified || []}
+            render={(r) => card(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "SUBMITTED", "#eab308")}
+          />
+          <Section
+            title="🟠 Invoice belum ter-link ke perusahaan"
+            hint="Invoice order maintenance tapi maintenance_client_id kosong — tak muncul di tagihan B2B perusahaan."
+            color="#f59e0b"
+            rows={data.invoice_unlinked || []}
+            render={(r) => card(r.invoice_id, r.customer, `${r.invoice_id} · ${r.order_id} · ${r.status}`, fmtIDR(r.total), "#f59e0b")}
+          />
+          <Section
+            title="🔵 Link lemah (tercatat via posisi, bukan ID unit)"
+            hint="Sudah ada log tapi sebagian unit laporan tak punya maint_unit_id (dicocokkan posisi — rawan salah AC bila urutan beda). Idealnya teknisi pilih unit via 'Tambah dari Daftar Maintenance'."
+            color="#3b82f6"
+            rows={data.weak_links || []}
+            render={(r) => card(r.order_id, `${r.customer} — ${r.client}`, `${r.order_id} · ${r.service} · ${r.date}`, `${r.units_no_id}/${r.units_total} tanpa ID`, "#3b82f6")}
+          />
+          <div style={{ fontSize: 10, color: cs.muted }}>
+            Window {data.window_days} hari. Pemeriksa ini hanya membaca data (tidak mengubah apa pun). Lakukan perbaikan dari menu terkait (Planning Order / Laporan Tim / Maintenance).
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHeaders, supabase }) {
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -869,6 +985,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
     { id: "snapshots",    label: "📸 WA Snapshots" },
     { id: "observations", label: "🧪 AI Observations" },
     { id: "recon",        label: "🧾 Rekonsiliasi Invoice" },
+    { id: "maintlink",    label: "🏢 Link Maintenance" },
     { id: "audit",        label: "📜 Audit Log" },
   ];
 
@@ -905,6 +1022,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
       {activeTab === "snapshots"    && <TabWaSnapshots supabase={supabase} apiHeaders={_apiHeaders} />}
       {activeTab === "observations" && <TabWaObservations supabase={supabase} />}
       {activeTab === "recon"     && <TabInvoiceRecon supabase={supabase} />}
+      {activeTab === "maintlink" && <TabMaintLink apiHeaders={_apiHeaders} />}
       {activeTab === "audit"     && <TabAudit supabase={supabase} />}
     </div>
   );

@@ -3291,16 +3291,23 @@ ${photoPageHTML}
     })();
   }, [newOrderForm.maintenance_client_id]);
 
-  // Auto-detect maintenance client: jika phone match customer yg ada di maintenance_clients → auto-select
+  // Auto-detect maintenance client: phone match customer ATAU nama order = nama perusahaan → auto-select.
+  // Tujuan: cegah order maintenance lupa di-link (missing link silent). Owner/Admin tetap bisa ubah manual.
   useEffect(() => {
-    if (!modalOrder || newOrderForm.maintenance_client_id) return;
+    if (!modalOrder || newOrderForm.maintenance_client_id || !maintClientsForOrder.length) return;
     const custMatch = orderPhoneLookup.matches?.[0];
-    if (!custMatch?.id || !maintClientsForOrder.length) return;
-    const found = maintClientsForOrder.find(c => c.customer_id === custMatch.id);
+    // 1) Cocok via customer_id (paling andal — dari nomor HP)
+    let found = custMatch?.id ? maintClientsForOrder.find(c => c.customer_id === custMatch.id) : null;
+    // 2) Fallback: nama order persis sama dengan nama perusahaan (normalized) — low-risk, exact only
+    if (!found) {
+      const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+      const oc = norm(newOrderForm.customer);
+      if (oc.length >= 4) found = maintClientsForOrder.find(c => norm(c.name) === oc);
+    }
     if (!found) return;
     _maintAutoDetectRef.current = true;
     setNewOrderForm(f => ({ ...f, maintenance_client_id: found.id }));
-  }, [orderPhoneLookup.matches, maintClientsForOrder, modalOrder]);
+  }, [orderPhoneLookup.matches, maintClientsForOrder, modalOrder, newOrderForm.customer]);
 
   // Saat units selesai di-load via auto-detect → centang semua otomatis
   useEffect(() => {
