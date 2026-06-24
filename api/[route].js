@@ -3403,6 +3403,75 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
           return res.status(200).json({ clients: await r.json() });
         }
+        // ---- LINK AUDIT (pemeriksa missing-link maintenance) ----
+        // Mendeteksi pekerjaan maintenance yang link unit/client/invoice-nya putus, supaya
+        // ketahuan SEBELUM menumpuk. Tidak mengubah data — murni laporan.
+        if (action === "link-audit") {
+          const days = Math.min(Math.max(Number(body.days) || 120, 7), 3650);
+          const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+          const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
+          const j = async (url) => { try { const r = await fetch(REST(url), { headers }); return r.ok ? await r.json() : []; } catch { return []; } };
+
+          // 1) Order yang SUDAH ter-link ke client maintenance dalam window
+          const linkedOrders = await j(`orders?maintenance_client_id=not.is.null&date=gte.${since}&select=id,customer,phone,service,status,date,maintenance_client_id,maintenance_unit_ids&order=date.desc&limit=3000`);
+          const linkedIds = new Set(linkedOrders.map(o => o.id));
+          // 2) Laporan VERIFIED dalam window (units_json untuk cek maint_unit_id)
+          const verifiedReports = await j(`service_reports?status=eq.VERIFIED&date=gte.${since}&select=job_id,total_units,units_json&limit=6000`);
+          const repByJob = {}; verifiedReports.forEach(r => { if (!repByJob[r.job_id]) repByJob[r.job_id] = r; });
+          // 3) maintenance_logs dalam window → order mana yang sudah punya log
+          const logsRows = await j(`maintenance_logs?service_date=gte.${since}&select=order_id&limit=10000`);
+          const loggedOrders = new Set(logsRows.map(l => l.order_id).filter(Boolean));
+          // 4) Clients (untuk nama & phone variants)
+          const clients = await j(`maintenance_clients?select=id,name,pic_phone`);
+          const clientName = Object.fromEntries(clients.map(c => [c.id, c.name]));
+          // 5) Invoices dalam window (cek link ke client)
+          const invoices = await j(`invoices?created_at=gte.${since}T00:00:00&select=id,job_id,customer,total,maintenance_client_id,status&limit=5000`);
+
+          // === Temuan A: laporan VERIFIED tapi 0 log (history unit kosong) ===
+          // Hanya laporan yang PUNYA unit (Survey/Cek tanpa unit tidak perlu log → bukan missing-link).
+          const missing_logs = linkedOrders
+            .filter(o => repByJob[o.id] && _arr(repByJob[o.id].units_json).length > 0 && !loggedOrders.has(o.id))
+            .map(o => ({ order_id: o.id, customer: o.customer, client: clientName[o.maintenance_client_id] || "?", service: o.service, date: o.date, status: o.status }));
+
+          // === Temuan B: link lemah — sudah ada log TAPI laporan punya unit tanpa maint_unit_id ===
+          // (dicatat lewat pencocokan posisi yang rawan salah AC)
+          const weak_links = linkedOrders
+            .filter(o => repByJob[o.id] && loggedOrders.has(o.id))
+            .map(o => {
+              const units = _arr(repByJob[o.id].units_json);
+              const noId = units.filter(u => u && !u.maint_unit_id).length;
+              return noId > 0 ? { order_id: o.id, customer: o.customer, client: clientName[o.maintenance_client_id] || "?", service: o.service, date: o.date, units_total: units.length, units_no_id: noId } : null;
+            })
+            .filter(Boolean);
+
+          // === Temuan C: laporan maintenance belum diverifikasi (autolog belum jalan) ===
+          const submittedReports = await j(`service_reports?status=eq.SUBMITTED&date=gte.${since}&select=job_id,customer,date,service&limit=3000`);
+          const unverified = submittedReports
+            .filter(r => linkedIds.has(r.job_id))
+            .map(r => ({ order_id: r.job_id, customer: r.customer, date: r.date, service: r.service }));
+
+          // === Temuan D: invoice order maintenance belum ter-link ke client ===
+          const invoice_unlinked = invoices
+            .filter(iv => iv.job_id && linkedIds.has(iv.job_id) && !iv.maintenance_client_id)
+            .map(iv => ({ invoice_id: iv.id, order_id: iv.job_id, customer: iv.customer, total: iv.total, status: iv.status }));
+
+          // === Temuan E: order BELUM ter-link tapi nomor HP cocok perusahaan maintenance ===
+          const phoneToClient = {};
+          clients.forEach(c => { const np = validateAndNormalizePhone(c.pic_phone); if (np) buildPhoneVariants(np).forEach(v => { phoneToClient[v] = c; }); });
+          const variants = Object.keys(phoneToClient);
+          let unlinked_candidates = [];
+          if (variants.length) {
+            const unlinkedOrders = await j(`orders?maintenance_client_id=is.null&phone=in.(${encodeURIComponent(variants.join(","))})&date=gte.${since}&select=id,customer,phone,service,status,date&order=date.desc&limit=2000`);
+            unlinked_candidates = unlinkedOrders.map(o => ({ order_id: o.id, customer: o.customer, phone: o.phone, service: o.service, date: o.date, status: o.status, suggest_client: phoneToClient[o.phone]?.name || "?", suggest_client_id: phoneToClient[o.phone]?.id || null }));
+          }
+
+          return res.status(200).json({
+            window_days: days,
+            summary: { missing_logs: missing_logs.length, weak_links: weak_links.length, unverified: unverified.length, invoice_unlinked: invoice_unlinked.length, unlinked_candidates: unlinked_candidates.length },
+            missing_logs, weak_links, unverified, invoice_unlinked, unlinked_candidates,
+          });
+        }
+
         if (action === "create-client") {
           const name = sanitizeName(body.name);
           if (!name) return res.status(400).json({ error: "Nama perusahaan wajib" });
@@ -3893,7 +3962,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                 time: new Date().toISOString(),
               }),
             }).catch(sentryCatch("agent_log_maintenance_select", { order_id: order.id, client_id: clientId }));
-            return res.status(200).json({ skipped: true, reason: "servis non-cleaning — admin pilih unit dulu", client_linked: clientId });
+            return res.status(200).json({ skipped: true, needs_unit_selection: true, reason: "servis non-cleaning — admin pilih unit dulu", client_linked: clientId });
           }
 
           // Cleaning tanpa pilihan eksplisit → default semua unit aktif (bukan baru/nonaktif/rusak).
