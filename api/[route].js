@@ -3858,7 +3858,26 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           const svcRaw = String(order.service || "").toLowerCase();
           const isCleaning = svcRaw.includes("cleaning") || svcRaw.includes("cuci");
 
-          if (!explicitUnits && !isCleaning) {
+          // ── Ambil laporan teknisi LEBIH AWAL (sebelum guard non-cleaning) ──
+          // Laporan bisa jadi sumber kebenaran unit: teknisi memilih AC spesifik via
+          // "Tambah dari Daftar Maintenance" di modal laporan (maint_unit_id terisi) walaupun
+          // admin belum pilih unit di Planning Order. Tanpa ini, servis Repair/Pasang yang unitnya
+          // dipilih di laporan (bukan di order) tidak pernah ter-log ke history per unit.
+          const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
+          let report = null;
+          try {
+            const rpRes = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(order.id) + "&select=units_json,foto_urls,materials_json,total_freon&order=updated_at.desc&limit=1"), { headers });
+            const rp = await rpRes.json();
+            if (Array.isArray(rp) && rp.length) report = rp[0];
+          } catch (_) {}
+          const repUnits = _arr(report?.units_json);
+          const reportMaintIds = [...new Set(repUnits.map(ru => (ru && ru.maint_unit_id) || null).filter(Boolean))];
+          // Laporan menunjuk unit spesifik & order belum punya pilihan → pakai unit dari laporan.
+          if (!explicitUnits && reportMaintIds.length) unitIds = reportMaintIds.slice();
+
+          // Bail HANYA bila tak ada info unit dari mana pun (order kosong, bukan cleaning, laporan
+          // juga tak menunjuk unit). Kalau laporan sudah menunjuk unit → lanjut catat per unit.
+          if (!explicitUnits && !isCleaning && !reportMaintIds.length) {
             // Bukan cleaning & unit belum dipilih → JANGAN auto-catat. Link klien saja, minta admin pilih.
             if (!order.maintenance_client_id) {
               fetch(REST("orders?id=eq." + encodeURIComponent(order.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ maintenance_client_id: clientId }) }).catch(() => {});
@@ -3921,16 +3940,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           if (Array.isArray(ex) && ex.length) return res.status(200).json({ skipped: true, reason: "sudah ter-log" });
 
           // ── Perkaya log dari laporan + invoice (visi "1-stop all-in") ──
-          // 1) Laporan teknisi: detail per-unit (units_json), foto, material level-laporan.
-          let report = null;
-          try {
-            const rpRes = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(order.id) + "&select=units_json,foto_urls,materials_json,total_freon&order=updated_at.desc&limit=1"), { headers });
-            const rp = await rpRes.json();
-            if (Array.isArray(rp) && rp.length) report = rp[0];
-          } catch (_) {}
-          // units_json & materials_json disimpan sebagai STRING JSON (text), foto_urls array asli.
-          const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
-          const repUnits = _arr(report?.units_json);
+          // 1) Laporan teknisi (sudah di-fetch lebih awal di atas): foto + material level-laporan.
           // foto_urls = URL penuh R2; MaintenanceView & portal render via /api/foto?key=<R2 key> → strip domain.
           const repFotos = _arr(report?.foto_urls).map(u => String(u || "").replace(/^https?:\/\/[^/]+\//, "")).filter(Boolean);
           const repMats = _arr(report?.materials_json);
