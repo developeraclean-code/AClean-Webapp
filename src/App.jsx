@@ -1728,9 +1728,14 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
   // ── Update membership tier customer setelah order Cleaning/Install selesai ──
   const updateCustomerTierAfterOrder = async (order) => {
     if (!["Cleaning", "Install"].includes(order?.service)) return;
-    const custPhone = order.phone || customersData.find(c => c.name === order.customer)?.phone;
-    if (!custPhone) return;
-    const cust = customersData.find(c => c.phone === custPhone || c.phone === normalizePhone(custPhone));
+    // Cocokkan ke customer YANG BENAR — bukan phone-only (untuk multi-lokasi phone-only nyasar
+    // ke record pertama → counter unit naik di record salah, riwayat di record lain kosong).
+    // Prioritas: customer_id (link permanen) > (nama + phone) > nama saja. Selaras buildCustomerHistory.
+    const nm = (s) => (s || "").trim().toLowerCase();
+    const oPhone = order.phone ? normalizePhone(order.phone) : null;
+    let cust = order.customer_id ? customersData.find(c => c.id === order.customer_id) : null;
+    if (!cust) cust = customersData.find(c => nm(c.name) === nm(order.customer) && (!oPhone || samePhone(c.phone, oPhone)));
+    if (!cust) cust = customersData.find(c => nm(c.name) === nm(order.customer));
     if (!cust?.id) return;
     const addUnits = order.units || 1;
     const newTotal = (cust.total_units_serviced || 0) + addUnits;
@@ -2739,6 +2744,28 @@ ${photoPageHTML}
           }
         } catch (_) { /* non-blocking — default units tetap dipakai */ }
       })();
+    } else {
+      // #1A — customer REGULER: pre-fill identitas unit (merk/tipe/PK/label) dari laporan
+      // terakhir customer ini supaya teknisi tinggal konfirmasi/edit, bukan bikin unit baru
+      // terus. Field kerja (kondisi/pekerjaan/freon) tetap kosong — diisi fresh tiap kunjungan.
+      const nm = (s) => (s || "").trim().toLowerCase();
+      const custOrderIds = new Set(
+        ordersData.filter(o => o.id !== order.id &&
+          ((order.customer_id && o.customer_id === order.customer_id) ||
+           (!o.customer_id && nm(o.customer) === nm(order.customer)))
+        ).map(o => o.id)
+      );
+      const lastReport = laporanReports
+        .filter(r => custOrderIds.has(r.job_id) && r.status && r.status !== "PENDING" && Array.isArray(r.units) && r.units.length > 0)
+        .sort((a, b) => (b.date || b.submitted || "").localeCompare(a.date || a.submitted || ""))[0];
+      if (lastReport) {
+        const prefilled = Array.from({ length: count }, (_, i) => {
+          const pu = lastReport.units[i];
+          return pu ? mkUnit(i + 1, { label: pu.label, tipe: pu.tipe, merk: pu.merk, pk: pu.pk, model: pu.model, from_history_job_id: lastReport.job_id }) : mkUnit(i + 1);
+        });
+        setLaporanUnits(prefilled);
+        showNotif(`ℹ️ ${Math.min(count, lastReport.units.length)} unit di-prefill dari servis terakhir — cek & sesuaikan`);
+      }
     }
 
     setLaporanMaterials([]);
@@ -9900,6 +9927,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           open={modalAddCustomer}
           onClose={() => { setModalAddCustomer(false); setNewCustomerForm({ name: "", phone: "", address: "", area: "", notes: "", is_vip: false }); }}
           selectedCustomer={selectedCustomer}
+          presetForm={newCustomerForm}
           customersData={customersData}
           ordersData={ordersData}
           showNotif={showNotif}

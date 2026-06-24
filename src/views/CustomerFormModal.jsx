@@ -20,6 +20,7 @@ export default function CustomerFormModal({
   open,
   onClose,
   selectedCustomer,         // null = baru, object = edit
+  presetForm = null,        // pre-fill saat mode BARU (mis. "Tambah Lokasi" → HP sama)
   customersData = [],
   ordersData = [],
   showNotif,
@@ -45,7 +46,7 @@ export default function CustomerFormModal({
       area: selectedCustomer.area || "",
       notes: selectedCustomer.notes || "",
       is_vip: selectedCustomer.is_vip || false,
-    } : blank);
+    } : { ...blank, ...(presetForm || {}) });
     setErrors({});
     setSaving(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
