@@ -77,7 +77,7 @@ function OfficeToolModal({ job, scope = "order", mode = "bawa", onClose, supabas
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 800, color: cs.text }}>{isBawa ? "🛠 Bawa Alat" : "📥 Kembalikan Alat"}</div>
-            <div style={{ fontSize: 12, color: cs.muted }}>{scope === "project" ? "Project" : "Job"} · {refLabel}{job?.date ? " · " + job.date : ""}</div>
+            <div style={{ fontSize: 12, color: cs.muted }}>{scope === "project" ? "Project" : scope === "daily" ? "Harian" : "Job"} · {refLabel}{job?.date ? " · " + job.date : ""}</div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 24, cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
