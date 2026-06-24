@@ -13,7 +13,7 @@ const STATUS_CONFIG = {
   COMPLETED:  { label: "Selesai",    color: "#10b981", bg: "#10b98122" },
 };
 
-function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, openMaterialMove, openOfficeTool, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps }) {
+function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openMaterialBringModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
 
@@ -70,6 +70,17 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
         <div style={{ fontWeight: 800, fontSize: 20, color: cs.text, marginTop: 2 }}>{myName} <span style={{ fontSize: 14 }}>{currentUser?.role === "Helper" ? "🤝" : "👷"}</span></div>
         <div style={{ fontSize: 12, color: cs.muted, marginTop: 4 }}>
           {new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+        </div>
+        {/* Quick-nav: pintu harian material & alat (di luar per-job) */}
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button onClick={() => setActiveMenu?.("matcheckout")}
+            style={{ flex: 1, background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
+            📥 Material Harian
+          </button>
+          <button onClick={() => setActiveMenu?.("alatsaya")}
+            style={{ flex: 1, background: "#f59e0b18", border: "1px solid #f59e0b44", color: "#f59e0b", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
+            🧰 Alat Saya
+          </button>
         </div>
       </div>
 
@@ -199,30 +210,9 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
                     </>
                   );
                 })()}
-                {openMaterialMove && order.status !== "CANCELLED" && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => openMaterialMove(order, "bawa")}
-                      style={{ flex: 1, background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#0ea5e9", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-                      🔧 Bawa Pipa/Kabel
-                    </button>
-                    <button onClick={() => openMaterialMove(order, "pulang")}
-                      style={{ flex: 1, background: "#14b8a622", border: "1px solid #14b8a644", color: "#14b8a6", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-                      📥 Pulang
-                    </button>
-                  </div>
-                )}
-                {openOfficeTool && order.status !== "CANCELLED" && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => openOfficeTool(order, "bawa", "order")}
-                      style={{ flex: 1, background: "#f59e0b22", border: "1px solid #f59e0b44", color: "#f59e0b", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-                      🛠 Bawa Alat
-                    </button>
-                    <button onClick={() => openOfficeTool(order, "kembali", "order")}
-                      style={{ flex: 1, background: "#10b98122", border: "1px solid #10b98144", color: "#10b981", borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-                      ↩️ Kembali Alat
-                    </button>
-                  </div>
-                )}
+                {/* "Bawa Pipa/Kabel"+"Pulang" (openMaterialMove) & "Bawa/Kembali Alat" per-job
+                    (openOfficeTool) dihapus dari kartu. Material → satu pintu "📝 Laporan & Material".
+                    Alat → checkout HARIAN per teknisi di menu "🧰 Alat Saya". */}
                 {isDispatched && (
                   <button
                     onClick={() => handleStatus(order, "ON_SITE", "Konfirmasi tiba di lokasi")}
@@ -251,9 +241,9 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
                     💬 WA Customer
                   </button>
                   {!isCompleted && (
-                    <button onClick={() => openLaporanModal(order)}
+                    <button onClick={() => (openJobReport || openLaporanModal)(order)}
                       style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
-                      📋 Laporan
+                      📝 Laporan & Material
                     </button>
                   )}
                   {isCompleted && (
