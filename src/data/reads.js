@@ -64,10 +64,27 @@ export const fetchInventory = (supabase) =>
     .select("id,code,name,unit,price,stock,reorder,status,min_alert,material_type,freon_type")
     .order("code").limit(500);
 
+// Catatan perf: units_json & materials_json (TEXT) DIBUANG dari kolom ini — keduanya
+// duplikat dari units & materials_used (jsonb). Semua 1133 row sudah di-backfill jsonb-nya
+// (scripts/backfill-report-jsonb), jadi parseLaporan cukup pakai jsonb. Hemat ~0,9MB payload startup.
+const REPORT_COLS = "id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,fotos,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at,hasil_survey,catatan_rekomendasi,survey_sent_at";
 export const fetchServiceReports = (supabase) =>
   supabase.from("service_reports")
-    .select("id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,fotos,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,units_json,materials_json,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at,hasil_survey,catatan_rekomendasi,survey_sent_at")
+    .select(REPORT_COLS)
     .order("submitted_at", { ascending: false }).limit(5000);
+
+// Server-side search laporan — jangkau report lama di luar cap startup (PostgREST max 1000 row).
+// Pola sama searchInvoicesServer/searchOrdersServer (sudah terbukti). Multi-kolom identitas + tim.
+export const searchServiceReportsServer = (supabase, query) => {
+  const term = (query || "").trim().replace(/[(),]/g, " ").trim();
+  if (term.length < 2) return Promise.resolve({ data: [], error: null });
+  const p = `%${term}%`;
+  return supabase.from("service_reports")
+    .select(REPORT_COLS)
+    .or(`customer.ilike.${p},id.ilike.${p},job_id.ilike.${p},teknisi.ilike.${p},helper.ilike.${p}`)
+    .order("submitted_at", { ascending: false })
+    .limit(100);
+};
 
 export const fetchAgentLogs = (supabase) =>
   supabase.from("agent_logs").select("*").order("created_at", { ascending: false }).limit(100);

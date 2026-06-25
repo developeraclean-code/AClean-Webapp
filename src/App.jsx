@@ -32,7 +32,7 @@ import { DEFAULT_BONUS_CATEGORIES } from "./constants/bonus.js";
 import {
   fetchOrders, fetchInvoices, fetchCustomers, fetchInventory,
   fetchServiceReports, fetchInventoryTransactions,
-  searchInvoicesServer, searchOrdersServer,
+  searchInvoicesServer, searchOrdersServer, searchServiceReportsServer,
   fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
   fetchWaConversations, fetchPriceList, fetchAraBrain,
@@ -1125,6 +1125,8 @@ export default function ACleanWebApp() {
   const [searchOrdExt, setSearchOrdExt] = useState([]);
   const [searchInvLoading, setSearchInvLoading] = useState(false);
   const [searchOrdLoading, setSearchOrdLoading] = useState(false);
+  const [searchLapExt, setSearchLapExt] = useState([]);
+  const [searchLapLoading, setSearchLapLoading] = useState(false);
 
   // GAP 3 — State untuk edit invoice
   const [modalEditInvoice, setModalEditInvoice] = useState(false);
@@ -1339,6 +1341,35 @@ export default function ACleanWebApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchOrder]);
 
+  // Server-side search Laporan — jangkau report lama di luar cap startup (PostgREST 1000). Pola sama invoice/order.
+  useEffect(() => {
+    const q = (searchLaporan || "").trim();
+    if (q.length < 2) { setSearchLapExt([]); setSearchLapLoading(false); return; }
+    let cancelled = false;
+    setSearchLapLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await searchServiceReportsServer(supabase, q);
+        // Parse selaras parseLaporan di loadAll (units_json/materials_json sudah tak di-fetch → pakai jsonb)
+        const parsed = (data || []).map(r => ({
+          ...r,
+          units: safeArr(r.units),
+          materials: safeArr(r.materials_used),
+          fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
+          editLog: safeArr(r.edit_log ?? r.editLog),
+          rekomendasi: r.rekomendasi || "",
+          catatan_global: r.catatan_global || r.catatan || "",
+          submitted: r.submitted || (r.submitted_at || "").slice(0, 16).replace("T", " "),
+          status: r.status || "SUBMITTED",
+        }));
+        if (!cancelled) setSearchLapExt(parsed);
+      } catch (_) { if (!cancelled) setSearchLapExt([]); }
+      finally { if (!cancelled) setSearchLapLoading(false); }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); setSearchLapLoading(false); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchLaporan]);
+
   // Merge local + server (dedup by id) — hanya untuk filter & display, bukan state global
   const invoicesDataMerged = useMemo(() => {
     if (!searchInvExt.length) return invoicesData;
@@ -1353,6 +1384,13 @@ export default function ACleanWebApp() {
     const extras = searchOrdExt.filter(o => !ids.has(o.id));
     return extras.length ? [...ordersData, ...extras] : ordersData;
   }, [ordersData, searchOrdExt]);
+
+  const laporanReportsMerged = useMemo(() => {
+    if (!searchLapExt.length) return laporanReports;
+    const ids = new Set(laporanReports.map(r => r.id));
+    const extras = searchLapExt.filter(r => !ids.has(r.id));
+    return extras.length ? [...laporanReports, ...extras] : laporanReports;
+  }, [laporanReports, searchLapExt]);
 
   // ── Jaring pengaman global: ordersData tak pernah simpan id ganda. ──
   // Beberapa jalur (realtime INSERT + create/confirm order WA) sesekali menyisipkan
@@ -6689,7 +6727,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // RENDER LAPORAN TIM  (Owner & Admin)
   // ============================================================
   const renderLaporanTim = () => (
-    <LaporanTimView laporanReports={laporanReports} setLaporanReports={setLaporanReports} ordersData={ordersData} setOrdersData={setOrdersData}
+    <LaporanTimView laporanReports={searchLaporan.trim() ? laporanReportsMerged : laporanReports} searchLoading={searchLapLoading} setLaporanReports={setLaporanReports} ordersData={ordersData} setOrdersData={setOrdersData}
       invoicesData={invoicesData} setInvoicesData={setInvoicesData} priceListData={priceListData} currentUser={currentUser} isMobile={isMobile}
       laporanDateFilter={laporanDateFilter} setLaporanDateFilter={setLaporanDateFilter} laporanDateFrom={laporanDateFrom} setLaporanDateFrom={setLaporanDateFrom}
       laporanDateTo={laporanDateTo} setLaporanDateTo={setLaporanDateTo} laporanSvcFilter={laporanSvcFilter} setLaporanSvcFilter={setLaporanSvcFilter}
@@ -6714,7 +6752,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // RENDER MY REPORT  (Teknisi & Helper — laporan sendiri + edit)
   // ============================================================
   const renderMyReport = () => (
-    <MyReportView laporanReports={laporanReports} projectDailyReports={projectDailyReports} ordersData={ordersData} invoicesData={invoicesData} currentUser={currentUser}
+    <MyReportView laporanReports={searchLaporan.trim() ? laporanReportsMerged : laporanReports} searchLoading={searchLapLoading} projectDailyReports={projectDailyReports} ordersData={ordersData} invoicesData={invoicesData} currentUser={currentUser}
       searchLaporan={searchLaporan} setSearchLaporan={setSearchLaporan} setSelectedLaporan={setSelectedLaporan} setEditLaporanMode={setEditLaporanMode}
       setModalLaporanDetail={setModalLaporanDetail} setEditLaporanForm={setEditLaporanForm} setLaporanBarangItems={setLaporanBarangItems}
       setEditRepairType={setEditRepairType} setEditGratisAlasan={setEditGratisAlasan} setActiveEditUnitIdx={setActiveEditUnitIdx}

@@ -131,7 +131,7 @@ function SurveyKirimModal({ r, onClose, sendWA, showNotif, addAgentLog, auditUse
   );
 }
 
-function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData, apiFetch }) {
+function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, searchLoading, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData, apiFetch }) {
 const _todayLap = getLocalDate?.() || new Date().toISOString().slice(0, 10);
 const [lapViewMode, setLapViewMode] = useState("detail"); // "rekap" | "detail" — default detail
 const [rekapDate, setRekapDate]     = useState(_todayLap);
@@ -318,8 +318,9 @@ const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)
 const CUTOFF_DATE = "2026-04-25"; // sembunyikan laporan sebelum tanggal ini by default
 let filtered = [...laporanReports];
 
-// ── DEFAULT HIDE laporan sebelum 25 April 2026 (kecuali filter manual aktif) ──
-const isDefaultView = laporanDateFilter === "Semua" && !laporanDateFrom && !laporanDateTo;
+// ── DEFAULT HIDE laporan sebelum 25 April 2026 (kecuali filter manual ATAU search aktif) ──
+// Saat user mengetik di search, JANGAN sembunyikan arsip lama — biar report 3 bulan lalu ketemu.
+const isDefaultView = laporanDateFilter === "Semua" && !laporanDateFrom && !laporanDateTo && !searchLaporan.trim();
 if (isDefaultView) {
   filtered = filtered.filter(r => (r.date || r.submitted_at || "").slice(0, 10) >= CUTOFF_DATE);
 }
@@ -959,6 +960,11 @@ return (
         placeholder="Cari nama teknisi, customer, ID job, atau layanan..."
         style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px 10px 38px", color: cs.text, fontSize: 13, boxSizing: "border-box" }} />
       {searchLaporan && <button onClick={() => { setSearchLaporan(""); setLaporanPage(1); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16 }}>✕</button>}
+      {searchLaporan.trim().length >= 2 && (
+        <div style={{ fontSize: 11, color: cs.muted, marginTop: 5, paddingLeft: 4 }}>
+          {searchLoading ? "⏳ Mencari di seluruh arsip laporan…" : "🗂️ Termasuk laporan lama (di luar 1000 terbaru)"}
+        </div>
+      )}
     </div>
     {/* ── DATE RANGE PICKER ── */}
     <div style={{
