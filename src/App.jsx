@@ -17,7 +17,7 @@ import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLin
 import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
 import {
   KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, MATERIAL_PRESET,
-  INSTALL_ITEMS, TIPE_AC_OPT, SATUAN_OPT, maintUnitToHist, mkUnit, isUnitDone,
+  INSTALL_ITEMS, TIPE_AC_OPT, SATUAN_OPT, maintUnitToHist, acUnitToHist, mkUnit, isUnitDone,
 } from "./lib/laporanConstants.js";
 import {
   PRICE_LIST_DEFAULT, getBracketKey,
@@ -45,7 +45,10 @@ import {
   insertExpense, updateExpense, deleteExpense,
   insertCustomer, updateCustomer, deleteCustomer,
   insertKasbonRequest, updateKasbonRequest,
+  fetchAcUnitsByCustomer, insertAcUnit, updateAcUnit,
 } from "./data/writes.js";
+// Registry unit AC permanen hanya berlaku maju (order >= tanggal ini). Historis dibiarkan.
+const AC_REGISTRY_CUTOFF = "2026-06-25";
 import DashboardView from "./views/DashboardView.jsx";
 import KasbonWidget from "./views/KasbonWidget.jsx";
 import ExpenseInputWidget from "./views/ExpenseInputWidget.jsx";
@@ -923,6 +926,9 @@ export default function ACleanWebApp() {
   const [maintUnitPool, setMaintUnitPool] = useState([]);            // semua unit terdaftar klien
   const [showAddMaintUnitModal, setShowAddMaintUnitModal] = useState(false);
   const [addMaintSelected, setAddMaintSelected] = useState(new Set()); // Set of maintenance unit ids to add
+  // ── Registry unit AC permanen (customer reguler) — forward-only sejak cutoff ──
+  // Picker open-state dikelola lokal di LaporanTeknisiModal (cermin maint). App pegang datanya.
+  const [acUnitPool, setAcUnitPool] = useState([]);                 // ac_units aktif customer ini
   const fotoInputRef = useRef();
   const fotoUnitInputRef = useRef(); // input khusus uploader foto per-unit di Step 2
   const fotoTargetUnitRef = useRef(null); // unit_no untuk foto yg di-upload dari tab unit (null = umum)
@@ -1786,6 +1792,36 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
       showNotif(`🎉 ${cust.name} naik ke Member ${tierLabel}!`);
       addAgentLog("MEMBER_TIER_UP", `${cust.name} → ${newTier} (${newTotal} unit)`, "SUCCESS");
     }
+  };
+
+  // ── Seed-by-confirm registry unit AC (forward-only) setelah laporan disimpan ──
+  // Idempotent by (customer_id, lokasi=label): unit ber-ac_unit_id → touch terakhir_service;
+  // unit baru ber-label → insert/touch. Tanpa label → dilewati (label posisi wajib utk registry).
+  // Hanya customer reguler (non-maintenance) & order >= cutoff. Historis tak tersentuh.
+  const seedAcRegistry = async (order, units) => {
+    try {
+      const cid = order?.customer_id;
+      if (!cid || order?.maintenance_client_id) return;
+      if ((order?.date || "") < AC_REGISTRY_CUTOFF) return;
+      const { data: existing } = await fetchAcUnitsByCustomer(supabase, cid);
+      const byLabel = new Map((existing || []).map(u => [String(u.lokasi || "").trim().toLowerCase(), u]));
+      for (const u of (units || [])) {
+        const label = String(u.label || "").trim();
+        const fields = { merk: u.merk || null, tipe: u.tipe || null, pk: u.pk || null, serial_number: u.model || null, terakhir_service: order.date };
+        if (u.ac_unit_id) {
+          await updateAcUnit(supabase, u.ac_unit_id, fields);
+        } else if (label) {
+          const hit = byLabel.get(label.toLowerCase());
+          if (hit) await updateAcUnit(supabase, hit.id, fields);
+          else await insertAcUnit(supabase, { customer_id: cid, lokasi: label, is_active: true, ...fields });
+        }
+      }
+      // Refresh pool kalau modal masih buka untuk customer ini
+      if (laporanModal?.customer_id === cid) {
+        const { data: fresh } = await fetchAcUnitsByCustomer(supabase, cid);
+        if (fresh) setAcUnitPool(fresh);
+      }
+    } catch (e) { console.warn("[AC_REGISTRY] seed gagal:", e?.message || e); }
   };
 
   const downloadRekapHarian = (targetDate) => {
@@ -2756,8 +2792,9 @@ ${photoPageHTML}
     const count = Math.min(order.units || 1, 30);
     setLaporanUnits(Array.from({ length: count }, (_, i) => mkUnit(i + 1)));
 
-    // Reset pool unit maintenance — diisi ulang di bawah jika order corporate
+    // Reset pool unit maintenance & registry AC — diisi ulang di bawah sesuai jenis order
     setMaintUnitPool([]); setShowAddMaintUnitModal(false); setAddMaintSelected(new Set());
+    setAcUnitPool([]);
 
     // Pre-fill unit label/tipe/merk/PK dari maintenance preset (jika order corporate)
     const mUnitIds = Array.isArray(order.maintenance_unit_ids) ? order.maintenance_unit_ids : [];
@@ -2783,26 +2820,46 @@ ${photoPageHTML}
         } catch (_) { /* non-blocking — default units tetap dipakai */ }
       })();
     } else {
-      // #1A — customer REGULER: pre-fill identitas unit (merk/tipe/PK/label) dari laporan
-      // terakhir customer ini supaya teknisi tinggal konfirmasi/edit, bukan bikin unit baru
-      // terus. Field kerja (kondisi/pekerjaan/freon) tetap kosong — diisi fresh tiap kunjungan.
-      const nm = (s) => (s || "").trim().toLowerCase();
-      const custOrderIds = new Set(
-        ordersData.filter(o => o.id !== order.id &&
-          ((order.customer_id && o.customer_id === order.customer_id) ||
-           (!o.customer_id && nm(o.customer) === nm(order.customer)))
-        ).map(o => o.id)
-      );
-      const lastReport = laporanReports
-        .filter(r => custOrderIds.has(r.job_id) && r.status && r.status !== "PENDING" && Array.isArray(r.units) && r.units.length > 0)
-        .sort((a, b) => (b.date || b.submitted || "").localeCompare(a.date || a.submitted || ""))[0];
-      if (lastReport) {
-        const prefilled = Array.from({ length: count }, (_, i) => {
-          const pu = lastReport.units[i];
-          return pu ? mkUnit(i + 1, { label: pu.label, tipe: pu.tipe, merk: pu.merk, pk: pu.pk, model: pu.model, from_history_job_id: lastReport.job_id }) : mkUnit(i + 1);
-        });
-        setLaporanUnits(prefilled);
-        showNotif(`ℹ️ ${Math.min(count, lastReport.units.length)} unit di-prefill dari servis terakhir — cek & sesuaikan`);
+      // Customer REGULER. Prioritas pre-fill: (1) registry unit AC permanen bila order
+      // >= cutoff & ada di registry; (2) fallback #1A laporan terakhir; (3) default kosong.
+      // #1A — pre-fill identitas dari laporan terakhir (field kerja tetap kosong tiap visit).
+      const prefillFromLastReport = () => {
+        const nm = (s) => (s || "").trim().toLowerCase();
+        const custOrderIds = new Set(
+          ordersData.filter(o => o.id !== order.id &&
+            ((order.customer_id && o.customer_id === order.customer_id) ||
+             (!o.customer_id && nm(o.customer) === nm(order.customer)))
+          ).map(o => o.id)
+        );
+        const lastReport = laporanReports
+          .filter(r => custOrderIds.has(r.job_id) && r.status && r.status !== "PENDING" && Array.isArray(r.units) && r.units.length > 0)
+          .sort((a, b) => (b.date || b.submitted || "").localeCompare(a.date || a.submitted || ""))[0];
+        if (lastReport) {
+          const prefilled = Array.from({ length: count }, (_, i) => {
+            const pu = lastReport.units[i];
+            return pu ? mkUnit(i + 1, { label: pu.label, tipe: pu.tipe, merk: pu.merk, pk: pu.pk, model: pu.model, from_history_job_id: lastReport.job_id }) : mkUnit(i + 1);
+          });
+          setLaporanUnits(prefilled);
+          showNotif(`ℹ️ ${Math.min(count, lastReport.units.length)} unit di-prefill dari servis terakhir — cek & sesuaikan`);
+        }
+      };
+      // Registry forward-only: hanya order >= cutoff & punya customer_id.
+      if (order.customer_id && (order.date || "") >= AC_REGISTRY_CUTOFF) {
+        (async () => {
+          try {
+            const { data: acUnits } = await fetchAcUnitsByCustomer(supabase, order.customer_id);
+            if (acUnits && acUnits.length > 0) {
+              setAcUnitPool(acUnits);
+              const filled = acUnits.slice(0, 30).map((au, i) => mkUnit(i + 1, acUnitToHist(au)));
+              setLaporanUnits(filled);
+              showNotif(`ℹ️ ${filled.length} unit di-prefill dari registry customer — cek & sesuaikan`);
+              return; // registry dipakai → skip #1A
+            }
+          } catch (_) { /* non-blocking */ }
+          prefillFromLastReport(); // registry kosong/gagal → fallback
+        })();
+      } else {
+        prefillFromLastReport();
       }
     }
 
@@ -8313,6 +8370,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     } catch (e) { console.warn("[BROUGHT_SYNC]", e?.message || e); }
 
     setLaporanSubmitted(true);
+    // Seed-by-confirm registry unit AC (non-blocking, idempotent, forward-only)
+    seedAcRegistry(laporanModal, laporanUnits);
     pushNotif(appSettings.app_name || "AClean", "Laporan berhasil dikirim ke Admin ✅");
     showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan dikirim ke Owner/Admin untuk verifikasi.`);
     } catch (err) {
@@ -10396,6 +10455,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             unitPresetHistory={unitPresetHistory} setUnitPresetHistory={setUnitPresetHistory}
             unitPresetSelected={unitPresetSelected} setUnitPresetSelected={setUnitPresetSelected}
             maintUnitPool={maintUnitPool}
+            acUnitPool={acUnitPool}
             fotoInputRef={fotoInputRef}
             fotoUnitInputRef={fotoUnitInputRef}
             fotoTargetUnitRef={fotoTargetUnitRef}

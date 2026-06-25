@@ -23,6 +23,25 @@ const MEMBER_TIER_INFO = {
 
 function CustomersView({ selectedCustomer, setSelectedCustomer, ordersData, laporanReports, invoicesData, customersData, setCustomersData, searchCustomer, setSearchCustomer, customerPage, setCustomerPage, customerTab, setCustomerTab, currentUser, isMobile, setNewCustomerForm, setModalAddCustomer, setNewOrderForm, setModalOrder, setSelectedInvoice, setModalPDF, buildCustomerHistory, openWA, showConfirm, showNotif, deleteCustomer, addAgentLog, updateCustomer, fotoSrc, safeArr, fmt, supabase, CUST_PAGE_SIZE, downloadServiceReportPDF }) {
 const [tierFilter, setTierFilter] = React.useState("all");
+// Registry unit AC permanen (ac_units) untuk customer terpilih
+const [acUnits, setAcUnits] = React.useState([]);
+React.useEffect(() => {
+  if (!selectedCustomer?.id) { setAcUnits([]); return; }
+  let cancelled = false;
+  (async () => {
+    const { data } = await supabase.from("ac_units").select("*")
+      .eq("customer_id", selectedCustomer.id).eq("is_active", true).order("created_at");
+    if (!cancelled) setAcUnits(data || []);
+  })();
+  return () => { cancelled = true; };
+}, [selectedCustomer?.id, supabase]);
+const deactivateAcUnit = async (id, lokasi) => {
+  if (!await showConfirm({ icon: "🗑️", title: "Nonaktifkan Unit?", message: `Unit "${lokasi || "(tanpa posisi)"}" tak akan lagi auto-muncul di laporan. Riwayat tetap aman.`, confirmText: "Nonaktifkan" })) return;
+  const { error } = await supabase.from("ac_units").update({ is_active: false, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) { showNotif("❌ Gagal: " + error.message); return; }
+  setAcUnits(prev => prev.filter(u => u.id !== id));
+  showNotif("✅ Unit dinonaktifkan dari registry");
+};
 const history = selectedCustomer
   ? buildCustomerHistory(selectedCustomer, ordersData, laporanReports, invoicesData, customersData)
   : [];
@@ -634,6 +653,31 @@ return (
                 <span style={{ fontSize: 13, color: cs.text, flex: 1 }}>{v || "—"}</span>
               </div>
             ))}
+            {/* ── Registry Unit AC (forward-only, ac_units) ── */}
+            <div style={{ padding: "14px 18px", borderTop: "1px solid " + cs.border }}>
+              <div style={{ fontSize: 12, color: cs.muted, fontWeight: 700, marginBottom: 8 }}>🔧 Unit AC Terdaftar ({acUnits.length})</div>
+              {acUnits.length === 0 ? (
+                <div style={{ fontSize: 12, color: cs.muted, fontStyle: "italic" }}>Belum ada unit terdaftar. Registry terisi otomatis saat laporan servis disimpan (mulai 25 Jun 2026).</div>
+              ) : (
+                <div style={{ display: "grid", gap: 6 }}>
+                  {acUnits.map(au => (
+                    <div key={au.id} style={{ display: "flex", alignItems: "center", gap: 10, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 11px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>📍 {au.lokasi || "(tanpa posisi)"}</div>
+                        <div style={{ fontSize: 10, color: cs.muted, marginTop: 1 }}>
+                          {[au.merk, au.pk || au.kapasitas, au.tipe].filter(Boolean).join(" · ") || "—"}
+                          {au.terakhir_service ? ` · terakhir ${au.terakhir_service}` : ""}
+                        </div>
+                      </div>
+                      {!isTekHelper && (
+                        <button onClick={() => deactivateAcUnit(au.id, au.lokasi)} title="Nonaktifkan dari registry"
+                          style={{ flexShrink: 0, background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 7, padding: "5px 9px", cursor: "pointer", fontSize: 11 }}>Nonaktifkan</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

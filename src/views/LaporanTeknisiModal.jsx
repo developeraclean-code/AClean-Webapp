@@ -4,7 +4,7 @@ import { getBracketKey, hargaPerUnitFromTipe } from "../lib/pricing.js";
 import { categoryFromCatalog } from "../lib/invoicing.js";
 import {
   KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, MATERIAL_PRESET,
-  INSTALL_ITEMS, TIPE_AC_OPT, mkUnit, isUnitDone, maintUnitToHist,
+  INSTALL_ITEMS, TIPE_AC_OPT, mkUnit, isUnitDone, maintUnitToHist, acUnitToHist,
 } from "../lib/laporanConstants.js";
 
 // Debounce lokal (disalin dari App.jsx module-level) — untuk search material
@@ -48,6 +48,7 @@ export default function LaporanTeknisiModal({
   unitPresetHistory, setUnitPresetHistory,
   unitPresetSelected, setUnitPresetSelected,
   maintUnitPool,
+  acUnitPool = [],
   // refs
   fotoInputRef, fotoUnitInputRef, fotoTargetUnitRef,
   // data
@@ -68,6 +69,9 @@ export default function LaporanTeknisiModal({
   const [repairManualText, setRepairManualText] = useState({});
   const [showAddMaintUnitModal, setShowAddMaintUnitModal] = useState(false);
   const [addMaintSelected, setAddMaintSelected] = useState(new Set());
+  // Picker registry unit AC (customer reguler) — cermin maint
+  const [showAddAcUnitModal, setShowAddAcUnitModal] = useState(false);
+  const [addAcSelected, setAddAcSelected] = useState(new Set());
 
   // ── Layar sukses (setelah submit) ──
   if (laporanModal && laporanSubmitted) {
@@ -291,10 +295,87 @@ export default function LaporanTeknisiModal({
     );
   };
 
+  // ── TAMBAH UNIT DARI REGISTRY (customer reguler — ac_units) ──
+  const AddAcUnitModal = () => {
+    if (!showAddAcUnitModal) return null;
+    const available = acUnitPool.filter(au => !laporanUnits.some(u => u.ac_unit_id === au.id));
+
+    const handleAdd = () => {
+      const toAdd = available.filter(au => addAcSelected.has(au.id));
+      if (toAdd.length === 0) return;
+      setLaporanUnits(prev => {
+        const next = [...prev];
+        toAdd.forEach(au => next.push(mkUnit(next.length + 1, acUnitToHist(au))));
+        return next.map((u, i) => ({ ...u, unit_no: i + 1 }));
+      });
+      setActiveUnitIdx(laporanUnits.length);
+      setShowAddAcUnitModal(false);
+      setAddAcSelected(new Set());
+    };
+
+    return (
+      <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 710, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setShowAddAcUnitModal(false)}>
+        <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, width: "100%", maxWidth: 500, maxHeight: "80vh", overflowY: "auto", padding: 20 }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ fontWeight: 800, fontSize: 16, color: cs.text, margin: 0 }}>🔧 Tambah dari Unit Tersimpan</h3>
+            <button onClick={() => setShowAddAcUnitModal(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 20, cursor: "pointer" }}>×</button>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: cs.muted }}>
+              Unit AC milik customer ini yang belum ada di laporan. Centang yang dikerjakan — identitas terisi otomatis.
+            </div>
+            {available.length > 0 && (
+              <button onClick={() => setAddAcSelected(addAcSelected.size === available.length ? new Set() : new Set(available.map(au => au.id)))}
+                style={{ flexShrink: 0, background: cs.border, color: cs.text, border: "none", borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontWeight: 600, fontSize: 11 }}>
+                {addAcSelected.size === available.length ? "Hapus semua" : "Pilih semua"}
+              </button>
+            )}
+          </div>
+          {available.length === 0 ? (
+            <div style={{ fontSize: 12, color: cs.muted, fontStyle: "italic", marginBottom: 16 }}>Semua unit tersimpan sudah ada di laporan.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+              {available.map(au => {
+                const isSelected = addAcSelected.has(au.id);
+                return (
+                  <div key={au.id} style={{ display: "flex", gap: 10, alignItems: "center", background: cs.card, border: "1px solid " + (isSelected ? cs.green : cs.border), borderRadius: 10, padding: 12, cursor: "pointer" }} onClick={() => {
+                    const newSet = new Set(addAcSelected);
+                    if (isSelected) newSet.delete(au.id); else newSet.add(au.id);
+                    setAddAcSelected(newSet);
+                  }}>
+                    <input type="checkbox" checked={isSelected} onChange={() => { }} style={{ cursor: "pointer", width: 18, height: 18 }} />
+                    <div style={{ flex: 1, display: "grid", gap: 4 }}>
+                      <div style={{ fontWeight: 600, color: cs.text, fontSize: 12 }}>📍 {au.lokasi || "(tanpa posisi)"}</div>
+                      <div style={{ fontSize: 10, color: cs.muted }}>
+                        {au.merk && <span>{au.merk}</span>}
+                        {(au.pk || au.kapasitas) && <span> · {au.pk || au.kapasitas}</span>}
+                        {au.tipe && <span> · {au.tipe}</span>}
+                        {au.terakhir_service && <span> · terakhir {au.terakhir_service}</span>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setShowAddAcUnitModal(false)} style={{ flex: 1, background: cs.border, color: cs.muted, border: "none", borderRadius: 8, padding: "10px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+              Batal
+            </button>
+            <button onClick={handleAdd} disabled={addAcSelected.size === 0} style={{ flex: 1, background: addAcSelected.size === 0 ? cs.border : cs.green, color: addAcSelected.size === 0 ? cs.muted : "#fff", border: "none", borderRadius: 8, padding: "10px 14px", cursor: addAcSelected.size === 0 ? "default" : "pointer", fontWeight: 600, fontSize: 12 }}>
+              Tambah {addAcSelected.size > 0 ? `${addAcSelected.size} Unit` : ""}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
       <UnitPresetModal />
       <AddMaintUnitModal />
+      <AddAcUnitModal />
       <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 600, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setLaporanModal(null)}>
         <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 560, maxHeight: "94vh", overflowY: "auto", padding: 24 }} onClick={e => e.stopPropagation()}>
 
@@ -524,7 +605,7 @@ export default function LaporanTeknisiModal({
                       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", padding: "10px 12px" }}>
                         <div style={{ display: "grid", gap: 4 }}>
                           <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Nama Ruangan *</span>
-                          <input value={u.label} onChange={e => updateUnit(idx, { ...u, label: e.target.value })} placeholder="Pilih atau tulis nama ruangan"
+                          <input value={u.label} onChange={e => updateUnit(idx, { ...u, label: e.target.value })} placeholder="Posisi: Kamar Utama / Ruang Tamu / Kantor"
                             list="ruangan-preset"
                             style={{ background: cs.card, border: "1px solid " + (u.label && u.label.trim() ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: cs.text, fontSize: 11, outline: "none", boxSizing: "border-box" }} />
                           <datalist id="ruangan-preset">
@@ -620,6 +701,18 @@ export default function LaporanTeknisiModal({
                     <button onClick={() => { setAddMaintSelected(new Set()); setShowAddMaintUnitModal(true); }}
                       style={{ marginTop: 8, width: "100%", background: cs.green + "12", border: "1px dashed " + cs.green + "55", color: cs.green, borderRadius: 8, padding: "10px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
                       🏢 Tambah dari Daftar Maintenance ({available.length} unit belum dipilih)
+                    </button>
+                  );
+                })()}
+                {(() => {
+                  // Registry customer reguler — tombol pilih unit tersimpan
+                  if (laporanModal?.maintenance_client_id) return null;
+                  const available = acUnitPool.filter(au => !laporanUnits.some(u => u.ac_unit_id === au.id));
+                  if (available.length === 0) return null;
+                  return (
+                    <button onClick={() => { setAddAcSelected(new Set()); setShowAddAcUnitModal(true); }}
+                      style={{ marginTop: 8, width: "100%", background: cs.accent + "12", border: "1px dashed " + cs.accent + "55", color: cs.accent, borderRadius: 8, padding: "10px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+                      🔧 Tambah dari Unit Tersimpan ({available.length} unit)
                     </button>
                   );
                 })()}
