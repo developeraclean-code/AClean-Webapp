@@ -3472,6 +3472,22 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           });
         }
 
+        // Tautkan order yang belum ter-link ke perusahaan maintenance (1 klik dari tab Cek Link).
+        if (action === "link-order") {
+          if (!body.order_id || !body.client_id) return res.status(400).json({ error: "order_id & client_id wajib" });
+          // Pastikan klien ada (hindari set FK sembarangan)
+          const cRes = await fetch(REST("maintenance_clients?id=eq." + encodeURIComponent(body.client_id) + "&select=id&limit=1"), { headers });
+          if (!cRes.ok || !(await cRes.json())[0]) return res.status(400).json({ error: "Perusahaan tidak ditemukan" });
+          const r = await fetch(REST("orders?id=eq." + encodeURIComponent(body.order_id)), {
+            method: "PATCH", headers: { ...headers, Prefer: "return=representation" },
+            body: JSON.stringify({ maintenance_client_id: body.client_id }),
+          });
+          if (!r.ok) return res.status(400).json({ error: "Gagal tautkan order", detail: await r.text() });
+          const updated = (await r.json())[0];
+          if (!updated) return res.status(404).json({ error: "Order tidak ditemukan" });
+          return res.status(200).json({ ok: true, order: updated });
+        }
+
         if (action === "create-client") {
           const name = sanitizeName(body.name);
           if (!name) return res.status(400).json({ error: "Nama perusahaan wajib" });

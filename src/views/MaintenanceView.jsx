@@ -284,7 +284,7 @@ export default function MaintenanceView({
             )}
             {tab === "price"   && <PriceTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} />}
             {tab === "invoice" && <InvoiceTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} />}
-            {tab === "link"    && <LinkTab sel={sel} call={call} showNotif={showNotif} />}
+            {tab === "link"    && <LinkTab sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} />}
             {tab === "portal" && <PortalTab sel={sel} setSel={setSel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} onChanged={loadClients} />}
           </>
         );
@@ -2494,10 +2494,11 @@ function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
 }
 
 // ─────────── CEK LINK TAB (audit per perusahaan, reuse link-audit) ───────────
-function LinkTab({ sel, call, showNotif }) {
+function LinkTab({ sel, call, showNotif, showConfirm }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(365);
+  const [linkingId, setLinkingId] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -2507,6 +2508,20 @@ function LinkTab({ sel, call, showNotif }) {
       .finally(() => setLoading(false));
   }, [call, days, showNotif]);
   useEffect(() => { load(); }, [load]);
+
+  // Tautkan 1 klik: order kandidat (HP cocok) → set maintenance_client_id ke perusahaan ini.
+  const doLink = async (r) => {
+    const cid = r.suggest_client_id || sel.id;
+    const ok = await showConfirm?.({ title: "Tautkan order?", message: `Tautkan ${r.order_id} (${r.customer}) ke ${sel.name}?` });
+    if (showConfirm && !ok) return;
+    setLinkingId(r.order_id);
+    try {
+      await call("link-order", { order_id: r.order_id, client_id: cid });
+      showNotif("✅ Order " + r.order_id + " ditautkan ke " + sel.name);
+      load();
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setLinkingId(null); }
+  };
 
   const name = sel.name;
   const mine = {
@@ -2551,8 +2566,19 @@ function LinkTab({ sel, call, showNotif }) {
         <>
           <Sec title="🔴 History unit kosong" hint="Laporan VERIFIED ber-unit tapi 0 log. Pilih unit di order lalu verifikasi ulang." color={cs.red}
             rows={mine.missing_logs} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date} · ${r.status}`, "0 log", cs.red)} />
-          <Sec title="🟠 Order belum di-link (HP cocok)" hint="HP order cocok PIC perusahaan tapi belum ditautkan." color={cs.yellow}
-            rows={mine.unlinked_candidates} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "perlu link", cs.yellow)} />
+          <Sec title="🟠 Order belum di-link (HP cocok)" hint="HP order cocok PIC perusahaan tapi belum ditautkan. Klik Tautkan untuk menautkan ke perusahaan ini." color={cs.yellow}
+            rows={mine.unlinked_candidates} render={r => (
+              <div key={r.order_id} style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8, padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11 }}>
+                <div>
+                  <div style={{ color: cs.text, fontWeight: 700 }}>{r.customer}</div>
+                  <div style={{ color: cs.muted, fontSize: 10, fontFamily: "monospace" }}>{r.order_id} · {r.service} · {r.date}</div>
+                </div>
+                <button onClick={() => doLink(r)} disabled={linkingId === r.order_id}
+                  style={{ ...btn, fontSize: 11, padding: "6px 10px", opacity: linkingId === r.order_id ? 0.6 : 1, cursor: linkingId === r.order_id ? "wait" : "pointer" }}>
+                  {linkingId === r.order_id ? "⏳ Menautkan…" : "Tautkan →"}
+                </button>
+              </div>
+            )} />
           <Sec title="🟡 Laporan belum diverifikasi" hint="Autolog jalan saat laporan diverifikasi." color={cs.yellow}
             rows={mine.unverified} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "SUBMITTED", cs.yellow)} />
           <Sec title="🟠 Invoice belum ter-link" hint="Invoice order maintenance tanpa maintenance_client_id." color={cs.yellow}
