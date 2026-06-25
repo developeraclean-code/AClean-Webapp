@@ -4385,13 +4385,16 @@ ${photoPageHTML}
       }).eq("id", inv.id);
     }
 
-    // Update state lokal
+    // Update state lokal — dedup created.id supaya tidak dobel di UI kalau subscription
+    // realtime INSERT sudah menambah invoice gabungan duluan (race optimistic vs realtime).
     setInvoicesData(prev => {
-      const updated = prev.map(i =>
-        sorted.some(s => s.id === i.id)
-          ? { ...i, status: "CANCELLED", service: i.service + ` [Digabung ke ${created.id}]` }
-          : i
-      );
+      const updated = prev
+        .filter(i => i.id !== created.id)
+        .map(i =>
+          sorted.some(s => s.id === i.id)
+            ? { ...i, status: "CANCELLED", service: i.service + ` [Digabung ke ${created.id}]` }
+            : i
+        );
       return [created, ...updated];
     });
 
@@ -6074,7 +6077,7 @@ ${photoPageHTML}
                 if (!_chk.ok) addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, newInv.id) + " (ARA)", "WARNING");
               }
               invalidateCache("invoices", "orders");
-              setInvoicesData(prev => [...prev, newInv]);
+              setInvoicesData(prev => prev.some(i => i.id === newInv.id) ? prev : [...prev, newInv]);
               const { error: invErr } = await insertInvoice(supabase, newInv);
               if (invErr) console.warn("Create invoice DB:", invErr.message);
               // Link invoice ke order
@@ -8286,7 +8289,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         }
       }
       // Update local state SETELAH DB insert sukses (atau retry sukses)
-      setInvoicesData(prev => [...prev, newInvoice]);
+      setInvoicesData(prev => prev.some(i => i.id === newInvoice.id) ? prev : [...prev, newInvoice]);
 
       // P1: Link invoice ↔ quotation — jika order ini berasal dari quotation
       const srcOrder = ordersData.find(o => o.id === laporanModal.id);
