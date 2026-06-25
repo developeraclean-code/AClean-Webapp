@@ -15,6 +15,7 @@ import { detectContinuationCandidates } from "./lib/orders.js";
 import { resolveMultiDayInvoiceAction, multiDayProjectKey } from "./lib/invoiceMultiDay.js";
 import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryOf, LINE_CATEGORY, categoryFromCatalog, computePph23 } from "./lib/invoicing.js";
 import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
+import { buildInvoiceDetail } from "./lib/laporanInvoice.js";
 import {
   KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, MATERIAL_PRESET,
   INSTALL_ITEMS, TIPE_AC_OPT, SATUAN_OPT, maintUnitToHist, acUnitToHist, mkUnit, isUnitDone,
@@ -7935,162 +7936,23 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       const gDays = 30; // Semua service: garansi 30 hari dari terbit invoice
       const gExpires = new Date(Date.now() + gDays * 86400000).toISOString().slice(0, 10);
 
-      // ── BUILD mDetail — BREAKDOWN 1-1, SINGLE SOURCE OF TRUTH ──────────────
-      // Helper: lookup harga dari inventory/pricelist jika tidak ada di item
-      const lookupHarga = (nama, satuanHint) => lookupHargaGlobal(nama, satuanHint);
-      const mkRow = (nama, jumlah, satuan, hSat, ket) => {
-        const nama2 = (nama || "").toLowerCase();
-        const isF = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => nama2.includes(k));
-        const rawQ = parseFloat(jumlah) || 0;
-        const qty = isF ? Math.max(1, Math.ceil(rawQ)) : rawQ;
-        const h = parseFloat(hSat) || 0 || lookupHarga(nama, satuan);
-        const ketFin = ket || (isF && rawQ !== qty ? `Aktual: ${rawQ} kg → dibulatkan ${qty} kg` : "");
-        return { nama, jumlah: qty, satuan: satuan || (isF ? "kg" : "pcs"), harga_satuan: h, subtotal: h * qty, keterangan: ketFin, category: categoryFromCatalog(nama, priceListData) };
-      };
-
-      const mDetail = [];
-
-      // A. Jasa rows (dari [+] Tambah Jasa form) — keterangan: "jasa"
-      laporanJasaItems.filter(j => j.nama && j.nama !== "__manual__" && parseFloat(j.jumlah || 0) > 0).forEach(j => {
-        mDetail.push(mkRow(j.nama, j.jumlah || 1, j.satuan || "pcs", j.harga_satuan || 0, "jasa"));
-      });
-
-      // B. Repair rows (dari [+] Tambah Repair form) — keterangan: "repair"
-      laporanRepairItems.filter(r => r.nama && parseFloat(r.jumlah || 0) > 0).forEach(r => {
-        mDetail.push(mkRow(r.nama, r.jumlah || 1, r.satuan || "pcs", r.harga_satuan || 0, "repair"));
-      });
-
-      // C. Barang/Sparepart rows (dari section "📦 Sparepart & Material") — keterangan: "barang"
-      //    FIX: dulu item Barang HANYA mengisi field `material` & dipotong stok, tapi TIDAK
-      //    dimasukkan ke mDetail → total invoice kurang tagih & line item hilang dari PDF.
-      //    Sekarang Barang jadi line item resmi (ikut total). laporanMaterials (stok murni) tetap
-      //    tidak ditagih.
-      laporanBarangItems.filter(b => b.nama && parseFloat(b.jumlah || 0) > 0).forEach(b => {
-        mDetail.push(mkRow(b.nama, b.jumlah || 1, b.satuan || "pcs", b.harga_satuan || 0, "barang"));
-      });
-
-      // D. Install rows — build dari laporanInstallItems dengan keterangan yang benar
-      if (isInstallSvc) {
-        mDetail.length = 0;
-        // Jasa Install (pasang, vacum, kuras) → keterangan:"jasa"
-        const INSTALL_JASA_KEYS = ["pasang", "vacum", "bongkar", "kuras"];
-        effectiveMaterials.filter(m => m.nama && parseFloat(m.jumlah || 0) > 0).forEach(m => {
-          const n = (m.nama || "").toLowerCase();
-          const isJasa = INSTALL_JASA_KEYS.some(k => n.includes(k));
-          const isFreon = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => n.includes(k));
-          const ket = m.keterangan || (isJasa ? "jasa" : isFreon ? "freon" : "");
-          mDetail.push(mkRow(m.nama, m.jumlah, m.satuan || "pcs", m.harga_satuan || 0, ket));
-        });
-      }
-
-      // E. AUTO-INJECT per-service (planning final 2026-04-14):
-      //    - Cleaning/Maintenance: inject per-unit dari Card 1/4 tipe PK (base labor)
-      //    - Repair: NO auto-inject base. Inject "Biaya Pengecekan" jika card 3/4 kosong.
-      //             Checkbox "Cleaning in Repair" → inject Cleaning rows untuk unit yg dicentang.
-      //    - Install: semua dari Card 3/4 (handled di branch D di atas)
-      //    - Complain: inject biaya cek hanya jika tanpa-garansi & finalLabor > 0
-      if (!isInstallSvc) {
-        const svc = laporanModal?.service;
-        const hasRepairItems = mDetail.some(m => m.keterangan === "repair");
-        const isRepairSvc = svc === "Repair";
-        const isComplainSvc2 = svc === "Complain";
-        const isCleaningOrMaint = svc === "Cleaning" || svc === "Maintenance";
-
-        // ── Cleaning & Maintenance: per-unit base labor dari Card 1/4 tipe ──
-        // Skip hanya jika mDetail sudah ada row jasa cleaning/maintenance/cuci.
-        // Bug lama: transport jasa bikin baseline ter-skip → laporan Cleaning hilang.
-        const alreadyHasCleaningRow = mDetail.some(m => {
-          if (m.keterangan !== "jasa") return false;
-          const n = (m.nama || "").toLowerCase();
-          return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
-        });
-        if (isCleaningOrMaint && !alreadyHasCleaningRow) {
-          const unitsWithTipe = (laporanUnits || []).filter(u => u && u.tipe);
-          if (unitsWithTipe.length > 0) {
-            [...unitsWithTipe].reverse().forEach((u) => {
-              const hargaUnit = hargaPerUnitFromTipe(svc, u.tipe, priceListData);
-              if (hargaUnit > 0) {
-                const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
-                const bracketLabel = getBracketKey(svc, u.tipe) || u.tipe;
-                const namaJasa = (svc || "") + " " + bracketLabel + " (" + unitLabel + ")";
-                mDetail.unshift({
-                  nama: namaJasa, jumlah: 1, satuan: "unit",
-                  harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
-                });
-              }
-            });
-          } else {
-            const svcFee = hitungLabor(svc, laporanModal.type, laporanUnits.length);
-            if (svcFee > 0) {
-              const unitCount = laporanUnits.length || 1;
-              const hPerUnit = Math.round(svcFee / unitCount);
-              [...laporanUnits].reverse().forEach((u, idx) => {
-                const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || (unitCount - idx)));
-                const namaJasa = (svc || "") + (laporanModal.type ? " - " + laporanModal.type : "") + " (" + unitLabel + ")";
-                mDetail.unshift({ nama: namaJasa, jumlah: 1, satuan: "unit", harga_satuan: hPerUnit, subtotal: hPerUnit, keterangan: "jasa" });
-              });
-            }
-          }
-        }
-
-        // ── Cleaning 1 unit: inject "Biaya Transport Bila 1 Unit" otomatis ──
-        // Guard: jangan inject kalau mDetail sudah berisi item transport → cegah double tagih.
-        const sudahAdaTransport = mDetail.some(m => (m.nama || "").toLowerCase().includes("transport"));
-        if (svc === "Cleaning" && (laporanUnits || []).length === 1 && !sudahAdaTransport) {
-          const transportItem = priceListData.find(
-            r => r.service === "Cleaning" && r.type === "Biaya Transport Bila 1 Unit" && r.is_active !== false
-          );
-          if (transportItem && transportItem.price > 0) {
-            mDetail.push({
-              nama: "Biaya Transport Bila 1 Unit", jumlah: 1, satuan: "unit",
-              harga_satuan: transportItem.price, subtotal: transportItem.price, keterangan: "jasa"
-            });
-          }
-        }
-
-        // ── Repair: Cleaning-in-Repair checkbox → append per unit yg dicentang ──
-        if (isRepairSvc && Array.isArray(laporanCleaningInRepair) && laporanCleaningInRepair.length > 0) {
-          const checkedUnits = (laporanUnits || []).filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no));
-          checkedUnits.forEach((u) => {
-            const hargaUnit = hargaPerUnitFromTipe("Cleaning", u.tipe, priceListData);
-            if (hargaUnit > 0) {
-              const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
-              const bracketLabel = getBracketKey("Cleaning", u.tipe) || u.tipe;
-              mDetail.push({
-                nama: "Cleaning " + bracketLabel + " (" + unitLabel + ") [+Repair]",
-                jumlah: 1, satuan: "unit",
-                harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
-              });
-            }
-          });
-        }
-
-        // ── Repair card 3/4 kosong: inject "Biaya Pengecekan" ──
-        // Kondisi: tidak ada repair item DAN tidak ada jasa apapun (card 3/4 benar-benar kosong)
-        // ✨ FIX: skip jika isRepairGratis=true — repair gratis tidak boleh kena biaya cek
-        if (isRepairSvc && !isRepairGratis && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa")) {
-          const biayaCekItem = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
-          const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 0;
-          const cekQty = Math.max(1, (laporanUnits || []).length || 1); // biaya pengecekan PER UNIT
-          mDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: cekQty, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek * cekQty, keterangan: "jasa" });
-        }
-
-        // ── Complain biaya cek: inject dari finalLabor (tanpa garansi) ──
-        if (isComplainSvc2 && finalLabor > 0 && finalLabor <= 200000 && !mDetail.some(m => m.keterangan === "jasa")) {
-          mDetail.unshift({ nama: "Biaya Pengecekan (Tanpa Garansi)", jumlah: 1, satuan: "unit", harga_satuan: finalLabor, subtotal: finalLabor, keterangan: "jasa" });
-        }
-      }
-
       // garansi_status: hanya untuk state lokal (tidak ada kolom ini di DB)
       const garansiStatusLocal = isComplainSvc
         ? (prevGaransiActive ? (matTotalInv > 0 ? 'GARANSI_DENGAN_MATERIAL' : 'GARANSI_AKTIF')
           : prevGaransiExpired ? 'GARANSI_EXPIRED' : 'NO_GARANSI')
         : null;
-      // ── P3: Complain dalam garansi → jasa ditanggung = baris DISKON (paritas dgn verify) ──
-      if (isComplainSvc && prevGaransiActive) {
-        const _g = summarize(mDetail);
-        if (_g.labor > 0) mDetail.push(buildWarrantyDiscountLine(_g.labor, prevGaransiActive.id));
-      }
+
+      // ── mDetail = single source of truth baris invoice — diekstrak ke lib/laporanInvoice.js ──
+      // buildInvoiceDetail murni (no DB/setState). Warranty discount line (Complain dalam garansi)
+      // ikut dibangun di dalamnya. Orkestrasi (skip/multi-hari/insert) tetap di submitLaporan.
+      const { mDetail } = buildInvoiceDetail({
+        order: laporanModal, units: laporanUnits,
+        jasaItems: laporanJasaItems, repairItems: laporanRepairItems, barangItems: laporanBarangItems,
+        effectiveMaterials, cleaningInRepair: laporanCleaningInRepair,
+        finalLabor, isRepairGratis, prevGaransiActive,
+        priceListData, lookupHargaGlobal, hitungLabor,
+      });
+
       // ── SINGLE SOURCE OF TRUTH: ringkasan DITURUNKAN dari mDetail via lib/invoicing ──
       // Dulu labor=finalLabor & material=matTotalInv dihitung dari variabel terpisah → desync
       // (transport/biaya-cek/barang inject tak terhitung). Sekarang summarize() = satu-satunya
