@@ -163,6 +163,18 @@ export const maintUnitToHist = (mu) => {
   };
 };
 
+// Map satu unit registry AC (ac_units) → bentuk "hist" untuk mkUnit (registry customer reguler).
+// lokasi = label posisi (kunci identitas). pk fallback ke kapasitas (legacy migrasi 018).
+export const acUnitToHist = (au) => ({
+  label: au.lokasi || "",
+  tipe: TIPE_AC_OPT.includes(au.tipe) ? au.tipe : "",
+  merk: au.merk || "",
+  pk: au.pk || au.kapasitas || "1PK",
+  model: au.serial_number || "",
+  from_history_job_id: null,
+  ac_unit_id: au.id,
+});
+
 export const mkUnit = (no, hist = null) => {
   if (hist) {
     return {
@@ -180,13 +192,14 @@ export const mkUnit = (no, hist = null) => {
       catatan_unit: "",
       from_history_job_id: hist.from_history_job_id || null,
       maint_unit_id: hist.maint_unit_id || null,
+      ac_unit_id: hist.ac_unit_id || null,
     };
   }
   return {
     unit_no: no, label: "", tipe: "", merk: "", pk: "1PK", model: "",
     kondisi_sebelum: [], kondisi_setelah: [], pekerjaan: [],
     freon_ditambah: "", ampere_akhir: "", catatan_unit: "",
-    from_history_job_id: null, maint_unit_id: null,
+    from_history_job_id: null, maint_unit_id: null, ac_unit_id: null,
   };
 };
 

@@ -161,6 +161,16 @@ export const updateCustomer = (supabase, id, fields) =>
 export const deleteCustomer = (supabase, id) =>
   supabase.from("customers").delete().eq("id", id);
 
+// ───── AC UNIT REGISTRY (ac_units) — registry unit AC permanen per customer ─────
+export const fetchAcUnitsByCustomer = (supabase, customerId) =>
+  supabase.from("ac_units").select("*").eq("customer_id", customerId).eq("is_active", true).order("created_at");
+
+export const insertAcUnit = (supabase, payload) =>
+  supabase.from("ac_units").insert(payload).select().single();
+
+export const updateAcUnit = (supabase, id, fields) =>
+  supabase.from("ac_units").update({ ...fields, updated_at: new Date().toISOString() }).eq("id", id);
+
 // ───── PAYMENT SUGGESTIONS ─────
 export const resolvePaymentSuggestion = (supabase, id, status, resolvedBy) =>
   supabase.from("payment_suggestions").update({
