@@ -3488,6 +3488,60 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           return res.status(200).json({ ok: true, order: updated });
         }
 
+        // Ambil unit laporan (units_json) untuk modal "Petakan Unit" di tab Cek Link.
+        if (action === "report-units") {
+          if (!body.order_id) return res.status(400).json({ error: "order_id wajib" });
+          const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
+          const r = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(body.order_id) + "&select=units_json,total_units,service,date&order=updated_at.desc&limit=1"), { headers });
+          if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
+          const rep = (await r.json())[0];
+          if (!rep) return res.status(200).json({ units: [], found: false });
+          const units = _arr(rep.units_json).map((u, idx) => ({
+            idx, label: u.label || "", tipe: u.tipe || "", merk: u.merk || "", pk: u.pk || "",
+            model: u.model || "", maint_unit_id: u.maint_unit_id || null,
+          }));
+          return res.status(200).json({ units, service: rep.service, date: rep.date, found: true });
+        }
+
+        // Petakan unit laporan → unit registry (set maint_unit_id), lalu siap re-autolog.
+        // body: { order_id, mapping: [{ idx, maint_unit_id }] }
+        if (action === "remap-report-units") {
+          if (!body.order_id || !Array.isArray(body.mapping)) return res.status(400).json({ error: "order_id & mapping wajib" });
+          const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
+          // Order (sumber field maintenance)
+          const oRes = await fetch(REST("orders?id=eq." + encodeURIComponent(body.order_id) + "&select=id,maintenance_client_id,maintenance_unit_ids&limit=1"), { headers });
+          const order = (await oRes.json())[0];
+          if (!order) return res.status(404).json({ error: "Order tidak ditemukan" });
+          // Laporan terbaru
+          const rRes = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(body.order_id) + "&select=id,units_json&order=updated_at.desc&limit=1"), { headers });
+          const rep = (await rRes.json())[0];
+          if (!rep) return res.status(404).json({ error: "Laporan tidak ditemukan" });
+          // Validasi unit_id milik klien ini
+          const clientId = order.maintenance_client_id;
+          if (!clientId) return res.status(400).json({ error: "Order belum ter-link perusahaan — tautkan dulu" });
+          const uRes = await fetch(REST("maintenance_units?client_id=eq." + encodeURIComponent(clientId) + "&select=id"), { headers });
+          const validSet = new Set((await uRes.json()).map(u => u.id));
+          const units = _arr(rep.units_json);
+          const usedIds = [];
+          for (const m of body.mapping) {
+            const i = Number(m.idx);
+            if (i >= 0 && i < units.length && m.maint_unit_id && validSet.has(m.maint_unit_id)) {
+              units[i] = { ...units[i], maint_unit_id: m.maint_unit_id };
+              usedIds.push(m.maint_unit_id);
+            }
+          }
+          if (!usedIds.length) return res.status(400).json({ error: "Tidak ada pemetaan valid" });
+          // 1) Simpan maint_unit_id ke units_json laporan
+          const pr = await fetch(REST("service_reports?id=eq." + encodeURIComponent(rep.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ units_json: units }) });
+          if (!pr.ok) return res.status(400).json({ error: "Gagal simpan laporan", detail: await pr.text() });
+          // 2) Pastikan order.maintenance_unit_ids memuat unit yang dipetakan
+          const newUnitIds = [...new Set([...(Array.isArray(order.maintenance_unit_ids) ? order.maintenance_unit_ids : []), ...usedIds])];
+          await fetch(REST("orders?id=eq." + encodeURIComponent(body.order_id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ maintenance_unit_ids: newUnitIds }) });
+          // 3) Hapus log lama order ini supaya re-autolog bersih (cegah dobel / posisi lama)
+          await fetch(REST("maintenance_logs?order_id=eq." + encodeURIComponent(body.order_id)), { method: "DELETE", headers });
+          return res.status(200).json({ ok: true, mapped: usedIds.length });
+        }
+
         if (action === "create-client") {
           const name = sanitizeName(body.name);
           if (!name) return res.status(400).json({ error: "Nama perusahaan wajib" });

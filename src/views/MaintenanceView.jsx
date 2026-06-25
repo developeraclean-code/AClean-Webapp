@@ -284,7 +284,7 @@ export default function MaintenanceView({
             )}
             {tab === "price"   && <PriceTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} />}
             {tab === "invoice" && <InvoiceTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} />}
-            {tab === "link"    && <LinkTab sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} />}
+            {tab === "link"    && <LinkTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} />}
             {tab === "portal" && <PortalTab sel={sel} setSel={setSel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} onChanged={loadClients} />}
           </>
         );
@@ -2494,11 +2494,12 @@ function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
 }
 
 // ─────────── CEK LINK TAB (audit per perusahaan, reuse link-audit) ───────────
-function LinkTab({ sel, call, showNotif, showConfirm }) {
+function LinkTab({ sel, units, call, showNotif, showConfirm }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(365);
   const [linkingId, setLinkingId] = useState(null);
+  const [mapOrder, setMapOrder] = useState(null); // { order_id } untuk modal Petakan Unit
 
   const load = useCallback(() => {
     setLoading(true);
@@ -2548,6 +2549,17 @@ function LinkTab({ sel, call, showNotif, showConfirm }) {
       {badge && <span style={{ color: bc, fontWeight: 800, fontSize: 10, whiteSpace: "nowrap" }}>{badge}</span>}
     </div>
   );
+  // Baris dengan tombol "Petakan Unit" (untuk History kosong & Link lemah).
+  const mapRow = (r, badge, bc) => (
+    <div key={r.order_id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", alignItems: "center", gap: 8, padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11 }}>
+      <div>
+        <div style={{ color: cs.text, fontWeight: 700 }}>{r.customer}</div>
+        <div style={{ color: cs.muted, fontSize: 10, fontFamily: "monospace" }}>{r.order_id} · {r.service} · {r.date}</div>
+      </div>
+      <span style={{ color: bc, fontWeight: 800, fontSize: 10, whiteSpace: "nowrap" }}>{badge}</span>
+      <button onClick={() => setMapOrder({ order_id: r.order_id, customer: r.customer })} style={{ ...btn, fontSize: 11, padding: "6px 10px" }}>🔧 Petakan Unit</button>
+    </div>
+  );
 
   return (
     <div>
@@ -2564,8 +2576,8 @@ function LinkTab({ sel, call, showNotif, showConfirm }) {
       </div>
       {!data ? <div style={{ color: cs.muted, padding: 20 }}>{loading ? "⏳ Memindai…" : "—"}</div> : (
         <>
-          <Sec title="🔴 History unit kosong" hint="Laporan VERIFIED ber-unit tapi 0 log. Pilih unit di order lalu verifikasi ulang." color={cs.red}
-            rows={mine.missing_logs} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date} · ${r.status}`, "0 log", cs.red)} />
+          <Sec title="🔴 History unit kosong" hint="Laporan VERIFIED ber-unit tapi 0 log. Klik Petakan Unit untuk memetakan unit laporan ke unit terdaftar (auto-tebak)." color={cs.red}
+            rows={mine.missing_logs} render={r => mapRow(r, "0 log", cs.red)} />
           <Sec title="🟠 Order belum di-link (HP cocok)" hint="HP order cocok PIC perusahaan tapi belum ditautkan. Klik Tautkan untuk menautkan ke perusahaan ini." color={cs.yellow}
             rows={mine.unlinked_candidates} render={r => (
               <div key={r.order_id} style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8, padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11 }}>
@@ -2583,12 +2595,129 @@ function LinkTab({ sel, call, showNotif, showConfirm }) {
             rows={mine.unverified} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "SUBMITTED", cs.yellow)} />
           <Sec title="🟠 Invoice belum ter-link" hint="Invoice order maintenance tanpa maintenance_client_id." color={cs.yellow}
             rows={mine.invoice_unlinked} render={r => row(r.invoice_id, r.customer, `${r.invoice_id} · ${r.order_id} · ${r.status}`, fmtRp(r.total), cs.yellow)} />
-          <Sec title="🔵 Link lemah (via posisi)" hint="Ada log tapi sebagian unit tanpa maint_unit_id — rawan salah AC." color={cs.accent}
-            rows={mine.weak_links} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, `${r.units_no_id}/${r.units_total} tanpa ID`, cs.accent)} />
-          <div style={{ fontSize: 10, color: cs.muted }}>Window {data.window_days} hari · hanya membaca data. Perbaikan dari Planning Order / Laporan Tim / tab terkait.</div>
+          <Sec title="🔵 Link lemah (via posisi)" hint="Ada log tapi sebagian unit tanpa maint_unit_id — rawan salah AC. Petakan ulang untuk perbaiki." color={cs.accent}
+            rows={mine.weak_links} render={r => mapRow(r, `${r.units_no_id}/${r.units_total} tanpa ID`, cs.accent)} />
+          <div style={{ fontSize: 10, color: cs.muted }}>Window {data.window_days} hari · membaca data; tombol Tautkan/Petakan menulis perbaikan. Sisanya dari Planning Order / Laporan Tim.</div>
         </>
       )}
+      {mapOrder && <MapUnitsModal order={mapOrder} registryUnits={units || []} call={call} showNotif={showNotif} onClose={() => setMapOrder(null)} onDone={load} />}
     </div>
+  );
+}
+
+// Skor kemiripan unit laporan ↔ unit registry (untuk auto-tebak pemetaan).
+function unitMatchScore(rep, reg) {
+  let s = 0;
+  const rl = (rep.label || "").toLowerCase();
+  const code = (reg.unit_code || "").toLowerCase();
+  const loc = (reg.location || "").toLowerCase();
+  if (code && rl.includes(code)) s += 100;                 // unit_code persis di label → pasti
+  if (loc && loc.length > 2 && rl.includes(loc)) s += 55;  // lokasi cocok
+  const rpk = String(rep.pk || "").toLowerCase().replace("pk", "").trim();
+  const gpk = reg.capacity_pk != null ? String(reg.capacity_pk) : "";
+  if (rpk && gpk && rpk === gpk) s += 20;
+  if (rep.merk && reg.brand && rep.merk.toLowerCase() === reg.brand.toLowerCase()) s += 15;
+  const tl = (rep.tipe || "").toLowerCase();
+  const acm = { cassette: "cassette", split: "split", standing: "floor standing", ducted: "split duct" };
+  const want = acm[reg.ac_type];
+  if (want && tl.includes(want)) s += 10;
+  return s;
+}
+const regUnitLabel = (u) => u.unit_code + (u.location ? " — " + u.location : "");
+
+// Modal "Petakan Unit": petakan tiap unit laporan → unit registry (auto-tebak, owner konfirmasi).
+function MapUnitsModal({ order, registryUnits, call, showNotif, onClose, onDone }) {
+  const [reportUnits, setReportUnits] = useState(null);
+  const [pick, setPick] = useState({});   // idx → maint_unit_id
+  const [conf, setConf] = useState({});    // idx → skor tebakan
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    call("report-units", { order_id: order.order_id })
+      .then(j => {
+        if (!alive) return;
+        const units = j.units || [];
+        setReportUnits(units);
+        // Auto-tebak greedy global (skor tertinggi dulu, registry tak dipakai ulang).
+        const pairs = [];
+        units.forEach((rep) => registryUnits.forEach(reg => {
+          const sc = unitMatchScore(rep, reg);
+          if (sc > 0) pairs.push({ idx: rep.idx, uid: reg.id, sc });
+        }));
+        pairs.sort((a, b) => b.sc - a.sc);
+        const mp = {}, cf = {}, used = new Set();
+        units.forEach(rep => { if (rep.maint_unit_id) { mp[rep.idx] = rep.maint_unit_id; cf[rep.idx] = 999; used.add(rep.maint_unit_id); } });
+        for (const p of pairs) {
+          if (mp[p.idx] != null || used.has(p.uid)) continue;
+          mp[p.idx] = p.uid; cf[p.idx] = p.sc; used.add(p.uid);
+        }
+        setPick(mp); setConf(cf);
+      })
+      .catch(e => showNotif("❌ " + e.message));
+    return () => { alive = false; };
+  }, [order.order_id, call, registryUnits, showNotif]);
+
+  const dupIds = (() => {
+    const seen = {}, dup = new Set();
+    Object.values(pick).forEach(v => { if (!v) return; if (seen[v]) dup.add(v); seen[v] = true; });
+    return dup;
+  })();
+
+  const save = async () => {
+    const mapping = Object.entries(pick).filter(([, uid]) => uid).map(([idx, uid]) => ({ idx: Number(idx), maint_unit_id: uid }));
+    if (!mapping.length) { showNotif("❌ Pilih minimal 1 unit"); return; }
+    if (dupIds.size) { showNotif("❌ Ada unit registry dipilih lebih dari sekali — perbaiki dulu"); return; }
+    setSaving(true);
+    try {
+      await call("remap-report-units", { order_id: order.order_id, mapping });
+      await call("autolog-from-order", { order_id: order.order_id });
+      showNotif(`✅ ${mapping.length} unit dipetakan & history dibuat`);
+      onDone?.(); onClose();
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ fontWeight: 700, color: cs.text, fontSize: 16, marginBottom: 4 }}>🔧 Petakan Unit — {order.order_id}</div>
+      <div style={{ color: cs.muted, fontSize: 11, marginBottom: 12 }}>
+        Cocokkan tiap unit di laporan ke unit terdaftar. Tebakan otomatis berdasarkan lokasi/merk/tipe/PK — periksa lalu simpan. Baris kuning = tebakan kurang yakin.
+      </div>
+      {reportUnits === null ? <div style={{ color: cs.muted, padding: 20 }}>Memuat unit laporan…</div> :
+       reportUnits.length === 0 ? <div style={{ color: cs.muted, padding: 20 }}>Laporan tidak punya unit.</div> : (
+        <div style={{ display: "grid", gap: 8, maxHeight: 420, overflowY: "auto" }}>
+          {reportUnits.map(u => {
+            const uncertain = (conf[u.idx] || 0) < 60 && conf[u.idx] !== 999;
+            const isDup = pick[u.idx] && dupIds.has(pick[u.idx]);
+            return (
+              <div key={u.idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "center", padding: "8px 10px", borderRadius: 8,
+                background: isDup ? cs.red + "12" : uncertain ? (cs.yellow + "10") : cs.surface, border: "1px solid " + (isDup ? cs.red + "55" : uncertain ? cs.yellow + "44" : cs.border) }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: cs.text, fontSize: 12, fontWeight: 600 }}>#{u.idx + 1} {u.label || "(tanpa label)"}</div>
+                  <div style={{ color: cs.muted, fontSize: 11 }}>{[u.merk, u.pk, u.tipe].filter(Boolean).join(" · ") || "—"}</div>
+                </div>
+                <div>
+                  <select value={pick[u.idx] || ""} onChange={e => { setPick(p => ({ ...p, [u.idx]: e.target.value })); setConf(c => ({ ...c, [u.idx]: 999 })); }}
+                    style={{ ...inp, borderColor: isDup ? cs.red : uncertain ? cs.yellow : cs.border }}>
+                    <option value="">— belum dipetakan —</option>
+                    {registryUnits.map(r => <option key={r.id} value={r.id}>{regUnitLabel(r)}</option>)}
+                  </select>
+                  {uncertain && <div style={{ color: cs.yellow, fontSize: 10, marginTop: 2 }}>⚠ tebakan kurang yakin — periksa</div>}
+                  {isDup && <div style={{ color: cs.red, fontSize: 10, marginTop: 2 }}>⚠ unit ini dipilih ganda</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+        <button onClick={onClose} style={btnGhost}>Batal</button>
+        <button onClick={save} disabled={saving || !reportUnits?.length} style={{ ...btn, opacity: saving ? 0.6 : 1 }}>
+          {saving ? "⏳ Menyimpan…" : "Simpan & Buat Log"}
+        </button>
+      </div>
+    </Overlay>
   );
 }
 
