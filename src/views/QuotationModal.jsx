@@ -59,6 +59,7 @@ const emptyMat  = () => ({ _id: Date.now() + Math.random(), nama: "", qty: 1, ha
 export default function QuotationModal({
   onClose, supabase, customersData, showNotif, setQuotationsData,
   getLocalDate, editData, priceListData,
+  extraPriceOptions,    // opsional — harga deal khusus klien (price book maintenance) → opsi jasa/addon
   maintenanceClientId,  // opsional — link quotation ke maintenance client
   maintenancePrefill,   // opsional — { name, phone, address } untuk pre-fill customer
 }) {
@@ -203,12 +204,15 @@ export default function QuotationModal({
     (c.phone || "").includes(custSearch)
   );
 
-  // ── Price list options ──
-  const priceOptions = useMemo(() => (priceListData || [])
-    .filter(p => p.is_active !== false)
-    .map(p => ({ nama: p.type, satuan: p.unit || "Unit", harga: Number(p.price) || 0 }))
-    .sort((a, b) => a.nama.localeCompare(b.nama)),
-  [priceListData]);
+  // ── Price list options (harga deal klien diprioritaskan di atas) ──
+  const priceOptions = useMemo(() => {
+    const clientOpts = (extraPriceOptions || []).map(p => ({ nama: p.nama, satuan: p.satuan || "Unit", harga: Number(p.harga) || 0, _client: true }));
+    const globalOpts = (priceListData || [])
+      .filter(p => p.is_active !== false)
+      .map(p => ({ nama: p.type, satuan: p.unit || "Unit", harga: Number(p.price) || 0 }))
+      .sort((a, b) => a.nama.localeCompare(b.nama));
+    return [...clientOpts, ...globalOpts];
+  }, [priceListData, extraPriceOptions]);
 
   const filteredAddon = addonSearch
     ? priceOptions.filter(p => p.nama.toLowerCase().includes(addonSearch.toLowerCase()))

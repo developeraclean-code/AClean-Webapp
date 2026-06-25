@@ -3589,6 +3589,8 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
             serial_no: u.serial_no || null,
             status: ["active", "rusak", "retired"].includes(u.status) ? u.status : "active",
             notes: u.notes || null,
+            high_freq: u.high_freq === true || u.high_freq === "true",
+            service_interval_months: u.service_interval_months != null && u.service_interval_months !== "" ? Number(u.service_interval_months) : 3,
           });
           const valid = body.units.filter(u => String(u.unit_code || "").trim());
           if (!valid.length) return res.status(400).json({ error: "unit_code wajib di tiap unit" });
@@ -3614,6 +3616,45 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           if (!body.id) return res.status(400).json({ error: "id wajib" });
           const r = await fetch(REST("maintenance_units?id=eq." + encodeURIComponent(body.id)), { method: "DELETE", headers });
           if (!r.ok) return res.status(400).json({ error: "Gagal hapus unit", detail: await r.text() });
+          return res.status(200).json({ ok: true });
+        }
+
+        // ---- PRICE BOOK per-klien (harga deal khusus per perusahaan) ----
+        if (action === "list-prices") {
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          const r = await fetch(REST("maintenance_client_prices?client_id=eq." + encodeURIComponent(body.client_id) + "&select=*&order=service_type.asc,capacity_pk.asc"), { headers });
+          if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
+          return res.status(200).json({ prices: await r.json() });
+        }
+        if (action === "save-price") {
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          if (!body.service_type) return res.status(400).json({ error: "service_type wajib" });
+          if (body.unit_price == null || body.unit_price === "") return res.status(400).json({ error: "unit_price wajib" });
+          const payload = {
+            client_id: body.client_id,
+            service_type: String(body.service_type).trim(),
+            ac_type: body.ac_type ? String(body.ac_type).trim() : null,
+            capacity_pk: body.capacity_pk != null && body.capacity_pk !== "" ? Number(body.capacity_pk) : null,
+            unit_price: Math.round(Number(body.unit_price)),
+            notes: body.notes || null,
+          };
+          let r;
+          if (body.id) {
+            r = await fetch(REST("maintenance_client_prices?id=eq." + encodeURIComponent(body.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
+          } else {
+            r = await fetch(REST("maintenance_client_prices"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
+          }
+          if (!r.ok) {
+            const detail = await r.text();
+            const dup = /duplicate key|unique/i.test(detail);
+            return res.status(400).json({ error: dup ? "Kombinasi servis + tipe + kapasitas itu sudah ada" : "Gagal simpan harga", detail });
+          }
+          return res.status(200).json({ price: (await r.json())[0] });
+        }
+        if (action === "delete-price") {
+          if (!body.id) return res.status(400).json({ error: "id wajib" });
+          const r = await fetch(REST("maintenance_client_prices?id=eq." + encodeURIComponent(body.id)), { method: "DELETE", headers });
+          if (!r.ok) return res.status(400).json({ error: "Gagal hapus harga", detail: await r.text() });
           return res.status(200).json({ ok: true });
         }
 
@@ -4278,26 +4319,41 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           return res.status(200).json({ work_order: (await r.json())[0] });
         }
 
-        // ── PPM CALENDAR — global lintas klien ──────────────────────────
+        // ── PPM CALENDAR — level SITE (per klien), bukan per unit ─────────
+        // Tiap perusahaan = 1 kartu jatuh tempo (kunjungan rutin), bukan 1 baris per unit.
+        // Tanggal jatuh tempo site = next_service_date TERAWAL di antara unit reguler klien itu.
+        // Unit high_freq (intensitas tinggi, mis. 2-mingguan) DIKELUARKAN — punya checklist sendiri
+        // di tab Unit supaya tak mengganggu ritme kunjungan standar. limit dinaikkan (per-site jauh
+        // lebih sedikit barisnya, tapi unit mentah tetap bisa banyak → ambil cukup besar).
         if (action === "ppm-calendar") {
           const { months_ahead = 3 } = body;
           const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() + months_ahead);
-          const r = await fetch(REST(`maintenance_units?select=id,unit_code,location,client_id,next_service_date,last_service_date,status,service_interval_months&next_service_date=lte.${cutoff.toISOString().slice(0,10)}&status=not.in.(retired,rusak)&order=next_service_date.asc&limit=200`), { headers });
+          const r = await fetch(REST(`maintenance_units?select=id,unit_code,location,client_id,next_service_date,status,high_freq&next_service_date=lte.${cutoff.toISOString().slice(0,10)}&status=not.in.(retired,rusak)&high_freq=eq.false&order=next_service_date.asc&limit=2000`), { headers });
           if (!r.ok) return res.status(400).json({ error: await r.text() });
           const units = await r.json();
-          // Ambil client info
           const clientIds = [...new Set(units.map(u => u.client_id).filter(Boolean))];
           let clientMap = {};
           if (clientIds.length) {
             const cRes = await fetch(REST(`maintenance_clients?id=in.(${clientIds.join(",")})&select=id,name,pic_phone`), { headers });
             if (cRes.ok) { const cd = await cRes.json(); cd.forEach(c => { clientMap[c.id] = c; }); }
           }
-          const events = units.map(u => ({
-            unit_id: u.id, unit_code: u.unit_code, location: u.location,
-            client_id: u.client_id, client_name: clientMap[u.client_id]?.name || "—",
-            next_service_date: u.next_service_date, last_service_date: u.last_service_date,
-            status: u.status, interval_months: u.service_interval_months,
+          // Agregasi per klien: tanggal jatuh tempo terawal + jumlah unit jatuh tempo.
+          const byClient = {};
+          for (const u of units) {
+            const k = u.client_id || "—";
+            if (!byClient[k]) byClient[k] = { client_id: u.client_id, units: [], earliest: u.next_service_date };
+            byClient[k].units.push(u);
+            if (u.next_service_date && (!byClient[k].earliest || u.next_service_date < byClient[k].earliest)) byClient[k].earliest = u.next_service_date;
+          }
+          const events = Object.values(byClient).map(g => ({
+            client_id: g.client_id,
+            client_name: clientMap[g.client_id]?.name || "—",
+            client_phone: clientMap[g.client_id]?.pic_phone || "",
+            next_service_date: g.earliest,
+            due_count: g.units.length,
+            unit_codes: g.units.map(u => u.unit_code),
           }));
+          events.sort((a, b) => String(a.next_service_date).localeCompare(String(b.next_service_date)));
           return res.status(200).json({ events });
         }
 

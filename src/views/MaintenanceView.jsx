@@ -59,6 +59,14 @@ const SERVICE_CATEGORY_LABELS = { cuci_rutin: "Cuci Rutin", inspeksi: "Inspeksi"
 const MATERIAL_UNITS = ["kg", "gram", "liter", "pcs", "meter", "set"];
 
 function fmtRp(n) { return n == null ? "—" : "Rp " + Number(n).toLocaleString("id-ID"); }
+function intervalLabel(m) {
+  if (m == null || m === "") return "—";
+  const n = Number(m);
+  if (n === 0.5) return "2 minggu";
+  if (n === 1.5) return "6 minggu";
+  if (Number.isInteger(n)) return n + " bulan";
+  return n + " bulan";
+}
 function fmtDate(d) { if (!d) return "—"; try { return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }); } catch { return d; } }
 
 function statusPill(s) {
@@ -245,8 +253,10 @@ export default function MaintenanceView({
                 ["workorder", "🔨 Work Order"],
                 ["svchistory","🧾 History Service"],
                 ["stats",     "📊 Statistik"],
+                ["price",     "💲 Harga"],
                 ["quotation", `📄 Quotasi (${clientQuotations.length})`],
                 ["invoice",   "🧾 Invoice B2B"],
+                ["link",      "🔗 Cek Link"],
                 ["portal",    "🔗 Portal & Akses"],
               ].map(([k, l]) => (
                 <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
@@ -262,7 +272,7 @@ export default function MaintenanceView({
             {tab === "stats"    && <StatsTab units={units} logs={logs} sel={sel} />}
             {tab === "quotation" && (
               <QuotasiTab
-                sel={sel} quotations={clientQuotations}
+                sel={sel} quotations={clientQuotations} call={call}
                 quotationsData={quotationsData} setQuotationsData={setQuotationsData}
                 setOrdersData={setOrdersData}
                 supabase={supabase} customersData={customersData}
@@ -272,7 +282,9 @@ export default function MaintenanceView({
                 uploadQuotationPDFFn={uploadQuotationPDFFn}
               />
             )}
+            {tab === "price"   && <PriceTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} />}
             {tab === "invoice" && <InvoiceTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} />}
+            {tab === "link"    && <LinkTab sel={sel} call={call} showNotif={showNotif} />}
             {tab === "portal" && <PortalTab sel={sel} setSel={setSel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} onChanged={loadClients} />}
           </>
         );
@@ -438,17 +450,31 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
   const filtered = units.filter(u =>
     (u.unit_code + (u.location || "") + (u.brand || "")).toLowerCase().includes(q.toLowerCase()) &&
     (!filter || u.ac_type === filter));
+  const highFreqUnits = units.filter(u => u.high_freq);
 
   const save = async (u) => {
     if (!u.unit_code?.trim()) { showNotif("❌ Kode unit wajib"); return; }
+    // Auto-suffix lokasi duplikat (unit BARU saja) → konvensi tertib "<lokasi> #n".
+    let suffixed = false;
+    const u2 = { ...u };
+    if (!u.id && u2.location && u2.location.trim()) {
+      const base = u2.location.trim().replace(/\s*#\d+$/, "");
+      const sameBase = units.filter(x => (x.location || "").trim().replace(/\s*#\d+$/, "") === base);
+      if (sameBase.length > 0) {
+        let maxN = 0;
+        sameBase.forEach(x => { const m = (x.location || "").match(/#(\d+)\s*$/); maxN = Math.max(maxN, m ? parseInt(m[1]) : 1); });
+        u2.location = `${base} #${maxN + 1}`;
+        suffixed = true;
+      }
+    }
     try {
-      const j = await call("save-units", { client_id: sel.id, units: [{ ...u, client_id: sel.id }] });
+      const j = await call("save-units", { client_id: sel.id, units: [{ ...u2, client_id: sel.id }] });
       const saved = (j.units || [])[0];
       setUnits(prev => {
         const others = prev.filter(x => x.id !== saved.id && x.unit_code !== saved.unit_code);
         return [...others, saved].sort((a, b) => a.unit_code.localeCompare(b.unit_code));
       });
-      setEdit(null); showNotif("✅ Unit disimpan");
+      setEdit(null); showNotif(suffixed ? `✅ Unit disimpan sebagai "${u2.location}" (lokasi duplikat → diberi sufiks)` : "✅ Unit disimpan");
     } catch (e) { showNotif("❌ " + e.message); }
   };
 
@@ -562,6 +588,33 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
         </div>
       )}
 
+      {!orderMode && highFreqUnits.length > 0 && (
+        <div style={{ background: cs.yellow + "10", border: "1px solid " + cs.yellow + "44", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, color: cs.text, fontSize: 13, marginBottom: 8 }}>
+            ⚡ Unit Intensitas Tinggi ({highFreqUnits.length}) <span style={{ color: cs.muted, fontWeight: 400, fontSize: 11 }}>— cleaning lebih sering, dipantau terpisah dari PPM</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 8 }}>
+            {highFreqUnits.map(u => {
+              const d = daysUntil(u.next_service_date);
+              const od = d !== null && d < 0;
+              return (
+                <div key={u.id} style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 16 }}>{od ? "🔴" : "🟢"}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: cs.text, fontSize: 12, fontWeight: 600 }}>{u.unit_code} {u.location ? "· " + u.location : ""}</div>
+                    <div style={{ color: cs.muted, fontSize: 11 }}>
+                      Tiap {intervalLabel(u.service_interval_months)} · {u.last_service_date ? "terakhir " + fmtDate(u.last_service_date) : "belum pernah"}
+                      {u.next_service_date ? ` · berikutnya ${fmtDate(u.next_service_date)}` : ""}
+                    </div>
+                  </div>
+                  <button onClick={() => setEdit(u)} style={miniBtn} title="Edit">✏️</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {filtered.length === 0 ? <div style={{ color: cs.muted }}>Belum ada unit.</div> :
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 10 }}>
           {filtered.map(u => {
@@ -580,6 +633,7 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
                       {orderMode && <span style={{ fontSize: 14 }}>{isPicked ? "☑️" : "⬜"}</span>}
                       <b style={{ color: cs.text }}>{u.unit_code}</b>
                       {statusPill(u.status)}
+                      {u.high_freq && <span style={{ background: cs.yellow + "22", color: cs.yellow, padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }} title="Intensitas tinggi — tidak masuk PPM">⚡</span>}
                       {overdue && <span style={{ background: cs.red + "22", color: cs.red, padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>🔴 PM Terlambat</span>}
                       {dueSoon && !overdue && <span style={{ background: cs.yellow + "22", color: cs.yellow, padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>⚠️ Due {dueDays}h</span>}
                     </div>
@@ -747,6 +801,7 @@ function UnitFormModal({ unit, onClose, onSave }) {
     brand: unit.brand || "", ac_type: unit.ac_type || "split",
     capacity_pk: unit.capacity_pk || "", refrigerant: unit.refrigerant || "R32",
     status: unit.status || "active", service_interval_months: unit.service_interval_months ?? 3,
+    high_freq: unit.high_freq === true,
     id: unit.id,
   });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -764,9 +819,15 @@ function UnitFormModal({ unit, onClose, onSave }) {
         <Field l="Refrigerant"><select value={f.refrigerant} onChange={e => set("refrigerant", e.target.value)} style={inp}>{REFRIGERANTS.map(r => <option key={r}>{r}</option>)}</select></Field>
         <Field l="Status"><select value={f.status} onChange={e => set("status", e.target.value)} style={inp}>{STATUSES.map(s => <option key={s}>{s}</option>)}</select></Field>
         <Field l="Interval PM (bulan)">
-          <input type="number" min="1" max="24" value={f.service_interval_months} onChange={e => set("service_interval_months", parseInt(e.target.value) || 3)} style={inp} />
+          <input type="number" min="0.5" max="24" step="0.5" value={f.service_interval_months} onChange={e => set("service_interval_months", e.target.value === "" ? "" : Number(e.target.value))} style={inp} />
         </Field>
       </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, cursor: "pointer", color: cs.text, fontSize: 13 }}>
+        <input type="checkbox" checked={!!f.high_freq} onChange={e => set("high_freq", e.target.checked)} />
+        <span>⚡ Unit intensitas tinggi (cleaning lebih sering, mis. 2-mingguan/bulanan)
+          <span style={{ display: "block", color: cs.muted, fontSize: 11 }}>Dikeluarkan dari PPM Calendar; muncul di checklist khusus tab Unit.</span>
+        </span>
+      </label>
       <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
         <button onClick={onClose} style={btnGhost}>Batal</button>
         <button onClick={() => onSave(f)} style={btn}>Simpan</button>
@@ -1701,9 +1762,27 @@ const QUO_STATUS_COLOR = {
 };
 const QUO_LABEL = { DRAFT: "📝 Draft", SENT: "📤 Terkirim", APPROVED: "✅ Disetujui", EXPIRED: "⏰ Kadaluarsa", CANCELLED: "❌ Dibatalkan" };
 
-function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, setOrdersData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner, appSettings, sendWAFn, uploadQuotationPDFFn }) {
+function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, setOrdersData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner, appSettings, sendWAFn, uploadQuotationPDFFn }) {
   const [showCreate, setShowCreate] = useState(false);
   const [editQ, setEditQ] = useState(null);
+  // Harga deal khusus perusahaan ini → opsi tambahan di pencarian jasa/addon QuotationModal.
+  const [clientPriceOptions, setClientPriceOptions] = useState([]);
+  useEffect(() => {
+    if (!call || !sel?.id) return;
+    let alive = true;
+    call("list-prices", { client_id: sel.id })
+      .then(j => {
+        if (!alive) return;
+        const opts = (j.prices || []).map(p => ({
+          nama: p.service_type + (p.ac_type ? " " + (AC_TYPE_LABELS[p.ac_type] || p.ac_type) : "") + (p.capacity_pk ? " " + p.capacity_pk + "PK" : ""),
+          satuan: "Unit",
+          harga: Number(p.unit_price) || 0,
+        }));
+        setClientPriceOptions(opts);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [call, sel?.id]);
   const [previewQ, setPreviewQ] = useState(null);
   const [sendingId, setSendingId] = useState(null);
   const [logoUrl, setLogoUrl] = useState(null);
@@ -1923,6 +2002,7 @@ function QuotasiTab({ sel, quotations, quotationsData, setQuotationsData, setOrd
                 setQuotationsData={setQuotationsData}
                 getLocalDate={getLocalDate}
                 priceListData={priceListData}
+                extraPriceOptions={clientPriceOptions}
                 editData={editQ}
                 maintenanceClientId={sel.id}
                 maintenancePrefill={editQ ? undefined : prefill}
@@ -2247,7 +2327,7 @@ function PPMCalendar({ call, showNotif, onBack }) {
   const clients = [...new Set(events.map(e => e.client_name))].sort();
   const filtered = filterClient ? events.filter(e => e.client_name === filterClient) : events;
 
-  // Group by month
+  // Group per BULAN jatuh tempo. Tiap event = 1 perusahaan (level site), bukan per unit.
   const byMonth = {};
   filtered.forEach(ev => {
     const m = ev.next_service_date?.slice(0, 7) || "?";
@@ -2256,13 +2336,12 @@ function PPMCalendar({ call, showNotif, onBack }) {
   });
 
   const today = new Date().toISOString().slice(0, 10);
-  const statusDot = (s) => ({ active: "🟢", baru: "🔵", perlu_perbaikan: "🔴", dalam_perbaikan: "🟡", nonaktif: "⚫", rusak: "🔴", retired: "⚫" }[s] || "⚪");
 
   return (
     <div style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <button onClick={onBack} style={btnGhost}>← Semua Perusahaan</button>
-        <h2 style={{ color: cs.text, margin: 0, flex: 1 }}>📅 PPM Calendar — Jadwal Maintenance Semua Klien</h2>
+        <h2 style={{ color: cs.text, margin: 0, flex: 1 }}>📅 PPM Calendar — Jadwal Kunjungan per Perusahaan</h2>
         <select value={months} onChange={e => setMonths(Number(e.target.value))} style={{ ...inp, width: "auto" }}>
           <option value={1}>1 bulan ke depan</option>
           <option value={2}>2 bulan ke depan</option>
@@ -2274,11 +2353,14 @@ function PPMCalendar({ call, showNotif, onBack }) {
           {clients.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
+      <div style={{ color: cs.muted, fontSize: 11, marginBottom: 14 }}>
+        Jatuh tempo = kunjungan terdekat per perusahaan (tanggal unit reguler paling awal). Unit intensitas tinggi punya checklist sendiri di tab Unit dan tidak ditampilkan di sini.
+      </div>
 
       {loading ? <div style={{ color: cs.muted, textAlign: "center", padding: 40 }}>Memuat…</div> : filtered.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40, color: cs.muted }}>
           <div style={{ fontSize: 40 }}>✅</div>
-          <div>Tidak ada unit yang jatuh tempo dalam periode ini</div>
+          <div>Tidak ada perusahaan yang jatuh tempo dalam periode ini</div>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -2286,40 +2368,199 @@ function PPMCalendar({ call, showNotif, onBack }) {
             const [y, m] = month.split("-");
             const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
             const isOverdue = month < today.slice(0, 7);
-            const clientGroups = {};
-            evs.forEach(e => {
-              if (!clientGroups[e.client_name]) clientGroups[e.client_name] = [];
-              clientGroups[e.client_name].push(e);
-            });
             return (
               <div key={month}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   <div style={{ fontWeight: 700, fontSize: 15, color: isOverdue ? cs.red : cs.text }}>{label}</div>
                   {isOverdue && <span style={{ background: cs.red + "22", color: cs.red, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700 }}>OVERDUE</span>}
-                  <div style={{ background: cs.accent + "22", color: cs.accent, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700 }}>{evs.length} unit</div>
+                  <div style={{ background: cs.accent + "22", color: cs.accent, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700 }}>{evs.length} perusahaan</div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 10 }}>
-                  {Object.entries(clientGroups).map(([cname, cevs]) => (
-                    <div key={cname} style={{ ...card, borderLeft: `3px solid ${isOverdue ? cs.red : cs.accent}` }}>
-                      <div style={{ fontWeight: 700, color: cs.text, fontSize: 13, marginBottom: 8 }}>🏢 {cname}</div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                        {cevs.map(ev => (
-                          <span key={ev.unit_id} title={`${ev.location} — Due: ${ev.next_service_date}`}
-                            style={{ background: cs.surface, border: "1px solid " + cs.border, padding: "3px 7px", borderRadius: 6, fontSize: 11, color: cs.text }}>
-                            {statusDot(ev.status)} {ev.unit_code}
-                          </span>
-                        ))}
+                  {evs.map(ev => {
+                    const evOverdue = ev.next_service_date && ev.next_service_date < today;
+                    return (
+                      <div key={ev.client_id} style={{ ...card, borderLeft: `3px solid ${evOverdue ? cs.red : cs.accent}` }}>
+                        <div style={{ fontWeight: 700, color: cs.text, fontSize: 13, marginBottom: 8 }}>🏢 {ev.client_name}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <span style={{ ...pillBlue, fontSize: 11 }}>{ev.due_count} unit jatuh tempo</span>
+                          {evOverdue && <span style={{ ...pillYellow, fontSize: 11 }}>OVERDUE</span>}
+                        </div>
+                        <div style={{ color: evOverdue ? cs.red : cs.muted, fontSize: 11, marginTop: 8, fontWeight: 600 }}>
+                          📅 Kunjungan: {fmtDate(ev.next_service_date)}
+                        </div>
                       </div>
-                      <div style={{ color: cs.muted, fontSize: 11, marginTop: 8 }}>
-                        Due: {fmtDate(cevs[0].next_service_date)} · {cevs.length} unit
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────── PRICE BOOK TAB (harga deal khusus per perusahaan) ───────────
+const acLabel = (t) => t ? (AC_TYPE_LABELS[t] || t) : "Semua tipe";
+
+function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
+  const [prices, setPrices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    call("list-prices", { client_id: sel.id })
+      .then(j => setPrices(j.prices || []))
+      .catch(e => showNotif("❌ " + e.message))
+      .finally(() => setLoading(false));
+  }, [call, sel.id, showNotif]);
+  useEffect(() => { load(); }, [load]);
+
+  const blank = { service_type: "Cuci Rutin", ac_type: "", capacity_pk: "", unit_price: "", notes: "" };
+  const setF = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    if (form.unit_price === "" || form.unit_price == null) { showNotif("❌ Harga wajib"); return; }
+    try {
+      await call("save-price", { client_id: sel.id, ...form });
+      setForm(null); load(); showNotif("✅ Harga disimpan");
+    } catch (e) { showNotif("❌ " + e.message); }
+  };
+  const del = async (p) => {
+    const ok = await showConfirm({ title: "Hapus harga?", message: `${p.service_type} · ${acLabel(p.ac_type)}${p.capacity_pk ? " · " + p.capacity_pk + "PK" : ""}` });
+    if (!ok) return;
+    try { await call("delete-price", { id: p.id }); load(); showNotif("✅ Dihapus"); }
+    catch (e) { showNotif("❌ " + e.message); }
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>💲 Harga Khusus — {sel.name}</div>
+        <button onClick={() => setForm({ ...blank })} style={{ ...btn, marginLeft: "auto" }}>+ Harga</button>
+      </div>
+      <div style={{ color: cs.muted, fontSize: 11, marginBottom: 12 }}>
+        Harga deal per perusahaan. Dipakai mengisi Quotasi & Invoice B2B otomatis. Baris tanpa tipe/kapasitas = berlaku untuk semua (wildcard); baris spesifik diprioritaskan.
+      </div>
+
+      {form && (
+        <div style={{ ...card, padding: 12, marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <Field l="Jenis Servis *">
+            <select value={form.service_type} onChange={e => setF("service_type", e.target.value)} style={inp}>
+              {SERVICE_TYPES_LOG.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field l="Tipe AC">
+            <select value={form.ac_type} onChange={e => setF("ac_type", e.target.value)} style={inp}>
+              <option value="">Semua tipe</option>
+              {AC_TYPES.map(t => <option key={t} value={t}>{AC_TYPE_LABELS[t]}</option>)}
+            </select>
+          </Field>
+          <Field l="Kapasitas (PK)"><input type="number" step="0.5" value={form.capacity_pk} onChange={e => setF("capacity_pk", e.target.value)} style={inp} placeholder="kosong = semua" /></Field>
+          <Field l="Harga / unit (Rp) *"><input type="number" value={form.unit_price} onChange={e => setF("unit_price", e.target.value)} style={inp} placeholder="80000" /></Field>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <Field l="Catatan"><input value={form.notes} onChange={e => setF("notes", e.target.value)} style={inp} placeholder="opsional" /></Field>
+          </div>
+          <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setForm(null)} style={btnGhost}>Batal</button>
+            <button onClick={save} style={btn}>Simpan</button>
+          </div>
+        </div>
+      )}
+
+      {loading ? <div style={{ color: cs.muted, padding: 20 }}>Memuat…</div> : prices.length === 0 ? (
+        <div style={{ color: cs.muted, textAlign: "center", padding: 30 }}>Belum ada harga khusus. Tambahkan agar quotasi/invoice terisi otomatis.</div>
+      ) : (
+        <div style={{ display: "grid", gap: 6 }}>
+          {prices.map(p => (
+            <div key={p.id} style={{ ...card, padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr auto auto", alignItems: "center", gap: 10 }}>
+              <div>
+                <div style={{ color: cs.text, fontWeight: 600, fontSize: 13 }}>{p.service_type}</div>
+                <div style={{ color: cs.muted, fontSize: 11 }}>{acLabel(p.ac_type)}{p.capacity_pk ? " · " + p.capacity_pk + "PK" : ""}{p.notes ? " · " + p.notes : ""}</div>
+              </div>
+              <div style={{ color: cs.accent, fontWeight: 700, fontSize: 13 }}>{fmtRp(p.unit_price)}</div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => setForm({ id: p.id, service_type: p.service_type, ac_type: p.ac_type || "", capacity_pk: p.capacity_pk ?? "", unit_price: p.unit_price, notes: p.notes || "" })} style={miniBtn} title="Edit">✏️</button>
+                {isOwner && <button onClick={() => del(p)} style={{ ...miniBtn, color: cs.red }}>🗑</button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────── CEK LINK TAB (audit per perusahaan, reuse link-audit) ───────────
+function LinkTab({ sel, call, showNotif }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(365);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    call("link-audit", { days })
+      .then(setData)
+      .catch(e => showNotif("❌ " + e.message))
+      .finally(() => setLoading(false));
+  }, [call, days, showNotif]);
+  useEffect(() => { load(); }, [load]);
+
+  const name = sel.name;
+  const mine = {
+    missing_logs: (data?.missing_logs || []).filter(r => r.client === name),
+    weak_links: (data?.weak_links || []).filter(r => r.client === name),
+    unverified: (data?.unverified || []).filter(r => r.customer === name),
+    invoice_unlinked: (data?.invoice_unlinked || []).filter(r => r.customer === name),
+    unlinked_candidates: (data?.unlinked_candidates || []).filter(r => r.suggest_client === name),
+  };
+  const total = Object.values(mine).reduce((a, r) => a + r.length, 0);
+
+  const Sec = ({ title, hint, color, rows, render }) => (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>{title} <span style={{ color: rows.length ? color : cs.green, fontWeight: 800 }}>({rows.length})</span></div>
+      {hint && <div style={{ fontSize: 10, color: cs.muted, marginBottom: 6 }}>{hint}</div>}
+      <div style={{ display: "grid", gap: 6 }}>
+        {rows.length === 0 ? <div style={{ color: cs.muted, fontSize: 11 }}>✅ Bersih.</div> : rows.map(render)}
+      </div>
+    </div>
+  );
+  const row = (key, main, sub, badge, bc) => (
+    <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8, padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11 }}>
+      <div><div style={{ color: cs.text, fontWeight: 700 }}>{main}</div><div style={{ color: cs.muted, fontSize: 10, fontFamily: "monospace" }}>{sub}</div></div>
+      {badge && <span style={{ color: bc, fontWeight: 800, fontSize: 10, whiteSpace: "nowrap" }}>{badge}</span>}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>🔗 Cek Link — {sel.name}</div>
+        <select value={days} onChange={e => setDays(Number(e.target.value))} style={{ ...inp, width: "auto" }}>
+          <option value={30}>30 hari</option>
+          <option value={120}>120 hari</option>
+          <option value={365}>1 tahun</option>
+          <option value={3650}>Semua</option>
+        </select>
+        <button onClick={load} disabled={loading} style={btnGhost}>{loading ? "⏳" : "🔄"}</button>
+        <span style={{ fontSize: 11, marginLeft: "auto", color: total ? cs.red : cs.green, fontWeight: 700 }}>{total} perlu tindakan</span>
+      </div>
+      {!data ? <div style={{ color: cs.muted, padding: 20 }}>{loading ? "⏳ Memindai…" : "—"}</div> : (
+        <>
+          <Sec title="🔴 History unit kosong" hint="Laporan VERIFIED ber-unit tapi 0 log. Pilih unit di order lalu verifikasi ulang." color={cs.red}
+            rows={mine.missing_logs} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date} · ${r.status}`, "0 log", cs.red)} />
+          <Sec title="🟠 Order belum di-link (HP cocok)" hint="HP order cocok PIC perusahaan tapi belum ditautkan." color={cs.yellow}
+            rows={mine.unlinked_candidates} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "perlu link", cs.yellow)} />
+          <Sec title="🟡 Laporan belum diverifikasi" hint="Autolog jalan saat laporan diverifikasi." color={cs.yellow}
+            rows={mine.unverified} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "SUBMITTED", cs.yellow)} />
+          <Sec title="🟠 Invoice belum ter-link" hint="Invoice order maintenance tanpa maintenance_client_id." color={cs.yellow}
+            rows={mine.invoice_unlinked} render={r => row(r.invoice_id, r.customer, `${r.invoice_id} · ${r.order_id} · ${r.status}`, fmtRp(r.total), cs.yellow)} />
+          <Sec title="🔵 Link lemah (via posisi)" hint="Ada log tapi sebagian unit tanpa maint_unit_id — rawan salah AC." color={cs.accent}
+            rows={mine.weak_links} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, `${r.units_no_id}/${r.units_total} tanpa ID`, cs.accent)} />
+          <div style={{ fontSize: 10, color: cs.muted }}>Window {data.window_days} hari · hanya membaca data. Perbaikan dari Planning Order / Laporan Tim / tab terkait.</div>
+        </>
       )}
     </div>
   );
