@@ -4,7 +4,7 @@ import { SERVICE_TYPES } from "../constants/services.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { normalizePhone, samePhone } from "../lib/phone.js";
 import { getTechColor } from "../lib/techColor.js";
-import { detectContinuationCandidates, calcContinuationDayNum } from "../lib/orders.js";
+import { detectContinuationCandidates, calcContinuationDayNum, multiDayProgress } from "../lib/orders.js";
 import QuickScheduleModal from "../components/QuickScheduleModal.jsx";
 
 // ── Durasi estimasi (jam) — sama dengan logic di App.jsx ──
@@ -2412,6 +2412,15 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                           {(o.parent_job_id && o.is_multi_day) ? `🔗 Lanjutan Hari ${o.day_number || "?"}` : "📋 Multi-Hari"}
                         </div>
                       )}
+                      {(() => {
+                        const md = multiDayProgress(o, ordersData);
+                        if (!md) return null;
+                        return (
+                          <div style={{ fontSize: 9, color: md.color, fontWeight: 800, marginTop: 1 }}>
+                            {md.label}{md.isParent && md.totalDays > 1 ? ` · ${md.totalDays} hari` : ""}
+                          </div>
+                        );
+                      })()}
                       {o.is_team_split && o.job_group_id && (
                         <div style={{ fontSize: 10, color: "#0ea5e9", fontWeight: 700, marginTop: 2 }}>
                           {o.id === o.job_group_id
