@@ -1265,7 +1265,7 @@ export default function ACleanWebApp() {
       return parsed;
     } catch { return def; }
   };
-  const _lsSave = (key, val) => { try { localStorage.setItem("aclean_" + key, JSON.stringify(val)); } catch { } };
+  const _lsSave = (key, val) => { try { localStorage.setItem("aclean_" + key, JSON.stringify(val)); } catch { /* localStorage opsional — abaikan */ } };
   // SEC-02: internal API token — App Token JWT (15 menit expiry, per-user, role claim)
   // Cached di memory, auto-refresh 1 menit sebelum expiry. Tidak di localStorage/bundle.
   const _internalTokenRef = useRef(null);
@@ -1577,7 +1577,7 @@ export default function ACleanWebApp() {
     if ("Notification" in window && Notification.permission === "granted") {
       try {
         new Notification(title, { body, icon: "/favicon.ico", tag: "aclean-" + Date.now() });
-      } catch (e) { }
+      } catch { /* notifikasi browser opsional — abaikan */ }
     }
   };
   const showNotif = (msg, push = false) => {
@@ -3027,7 +3027,7 @@ ${photoPageHTML}
         setActiveRole(profile.role.toLowerCase());
         const defaultMenu = profile.role === "Finance" ? "finance" : "dashboard";
         setActiveMenu(defaultMenu);
-        try { localStorage.setItem("aclean_lastMenu", defaultMenu); } catch (_) {}
+        try { localStorage.setItem("aclean_lastMenu", defaultMenu); } catch { /* localStorage opsional — abaikan */ }
         _lsSave("localSession", userObj);
         // SEC-07: Reset counter setelah login berhasil
         setLoginAttempts(0); setLockoutUntil(0);
@@ -3111,7 +3111,7 @@ ${photoPageHTML}
   useEffect(() => {
     // Delete any stored API credentials (security: never persist keys in localStorage)
     ["fonnteKey", "wapiToken", "wapiUrl", "llmApiKey"].forEach(k => {
-      try { localStorage.removeItem("aclean_" + k); } catch (_) { }
+      try { localStorage.removeItem("aclean_" + k); } catch { /* localStorage opsional — abaikan */ }
     });
 
     const stringKeys = ["brainMd", "waProvider", "llmProvider", "llmModel", "ollamaUrl"];
@@ -3126,7 +3126,7 @@ ${photoPageHTML}
             localStorage.removeItem("aclean_" + key);
           }
         }
-      } catch (e) { try { localStorage.removeItem("aclean_" + key); } catch (_) { } }
+      } catch (e) { try { localStorage.removeItem("aclean_" + key); } catch { /* localStorage opsional — abaikan */ } }
     });
   }, []);
 
@@ -3495,7 +3495,7 @@ ${photoPageHTML}
               try {
                 const s = JSON.parse(sMap.cron_jobs);
                 if (Array.isArray(s) && s.length > 0) setCronJobs(s);
-              } catch (e) { }
+              } catch { /* cron_jobs JSON rusak → pakai default */ }
             } else {
               // Migrasi: baca toggle lama ke active di masing-masing job
               setCronJobs(prev => prev.map(j => {
@@ -3511,7 +3511,7 @@ ${photoPageHTML}
               if (savedKey) setLlmApiKey(savedKey);
             }
           }
-        } catch (e) { }
+        } catch { /* muat setting opsional — abaikan */ }
 
         // Load Teknisi dari Supabase — fallback ke TEKNISI_DATA jika kosong/error
         try {
@@ -3584,7 +3584,6 @@ ${photoPageHTML}
               if (!isOldVersion) {
                 setBrainMd(brainMap.brain_md);
                 _lsSave("brainMd", brainMap.brain_md);
-              } else {
               }
             }
             if (brainMap.brain_customer && typeof brainMap.brain_customer === "string" && brainMap.brain_customer.length > 10) {
@@ -5165,7 +5164,7 @@ ${photoPageHTML}
           console.warn("try_claim_teknisi_slot error:", claimErr.message, "— fallback insert schedule biasa");
         } else if (claimOk === false) {
           // Kalah race / slot bentrok → buang order yang sudah terlanjur dibuat
-          try { await supabase.from("orders").delete().eq("id", newId); } catch (_) {}
+          try { await supabase.from("orders").delete().eq("id", newId); } catch { /* rollback hapus order best-effort */ }
           showNotif("🚫 " + form.teknisi + " bentrok di jam tersebut (slot baru saja terisi)");
           return null;
         } else {
@@ -5796,7 +5795,7 @@ ${photoPageHTML}
                   harga_satuan: Math.round(laborTotal / (ord.units || 1)), subtotal: laborTotal, keterangan: "jasa",
                 });
                 const mats = (() => {
-                  if (lapRep?.materials_json) { try { return JSON.parse(lapRep.materials_json); } catch (_) { } }
+                  if (lapRep?.materials_json) { try { return JSON.parse(lapRep.materials_json); } catch { /* materials_json rusak → pakai default */ } }
                   return safeArr(lapRep?.materials);
                 })().filter(m => m.nama && parseFloat(m.jumlah || 0) > 0);
                 mats.forEach(m => {
@@ -7168,7 +7167,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       showNotif("⏳ Menyimpan laporan survey...");
       try {
         await supabase.from("service_reports").delete().eq("job_id", reportId).neq("id", reportId);
-      } catch (_) {}
+      } catch { /* hapus laporan duplikat best-effort */ }
       const { error: sErr } = await supabase.from("service_reports").upsert({
         id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
         helper: laporanModal.helper || null, customer: laporanModal.customer,
@@ -7658,7 +7657,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       setOrdersData(prev => prev.map(o =>
         o.id === laporanModal.id ? { ...o, status: "COMPLETED" } : o
       ));
-      try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName()); } catch (_) { }
+      try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName()); } catch (e) { reportError("order.complete.statusSync", e, { jobId: laporanModal.id }); }
       addAgentLog("GARANSI_SKIP_INVOICE",
         `Complain ${laporanModal.id} — dalam garansi s/d ${prevGaransiActive.garansi_expires} ` +
         `(ref: ${prevGaransiActive.id}) → invoice di-skip`, "SUCCESS");
@@ -7736,7 +7735,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         if (laporanModal.service !== "Survey" && (_linkedDup || _orphanMD)) {
           const _tgt = _linkedDup?.id || _ordDup?.invoice_id || null;
           setOrdersData(prev => prev.map(o => o.id === laporanModal.id ? { ...o, status: "COMPLETED", ...(_tgt ? { invoice_id: _tgt } : {}) } : o));
-          try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName(), _tgt ? { invoice_id: _tgt } : {}); } catch (_) { }
+          try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName(), _tgt ? { invoice_id: _tgt } : {}); } catch (e) { reportError("order.complete.statusSync", e, { jobId: laporanModal.id }); }
           addAgentLog("INVOICE_DUP_GUARD",
             `Laporan ${laporanModal.id} (hari ke-${laporanModal.day_number || "?"}) — ${_linkedDup ? "tertaut invoice " + _linkedDup.id : "day_number>1 tanpa flag multi-hari"}, TIDAK buat invoice baru`, "INFO");
           showNotif(_linkedDup
@@ -7767,7 +7766,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           // dobel-hitung). Cukup tautkan order ini ke invoice induk; Owner edit manual.
           const existing = mdAction.existing;
           setOrdersData(prev => prev.map(o => o.id === laporanModal.id ? { ...o, status: "COMPLETED", invoice_id: existing.id } : o));
-          try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName(), { invoice_id: existing.id }); } catch (_) { }
+          try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName(), { invoice_id: existing.id }); } catch (e) { reportError("order.complete.statusSync", e, { jobId: laporanModal.id }); }
           addAgentLog("MULTIDAY_SKIP_INVOICE",
             `Laporan ${laporanModal.id} (hari ke-${laporanModal.day_number || "?"}) — invoice induk ${existing.id} sudah ada, tidak buat/menambah (edit manual bila perlu)`,
             "INFO");

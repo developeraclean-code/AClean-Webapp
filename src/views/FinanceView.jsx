@@ -20,7 +20,7 @@ const LS_KEY = "finance_target_bulan";
 const loadTarget = () => {
   try { const v = localStorage.getItem(LS_KEY); return v ? Number(v) : 100000000; } catch { return 100000000; }
 };
-const saveTarget = (v) => { try { localStorage.setItem(LS_KEY, String(v)); } catch { } };
+const saveTarget = (v) => { try { localStorage.setItem(LS_KEY, String(v)); } catch { /* localStorage opsional (penuh/private mode) — abaikan */ } };
 
 const TABS = [
   { id: "dashboard", label: "Dashboard", icon: "📊" },

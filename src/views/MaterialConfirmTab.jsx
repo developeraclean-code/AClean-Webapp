@@ -44,7 +44,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   const refreshStock = async () => {
     try {
       if (fetchInventoryUnits) { const { data } = await fetchInventoryUnits(supabase); if (data && setInvUnitsData) setInvUnitsData(data); }
-    } catch (_) {}
+    } catch { /* refresh stok unit opsional — abaikan */ }
   };
 
   const confirm = async (entry) => {

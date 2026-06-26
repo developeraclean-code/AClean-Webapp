@@ -32,10 +32,11 @@ export default [
     },
     plugins: { "react-hooks": reactHooks },
     rules: {
-      // Inti Plan 1: catch kosong = error senyap. Warn dulu (25 existing belum
-      // dibersihkan) — pakai reportError() atau beri komentar alasan utk lolos.
-      // Naikkan ke "error" setelah backlog dibersihkan agar jadi gate CI.
-      "no-empty": ["warn", { allowEmptyCatch: false }],
+      // Inti Plan 1: blok kosong (termasuk catch) = error senyap → GATE.
+      // Backlog 26 existing sudah dibersihkan (reportError / komentar alasan).
+      // Catch kosong baru = build merah. Untuk sengaja abaikan: beri komentar
+      // alasan di dalam blok, atau panggil reportError().
+      "no-empty": ["error", { allowEmptyCatch: false }],
       // Promise yang di-await tapi error tak ditangani gampang jadi senyap juga.
       "no-unsafe-finally": "warn",
       // Belum di-enforce (codebase belum bersih) — daftarkan saja supaya komentar

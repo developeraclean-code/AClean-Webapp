@@ -102,7 +102,7 @@ export default function EditOrderModal({
 
       // Sync schedule
       if (!eoErr) {
-        try { await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id); } catch {}
+        try { await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id); } catch { /* cleanup jadwal teknisi best-effort */ }
         if (form.teknisi && form.date) {
           try {
             await supabase.from("technician_schedule").insert({
@@ -110,7 +110,7 @@ export default function EditOrderModal({
               date: form.date, time_start: form.time || "09:00", time_end: timeEnd, status: "ACTIVE",
             });
             if (addAgentLog) addAgentLog("SCHEDULE_SYNCED", `Schedule diupdate untuk ${editOrderItem.id}`, "SUCCESS");
-          } catch {}
+          } catch { /* sinkron jadwal best-effort */ }
         }
       }
 

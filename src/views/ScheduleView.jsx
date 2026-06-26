@@ -560,7 +560,7 @@ return (
                               const { error: delOrdErr } = await deleteOrder(supabase, o.id, auditUserName());
                               if (delOrdErr) { showNotif("❌ Gagal hapus order: " + delOrdErr.message); return; }
                               // Hapus schedule terkait
-                              try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch (_) { }
+                              try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch { /* cleanup jadwal teknisi best-effort */ }
                               setOrdersData(prev => prev.filter(ord => ord.id !== o.id));
                               addAgentLog("ORDER_DELETED", `Owner hapus order ${o.id} — ${o.customer} (${o.service})`, "WARNING");
                               showNotif("🗑️ Order " + o.id + " berhasil dihapus");

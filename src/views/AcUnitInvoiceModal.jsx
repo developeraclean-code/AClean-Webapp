@@ -148,7 +148,7 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
           try {
             const parsed = typeof data.value === "string" ? JSON.parse(data.value) : data.value;
             if (Array.isArray(parsed) && parsed.length > 0) setPaketList(parsed);
-          } catch (_) {}
+          } catch { /* paket JSON rusak → pakai default */ }
         }
         setPaketLoading(false);
       });

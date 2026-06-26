@@ -466,7 +466,7 @@ const verifyLaporan = async (r) => {
         // ── Kalkulasi items dari laporan hari ini (sama seperti day-1) ──
         const _ordDay = ordersData.find(o => o.id === r.job_id);
         const _rawMatsD = (() => {
-          if (r.materials_json) { try { return JSON.parse(r.materials_json); } catch (_) {} }
+          if (r.materials_json) { try { return JSON.parse(r.materials_json); } catch { /* materials_json rusak → pakai default */ } }
           return safeArr(r.materials);
         })();
         const vMDetailD = _rawMatsD
@@ -610,7 +610,7 @@ const verifyLaporan = async (r) => {
 
     const _rawMats = (() => {
       if (r.materials_json) {
-        try { return JSON.parse(r.materials_json); } catch (_) { }
+        try { return JSON.parse(r.materials_json); } catch { /* materials_json rusak → pakai default */ }
       }
       return safeArr(r.materials);
     })();

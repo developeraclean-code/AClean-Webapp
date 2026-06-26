@@ -1898,7 +1898,7 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
     try {
       let pdfAttachment = null;
       if (uploadQuotationPDFFn) {
-        try { pdfAttachment = await uploadQuotationPDFFn(q); } catch (_) {}
+        try { pdfAttachment = await uploadQuotationPDFFn(q); } catch { /* lampiran PDF opsional — quotation tetap terkirim */ }
       }
       const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
       const msg = `Halo ${q.customer},\n\nBerikut penawaran dari AClean:\n📄 ${q.id}\nTotal: ${fmt(q.total)}\nBerlaku s/d: ${q.valid_until || "-"}\n\nTerima kasih 🙏`;

@@ -282,12 +282,12 @@ return (
                         const childIds = childOrders.map(c => c.id);
                         const { error: cErr } = await supabase.from("orders").delete().in("id", childIds);
                         if (cErr) { showNotif("❌ Gagal hapus order lanjutan: " + cErr.message); return; }
-                        try { await supabase.from("technician_schedule").delete().in("order_id", childIds); } catch (_) { }
+                        try { await supabase.from("technician_schedule").delete().in("order_id", childIds); } catch { /* cleanup jadwal teknisi best-effort */ }
                         setOrdersData(prev => prev.filter(x => !childIds.includes(x.id)));
                       }
                       const { error: delErr } = await deleteOrder(supabase, o.id, auditUserName());
                       if (delErr) { showNotif("❌ Gagal hapus: " + delErr.message); return; }
-                      try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch (_) { }
+                      try { await supabase.from("technician_schedule").delete().eq("order_id", o.id); } catch { /* cleanup jadwal teknisi best-effort */ }
                       setOrdersData(prev => prev.filter(x => x.id !== o.id));
                       addAgentLog("ORDER_DELETED",
                         `${currentUser?.role} hapus order ${o.id} — ${o.customer} (${o.service}) tgl ${o.date}`
