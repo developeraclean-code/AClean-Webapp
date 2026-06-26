@@ -1,0 +1,51 @@
+name: Quality
+
+# Gate cepat (~1 menit, tanpa secrets) di tiap push/PR ke main:
+#   - lint   : cegah error senyap (catch kosong = build merah)
+#   - typecheck : TS bertahap di data layer (salah key tabel/field = error)
+#   - unit   : vitest (logika murni di src/lib)
+# E2E (Playwright) terpisah di e2e.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint · Typecheck · Unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]')"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        # npm install (bukan npm ci) — optional deps platform-spesifik (rollup/esbuild
+        # linux) ter-resolve otomatis, konsisten dgn e2e.yml.
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install --no-audit --no-fund
+
+      - name: Lint (no silent catches)
+        run: npm run lint
+
+      - name: Typecheck (TS data layer)
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        run: npm test
