@@ -1410,10 +1410,17 @@ export default async function handler(req, res) {
               if (checklist.length === 0) {
                 console.warn("[TOOL_BAG] Checklist kosong untuk", bagId);
               } else {
-                const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(15000) });
-                if (imgFetch.ok) {
+                // Unduh foto dari Fonnte: timeout 25s + 1 retry (penyebab "nyangkut" tersering).
+                let imgFetch = null;
+                for (let attempt = 1; attempt <= 2; attempt++) {
+                  try { imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(25000) }); if (imgFetch.ok) break; }
+                  catch (e) { if (attempt === 2) throw new Error("Unduh foto Fonnte gagal/timeout: " + e.message); }
+                }
+                if (!imgFetch || !imgFetch.ok) throw new Error("Unduh foto Fonnte HTTP " + (imgFetch ? imgFetch.status : "no-response"));
+                {
                   const imgBuf = await imgFetch.arrayBuffer();
-                  if (imgBuf.byteLength >= 10240) {
+                  if (imgBuf.byteLength < 10240) throw new Error("Foto terlalu kecil/rusak (" + imgBuf.byteLength + " bytes)");
+                  {
                     const base64Img = Buffer.from(imgBuf).toString("base64");
                     const mimeType = (imgFetch.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
 
@@ -1480,18 +1487,23 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
   "notes": "catatan singkat opsional"
 }`;
 
-                    const visionRes = await fetch("https://api.anthropic.com/v1/messages", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
-                      body: JSON.stringify({
-                        model: "claude-haiku-4-5",
-                        max_tokens: 800,
-                        messages: [{ role: "user", content: [
-                          { type: "image", source: { type: "base64", media_type: mimeType, data: base64Img } },
-                          { type: "text", text: visionPrompt }
-                        ]}]
-                      })
-                    });
+                    let visionRes;
+                    try {
+                      visionRes = await fetch("https://api.anthropic.com/v1/messages", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
+                        body: JSON.stringify({
+                          model: "claude-haiku-4-5",
+                          max_tokens: 800,
+                          messages: [{ role: "user", content: [
+                            { type: "image", source: { type: "base64", media_type: mimeType, data: base64Img } },
+                            { type: "text", text: visionPrompt }
+                          ]}]
+                        }),
+                        signal: AbortSignal.timeout(25000)
+                      });
+                    } catch (e) { throw new Error("AI vision gagal/timeout: " + e.message); }
+                    if (!visionRes.ok) throw new Error("AI vision HTTP " + visionRes.status);
 
                     let analysisResult = null;
                     let rawText = "";
@@ -1699,6 +1711,18 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
             }
           } catch(tbErr) {
             console.warn("[TOOL_BAG] error:", tbErr.message);
+            // 1) Lepas lock dedup → retry Fonnte / kirim ulang bisa diproses lagi (jangan nyangkut permanen).
+            try { await fetch(SU + "/rest/v1/wa_webhook_dedup?dedup_key=eq." + encodeURIComponent(dedupKey), { method: "DELETE", headers: { apikey: SK, Authorization: "Bearer " + SK } }); } catch (_) {}
+            // 2) Balas pengirim (jangan gagal diam-diam) + tandai SUMBER kegagalan utk diagnosa.
+            const failKind = /unduh foto/i.test(tbErr.message) ? "jaringan/Fonnte lambat"
+              : /ai vision/i.test(tbErr.message) ? "AI sedang sibuk"
+              : /aborted|timeout/i.test(tbErr.message) ? "jaringan lambat" : "kendala sistem";
+            if (FT && sender) fetch("https://api.fonnte.com/send", {
+              method: "POST", headers: { Authorization: FT, "Content-Type": "application/json" },
+              body: JSON.stringify({ target: sender, message: `⚠️ Foto ${toolBagCaption.bagId} gagal diproses (${failKind}). Mohon *kirim ulang* fotonya ya. 🙏`, delay: "1", countryCode: "62" })
+            }).catch(() => {});
+            // 3) Catat ke Sentry biar kelihatan (sebelumnya senyap total).
+            try { Sentry.captureMessage(`[TOOL_BAG_FAIL] ${toolBagCaption.bagId} ${toolBagCaption.sessionType}: ${tbErr.message}`, "warning"); } catch (_) {}
           }
         } else if (toolBagCaption && !toolBagCaption.bagId) {
           // Nomor tas di luar range 1-10
