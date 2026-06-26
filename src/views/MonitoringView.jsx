@@ -612,7 +612,7 @@ function TabWaSnapshots({ supabase, apiHeaders }) {
         </div>
       )}
       <div style={{ fontSize: 11, color: cs.muted, padding: 12, background: "#f59e0b22", border: "1px solid #f59e0b55", borderRadius: 8 }}>
-        ⏰ <b>Auto-cleanup aktif:</b> manifest snapshot > 60 hari dihapus otomatis tiap 03:00 UTC (10:00 WIB) via cron <code>snapshot-cleanup</code>. R2 objek ikut di-purge cron <code>r2-cleanup-90d</code>.
+        ⏰ <b>Auto-cleanup aktif:</b> manifest snapshot &gt; 60 hari dihapus otomatis tiap 03:00 UTC (10:00 WIB) via cron <code>snapshot-cleanup</code>. R2 objek ikut di-purge cron <code>r2-cleanup-90d</code>.
       </div>
     </div>
   );

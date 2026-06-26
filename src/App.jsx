@@ -9079,7 +9079,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           isMobile={isMobile}
           _lsSave={_lsSave}
         />
-      </Suspense>}
+      </Suspense>
 
 
       {/* ══════════════════════════════════════════════════════ */}
