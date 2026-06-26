@@ -3,6 +3,7 @@ import { supabase } from "./supabaseClient.js";
 import { normalizePhone, samePhone } from "./lib/phone.js";
 import { getLocalDate, getLocalISOString, isWorkingHours } from "./lib/dateTime.js";
 import { safeJsonParse } from "./lib/safeJson.js";
+import { reportError } from "./lib/reportError.js";
 import {
   validatePhone, validateTime, validateDate,
   validatePositiveNumber, validateAddressLength, validateNameLength,
@@ -4520,7 +4521,7 @@ ${photoPageHTML}
       if (apErr) {
         console.warn("invoice approve full failed:", apErr.message);
         const { error: apErr2 } = await updateInvoice(supabase, inv.id, { status: "UNPAID" }, auditUserName());
-        if (apErr2) console.error("invoice approve minimal failed:", apErr2.message);
+        if (apErr2) reportError("invoice.approve.minimalFailed", apErr2, { invoiceId: inv.id });
       }
     }
     // Update order status — with fallback
@@ -4631,7 +4632,7 @@ ${photoPageHTML}
         const { error: fbErr } = await updateInvoice(supabase, inv.id, { status: "PAID" }, auditUserName());
         if (fbErr) {
           // H-04: Rollback state jika semua DB update gagal
-          console.error("markPaid DB failed completely, rolling back state:", fbErr.message);
+          reportError("invoice.markPaid.dbFailed", fbErr, { invoiceId: inv.id, jobId: inv.job_id });
           setInvoicesData(prev => prev.map(i =>
             i.id === inv.id ? { ...i, status: originalInvStatus, paid_at: inv.paid_at || null } : i
           ));
@@ -7376,7 +7377,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     // Final error handling
     if (!savedOk) {
       const errMsg = lastError?.message || "Unknown error";
-      console.error("❌ All save attempts failed:", errMsg);
+      reportError("laporan.save.allAttemptsFailed", lastError || new Error(errMsg), { jobId: newReport?.job_id, reportId: newReport?.id });
       showNotif("❌ Gagal simpan laporan: " + errMsg + ". Coba lagi atau hubungi admin.");
       return; // Don't proceed to reload/notify if save failed
     }
@@ -7833,7 +7834,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       const { data: existingDB, error: fetchExistingErr } = await supabase
         .from("invoices").select("id").eq("job_id", laporanModal.id);
       if (fetchExistingErr) {
-        console.error("[INVOICE_PRECHECK] gagal cek existing:", fetchExistingErr.message);
+        reportError("invoice.precheck.fetchExisting", fetchExistingErr, { jobId: laporanModal.id });
         showNotif("❌ Gagal verifikasi invoice existing — submit dibatalkan. Coba lagi.");
         return;
       }
@@ -7842,7 +7843,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
         for (const old of existingDB) {
           const { error: delErr } = await deleteInvoice(supabase, old.id, auditUserName(), "TEKNISI_REWRITE_LAPORAN");
           if (delErr) {
-            console.error("[INVOICE_REWRITE] gagal hapus", old.id, delErr.message);
+            reportError("invoice.rewrite.deleteOld", delErr, { jobId: laporanModal.id, oldInvoiceId: old.id });
             showNotif("❌ Gagal hapus invoice lama — submit dibatalkan. Coba lagi.");
             return;
           }
@@ -7969,7 +7970,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     pushNotif(appSettings.app_name || "AClean", "Laporan berhasil dikirim ke Admin ✅");
     showNotif(`✅ Laporan ${laporanModal.id} terkirim! Laporan dikirim ke Owner/Admin untuk verifikasi.`);
     } catch (err) {
-      console.error("submitLaporan fatal:", err);
+      reportError("laporan.submit.fatal", err, { jobId: laporanModal?.id });
       showNotif("❌ Submit error: " + (err?.message || String(err)));
     } finally {
       submitLaporanLock.current = false;

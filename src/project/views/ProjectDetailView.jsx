@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { cs } from "../../theme/cs.js";
 import * as S from "../utils/styles.js";
 import { supabase } from "../../supabaseClient.js";
+import { reportError } from "../../lib/reportError.js";
 import OfficeToolModal from "../../views/OfficeToolModal.jsx";
 import { useProject } from "../context/ProjectContext.jsx";
 import { useModal } from "../context/ModalContext.jsx";
@@ -33,7 +34,7 @@ export default function ProjectDetailView() {
           .eq("project_id", p.id)
           .order("tanggal", { ascending: false });
         if (alive) setLaporanTim(reports || []);
-      } catch (e) { console.error("[ProjectDetail] laporan fetch gagal:", e); }
+      } catch (e) { reportError("project.detail.laporanFetch", e, { pid: p.id }); }
       finally { if (alive) setLaporanLoading(false); }
     })();
     return () => { alive = false; };

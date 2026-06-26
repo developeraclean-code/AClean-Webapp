@@ -23,6 +23,7 @@ import { isLocked, pName } from "../utils/finance.js";
 import { StatusPill } from "../components/Bits.jsx";
 import Modal from "../components/Modal.jsx";
 import { supabase } from "../../supabaseClient.js";
+import { reportError } from "../../lib/reportError.js";
 
 export default function ProjectHarianView() {
   const { db, can, today, upsertHarian, patchRow, uploadPhotos, deleteRow } = useProject();
@@ -55,7 +56,7 @@ export default function ProjectHarianView() {
       const matStr = (d.materialRows || []).map((r) => `${r.nama || ""} ${r.qty || ""} ${r.satuan || ""}`.replace(/\s+/g, " ").trim()).filter(Boolean).join(", ") || "-";
       const chosen = d.alat || [];
       let fotos = [];
-      if ((d.foto || []).length) { toast("⏳ Mengupload foto…"); try { fotos = await uploadPhotos(d.foto, `project/${pid}/${today.slice(0, 7)}/pagi`); } catch (e) { toast("⚠️ Foto gagal diupload — laporan tetap disimpan"); } }
+      if ((d.foto || []).length) { toast("⏳ Mengupload foto…"); try { fotos = await uploadPhotos(d.foto, `project/${pid}/${today.slice(0, 7)}/pagi`); } catch (e) { reportError("project.harian.uploadFoto.pagi", e, { pid }); toast("⚠️ Foto gagal diupload — laporan tetap disimpan"); } }
       const pagi = { jam: d.jam, material: matStr, alat: chosen.join(", ") || "-", foto: fotos.length, fotos };
       const existing = db.harian.find((x) => x.projectId === pid && x.tanggal === today);
       const row = existing
@@ -91,7 +92,7 @@ export default function ProjectHarianView() {
       const matStr = (d.materialRows || []).map((r) => `${r.nama || ""} ${r.qty || ""} ${r.satuan || ""}`.replace(/\s+/g, " ").trim()).filter(Boolean).join(", ") || "-";
       const chosen = d.alat || [];
       let fotos = [];
-      if ((d.foto || []).length) { toast("⏳ Mengupload foto…"); try { fotos = await uploadPhotos(d.foto, `project/${pid}/${today.slice(0, 7)}/sore`); } catch (e) { toast("⚠️ Foto gagal diupload — laporan tetap disimpan"); } }
+      if ((d.foto || []).length) { toast("⏳ Mengupload foto…"); try { fotos = await uploadPhotos(d.foto, `project/${pid}/${today.slice(0, 7)}/sore`); } catch (e) { reportError("project.harian.uploadFoto.sore", e, { pid }); toast("⚠️ Foto gagal diupload — laporan tetap disimpan"); } }
       const sore = { jam: d.jam, progress: d.progress, material: matStr, alat: chosen.join(", ") || "-", foto: fotos.length, fotos };
       const existing = db.harian.find((x) => x.projectId === pid && x.tanggal === today);
       const row = existing
@@ -237,11 +238,12 @@ function BeritaAcaraTab({ db, can, toast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("project_daily_reports")
       .select("*")
       .order("tanggal", { ascending: false })
       .limit(200);
+    if (error) reportError("project.beritaAcara.load", error);
     setRows(data || []);
     setLoading(false);
   }, []);
@@ -256,7 +258,7 @@ function BeritaAcaraTab({ db, can, toast }) {
       .from("project_daily_reports")
       .update({ status: newStatus, revision_note: note || null, verified_at: new Date().toISOString() })
       .eq("id", row.id);
-    if (error) { toast("❌ Gagal: " + error.message); }
+    if (error) { reportError("project.beritaAcara.verify", error, { id: row.id, newStatus }); toast("❌ Gagal: " + error.message); }
     else { toast(newStatus === "VERIFIED" ? "✅ Diverifikasi" : "↩ Revisi diminta"); await load(); }
     setBusy("");
     setViewRow(null);
@@ -484,7 +486,7 @@ function EditLaporanModal({ row, onClose, onSave }) {
       .update({ pekerjaan: pekerjaan.trim(), kendala: kendala.trim() || null })
       .eq("id", row.id);
     setSaving(false);
-    if (error) { setErr("Gagal menyimpan: " + error.message); return; }
+    if (error) { reportError("project.beritaAcara.edit", error, { id: row.id }); setErr("Gagal menyimpan: " + error.message); return; }
     onSave({ id: row.id, pekerjaan: pekerjaan.trim(), kendala: kendala.trim() || null });
   };
 

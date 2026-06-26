@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
 import { initialData } from "../data/sampleData.js";
 import { loadAll, api, genId, ASC } from "../data/projectApi.js";
+import { reportError } from "../../lib/reportError.js";
 
 const Ctx = createContext(null);
 export const useProject = () => useContext(Ctx);
@@ -28,7 +29,7 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
       setDb(data);
       setSyncError(null);
     } catch (e) {
-      console.error("[Project] load gagal:", e);
+      reportError("project.reload", e);
       setSyncError(e.message || "Gagal memuat data Project");
     }
   }, []);
@@ -51,7 +52,7 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
   // jalankan persist; bila gagal → tampilkan error + muat ulang (revert optimistic)
   const guard = useCallback(async (promise) => {
     try { await promise; setSyncError(null); }
-    catch (e) { console.error("[Project] simpan gagal:", e); setSyncError("Gagal menyimpan ke server — data dimuat ulang."); await reload(); }
+    catch (e) { reportError("project.guard.persist", e); setSyncError("Gagal menyimpan ke server — data dimuat ulang."); await reload(); }
   }, [reload]);
 
   // ── aksi generik (optimistic + persist) ───────────────────────────────────
@@ -128,7 +129,7 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
       // hapus project/material → DB cascade (dp/harian/alokasi/dst) → muat ulang biar konsisten
       if (key === "projects" || key === "materials") await reload();
     } catch (e) {
-      console.error("[Project] hapus gagal:", e);
+      reportError("project.deleteRow", e, { key, id });
       setSyncError("Gagal menghapus: " + (e.message || e));
       update((cur) => { cur[key] = prev; });  // revert
     }
