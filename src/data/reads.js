@@ -27,6 +27,14 @@ export const fetchInvoices = (supabase) =>
     .select(INVOICE_COLS)
     .order("created_at", { ascending: false }).limit(300);
 
+// Incremental: hanya invoice yang berubah/baru sejak `since` (updated_at, set on insert & update).
+// Dipakai polling live agar egress minim — saat tak ada perubahan → 0 baris.
+export const fetchInvoicesSince = (supabase, since) =>
+  supabase.from("invoices")
+    .select(INVOICE_COLS)
+    .gt("updated_at", since)
+    .order("updated_at", { ascending: true }).limit(300);
+
 // Server-side search invoice — multi-kolom: identitas + tim + layanan + bayar + status.
 // Karakter spesial (koma, kurung) di-strip untuk hindari masalah parser .or() Supabase.
 export const searchInvoicesServer = (supabase, query) => {
@@ -72,6 +80,14 @@ export const fetchServiceReports = (supabase) =>
   supabase.from("service_reports")
     .select(REPORT_COLS)
     .order("submitted_at", { ascending: false }).limit(5000);
+
+// Incremental: hanya laporan yang berubah/baru sejak `since` (updated_at, set on insert & update).
+// Polling live pakai ini agar egress minim — payload berat (foto/json) hanya saat ada perubahan.
+export const fetchServiceReportsSince = (supabase, since) =>
+  supabase.from("service_reports")
+    .select(REPORT_COLS)
+    .gt("updated_at", since)
+    .order("updated_at", { ascending: true }).limit(500);
 
 // Server-side search laporan — jangkau report lama di luar cap startup (PostgREST max 1000 row).
 // Pola sama searchInvoicesServer/searchOrdersServer (sudah terbukti). Multi-kolom identitas + tim.

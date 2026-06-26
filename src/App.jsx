@@ -35,6 +35,7 @@ import { DEFAULT_BONUS_CATEGORIES } from "./constants/bonus.js";
 import {
   fetchOrders, fetchInvoices, fetchCustomers, fetchInventory,
   fetchServiceReports, fetchInventoryTransactions,
+  fetchInvoicesSince, fetchServiceReportsSince,
   searchInvoicesServer, searchOrdersServer, searchServiceReportsServer,
   fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
@@ -3705,17 +3706,37 @@ ${photoPageHTML}
       }).catch(() => {});
     }, POLL_MS);
 
+    // Inkremental: hanya tarik baris yang BERUBAH sejak poll terakhir (updated_at > cursor),
+    // lalu merge by id ke state. Saat idle → 0 baris → egress ~nol (seefisien realtime dulu,
+    // tanpa WAL). Cursor mulai dari waktu efek (minus buffer 2 mnt utk toleransi skew jam),
+    // lalu mengunci ke updated_at server. DELETE ditutup oleh loadAll penuh tiap 30 mnt.
+    let _invoiceCursor = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    let _reportCursor = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+
     const _pollInvoices = setInterval(() => {
       if (!_shouldPoll()) return;
-      fetchInvoices(supabase).then(({ data, error }) => {
-        if (!error && data) setInvoicesData(data.map(parseInvoiceRow));
+      fetchInvoicesSince(supabase, _invoiceCursor).then(({ data, error }) => {
+        if (error || !data || data.length === 0) return;
+        _invoiceCursor = data.reduce((m, r) => (r.updated_at || "") > m ? r.updated_at : m, _invoiceCursor);
+        setInvoicesData(prev => {
+          const map = new Map((prev || []).map(r => [r.id, r]));
+          data.map(parseInvoiceRow).forEach(r => map.set(r.id, r));
+          return Array.from(map.values()).sort((a, b) => (b.created_at || "") > (a.created_at || "") ? 1 : -1);
+        });
       }).catch(() => {});
     }, POLL_MS);
 
     const _pollReports = setInterval(() => {
       if (!_shouldPoll()) return;
-      fetchServiceReports(supabase).then(({ data, error }) => {
-        if (!error && data) setLaporanReports(dedupReportsByJob(data.map(parseLaporanRow)));
+      fetchServiceReportsSince(supabase, _reportCursor).then(({ data, error }) => {
+        if (error || !data || data.length === 0) return;
+        _reportCursor = data.reduce((m, r) => (r.updated_at || "") > m ? r.updated_at : m, _reportCursor);
+        setLaporanReports(prev => {
+          const map = new Map((prev || []).map(r => [r.id, r]));
+          data.map(parseLaporanRow).forEach(r => map.set(r.id, r));
+          return dedupReportsByJob(Array.from(map.values()))
+            .sort((a, b) => (b.submitted_at || "") > (a.submitted_at || "") ? 1 : -1);
+        });
       }).catch(() => {});
     }, POLL_MS);
 
