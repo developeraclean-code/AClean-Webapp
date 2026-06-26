@@ -356,7 +356,7 @@ return (
       });
 
       // Semua anggota tim (dari teknisiData)
-      const allTeam = teknisiData.filter(t => t.status !== "inactive");
+      const allTeam = teknisiData.filter(t => t.active !== false);
 
       const teamRanking = Object.entries(byPerson)
         .sort((a, b) => b[1].total - a[1].total);

@@ -470,7 +470,7 @@ export default function OrderFormModal({
                   <select value={form.helper} onChange={e => set("helper", e.target.value)}
                     style={{ ...inp, background: cs.surface }}>
                     <option value="">Tidak ada helper</option>
-                    {teknisiData.filter(t => t.status !== "inactive" && t.name !== form.teknisi).map(t => {
+                    {teknisiData.filter(t => t.active !== false && t.name !== form.teknisi).map(t => {
                       const { pref } = araSchedulingSuggest ? araSchedulingSuggest(form.date || "", form.service, form.units) : { pref: {} };
                       const isSug = pref[form.teknisi] === t.name;
                       return <option key={t.id} value={t.name}>{isSug ? "★ " : ""}{t.name}{t.role === "Teknisi" ? " [T]" : t.role === "Helper" ? "" : ` [${t.role}]`}{isSug ? " (ARA)" : ""}</option>;

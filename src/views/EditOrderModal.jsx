@@ -244,7 +244,7 @@ export default function EditOrderModal({
                 <select value={form.helper || ""} onChange={e => set("helper", e.target.value)}
                   style={{ ...inp, background: cs.surface }}>
                   <option value="">Tidak ada</option>
-                  {teknisiData.filter(t => t.status !== "inactive" && t.name !== form.teknisi).map(t => {
+                  {teknisiData.filter(t => t.active !== false && t.name !== form.teknisi).map(t => {
                     const { pref } = araSchedulingSuggest ? araSchedulingSuggest(form.date || "", form.service, form.units) : { pref: {} };
                     const roleTag = t.role === "Teknisi" ? " [T]" : t.role === "Helper" ? "" : ` [${t.role}]`;
                     return <option key={t.id} value={t.name}>{pref[form.teknisi] === t.name ? "★ " : ""}{t.name}{roleTag}</option>;
@@ -262,7 +262,7 @@ export default function EditOrderModal({
                     <select value={form[key] || ""} onChange={e => set(key, e.target.value)}
                       style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "7px 10px", color: cs.text, fontSize: 12 }}>
                       <option value="">Tidak ada</option>
-                      {teknisiData.filter(t => t.status !== "inactive" && t.name !== form.teknisi && t.name !== form.helper).map(t => {
+                      {teknisiData.filter(t => t.active !== false && t.name !== form.teknisi && t.name !== form.helper).map(t => {
                         const roleTag = t.role === "Teknisi" ? " [T]" : t.role === "Helper" ? "" : ` [${t.role}]`;
                         return <option key={t.id} value={t.name}>{t.name}{roleTag}</option>;
                       })}

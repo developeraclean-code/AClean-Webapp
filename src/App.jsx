@@ -5651,7 +5651,7 @@ ${photoPageHTML}
             // ── Auto-enforce helper rule: 3+ unit ATAU Install untuk SEMUA service ──
             if ((parseInt(newOrd.units) || 1) >= 3 || newOrd.service === "Install") {
               if (!newOrd.helper) {
-                const availHelper = teknisiData.find(t => t.role === "Helper" && t.status !== "inactive");
+                const availHelper = teknisiData.find(t => t.role === "Helper" && t.active !== false);
                 if (availHelper) { newOrd.helper = availHelper.name; }
                 else addAgentLog("ARA_WARN", "Helper dibutuhkan tapi belum ada di database", "WARNING");
               }
@@ -6029,7 +6029,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 };
                 // Auto helper
                 if ((bOrd.units >= 3 || bOrd.service === "Install") && !bOrd.helper) {
-                  const avH = teknisiData.find(t => t.role === "Helper" && t.status !== "inactive");
+                  const avH = teknisiData.find(t => t.role === "Helper" && t.active !== false);
                   if (avH) bOrd.helper = avH.name;
                 }
                 setOrdersData(prev => prev.some(o => o.id === bOrd.id) ? prev : [...prev, bOrd]);
@@ -8674,7 +8674,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 <select value={newOrderForm.helper} onChange={e => setNewOrderForm(f => ({ ...f, helper: e.target.value }))}
                   style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none" }}>
                   <option value="">Tidak ada helper</option>
-                  {teknisiData.filter(t => t.status !== "inactive" && t.name !== newOrderForm.teknisi).map(t => {
+                  {teknisiData.filter(t => t.active !== false && t.name !== newOrderForm.teknisi).map(t => {
                     const { pref } = araSchedulingSuggest(newOrderForm.date || "", newOrderForm.service, newOrderForm.units);
                     const isSug = pref[newOrderForm.teknisi] === t.name;
                     const roleTag = t.role === "Teknisi" ? " [T]" : t.role === "Helper" ? "" : ` [${t.role}]`;
@@ -9899,7 +9899,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                     <select value={editOrderForm.helper || ""} onChange={e => setEditOrderForm(f => ({ ...f, helper: e.target.value }))}
                       style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 11px", color: cs.text, fontSize: 13, outline: "none" }}>
                       <option value="">Tidak ada</option>
-                      {teknisiData.filter(t => t.status !== "inactive" && t.name !== editOrderForm.teknisi).map(t => {
+                      {teknisiData.filter(t => t.active !== false && t.name !== editOrderForm.teknisi).map(t => {
                         const { pref } = araSchedulingSuggest(editOrderForm.date || "", editOrderForm.service, editOrderForm.units);
                         const roleTag = t.role === "Teknisi" ? " [T]" : t.role === "Helper" ? "" : ` [${t.role}]`;
                         return <option key={t.id} value={t.name}>{pref[editOrderForm.teknisi] === t.name ? "★ " : ""}{t.name}{roleTag}</option>;
@@ -9916,7 +9916,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                         <select value={editOrderForm[key] || ""} onChange={e => setEditOrderForm(f => ({ ...f, [key]: e.target.value }))}
                           style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 11px", color: cs.text, fontSize: 13, outline: "none" }}>
                           <option value="">Tidak ada</option>
-                          {teknisiData.filter(t => t.status !== "inactive" && t.name !== editOrderForm.teknisi && t.name !== editOrderForm.helper).map(t => {
+                          {teknisiData.filter(t => t.active !== false && t.name !== editOrderForm.teknisi && t.name !== editOrderForm.helper).map(t => {
                             const roleTag = t.role === "Teknisi" ? " [T]" : t.role === "Helper" ? "" : ` [${t.role}]`;
                             return <option key={t.id} value={t.name}>{t.name}{roleTag}</option>;
                           })}
