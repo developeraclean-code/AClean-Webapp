@@ -11,8 +11,8 @@ import { StatusPill } from "../components/Bits.jsx";
 import Modal from "../components/Modal.jsx";
 
 export default function ProjectDetailView() {
-  const { db, can, today, currentUser, activeProject, setActiveProject, setActiveView, toggleHold } = useProject();
-  const { openContent, close, toast } = useModal();
+  const { db, can, today, currentUser, activeProject, setActiveProject, setActiveView, toggleHold, updateProject } = useProject();
+  const { openForm, openContent, close, toast } = useModal();
   const [alatMode, setAlatMode] = useState(null); // 'bawa' | 'kembali'
   const [laporanTim, setLaporanTim] = useState([]);
   const [laporanLoading, setLaporanLoading] = useState(false);
@@ -56,6 +56,19 @@ export default function ProjectDetailView() {
   const last = har[0];
 
   const handleHold = () => { toggleHold(p.id); toast(p.status === "HOLD" ? "Project dilanjutkan" : "Project di-HOLD — tim bebas untuk job reguler"); };
+
+  // Set progress keseluruhan project (% bar di Daftar/Dashboard/Portal). Owner/Admin.
+  const editProgress = () => openForm({
+    title: `Set Progress — ${p.nama}`,
+    fields: [{ name: "progress", label: "Progress keseluruhan (%)", type: "number", val: p.progress }],
+    onSubmit: (d) => {
+      const n = Math.round(Number(d.progress));
+      if (!Number.isFinite(n)) { toast("Angka tidak valid"); return; }
+      const v = Math.max(0, Math.min(100, n));
+      updateProject(p.id, { progress: v });
+      toast(`Progress di-set ${v}%`);
+    },
+  });
 
   const showWeekly = () => {
     const w = weekSummary(db, p.id, today);
@@ -105,7 +118,11 @@ export default function ProjectDetailView() {
       <div style={{ ...S.sectionTitle, alignItems: "center" }}>
         <h2 style={S.sectionTitleH}>{p.nama}</h2>
         <StatusPill s={p.status} />
-        <span style={S.pill("accent")}>{p.progress}%</span>
+        {can.manage ? (
+          <button style={{ ...S.pill("accent"), border: "none", cursor: "pointer" }} onClick={editProgress} title="Klik untuk ubah progress">{p.progress}% ✏️</button>
+        ) : (
+          <span style={S.pill("accent")}>{p.progress}%</span>
+        )}
         {late > 0 && <span style={S.pill("red")}>telat {late} hari</span>}
         <div style={S.spacer} />
         {p.status !== "SELESAI" && can.manage && (

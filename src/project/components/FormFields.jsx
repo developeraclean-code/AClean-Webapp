@@ -10,7 +10,13 @@ export default function FormFields({ title, fields, onSubmit, onClose, today, gp
   const initRows = useMemo(() => {
     const r = {};
     fields.forEach((f) => {
-      if (f.type === "grid") r[f.name] = (f.rows && f.rows.length ? f.rows : [{}, {}, {}]).map((x) => ({ ...x }));
+      if (f.type === "grid") {
+        // Pra-isi nilai default kolom select ke state (bukan cuma tampilan).
+        // Tanpa ini, baris yang select-nya tak disentuh user tersimpan undefined
+        // → baris di-skip senyap saat submit (mis. alokasi material pertama di list).
+        const blank = () => Object.fromEntries((f.columns || []).filter((c) => c.type === "select" && c.options?.length).map((c) => [c.key, c.options[0]]));
+        r[f.name] = (f.rows && f.rows.length ? f.rows : [{}, {}, {}]).map((x) => ({ ...blank(), ...x }));
+      }
       else if (f.type === "checks") r[f.name] = [];
       else if (f.type === "photo") r[f.name + "_files"] = [];
       else if (f.type === "select" && f.val === undefined && f.options?.length) r[f.name] = f.options[0];
@@ -96,7 +102,9 @@ function Field({ f, data, set, today, gps }) {
   if (f.type === "grid") {
     const rows = data[f.name] || [];
     const setRows = (r) => set(f.name, r);
-    const addRow = () => setRows([...rows, {}]);
+    // Baris baru ikut bawa default kolom select supaya nilainya ada di state.
+    const blankRow = () => Object.fromEntries((f.columns || []).filter((c) => c.type === "select" && c.options?.length).map((c) => [c.key, c.options[0]]));
+    const addRow = () => setRows([...rows, blankRow()]);
     const delRow = (i) => setRows(rows.filter((_, j) => j !== i));
     const setCell = (i, key, v) => setRows(rows.map((r, j) => (j === i ? { ...r, [key]: v } : r)));
     return (
