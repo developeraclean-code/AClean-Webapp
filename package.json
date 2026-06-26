@@ -14,7 +14,8 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:report": "playwright show-report",
     "lint": "eslint src",
-    "lint:fix": "eslint src --fix"
+    "lint:fix": "eslint src --fix",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",
@@ -36,6 +37,7 @@
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.7.0",
+    "typescript": "^6.0.3",
     "vite": "^5.0.8",
     "vitest": "^4.1.4"
   }

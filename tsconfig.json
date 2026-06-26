@@ -1,0 +1,19 @@
+{
+  "//": "TypeScript bertahap (Plan 2). noEmit — hanya type-check (Vite/esbuild yg compile). 'include' sengaja DIPERSEMPIT ke file yang sudah di-TS-kan supaya tsc tidak kebanjiran error dari ribuan baris JS lama. Tambah file ke 'include' setiap kali dikonversi.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": []
+  },
+  "include": ["src/project/data/projectApi.ts"]
+}

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
 import { initialData } from "../data/sampleData.js";
-import { loadAll, api, genId, ASC } from "../data/projectApi.js";
+import { loadAll, api, genId, ASC } from "../data/projectApi";
 import { reportError } from "../../lib/reportError.js";
 
 const Ctx = createContext(null);

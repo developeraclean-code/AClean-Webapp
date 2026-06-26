@@ -1,10 +1,19 @@
 // Data layer modul Project — Supabase (standalone, tabel prefix `project_`).
 // Memetakan field camelCase (state UI) ↔ kolom snake_case (DB) per entitas.
 // Lihat migrations/051_project_module.sql untuk skema.
+//
+// TypeScript (Plan 2): `TableKey` mengunci nama tabel/key. Salah ketik key atau
+// lupa daftar di TABLE/FIELDS/ASC kini = error compile (bukan bug senyap saat
+// runtime seperti dulu).
 import { supabase } from "../../supabaseClient.js";
 
+// Semua key entitas. Satu sumber kebenaran — dipakai utk index TABLE/FIELDS/ASC.
+export type TableKey =
+  | "projects" | "dp" | "materials" | "alokasi" | "usage"
+  | "tools" | "expenses" | "purchases" | "harian" | "documents";
+
 // key state ↔ nama tabel DB (selalu project_<key>)
-const TABLE = {
+const TABLE: Record<TableKey, string> = {
   projects: "project_projects",
   dp: "project_dp",
   materials: "project_materials",
@@ -19,7 +28,7 @@ const TABLE = {
 
 // Peta field JS → kolom DB per entitas. Field jsonb (tim/pagi/sore/items/checklist)
 // & data URL dipetakan apa adanya (passthrough).
-const FIELDS = {
+const FIELDS: Record<TableKey, Record<string, string>> = {
   projects: { id: "id", nama: "nama", kategori: "kategori", lokasi: "lokasi", pic: "pic", status: "status", progress: "progress", mulai: "mulai", target: "target", nilai: "nilai", rab: "rab", tim: "tim", _prev: "prev_status", portalToken: "portal_token", tokenActive: "token_active" },
   dp: { id: "id", projectId: "project_id", tanggal: "tanggal", jumlah: "jumlah", ket: "ket" },
   materials: { id: "id", nama: "nama", sub: "sub", satuan: "satuan", gudang: "gudang", min: "min_qty", harga: "harga" },
@@ -33,36 +42,47 @@ const FIELDS = {
 };
 
 // Urutan load + insert optimistic. true = ascending (append), false = desc (newest-first / prepend).
-export const ASC = {
+export const ASC: Record<TableKey, boolean> = {
   projects: true, materials: true, tools: true, dp: true, alokasi: true,
   usage: false, expenses: false, purchases: false, harian: false, documents: false,
 };
 
+// Baris generik (camelCase utk obj UI, snake_case utk row DB). DB tak diketik
+// ketat dulu — tahap berikutnya bisa beri interface per entitas.
+type Row = Record<string, unknown>;
+export type ProjectDb = Record<TableKey, Row[]>;
+
 // projectId "" (umum) → NULL di DB.
-const toRow = (key, obj) => {
-  const map = FIELDS[key]; const row = {};
+const toRow = (key: TableKey, obj: Row): Row => {
+  const map = FIELDS[key];
+  const row: Row = {};
   for (const js in map) {
     if (!(js in obj)) continue;
     let v = obj[js];
-    if ((map[js] === "project_id") && (v === "" || v === undefined)) v = null;
+    if (map[js] === "project_id" && (v === "" || v === undefined)) v = null;
     row[map[js]] = v;
   }
   return row;
 };
 
-const fromRow = (key, row) => {
-  const map = FIELDS[key]; const obj = {};
+const fromRow = (key: TableKey, row: Row): Row => {
+  const map = FIELDS[key];
+  const obj: Row = {};
   for (const js in map) obj[js] = row[map[js]];
   return obj;
 };
 
-export const genId = (p = "r") => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+export const genId = (p = "r"): string =>
+  p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
-const EMPTY = () => ({ projects: [], dp: [], materials: [], alokasi: [], usage: [], tools: [], expenses: [], purchases: [], harian: [], documents: [] });
+const EMPTY = (): ProjectDb => ({
+  projects: [], dp: [], materials: [], alokasi: [], usage: [],
+  tools: [], expenses: [], purchases: [], harian: [], documents: [],
+});
 
 // Load semua tabel sekaligus → bentuk sama dgn initialData().
-export async function loadAll() {
-  const keys = Object.keys(TABLE);
+export async function loadAll(): Promise<ProjectDb> {
+  const keys = Object.keys(TABLE) as TableKey[];
   const results = await Promise.all(
     keys.map((k) => supabase.from(TABLE[k]).select("*").order("created_at", { ascending: ASC[k] }))
   );
@@ -70,22 +90,22 @@ export async function loadAll() {
   results.forEach((res, i) => {
     const k = keys[i];
     if (res.error) throw new Error(`load ${k}: ${res.error.message}`);
-    out[k] = (res.data || []).map((r) => fromRow(k, r));
+    out[k] = (res.data || []).map((r) => fromRow(k, r as Row));
   });
   return out;
 }
 
 export const api = {
-  async insert(key, rows) {
+  async insert(key: TableKey, rows: Row[]): Promise<void> {
     const payload = rows.map((r) => toRow(key, r));
     const { error } = await supabase.from(TABLE[key]).insert(payload);
     if (error) throw new Error(`insert ${key}: ${error.message}`);
   },
-  async update(key, id, patch) {
+  async update(key: TableKey, id: string, patch: Row): Promise<void> {
     const { error } = await supabase.from(TABLE[key]).update(toRow(key, patch)).eq("id", id);
     if (error) throw new Error(`update ${key}: ${error.message}`);
   },
-  async upsert(key, rows, onConflict) {
+  async upsert(key: TableKey, rows: Row[], onConflict?: string): Promise<void> {
     const payload = rows.map((r) => toRow(key, r));
     const { error } = await supabase.from(TABLE[key]).upsert(payload, onConflict ? { onConflict } : undefined);
     if (error) throw new Error(`upsert ${key}: ${error.message}`);
