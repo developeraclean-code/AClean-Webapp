@@ -13,7 +13,13 @@ const myJobs = ordersData.filter(o =>
 );
 // Job IDs yang sudah dilaporkan: service_reports (order biasa) + project_daily_reports (order project)
 const pdrByOrderId = new Set((projectDailyReports || []).map(r => r.order_id).filter(Boolean));
-const reportedJobIds = new Set(submittedReps.map(r => r.job_id));
+// Job dianggap "sudah dilaporkan" bila ADA laporan dari SIAPA PUN (1 laporan/job).
+// Pakai semua laporanReports, bukan hanya milik user — kalau cuma milik user, job
+// yang laporannya diisi teknisi akan nyangkut sebagai "Belum Dibuat" di daftar
+// helper (dan menumpuk tanpa batas tanggal). Lihat audit: 15 orang kena.
+const reportedJobIds = new Set(
+  laporanReports.filter(r => (r.status || "").toUpperCase() !== "PENDING").map(r => r.job_id)
+);
 const pendingJobs = myJobs.filter(o =>
   !reportedJobIds.has(o.id) &&
   !(o.project_id && pdrByOrderId.has(o.id)) && // project order sudah punya laporan harian → skip
