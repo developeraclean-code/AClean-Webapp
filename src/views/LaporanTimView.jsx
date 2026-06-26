@@ -144,24 +144,9 @@ useEffect(() => {
   return () => window.removeEventListener("open-survey-kirim", handler);
 }, []);
 
-// Live update via Supabase Realtime — service_reports ada di publication
-const [liveActive, setLiveActive] = useState(false);
-useEffect(() => {
-  if (!supabase) return;
-  const ch = supabase
-    .channel("laporan-tim-live")
-    .on("postgres_changes", { event: "*", schema: "public", table: "service_reports" }, (payload) => {
-      if (payload.eventType === "INSERT") {
-        setLaporanReports(prev => [payload.new, ...prev]);
-      } else if (payload.eventType === "UPDATE") {
-        setLaporanReports(prev => prev.map(r => r.id === payload.new.id ? { ...r, ...payload.new } : r));
-      } else if (payload.eventType === "DELETE") {
-        setLaporanReports(prev => prev.filter(r => r.id !== payload.old.id));
-      }
-    })
-    .subscribe((status) => setLiveActive(status === "SUBSCRIBED"));
-  return () => { supabase.removeChannel(ch); };
-}, [supabase, setLaporanReports]);
+// Realtime/WAL dimatikan (hemat compute Supabase). Data laporan di-refresh terpusat oleh
+// App.jsx (polling service_reports tiap 90 dtk, jam kerja + tab aktif) — parsed + dedup by job_id.
+const [liveActive] = useState(true);
 
 // Toggle tampilan — dipakai di mode rekap & detail
 const _viewToggle = (
@@ -854,7 +839,7 @@ return (
         <div style={{ fontWeight: 800, fontSize: 18, color: cs.text, display: "flex", alignItems: "center", gap: 8 }}>
           Laporan Tim Teknisi <span style={{ fontSize: 13, color: cs.muted, fontWeight: 400 }}>({filtered.length})</span>
           {liveActive && (
-            <span title="Live update aktif" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: cs.green, background: cs.green + "18", border: `1px solid ${cs.green}33`, borderRadius: 99, padding: "2px 8px" }}>
+            <span title="Auto-refresh aktif (polling 90 dtk)" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: cs.green, background: cs.green + "18", border: `1px solid ${cs.green}33`, borderRadius: 99, padding: "2px 8px" }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: cs.green, display: "inline-block", animation: "pulse 1.5s ease-in-out infinite" }} />
               LIVE
             </span>

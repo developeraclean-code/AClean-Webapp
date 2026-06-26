@@ -3398,38 +3398,10 @@ ${photoPageHTML}
         // Load laporan — single clean parse, always run (even empty = clear demo data)
         // Parse materials_detail JSON di invoices
         if (!invoicesRes.error && invoicesRes.data) {
-          setInvoicesData(invoicesRes.data.map(inv => ({
-            ...inv,
-            materials_detail: (() => {
-              if (!inv.materials_detail) return [];
-              if (Array.isArray(inv.materials_detail)) return inv.materials_detail;
-              return safeJsonParse(inv.materials_detail, `invoice_materials_${inv.id}`, []);
-            })(),
-          })));
+          setInvoicesData(invoicesRes.data.map(parseInvoiceRow));
         }
         if (!laporanRes.error && laporanRes.data) {
-          const parseLaporan = r => ({
-            ...r,
-            units: r.units_json ? safeJsonParse(r.units_json, `laporan_units_${r.id}`, r.units || []) : (r.units || []),
-            materials: r.materials_json ? safeJsonParse(r.materials_json, `laporan_materials_${r.id}`, r.materials_used || []) : (r.materials_used || []),
-            fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
-            editLog: safeArr(r.edit_log ?? r.editLog),
-            rekomendasi: r.rekomendasi || "",
-            catatan_global: r.catatan_global || r.catatan || "",
-            submitted: r.submitted || (r.submitted_at || "").slice(0, 16).replace("T", " "),
-            status: r.status || "SUBMITTED",
-          });
-          // ✨ DEDUP by job_id — keep latest submitted (prevents double laporan bug on rewrite)
-          const allReports = laporanRes.data.map(parseLaporan);
-          const dedupedMap = new Map();
-          allReports.forEach(r => {
-            const existing = dedupedMap.get(r.job_id);
-            if (!existing) { dedupedMap.set(r.job_id, r); return; }
-            const rTime = r.submitted_at || r.submitted || "";
-            const eTime = existing.submitted_at || existing.submitted || "";
-            if (rTime > eTime) dedupedMap.set(r.job_id, r);
-          });
-          setLaporanReports(Array.from(dedupedMap.values()));
+          setLaporanReports(dedupReportsByJob(laporanRes.data.map(parseLaporanRow)));
         }
         if (!pdrRes?.error && pdrRes?.data) setProjectDailyReports(pdrRes.data);
         // Jika DB error total, keep demo data (already in useState init)
@@ -3717,218 +3689,44 @@ ${photoPageHTML}
       loadAll().catch(e => console.warn("Auto-refresh skip:", e?.message));
     }, STATS_INTERVAL);
 
-    // ══ Supabase Realtime Channels ══
-    // Hanya 4 channel kritis (Supabase free tier: max concurrent realtime)
-    // WA tables (wa_conversations, wa_messages) di-skip jika tidak ada
+    // ══ Polling ringan — pengganti Supabase Realtime / Postgres Changes ══
+    // Postgres Changes (decode WAL) = sumber utama beban compute Supabase (~68%) → DIMATIKAN.
+    // Diganti polling jam-kerja + sadar-visibility tab. Publication supabase_realtime dikosongkan
+    // via migrasi 109. Bukti bayar (payment_suggestions) TETAP via _payPoll di bawah — tak terpengaruh.
+    const POLL_MS = 90 * 1000;
+    const _shouldPoll = () =>
+      isWorkingHours() && (typeof document === "undefined" || document.visibilityState === "visible");
 
-    const shouldSubscribeRT = isWorkingHours();
+    const _pollOrders = setInterval(() => {
+      if (!_shouldPoll()) return;
+      fetchOrders(supabase).then(({ data, error }) => {
+        if (!error && data) setOrdersData(data);
+      }).catch(() => {});
+    }, POLL_MS);
 
-    const _tabId = (window._tabId = window._tabId || Math.random().toString(36).slice(2, 7));
-    const ch1 = shouldSubscribeRT ? supabase.channel("rt-orders-" + _tabId)
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, (payload) => {
-        const eventType = payload.eventType;
-        setOrdersData(prev => {
-          if (!prev) return prev;
-          if (eventType === "INSERT") {
-            // Cek dedup: jangan double-insert kalau sudah ada (misal user yang create)
-            if (prev.some(o => o.id === payload.new.id)) return prev;
-            return [payload.new, ...prev];
-          } else if (eventType === "UPDATE") {
-            return prev.map(o => o.id === payload.new.id ? payload.new : o);
-          } else if (eventType === "DELETE") {
-            return prev.filter(o => o.id !== payload.old.id);
-          }
-          return prev;
-        });
-      })
-      .subscribe((status) => {
-        if (status === "CHANNEL_ERROR") console.warn("⚠️ RT orders error — akan polling manual");
-      }) : null;
+    const _pollInvoices = setInterval(() => {
+      if (!_shouldPoll()) return;
+      fetchInvoices(supabase).then(({ data, error }) => {
+        if (!error && data) setInvoicesData(data.map(parseInvoiceRow));
+      }).catch(() => {});
+    }, POLL_MS);
 
-    const ch2 = shouldSubscribeRT ? supabase.channel("rt-invoices-" + _tabId)
-      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, (payload) => {
-        const eventType = payload.eventType;
-        setInvoicesData(prev => {
-          if (!prev) return eventType === "DELETE" ? prev : [normalizeInvoice(payload.new)];
-          if (eventType === "INSERT") {
-            if (prev.some(inv => inv.id === payload.new.id)) return prev;
-            return [normalizeInvoice(payload.new), ...prev];
-          } else if (eventType === "UPDATE") {
-            return prev.map(inv => inv.id === payload.new.id ? normalizeInvoice(payload.new) : inv);
-          } else if (eventType === "DELETE") {
-            return prev.filter(inv => inv.id !== payload.old.id);
-          }
-          return prev;
-        });
-      })
-      .subscribe((status) => {
-        if (status === "CHANNEL_ERROR") {
-          console.warn("⚠️ RT invoices error — fallback polling aktif");
-          if (window._rtPoll_1617) clearInterval(window._rtPoll_1617);
-          if (isWorkingHours()) {
-            window._rtPoll_1617 = setInterval(() => fetchInvoices(supabase)
-              .then(({ data }) => {
-                if (data) setInvoicesData(data.map(normalizeInvoice));
-              }), 5 * 60 * 1000);
-          }
-        }
-      }) : null;
+    const _pollReports = setInterval(() => {
+      if (!_shouldPoll()) return;
+      fetchServiceReports(supabase).then(({ data, error }) => {
+        if (!error && data) setLaporanReports(dedupReportsByJob(data.map(parseLaporanRow)));
+      }).catch(() => {});
+    }, POLL_MS);
 
-    const ch3 = shouldSubscribeRT ? supabase.channel("rt-laporan-" + _tabId)
-      .on("postgres_changes", { event: "*", schema: "public", table: "service_reports" }, (payload) => {
-        const eventType = payload.eventType;
-        setLaporanReports(prev => {
-          if (!prev) return eventType === "DELETE" ? prev : [normalizeReport(payload.new)];
-          const normalized = eventType !== "DELETE" ? normalizeReport(payload.new) : null;
-
-          if (eventType === "INSERT") {
-            if (prev.some(r => r.id === payload.new.id)) return prev;
-            const updated = [normalized, ...prev];
-            const dm = new Map();
-            updated.forEach(r => {
-              const ex = dm.get(r.job_id);
-              if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
-            });
-            return Array.from(dm.values());
-          } else if (eventType === "UPDATE") {
-            const updated = prev.map(r => r.id === normalized.id ? normalized : r);
-            const dm = new Map();
-            updated.forEach(r => {
-              const ex = dm.get(r.job_id);
-              if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
-            });
-            return Array.from(dm.values());
-          } else if (eventType === "DELETE") {
-            return prev.filter(r => r.id !== payload.old.id);
-          }
-          return prev;
-        });
-      })
-      .subscribe((status) => {
-        if (status === "CHANNEL_ERROR") {
-          console.warn("⚠️ RT laporan error — fallback polling aktif");
-          if (window._rtPoll_1645) clearInterval(window._rtPoll_1645);
-          if (isWorkingHours()) {
-            window._rtPoll_1645 = setInterval(() => fetchServiceReports(supabase)
-              .then(({ data }) => {
-                if (data) {
-                  const mapped = data.map(normalizeReport);
-                  const dm = new Map();
-                  mapped.forEach(r => {
-                    const ex = dm.get(r.job_id);
-                    if (!ex || (r.submitted_at || "") > (ex.submitted_at || "")) dm.set(r.job_id, r);
-                  });
-                  setLaporanReports(Array.from(dm.values()));
-                }
-              }), 5 * 60 * 1000);
-          }
-        }
-      }) : null;
-
-    // CH4–CH6 dihapus (Opsi-A): pricelist, inventory, customers tidak butuh realtime ketat.
-    // Data di-refresh otomatis setiap 30 menit via _statsTimer, cukup untuk use case bisnis.
-
-    // CH7 & CH8: WA tables — hanya aktif bila wa_monitor_enabled = "true"
+    // WA monitor: refresh daftar percakapan saat monitor aktif (gantikan ch7/ch8 postgres_changes
+    // yang sudah no-op — wa_conversations/wa_messages tidak ada di publication realtime).
     const _waMonitorOn = appSettings?.wa_monitor_enabled === "true";
-    let ch7 = null, ch8 = null;
-    if (_waMonitorOn) {
-      try {
-        ch7 = supabase.channel("rt-wa-conv-" + _tabId)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wa_conversations" }, (payload) => {
-            // Opsi-B: update lokal tanpa re-fetch — hemat egress
-            const row = payload.new || payload.old;
-            if (!row?.phone) return;
-            if (payload.eventType === "DELETE") {
-              setWaConversations(prev => prev.filter(c => c.phone !== row.phone));
-            } else {
-              setWaConversations(prev => {
-                const idx = prev.findIndex(c => c.phone === row.phone);
-                if (idx >= 0) {
-                  const next = [...prev];
-                  next[idx] = { ...next[idx], ...row };
-                  next.sort((a, b) => (b.updated_at || "") > (a.updated_at || "") ? 1 : -1);
-                  return next;
-                }
-                return [row, ...prev].slice(0, 100);
-              });
-            }
-          })
-          .subscribe((status) => {
-            if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_conversations — tabel mungkin belum ada");
-          });
-
-        ch8 = supabase.channel("rt-wa-msg-" + _tabId)
-          .on("postgres_changes", { event: "INSERT", schema: "public", table: "wa_messages" }, (payload) => {
-            setWaMessages(prev => {
-              if (prev.length === 0) return prev;
-              const phone = payload.new?.phone;
-              if (!phone) return prev;
-              if (prev[0]?.phone === phone) return [...prev, payload.new];
-              return prev;
-            });
-            // Update state lokal tanpa re-fetch — hemat egress DB
-            const newMsg = payload.new;
-            if (newMsg?.phone) {
-              setWaConversations(prev => {
-                const phone = newMsg.phone;
-                const idx = prev.findIndex(c => c.phone === phone);
-                const now = new Date().toISOString();
-                if (idx >= 0) {
-                  const updated = { ...prev[idx], last_message: newMsg.message || prev[idx].last_message, last_reply: newMsg.role === "bot" ? (newMsg.message || prev[idx].last_reply) : prev[idx].last_reply, updated_at: now, unread: newMsg.role === "customer" ? (prev[idx].unread || 0) + 1 : prev[idx].unread };
-                  const rest = prev.filter((_, i) => i !== idx);
-                  return [updated, ...rest];
-                }
-                return [{ phone, last_message: newMsg.message, last_reply: null, updated_at: now, unread: newMsg.role === "customer" ? 1 : 0, id: newMsg.phone }, ...prev.slice(0, 149)];
-              });
-            }
-
-            if (newMsg?.role === "customer") {
-              // 1. Suara — buat AudioContext inline (tidak perlu file eksternal)
-              try {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.connect(gain); gain.connect(ctx.destination);
-                osc.frequency.value = 880;
-                osc.type = "sine";
-                gain.gain.setValueAtTime(0.3, ctx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-                osc.start(ctx.currentTime);
-                osc.stop(ctx.currentTime + 0.4);
-              } catch(_) {}
-
-              // 2. Browser push notification
-              const senderDisplay = newMsg.name || newMsg.phone || "Customer";
-              const msgPreview = (newMsg.content || "").slice(0, 60);
-              if (typeof Notification !== "undefined") {
-                if (Notification.permission === "granted") {
-                  new Notification("📱 WA Baru — " + senderDisplay, {
-                    body: msgPreview || "(foto/media)",
-                    icon: "/favicon.ico",
-                    tag: "wa-" + (newMsg.phone || ""),
-                    renotify: true
-                  });
-                } else if (Notification.permission === "default") {
-                  Notification.requestPermission().then(perm => {
-                    if (perm === "granted") {
-                      new Notification("📱 WA Baru — " + senderDisplay, {
-                        body: msgPreview || "(foto/media)",
-                        icon: "/favicon.ico",
-                        tag: "wa-" + (newMsg.phone || "")
-                      });
-                    }
-                  });
-                }
-              }
-            }
-          })
-          .subscribe((status) => {
-            if (status === "CHANNEL_ERROR") console.warn("⚠️ RT wa_messages — tabel mungkin belum ada");
-          });
-      } catch (e) {
-        console.warn("WA realtime channels skip:", e?.message);
-      }
-    }
+    const _pollWa = _waMonitorOn ? setInterval(() => {
+      if (!_shouldPoll()) return;
+      fetchWaConversations(supabase, 100).then(res => {
+        if (!res.error && res.data) setWaConversations(res.data);
+      }).catch(() => {});
+    }, POLL_MS) : null;
 
     // Payment suggestions — HANYA Owner/Admin, hanya jam kerja, 5 menit polling (Opsi-C)
     const _isFinanceRole = ["Owner", "Admin"].includes(currentUser?.role);
@@ -3951,17 +3749,15 @@ ${photoPageHTML}
     }, 5 * 60 * 1000) : null;
 
     return () => {
-      clearInterval(window._rtPoll_1617); delete window._rtPoll_1617;
-      clearInterval(window._rtPoll_1645); delete window._rtPoll_1645;
-      clearInterval(window._rtPoll_1673); delete window._rtPoll_1673;
+      clearInterval(_pollOrders);
+      clearInterval(_pollInvoices);
+      clearInterval(_pollReports);
+      if (_pollWa) clearInterval(_pollWa);
       if (_payPoll) clearInterval(_payPoll);
 
       clearTimeout(autoVerifyTimer);
       clearInterval(_statsTimer);
       if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
-      [ch1, ch2, ch3, ch7, ch8].forEach(ch => {
-        try { if (ch) supabase.removeChannel(ch); } catch (_) { }
-      });
     };
   }, [isLoggedIn]);
   // ── Helper: parse materials_detail JSON safely ──
@@ -3988,20 +3784,40 @@ ${photoPageHTML}
     });
   };
 
-  // Helper: normalize invoice untuk payload event
-  const normalizeInvoice = (inv) => ({
+  // Parser baris invoice & laporan — SATU sumber kebenaran, dipakai loadAll() awal & polling live.
+  const parseInvoiceRow = (inv) => ({
     ...inv,
-    materials_detail: parseMD(inv.materials_detail)
+    materials_detail: (() => {
+      if (!inv.materials_detail) return [];
+      if (Array.isArray(inv.materials_detail)) return inv.materials_detail;
+      return safeJsonParse(inv.materials_detail, `invoice_materials_${inv.id}`, []);
+    })(),
   });
 
-  // Helper: normalize service report untuk payload event
-  const normalizeReport = (r) => ({
+  const parseLaporanRow = (r) => ({
     ...r,
-    units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return r.units || []; } })() : (r.units || []),
-    materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return r.materials_used || []; } })() : (r.materials_used || []),
+    units: r.units_json ? safeJsonParse(r.units_json, `laporan_units_${r.id}`, r.units || []) : (r.units || []),
+    materials: r.materials_json ? safeJsonParse(r.materials_json, `laporan_materials_${r.id}`, r.materials_used || []) : (r.materials_used || []),
     fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
     editLog: safeArr(r.edit_log ?? r.editLog),
+    rekomendasi: r.rekomendasi || "",
+    catatan_global: r.catatan_global || r.catatan || "",
+    submitted: r.submitted || (r.submitted_at || "").slice(0, 16).replace("T", " "),
+    status: r.status || "SUBMITTED",
   });
+
+  // Dedup laporan by job_id — keep latest submitted (cegah double laporan saat rewrite).
+  const dedupReportsByJob = (reports) => {
+    const m = new Map();
+    reports.forEach(r => {
+      const ex = m.get(r.job_id);
+      if (!ex) { m.set(r.job_id, r); return; }
+      const rTime = r.submitted_at || r.submitted || "";
+      const eTime = ex.submitted_at || ex.submitted || "";
+      if (rTime > eTime) m.set(r.job_id, r);
+    });
+    return Array.from(m.values());
+  };
 
   // cs / statusColor / statusLabel sudah di-import dari src/theme & src/constants (Fase 2)
 
