@@ -3717,7 +3717,8 @@ ${photoPageHTML}
       if (!_shouldPoll()) return;
       fetchInvoicesSince(supabase, _invoiceCursor).then(({ data, error }) => {
         if (error || !data || data.length === 0) return;
-        _invoiceCursor = data.reduce((m, r) => (r.updated_at || "") > m ? r.updated_at : m, _invoiceCursor);
+        // Query order updated_at ASC → baris terakhir = paling baru. Pakai langsung (format-agnostic).
+        _invoiceCursor = data[data.length - 1].updated_at || _invoiceCursor;
         setInvoicesData(prev => {
           const map = new Map((prev || []).map(r => [r.id, r]));
           data.map(parseInvoiceRow).forEach(r => map.set(r.id, r));
@@ -3730,7 +3731,8 @@ ${photoPageHTML}
       if (!_shouldPoll()) return;
       fetchServiceReportsSince(supabase, _reportCursor).then(({ data, error }) => {
         if (error || !data || data.length === 0) return;
-        _reportCursor = data.reduce((m, r) => (r.updated_at || "") > m ? r.updated_at : m, _reportCursor);
+        // Query order updated_at ASC → baris terakhir = paling baru. Pakai langsung (format-agnostic).
+        _reportCursor = data[data.length - 1].updated_at || _reportCursor;
         setLaporanReports(prev => {
           const map = new Map((prev || []).map(r => [r.id, r]));
           data.map(parseLaporanRow).forEach(r => map.set(r.id, r));
