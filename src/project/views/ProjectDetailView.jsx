@@ -25,18 +25,14 @@ export default function ProjectDetailView() {
     setLaporanLoading(true);
     (async () => {
       try {
-        const { data: projOrders } = await supabase
-          .from("orders").select("id,date")
-          .eq("project_id", p.id).neq("status", "CANCELLED");
-        const ids = (projOrders || []).map(o => o.id);
-        if (!ids.length) { if (alive) { setLaporanTim([]); setLaporanLoading(false); } return; }
-        const orderDateMap = Object.fromEntries((projOrders || []).map(o => [o.id, o.date]));
+        // Laporan job project ada di project_daily_reports (di-submit teknisi via
+        // "Laporan Saya" → ProjectLaporanModal), BUKAN di service_reports.
         const { data: reports } = await supabase
-          .from("service_reports")
-          .select("id,job_id,teknisi,status,submitted_at,catatan_global,total_units,foto_urls")
-          .in("job_id", ids)
-          .order("submitted_at", { ascending: false });
-        if (alive) setLaporanTim((reports || []).map(r => ({ ...r, orderDate: orderDateMap[r.job_id] })));
+          .from("project_daily_reports")
+          .select("id,tanggal,teknisi_name,status,pekerjaan,kendala,foto_urls,submitted_at")
+          .eq("project_id", p.id)
+          .order("tanggal", { ascending: false });
+        if (alive) setLaporanTim(reports || []);
       } catch (e) { console.error("[ProjectDetail] laporan fetch gagal:", e); }
       finally { if (alive) setLaporanLoading(false); }
     })();
@@ -237,18 +233,16 @@ export default function ProjectDetailView() {
               <th style={S.tableStyles.th}>Tgl</th>
               <th style={S.tableStyles.th}>Teknisi</th>
               <th style={S.tableStyles.th}>Status</th>
-              <th style={S.tableStyles.th}>Unit</th>
-              <th style={S.tableStyles.th}>Catatan</th>
+              <th style={S.tableStyles.th}>Pekerjaan</th>
               <th style={S.tableStyles.th}>Foto</th>
             </tr></thead>
             <tbody>
               {laporanTim.map(r => (
                 <tr key={r.id}>
-                  <td style={S.tableStyles.td}>{(r.orderDate || "").slice(5)}</td>
-                  <td style={S.tableStyles.td}>{r.teknisi || "—"}</td>
+                  <td style={S.tableStyles.td}>{(r.tanggal || "").slice(5)}</td>
+                  <td style={S.tableStyles.td}>{r.teknisi_name || "—"}</td>
                   <td style={S.tableStyles.td}><StatusPill s={r.status} /></td>
-                  <td style={S.tableStyles.td}>{r.total_units ?? "—"}</td>
-                  <td style={S.tableStyles.td}>{r.catatan_global || "—"}</td>
+                  <td style={S.tableStyles.td}>{r.pekerjaan || "—"}</td>
                   <td style={S.tableStyles.td}>{(r.foto_urls || []).length}📷</td>
                 </tr>
               ))}
