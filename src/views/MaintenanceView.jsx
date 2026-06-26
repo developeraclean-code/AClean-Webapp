@@ -90,7 +90,7 @@ function daysUntil(dateStr) {
 
 export default function MaintenanceView({
   currentUser, apiFetch, showNotif, showConfirm,
-  quotationsData, setQuotationsData, setOrdersData,
+  quotationsData, setQuotationsData, setOrdersData, ordersData,
   teknisiData, createOrderFn, createTeamSplitFn,
   supabase, customersData, priceListData, getLocalDate,
   appSettings, sendWAFn, uploadQuotationPDFFn,
@@ -274,7 +274,7 @@ export default function MaintenanceView({
               <QuotasiTab
                 sel={sel} quotations={clientQuotations} call={call}
                 quotationsData={quotationsData} setQuotationsData={setQuotationsData}
-                setOrdersData={setOrdersData}
+                setOrdersData={setOrdersData} ordersData={ordersData}
                 supabase={supabase} customersData={customersData}
                 priceListData={priceListData} getLocalDate={getLocalDate}
                 showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner}
@@ -1762,9 +1762,12 @@ const QUO_STATUS_COLOR = {
 };
 const QUO_LABEL = { DRAFT: "📝 Draft", SENT: "📤 Terkirim", APPROVED: "✅ Disetujui", EXPIRED: "⏰ Kadaluarsa", CANCELLED: "❌ Dibatalkan" };
 
-function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, setOrdersData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner, appSettings, sendWAFn, uploadQuotationPDFFn }) {
+function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, setOrdersData, ordersData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner, appSettings, sendWAFn, uploadQuotationPDFFn }) {
   const [showCreate, setShowCreate] = useState(false);
   const [editQ, setEditQ] = useState(null);
+  const [linkJobTargetId, setLinkJobTargetId] = useState(null); // quotation.id yg sedang dipilih job-nya
+  const [linkJobOrderId, setLinkJobOrderId] = useState("");
+  const [linkingJobId, setLinkingJobId] = useState(null);
   // Harga deal khusus perusahaan ini → opsi tambahan di pencarian jasa/addon QuotationModal.
   const [clientPriceOptions, setClientPriceOptions] = useState([]);
   useEffect(() => {
@@ -1899,6 +1902,28 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
 
   const prefill = { name: sel.name, phone: sel.pic_phone || "", address: sel.address || "" };
 
+  // ── Tautkan penawaran ke job/order yang dibuat manual (bukan via Approve) ──
+  const usedJobIds = new Set((quotationsData || []).map(q => q.job_id).filter(Boolean));
+  const nName = (s) => String(s || "").trim().toLowerCase();
+  const candidateOrders = (ordersData || []).filter(o =>
+    (o.maintenance_client_id === sel.id
+      || (o.customer && nName(o.customer) === nName(sel.name))
+      || (o.phone && sel.pic_phone && String(o.phone) === String(sel.pic_phone)))
+    && !usedJobIds.has(o.id)
+  ).slice(0, 50);
+  const handleLinkJob = async (quo) => {
+    if (!linkJobOrderId) { showNotif("❌ Pilih order dulu"); return; }
+    setLinkingJobId(quo.id);
+    try {
+      const { error } = await supabase.from("quotations").update({ job_id: linkJobOrderId, updated_at: new Date().toISOString() }).eq("id", quo.id);
+      if (error) throw error;
+      setQuotationsData(prev => prev.map(x => x.id === quo.id ? { ...x, job_id: linkJobOrderId } : x));
+      setLinkJobTargetId(null); setLinkJobOrderId("");
+      showNotif(`✅ Penawaran ${quo.id} ditautkan ke job ${linkJobOrderId}. Invoice dari laporan job itu akan ter-link otomatis.`);
+    } catch (e) { showNotif("❌ " + (e.message || "Gagal tautkan")); }
+    finally { setLinkingJobId(null); }
+  };
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
@@ -1957,6 +1982,12 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
                           {approvingId === q.id ? "…" : "✅ Approve"}
                         </button>
                       )}
+                      {!q.job_id && (
+                        <button onClick={() => { setLinkJobTargetId(linkJobTargetId === q.id ? null : q.id); setLinkJobOrderId(""); }}
+                          style={{ ...miniBtn, color: "#a5b4fc", borderColor: "#6366f155" }} title="Tautkan ke job yang dibuat manual">
+                          🔗 Tautkan Job
+                        </button>
+                      )}
                       <button onClick={() => { setEditQ(q); setShowCreate(true); }} style={miniBtn}>✏️</button>
                       {isOwner && <button onClick={() => delQ(q)} style={{ ...miniBtn, color: cs.red }}>🗑</button>}
                     </div>
@@ -1973,6 +2004,25 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
                     </button>
                     <button onClick={() => { setApproveTargetId(null); setApproveDate(""); }}
                       style={{ ...miniBtn, color: cs.muted }}>Batal</button>
+                  </div>
+                )}
+                {linkJobTargetId === q.id && (
+                  <div style={{ borderTop: "1px solid " + cs.border, background: "#6366f10d", padding: "10px 14px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12, color: cs.muted }}>Tautkan ke order/job:</span>
+                    {candidateOrders.length === 0 ? (
+                      <span style={{ fontSize: 12, color: cs.yellow }}>Tidak ada order perusahaan ini yang belum tertaut. Pastikan order ber-customer/HP sama atau sudah di-link ke perusahaan.</span>
+                    ) : (
+                      <select value={linkJobOrderId} onChange={e => setLinkJobOrderId(e.target.value)}
+                        style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid " + cs.border, background: cs.surface, color: cs.text, fontSize: 12, maxWidth: 380 }}>
+                        <option value="">— pilih order —</option>
+                        {candidateOrders.map(o => <option key={o.id} value={o.id}>{o.id} · {o.service || "-"} · {o.date || "-"} · {o.status || "-"}</option>)}
+                      </select>
+                    )}
+                    <button onClick={() => handleLinkJob(q)} disabled={linkingJobId === q.id || !linkJobOrderId}
+                      style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontWeight: 700, fontSize: 12, cursor: linkingJobId === q.id || !linkJobOrderId ? "not-allowed" : "pointer", opacity: linkingJobId === q.id || !linkJobOrderId ? 0.6 : 1 }}>
+                      {linkingJobId === q.id ? "Proses…" : "🔗 Tautkan"}
+                    </button>
+                    <button onClick={() => { setLinkJobTargetId(null); setLinkJobOrderId(""); }} style={{ ...miniBtn, color: cs.muted }}>Batal</button>
                   </div>
                 )}
                 {items.length > 0 && (

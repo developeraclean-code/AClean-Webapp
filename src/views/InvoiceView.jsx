@@ -241,6 +241,27 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
 function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, paymentSuggestions, setPaymentSuggestions, fotoSrc, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
+// Bandingkan total invoice vs penawaran yang ter-link (warning bila selisih > 10%).
+// quotationsData lazy-load (kosong di view Invoice) → ambil total penawaran on-demand.
+const QUO_DIFF_PCT = 0.10;
+const [quoTotals, setQuoTotals] = useState({});
+useEffect(() => {
+  if (!supabase) return;
+  const ids = [...new Set((filteredInv || []).map(i => i.quotation_id).filter(Boolean))].filter(id => !(id in quoTotals));
+  if (!ids.length) return;
+  supabase.from("quotations").select("id,total").in("id", ids).then(({ data }) => {
+    if (data && data.length) setQuoTotals(prev => { const n = { ...prev }; data.forEach(q => { n[q.id] = Number(q.total) || 0; }); return n; });
+  });
+}, [filteredInv, supabase]); // eslint-disable-line react-hooks/exhaustive-deps
+const quoCompare = (inv) => {
+  if (!inv?.quotation_id) return null;
+  let quoTotal = quoTotals[inv.quotation_id];
+  if (quoTotal == null) { const q = (quotationsData || []).find(x => x.id === inv.quotation_id); quoTotal = Number(q?.total) || 0; }
+  if (!quoTotal) return null;
+  const invTotal = Number(inv.total) || 0;
+  const diff = invTotal - quoTotal;
+  return { quoTotal, invTotal, diff, pct: diff / quoTotal, over: Math.abs(diff / quoTotal) > QUO_DIFF_PCT };
+};
 const [scanningBukti, setScanningBukti] = useState(false);
 const [confirmingCash, setConfirmingCash] = useState(false);
 const [showAcUnitModal, setShowAcUnitModal] = useState(false);
@@ -1472,6 +1493,21 @@ return (
                   📋 {inv.quotation_id}
                 </span>
               )}
+              {/* Perbandingan invoice vs penawaran (warning bila selisih > 10%) */}
+              {(() => {
+                const c = quoCompare(inv);
+                if (!c) return null;
+                const sign = c.diff > 0 ? "+" : "";
+                return (
+                  <span
+                    style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, fontWeight: 700,
+                      background: c.over ? "#ef444418" : "#22c55e18", color: c.over ? "#f87171" : "#4ade80",
+                      border: "1px solid " + (c.over ? "#ef444444" : "#22c55e44") }}
+                    title={`Penawaran ${fmt(c.quoTotal)} → Invoice ${fmt(c.invTotal)}`}>
+                    {c.over ? "⚠️ " : "≈ "}vs penawaran {sign}{fmt(c.diff)} ({sign}{Math.round(c.pct * 100)}%)
+                  </span>
+                );
+              })()}
               {inv.garansi_expires && (() => {
                 const daysLeft = Math.ceil((new Date(inv.garansi_expires) - new Date()) / 86400000);
                 if (daysLeft < 0) return <span style={{ fontSize: 10, color: cs.muted, background: cs.surface, padding: "1px 6px", borderRadius: 4 }}>🔒 Garansi selesai</span>;
@@ -1672,7 +1708,18 @@ return (
               )}
             {inv.status === "PENDING_APPROVAL" && !inv.repair_gratis && (
               <>
-                <button onClick={() => approveInvoice(inv)} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>✅ Approve</button>
+                <button onClick={async () => {
+                  const c = quoCompare(inv);
+                  if (c && c.over) {
+                    const ok = await showConfirm({
+                      title: "Selisih besar vs penawaran",
+                      message: `Invoice ${fmt(c.invTotal)} berbeda ${c.diff > 0 ? "+" : ""}${fmt(c.diff)} (${c.diff > 0 ? "+" : ""}${Math.round(c.pct * 100)}%) dari penawaran ${fmt(c.quoTotal)}.\n\nTetap approve dengan nilai invoice ini?`,
+                      confirmText: "Ya, Approve",
+                    });
+                    if (!ok) return;
+                  }
+                  approveInvoice(inv);
+                }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>✅ Approve</button>
                 <span style={{ fontSize: 11, color: cs.accent, alignSelf: "center" }}>Belum dikirim ke customer</span>
               </>
             )}

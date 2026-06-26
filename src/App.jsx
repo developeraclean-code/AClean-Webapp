@@ -6833,7 +6833,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
             currentUser={currentUser} apiFetch={_apiFetch}
             showNotif={showNotif} showConfirm={showConfirm}
             quotationsData={quotationsData} setQuotationsData={setQuotationsData}
-            setOrdersData={setOrdersData}
+            setOrdersData={setOrdersData} ordersData={ordersData}
             teknisiData={teknisiData} createOrderFn={createOrder} createTeamSplitFn={createTeamSplit}
             supabase={supabase} customersData={customersData}
             priceListData={priceListData} getLocalDate={getLocalDate}
@@ -7882,19 +7882,19 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       // Update local state SETELAH DB insert sukses (atau retry sukses)
       setInvoicesData(prev => prev.some(i => i.id === newInvoice.id) ? prev : [...prev, newInvoice]);
 
-      // P1: Link invoice ↔ quotation — jika order ini berasal dari quotation
-      const srcOrder = ordersData.find(o => o.id === laporanModal.id);
-      if (srcOrder?.source === "quotation") {
-        const linkedQuo = quotationsData.find(q => q.job_id === laporanModal.id);
-        if (linkedQuo) {
-          // Patch invoice.quotation_id
-          supabase.from("invoices").update({ quotation_id: linkedQuo.id }).eq("id", invId).then(() => {});
-          // Patch quotation.invoice_id
-          supabase.from("quotations").update({ invoice_id: invId, updated_at: new Date().toISOString() }).eq("id", linkedQuo.id).then(() => {});
-          setQuotationsData(prev => prev.map(q => q.id === linkedQuo.id ? { ...q, invoice_id: invId } : q));
-          setInvoicesData(prev => prev.map(i => i.id === invId ? { ...i, quotation_id: linkedQuo.id } : i));
-          addAgentLog("QUOTATION_INVOICE_LINKED", `Invoice ${invId} ↔ Quotation ${linkedQuo.id} ter-link`, "SUCCESS");
-        }
+      // P1: Link invoice ↔ quotation — jika ADA penawaran yang job_id-nya = order ini.
+      // Berlaku baik order dari Approve quotation MAUPUN job manual yang ditautkan via
+      // tab Maintenance → Quotasi → "Tautkan Job". (Dulu syarat source==="quotation" memblok
+      // job manual sehingga invoice tak pernah ter-link ke penawaran.)
+      const linkedQuo = quotationsData.find(q => q.job_id === laporanModal.id);
+      if (linkedQuo) {
+        // Patch invoice.quotation_id
+        supabase.from("invoices").update({ quotation_id: linkedQuo.id }).eq("id", invId).then(() => {});
+        // Patch quotation.invoice_id
+        supabase.from("quotations").update({ invoice_id: invId, updated_at: new Date().toISOString() }).eq("id", linkedQuo.id).then(() => {});
+        setQuotationsData(prev => prev.map(q => q.id === linkedQuo.id ? { ...q, invoice_id: invId } : q));
+        setInvoicesData(prev => prev.map(i => i.id === invId ? { ...i, quotation_id: linkedQuo.id } : i));
+        addAgentLog("QUOTATION_INVOICE_LINKED", `Invoice ${invId} ↔ Quotation ${linkedQuo.id} ter-link`, "SUCCESS");
       }
 
       addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
