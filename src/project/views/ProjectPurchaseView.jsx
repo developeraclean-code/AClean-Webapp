@@ -47,7 +47,7 @@ export default function ProjectPurchaseView() {
   return (
     <div style={{ padding: 22, maxWidth: 1200 }}>
       <div style={S.note}>
-        Pembelian material & alat → masuk Stok Gudang / Daftar Alat & tercatat di Keuangan. Filter per project & jenis di bawah.
+        Pembelian material & alat project → tercatat di <b>Keuangan project</b>. Stok project <b>terpisah</b> dari inventori bisnis reguler & ditangani sendiri — tambah stok lewat <b>Stok Material → Restock Gudang</b>. Filter per project & jenis di bawah.
       </div>
       <div style={{ ...S.between, marginBottom: 10 }}>
         <div style={S.row}>

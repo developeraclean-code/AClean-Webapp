@@ -68,6 +68,11 @@ export default function ProjectDetailView() {
 
   const showWeekly = () => {
     const w = weekSummary(db, p.id, today);
+    // Rekap mingguan customer disambungkan ke laporan teknisi (project_daily_reports,
+    // VERIFIED) — sumber yang sama dgn portal & panel Laporan Tim — bukan log alat internal.
+    const weekReports = laporanTim.filter((r) => r.status === "VERIFIED" && (r.tanggal || "") >= w.ws);
+    const progressRows = weekReports.map((r) => ({ tgl: (r.tanggal || "").slice(5), txt: r.pekerjaan || "-", teknisi: r.teknisi_name || "—" }));
+    const fotoCount = weekReports.reduce((s, r) => s + (r.foto_urls?.length || 0), 0);
     openContent({
       content: (
         <Modal wide onClose={close}>
@@ -85,13 +90,13 @@ export default function ProjectDetailView() {
             <div style={{ display: "flex", gap: 24, marginBottom: 8 }}>
               <div><b>Progress keseluruhan</b><br />{p.progress}%</div>
               {can.finance && <div><b>Biaya minggu ini</b><br />{fmtRp(w.biaya)}</div>}
-              <div><b>Dokumentasi</b><br />{w.foto} foto minggu ini</div>
+              <div><b>Dokumentasi</b><br />{fotoCount} foto minggu ini</div>
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", margin: "8px 0" }}>
-              <thead><tr><th style={paperTh}>Tgl</th><th style={paperTh}>Progress Harian</th></tr></thead>
-              <tbody>{w.progress.length ? w.progress.map((x, i) => (
-                <tr key={i}><td style={{ ...paperTd, width: 60 }}>{x.tgl}</td><td style={paperTd}>{x.txt}</td></tr>
-              )) : <tr><td colSpan={2} style={{ ...paperTd, color: "#64748b" }}>belum ada progress minggu ini</td></tr>}</tbody>
+              <thead><tr><th style={paperTh}>Tgl</th><th style={paperTh}>Progress Harian</th><th style={paperTh}>Teknisi</th></tr></thead>
+              <tbody>{progressRows.length ? progressRows.map((x, i) => (
+                <tr key={i}><td style={{ ...paperTd, width: 60 }}>{x.tgl}</td><td style={paperTd}>{x.txt}</td><td style={{ ...paperTd, width: 110 }}>{x.teknisi}</td></tr>
+              )) : <tr><td colSpan={3} style={{ ...paperTd, color: "#64748b" }}>belum ada laporan VERIFIED minggu ini</td></tr>}</tbody>
             </table>
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 12 }}>
