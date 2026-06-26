@@ -1822,6 +1822,15 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
     setApproveTargetId(null);
     setApproveDate("");
     try {
+      // Approve cerdas: penawaran SUDAH punya job (ditautkan manual / sebelumnya) → cukup ubah
+      // status jadi APPROVED. JANGAN buat order baru (cegah order dobel + link ketimpa).
+      if (quo.job_id) {
+        const { error } = await supabase.from("quotations").update({ status: "APPROVED", updated_at: new Date().toISOString() }).eq("id", quo.id);
+        if (error) throw new Error("Gagal update quotation: " + error.message);
+        setQuotationsData(prev => prev.map(x => x.id === quo.id ? { ...x, status: "APPROVED" } : x));
+        showNotif(`✅ ${quo.id} disetujui — pakai job ${quo.job_id} yang sudah ada (tidak buat order baru).`);
+        return;
+      }
       const orderDate = scheduledDate || today;
       const jobId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
 
@@ -1977,10 +1986,22 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
                         <button onClick={() => markSent(q)} style={{ ...miniBtn, color: "#60a5fa" }}>📤 Sent</button>
                       )}
                       {!["APPROVED", "CANCELLED"].includes(q.status) && approveTargetId !== q.id && (
-                        <button onClick={() => { setApproveTargetId(q.id); setApproveDate(today); }} disabled={approvingId === q.id}
-                          style={{ ...miniBtn, color: cs.green, borderColor: cs.green + "55" }}>
-                          {approvingId === q.id ? "…" : "✅ Approve"}
-                        </button>
+                        q.job_id ? (
+                          // Sudah ada job → setujui tanpa buat order baru (anti-dobel).
+                          <button onClick={async () => {
+                            const ok = await showConfirm?.({ title: "Setujui penawaran?", message: `${q.id} sudah tertaut job ${q.job_id}.\n\nSetujui penawaran tanpa membuat order baru (pakai job yang ada)?`, confirmText: "Ya, Setujui" });
+                            if (showConfirm && !ok) return;
+                            handleApprove(q);
+                          }} disabled={approvingId === q.id}
+                            style={{ ...miniBtn, color: cs.green, borderColor: cs.green + "55" }} title="Setujui tanpa buat order baru (job sudah ada)">
+                            {approvingId === q.id ? "…" : "✅ Setujui"}
+                          </button>
+                        ) : (
+                          <button onClick={() => { setApproveTargetId(q.id); setApproveDate(today); }} disabled={approvingId === q.id}
+                            style={{ ...miniBtn, color: cs.green, borderColor: cs.green + "55" }}>
+                            {approvingId === q.id ? "…" : "✅ Approve"}
+                          </button>
+                        )
                       )}
                       {!q.job_id && (
                         <button onClick={() => { setLinkJobTargetId(linkJobTargetId === q.id ? null : q.id); setLinkJobOrderId(""); }}
