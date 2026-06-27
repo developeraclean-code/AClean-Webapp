@@ -4,7 +4,7 @@ import { statusColor, statusLabel } from "../constants/status.js";
 import { displayStock } from "../lib/inventory.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 
-function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, expensesData, supabase, apiHeaders, bapEnabled }) {
+function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, setHistoryPreview, expensesData, supabase, apiHeaders, bapEnabled }) {
 const role = currentUser?.role || "Admin";
 const [gridDate, setGridDate] = useState(TODAY);
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -17,23 +17,6 @@ if (role === "Teknisi" || role === "Helper") {
   const myJobs = ordersData.filter(o => o.teknisi === myName);
   const todayJobs = myJobs.filter(o => o.date === TODAY);
   const doneCount = myJobs.filter(o => o.status === "COMPLETED").length;
-  const [historyOpen, setHistoryOpen] = useState(null);
-
-  const getCustomerHistory = (order) => {
-    const sameCustomerIds = new Set(
-      ordersData
-        .filter(ord => ord.id !== order.id && ord.customer === order.customer && ord.address === order.address)
-        .map(ord => ord.id)
-    );
-    return laporanReports
-      .filter(r => sameCustomerIds.has(r.job_id) && (r.status === "VERIFIED" || r.status === "SUBMITTED"))
-      .map(r => {
-        const ord = ordersData.find(o => o.id === r.job_id);
-        return { ...r, orderDate: ord?.date || "", orderService: ord?.service || r.service || "", orderUnits: ord?.units || 1 };
-      })
-      .sort((a, b) => (b.orderDate > a.orderDate ? 1 : -1))
-      .slice(0, 3);
-  };
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -69,8 +52,6 @@ if (role === "Teknisi" || role === "Helper") {
         {todayJobs.length === 0
           ? <div style={{ color: cs.muted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Tidak ada jadwal hari ini</div>
           : todayJobs.map(o => {
-            const isHistOpen = historyOpen === o.id;
-            const history = isHistOpen ? getCustomerHistory(o) : [];
             return (
               <div key={o.id} style={{ background: cs.surface, border: "1px solid " + myColor + "33", borderRadius: 10, marginBottom: 8, overflow: "hidden" }}>
                 <div style={{ padding: "12px 14px" }}>
@@ -113,40 +94,13 @@ if (role === "Teknisi" || role === "Helper") {
                         </button>
                       );
                     })()}
-                    <button onClick={() => setHistoryOpen(isHistOpen ? null : o.id)}
-                      style={{ background: isHistOpen ? cs.accent + "22" : cs.card, border: "1px solid " + (isHistOpen ? cs.accent + "66" : cs.border), color: isHistOpen ? cs.accent : cs.muted, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🕐 Riwayat</button>
+                    <button onClick={() => {
+                      const cu = customersData.find(c => c.name === o.customer);
+                      setHistoryPreview(cu || { name: o.customer, phone: o.phone, address: o.address });
+                    }}
+                      style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>🕐 Riwayat</button>
                   </div>
                 </div>
-
-                {/* History panel — inline expand */}
-                {isHistOpen && (
-                  <div style={{ borderTop: "1px solid " + cs.border + "44", background: cs.card + "88", padding: "12px 14px" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>📋 Riwayat Pekerjaan Sebelumnya</div>
-                    {history.length === 0
-                      ? <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada riwayat — customer baru.</div>
-                      : history.map((h, hi) => {
-                        const hasNote = !!(h.rekomendasi || h.catatan_global);
-                        const tgl = h.orderDate ? new Date(h.orderDate + "T00:00:00+07:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "-";
-                        return (
-                          <div key={hi} style={{ background: cs.surface, border: "1px solid " + (hasNote ? "#f59e0b33" : cs.border + "44"), borderRadius: 8, padding: "9px 11px", marginBottom: hi < history.length - 1 ? 6 : 0 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                              <div>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: cs.text }}>{h.orderService} · {h.orderUnits} unit</div>
-                                <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>📅 {tgl} · 👤 {h.teknisi || "-"}</div>
-                              </div>
-                              {hasNote && <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 99, background: "#f59e0b22", color: "#f59e0b", border: "1px solid #f59e0b44", fontWeight: 700, whiteSpace: "nowrap" }}>⚠ Ada Catatan</span>}
-                            </div>
-                            {hasNote && (
-                              <div style={{ marginTop: 6, fontSize: 10, color: "#f59e0b", background: "#f59e0b0d", borderRadius: 5, padding: "5px 8px", lineHeight: 1.5 }}>
-                                {h.rekomendasi || h.catatan_global}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
-                    }
-                  </div>
-                )}
               </div>
             );
           })
