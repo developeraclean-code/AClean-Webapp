@@ -1446,7 +1446,7 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
   const slugify = (s) => (s || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || ("bonus_" + Date.now());
 
   const updateRow = (idx, field, val) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [field]: val } : r));
-  const addRow    = () => setRows(prev => [...prev, { id: "", label: "", amount: 0, detection_keywords: [] }]);
+  const addRow    = () => setRows(prev => [...prev, { id: "", label: "", amount: 0, detection_keywords: "" }]);
   const removeRow = (idx) => setRows(prev => prev.filter((_, i) => i !== idx));
 
   const handleSave = async () => {
@@ -1504,9 +1504,11 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
             <input value={r.label} placeholder="cth: Isi Freon" onChange={e => updateRow(idx, "label", e.target.value)} style={inputStyle} />
             <input type="number" value={r.amount} placeholder="0" onChange={e => updateRow(idx, "amount", e.target.value)} style={inputStyle} />
             <input
-              value={Array.isArray(r.detection_keywords) ? r.detection_keywords.join(", ") : r.detection_keywords}
+              value={Array.isArray(r.detection_keywords) ? r.detection_keywords.join(", ") : (r.detection_keywords || "")}
               placeholder="cth: kuras vacum, freon"
-              onChange={e => updateRow(idx, "detection_keywords", e.target.value.split(",").map(k => k.trim().toLowerCase()).filter(Boolean))}
+              // Simpan string MENTAH saat mengetik — biar spasi & koma tidak "dimakan".
+              // Normalisasi (split koma → trim → lowercase) dilakukan sekali saat handleSave.
+              onChange={e => updateRow(idx, "detection_keywords", e.target.value)}
               style={inputStyle}
             />
             <button onClick={() => removeRow(idx)} title="Hapus" style={{ padding: "7px 0", borderRadius: 6, background: cs.card, border: "1px solid " + cs.red + "66", color: cs.red, cursor: "pointer", fontSize: 13 }}>🗑</button>
@@ -1577,14 +1579,27 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
   const installInfo = orderRow.service === "Install"
     ? getInstallCumulative(ordersData, orderRow.date, team) : null;
 
-  // Default bonus type: freon jika terdeteksi, kapasitor, thermis, install, lalu margin, lalu manual untuk complain
+  // Opsi tipe bonus dari kategori tersimpan. "manual" SELALU disediakan walau kategori
+  // terhapus dari setting — biar input nominal manual tidak pernah buntu (anti data rusak).
+  const typeOptions = Object.entries(BONUS_LABELS).some(([k]) => k === "manual")
+    ? Object.entries(BONUS_LABELS)
+    : [...Object.entries(BONUS_LABELS), ["manual", "Bonus Manual"]];
+  const validIds = new Set(typeOptions.map(([k]) => k));
+
+  // Default bonus type: freon jika terdeteksi, kapasitor, thermis, install, lalu margin, lalu manual untuk complain.
+  // Fallback ke tipe yang BENAR-BENAR ada di kategori (hindari dropdown kosong / Rp 0 saat kategori tak lengkap).
   const defaultType = (() => {
-    if (isComplain) return "manual";
-    if (detected.detected.includes("freon")) return "freon";
-    if (detected.detected.includes("kapasitor")) return "kapasitor";
-    if (detected.detected.includes("thermis")) return "thermis";
-    if (installInfo?.tier) return installInfo.tier;
-    return "margin_1jt";
+    const ideal = (() => {
+      if (isComplain) return "manual";
+      if (detected.detected.includes("freon")) return "freon";
+      if (detected.detected.includes("kapasitor")) return "kapasitor";
+      if (detected.detected.includes("thermis")) return "thermis";
+      if (installInfo?.tier) return installInfo.tier;
+      return "margin_1jt";
+    })();
+    if (validIds.has(ideal)) return ideal;
+    if (validIds.has("manual")) return "manual";
+    return typeOptions[0]?.[0] || "manual";
   })();
 
   const [bonusType, setBonusType]       = useState(defaultType);
@@ -1656,7 +1671,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
         <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Tipe Bonus</div>
         <select value={bonusType} onChange={e => setBonusType(e.target.value)}
           style={{ width: "100%", padding: "7px 10px", borderRadius: 7, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13 }}>
-          {Object.entries(BONUS_LABELS).map(([k, v]) => (
+          {typeOptions.map(([k, v]) => (
             <option key={k} value={k}>{v}{BONUS_DEFAULTS[k] ? ` — Rp ${BONUS_DEFAULTS[k].toLocaleString("id-ID")}/tim` : ""}</option>
           ))}
         </select>
@@ -1720,7 +1735,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
         <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Preview</div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ fontSize: 12, color: "#94a3b8" }}>{BONUS_LABELS[bonusType]}</div>
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>{BONUS_LABELS[bonusType] || (bonusType === "manual" ? "Bonus Manual" : bonusType)}</div>
             <div style={{ fontSize: 11, color: "#64748b" }}>Dibagi {selectedTeam.length} orang: <strong style={{ color: "#93c5fd" }}>Rp {fmt(perPerson)}/orang</strong></div>
             <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>Status: PENDING — cair setelah 30 hari</div>
           </div>
