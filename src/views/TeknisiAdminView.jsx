@@ -500,6 +500,15 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const [slipPreview, setSlipPreview] = useState(null);
   // localBonus: { rowId: [{label, amount}] } — local buffer, no DB call on each keystroke
   const [localBonus, setLocalBonus]   = useState({});
+  // Rekening tujuan transfer per user — di-fetch scoped di panel gaji (hanya Owner/Admin/Finance
+  // yang bisa buka GajiTab), bukan ditaruh di teknisiData global. { userId: {bank_name, bank_account_no, bank_holder} }
+  const [bankMap, setBankMap]         = useState({});
+  useEffect(() => {
+    let alive = true;
+    supabase.from("user_profiles").select("id,bank_name,bank_account_no,bank_holder")
+      .then(({ data }) => { if (alive && data) setBankMap(Object.fromEntries(data.map(u => [u.id, u]))); });
+    return () => { alive = false; };
+  }, [supabase]);
 
   // ── Komisi state (periode BULANAN — terpisah dari payroll mingguan) ──
   const [bonusMonth, setBonusMonth]     = useState(() => todayYearMonth()); // "2026-05"
@@ -1056,6 +1065,31 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                       <div style={{ fontSize: 11, color: cs.muted }}>{row.role} · {fmtRp(row.daily_rate)}/hari</div>
                     </div>
                   </div>
+
+                  {/* Rekening tujuan transfer — biar Finance proses pembayaran langsung dari panel ini */}
+                  {(() => {
+                    const bank = bankMap[row.user_id] || {};
+                    const isDana = (bank.bank_name || "").toUpperCase() === "DANA";
+                    const bankCol = isDana ? "#118eea" : "#2563eb";
+                    if (!bank.bank_account_no) {
+                      return (
+                        <div style={{ background: cs.surface, borderRadius: 8, padding: "8px 10px", marginBottom: 14, fontSize: 11, color: cs.muted }}>
+                          💳 Rekening belum diisi — lengkapi di profil {row.user_name} (Tim Teknisi → Edit).
+                        </div>
+                      );
+                    }
+                    return (
+                      <div style={{ background: cs.surface, borderRadius: 8, padding: "8px 10px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 11, color: cs.muted }}>💳 Transfer ke</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: bankCol, background: bankCol + "22", padding: "2px 8px", borderRadius: 5 }}>{bank.bank_name || "-"}</span>
+                        <span style={{ fontSize: 14, fontWeight: 800, color: cs.text, fontVariantNumeric: "tabular-nums", letterSpacing: "0.03em" }}>{bank.bank_account_no}</span>
+                        {bank.bank_holder && <span style={{ fontSize: 11, color: cs.muted }}>a.n. {bank.bank_holder}</span>}
+                        <button onClick={() => { navigator.clipboard?.writeText(bank.bank_account_no); showNotif?.("📋 No. rekening " + row.user_name + " disalin"); }}
+                          title="Salin no. rekening"
+                          style={{ marginLeft: "auto", padding: "4px 9px", borderRadius: 6, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>📋 Salin</button>
+                      </div>
+                    );
+                  })()}
 
                   {/* Grid detail */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
