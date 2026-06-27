@@ -114,6 +114,9 @@ if (role === "Teknisi" || role === "Helper") {
 // ── OWNER / ADMIN DASHBOARD ────────────────────────────────
 // Tanggal pengerjaan = order.date (bukan paid_at). Fallback ke created_at invoice.
 const orderDateMap = Object.fromEntries(ordersData.map(o => [o.id, o.date]));
+// Teknisi utama job = dari ORDER (selalu terisi), bukan invoice.teknisi yang mayoritas NULL.
+// invoice.teknisi cuma fallback bila job_id tak ketemu (order terhapus).
+const orderTeknisiMap = Object.fromEntries(ordersData.filter(o => o.teknisi).map(o => [o.id, o.teknisi]));
 function jobDate(inv) {
   return orderDateMap[inv.job_id] || (inv.created_at || "").slice(0, 10) || "";
 }
@@ -292,8 +295,9 @@ return (
       const byPerson = {};
 
       paidInPeriod.forEach(inv => {
-        // Teknisi utama — pakai effRev biar skip unit AC passthrough
-        const tek = inv.teknisi;
+        // Teknisi utama — dari ORDER (reliabel); invoice.teknisi mayoritas NULL → fallback saja.
+        // Pakai effRev biar skip unit AC passthrough.
+        const tek = orderTeknisiMap[inv.job_id] || inv.teknisi;
         if (tek) {
           if (!byPerson[tek]) byPerson[tek] = { total: 0, count: 0, role: "Teknisi" };
           byPerson[tek].total += effRev(inv);
