@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import { fetchWeeklyPayrollByUser, fetchMyBonuses } from "../data/reads.js";
+import { kasbonOwed, kasbonSisa } from "../lib/payroll.js";
 
 const STATUS_COLORS  = { PENDING: "#f59e0b", ELIGIBLE: "#3b82f6", PAID: "#22c55e", VOID: "#6b7280" };
 const STATUS_LABELS  = { PENDING: "Dalam Warranty", ELIGIBLE: "Siap Cair", PAID: "Sudah Dibayar", VOID: "Void" };
@@ -83,6 +84,12 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
   const totalPending  = bonuses.filter(b => b.status === "PENDING").reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
 
   const latestPayroll = payrolls[0];
+
+  // ── Kasbon: sisa terutang (carryover model) dari periode terakhir ──
+  const kOwed   = latestPayroll ? kasbonOwed(latestPayroll) : 0;           // total terutang periode ini (baru + sisa lalu)
+  const kDeduct = latestPayroll ? Number(latestPayroll.kasbon_deduct || 0) : 0; // yang benar-benar dipotong
+  const kSisa   = latestPayroll ? kasbonSisa(latestPayroll) : 0;           // dibawa ke periode depan
+  const hasKasbon = kOwed > 0 || kDeduct > 0 || kSisa > 0;
 
   return (
     <div style={{ maxWidth: 600, margin: "0 auto", padding: "0 4px" }}>
@@ -178,12 +185,55 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
             <Row label="Hari Masuk" value={`${latestPayroll.days_worked} hari × ${fmtRp(latestPayroll.daily_rate)} = ${fmtRp(latestPayroll.days_worked * latestPayroll.daily_rate)}`} />
             {latestPayroll.full_week_bonus && <Row label="Bonus Full Week" value={"+" + fmtRp(latestPayroll.role === "Helper" ? 75000 : 100000)} color={STATUS_COLORS.PAID} />}
             {latestPayroll.late_days > 0 && <Row label={`Potongan Telat (${latestPayroll.late_days}×)`} value={"-" + fmtRp(latestPayroll.late_days * 10000)} color="#ef4444" />}
-            {latestPayroll.kasbon_total > 0 && <Row label="Kasbon" value={"-" + fmtRp(latestPayroll.kasbon_total)} color="#ef4444" />}
+            {Number(latestPayroll.kasbon_deduct) > 0 && <Row label="Potongan Kasbon" value={"-" + fmtRp(latestPayroll.kasbon_deduct)} color="#ef4444" />}
             {latestPayroll.manual_bonus > 0 && <Row label={"Bonus Manual" + (latestPayroll.manual_bonus_note ? " (" + latestPayroll.manual_bonus_note + ")" : "")} value={"+" + fmtRp(latestPayroll.manual_bonus)} color={STATUS_COLORS.PAID} />}
           </div>
           <div style={{ borderTop: "1px solid " + cs.border, marginTop: 10, paddingTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontWeight: 700, fontSize: 13, color: cs.muted }}>TOTAL</span>
             <span style={{ fontWeight: 800, fontSize: 20, color: cs.accent }}>{fmtRp(latestPayroll.gross_salary)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sisa Kasbon (kejelasan: terutang berapa, dipotong kapan, lunas/belum) ── */}
+      {latestPayroll && hasKasbon && (
+        <div style={{ background: cs.card, borderRadius: 12, padding: 14, marginBottom: 16, border: "1px solid " + (kSisa > 0 ? "#f59e0b" : STATUS_COLORS.PAID) }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>💳 Kasbon</div>
+            <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: kSisa > 0 ? "#f59e0b" : STATUS_COLORS.PAID, color: "#fff" }}>
+              {kSisa > 0 ? "⚠️ MASIH ADA SISA" : "✅ LUNAS"}
+            </span>
+          </div>
+
+          {/* Sisa besar */}
+          <div style={{ background: cs.surface, borderRadius: 10, padding: "12px 14px", marginBottom: 10, textAlign: "center" }}>
+            <div style={{ fontSize: 11, color: cs.muted, marginBottom: 2 }}>Sisa Kasbon Saat Ini</div>
+            <div style={{ fontWeight: 800, fontSize: 24, color: kSisa > 0 ? "#f59e0b" : STATUS_COLORS.PAID }}>{fmtRp(kSisa)}</div>
+          </div>
+
+          {/* Rincian periode terakhir */}
+          <div style={{ display: "grid", gap: 4 }}>
+            {Number(latestPayroll.kasbon_carryover) > 0 && <Row label="Sisa periode lalu" value={fmtRp(latestPayroll.kasbon_carryover)} />}
+            {Number(latestPayroll.kasbon_total) > 0 && <Row label="Kasbon baru periode ini" value={fmtRp(latestPayroll.kasbon_total)} />}
+            <Row label="Total terutang" value={fmtRp(kOwed)} />
+            <Row label="Dipotong periode ini" value={"-" + fmtRp(kDeduct)} color="#ef4444" />
+          </div>
+          <div style={{ borderTop: "1px solid " + cs.border, marginTop: 8, paddingTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontWeight: 700, fontSize: 12, color: cs.muted }}>SISA DIBAWA KE PERIODE DEPAN</span>
+            <span style={{ fontWeight: 800, fontSize: 15, color: kSisa > 0 ? "#f59e0b" : STATUS_COLORS.PAID }}>{fmtRp(kSisa)}</span>
+          </div>
+
+          {/* Kejelasan tanggal & status pembayaran gaji yang memotong */}
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 10, lineHeight: 1.5, background: cs.surface, borderRadius: 8, padding: "8px 10px" }}>
+            {kDeduct > 0 ? (
+              <>📅 Dipotong dari gaji periode <strong style={{ color: cs.text }}>{fmtDate(latestPayroll.period_start)} — {fmtDate(latestPayroll.period_end)}</strong>{" · "}
+                {latestPayroll.is_paid
+                  ? <span style={{ color: STATUS_COLORS.PAID, fontWeight: 700 }}>✅ sudah dibayar{latestPayroll.paid_at ? " " + fmtDate(latestPayroll.paid_at.slice(0, 10)) : ""}</span>
+                  : <span style={{ color: "#f59e0b", fontWeight: 700 }}>⏳ belum dibayar</span>}
+              </>
+            ) : (
+              <>Belum ada potongan kasbon di periode <strong style={{ color: cs.text }}>{fmtDate(latestPayroll.period_start)} — {fmtDate(latestPayroll.period_end)}</strong>.</>
+            )}
           </div>
         </div>
       )}
@@ -303,9 +353,19 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
                       <Row label="Hari Masuk" value={`${p.days_worked} × ${fmtRp(p.daily_rate)} = ${fmtRp(p.days_worked * p.daily_rate)}`} />
                       {p.full_week_bonus && <Row label="Bonus Full Week" value={"+" + fmtRp(fullBonus)} color={STATUS_COLORS.PAID} />}
                       {p.late_days > 0 && <Row label={`Potongan Telat (${p.late_days}×)`} value={"-" + fmtRp(p.late_days * 10000)} color="#ef4444" />}
-                      {p.kasbon_total > 0 && <Row label="Kasbon" value={"-" + fmtRp(p.kasbon_total)} color="#ef4444" />}
+                      {Number(p.kasbon_deduct) > 0 && <Row label="Potongan Kasbon" value={"-" + fmtRp(p.kasbon_deduct)} color="#ef4444" />}
                       {p.manual_bonus > 0 && <Row label={"Bonus Manual" + (p.manual_bonus_note ? ` (${p.manual_bonus_note})` : "")} value={"+" + fmtRp(p.manual_bonus)} color={STATUS_COLORS.PAID} />}
                     </div>
+                    {(kasbonOwed(p) > 0 || kasbonSisa(p) > 0) && (
+                      <div style={{ fontSize: 11, color: cs.muted, marginTop: 8, background: cs.surface, borderRadius: 7, padding: "7px 10px", display: "grid", gap: 3 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                          <span>💳 Kasbon terutang</span><span>{fmtRp(kasbonOwed(p))}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", color: kasbonSisa(p) > 0 ? "#f59e0b" : STATUS_COLORS.PAID, fontWeight: 700 }}>
+                          <span>Sisa setelah periode ini</span><span>{fmtRp(kasbonSisa(p))}</span>
+                        </div>
+                      </div>
+                    )}
                     {p.is_paid && p.paid_at && (
                       <div style={{ fontSize: 11, color: cs.muted, marginTop: 8 }}>
                         Dibayar oleh {p.paid_by} · {new Date(p.paid_at).toLocaleString("id-ID")}
