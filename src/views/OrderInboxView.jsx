@@ -6,6 +6,7 @@ import { normalizePhone, samePhone } from "../lib/phone.js";
 import { getTechColor } from "../lib/techColor.js";
 import { detectContinuationCandidates, calcContinuationDayNum, multiDayProgress } from "../lib/orders.js";
 import QuickScheduleModal from "../components/QuickScheduleModal.jsx";
+import { useAppContext } from "../context/AppContext.js";
 
 // ── Durasi estimasi (jam) — sama dengan logic di App.jsx ──
 function hitungDurasi(service, units) {
@@ -967,7 +968,11 @@ const EMPTY_FORM = {
   customer_id: null,
 };
 
-export default function OrderInboxView({ ordersData, setOrdersData, customersData, setCustomersData, teknisiData, currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY, sendWA, showUndoToast, insertOrder, apiHeaders }) {
+export default function OrderInboxView({ ordersData, setOrdersData, customersData, setCustomersData, teknisiData, sendWA, showUndoToast, insertOrder, apiHeaders }) {
+  // Fase 1 refactor: primitif global (currentUser/supabase/showNotif/showConfirm/
+  // auditUserName/TODAY) dibaca dari AppContext, bukan prop-drilling. View ini
+  // selalu dirender di dalam <App> (Provider), aman pakai useAppContext.
+  const { currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY } = useAppContext();
   const [form, setForm] = useState({ ...EMPTY_FORM, date: TODAY });
   const [saving, setSaving] = useState(false);
   const [showQuickPaste, setShowQuickPaste] = useState(false);

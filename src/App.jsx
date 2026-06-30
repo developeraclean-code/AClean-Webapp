@@ -6184,9 +6184,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     <OrderInboxView
       ordersData={ordersData} setOrdersData={setOrdersData}
       customersData={customersData} setCustomersData={setCustomersData} teknisiData={teknisiData}
-      currentUser={currentUser} supabase={supabase}
-      showNotif={showNotif} showConfirm={showConfirm}
-      auditUserName={auditUserName} TODAY={TODAY}
       sendWA={sendWA} showUndoToast={showUndoToast}
       insertOrder={insertOrder}
       apiHeaders={_apiHeaders} />
