@@ -3850,6 +3850,16 @@ ${photoPageHTML}
   // cs / statusColor / statusLabel sudah di-import dari src/theme & src/constants (Fase 2)
 
   const fmt = useCallback((n) => "Rp " + (n || 0).toLocaleString("id-ID"), []);
+
+  // useMemo (Fase 1): identitas appContextValue stabil supaya view memo'd tak
+  // re-render sia-sia. WAJIB DITARUH SEBELUM early-return (layar login/loading di
+  // bawah) — hook setelah early return = jumlah hook berubah antar render =
+  // React error #310 (crash). Semua dep sudah terdefinisi di atas; nilai ini baru
+  // dipakai di Provider pada return utama.
+  const appContextValue = useMemo(() => ({
+    currentUser, supabase, showNotif, showConfirm, addAgentLog,
+    fmt, TODAY, isMobile, auditUserName,
+  }), [currentUser, supabase, showNotif, showConfirm, addAgentLog, fmt, TODAY, isMobile, auditUserName]);
   // safeArr: handle Supabase returning JSON arrays as strings
   const safeArr = (v) => {
     if (Array.isArray(v)) return v;
@@ -6984,14 +6994,6 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   }
 
   const isTekRoleGlobal = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
-
-  // useMemo (Fase 1): identitas appContextValue hanya berubah saat salah satu
-  // primitif benar-benar berubah (semua fungsi sudah di-useCallback). Tanpa ini,
-  // tiap consumer useAppContext re-render tiap App render (mis. tick polling WA).
-  const appContextValue = useMemo(() => ({
-    currentUser, supabase, showNotif, showConfirm, addAgentLog,
-    fmt, TODAY, isMobile, auditUserName,
-  }), [currentUser, supabase, showNotif, showConfirm, addAgentLog, fmt, TODAY, isMobile, auditUserName]);
 
   // ── Laporan modal handlers (diekstrak dari IIFE render — Tahap 1 refactor) ──
   // Logika murni level-komponen; incompleteUnits dihitung ulang di dalam submitLaporan.
