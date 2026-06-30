@@ -59,6 +59,7 @@ import KasbonWidget from "./views/KasbonWidget.jsx";
 import ExpenseInputWidget from "./views/ExpenseInputWidget.jsx";
 import ViewErrorBoundary from "./components/ViewErrorBoundary.jsx";
 import { AppContext } from "./context/AppContext.js";
+import { useSettings } from "./hooks/useSettings.js";
 const DeletedAuditView = lazy(() => import("./views/DeletedAuditView.jsx"));
 const MonitoringView = lazy(() => import("./views/MonitoringView.jsx"));
 const WaGroupMonitorView = lazy(() => import("./views/WaGroupMonitorView.jsx"));
@@ -1223,38 +1224,9 @@ export default function ACleanWebApp() {
   };
 
   // ── App Settings: bank, phone, nama — load dari DB tabel app_settings ──
-  const [appSettings, setAppSettings] = useState({
-    bank_name: "",
-    bank_number: "",
-    bank_holder: "",
-    owner_phone: "",
-    company_name: "",
-    company_addr: "",
-    wa_number: "",
-    wa_autoreply_enabled: "false",
-    ara_training_rules: "",
-    wa_forward_to_owner: "true",
-    wa_chatbot_enabled: "false",
-    wa_payment_detect: "true",
-    wa_cleanup_enabled: "true",
-    wa_monitor_enabled: "false",
-    bap_enabled: "false",
-    foto_compression_quality: "0.70",
-    // White-label branding
-    app_name: "AClean",
-    ai_name: "ARA",
-    logo_url: "",
-    // Configurable business logic
-    service_types_json: "",
-    area_utama: "",
-    area_konfirmasi: "",
-  });
-
-  // Service types — bisa override via app_settings.service_types_json (JSON array)
-  const effectiveServiceTypes = useMemo(() => {
-    const p = safeJsonParse(appSettings.service_types_json, null);
-    return Array.isArray(p) && p.length > 0 ? p : SERVICE_TYPES;
-  }, [appSettings.service_types_json]);
+  // Fase 2: state appSettings + effectiveServiceTypes dipindah ke useSettings().
+  // Load dari Supabase tetap di efek besar di bawah (terjalin) → panggil setAppSettings.
+  const { appSettings, setAppSettings, effectiveServiceTypes } = useSettings();
 
   // ── Settings: _ls HARUS dideklarasi SEBELUM useState yang memakainya ──
   const _ls = (key, def) => {
