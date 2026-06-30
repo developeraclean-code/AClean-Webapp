@@ -1149,7 +1149,7 @@ export default function ACleanWebApp() {
   // ── Confirm Modal (ganti window.confirm) ──
   const [confirmModal, setConfirmModal] = useState(null);
   // confirmModal = { title, message, icon, danger, onConfirm, onCancel, confirmText, cancelText }
-  const showConfirm = (opts) => new Promise(resolve => {
+  const showConfirm = useCallback((opts) => new Promise(resolve => {
     const userOnConfirm = opts.onConfirm;
     const userOnCancel  = opts.onCancel;
     setConfirmModal({
@@ -1165,7 +1165,7 @@ export default function ACleanWebApp() {
         resolve(false);
       },
     });
-  });
+  }), []);
 
   const [modalEditPwd, setModalEditPwd] = useState(false);
   const [editPwdTarget, setEditPwdTarget] = useState(null); // {id, name}
@@ -1187,7 +1187,7 @@ export default function ACleanWebApp() {
 
   // GAP 7 — Reactive agent logs
   const [agentLogs, setAgentLogs] = useState(AGENT_LOGS);
-  const addAgentLog = async (action, detail, status = "SUCCESS") => {
+  const addAgentLog = useCallback(async (action, detail, status = "SUCCESS") => {
     const now = new Date();
     const timeStr = now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     const createdAt = now.toISOString();
@@ -1209,14 +1209,14 @@ export default function ACleanWebApp() {
       });
       if (alErr) console.warn("agent_logs insert:", alErr.message, alErr.hint);
     } catch (e) { console.warn("agent_logs catch:", e.message); }
-  };
+  }, [currentUser]);
 
   // ── AUDIT TRAIL (stabilisasi #2B) ──
   // Pooler Supabase = transaction mode → session var ga persist. Solusi:
   // inject kolom last_changed_by langsung ke payload. Trigger baca dari NEW/OLD row.
   // auditUserName() = helper nama string user aktif.
   // setAuditUser() = legacy (coba set session var juga, fail-silent backup).
-  const auditUserName = () => currentUser?.name || currentUser?.email || currentUser?.id || "system";
+  const auditUserName = useCallback(() => currentUser?.name || currentUser?.email || currentUser?.id || "system", [currentUser]);
   const setAuditUser = async () => {
     try { await supabase.rpc("set_current_user", { uid: auditUserName() }); }
     catch { /* pooler ga support, diabaikan — last_changed_by di payload sudah cukup */ }
@@ -1576,19 +1576,21 @@ export default function ACleanWebApp() {
       }, 30 * 60 * 1000); // 30 menit jam kerja
     }
   };
-  const pushNotif = (title, body, icon = "⬡") => {
+  // useCallback (Fase 1): identitas stabil supaya appContextValue (useMemo) tak
+  // berubah tiap render — cegah view memo'd re-render sia-sia tiap App render.
+  const pushNotif = useCallback((title, body, icon = "⬡") => {
     if ("Notification" in window && Notification.permission === "granted") {
       try {
         new Notification(title, { body, icon: "/favicon.ico", tag: "aclean-" + Date.now() });
       } catch { /* notifikasi browser opsional — abaikan */ }
     }
-  };
-  const showNotif = (msg, push = false) => {
+  }, []);
+  const showNotif = useCallback((msg, push = false) => {
     setNotification(msg);
     clearTimeout(notifTimer.current);
     notifTimer.current = setTimeout(() => setNotification(null), 3000);
     if (push) pushNotif(appSettings.app_name || "AClean", msg.replace(/[🔔📋✅❌⚠️💰]/g, "").trim());
-  };
+  }, [pushNotif, appSettings.app_name]);
 
   // ── FORCE RELOAD PRICE LIST: dipanggil dari tombol "Sync Harga" di panel ARA ──
   const forceReloadPriceList = async () => {
@@ -3847,7 +3849,7 @@ ${photoPageHTML}
 
   // cs / statusColor / statusLabel sudah di-import dari src/theme & src/constants (Fase 2)
 
-  const fmt = (n) => "Rp " + (n || 0).toLocaleString("id-ID");
+  const fmt = useCallback((n) => "Rp " + (n || 0).toLocaleString("id-ID"), []);
   // safeArr: handle Supabase returning JSON arrays as strings
   const safeArr = (v) => {
     if (Array.isArray(v)) return v;
@@ -6984,10 +6986,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
   const isTekRoleGlobal = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
 
-  const appContextValue = {
+  // useMemo (Fase 1): identitas appContextValue hanya berubah saat salah satu
+  // primitif benar-benar berubah (semua fungsi sudah di-useCallback). Tanpa ini,
+  // tiap consumer useAppContext re-render tiap App render (mis. tick polling WA).
+  const appContextValue = useMemo(() => ({
     currentUser, supabase, showNotif, showConfirm, addAgentLog,
     fmt, TODAY, isMobile, auditUserName,
-  };
+  }), [currentUser, supabase, showNotif, showConfirm, addAgentLog, fmt, TODAY, isMobile, auditUserName]);
 
   // ── Laporan modal handlers (diekstrak dari IIFE render — Tahap 1 refactor) ──
   // Logika murni level-komponen; incompleteUnits dihitung ulang di dalam submitLaporan.
