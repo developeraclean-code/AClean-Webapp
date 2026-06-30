@@ -1,6 +1,7 @@
 import { memo, useState, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
 import { displayStock } from "../lib/inventory.js";
+import { useAppContext } from "../context/AppContext.js";
 
 const ToolBagView = lazy(() => import("./ToolBagView.jsx"));
 const OfficeToolsView = lazy(() => import("./OfficeToolsView.jsx"));
@@ -9,10 +10,11 @@ const INV_PAGE_SIZE = 15;
 
 function InventoryView({
   inventoryData, searchInventory, setSearchInventory, inventoryPage, setInventoryPage,
-  currentUser, supabase, fmt, showConfirm, showNotif,
   setModalStok, setEditStokItem, setModalEditStok, setInventoryData,
-  setModalRestock, setRestockItem, TODAY,
+  setModalRestock, setRestockItem,
 }) {
+  // Fase 1: primitif global dari AppContext.
+  const { currentUser, supabase, fmt, showConfirm, showNotif, TODAY } = useAppContext();
   const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
   const [activeTab, setActiveTab] = useState("material");
 

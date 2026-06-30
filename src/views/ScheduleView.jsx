@@ -2,8 +2,11 @@ import { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { smartSearchNormalize } from "../lib/phone.js";
+import { useAppContext } from "../context/AppContext.js";
 
-function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, currentUser, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, isMobile, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, addAgentLog, auditUserName, showConfirm, showNotif, openWA, openLaporanModal, openJobReport, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, supabase, TODAY, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
+function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, openWA, openLaporanModal, openJobReport, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
+  // Fase 1: primitif global dari AppContext.
+  const { currentUser, isMobile, addAgentLog, auditUserName, showConfirm, showNotif, supabase, TODAY } = useAppContext();
 // Hitung minggu dinamis berdasarkan weekOffset
 const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 const baseDate = new Date();

@@ -6150,17 +6150,17 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
   const renderDashboardMain = () => {
     return (
-    <DashboardView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} inventoryData={inventoryData}
-      teknisiData={teknisiData} omsetView={omsetView} setOmsetView={setOmsetView} isMobile={isMobile} waConversations={waConversations}
+    <DashboardView ordersData={ordersData} invoicesData={invoicesData} inventoryData={inventoryData}
+      teknisiData={teknisiData} omsetView={omsetView} setOmsetView={setOmsetView} waConversations={waConversations}
       bulanIni={bulanIni} setActiveMenu={setActiveMenu} setInvoiceFilter={setInvoiceFilter} setModalOrder={setModalOrder}
       setWaPanel={setWaPanel} setWaTekTarget={setWaTekTarget} setModalWaTek={setModalWaTek}
-      fmt={fmt} getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} bapEnabled={appSettings?.bap_enabled === "true"}
-      openMaterialBringModal={openMaterialBringModal} openJobReport={openJobReport} materialsBroughtMap={materialsBroughtMap} showNotif={showNotif} TODAY={TODAY}
-      sendWA={sendWA} dispatchWA={dispatchWA} addAgentLog={addAgentLog}
+      getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} bapEnabled={appSettings?.bap_enabled === "true"}
+      openMaterialBringModal={openMaterialBringModal} openJobReport={openJobReport} materialsBroughtMap={materialsBroughtMap}
+      sendWA={sendWA} dispatchWA={dispatchWA}
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       customersData={customersData} laporanReports={laporanReports} findCustomer={findCustomer}
       setSelectedCustomer={setSelectedCustomer} setCustomerTab={setCustomerTab}
-      expensesData={expensesData} supabase={supabase} apiHeaders={_apiHeaders} />
+      expensesData={expensesData} apiHeaders={_apiHeaders} />
     );
   };
 
@@ -6171,12 +6171,12 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     <CustomersView selectedCustomer={selectedCustomer} setSelectedCustomer={setSelectedCustomer} ordersData={ordersData}
       laporanReports={laporanReports} invoicesData={invoicesData} customersData={customersData} setCustomersData={setCustomersData}
       searchCustomer={searchCustomer} setSearchCustomer={setSearchCustomer} customerPage={customerPage} setCustomerPage={setCustomerPage}
-      customerTab={customerTab} setCustomerTab={setCustomerTab} currentUser={currentUser} isMobile={isMobile}
+      customerTab={customerTab} setCustomerTab={setCustomerTab}
       setNewCustomerForm={setNewCustomerForm} setModalAddCustomer={setModalAddCustomer} setNewOrderForm={setNewOrderForm} setModalOrder={setModalOrder}
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
-      buildCustomerHistory={buildCustomerHistory} openWA={openWA} showConfirm={showConfirm} showNotif={showNotif}
-      deleteCustomer={deleteCustomer} addAgentLog={addAgentLog} updateCustomer={updateCustomer} fotoSrc={fotoSrc} safeArr={safeArr} fmt={fmt}
-      supabase={supabase} CUST_PAGE_SIZE={CUST_PAGE_SIZE} downloadServiceReportPDF={downloadServiceReportPDF} />
+      buildCustomerHistory={buildCustomerHistory} openWA={openWA}
+      deleteCustomer={deleteCustomer} updateCustomer={updateCustomer} fotoSrc={fotoSrc} safeArr={safeArr}
+      CUST_PAGE_SIZE={CUST_PAGE_SIZE} downloadServiceReportPDF={downloadServiceReportPDF} />
   );
 
   // ============================================================
@@ -6257,17 +6257,16 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
 
   const renderInvoice = () => (
     <InvoiceView invoiceFilterMemo={invoiceFilterMemo} invoicesData={invoicesData} setInvoicesData={setInvoicesData} searchLoading={searchInvLoading}
-      invoicePage={invoicePage} setInvoicePage={setInvoicePage} currentUser={currentUser} isMobile={isMobile}
+      invoicePage={invoicePage} setInvoicePage={setInvoicePage}
       invoiceFilter={invoiceFilter} setInvoiceFilter={setInvoiceFilter} searchInvoice={searchInvoice} invoiceDateFrom={invoiceDateFrom} setInvoiceDateFrom={setInvoiceDateFrom} invoiceDateTo={invoiceDateTo} setInvoiceDateTo={setInvoiceDateTo}
       setSearchInvoice={setSearchInvoice} setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       setEditInvoiceData={setEditInvoiceData} setEditInvoiceForm={setEditInvoiceForm} setEditJasaItems={setEditJasaItems}
       setEditInvoiceItems={setEditInvoiceItems} setModalEditInvoice={setModalEditInvoice}
       ordersData={ordersData} setOrdersData={setOrdersData} setActiveMenu={setActiveMenu} setAuditModal={setAuditModal}
       invoiceReminderWA={invoiceReminderWA} mergedInvoiceWA={mergedInvoiceWA} createConsolidatedInvoice={createConsolidatedInvoice} previewMergedInvoicePDF={previewMergedInvoicePDF} approveInvoice={approveInvoice} markPaid={markPaid}
-      showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog} auditUserName={auditUserName}
       markInvoicePaid={markInvoicePaid} revertInvoicePaid={revertInvoicePaid} updateOrderStatus={updateOrderStatus} deleteInvoice={deleteInvoice} updateInvoice={updateInvoice}
-      getLocalDate={getLocalDate} fmt={fmt} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
-      supabase={supabase} TODAY={TODAY} INV_PAGE_SIZE={INV_PAGE_SIZE}
+      getLocalDate={getLocalDate} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
+      INV_PAGE_SIZE={INV_PAGE_SIZE}
       laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
       apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx}
       paymentSuggestions={paymentSuggestions} setPaymentSuggestions={setPaymentSuggestions} fotoSrc={fotoSrc}
@@ -6283,10 +6282,10 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   const renderInventory = () => (
     <InventoryView inventoryData={inventoryData} searchInventory={searchInventory} setSearchInventory={setSearchInventory}
-      inventoryPage={inventoryPage} setInventoryPage={setInventoryPage} currentUser={currentUser} supabase={supabase} fmt={fmt}
-      showConfirm={showConfirm} showNotif={showNotif} setModalStok={setModalStok} setEditStokItem={setEditStokItem}
+      inventoryPage={inventoryPage} setInventoryPage={setInventoryPage}
+      setModalStok={setModalStok} setEditStokItem={setEditStokItem}
       setModalEditStok={setModalEditStok} setInventoryData={setInventoryData}
-      setModalRestock={setModalRestock} setRestockItem={setRestockItem} TODAY={TODAY} />
+      setModalRestock={setModalRestock} setRestockItem={setRestockItem} />
   );
 
   // ============================================================
@@ -6307,20 +6306,20 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   const renderSchedule = () => (
     <ScheduleView ordersData={ordersData} setOrdersData={setOrdersData} laporanReports={laporanReports} customersData={customersData}
-      teknisiData={teknisiData} currentUser={currentUser} weekOffset={weekOffset} setWeekOffset={setWeekOffset}
+      teknisiData={teknisiData} weekOffset={weekOffset} setWeekOffset={setWeekOffset}
       scheduleView={scheduleView} setScheduleView={setScheduleView} filterTeknisi={filterTeknisi} setFilterTeknisi={setFilterTeknisi}
       calLaporanFilter={calLaporanFilter} setCalLaporanFilter={setCalLaporanFilter} searchSchedule={searchSchedule} setSearchSchedule={setSearchSchedule}
-      schedListFilter={schedListFilter} setSchedListFilter={setSchedListFilter} schedPage={schedPage} setSchedPage={setSchedPage} isMobile={isMobile}
+      schedListFilter={schedListFilter} setSchedListFilter={setSchedListFilter} schedPage={schedPage} setSchedPage={setSchedPage}
       setModalOrder={setModalOrder} setSelectedCustomer={setSelectedCustomer} setCustomerTab={setCustomerTab} setActiveMenu={setActiveMenu}
       setEditOrderItem={setEditOrderItem} setEditOrderForm={setEditOrderForm} setModalEditOrder={setModalEditOrder}
       setHistoryPreview={setHistoryPreview} setWaTekTarget={setWaTekTarget} setModalWaTek={setModalWaTek}
       getTechColor={getTechColor} dispatchStatus={dispatchStatus} sendDispatchWA={sendDispatchWA} dispatchWA={dispatchWA}
-      deleteOrder={deleteOrder} addAgentLog={addAgentLog} auditUserName={auditUserName} showConfirm={showConfirm} showNotif={showNotif}
+      deleteOrder={deleteOrder}
       openWA={openWA} openLaporanModal={openLaporanModal}
       openJobReport={openJobReport} materialsBroughtMap={materialsBroughtMap}
       sendWA={sendWA} updateOrderStatus={updateOrderStatus}
       hitungJamSelesai={hitungJamSelesai} downloadRekapHarian={downloadRekapHarian} triggerRekapHarian={triggerRekapHarian}
-      supabase={supabase} TODAY={TODAY} SCHED_PAGE_SIZE={SCHED_PAGE_SIZE} getLocalDate={getLocalDate} userAccounts={userAccounts}
+      SCHED_PAGE_SIZE={SCHED_PAGE_SIZE} getLocalDate={getLocalDate} userAccounts={userAccounts}
       uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} invoicesData={invoicesData} setLaporanReports={setLaporanReports} />
   );
 
@@ -6330,8 +6329,8 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   const renderTeknisiAdmin = () => (
     <TeknisiAdminView teknisiData={teknisiData} setTeknisiData={setTeknisiData} ordersData={ordersData} laporanReports={laporanReports}
-      currentUser={currentUser} supabase={supabase} setEditTeknisi={setEditTeknisi} setNewTeknisiForm={setNewTeknisiForm}
-      setModalTeknisi={setModalTeknisi} showConfirm={showConfirm} showNotif={showNotif} addAgentLog={addAgentLog} openWA={openWA} TODAY={TODAY}
+      setEditTeknisi={setEditTeknisi} setNewTeknisiForm={setNewTeknisiForm}
+      setModalTeknisi={setModalTeknisi} openWA={openWA}
       invoicesData={invoicesData} bonusCategories={bonusCategories} setBonusCategories={setBonusCategories}
       BONUS_LABELS={BONUS_LABELS} BONUS_DEFAULTS={BONUS_DEFAULTS} />
   );
@@ -6531,11 +6530,11 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
   // ============================================================
   const renderReports = () => (
     <ReportsView ordersData={ordersData} invoicesData={invoicesData} laporanReports={laporanReports} customersData={customersData}
-      teknisiData={teknisiData} inventoryData={inventoryData} isMobile={isMobile} currentUser={currentUser}
+      teknisiData={teknisiData} inventoryData={inventoryData}
       statsPeriod={statsPeriod} setStatsPeriod={setStatsPeriod} statsMingguOff={statsMingguOff} setStatsMingguOff={setStatsMingguOff}
       statsDateFrom={statsDateFrom} setStatsDateFrom={setStatsDateFrom} statsDateTo={statsDateTo} setStatsDateTo={setStatsDateTo}
-      bulanIni={bulanIni} fmt={fmt} invoiceReminderWA={invoiceReminderWA} getTechColor={getTechColor} TODAY={TODAY}
-      expensesData={expensesData} supabase={supabase} />
+      bulanIni={bulanIni} invoiceReminderWA={invoiceReminderWA} getTechColor={getTechColor}
+      expensesData={expensesData} />
   );
 
   // ============================================================
@@ -6583,7 +6582,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
     <MatTrackView inventoryData={inventoryData} invUnitsData={invUnitsData} setInvUnitsData={setInvUnitsData} invTxData={invTxData} setInvTxData={setInvTxData}
       matTrackFilter={matTrackFilter} setMatTrackFilter={setMatTrackFilter} matTrackSearch={matTrackSearch} setMatTrackSearch={setMatTrackSearch}
       matTrackDateFrom={matTrackDateFrom} setMatTrackDateFrom={setMatTrackDateFrom} matTrackDateTo={matTrackDateTo} setMatTrackDateTo={setMatTrackDateTo}
-      setModalStok={setModalStok} supabase={supabase} fetchInventoryUnits={fetchInventoryUnits} showNotif={showNotif} currentUser={currentUser} setInventoryData={setInventoryData} computeStockStatus={computeStockStatus} appSettings={appSettings} />
+      setModalStok={setModalStok} fetchInventoryUnits={fetchInventoryUnits} setInventoryData={setInventoryData} computeStockStatus={computeStockStatus} appSettings={appSettings} />
   );
 
 
@@ -6596,9 +6595,9 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
       expenseDateTo={expenseDateTo} setExpenseDateTo={setExpenseDateTo} expenseSearch={expenseSearch} setExpenseSearch={setExpenseSearch}
       expensePage={expensePage} setExpensePage={setExpensePage} modalExpense={modalExpense} setModalExpense={setModalExpense}
       editExpenseItem={editExpenseItem} setEditExpenseItem={setEditExpenseItem} newExpenseForm={newExpenseForm} setNewExpenseForm={setNewExpenseForm}
-      currentUser={currentUser} supabase={supabase} insertExpense={insertExpense} updateExpense={updateExpense} deleteExpense={deleteExpense}
-      auditUserName={auditUserName} setAuditModal={setAuditModal} TODAY={TODAY} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE} fmt={fmt}
-      showNotif={showNotif} showConfirm={showConfirm} appSettings={appSettings} setAppSettings={setAppSettings}
+      insertExpense={insertExpense} updateExpense={updateExpense} deleteExpense={deleteExpense}
+      setAuditModal={setAuditModal} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE}
+      appSettings={appSettings} setAppSettings={setAppSettings}
       teknisiData={teknisiData} userAccounts={userAccounts}
       kasbonRequests={kasbonRequests} approveKasbon={approveKasbon} rejectKasbon={rejectKasbon} />
   );

@@ -1,5 +1,6 @@
 import { memo, useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
+import { useAppContext } from "../context/AppContext.js";
 import { DEFAULT_BONUS_CATEGORIES } from "../constants/bonus.js";
 import {
   localDateStr, getMondayOf, getSaturdayOf, addWeeks,
@@ -59,7 +60,9 @@ function effBonusStatus(b) {
   return b.status;
 }
 
-function TeknisiAdminView({ teknisiData, setTeknisiData, ordersData, laporanReports, currentUser, supabase, setEditTeknisi, setNewTeknisiForm, setModalTeknisi, showConfirm, showNotif, addAgentLog, openWA, TODAY, invoicesData, bonusCategories = [], setBonusCategories, BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
+function TeknisiAdminView({ teknisiData, setTeknisiData, ordersData, laporanReports, setEditTeknisi, setNewTeknisiForm, setModalTeknisi, openWA, invoicesData, bonusCategories = [], setBonusCategories, BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
+  // Fase 1: primitif global dari AppContext.
+  const { currentUser, supabase, showConfirm, showNotif, addAgentLog, TODAY } = useAppContext();
 const [activeTab, setActiveTab] = useState("tim"); // "tim" | "sla" | "gaji"
 // GAP-11: Rekap performa per teknisi
 const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);

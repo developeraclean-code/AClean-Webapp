@@ -1,7 +1,10 @@
 import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
+import { useAppContext } from "../context/AppContext.js";
 
-function ReportsView({ ordersData, invoicesData, laporanReports, customersData, teknisiData, inventoryData, isMobile, currentUser, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, fmt, invoiceReminderWA, getTechColor, TODAY, expensesData, supabase }) {
+function ReportsView({ ordersData, invoicesData, laporanReports, customersData, teknisiData, inventoryData, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, invoiceReminderWA, getTechColor, expensesData }) {
+  // Fase 1: primitif global dari AppContext.
+  const { isMobile, currentUser, fmt, TODAY, supabase } = useAppContext();
 const techColors = Object.fromEntries([...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(n => [n, getTechColor(n, teknisiData)]))
 
 // ── Rating Dashboard state ──

@@ -2,6 +2,7 @@ import React, { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 import { normalizePhone, smartSearchNormalize } from "../lib/phone.js";
+import { useAppContext } from "../context/AppContext.js";
 
 // Warna avatar deterministik berdasarkan nama
 const AVATAR_COLORS = [
@@ -21,7 +22,9 @@ const MEMBER_TIER_INFO = {
   platinum: { label: "Platinum", badge: "💎", color: "#6d28d9", bg: "#f5f3ff", border: "#a78bfa", benefit: "Diskon Jasa 5% + Material 5%" },
 };
 
-function CustomersView({ selectedCustomer, setSelectedCustomer, ordersData, laporanReports, invoicesData, customersData, setCustomersData, searchCustomer, setSearchCustomer, customerPage, setCustomerPage, customerTab, setCustomerTab, currentUser, isMobile, setNewCustomerForm, setModalAddCustomer, setNewOrderForm, setModalOrder, setSelectedInvoice, setModalPDF, buildCustomerHistory, openWA, showConfirm, showNotif, deleteCustomer, addAgentLog, updateCustomer, fotoSrc, safeArr, fmt, supabase, CUST_PAGE_SIZE, downloadServiceReportPDF }) {
+function CustomersView({ selectedCustomer, setSelectedCustomer, ordersData, laporanReports, invoicesData, customersData, setCustomersData, searchCustomer, setSearchCustomer, customerPage, setCustomerPage, customerTab, setCustomerTab, setNewCustomerForm, setModalAddCustomer, setNewOrderForm, setModalOrder, setSelectedInvoice, setModalPDF, buildCustomerHistory, openWA, deleteCustomer, updateCustomer, fotoSrc, safeArr, CUST_PAGE_SIZE, downloadServiceReportPDF }) {
+  // Fase 1: primitif global dari AppContext (view selalu di dalam Provider <App>).
+  const { currentUser, isMobile, showConfirm, showNotif, addAgentLog, fmt, supabase } = useAppContext();
 const [tierFilter, setTierFilter] = React.useState("all");
 // Registry unit AC permanen (ac_units) untuk customer terpilih
 const [acUnits, setAcUnits] = React.useState([]);

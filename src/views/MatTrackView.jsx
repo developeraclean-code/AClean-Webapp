@@ -1,5 +1,6 @@
 import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
+import { useAppContext } from "../context/AppContext.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
 import { reconcileDay, sumReportedUsage, reconStatus } from "../lib/materialRecon.js";
 import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
@@ -310,7 +311,9 @@ function MaterialReconTab({ supabase, appSettings }) {
   );
 }
 
-function MatTrackView({ inventoryData, invUnitsData, setInvUnitsData, invTxData, setInvTxData, matTrackFilter, setMatTrackFilter, matTrackSearch, setMatTrackSearch, matTrackDateFrom, setMatTrackDateFrom, matTrackDateTo, setMatTrackDateTo, setModalStok, supabase, fetchInventoryUnits, showNotif, currentUser, setInventoryData, appSettings }) {
+function MatTrackView({ inventoryData, invUnitsData, setInvUnitsData, invTxData, setInvTxData, matTrackFilter, setMatTrackFilter, matTrackSearch, setMatTrackSearch, matTrackDateFrom, setMatTrackDateFrom, matTrackDateTo, setMatTrackDateTo, setModalStok, fetchInventoryUnits, setInventoryData, appSettings }) {
+  // Fase 1: primitif global dari AppContext.
+  const { supabase, showNotif, currentUser } = useAppContext();
 const TRACK_ITEMS = inventoryData.filter(item =>
   item.material_type === "freon" ||
   item.material_type === "pipa" ||

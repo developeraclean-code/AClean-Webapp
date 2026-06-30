@@ -3,8 +3,11 @@ import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { displayStock } from "../lib/inventory.js";
 import AbsenBanner from "./AbsenBanner.jsx";
+import { useAppContext } from "../context/AppContext.js";
 
-function DashboardView({ currentUser, ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, isMobile, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, fmt, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, showNotif, TODAY, sendWA, dispatchWA, addAgentLog, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, setHistoryPreview, expensesData, supabase, apiHeaders, bapEnabled }) {
+function DashboardView({ ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, sendWA, dispatchWA, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, setHistoryPreview, expensesData, apiHeaders, bapEnabled }) {
+  // Fase 1: primitif global dari AppContext.
+  const { currentUser, isMobile, fmt, showNotif, TODAY, addAgentLog, supabase } = useAppContext();
 const role = currentUser?.role || "Admin";
 const [gridDate, setGridDate] = useState(TODAY);
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });

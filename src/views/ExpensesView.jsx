@@ -1,5 +1,6 @@
 import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
+import { useAppContext } from "../context/AppContext.js";
 import { fetchDeletedExpenses } from "../data/reads.js";
 import { restoreExpense, purgeExpense } from "../data/writes.js";
 import ExpenseFormModal, { BudgetModal } from "./ExpenseFormModal.jsx";
@@ -84,7 +85,9 @@ function KasbonSection({ currentUser, kasbonRequests, approveKasbon, rejectKasbo
   );
 }
 
-function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, currentUser, supabase, insertExpense, updateExpense, deleteExpense, auditUserName, setAuditModal, TODAY, EXPENSE_PAGE_SIZE, fmt, showNotif, showConfirm, appSettings, setAppSettings, teknisiData, userAccounts, kasbonRequests, approveKasbon, rejectKasbon }) {
+function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, insertExpense, updateExpense, deleteExpense, setAuditModal, EXPENSE_PAGE_SIZE, appSettings, setAppSettings, teknisiData, userAccounts, kasbonRequests, approveKasbon, rejectKasbon }) {
+  // Fase 1: primitif global dari AppContext.
+  const { currentUser, supabase, auditUserName, TODAY, fmt, showNotif, showConfirm } = useAppContext();
 const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin" || currentUser?.role === "Finance";
 const isOwner = currentUser?.role === "Owner";
 

@@ -2,6 +2,7 @@ import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 import { smartSearchNormalize, samePhone } from "../lib/phone.js";
+import { useAppContext } from "../context/AppContext.js";
 import { categoryOf, LINE_CATEGORY } from "../lib/invoicing.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
@@ -238,7 +239,9 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
   );
 }
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, currentUser, isMobile, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, showConfirm, showNotif, addAgentLog, auditUserName, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, fmt, parseMD, jasaSvcNames, downloadRekapHarian, supabase, TODAY, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, paymentSuggestions, setPaymentSuggestions, fotoSrc, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, parseMD, jasaSvcNames, downloadRekapHarian, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, paymentSuggestions, setPaymentSuggestions, fotoSrc, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
+  // Fase 1: primitif global dari AppContext.
+  const { currentUser, isMobile, showConfirm, showNotif, addAgentLog, auditUserName, fmt, supabase, TODAY } = useAppContext();
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
 // Bandingkan total invoice vs penawaran yang ter-link (warning bila selisih > 10%).
