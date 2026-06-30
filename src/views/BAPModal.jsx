@@ -37,7 +37,9 @@ async function nextBapNumber(supabase, todayStr) {
 }
 
 export default function BAPModal({ order, onClose, onSubmitted, supabase, showNotif, currentUser, apiHeaders, appSettings, getLocalDate, fotoSrc }) {
-  if (!order) return null;
+  // CATATAN: guard `if (!order) return null` ADA DI BAWAH, setelah semua hook —
+  // rules-of-hooks: hook tak boleh setelah early-return. Parent hanya me-mount
+  // saat order truthy, jadi guard ini defensif. Initializer di-null-safe-kan.
   const todayStr = getLocalDate?.() || new Date().toISOString().slice(0, 10);
 
   // Statement default dari appSettings, fallback hardcode
@@ -45,7 +47,7 @@ export default function BAPModal({ order, onClose, onSubmitted, supabase, showNo
     "Dengan ditandatanganinya Berita Acara ini, customer menyatakan bahwa pekerjaan AC di atas telah selesai dikerjakan dengan baik, unit berfungsi normal, dan area kerja telah dirapikan. Customer menerima hasil pekerjaan tanpa keberatan.";
 
   // Pre-fill unit rows dari order.units
-  const unitCount = Math.max(1, Number(order.units) || 1);
+  const unitCount = Math.max(1, Number(order?.units) || 1);
   const [units, setUnits] = useState(() =>
     Array.from({ length: unitCount }, (_, i) => ({
       _id: i + "-" + Math.random(),
@@ -56,7 +58,7 @@ export default function BAPModal({ order, onClose, onSubmitted, supabase, showNo
   const [rekomendasi, setRekomendasi] = useState("");
   const [statement, setStatement] = useState(defaultStatement);
   const [editStmt, setEditStmt] = useState(false);
-  const [custName, setCustName] = useState(order.customer || "");
+  const [custName, setCustName] = useState(order?.customer || "");
   const [skipOpen, setSkipOpen] = useState(false);
   const [skipReason, setSkipReason] = useState("");
   const [saving, setSaving] = useState(false);
@@ -91,6 +93,10 @@ export default function BAPModal({ order, onClose, onSubmitted, supabase, showNo
     ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = "#0f172a";
     ctxRef.current = ctx;
   }, []);
+
+  // Guard SETELAH semua hook (rules-of-hooks). Praktiknya order selalu truthy
+  // (parent me-mount via `{bapModalOrder && <BAPModal/>}`).
+  if (!order) return null;
 
   const posOf = (e) => {
     const r = canvasRef.current.getBoundingClientRect();

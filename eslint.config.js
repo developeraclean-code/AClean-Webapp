@@ -39,10 +39,13 @@ export default [
       "no-empty": ["error", { allowEmptyCatch: false }],
       // Promise yang di-await tapi error tak ditangani gampang jadi senyap juga.
       "no-unsafe-finally": "warn",
-      // Belum di-enforce (codebase belum bersih) — daftarkan saja supaya komentar
-      // `eslint-disable react-hooks/*` yang sudah ada di kode tidak jadi error.
+      // rules-of-hooks = ERROR (gate): tangkap hook kondisional / hook setelah
+      // early-return — persis kelas bug yang bikin outage React #310 (useMemo di
+      // bawah `if (!isLoggedIn) return`). Hook WAJIB unconditional di top-level.
+      "react-hooks/rules-of-hooks": "error",
+      // exhaustive-deps tetap off — terlalu berisik utk codebase ini, dan salah
+      // dep ≠ crash (beda kelas dgn rules-of-hooks). Bisa dinaikkan nanti.
       "react-hooks/exhaustive-deps": "off",
-      "react-hooks/rules-of-hooks": "off",
     },
   },
 ];
