@@ -69,6 +69,9 @@ import { createOrder as createOrderLib } from "./lib/createOrder.js";
 import { sendToARA as sendToARAImpl } from "./lib/ara.js";
 import { markPaid as markPaidLib } from "./lib/markPaid.js";
 import { handleGroupPayment as handleGroupPaymentLib } from "./lib/groupPayment.js";
+import { retroMatchPayment as retroMatchPaymentLib } from "./lib/retroMatch.js";
+import { syncTrackedStock as syncTrackedStockLib } from "./lib/trackedStock.js";
+import { createTeamSplit as createTeamSplitLib } from "./lib/createTeamSplit.js";
 import { sendDispatchWA as sendDispatchWALib } from "./lib/dispatchWa.js";
 import { uploadMergedInvoicePDFForWA as uploadMergedInvoicePDFForWALib } from "./lib/mergedInvoicePdf.js";
 import { openLaporanModal as openLaporanModalLib } from "./lib/openLaporanModal.js";
@@ -3482,91 +3485,8 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
   // ── Approve invoice (core) — tanpa kirim WA ──
   // ── Retro-match: cari bukti bayar yang sudah masuk untuk invoice yang baru di-approve ──
   // Dipanggil saat invoice berubah ke UNPAID. Cari payment_suggestions by phone dalam 7 hari.
-  const retroMatchPayment = async (inv) => {
-    if (!inv.phone || !supabase) return;
-    const norm = normalizePhone(inv.phone);
-    if (!norm) return;
-
-    try {
-      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      // Cari semua payment_suggestions dari nomor ini, belum di-match ke invoice manapun, dalam 30 hari
-      const { data: candidates, error } = await supabase
-        .from("payment_suggestions")
-        .select("id, amount, bank, transfer_date, image_url, source, created_at")
-        .eq("phone", norm)
-        .is("invoice_id", null)
-        .eq("status", "PENDING")
-        .gte("created_at", cutoff)
-        .order("created_at", { ascending: false })
-        .limit(5);
-
-      if (error || !candidates?.length) return;
-
-      // Ambil kandidat terbaik: yang paling baru
-      const best = candidates[0];
-      const now = new Date().toISOString();
-
-      // Patch payment_suggestion → link ke invoice ini
-      await supabase.from("payment_suggestions").update({
-        invoice_id: inv.id,
-        order_id: inv.job_id || null,
-        matched_at: now,
-        match_source: "retro",
-      }).eq("id", best.id);
-
-      // Patch invoice → simpan payment_proof_url jika ada foto
-      if (best.image_url) {
-        await supabase.from("invoices").update({
-          payment_proof_url: best.image_url,
-          updated_at: now,
-        }).eq("id", inv.id);
-        setInvoicesData(prev => prev.map(i =>
-          i.id === inv.id ? { ...i, payment_proof_url: best.image_url } : i
-        ));
-      }
-
-      // Cek selisih nominal
-      const invTotal = Number(inv.total) || 0;
-      const paidAmt  = Number(best.amount) || 0;
-      const selisih  = Math.abs(invTotal - paidAmt);
-      const toleransi = 10000; // Rp 10.000 toleransi pembulatan
-
-      // Notif ke owner via WA
-      const ownerAccs = (userAccounts || []).filter(u => u.role === "Owner" && u.phone);
-      const tglBukti = best.transfer_date || best.created_at?.slice(0, 10) || "?";
-      const tglInvoice = inv.date || inv.created_at?.slice(0, 10) || "?";
-
-      if (paidAmt > 0 && selisih > toleransi) {
-        // Nominal TIDAK sesuai — warning
-        const warnMsg =
-          `⚠️ *Bukti Bayar Ditemukan — Nominal Beda*\n` +
-          `Invoice: ${inv.id}\n` +
-          `Customer: ${inv.customer}\n` +
-          `Tagihan: Rp${invTotal.toLocaleString("id-ID")}\n` +
-          `Bukti Bayar: Rp${paidAmt.toLocaleString("id-ID")}\n` +
-          `Selisih: Rp${selisih.toLocaleString("id-ID")}\n` +
-          `Tgl Bukti: ${tglBukti} · Tgl Invoice: ${tglInvoice}\n` +
-          (best.bank ? `Bank: ${best.bank}\n` : "") +
-          `\n🔍 Cek manual di menu Invoice → ${inv.id}`;
-        ownerAccs.forEach(u => sendWA(u.phone, warnMsg));
-        addAgentLog("RETRO_MATCH_WARN", `Retro-match ${inv.id} ← ${best.id} | selisih Rp${selisih.toLocaleString("id-ID")}`, "WARNING");
-      } else {
-        // Nominal sesuai (atau tidak terbaca) — notif biasa
-        const okMsg =
-          `✅ *Bukti Bayar Otomatis Dicocokkan*\n` +
-          `Invoice: ${inv.id}\n` +
-          `Customer: ${inv.customer}\n` +
-          (paidAmt > 0 ? `Nominal: Rp${paidAmt.toLocaleString("id-ID")}\n` : `Nominal: tidak terbaca dari bukti\n`) +
-          `Tgl Bukti: ${tglBukti} · Tgl Invoice: ${tglInvoice}\n` +
-          (best.bank ? `Bank: ${best.bank}\n` : "") +
-          `\n📋 Cek & konfirmasi PAID di menu Invoice → ${inv.id}`;
-        ownerAccs.forEach(u => sendWA(u.phone, okMsg));
-        addAgentLog("RETRO_MATCH_OK", `Retro-match ${inv.id} ← ${best.id}${paidAmt > 0 ? " | Rp" + paidAmt.toLocaleString("id-ID") : " | nominal ?"}`, "SUCCESS");
-      }
-    } catch (e) {
-      console.warn("[RETRO_MATCH] error:", e.message);
-    }
-  };
+  // Wrapper (Fase 3, pola ctx): retroMatchPayment pindah ke lib/retroMatch.
+  const retroMatchPayment = (inv) => retroMatchPaymentLib(inv, { addAgentLog, normalizePhone, sendWA, setInvoicesData, supabase, userAccounts });
 
   const approveInvoiceCore = async (inv) => {
     // Input validation
@@ -3778,107 +3698,8 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
   // ── syncTrackedStock: idempotent — hapus usage tracked lama, insert baru, recalculate stok dari DB ──
   // Berlaku untuk submit pertama DAN semua revisi. Input terakhir selalu yang menang.
   // newMaterials: array [{nama, jumlah, inv_code?, _useCode?, freon_tabung_code?, _unitId?, freon_unit_label?, _unitLabel?}]
-  const syncTrackedStock = async (reportId, orderId, newMaterials, customerName, teknisiName, jobDate) => {
-    // 1. Hapus semua transaksi usage tracked lama untuk laporan ini
-    const { data: oldTxs } = await supabase
-      .from("inventory_transactions")
-      .select("id, inventory_code, inventory_name, qty, unit_id")
-      .eq("report_id", reportId)
-      .eq("type", "usage");
-
-    const oldTracked = (oldTxs || []).filter(tx =>
-      isTrackedByCode(tx.inventory_code) || isTrackedByName(tx.inventory_name)
-    );
-
-    if (oldTracked.length > 0) {
-      await supabase
-        .from("inventory_transactions")
-        .delete()
-        .in("id", oldTracked.map(tx => tx.id));
-    }
-
-    // 2. Filter material baru yang tracked
-    const newTracked = (newMaterials || []).filter(m =>
-      parseFloat(m.jumlah) > 0 && (isTrackedByCode(m.inv_code || m._useCode) || isTrackedByName(m.nama))
-    );
-
-    // 3. Insert transaksi usage baru untuk setiap tracked material
-    for (const m of newTracked) {
-      const qty = parseFloat(m.jumlah) || 0;
-      const invCode = m.inv_code || m._useCode || null;
-      const unitId = m.freon_tabung_code || m._unitId || null;
-      const unitLabel = m.freon_unit_label || m._unitLabel || null;
-      const invItem = invCode
-        ? inventoryData.find(i => i.code === invCode)
-        : inventoryData.find(i => i.name.toLowerCase().includes((m.nama || "").toLowerCase()));
-      const isFreon = (invItem?.material_type === "freon") || isTrackedByName(m.nama);
-      try {
-        await supabase.from("inventory_transactions").insert({
-          inventory_code: invCode || invItem?.code || null,
-          inventory_name: invItem?.name || m.nama || null,
-          order_id: orderId || null,
-          report_id: reportId || null,
-          qty: -qty,
-          qty_actual: isFreon ? null : -qty,
-          type: "usage",
-          notes: `Laporan ${reportId} oleh ${currentUser?.name || "sistem"}`,
-          customer_name: customerName || null,
-          teknisi_name: (teknisiName || "").trim() || null,
-          job_date: jobDate || null,
-          created_by: currentUser?.id || null,
-          created_by_name: currentUser?.name || "",
-          unit_id: unitId || null,
-          unit_label: unitLabel || null,
-        });
-      } catch (e) { console.warn("syncTrackedStock insert skip:", e?.message); }
-    }
-
-    // 4. Recalculate inventory_units.stock dari semua transaksi di DB (bukan dari state lokal)
-    // Kumpulkan semua unit_id yang terdampak (lama + baru)
-    const affectedUnitIds = new Set([
-      ...oldTracked.map(tx => tx.unit_id).filter(Boolean),
-      ...newTracked.map(m => m.freon_tabung_code || m._unitId).filter(Boolean),
-    ]);
-
-    for (const unitId of affectedUnitIds) {
-      const unit = invUnitsData.find(u => u.id === unitId);
-      if (!unit) continue;
-      // Query total usage untuk unit ini dari seluruh transaksi di DB
-      const { data: allUnitTxs } = await supabase
-        .from("inventory_transactions")
-        .select("qty")
-        .eq("unit_id", unitId)
-        .eq("type", "usage");
-      const totalUsed = (allUnitTxs || []).reduce((s, tx) => s + Math.abs(tx.qty), 0);
-      const recalcStock = Math.max(0, (unit.capacity || unit.stock + totalUsed) - totalUsed);
-      await supabase.from("inventory_units").update({ stock: recalcStock, updated_at: new Date().toISOString() }).eq("id", unitId);
-      setInvUnitsData(prev => prev.map(u => u.id === unitId ? { ...u, stock: recalcStock } : u));
-    }
-
-    // 5. Recalculate inventory master stock dari semua transaksi di DB
-    const affectedInvCodes = new Set([
-      ...oldTracked.map(tx => tx.inventory_code).filter(Boolean),
-      ...newTracked.map(m => m.inv_code || m._useCode).filter(Boolean),
-    ]);
-
-    for (const invCode of affectedInvCodes) {
-      const { data: allInvTxs } = await supabase
-        .from("inventory_transactions")
-        .select("qty, type")
-        .eq("inventory_code", invCode);
-      if (!allInvTxs) continue;
-      // Stok = restock - usage (semua jenis transaksi)
-      const netQty = (allInvTxs || []).reduce((s, tx) => s + (tx.qty || 0), 0);
-      const invItem = inventoryData.find(i => i.code === invCode);
-      if (!invItem) continue;
-      const recalcStock = Math.max(0, netQty);
-      const newStatus = computeStockStatus(recalcStock, invItem.reorder);
-      await supabase.from("inventory").update({ stock: recalcStock, status: newStatus }).eq("code", invCode);
-      setInventoryData(prev => prev.map(i => i.code === invCode ? { ...i, stock: recalcStock, status: newStatus } : i));
-    }
-
-    addAgentLog("INV_SYNC", `Stok tracked disync laporan ${reportId} — ${newTracked.length} item, editor: ${currentUser?.name}`, "INFO");
-  };
+  // Wrapper (Fase 3, pola ctx): syncTrackedStock pindah ke lib/trackedStock.
+  const syncTrackedStock = (reportId, orderId, newMaterials, customerName, teknisiName, jobDate) => syncTrackedStockLib(reportId, orderId, newMaterials, customerName, teknisiName, jobDate, { addAgentLog, computeStockStatus, currentUser, invUnitsData, inventoryData, isTrackedByCode, isTrackedByName, setInvUnitsData, setInventoryData, supabase });
 
   // ── GAP 9: Create order (real state mutation) ──
   // Wrapper (Fase 2, pola ctx): createOrder pindah ke lib/createOrder; semua dep
@@ -3899,80 +3720,8 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
   // base: { customer, phone, address, area, service, type, date, time, notes, maintenance_client_id }
   // teams: [{ teknisi, helper, unitIds: [] }]  — minimal 2 tim dgn unit terisi.
   // Return groupId (parent id) atau null jika gagal total.
-  const createTeamSplit = async ({ base, teams }) => {
-    if (!base?.date) { showNotif("❌ Tanggal wajib"); return null; }
-    const valid = (teams || []).filter(t => Array.isArray(t.unitIds) && t.unitIds.length > 0);
-    if (valid.length < 2) { showNotif("❌ Minimal 2 tim dengan unit terisi"); return null; }
-
-    const mkId = () => "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
-    const groupId = mkId();
-    const created = [];
-
-    for (let i = 0; i < valid.length; i++) {
-      const t = valid[i];
-      const id = i === 0 ? groupId : mkId();
-      const units = t.unitIds.length;
-      const timeEnd = hitungJamSelesai(base.time || "09:00", base.service || "Cleaning", units);
-      let teknisi = (t.teknisi || "").trim() || null;
-      let helper = teknisi ? ((t.helper || "").trim() || null) : null;
-      let status = teknisi ? "CONFIRMED" : "PENDING";
-
-      // Cek bentrok jadwal teknisi (real-time DB). Bentrok → turunkan ke PENDING.
-      if (teknisi && base.time) {
-        const dbCheck = await cekTeknisiAvailableDB(teknisi, base.date, base.time, base.service, units);
-        if (!dbCheck.ok) {
-          showNotif(`⚠️ Tim ${i + 1}: ${teknisi} bentrok jadwal → dibuat PENDING (assign ulang di Planning Order)`);
-          teknisi = null; helper = null; status = "PENDING";
-        }
-      }
-
-      const order = {
-        id,
-        customer: base.customer, phone: base.phone ? normalizePhone(base.phone) : null,
-        address: base.address || "", area: base.area || "",
-        service: base.service, type: base.type || base.service, units,
-        teknisi, helper,
-        date: base.date, time: base.time || "09:00", time_end: timeEnd, status,
-        dispatch: false, source: "maintenance",
-        job_group_id: groupId, is_team_split: true,
-        maintenance_client_id: base.maintenance_client_id || null,
-        maintenance_unit_ids: t.unitIds,
-        notes: [base.notes, `Tim ${i + 1}/${valid.length}`].filter(Boolean).join(" · "),
-      };
-
-      const { error } = await insertOrder(supabase, order);
-      if (error) { showNotif(`❌ Tim ${i + 1} gagal disimpan: ${error.message}`); continue; }
-      created.push(order);
-
-      // Gerbang atomik anti double-book (sama pola createOrder). Kalah race → turunkan PENDING.
-      if (teknisi && base.time && timeEnd) {
-        try {
-          const { data: claimOk } = await supabase.rpc("try_claim_teknisi_slot", {
-            p_teknisi: teknisi, p_date: base.date, p_order_id: id,
-            p_start: base.time, p_end: timeEnd,
-          });
-          if (claimOk === false) {
-            await supabase.from("orders").update({ teknisi: null, helper: null, status: "PENDING" }).eq("id", id);
-            order.teknisi = null; order.helper = null; order.status = "PENDING";
-            showNotif(`🚫 Tim ${i + 1}: ${teknisi} slot baru saja terisi → jadi PENDING`);
-          }
-        } catch (e) { console.warn("team-split claim slot:", e.message); }
-      }
-    }
-
-    if (!created.length) return null;
-    invalidateCache("orders");
-    // Dedup: realtime bisa keburu menambah order yang baru dibuat ke `prev`
-    // sebelum baris ini jalan → buang dulu id yang sama agar tak dobel.
-    setOrdersData(prev => {
-      const ids = new Set(created.map(o => o.id));
-      return [...created, ...prev.filter(o => !ids.has(o.id))];
-    });
-    addAgentLog("TEAM_SPLIT_CREATED",
-      `Project ${groupId} — ${created.length} tim · ${base.customer} (${valid.reduce((s, t) => s + t.unitIds.length, 0)} unit)`, "SUCCESS");
-    showNotif(`✅ Project dibuat: ${created.length} tim (grup ${groupId}). Cek/assign di Planning Order.`);
-    return groupId;
-  };
+  // Wrapper (Fase 3, pola ctx): createTeamSplit pindah ke lib/createTeamSplit.
+  const createTeamSplit = (arg) => createTeamSplitLib(arg, { addAgentLog, cekTeknisiAvailableDB, hitungJamSelesai, insertOrder, invalidateCache, normalizePhone, setOrdersData, showNotif, supabase });
 
   // ── Connect ARA Brain dari Supabase ──
   const connectAraBrain = async () => {
