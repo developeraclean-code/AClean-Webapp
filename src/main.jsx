@@ -20,15 +20,17 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 }
 
 // Auto-reload saat dynamic import gagal (deploy baru di Vercel — asset hash lama hilang).
-// Cek flag agar tidak infinite reload loop.
+// index.html kini no-cache (vercel.json) → reload selalu ambil chunk hash terbaru.
+// Guard berbasis timestamp: reload maksimal sekali per 15 detik agar tak infinite loop
+// bila memang broken (fallback ke error boundary "Silakan refresh").
 window.addEventListener('vite:preloadError', (event) => {
-  if (sessionStorage.getItem('chunk_reload') === '1') return;
-  sessionStorage.setItem('chunk_reload', '1');
-  event.preventDefault();
+  event.preventDefault(); // tangani sendiri via reload; jangan lempar error mentah
+  const KEY = 'chunk_reload_ts';
+  const last = Number(sessionStorage.getItem(KEY) || 0);
+  if (Date.now() - last < 15000) return;
+  sessionStorage.setItem(KEY, String(Date.now()));
   window.location.reload();
 });
-// Reset flag setelah app load sukses
-setTimeout(() => sessionStorage.removeItem('chunk_reload'), 5000);
 
 const CustomerPortalView = lazy(() => import('./views/CustomerPortalView.jsx'))
 const MaintenancePortalView = lazy(() => import('./views/MaintenancePortalView.jsx'))
