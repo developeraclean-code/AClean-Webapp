@@ -43,7 +43,8 @@ describe("buildAraContext", () => {
     expect(ctx.today).toBe(TODAY);
     expect(ctx.orders).toHaveLength(2);
     expect(ctx.orders[0]).toMatchObject({ id: "J1", customer: "Budi", teknisi: "Andi" });
-    expect(ctx.invoices[0].materials_detail[0].nama).toBe("Cuci");
+    // invoices kini diurut: belum-lunas dulu → cari by id (order tak dijamin)
+    expect(ctx.invoices.find(i => i.id === "INV1").materials_detail[0].nama).toBe("Cuci");
     expect(ctx.inventory).toHaveLength(2);
     expect(ctx.customers[0]).toMatchObject({ name: "Budi", is_vip: true });
   });

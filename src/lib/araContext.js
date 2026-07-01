@@ -24,13 +24,34 @@ export function buildAraContext({
   cariSlotKosong,
   araSchedulingSuggest,
 }) {
+  // ── Cap konteks: cegah prompt kegedean (>200k token limit Claude). Data DETAIL
+  //    dibatasi ke terbaru + actionable; STATISTIK AGREGAT (revenue, count, lookup WA)
+  //    tetap dihitung dari data PENUH agar akurat. Angka CAP bisa di-tune. ──
+  const _dateOf = (x) => String(x.date || x.created_at || x.sent || x.submitted || "");
+  const _recent = (arr, n) => [...arr].sort((a, b) => _dateOf(b).localeCompare(_dateOf(a))).slice(0, n);
+  const CAP = { orders: 150, invoicesUnpaid: 150, invoicesOther: 50, laporan: 120, customers: 400 };
+  const ordersSel = _recent(ordersData, CAP.orders);
+  const _unpaid = invoicesData.filter(i => ["UNPAID", "OVERDUE", "PARTIAL_PAID"].includes(i.status));
+  const _unpaidIds = new Set(_unpaid.map(i => i.id));
+  // Unpaid dibatasi ke terbaru juga (total nilai unpaid tetap akurat via revenueStats.totalUnpaid dari data penuh).
+  const invoicesSel = [..._recent(_unpaid, CAP.invoicesUnpaid), ..._recent(invoicesData.filter(i => !_unpaidIds.has(i.id)), CAP.invoicesOther)];
+  const laporanSel = _recent(laporanReports, CAP.laporan);
+  const customersSel = [...customersData]
+    .sort((a, b) => (b.is_vip ? 1 : 0) - (a.is_vip ? 1 : 0) || (b.total_orders || 0) - (a.total_orders || 0))
+    .slice(0, CAP.customers);
+
   return {
     today,
-    orders: ordersData.map(o => ({ id: o.id, customer: o.customer, service: o.service, type: o.type, units: o.units, status: o.status, date: o.date, time: o.time, teknisi: o.teknisi, helper: o.helper, dispatch: o.dispatch, invoice_id: o.invoice_id })),
-    invoices: invoicesData.map(i => ({ id: i.id, customer: i.customer, phone: i.phone, total: i.total, status: i.status, due: i.due, labor: i.labor, material: i.material, discount: i.discount, trade_in: i.trade_in, trade_in_amount: i.trade_in_amount, materials_detail: (Array.isArray(i.materials_detail) ? i.materials_detail : (typeof i.materials_detail === "string" ? (() => { try { return JSON.parse(i.materials_detail); } catch { return []; } })() : [])).map(m => ({ nama: m.nama, jumlah: m.jumlah, satuan: m.satuan, harga_satuan: m.harga_satuan, subtotal: m.subtotal })) })),
+    // Info cap supaya ARA sadar ia melihat data terbaru/teratas, bukan histori penuh.
+    _meta: {
+      note: "Data DETAIL dibatasi (orders 150 terbaru, invoices: 150 belum-lunas terbaru + 50 lain terbaru, laporan 120 terbaru, customers 400 teratas per VIP+total_order). Statistik agregat (revenue, totalUnpaid, jumlah, lookup WA) dihitung dari data PENUH. Untuk histori lama di luar cap, arahkan user ke modul terkait (Invoice/Order/Laporan).",
+      counts: { ordersTotal: ordersData.length, ordersShown: ordersSel.length, invoicesTotal: invoicesData.length, invoicesShown: invoicesSel.length, laporanTotal: laporanReports.length, laporanShown: laporanSel.length, customersTotal: customersData.length, customersShown: customersSel.length },
+    },
+    orders: ordersSel.map(o => ({ id: o.id, customer: o.customer, service: o.service, type: o.type, units: o.units, status: o.status, date: o.date, time: o.time, teknisi: o.teknisi, helper: o.helper, dispatch: o.dispatch, invoice_id: o.invoice_id })),
+    invoices: invoicesSel.map(i => ({ id: i.id, customer: i.customer, phone: i.phone, total: i.total, status: i.status, due: i.due, labor: i.labor, material: i.material, discount: i.discount, trade_in: i.trade_in, trade_in_amount: i.trade_in_amount, materials_detail: (Array.isArray(i.materials_detail) ? i.materials_detail : (typeof i.materials_detail === "string" ? (() => { try { return JSON.parse(i.materials_detail); } catch { return []; } })() : [])).map(m => ({ nama: m.nama, jumlah: m.jumlah, satuan: m.satuan, harga_satuan: m.harga_satuan, subtotal: m.subtotal })) })),
     inventory: inventoryData.map(i => ({ code: i.code, name: i.name, stock: i.stock, unit: i.unit, status: i.status, price: i.price, reorder: i.reorder })),
-    customers: customersData.map(c => ({ id: c.id, name: c.name, phone: c.phone, area: c.area, total_orders: c.total_orders, is_vip: c.is_vip })),
-    laporan: laporanReports.map(r => ({
+    customers: customersSel.map(c => ({ id: c.id, name: c.name, phone: c.phone, area: c.area, total_orders: c.total_orders, is_vip: c.is_vip })),
+    laporan: laporanSel.map(r => ({
       id: r.id, job_id: r.job_id, teknisi: r.teknisi, customer: r.customer,
       service: r.service, status: r.status, date: r.date, submitted: r.submitted,
       is_install: r.service === "Install",
