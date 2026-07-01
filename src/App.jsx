@@ -27,6 +27,7 @@ import {
   hargaPerUnitFromTipe as hargaPerUnitFromTipeLib,
   hitungLaborFromUnits as hitungLaborFromUnitsLib,
   buildPriceListFromDB as buildPriceListFromDBLib,
+  hitungMaterialTotal as hitungMaterialTotalLib,
 } from "./lib/pricing.js";
 import { cs } from "./theme/cs.js";
 import { statusColor, statusLabel } from "./constants/status.js";
@@ -4014,86 +4015,9 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
     return h;
   }, [inventoryData, priceListData]);
 
-  const hitungMaterialTotal = (materials) => {
-    return materials.reduce((sum, m) => {
-      const raw = (m.nama || "").toLowerCase().trim();
-      const norm = raw
-        .replace(/,/g, ".")
-        .replace(/eterna\s*/g, "").replace(/listrik\s*/g, "")
-        .replace(/[-\s]/g, "")
-        .replace(/r410a?$/, "r410")
-        .replace(/r22a?$/, "r22")
-        .replace(/r32a?$/, "r32");
-      const isJasaItem = /^(jasa|kuras|bongkar pasang|pemasangan|pasang)/i.test((m.nama || "").trim());
-
-      const mkN = (s) => (s || "").toLowerCase()
-        .replace(/,/g, ".").replace(/eterna\s*/g, "").replace(/hoda\s*/g, "").replace(/listrik\s*/g, "")
-        .replace(/[-\s]/g, "").replace(/r410a?$/, "r410").replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
-
-      // PRIORITY 1a: priceListData DB exact match
-      let harga = 0;
-      const mNama = m.nama || "";
-      const plIt = priceListData.find(r => r.type && r.type.trim() === mNama.trim());
-      if (plIt && plIt.price > 0) harga = parseInt(plIt.price) || 0;
-
-      // PRIORITY 1b: priceListData fuzzy match (kabel, breket, dll)
-      if (!harga) {
-        const nNorm = mkN(mNama);
-        const plFuzzy = priceListData.find(r => {
-          if (!r.type || !r.price) return false;
-          const t = mkN(r.type);
-          return nNorm.length >= 4 && (t === nNorm || t.includes(nNorm) || nNorm.includes(t));
-        });
-        if (plFuzzy && plFuzzy.price > 0) harga = plFuzzy.price;
-      }
-
-      // PRIORITY 2a: PRICE_LIST exact name match
-      if (!harga) {
-        for (const svc of ["Install", "Material", "Repair", "Cleaning", "Complain"]) {
-          if (PRICE_LIST[svc]?.[mNama]) { harga = PRICE_LIST[svc][mNama]; break; }
-        }
-      }
-
-      // PRIORITY 2b: PRICE_LIST fuzzy match (default prices untuk install materials)
-      if (!harga) {
-        const nNorm = mkN(mNama);
-        outer: for (const svc of ["Install", "Material", "Repair"]) {
-          if (!PRICE_LIST[svc]) continue;
-          for (const [k, v] of Object.entries(PRICE_LIST[svc])) {
-            if (k === "default" || !v) continue;
-            const kn = mkN(k);
-            if (nNorm.length >= 4 && (kn === nNorm || kn.includes(nNorm) || nNorm.includes(kn))) {
-              harga = v; break outer;
-            }
-          }
-        }
-      }
-
-      // PRIORITY 3: Cari di inventory (hanya fallback, jangan gunakan sebagai primary)
-      if (!harga && !isJasaItem) {
-        const invItem = inventoryData.find(inv => {
-          const n = inv.name.toLowerCase()
-            .replace(/,/g, ".").replace(/eterna\s*/g, "")
-            .replace(/[-\s]/g, "").replace(/r410a?$/, "r410")
-            .replace(/r22a?$/, "r22").replace(/r32a?$/, "r32");
-          if (n === norm) return true;
-          if (norm.length > 6 && n.includes(norm)) return true;
-          if (n.length > 6 && norm.includes(n)) return true;
-          return false;
-        });
-        if (invItem && invItem.price > 0) harga = invItem.price;
-      }
-
-      // PRIORITY 4: Fallback freon spesifik — skip jika isJasaItem
-      if (!harga && !isJasaItem) {
-        if (raw.includes("r-22") || raw.includes("r22")) harga = PRICE_LIST["freon_R22"] || 450000;
-        else if (raw.includes("r-32") || raw.includes("r32")) harga = PRICE_LIST["freon_R32"] || 450000;
-        else if (raw.includes("r-410") || raw.includes("r410")) harga = PRICE_LIST["freon_R410A"] || 450000;
-      }
-
-      return sum + (harga * (parseFloat(m.jumlah) || 0));
-    }, 0);
-  };
+  // Wrapper: total material laporan — delegasi ke lib pricing (Fase 2) dgn
+  // state (priceListData/inventoryData) + PRICE_LIST cache sebagai fallback.
+  const hitungMaterialTotal = (materials) => hitungMaterialTotalLib(materials, priceListData, inventoryData, PRICE_LIST);
 
   // ── GAP 3: Approve invoice (real state mutation) ──
   // ── Approve invoice (core) — tanpa kirim WA ──
