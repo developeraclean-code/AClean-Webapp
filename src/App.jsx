@@ -69,6 +69,8 @@ import { createOrder as createOrderLib } from "./lib/createOrder.js";
 import { sendToARA as sendToARAImpl } from "./lib/ara.js";
 import { markPaid as markPaidLib } from "./lib/markPaid.js";
 import { handleGroupPayment as handleGroupPaymentLib } from "./lib/groupPayment.js";
+import { approveKasbon as approveKasbonLib, rejectKasbon as rejectKasbonLib } from "./lib/kasbon.js";
+import { handleFotoUpload as handleFotoUploadLib } from "./lib/fotoUpload.js";
 import { retroMatchPayment as retroMatchPaymentLib } from "./lib/retroMatch.js";
 import { syncTrackedStock as syncTrackedStockLib } from "./lib/trackedStock.js";
 import { createTeamSplit as createTeamSplitLib } from "./lib/createTeamSplit.js";
@@ -1018,107 +1020,9 @@ export default function ACleanWebApp() {
   const openBAPModal = (order) => setBapModalOrder(order);
 
   // ── Kasbon: approve → auto-insert ke expenses (Kasbon Karyawan) ──
-  const approveKasbon = async (req, reviewNotes = "") => {
-    // ATOMIC CLAIM: update status hanya jika MASIH PENDING (.eq status filter).
-    // PostgREST/Postgres update bersifat atomic per-row → hanya 1 caller konkuren yang
-    // dapat baris (rows.length===1); caller kedua dapat 0 baris → skip, cegah double-expense.
-    const { data: claimed, error: claimErr } = await supabase
-      .from("kasbon_requests")
-      .update({
-        status: "APPROVED",
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: currentUser?.name || auditUserName(),
-        review_notes: reviewNotes || null,
-      })
-      .eq("id", req.id)
-      .eq("status", "PENDING")
-      .select();
-    if (claimErr) { showNotif("❌ Gagal proses kasbon: " + claimErr.message); return; }
-    if (!claimed || claimed.length === 0) {
-      showNotif("⚠️ Kasbon ini sudah diproses sebelumnya");
-      return;
-    }
-
-    const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
-    // Tanggal Biaya = tanggal REQUEST kasbon (bukan tanggal approve) agar tidak geser kalau
-    // approve-nya telat (mis. request sore, baru di-ACC besok pagi). Fallback ke hari ini.
-    const kasbonDate = (req.requested_at || req.created_at)
-      ? new Date(req.requested_at || req.created_at).toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" })
-      : today;
-    // dedup_key cross-channel (migrasi 094): kasbon yang sama bisa masuk dari WA Finance
-    // grup (jalur wa_group_kasbon di api/[route].js juga isi dedup_key) DAN dari approve di
-    // app ini. Tanpa key yang identik, unique index expenses.dedup_key tak bisa nangkep →
-    // double. Format WAJIB sama persis dengan buildExpenseDedupKey() di api/_expense-dedup.js:
-    // `${lower(name)}|${date}|${amount}|${lower(subcategory)}`.
-    const kasbonDedupKey = (() => {
-      const name = String(req.teknisi_name || "").trim().toLowerCase();
-      const amt = Number(req.amount);
-      if (!name || !amt || !kasbonDate) return null;
-      return `${name}|${kasbonDate}|${amt}|kasbon karyawan`;
-    })();
-    // id expenses dibiarkan default (UUID gen_random_uuid) — jangan kirim id custom (kolom UUID).
-    const expPayload = {
-      category: "petty_cash",
-      subcategory: "Kasbon Karyawan",
-      teknisi_name: (req.teknisi_name || "").trim(),
-      amount: req.amount,
-      date: kasbonDate,
-      description: "Kasbon: " + (req.reason || ""),
-      validation_status: "APPROVED",
-      last_changed_by: auditUserName(),
-      dedup_key: kasbonDedupKey,
-    };
-    const { data: expData, error: eErr } = await insertExpense(supabase, expPayload);
-    if (eErr) {
-      // 23505 = unique violation di expenses.dedup_key → kasbon yang sama SUDAH tercatat
-      // via WA Finance grup. Ini BUKAN kegagalan: link ke expense yang ada, biarkan status
-      // APPROVED (klaim atomic sudah jalan), JANGAN rollback ke PENDING & JANGAN gandakan.
-      if (eErr.code === "23505" || /duplicate key|dedup_key/i.test(eErr.message || "")) {
-        let existingId = null;
-        if (kasbonDedupKey) {
-          const { data: ex } = await supabase
-            .from("expenses").select("id")
-            .eq("dedup_key", kasbonDedupKey).is("deleted_at", null)
-            .limit(1).maybeSingle();
-          existingId = ex?.id || null;
-        }
-        if (existingId) await updateKasbonRequest(supabase, req.id, { expense_id: existingId });
-        setKasbonRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "APPROVED", expense_id: existingId, reviewed_by: currentUser?.name } : r));
-        if (req.teknisi_phone) sendWA(req.teknisi_phone, `✅ *Kasbon Disetujui*\n\nHalo ${req.teknisi_name},\nRequest kasbon Rp ${Number(req.amount).toLocaleString("id-ID")} sudah disetujui oleh ${currentUser?.name || "Admin"}.\n\nKeperluan: ${req.reason}\n${reviewNotes ? "Catatan: " + reviewNotes + "\n" : ""}\n— ${appSettings?.app_name || "AClean"}`);
-        addAgentLog("KASBON_APPROVED", `Kasbon ${req.id} (${req.teknisi_name} Rp${Number(req.amount).toLocaleString("id-ID")}) diapprove — biaya sudah tercatat via WA grup (dedup, tidak digandakan) → expense ${existingId || "?"}`, "SUCCESS");
-        showNotif(`✅ Kasbon ${req.teknisi_name} diapprove (biaya sudah tercatat via WA grup, tidak digandakan)`);
-        return;
-      }
-      // Error lain → rollback klaim ke PENDING agar bisa diproses ulang.
-      await supabase.from("kasbon_requests").update({ status: "PENDING", reviewed_at: null, reviewed_by: null, review_notes: null }).eq("id", req.id);
-      showNotif("❌ Gagal catat ke Biaya: " + eErr.message);
-      return;
-    }
-    const expId = expData?.id;  // UUID hasil generate DB
-    setExpensesData(prev => [expData || expPayload, ...prev]);
-
-    // Link expense_id ke request yang sudah diklaim
-    await updateKasbonRequest(supabase, req.id, { expense_id: expId });
-    setKasbonRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "APPROVED", expense_id: expId, reviewed_by: currentUser?.name } : r));
-
-    // WA notif ke teknisi
-    if (req.teknisi_phone) sendWA(req.teknisi_phone, `✅ *Kasbon Disetujui*\n\nHalo ${req.teknisi_name},\nRequest kasbon Rp ${Number(req.amount).toLocaleString("id-ID")} sudah disetujui oleh ${currentUser?.name || "Admin"}.\n\nKeperluan: ${req.reason}\n${reviewNotes ? "Catatan: " + reviewNotes + "\n" : ""}\n— ${appSettings?.app_name || "AClean"}`);
-    addAgentLog("KASBON_APPROVED", `Kasbon ${req.id} (${req.teknisi_name} Rp${Number(req.amount).toLocaleString("id-ID")}) diapprove → expense ${expId}`, "SUCCESS");
-    showNotif(`✅ Kasbon ${req.teknisi_name} Rp${Number(req.amount).toLocaleString("id-ID")} diapprove & dicatat ke Biaya`);
-  };
-
-  const rejectKasbon = async (req, reviewNotes = "") => {
-    await updateKasbonRequest(supabase, req.id, {
-      status: "REJECTED",
-      reviewed_at: new Date().toISOString(),
-      reviewed_by: currentUser?.name || auditUserName(),
-      review_notes: reviewNotes || null,
-    });
-    setKasbonRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "REJECTED", reviewed_by: currentUser?.name } : r));
-    if (req.teknisi_phone) sendWA(req.teknisi_phone, `❌ *Kasbon Ditolak*\n\nHalo ${req.teknisi_name},\nRequest kasbon Rp ${Number(req.amount).toLocaleString("id-ID")} ditolak oleh ${currentUser?.name || "Admin"}.\n\nKeperluan: ${req.reason}\n${reviewNotes ? "Alasan: " + reviewNotes + "\n" : ""}\n— ${appSettings?.app_name || "AClean"}`);
-    addAgentLog("KASBON_REJECTED", `Kasbon ${req.id} (${req.teknisi_name}) ditolak`, "INFO");
-    showNotif(`✅ Kasbon ${req.teknisi_name} ditolak`);
-  };
+  // Wrapper (Fase 3, pola ctx): kasbon pindah ke lib/kasbon.
+  const approveKasbon = (req, reviewNotes = "") => approveKasbonLib(req, reviewNotes, { addAgentLog, appSettings, auditUserName, currentUser, insertExpense, sendWA, setExpensesData, setKasbonRequests, showNotif, supabase, updateKasbonRequest });
+  const rejectKasbon = (req, reviewNotes = "") => rejectKasbonLib(req, reviewNotes, { addAgentLog, appSettings, auditUserName, currentUser, sendWA, setKasbonRequests, showNotif, supabase, updateKasbonRequest });
   const onBAPSubmitted = (newReport) => {
     setLaporanReports(prev => [newReport, ...prev.filter(r => r.id !== newReport.id)]);
     setBapModalOrder(null);
@@ -4594,146 +4498,8 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
 
   // ── Laporan modal handlers (diekstrak dari IIFE render — Tahap 1 refactor) ──
   // Logika murni level-komponen; incompleteUnits dihitung ulang di dalam submitLaporan.
-  const handleFotoUpload = async (e) => {
-    const MAX_PHOTOS = 20;
-    const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
-    // Foto baru di-tag ke unit hanya jika event berasal dari input per-unit (fotoUnitInputRef).
-    // Upload dari uploader global (fotoInputRef) selalu unit_no=null (umum). Cara ini kebal
-    // stale-ref: kalau picker per-unit dibatalkan, upload global berikutnya tidak salah tag.
-    const fromUnitInput = e.target === fotoUnitInputRef.current;
-    const targetUnitNo = fromUnitInput ? fotoTargetUnitRef.current : null;
-    fotoTargetUnitRef.current = null;
-
-    // ── Validasi format file — reject video ──
-    const rawFiles = Array.from(e.target.files || []);
-    const invalidFiles = rawFiles.filter(f => !ALLOWED_TYPES.includes(f.type));
-
-    if (invalidFiles.length > 0) {
-      showNotif(`❌ Format tidak didukung: ${invalidFiles.map(f => f.name.split(".").pop().toUpperCase()).join(", ")}. Hanya JPG, PNG, WEBP.`);
-      e.target.value = "";
-      return;
-    }
-
-    // ── Cek max 20 foto ──
-    if (laporanFotos.length >= MAX_PHOTOS) {
-      showNotif(`❌ Maksimal ${MAX_PHOTOS} foto per job. Hapus foto lain untuk upload baru.`);
-      e.target.value = "";
-      return;
-    }
-
-    const validFiles = rawFiles.slice(0, MAX_PHOTOS - laporanFotos.length);
-    if (validFiles.length === 0) return;
-    const reportId = laporanModal?.id || "tmp";
-
-    // ── LAYER 1: Hash setiap file SEBELUM compress ──
-    // Fungsi hash SHA-256 sederhana via SubtleCrypto (tersedia di semua browser modern)
-    const hashFile = async (file) => {
-      const buf = await file.arrayBuffer();
-      const hashBuf = await crypto.subtle.digest("SHA-256", buf);
-      return Array.from(new Uint8Array(hashBuf))
-        .map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16); // 16 char = cukup unik
-    };
-
-    // Hitung hash semua file sebelum compress
-    const fileHashes = await Promise.all(validFiles.map(hashFile));
-
-    // ── Get compression quality dari settings (default 0.70) ──
-    const fotoQualityValue = parseFloat(appSettings?.foto_compression_quality) || 0.70;
-    const fotoQuality = Math.max(0.3, Math.min(1, fotoQualityValue)); // Clamp: 30% - 100%
-
-    // ── LAYER 2: Cek duplikat vs foto yang sudah ada di state (per sesi) ──
-    const existingHashes = new Set(laporanFotos.map(f => f.hash).filter(Boolean));
-    const files = [];
-    const hashes = [];
-    let skippedCount = 0;
-    validFiles.forEach((file, i) => {
-      if (existingHashes.has(fileHashes[i])) {
-        skippedCount++;
-      } else {
-        files.push(file);
-        hashes.push(fileHashes[i]);
-      }
-    });
-
-    if (skippedCount > 0) {
-      showNotif(`⚠️ ${skippedCount} foto sudah ada (duplikat diabaikan).`);
-    }
-    if (files.length === 0) { e.target.value = ""; return; }
-
-    showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2 (quality: ${Math.round(fotoQuality * 100)}%)...`);
-    let compressed = [];
-    try {
-      compressed = await Promise.all(files.map(f => compressImg(f, fotoQuality)));
-    } catch (compErr) {
-      console.error("[COMPRESS_ERROR]", compErr.message);
-      showNotif(`❌ Gagal kompresi foto: ${compErr.message}. Pastikan file adalah gambar valid.`);
-      e.target.value = "";
-      return;
-    }
-
-    // ✨ FIX #1: Parallel upload dengan batch 3 (3-5x lebih cepat)
-    //   - Foto placeholder langsung muncul dengan flag `uploading:true`
-    //   - Tombol "Next" di Step 3 di-gate selama ada yang `uploading`
-    //   - Upload batch 3 concurrent → balance speed vs bandwidth HP teknisi
-    const BATCH_SIZE = 3;
-    const placeholders = compressed.map((dataUrl, i) => ({
-      id: Date.now() + i,
-      label: `Foto ${laporanFotos.length + i + 1}`,
-      data_url: dataUrl,
-      url: null,
-      errMsg: "",
-      hash: hashes[i],
-      uploading: true,
-      unit_no: targetUnitNo || null,
-    }));
-    // Push placeholders ke state supaya user lihat progress langsung
-    setLaporanFotos(prev => [...prev, ...placeholders]);
-
-    const uploadOne = async (ph) => {
-      try {
-        const r = await _apiFetch("/api/upload-foto", {
-          method: "POST",
-          headers: await _apiHeaders(),
-          body: JSON.stringify({
-            base64: ph.data_url,
-            filename: `${ph.hash}.jpg`,
-            reportId,
-            mimeType: "image/jpeg",
-            hash: ph.hash,
-            currentUserRole: currentUser?.role || "Unknown",
-          }),
-        });
-        const d = await r.json();
-        if (d.success && d.url) {
-          return { id: ph.id, url: d.url, errMsg: "", uploading: false };
-        }
-        return { id: ph.id, url: null, errMsg: d.error || "Upload gagal", uploading: false };
-      } catch (err) {
-        return { id: ph.id, url: null, errMsg: err.message || "Network error", uploading: false };
-      }
-    };
-
-    let savedCount = 0, failedCount = 0;
-    for (let i = 0; i < placeholders.length; i += BATCH_SIZE) {
-      const batch = placeholders.slice(i, i + BATCH_SIZE);
-      const results = await Promise.all(batch.map(uploadOne));
-      // Update state incremental per-batch
-      setLaporanFotos(prev => prev.map(foto => {
-        const res = results.find(r => r.id === foto.id);
-        return res ? { ...foto, ...res } : foto;
-      }));
-      results.forEach(r => r.url ? savedCount++ : failedCount++);
-    }
-
-    if (savedCount === placeholders.length) {
-      showNotif(`✅ ${savedCount} foto tersimpan di R2!`);
-    } else if (savedCount > 0) {
-      showNotif(`⚠️ ${savedCount} berhasil, ${failedCount} gagal. Tap ⏳ untuk retry.`);
-    } else {
-      showNotif(`❌ Upload gagal. Cek koneksi & coba lagi.`);
-    }
-    e.target.value = "";
-  };
+  // Wrapper (Fase 3, pola ctx): handleFotoUpload pindah ke lib/fotoUpload.
+  const handleFotoUpload = (e) => handleFotoUploadLib(e, { _apiFetch, _apiHeaders, appSettings, compressImg, currentUser, fotoTargetUnitRef, fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif });
 
   const submitLaporan = async () => {
     if (submitLaporanLock.current) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
