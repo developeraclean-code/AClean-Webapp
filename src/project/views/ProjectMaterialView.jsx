@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { cs } from "../../theme/cs.js";
 import * as S from "../utils/styles.js";
 import { useProject } from "../context/ProjectContext.jsx";
@@ -6,9 +6,16 @@ import { useModal } from "../context/ModalContext.jsx";
 import { matTotal, matAlloc, pName } from "../utils/finance.js";
 import { MAT_SUBS, fmtRp } from "../utils/constants.js";
 
+// Nama dasar (grup) = nama tanpa akhiran nomor. "DSP 2PK - 01" → "DSP 2PK".
+const baseName = (n = "") => n.replace(/[\s\-–—_.]*\d+\s*$/, "").trim() || n;
+
 export default function ProjectMaterialView() {
   const { db, can, addRows, patchRows, patchRow, allocateMaterials, deleteRow } = useProject();
   const { openForm, toast } = useModal();
+  const [q, setQ] = useState("");
+  const [subFilter, setSubFilter] = useState("Semua");
+  const [collapsed, setCollapsed] = useState({});
+  const toggleGroup = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
 
   // Edit material (Owner only) — adjust nama/satuan/stok gudang/min/harga
   const editMaterial = (m) => openForm({
@@ -114,13 +121,46 @@ export default function ProjectMaterialView() {
   });
   };
 
+  const colSpan = (can.finance ? 7 : 6) + (can.delete ? 1 : 0);
+  const matchQ = (m) => !q.trim() || (m.nama || "").toLowerCase().includes(q.trim().toLowerCase());
+
+  // Baris per sub-kategori (terfilter), lalu dikelompokkan per nama-dasar.
   const rowsBySub = {};
-  MAT_SUBS.forEach((s) => (rowsBySub[s] = db.materials.filter((m) => m.sub === s)));
+  MAT_SUBS.forEach((s) => (rowsBySub[s] = db.materials.filter((m) => m.sub === s && matchQ(m))));
+  const shownSubs = MAT_SUBS.filter((s) => (subFilter === "Semua" || subFilter === s) && rowsBySub[s].length);
+  const totalShown = shownSubs.reduce((n, s) => n + rowsBySub[s].length, 0);
+
+  const groupsOf = (items) => {
+    const map = new Map();
+    items.forEach((m) => { const k = baseName(m.nama); if (!map.has(k)) map.set(k, []); map.get(k).push(m); });
+    return [...map.entries()];
+  };
+
+  const renderRow = (m, indent) => {
+    const al = matAlloc(db, m); const tot = matTotal(db, m);
+    const st = m.gudang <= m.min ? (m.gudang < m.min * 0.5 ? "red" : "yellow") : "green";
+    const lbl = st === "red" ? "Kritis" : st === "yellow" ? "Menipis" : "Aman";
+    return (
+      <tr key={m.id}>
+        <td style={{ ...S.tableStyles.td, paddingLeft: indent ? 28 : undefined }}>{m.nama}</td>
+        <td style={S.tableStyles.td}>{m.satuan}</td>
+        <td style={S.tableStyles.td}><b>{m.gudang}</b> <span style={S.muted}>/ total {tot}</span></td>
+        <td style={S.tableStyles.td}>{al.length ? al.map((a, i) => <span key={i} style={{ ...S.tag, marginRight: 4 }}>{pName(db, a.projectId)}: {a.qty}</span>) : <span style={S.muted}>-</span>}</td>
+        <td style={S.tableStyles.td}>{m.min}</td>
+        <td style={S.tableStyles.td}><span style={S.pill(st)}>{lbl}</span></td>
+        {can.finance && <td style={S.tableStyles.td}>{fmtRp(tot * m.harga)}</td>}
+        {can.delete && <td style={S.tableStyles.td}><div style={S.row}>
+          <button style={S.btnSm("ghost")} title="Edit material" onClick={() => editMaterial(m)}>✏️</button>
+          <button style={S.btnSm("ghost")} onClick={() => { if (window.confirm(`Hapus material "${m.nama}" beserta alokasinya?`)) deleteRow("materials", m.id); }}>🗑</button>
+        </div></td>}
+      </tr>
+    );
+  };
 
   return (
     <div style={{ padding: 22, maxWidth: 1200 }}>
       <div style={S.note}>
-        Stok material Project <b>berdiri sendiri</b> dari Inventori utama. Tiap material punya stok <b>Gudang</b> + <b>alokasi per project</b>, dikelompokkan per sub-kategori.
+        Stok material Project <b>berdiri sendiri</b> dari Inventori utama. Tiap material punya stok <b>Gudang</b> + <b>alokasi per project</b>, dikelompokkan per sub-kategori & nama.
       </div>
       <div style={{ ...S.between, marginBottom: 14 }}>
         <div style={S.sectionTitle}><h2 style={S.sectionTitleH}>Stok Material Project</h2></div>
@@ -132,6 +172,21 @@ export default function ProjectMaterialView() {
           </div>
         )}
       </div>
+
+      {/* Filter: cari nama + chip sub-kategori */}
+      <div style={{ ...S.row, marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+        <input
+          value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Cari material… (mis. DSP 2PK)"
+          style={{ flex: "1 1 240px", minWidth: 200, background: cs.surface, border: `1px solid ${cs.border}`, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 13, outline: "none" }}
+        />
+        <div style={{ ...S.row, flexWrap: "wrap", gap: 6 }}>
+          {["Semua", ...MAT_SUBS].map((c) => (
+            <span key={c} style={S.chip(c === subFilter)} onClick={() => setSubFilter(c)}>{c}</span>
+          ))}
+        </div>
+      </div>
+      <div style={{ ...S.muted, fontSize: 11.5, marginBottom: 8 }}>{totalShown} material ditampilkan{q.trim() ? ` · cari "${q.trim()}"` : ""}</div>
+
       <div style={S.cardZero}>
         <table style={S.tableStyles.table}>
           <thead><tr>
@@ -142,31 +197,31 @@ export default function ProjectMaterialView() {
             {can.delete && <th style={S.tableStyles.th}></th>}
           </tr></thead>
           <tbody>
-            {MAT_SUBS.map((sub) => rowsBySub[sub].length ? (
+            {totalShown === 0 ? (
+              <tr><td colSpan={colSpan} style={{ ...S.tableStyles.td, ...S.muted, textAlign: "center", padding: 20 }}>Tidak ada material cocok.</td></tr>
+            ) : shownSubs.map((sub) => (
               <React.Fragment key={sub}>
-                <tr><td colSpan={(can.finance ? 7 : 6) + (can.delete ? 1 : 0)} style={{ background: "#0f1b30", color: cs.ara, fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", padding: "9px 12px" }}>{sub}</td></tr>
-                {rowsBySub[sub].map((m) => {
-                  const al = matAlloc(db, m); const tot = matTotal(db, m);
-                  const st = m.gudang <= m.min ? (m.gudang < m.min * 0.5 ? "red" : "yellow") : "green";
-                  const lbl = st === "red" ? "Kritis" : st === "yellow" ? "Menipis" : "Aman";
+                <tr><td colSpan={colSpan} style={{ background: "#0f1b30", color: cs.ara, fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", padding: "9px 12px" }}>{sub}</td></tr>
+                {groupsOf(rowsBySub[sub]).map(([base, items]) => {
+                  const multi = items.length > 1;
+                  if (!multi) return renderRow(items[0], false);
+                  const gkey = sub + "|" + base;
+                  const isOpen = !collapsed[gkey];
+                  const gGudang = items.reduce((n, m) => n + (Number(m.gudang) || 0), 0);
                   return (
-                    <tr key={m.id}>
-                      <td style={S.tableStyles.td}>{m.nama}</td>
-                      <td style={S.tableStyles.td}>{m.satuan}</td>
-                      <td style={S.tableStyles.td}><b>{m.gudang}</b> <span style={S.muted}>/ total {tot}</span></td>
-                      <td style={S.tableStyles.td}>{al.length ? al.map((a, i) => <span key={i} style={{ ...S.tag, marginRight: 4 }}>{pName(db, a.projectId)}: {a.qty}</span>) : <span style={S.muted}>-</span>}</td>
-                      <td style={S.tableStyles.td}>{m.min}</td>
-                      <td style={S.tableStyles.td}><span style={S.pill(st)}>{lbl}</span></td>
-                      {can.finance && <td style={S.tableStyles.td}>{fmtRp(tot * m.harga)}</td>}
-                      {can.delete && <td style={S.tableStyles.td}><div style={S.row}>
-                        <button style={S.btnSm("ghost")} title="Edit material" onClick={() => editMaterial(m)}>✏️</button>
-                        <button style={S.btnSm("ghost")} onClick={() => { if (window.confirm(`Hapus material "${m.nama}" beserta alokasinya?`)) deleteRow("materials", m.id); }}>🗑</button>
-                      </div></td>}
-                    </tr>
+                    <React.Fragment key={gkey}>
+                      <tr onClick={() => toggleGroup(gkey)} style={{ cursor: "pointer" }}>
+                        <td colSpan={colSpan} style={{ background: "#0c1526", color: cs.text, fontWeight: 600, fontSize: 12, padding: "7px 12px" }}>
+                          <span style={{ color: cs.muted, marginRight: 6 }}>{isOpen ? "▾" : "▸"}</span>
+                          {base} <span style={S.muted}>· {items.length} item · gudang {gGudang}</span>
+                        </td>
+                      </tr>
+                      {isOpen && items.map((m) => renderRow(m, true))}
+                    </React.Fragment>
                   );
                 })}
               </React.Fragment>
-            ) : null)}
+            ))}
           </tbody>
         </table>
       </div>
