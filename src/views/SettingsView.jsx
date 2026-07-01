@@ -334,7 +334,7 @@ function SettingsView({
       defaultModel: "claude-haiku-4-5-20251001",
       models: ["claude-haiku-4-5-20251001"],
       fields: [{ k: "key", label: "API Key", ph: "sk-ant-api03-...", t: "password" }],
-      guide: ["Buka console.anthropic.com", "API Keys → Create Key", "Copy key, paste di sini"],
+      guide: ["Buka console.anthropic.com", "API Keys → Create Key", "Set sebagai ANTHROPIC_API_KEY di Vercel → Environment Variables (Production), lalu Redeploy"],
       note: "Default ARA Brain · claude-haiku-4-5-20251001 — cepat & hemat kredit",
     },
     {
@@ -345,7 +345,7 @@ function SettingsView({
         { k: "key", label: "API Key", ph: "eyJhbGci...", t: "password" },
         { k: "group_id", label: "Group ID", ph: "1234567890" },
       ],
-      guide: ["Buka platform.minimaxi.com", "API → API Keys → Create", "Copy API Key & Group ID, paste di sini"],
+      guide: ["Buka platform.minimaxi.com", "API → API Keys → Create", "Set MINIMAX_API_KEY & MINIMAX_GROUP_ID di Vercel → Environment Variables, lalu Redeploy"],
       note: "MiniMax-M2.5",
     },
   ];
@@ -789,6 +789,10 @@ const d = await r.json();
 
           {/* Credential fields */}
           <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 8 }}>🔑 Kredensial {activeLLM.label}</div>
+          {/* ── Klarifikasi: API key AKTIF ARA ada di Vercel Env Vars, BUKAN field ini ── */}
+          <div style={{ background: cs.yellow + "12", border: "1px solid " + cs.yellow + "55", borderRadius: 9, padding: "10px 12px", marginBottom: 10, fontSize: 11, color: cs.text, lineHeight: 1.6 }}>
+            ⚠️ <b>API Key yang benar-benar dipakai ARA di-set di Vercel → Environment Variables</b> (<code>ANTHROPIC_API_KEY</code>, <code>MINIMAX_API_KEY</code>, dst), <b>bukan</b> di field ini. Field di bawah hanya untuk <b>uji koneksi & referensi</b>. Untuk memakai <b>{activeLLM.label}</b> di produksi: set env var-nya di Vercel, lalu pilih provider ini di atas & Simpan. Backend otomatis memilih provider sesuai pilihan ini <i>selama env key-nya tersedia</i>; jika tidak, ARA fallback ke provider lain yang key-nya ada.
+          </div>
           <LLMFields />
           <GuideBox guide={activeLLM.guide} title={"Cara dapat API Key — " + activeLLM.label} />
 
