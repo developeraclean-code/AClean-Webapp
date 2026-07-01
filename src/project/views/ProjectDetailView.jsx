@@ -3,16 +3,15 @@ import { cs } from "../../theme/cs.js";
 import * as S from "../utils/styles.js";
 import { supabase } from "../../supabaseClient.js";
 import { reportError } from "../../lib/reportError.js";
-import OfficeToolModal from "../../views/OfficeToolModal.jsx";
 import { useProject } from "../context/ProjectContext.jsx";
 import { useModal } from "../context/ModalContext.jsx";
-import { calc, budget, daysLate, pName, weekSummary } from "../utils/finance.js";
+import { calc, budget, daysLate, pName, weekSummary, matRecon, toolsAtProject } from "../utils/finance.js";
 import { fmtRp } from "../utils/constants.js";
 import { StatusPill } from "../components/Bits.jsx";
 import Modal from "../components/Modal.jsx";
 
 export default function ProjectDetailView() {
-  const { db, can, today, currentUser, activeProject, setActiveProject, setActiveView, toggleHold, updateProject } = useProject();
+  const { db, can, today, currentUser, activeProject, setActiveProject, setActiveView, toggleHold, updateProject, setProjectStatus, completeProject, patchRows } = useProject();
   const { openForm, openContent, close, toast } = useModal();
   const [alatMode, setAlatMode] = useState(null); // 'bawa' | 'kembali'
   const [laporanTim, setLaporanTim] = useState([]);
@@ -66,6 +65,70 @@ export default function ProjectDetailView() {
       toast(`Progress di-set ${v}%`);
     },
   });
+
+  // ── Siklus hidup project ──────────────────────────────────────────────────
+  const toFinishing = () => {
+    if (!window.confirm(`Tandai "${p.nama}" masuk tahap FINISHING?`)) return;
+    setProjectStatus(p.id, "FINISHING"); toast("Project → FINISHING (tahap penyelesaian)");
+  };
+  const reopen = () => {
+    if (!window.confirm(`Buka kembali "${p.nama}" ke BERJALAN? Sisa alokasi/alat sudah dikembalikan ke gudang saat ditutup — alokasikan ulang bila perlu.`)) return;
+    setProjectStatus(p.id, "BERJALAN"); toast("Project dibuka kembali → BERJALAN");
+  };
+
+  // Gerbang penutupan: cek blocker (wajib) & peringatan (boleh override) sebelum SELESAI.
+  const openCompletionGate = () => {
+    const submittedPending = db.harian.filter((h) => h.projectId === p.id && h.status === "SUBMITTED");
+    const baPending = laporanTim.filter((r) => r.status === "PENDING");
+    const alatDiLokasi = toolsAtProject(db, p.id);
+    const rec = matRecon(db, p.id);
+    const blockers = [];
+    if (submittedPending.length) blockers.push(`${submittedPending.length} laporan harian belum diverifikasi (Verify/Revisi dulu di Laporan Harian).`);
+    const warns = [];
+    if (baPending.length) warns.push(`${baPending.length} berita acara teknisi masih PENDING.`);
+    if (can.finance && k.sisaTagihan > 0) warns.push(`Sisa tagihan ${fmtRp(k.sisaTagihan)} belum lunas.`);
+    if (alatDiLokasi.length) warns.push(`${alatDiLokasi.length} alat masih di lokasi — akan otomatis ditarik ke gudang.`);
+    if (rec.totalSisa > 0) warns.push(`${rec.totalSisa} unit sisa alokasi material — akan otomatis dikembalikan ke gudang.`);
+
+    openContent({
+      content: (
+        <Modal onClose={close}>
+          <h3 style={{ fontSize: 16, fontWeight: 800, color: cs.text, marginBottom: 6 }}>✅ Selesaikan Project — {p.nama}</h3>
+          <p style={{ ...S.muted, fontSize: 12.5, marginBottom: 14 }}>
+            Saat SELESAI: alert & keterlambatan berhenti, laporan dikunci, sisa alokasi material & alat ditarik kembali ke gudang, dan <b>profit aktual</b> ditampilkan.
+          </p>
+          {blockers.length > 0 ? (
+            <div style={S.alert(false)}>
+              🚫 <b>Belum bisa diselesaikan:</b>
+              <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>{blockers.map((b2, i) => <li key={i}>{b2}</li>)}</ul>
+            </div>
+          ) : (
+            <>
+              {warns.length > 0 && (
+                <div style={S.alert(true)}>
+                  ⚠️ <b>Perhatian (boleh lanjut):</b>
+                  <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>{warns.map((w, i) => <li key={i}>{w}</li>)}</ul>
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+                <button style={S.btn("ghost")} onClick={close}>Batal</button>
+                <button style={S.btn()} onClick={() => {
+                  const res = completeProject(p.id);
+                  close();
+                  toast(`✅ Project SELESAI · ${res?.returnedMaterials || 0} material & ${res?.returnedTools || 0} alat kembali ke gudang`);
+                }}>Selesaikan Sekarang</button>
+              </div>
+            </>
+          )}
+          {blockers.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+              <button style={S.btn("ghost")} onClick={close}>Tutup</button>
+            </div>
+          )}
+        </Modal>
+      ),
+    });
+  };
 
   const showWeekly = () => {
     const w = weekSummary(db, p.id, today);
@@ -132,25 +195,34 @@ export default function ProjectDetailView() {
             {p.status === "HOLD" ? "▶ Lanjutkan" : "⏸ Hold"}
           </button>
         )}
+        {can.manage && p.status === "BERJALAN" && (
+          <button style={S.btnSm("ghost")} onClick={toFinishing}>⏩ Finishing</button>
+        )}
+        {can.manage && (p.status === "BERJALAN" || p.status === "FINISHING") && (
+          <button style={S.btnSm("green")} onClick={openCompletionGate}>✅ Selesaikan</button>
+        )}
+        {can.manage && p.status === "SELESAI" && (
+          <button style={S.btnSm("ghost")} onClick={reopen}>↩ Buka Kembali</button>
+        )}
         <button style={S.btnSm("ghost")} onClick={showWeekly}>📄 Ringkasan Mingguan</button>
         <button style={S.btnSm("ghost")} onClick={() => setAlatMode("bawa")}>🛠 Bawa Alat</button>
         <button style={S.btnSm("ghost")} onClick={() => setAlatMode("kembali")}>↩️ Kembali Alat</button>
       </div>
 
       {alatMode && (
-        <OfficeToolModal
-          job={{ id: p.id, nama: p.nama }}
-          scope="project"
-          mode={alatMode}
+        <ToolMoveModal
+          db={db} pid={p.id} pName={pName} mode={alatMode}
+          defaultHolder={p.pic || currentUser?.name || ""}
+          patchRows={patchRows} toast={toast}
           onClose={() => setAlatMode(null)}
-          supabase={supabase}
-          currentUser={currentUser}
-          showNotif={toast}
         />
       )}
 
       {p.status === "HOLD" && (
         <div style={S.alert(true)}>⏸ <b>Project di-HOLD</b> — tim dibebaskan untuk job reguler & laporan harian dijeda sampai dilanjutkan.</div>
+      )}
+      {p.status === "SELESAI" && (
+        <div style={S.alert(true)}>✅ <b>Project SELESAI</b>{p.selesaiAt ? ` — ${new Date(p.selesaiAt).toLocaleDateString("id-ID")}` : ""}. Sisa alokasi material & alat sudah dikembalikan ke gudang. Profit aktual final.</div>
       )}
       {(b.warn || b.crit) && (
         <div style={S.alert(!b.crit)}>⚠️ <b>{b.crit ? "Over budget" : "Mendekati RAB"}</b> — biaya {fmtRp(k.aktualBiaya)} / RAB {fmtRp(p.rab)} ({Math.round(b.ratio * 100)}%). Alert terkirim ke Owner.</div>
@@ -180,9 +252,13 @@ export default function ProjectDetailView() {
           <L>📦 Material Terpakai</L>
           <table style={S.tableStyles.table}>
             <tbody>
-              {db.usage.filter((u) => u.projectId === p.id).map((u, i) => (
-                <tr key={i}><td style={S.tableStyles.td}>{u.material}</td><td style={S.tableStyles.td}>{u.qty}</td></tr>
-              )) || <tr><td style={{ ...S.tableStyles.td, ...S.muted }}>belum ada</td></tr>}
+              {(() => {
+                const rows = db.usage.filter((u) => u.projectId === p.id);
+                if (!rows.length) return <tr><td colSpan={2} style={{ ...S.tableStyles.td, ...S.muted }}>belum ada</td></tr>;
+                return rows.map((u, i) => (
+                  <tr key={i}><td style={S.tableStyles.td}>{u.material}</td><td style={S.tableStyles.td}>{u.qty}{u.satuan ? ` ${u.satuan}` : ""}</td></tr>
+                ));
+              })()}
             </tbody>
           </table>
         </div>
@@ -197,6 +273,41 @@ export default function ProjectDetailView() {
           </table>
         </div>
       </div>
+
+      {(() => {
+        const rec = matRecon(db, p.id);
+        if (!rec.rows.length) return null;
+        const anyOver = rec.rows.some((r) => r.sisa < 0);
+        return (
+          <div style={{ ...S.card, marginTop: 14 }}>
+            <L>🔁 Rekonsiliasi Material (alokasi = terpakai + sisa)</L>
+            <table style={{ ...S.tableStyles.table, marginTop: 8 }}>
+              <thead><tr>
+                <th style={S.tableStyles.th}>Material</th>
+                <th style={S.tableStyles.th}>Dialokasikan</th>
+                <th style={S.tableStyles.th}>Terpakai</th>
+                <th style={S.tableStyles.th}>Sisa (blm dipakai)</th>
+                {can.finance && <th style={S.tableStyles.th}>Nilai sisa</th>}
+              </tr></thead>
+              <tbody>
+                {rec.rows.map((r) => (
+                  <tr key={r.materialId}>
+                    <td style={S.tableStyles.td}>{r.nama}</td>
+                    <td style={S.tableStyles.td}>{r.dialokasikan}{r.satuan ? ` ${r.satuan}` : ""}</td>
+                    <td style={S.tableStyles.td}>{r.terpakai}{r.satuan ? ` ${r.satuan}` : ""}</td>
+                    <td style={S.tableStyles.td}>
+                      <span style={S.pill(r.sisa < 0 ? "red" : r.sisa === 0 ? "gray" : "green")}>{r.sisa}{r.satuan ? ` ${r.satuan}` : ""}</span>
+                    </td>
+                    {can.finance && <td style={S.tableStyles.td}>{fmtRp(r.nilaiSisa)}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {anyOver && <div style={{ ...S.muted, fontSize: 11.5, marginTop: 6, color: cs.red }}>⚠️ Ada material over-pakai (sisa negatif) — alokasikan tambahan agar rekonsiliasi balance.</div>}
+            {p.status !== "SELESAI" && <div style={{ ...S.muted, fontSize: 11.5, marginTop: 6 }}>Sisa alokasi otomatis dikembalikan ke gudang saat project diselesaikan.</div>}
+          </div>
+        );
+      })()}
 
       <div style={{ ...S.card, marginTop: 14 }}>
         <div style={S.between}>
@@ -257,6 +368,75 @@ export default function ProjectDetailView() {
         )}
       </div>
     </div>
+  );
+}
+
+// Bawa/Kembali alat PROJECT (tabel project_tools) — terpisah dari alat kantor reguler.
+// bawa: gudang → lokasi (status "di lokasi" + pemegang). kembali: lokasi → gudang (+ kondisi).
+function ToolMoveModal({ db, pid, pName, mode, defaultHolder, patchRows, toast, onClose }) {
+  const isBawa = mode === "bawa";
+  const candidates = isBawa
+    ? db.tools.filter((t) => t.lokasi === "" && t.status === "tersedia" && (!t.projectId || t.projectId === pid))
+    : db.tools.filter((t) => t.lokasi === pid);
+  const [sel, setSel] = useState([]);
+  const [holder, setHolder] = useState(defaultHolder || "");
+  const [kondisi, setKondisi] = useState("baik");
+  const toggle = (id) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+
+  const submit = () => {
+    if (!sel.length) { toast("Pilih minimal 1 alat"); return; }
+    const updates = sel.map((id) => isBawa
+      ? { id, lokasi: pid, status: "di lokasi", pemegang: holder || null }
+      : { id, lokasi: "", status: "tersedia", pemegang: null, kondisi: kondisi || null });
+    patchRows("tools", updates);
+    toast(isBawa ? `${sel.length} alat dibawa → ${pName(db, pid)}` : `${sel.length} alat kembali ke gudang`);
+    onClose();
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <h3 style={{ fontSize: 16, fontWeight: 800, color: cs.text, marginBottom: 6 }}>
+        {isBawa ? "🛠 Bawa Alat ke Lokasi" : "↩️ Kembalikan Alat ke Gudang"}
+      </h3>
+      <p style={{ ...S.muted, fontSize: 12, marginBottom: 12 }}>
+        Alat kerja Project (terpisah dari Tas Teknisi & alat kantor reguler).
+      </p>
+      {candidates.length === 0 ? (
+        <div style={{ ...S.note, marginBottom: 12 }}>
+          {isBawa ? "Tidak ada alat tersedia di gudang. Tambah dulu di menu Alat Kerja." : "Tidak ada alat project ini di lokasi."}
+        </div>
+      ) : (
+        <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${cs.border}`, borderRadius: 10, padding: 8, marginBottom: 12 }}>
+          {candidates.map((t) => (
+            <label key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px", cursor: "pointer", fontSize: 13, color: cs.text }}>
+              <input type="checkbox" checked={sel.includes(t.id)} onChange={() => toggle(t.id)} />
+              {t.nama} <span style={S.muted}>×{t.jumlah}</span>
+              {!isBawa && t.pemegang && <span style={{ ...S.tag, marginLeft: "auto" }}>{t.pemegang}</span>}
+            </label>
+          ))}
+        </div>
+      )}
+      {candidates.length > 0 && (
+        isBawa ? (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Dibawa / dipegang oleh</div>
+            <input value={holder} onChange={(e) => setHolder(e.target.value)} placeholder="Nama teknisi/PIC"
+              style={{ width: "100%", boxSizing: "border-box", background: cs.surface, border: `1px solid ${cs.border}`, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 13 }} />
+          </div>
+        ) : (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Kondisi saat kembali</div>
+            <select value={kondisi} onChange={(e) => setKondisi(e.target.value)} style={S.select}>
+              {["baik", "perlu servis", "rusak", "hilang"].map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+        )
+      )}
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <button style={S.btn("ghost")} onClick={onClose}>Batal</button>
+        {candidates.length > 0 && <button style={S.btn()} onClick={submit}>{isBawa ? "Bawa" : "Kembalikan"}</button>}
+      </div>
+    </Modal>
   );
 }
 

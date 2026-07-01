@@ -3,6 +3,22 @@ import { EXP_CATS } from "./constants.js";
 
 export const pName = (db, id) => (db.projects.find((p) => p.id === id) || {}).nama || "(umum)";
 
+// Angka murni dari string bebas ("5 m" / "12,5" / "Rp 3.000") → number. 0 kalau kosong.
+export const parseNum = (v) => {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  const n = parseFloat(String(v ?? "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+};
+
+// Biaya 1 baris pemakaian stok (COGS). Pakai qty numerik + snapshot harga saat pemakaian;
+// fallback ke harga material terkini bila baris lama belum punya snapshot.
+export const usageCost = (db, u) => {
+  const qty = u.qtyNum != null ? Number(u.qtyNum) : parseNum(u.qty);
+  const mat = u.materialId ? db.materials.find((m) => m.id === u.materialId) : null;
+  const harga = u.harga != null && u.harga !== 0 ? Number(u.harga) : (mat ? mat.harga || 0 : 0);
+  return (qty || 0) * (harga || 0);
+};
+
 export function calc(db, pid) {
   const p = db.projects.find((x) => x.id === pid);
   if (!p) return null;
@@ -16,15 +32,45 @@ export function calc(db, pid) {
   db.expenses
     .filter((x) => x.projectId === pid)
     .forEach((x) => (byCat[x.kategori] = (byCat[x.kategori] || 0) + x.nominal));
+  // COGS material dari gudang project (pemakaian stok ber-materialId). Pembelian on-site
+  // (manual, tanpa materialId) tidak dibebankan di sini — sudah masuk lewat Pembelian.
+  const stokBiaya = db.usage
+    .filter((u) => u.projectId === pid && u.materialId)
+    .reduce((s, u) => s + usageCost(db, u), 0);
+  if (stokBiaya > 0) byCat["Material (stok gudang)"] = (byCat["Material (stok gudang)"] || 0) + stokBiaya;
   const aktualBiaya = Object.values(byCat).reduce((s, v) => s + v, 0);
   return {
     p, dpList, dpTotal,
     sisaTagihan: p.nilai - dpTotal,
-    byCat, aktualBiaya,
+    byCat, aktualBiaya, stokBiaya,
     estProfit: p.nilai - p.rab,
     aktualProfit: p.nilai - aktualBiaya,
   };
 }
+
+// Rekonsiliasi material per project: dialokasikan vs terpakai vs sisa (harus balance).
+// alokasi.qty menyimpan SISA alokasi (usage sudah menguranginya) → dialokasikan = sisa + terpakai.
+export function matRecon(db, pid) {
+  const rows = db.alokasi
+    .filter((a) => a.projectId === pid)
+    .map((a) => {
+      const m = db.materials.find((x) => x.id === a.materialId) || {};
+      const terpakai = db.usage
+        .filter((u) => u.projectId === pid && u.materialId === a.materialId)
+        .reduce((s, u) => s + (u.qtyNum != null ? Number(u.qtyNum) : parseNum(u.qty)), 0);
+      const sisa = Number(a.qty) || 0;
+      return {
+        materialId: a.materialId, nama: m.nama || "(?)", satuan: m.satuan || "",
+        harga: m.harga || 0, dialokasikan: sisa + terpakai, terpakai, sisa,
+        nilaiSisa: sisa * (m.harga || 0),
+      };
+    });
+  const totalSisa = rows.reduce((s, r) => s + r.sisa, 0);
+  return { rows, totalSisa };
+}
+
+// Alat yang masih tercatat di lokasi project (belum dikembalikan ke gudang).
+export const toolsAtProject = (db, pid) => db.tools.filter((t) => t.lokasi === pid);
 
 export function budget(db, pid) {
   const k = calc(db, pid); if (!k) return { ratio: 0, warn: false, crit: false };

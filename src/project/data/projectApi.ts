@@ -29,12 +29,12 @@ const TABLE: Record<TableKey, string> = {
 // Peta field JS → kolom DB per entitas. Field jsonb (tim/pagi/sore/items/checklist)
 // & data URL dipetakan apa adanya (passthrough).
 const FIELDS: Record<TableKey, Record<string, string>> = {
-  projects: { id: "id", nama: "nama", kategori: "kategori", lokasi: "lokasi", pic: "pic", status: "status", progress: "progress", mulai: "mulai", target: "target", nilai: "nilai", rab: "rab", tim: "tim", _prev: "prev_status", portalToken: "portal_token", tokenActive: "token_active" },
+  projects: { id: "id", nama: "nama", kategori: "kategori", lokasi: "lokasi", pic: "pic", status: "status", progress: "progress", mulai: "mulai", target: "target", nilai: "nilai", rab: "rab", tim: "tim", _prev: "prev_status", portalToken: "portal_token", tokenActive: "token_active", selesaiAt: "selesai_at", catatanSelesai: "catatan_selesai" },
   dp: { id: "id", projectId: "project_id", tanggal: "tanggal", jumlah: "jumlah", ket: "ket" },
   materials: { id: "id", nama: "nama", sub: "sub", satuan: "satuan", gudang: "gudang", min: "min_qty", harga: "harga" },
   alokasi: { id: "id", materialId: "material_id", projectId: "project_id", qty: "qty" },
-  usage: { id: "id", projectId: "project_id", tanggal: "tanggal", material: "material", qty: "qty", satuan: "satuan", oleh: "oleh" },
-  tools: { id: "id", nama: "nama", jumlah: "jumlah", status: "status", lokasi: "lokasi", projectId: "project_id" },
+  usage: { id: "id", projectId: "project_id", tanggal: "tanggal", material: "material", materialId: "material_id", qty: "qty", qtyNum: "qty_num", satuan: "satuan", harga: "harga", oleh: "oleh" },
+  tools: { id: "id", nama: "nama", jumlah: "jumlah", status: "status", lokasi: "lokasi", projectId: "project_id", pemegang: "pemegang", kondisi: "kondisi" },
   expenses: { id: "id", projectId: "project_id", tanggal: "tanggal", kategori: "kategori", ket: "ket", nominal: "nominal", oleh: "oleh" },
   purchases: { id: "id", projectId: "project_id", tanggal: "tanggal", jenis: "jenis", item: "item", qty: "qty", total: "total", nota: "nota" },
   harian: { id: "id", projectId: "project_id", tanggal: "tanggal", oleh: "oleh", pagi: "pagi", sore: "sore", status: "status" },

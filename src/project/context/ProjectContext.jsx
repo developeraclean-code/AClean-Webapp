@@ -83,6 +83,40 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
     else updateProject(pid, { _prev: p.status, status: "HOLD" });
   }, [db.projects, updateProject]);
 
+  // Ubah status siklus hidup (BERJALAN ⇄ FINISHING, atau buka kembali SELESAI → BERJALAN).
+  const setProjectStatus = useCallback((pid, status) => updateProject(pid, { status }), [updateProject]);
+
+  // Tutup project (SELESAI): kembalikan SISA alokasi material ke gudang + tarik semua alat
+  // dari lokasi kembali ke gudang, lalu set status + timestamp. Satu transaksi optimistic.
+  const completeProject = useCallback((pid, { catatan } = {}) => {
+    const p = db.projects.find((x) => x.id === pid);
+    if (!p) return;
+    const allocs = db.alokasi.filter((a) => a.projectId === pid && (Number(a.qty) || 0) > 0);
+    const matAdd = {};
+    allocs.forEach((a) => { matAdd[a.materialId] = (matAdd[a.materialId] || 0) + (Number(a.qty) || 0); });
+    const materialUpdates = Object.entries(matAdd).map(([id, add]) => {
+      const m = db.materials.find((x) => x.id === id);
+      return { id, gudang: (m?.gudang || 0) + add };
+    });
+    const alokasiUpdates = allocs.map((a) => ({ id: a.id, qty: 0 }));
+    const toolUpdates = db.tools.filter((t) => t.lokasi === pid).map((t) => ({ id: t.id, lokasi: "", status: "tersedia" }));
+    const projPatch = { status: "SELESAI", selesaiAt: new Date().toISOString(), catatanSelesai: catatan || null };
+
+    update((cur) => {
+      cur.materials = cur.materials.map((m) => { const u = materialUpdates.find((x) => x.id === m.id); return u ? { ...m, ...u } : m; });
+      cur.alokasi = cur.alokasi.map((a) => (alokasiUpdates.find((x) => x.id === a.id) ? { ...a, qty: 0 } : a));
+      cur.tools = cur.tools.map((t) => (toolUpdates.find((x) => x.id === t.id) ? { ...t, lokasi: "", status: "tersedia" } : t));
+      cur.projects = cur.projects.map((x) => (x.id === pid ? { ...x, ...projPatch } : x));
+    });
+    guard(Promise.all([
+      ...materialUpdates.map(({ id, ...patch }) => api.update("materials", id, patch)),
+      ...alokasiUpdates.map(({ id, ...patch }) => api.update("alokasi", id, patch)),
+      ...toolUpdates.map(({ id, ...patch }) => api.update("tools", id, patch)),
+      api.update("projects", pid, projPatch),
+    ]));
+    return { returnedMaterials: materialUpdates.length, returnedTools: toolUpdates.length };
+  }, [db, update, guard]);
+
   // alokasi material: materialUpdates = [{id, gudang}], alokasiRows = [{id?, materialId, projectId, qty}]
   const allocateMaterials = useCallback((materialUpdates, alokasiRows) => {
     const rows = alokasiRows.map((r) => (r.id ? r : { ...r, id: genId("a") }));
@@ -156,7 +190,7 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
   const value = {
     db, loading, syncError, reload,
     update, addRows, patchRow, patchRows,
-    updateProject, toggleHold, allocateMaterials, upsertHarian,
+    updateProject, toggleHold, setProjectStatus, completeProject, allocateMaterials, upsertHarian,
     deleteRow, uploadPhotos, genId,
     role, can, today,
     activeView, setActiveView,

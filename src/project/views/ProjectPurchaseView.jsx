@@ -3,12 +3,12 @@ import { cs } from "../../theme/cs.js";
 import * as S from "../utils/styles.js";
 import { useProject } from "../context/ProjectContext.jsx";
 import { useModal } from "../context/ModalContext.jsx";
-import { pName } from "../utils/finance.js";
-import { fmtRp } from "../utils/constants.js";
+import { pName, parseNum } from "../utils/finance.js";
+import { fmtRp, MAT_SUBS } from "../utils/constants.js";
 import { MiniCard, Tag } from "../components/Bits.jsx";
 
 export default function ProjectPurchaseView() {
-  const { db, can, today, addRows, deleteRow } = useProject();
+  const { db, can, today, addRows, patchRows, deleteRow } = useProject();
   const { openForm, toast } = useModal();
   const [filterProj, setFilterProj] = useState("Semua");
   const [filterJenis, setFilterJenis] = useState("Semua");
@@ -27,10 +27,11 @@ export default function ProjectPurchaseView() {
     title: "Catat Pembelian (isi beberapa sekaligus)",
     fields: [
       { name: "projectId", label: "Project", type: "select", options: ["(umum)", ...db.projects.map((p) => p.nama)] },
+      { name: "toStock", label: "Masukkan pembelian Material ke Stok Gudang project? (sekali klik, tak perlu restock manual)", type: "select", options: ["Tidak", "Ya — tambahkan ke stok gudang"] },
       { name: "rows", label: "Daftar Pembelian", type: "grid", hint: "tersimpan per item terpisah",
         columns: [
           { key: "jenis", label: "Jenis", type: "select", options: ["Material", "Alat"] },
-          { key: "item", label: "Item" }, { key: "qty", label: "Qty" },
+          { key: "item", label: "Item" }, { key: "qty", label: "Qty", type: "number" },
           { key: "satuan", label: "Satuan" }, { key: "total", label: "Total (Rp)", type: "number" },
         ] },
     ],
@@ -39,7 +40,37 @@ export default function ProjectPurchaseView() {
       const rr = (d.rows || []).filter((r) => r.item);
       if (!rr.length) return toast("Isi minimal 1 baris ber-item");
       addRows("purchases", rr.map((r) => ({ tanggal: today, projectId: pid, jenis: r.jenis || "Material", item: r.item, qty: `${r.qty || ""} ${r.satuan || ""}`.trim(), total: +r.total, nota: true })));
-      toast(`${rr.length} pembelian tercatat`);
+
+      // Opsi: langsung tambah pembelian Material ke stok gudang (restock existing / buat baru).
+      // Menutup "double entry": 1 aksi = biaya tercatat + stok bertambah.
+      let stokMsg = "";
+      if ((d.toStock || "").startsWith("Ya")) {
+        const restock = {};       // materialId → tambahan qty
+        const restockHarga = {};  // materialId → harga unit (dari nota) bila sebelumnya 0
+        const baru = [];
+        rr.filter((r) => (r.jenis || "Material") === "Material").forEach((r) => {
+          const qn = parseNum(r.qty); if (qn <= 0) return;
+          const hargaUnit = +r.total && qn ? Math.round(+r.total / qn) : 0;
+          const ex = db.materials.find((m) => (m.nama || "").trim().toLowerCase() === (r.item || "").trim().toLowerCase());
+          if (ex) {
+            restock[ex.id] = (restock[ex.id] || 0) + qn;
+            if ((!ex.harga || ex.harga === 0) && hargaUnit) restockHarga[ex.id] = hargaUnit;
+          } else {
+            baru.push({ id: "m" + Date.now() + baru.length, nama: r.item, sub: MAT_SUBS[0], satuan: r.satuan || "", gudang: qn, min: 0, harga: hargaUnit });
+          }
+        });
+        const updates = Object.entries(restock).map(([id, q]) => {
+          const m = db.materials.find((x) => x.id === id);
+          const patch = { id, gudang: (m.gudang || 0) + q };
+          if (restockHarga[id]) patch.harga = restockHarga[id];
+          return patch;
+        });
+        if (updates.length) patchRows("materials", updates);
+        if (baru.length) addRows("materials", baru);
+        const n = updates.length + baru.length;
+        if (n) stokMsg = ` · ${n} material masuk stok gudang`;
+      }
+      toast(`${rr.length} pembelian tercatat${stokMsg}`);
     },
   });
   };
