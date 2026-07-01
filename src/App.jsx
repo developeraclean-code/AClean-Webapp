@@ -2830,9 +2830,13 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
             const resolvedProvider = (dbProvider && VALID_PROVIDERS.includes(dbProvider)) ? dbProvider : "claude";
             setLlmProvider(resolvedProvider);
             _lsSave("llmProvider", resolvedProvider);
-            // Model: pakai DB jika ada & valid, otherwise auto-set sesuai provider
+            // Model HARUS konsisten dgn provider — cegah mismatch (mis. provider=claude
+            // tapi llm_model DB masih "MiniMax-M2.5" -> badge & call ARA salah). Provider
+            // dgn 1 model kanonik (claude/minimax) DIPAKSA ke DEFAULT_MODEL-nya; provider
+            // lain (openai/groq/ollama) pakai llm_model DB kalau ada & bukan gemini.
             const dbModel = sMap.llm_model;
-            const validModel = dbModel && !dbModel.includes("gemini") ? dbModel : DEFAULT_MODEL[resolvedProvider] || "claude-haiku-4-5-20251001";
+            const validModel = DEFAULT_MODEL[resolvedProvider]
+              || (dbModel && !dbModel.includes("gemini") ? dbModel : "claude-haiku-4-5-20251001");
             setLlmModel(validModel);
             _lsSave("llmModel", validModel);
             // Load wa_provider (WhatsApp provider) from DB — global setting for Owner/Admin
@@ -4156,7 +4160,9 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
       setBrainMd(brainMap.brain_md);
       _lsSave("brainMd", brainMap.brain_md);
 
-      showNotif("✅ ARA Brain berhasil terhubung dengan Minimax 2.5!");
+      // Label provider dinamis (bukan hardcode "Minimax 2.5") — ikut provider aktif.
+      const _provLabel = llmProvider === "claude" ? "Anthropic Claude" : llmProvider === "minimax" ? "Minimax" : llmProvider === "openai" ? "ChatGPT (OpenAI)" : llmProvider === "groq" ? "Groq" : llmProvider === "ollama" ? "Ollama" : (llmProvider || "LLM");
+      showNotif(`✅ ARA Brain berhasil terhubung dengan ${_provLabel}${llmModel ? " (" + llmModel + ")" : ""}!`);
     } catch (e) {
       console.error("[connectAraBrain]", e);
       showNotif("❌ Gagal koneksi brain: " + e.message);

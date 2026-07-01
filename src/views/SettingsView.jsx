@@ -745,7 +745,7 @@ const d = await r.json();
 
         {/* ARA Brain LLM */}
         <Card>
-          <CardHeader icon="🤖" title="ARA Brain — LLM Provider" subtitle="Model AI yang menjalankan ARA · Minimax sebagai default"
+          <CardHeader icon="🤖" title="ARA Brain — LLM Provider" subtitle={"Model AI yang menjalankan ARA · Aktif: " + activeLLM.label + (llmModel ? " (" + llmModel + ")" : "")}
             badge={llmStatusLabel} badgeColor={llmSC} />
 
           {/* Provider picker — 2 opsi saja */}

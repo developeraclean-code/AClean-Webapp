@@ -42,7 +42,7 @@ function AraView({
           <button onClick={() => setAraMessages([{ role: "assistant", content: "Halo! Saya ARA 🤖 — AI Agent AClean. Ada yang bisa saya bantu?" }])}
             style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>🗑 Reset</button>
           <button onClick={connectAraBrain} disabled={araLoading}
-            title="Hubungkan ARA Brain dengan Minimax 2.5"
+            title="Hubungkan & muat ARA Brain (memori) ke LLM yang aktif"
             style={{ background: cs.ara + "18", border: "1px solid " + cs.ara + "44", color: cs.ara, padding: "5px 12px", borderRadius: 6, cursor: araLoading ? "not-allowed" : "pointer", fontSize: 11, fontWeight: 700, opacity: araLoading ? 0.6 : 1 }}>🧠 Konek Brain</button>
         </div>
       </div>
