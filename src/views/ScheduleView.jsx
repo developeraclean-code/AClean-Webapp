@@ -48,12 +48,12 @@ const filteredOrders = !_sqSched ? _baseOrders : _baseOrders.filter(o =>
   (o.service || "").toLowerCase().includes(_sqSched) ||
   (o.phone || "").includes(searchSchedule.trim())
 );
-// Smart teknisiList: aktif UNION punya job minggu ini — hanya sebagai teknisi utama
-// Helper tidak punya baris sendiri, ditampilkan sebagai chip di dalam card
+// Smart teknisiList: HANYA teknisi yang punya job minggu ini (baris kosong tak
+// dirender — bikin grid ramping). Helper tak punya baris sendiri, tampil sbg chip
+// di dalam card. Kalau user filter ke teknisi spesifik, tetap tampil walau kosong.
 const weekDateSet = new Set(weekDays.map(d => d.date));
-const teksWithJobThisWeek = new Set(ordersData.filter(o => weekDateSet.has(o.date) && o.teknisi).map(o => o.teknisi));
-const activeTeknisiNames = new Set(teknisiData.filter(t => t.active !== false && (t.role === "Teknisi" || t.role === "Helper")).map(t => t.name));
-const smartTekNames = [...new Set([...activeTeknisiNames, ...teksWithJobThisWeek])].sort();
+const teksWithJobThisWeek = new Set(ordersData.filter(o => weekDateSet.has(o.date) && o.status !== "CANCELLED" && o.teknisi).map(o => o.teknisi));
+const smartTekNames = [...teksWithJobThisWeek].sort();
 const teknisiList = activeTek === "Semua" ? smartTekNames : [activeTek];
 // Untuk teknisi/helper: filter hanya hari ini
 const todayOrdersTek = isTekRole ? filteredOrders.filter(o => o.date === TODAY) : filteredOrders;
@@ -61,6 +61,19 @@ const todayOrdersTek = isTekRole ? filteredOrders.filter(o => o.date === TODAY) 
 // ── Report card sent helpers ──
 const getLaporan = (jobId) => laporanReports.find(r => r.job_id === jobId);
 const isReportSent = (jobId) => !!getLaporan(jobId)?.report_card_sent_at;
+
+// ── Invoice status per job: untuk strip status di card + ringkasan header ──
+// return { state, color, label } — state: none|draft|unsent|sent|paid
+const getInvoice = (jobId, invoiceId) => (invoicesData || []).find(i => i.job_id === jobId || (invoiceId && i.id === invoiceId));
+const invoiceStatus = (jobId, invoiceId) => {
+  const inv = getInvoice(jobId, invoiceId);
+  if (!inv) return { state: "none", color: cs.muted, label: "Invoice belum ada" };
+  if (inv.status === "PAID") return { state: "paid", color: cs.green, label: "Invoice LUNAS" };
+  const isSent = !!inv.sent || !!inv.sent_at || (inv.wa_sent_count || 0) > 0 || !!inv.wa_last_sent_at;
+  if (isSent) return { state: "sent", color: "#38bdf8", label: "Invoice terkirim (belum lunas)" };
+  if (inv.status === "DRAFT") return { state: "draft", color: "#facc15", label: "Invoice draft (belum approve)" };
+  return { state: "unsent", color: "#facc15", label: "Invoice belum terkirim" };
+};
 
 const kirimReportCard = async (order) => {
   const lap = getLaporan(order.id);
@@ -175,19 +188,40 @@ return (
       </div>
     )}
 
-    {/* ── Rekap Report Card Minggu Ini ── */}
+    {/* ── Kokpit Minggu Ini: Report · Card · Invoice (biar nol yang miss) ── */}
     {!isTekRole && (() => {
       const weekOrders = ordersData.filter(o => o.date >= weekDays[0].date && o.date <= weekDays[6].date && o.status !== "CANCELLED");
-      const completedOrders = weekOrders.filter(o => ["COMPLETED","PAID"].includes(o.status) || laporanReports.some(r => r.job_id === o.id && ["VERIFIED","APPROVED"].includes(r.status)));
-      const sudahKirim = completedOrders.filter(o => isReportSent(o.id)).length;
-      const belumKirim = completedOrders.filter(o => !isReportSent(o.id)).length;
-      if (completedOrders.length === 0) return null;
+      // Job yang sudah dikerjakan (butuh lapor/invoice)
+      const doneOrders = weekOrders.filter(o => ["COMPLETED", "PAID", "ON_SITE", "IN_PROGRESS"].includes(o.status) || laporanReports.some(r => r.job_id === o.id));
+      if (doneOrders.length === 0) return null;
+      const isVerif = (o) => { const l = getLaporan(o.id); return !!l && ["VERIFIED", "APPROVED"].includes(l.status); };
+      const reportBelum = doneOrders.filter(o => !isVerif(o)).length;              // report belum diverifikasi
+      const verifiedOrders = doneOrders.filter(isVerif);
+      const sudahKirim = verifiedOrders.filter(o => isReportSent(o.id)).length;
+      const belumKirim = verifiedOrders.filter(o => !isReportSent(o.id)).length;   // card siap kirim tapi belum
+      const invBelum = doneOrders.filter(o => ["none", "unsent", "draft"].includes(invoiceStatus(o.id, o.invoice_id).state)).length;
+      const chip = (color, txt) => <span style={{ fontSize: 12, color, fontWeight: 700, background: color + "15", padding: "3px 10px", borderRadius: 99, border: "1px solid " + color + "33" }}>{txt}</span>;
+      const dot = (c) => <span style={{ width: 7, height: 7, borderRadius: "50%", background: c, display: "inline-block" }} />;
       return (
-        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "10px 16px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>📤 Report Card Minggu Ini:</span>
-          <span style={{ fontSize: 12, color: cs.green, fontWeight: 700, background: cs.green + "15", padding: "3px 10px", borderRadius: 99, border: "1px solid " + cs.green + "33" }}>✅ {sudahKirim} Sudah Kirim</span>
-          <span style={{ fontSize: 12, color: cs.yellow, fontWeight: 700, background: cs.yellow + "15", padding: "3px 10px", borderRadius: 99, border: "1px solid " + cs.yellow + "33" }}>🟡 {belumKirim} Belum Kirim</span>
-          <span style={{ fontSize: 11, color: cs.muted }}>dari {completedOrders.length} job selesai</span>
+        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "10px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: cs.text }}>🗂️ Kokpit Minggu Ini ({doneOrders.length} job):</span>
+            {chip(reportBelum > 0 ? cs.red : cs.green, `📋 ${reportBelum} Report belum verif`)}
+            {chip(belumKirim > 0 ? cs.yellow : cs.green, `📤 ${belumKirim} Card belum kirim`)}
+            {chip(invBelum > 0 ? "#38bdf8" : cs.green, `🧾 ${invBelum} Invoice belum terkirim`)}
+            {chip(cs.green, `✅ ${sudahKirim} Card terkirim`)}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 10, color: cs.muted }}>
+            <span>Titik di card:</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 3 }}>📋 Report</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 3 }}>📤 Card</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 3 }}>🧾 Invoice</span>
+            <span style={{ opacity: 0.5 }}>·</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 3 }}>{dot(cs.green)} beres</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 3 }}>{dot("#facc15")} pending</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 3 }}>{dot("#38bdf8")} invoice terkirim</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 3 }}>{dot(cs.muted)} belum</span>
+          </div>
         </div>
       );
     })()}
@@ -388,6 +422,11 @@ return (
                   <div key={d.date} style={{ background: d.date === TODAY ? cs.accent + "22" : cs.surface, border: "1px solid " + (d.date === TODAY ? cs.accent : cs.border), borderRadius: 7, padding: "7px 4px", textAlign: "center", fontSize: 11, fontWeight: 700, color: d.date === TODAY ? cs.accent : cs.muted }}>{d.label}</div>
                 ))}
               </div>
+              {teknisiList.length === 0 && (
+                <div style={{ textAlign: "center", padding: "28px 12px", color: cs.muted, fontSize: 13, background: cs.card, border: "1px dashed " + cs.border, borderRadius: 8 }}>
+                  📭 Tidak ada teknisi dengan jadwal minggu ini.
+                </div>
+              )}
               {teknisiList.map(tek => (
                 <div key={tek} style={{ display: "grid", gridTemplateColumns: "70px repeat(7,1fr)", gap: 2, marginBottom: 2 }}>
                   <div style={{ background: cs.card, border: "1px solid " + (techColors[tek] || cs.border), borderRadius: 7, padding: "6px 4px", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -413,25 +452,29 @@ return (
                           const col = techColors[tek] || cs.accent;
                           const borderHL = sent ? cs.green : hasLaporan ? (lapVerified ? cs.green : "#facc15") : col;
                           const canSend = lapVerified && !sent;
+                          // ── Strip status 3-titik: Report · Card · Invoice ──
+                          const invSt = invoiceStatus(j.id, j.invoice_id);
+                          const reportColor = lapVerified ? cs.green : hasLaporan ? "#facc15" : cs.muted;
+                          const reportTitle = lapVerified ? "📋 Report: VERIFIED" : hasLaporan ? "📋 Report: SUBMITTED (belum diverifikasi)" : "📋 Report: belum dibuat teknisi";
+                          const cardColor = sent ? cs.green : cs.muted;
+                          const cardTitle = sent ? "📤 Report card: TERKIRIM ke customer" : lapVerified ? "📤 Report card: BELUM dikirim (siap kirim)" : "📤 Report card: menunggu report diverifikasi";
+                          const dotStyle = (c) => ({ width: 5, height: 5, borderRadius: "50%", background: c, display: "inline-block", flexShrink: 0 });
                           return (
-                            <div key={j.id} style={{ background: col + "22", border: "1px solid " + borderHL + "66", borderLeft: "3px solid " + borderHL, borderRadius: 5, padding: "3px 5px 3px 4px", marginBottom: 2, position: "relative" }}>
-                              <span style={{
-                                position: "absolute", top: 1, right: 2, fontSize: 7, fontWeight: 800,
-                                color: sent ? cs.green : lapVerified ? cs.green : hasLaporan ? "#facc15" : cs.muted,
-                                background: (sent ? cs.green : lapVerified ? cs.green : hasLaporan ? "#facc15" : cs.muted) + "22",
-                                borderRadius: 3, padding: "0 2px"
-                              }}>
-                                {sent ? "📤" : lapVerified ? "✓VRF" : hasLaporan ? "✓LAP" : ""}
-                              </span>
+                            <div key={j.id} style={{ background: col + "22", border: "1px solid " + borderHL + "66", borderLeft: "3px solid " + borderHL, borderRadius: 5, padding: "3px 5px", marginBottom: 2 }}>
                               <div style={{ fontSize: 9, fontWeight: 800, color: col }}>{j.time}</div>
-                              <div style={{ fontSize: 9, color: cs.text }}>{(j.customer || "").slice(0, 13)}{(j.customer || "").length > 13 ? "…" : ""}</div>
-                              <div style={{ fontSize: 8, color: cs.muted }}>{j.service}</div>
-                              {j.helper && <div style={{ fontSize: 8, color: "#a78bfa", fontWeight: 700, marginTop: 1 }}>🤝 {(j.helper).split(" ")[0]}</div>}
+                              <div style={{ fontSize: 9, color: cs.text }}>{(j.customer || "").slice(0, 14)}{(j.customer || "").length > 14 ? "…" : ""}</div>
+                              <div style={{ fontSize: 8, color: cs.muted }}>{j.service}{j.helper ? " · 🤝" + (j.helper).split(" ")[0] : ""}</div>
+                              {/* Strip status: 📋 Report · 📤 Card · 🧾 Invoice (hijau=beres, kuning=pending, abu=belum) */}
+                              <div style={{ display: "flex", gap: 6, marginTop: 3, alignItems: "center" }}>
+                                <span title={reportTitle} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 1 }}>📋<span style={dotStyle(reportColor)} /></span>
+                                <span title={cardTitle} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 1 }}>📤<span style={dotStyle(cardColor)} /></span>
+                                <span title={"🧾 " + invSt.label} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 1 }}>🧾<span style={dotStyle(invSt.color)} /></span>
+                              </div>
                               {canSend && (
                                 <button onClick={(e) => { e.stopPropagation(); kirimReportCard(j); }}
                                   title="Kirim report card ke customer"
-                                  style={{ marginTop: 2, width: "100%", background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, borderRadius: 3, fontSize: 7, fontWeight: 700, cursor: "pointer", padding: "1px 0" }}>
-                                  📤 Kirim
+                                  style={{ marginTop: 3, width: "100%", background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, borderRadius: 3, fontSize: 7, fontWeight: 700, cursor: "pointer", padding: "1px 0" }}>
+                                  📤 Kirim Card
                                 </button>
                               )}
                             </div>
