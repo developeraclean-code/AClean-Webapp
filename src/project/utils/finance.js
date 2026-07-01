@@ -48,6 +48,18 @@ export function calc(db, pid) {
   };
 }
 
+// Profit yang benar per konteks:
+// - SELESAI → aktual (nilai − biaya realisasi).
+// - Berjalan + RAB terisi → estimasi (nilai − RAB).
+// - Berjalan + RAB 0/kosong → "berjalan" (nilai − biaya terpakai sejauh ini) + tandai RAB kosong.
+export function profitInfo(db, pid) {
+  const k = calc(db, pid); if (!k) return { value: 0, label: "-", kind: "none", rabMissing: false };
+  const p = k.p;
+  if (p.status === "SELESAI") return { value: k.aktualProfit, label: "Aktual profit (final)", kind: "aktual", rabMissing: false };
+  if (p.rab > 0) return { value: k.estProfit, label: "Estimasi profit (RAB)", kind: "estimasi", rabMissing: false };
+  return { value: p.nilai - k.aktualBiaya, label: "Profit berjalan (RAB belum diisi)", kind: "berjalan", rabMissing: true };
+}
+
 // Rekonsiliasi material per project: dialokasikan vs terpakai vs sisa (harus balance).
 // alokasi.qty menyimpan SISA alokasi (usage sudah menguranginya) → dialokasikan = sisa + terpakai.
 export function matRecon(db, pid) {

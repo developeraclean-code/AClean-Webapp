@@ -12,15 +12,30 @@ export default function ProjectPurchaseView() {
   const { openForm, toast } = useModal();
   const [filterProj, setFilterProj] = useState("Semua");
   const [filterJenis, setFilterJenis] = useState("Semua");
+  const [filterStatus, setFilterStatus] = useState("Berjalan"); // Berjalan | Selesai (arsip) | Semua
   const pidByName = (n) => (db.projects.find((p) => p.nama === n) || {}).id || "";
+  const projStatus = (pid) => (pid ? (db.projects.find((p) => p.id === pid) || {}).status : null);
 
   const projOpts = ["Semua", ...db.projects.map((p) => p.nama), "(umum)"];
   let rows = db.purchases.slice();
   if (filterProj !== "Semua") rows = rows.filter((x) => filterProj === "(umum)" ? !x.projectId : pName(db, x.projectId) === filterProj);
   if (filterJenis !== "Semua") rows = rows.filter((x) => x.jenis === filterJenis);
+  // Arsip: pisahkan pembelian project SELESAI dari yang berjalan agar tak tercampur.
+  // "(umum)" (tanpa project) selalu dianggap berjalan.
+  if (filterStatus === "Berjalan") rows = rows.filter((x) => !x.projectId || projStatus(x.projectId) !== "SELESAI");
+  else if (filterStatus === "Selesai") rows = rows.filter((x) => x.projectId && projStatus(x.projectId) === "SELESAI");
+  const isArsip = filterStatus === "Selesai";
   const total = rows.reduce((s, x) => s + x.total, 0);
   const totMat = rows.filter((x) => x.jenis === "Material").reduce((s, x) => s + x.total, 0);
   const totAlat = rows.filter((x) => x.jenis === "Alat").reduce((s, x) => s + x.total, 0);
+
+  // Untuk mode arsip: kelompokkan per project (1 bundle/project + subtotal).
+  const bundles = (() => {
+    if (!isArsip) return null;
+    const map = new Map();
+    rows.forEach((x) => { if (!map.has(x.projectId)) map.set(x.projectId, []); map.get(x.projectId).push(x); });
+    return [...map.entries()].map(([pid, items]) => ({ pid, items, subtotal: items.reduce((s, x) => s + x.total, 0) }));
+  })();
 
   const addPurchase = () => {
     openForm({
@@ -75,10 +90,23 @@ export default function ProjectPurchaseView() {
   });
   };
 
+  const purchaseRow = (x, key) => (
+    <tr key={key}>
+      <td style={S.tableStyles.td}>{x.tanggal.slice(5)}</td>
+      <td style={S.tableStyles.td}><span style={S.pill(x.jenis === "Alat" ? "yellow" : "accent")}>{x.jenis}</span></td>
+      <td style={S.tableStyles.td}>{x.item}</td>
+      <td style={S.tableStyles.td}>{x.qty}</td>
+      <td style={S.tableStyles.td}>{fmtRp(x.total)}</td>
+      <td style={S.tableStyles.td}>{pName(db, x.projectId)}</td>
+      <td style={S.tableStyles.td}>{x.nota ? <Tag>📎 nota</Tag> : <span style={S.muted}>-</span>}</td>
+      {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus pembelian ini?")) deleteRow("purchases", x.id); }}>🗑</button></td>}
+    </tr>
+  );
+
   return (
     <div style={{ padding: 22, maxWidth: 1200 }}>
       <div style={S.note}>
-        Pembelian material & alat project → tercatat di <b>Keuangan project</b>. Stok project <b>terpisah</b> dari inventori bisnis reguler & ditangani sendiri — tambah stok lewat <b>Stok Material → Restock Gudang</b>. Filter per project & jenis di bawah.
+        Pembelian material & alat project → tercatat di <b>Keuangan project</b>. Stok project <b>terpisah</b> dari inventori bisnis reguler & ditangani sendiri — tambah stok lewat <b>Stok Material → Restock Gudang</b>. Filter per project, jenis & status (arsip project selesai) di bawah.
       </div>
       <div style={{ ...S.between, marginBottom: 10 }}>
         <div style={S.row}>
@@ -89,11 +117,20 @@ export default function ProjectPurchaseView() {
         </div>
         {can.expenseInput && <button style={S.btn()} onClick={addPurchase}>+ Catat Pembelian</button>}
       </div>
-      <div style={{ ...S.row, marginBottom: 12 }}>
+      <div style={{ ...S.row, marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
         {["Semua", "Material", "Alat"].map((c) => (
           <span key={c} style={S.chip(c === filterJenis)} onClick={() => setFilterJenis(c)}>{c}</span>
         ))}
+        <span style={{ ...S.muted, fontSize: 12, margin: "0 4px 0 10px", alignSelf: "center" }}>Status:</span>
+        {[["Berjalan", "Berjalan"], ["Selesai", "📦 Arsip (Selesai)"], ["Semua", "Semua"]].map(([v, lbl]) => (
+          <span key={v} style={S.chip(v === filterStatus)} onClick={() => setFilterStatus(v)}>{lbl}</span>
+        ))}
       </div>
+      {isArsip && (
+        <div style={{ ...S.note, marginBottom: 12 }}>
+          📦 <b>Arsip pembelian project selesai</b> — dikelompokkan per project (1 bundle), terpisah dari project berjalan.
+        </div>
+      )}
       <div style={{ ...S.row, marginBottom: 14, gap: 10 }}>
         <MiniCard label="Total Pembelian" value={fmtRp(total)} color="red" />
         <MiniCard label="Material" value={fmtRp(totMat)} color="accent" />
@@ -110,18 +147,20 @@ export default function ProjectPurchaseView() {
             {can.delete && <th style={S.tableStyles.th}></th>}
           </tr></thead>
           <tbody>
-            {rows.length ? rows.map((x, i) => (
-              <tr key={i}>
-                <td style={S.tableStyles.td}>{x.tanggal.slice(5)}</td>
-                <td style={S.tableStyles.td}><span style={S.pill(x.jenis === "Alat" ? "yellow" : "accent")}>{x.jenis}</span></td>
-                <td style={S.tableStyles.td}>{x.item}</td>
-                <td style={S.tableStyles.td}>{x.qty}</td>
-                <td style={S.tableStyles.td}>{fmtRp(x.total)}</td>
-                <td style={S.tableStyles.td}>{pName(db, x.projectId)}</td>
-                <td style={S.tableStyles.td}>{x.nota ? <Tag>📎 nota</Tag> : <span style={S.muted}>-</span>}</td>
-                {can.delete && <td style={S.tableStyles.td}><button style={S.btnSm("ghost")} onClick={() => { if (window.confirm("Hapus pembelian ini?")) deleteRow("purchases", x.id); }}>🗑</button></td>}
-              </tr>
-            )) : <tr><td colSpan={can.delete ? 8 : 7} style={{ ...S.tableStyles.td, ...S.muted, textAlign: "center", padding: 18 }}>Tidak ada data untuk filter ini</td></tr>}
+            {!rows.length ? (
+              <tr><td colSpan={can.delete ? 8 : 7} style={{ ...S.tableStyles.td, ...S.muted, textAlign: "center", padding: 18 }}>Tidak ada data untuk filter ini</td></tr>
+            ) : isArsip ? (
+              bundles.map((b) => (
+                <React.Fragment key={b.pid}>
+                  <tr><td colSpan={can.delete ? 8 : 7} style={{ background: "#0f1b30", color: cs.ara, fontWeight: 700, fontSize: 12, padding: "9px 12px" }}>
+                    📦 {pName(db, b.pid)} <span style={S.muted}>· {b.items.length} transaksi · subtotal {fmtRp(b.subtotal)}</span>
+                  </td></tr>
+                  {b.items.map((x, i) => purchaseRow(x, b.pid + "_" + i))}
+                </React.Fragment>
+              ))
+            ) : (
+              rows.map((x, i) => purchaseRow(x, i))
+            )}
           </tbody>
         </table>
       </div>

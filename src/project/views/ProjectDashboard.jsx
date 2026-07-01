@@ -3,7 +3,7 @@ import { cs } from "../../theme/cs.js";
 import * as S from "../utils/styles.js";
 import { useProject } from "../context/ProjectContext.jsx";
 import { useModal } from "../context/ModalContext.jsx";
-import { calc, budget, daysLate, overBudgetProjects, pName } from "../utils/finance.js";
+import { calc, budget, daysLate, overBudgetProjects, pName, profitInfo } from "../utils/finance.js";
 import { fmtRp } from "../utils/constants.js";
 import { Bar } from "../components/Bits.jsx";
 
@@ -15,8 +15,12 @@ export default function ProjectDashboard() {
   const held = db.projects.filter((p) => p.status === "HOLD");
   const progressList = [...active, ...held];
   const totNilai = db.projects.reduce((s, p) => s + p.nilai, 0);
-  let totBiaya = 0, totEst = 0;
-  db.projects.forEach((p) => { const k = calc(db, p.id); totBiaya += k.aktualBiaya; totEst += k.estProfit; });
+  let totBiaya = 0, totProfit = 0, rabMissing = 0;
+  db.projects.forEach((p) => {
+    const k = calc(db, p.id); totBiaya += k.aktualBiaya;
+    const pi = profitInfo(db, p.id); totProfit += pi.value;
+    if (pi.rabMissing) rabMissing++;
+  });
   const dpTot = db.dp.reduce((s, d) => s + d.jumlah, 0);
   const ob = overBudgetProjects(db);
   const telat = db.projects.filter((p) => daysLate(p, today) > 0);
@@ -55,7 +59,7 @@ export default function ProjectDashboard() {
         <Card><Label>Project Aktif</Label><Val color="accent">{active.length}</Val><Delta>{held.length} hold · {db.projects.length} total</Delta></Card>
         {can.finance && <Card><Label>DP / Pembayaran Diterima</Label><Val>{fmtRp(dpTot)}</Val><Delta>dari {fmtRp(totNilai)} nilai kontrak</Delta></Card>}
         {can.finance && <Card><Label>Biaya Terealisasi</Label><Val color="red">{fmtRp(totBiaya)}</Val></Card>}
-        {can.finance && <Card><Label>Estimasi Profit (RAB)</Label><Val color="green">{fmtRp(totEst)}</Val></Card>}
+        {can.finance && <Card><Label>Proyeksi Profit</Label><Val color="green">{fmtRp(totProfit)}</Val><Delta>{rabMissing > 0 ? `⚠️ ${rabMissing} project belum isi RAB` : "estimasi + aktual"}</Delta></Card>}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>

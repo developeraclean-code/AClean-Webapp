@@ -5,7 +5,7 @@ import { supabase } from "../../supabaseClient.js";
 import { reportError } from "../../lib/reportError.js";
 import { useProject } from "../context/ProjectContext.jsx";
 import { useModal } from "../context/ModalContext.jsx";
-import { calc, budget, daysLate, pName, weekSummary, matRecon, toolsAtProject } from "../utils/finance.js";
+import { calc, budget, daysLate, pName, weekSummary, matRecon, toolsAtProject, profitInfo } from "../utils/finance.js";
 import { fmtRp } from "../utils/constants.js";
 import { StatusPill } from "../components/Bits.jsx";
 import Modal from "../components/Modal.jsx";
@@ -244,8 +244,9 @@ export default function ProjectDetailView() {
             <KV l="Sisa tagihan" v={<span style={{ color: cs.yellow }}>{fmtRp(k.sisaTagihan)}</span>} />
             <hr style={{ border: "none", borderTop: `1px solid ${cs.border}`, margin: "8px 0" }} />
             <KV l="Biaya terpakai" v={<span style={{ color: cs.red }}>{fmtRp(k.aktualBiaya)}</span>} />
-            <KV l={<b>{p.status === "SELESAI" ? "Aktual profit" : "Estimasi profit (RAB)"}</b>}
-                v={<b style={{ color: cs.green }}>{fmtRp(p.status === "SELESAI" ? k.aktualProfit : k.estProfit)}</b>} />
+            {(() => { const pi = profitInfo(db, p.id); return (
+              <KV l={<b>{pi.label}</b>} v={<b style={{ color: pi.rabMissing ? cs.yellow : cs.green }}>{fmtRp(pi.value)}</b>} />
+            ); })()}
           </div>
         )}
         <div style={S.card}>
