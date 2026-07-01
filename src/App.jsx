@@ -69,6 +69,10 @@ import { createOrder as createOrderLib } from "./lib/createOrder.js";
 import { sendToARA as sendToARAImpl } from "./lib/ara.js";
 import { markPaid as markPaidLib } from "./lib/markPaid.js";
 import { handleGroupPayment as handleGroupPaymentLib } from "./lib/groupPayment.js";
+import { checkStuckJobs as checkStuckJobsLib } from "./lib/checkStuckJobs.js";
+import { doLogin as doLoginLib } from "./lib/doLogin.js";
+import { mergedInvoiceWA as mergedInvoiceWALib } from "./lib/mergedInvoiceWa.js";
+import { approveInvoiceCore as approveInvoiceCoreLib } from "./lib/approveInvoiceCore.js";
 import { submitLaporan as submitLaporanImpl } from "./lib/submitLaporan.js";
 import { loadAllData } from "./lib/loadAllData.js";
 import { approveKasbon as approveKasbonLib, rejectKasbon as rejectKasbonLib } from "./lib/kasbon.js";
@@ -1503,73 +1507,7 @@ export default function ACleanWebApp() {
   };
 
   // ── GAP-7: Cek job stuck — kirim reminder ke teknisi jika laporan belum masuk 1 jam setelah selesai ──
-  const checkStuckJobs = async () => {
-    // ── SLA CHECK: alert jika teknisi belum ON_SITE 30 menit setelah jam booking ──
-    const now2 = new Date();
-    const slaAlerts = ordersData.filter(o => {
-      if (o.status !== "DISPATCHED" && o.status !== "CONFIRMED") return false;
-      if (!o.date || !o.time || o.date > TODAY) return false;
-      const bookingMs = (o.date && o.time ? new Date(o.date + "T" + o.time + ":00").getTime() : 0);
-      const menit30 = 30 * 60 * 1000;
-      // Sudah lebih dari 30 menit dari jam booking tapi belum ON_SITE
-      return (now2.getTime() > bookingMs + menit30) && o.date === TODAY;
-    });
-    if (slaAlerts.length > 0) {
-      slaAlerts.forEach(o => {
-        const alreadyAlerted = agentLogs.some(l =>
-          l.action === "SLA_ALERT" && (l.detail || "").includes(o.id)
-          && (Date.now() - new Date(l.created_at || 0).getTime()) < 2 * 60 * 60 * 1000
-        );
-        if (!alreadyAlerted) {
-          addAgentLog("SLA_ALERT",
-            `⚠️ SLA: ${o.teknisi} belum konfirmasi tiba — ${o.id} ${o.customer} jam ${o.time}`,
-            "WARNING"
-          );
-          showNotif(`⚠️ SLA: ${o.teknisi} belum di lokasi ${o.customer} (booking ${o.time})`, true);
-          // Kirim WA Owner
-          const owners = [...(teknisiData || []), ...(userAccounts || [])].filter(u => u.role === "Owner" && u.phone);
-          const slaMsg = `⚠️ *SLA ALERT*\n📋 ${o.id}\n👤 ${o.customer}\n👷 ${o.teknisi || "-"}\n⏰ Booking: ${o.time} — belum konfirmasi tiba`;
-          owners.forEach(ow => sendWA(ow.phone, slaMsg));
-        }
-      });
-    }
-    const nowMs = Date.now();
-    const stuckOrders = ordersData.filter(o => {
-      if (!["DISPATCHED", "ON_SITE"].includes(o.status)) return false;
-      if (!o.date || !o.time_end) return false;
-      // Sudah lewat tanggal job
-      if (o.date > TODAY) return false;
-      // Hitung estimasi selesai
-      const [h, m] = (o.time_end || "17:00").split(":").map(Number);
-      const jobEndMs = (o.date && o.time_end ? new Date(o.date + "T" + o.time_end + ":00").getTime() : 0);
-      const satu_jam = 60 * 60 * 1000;
-      // Sudah lebih dari 1 jam setelah selesai
-      return nowMs > (jobEndMs + satu_jam);
-    });
-
-    for (const o of stuckOrders) {
-      // Cek apakah sudah ada laporan
-      const sudahAda = laporanReports.find(r => r.job_id === o.id);
-      if (sudahAda) continue;
-      // Cek apakah reminder sudah dikirim (pakai agent_logs)
-      const sudahReminder = agentLogs.find(l =>
-        l.action === "LAPORAN_REMINDER" && l.detail?.includes(o.id)
-      );
-      if (sudahReminder) continue;
-
-      // Kirim WA reminder ke teknisi
-      const tek = teknisiData.find(t => t.name === o.teknisi);
-      if (tek?.phone) {
-        const msg = `⏰ *Reminder Laporan*
-
-Halo ${o.teknisi}, job *${o.id}* (${o.customer} — ${o.service}) sudah selesai lebih dari 1 jam.
-
-Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 🙏`;
-        if (tek?.phone) sendWA(tek.phone, msg);
-      }
-      addAgentLog("LAPORAN_REMINDER", `Reminder laporan dikirim ke ${o.teknisi} — ${o.id}`, "WARNING");
-    }
-  };
+  const checkStuckJobs = () => checkStuckJobsLib({ TODAY, addAgentLog, agentLogs, appSettings, laporanReports, ordersData, sendWA, showNotif, teknisiData, userAccounts });
 
   const compressImg = (file, quality = 0.70) => new Promise((res, rej) => {
     const r = new FileReader();
@@ -2212,75 +2150,7 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
     setShowUnitPresetModal, setUnitPresetHistory, setUnitPresetSelected, showNotif,
     submitLaporanLock, supabase,
   });
-  const doLogin = async (email, pass) => {
-    setLoginError("");
-
-    // ── SEC-07: Cek lockout brute force ──
-    const _now = Date.now();
-    const _lockout = _ls("lockoutUntil", 0);
-    if (_lockout > _now) {
-      const sisa = Math.ceil((_lockout - _now) / 1000);
-      setLoginError(`⛔ Terlalu banyak percobaan. Coba lagi dalam ${sisa} detik.`);
-      return;
-    }
-
-    try {
-      // ── Coba Supabase Auth dulu (untuk akun real dengan UUID) ──
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
-
-      if (!error && data?.user) {
-        // Login Supabase Auth berhasil — load profil dari user_profiles
-        const { data: profile, error: profileErr } = await supabase
-          .from("user_profiles").select("*").eq("id", data.user.id).single();
-        if (profileErr) {
-          console.error("[LOGIN_PROFILE_LOAD_ERROR]", profileErr.message);
-          setLoginError("Gagal load profil pengguna. Silakan coba lagi. (Err: " + profileErr.code + ")");
-          await supabase.auth.signOut();
-          return;
-        }
-        if (!profile || !profile.active) {
-          setLoginError("Akun tidak aktif. Hubungi Owner.");
-          await supabase.auth.signOut(); return;
-        }
-        // SEC-08: Tambah expiry 8 jam ke session
-        // Strip kolom legacy `password` (terenkripsi, migrasi 079) — jangan pernah kirim ke client/localStorage
-        const { password: _ignorePwd, ...profileSafe } = profile;
-        const userObj = { ...data.user, ...profileSafe, _exp: Date.now() + 8 * 60 * 60 * 1000 };
-        setCurrentUser(userObj);
-        setIsLoggedIn(true);
-        setActiveRole(profile.role.toLowerCase());
-        const defaultMenu = profile.role === "Finance" ? "finance" : "dashboard";
-        setActiveMenu(defaultMenu);
-        try { localStorage.setItem("aclean_lastMenu", defaultMenu); } catch { /* localStorage opsional — abaikan */ }
-        _lsSave("localSession", userObj);
-        // SEC-07: Reset counter setelah login berhasil
-        setLoginAttempts(0); setLockoutUntil(0);
-        _lsSave("loginAttempts", 0); _lsSave("lockoutUntil", 0);
-        showNotif("Selamat datang, " + profile.name + "!");
-        addAgentLog("LOGIN", `${profile.name} (${profile.role}) login via Supabase Auth`, "SUCCESS");
-        requestPushPermission();
-        return;
-      }
-
-      // ── Fallback dihapus: semua login wajib via Supabase Auth ──
-      // Tidak ada lagi login dengan password hardcode
-
-      // SEC-07: increment attempt counter
-      const newAttempts = loginAttempts + 1;
-      setLoginAttempts(newAttempts);
-      _lsSave("loginAttempts", newAttempts);
-      if (newAttempts >= 5) {
-        const lockUntil = Date.now() + 5 * 60 * 1000; // 5 menit
-        setLockoutUntil(lockUntil);
-        _lsSave("lockoutUntil", lockUntil);
-        setLoginError("⛔ 5 percobaan gagal. Akun dikunci 5 menit.");
-      } else {
-        setLoginError(`Email atau password salah. (${newAttempts}/5 percobaan)`);
-      }
-    } catch (err) {
-      setLoginError("Terjadi kesalahan: " + err.message);
-    }
-  };
+  const doLogin = (email, pass) => doLoginLib(email, pass, { _ls, _lsSave, addAgentLog, loginAttempts, requestPushPermission, setActiveMenu, setActiveRole, setCurrentUser, setIsLoggedIn, setLockoutUntil, setLoginAttempts, setLoginError, showNotif, supabase });
 
   const doLogout = async () => {
     invalidateCache();
@@ -3023,63 +2893,7 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
   // Validasi: semua invoice harus customer/phone yang sama. Otomatis sort by created_at asc.
   // Cap maksimal 5 invoice per gabungan (UX & payload safety).
   // Return: { ok: bool, error?: string, retryContext?: object }
-  const mergedInvoiceWA = async (invList) => {
-    if (!Array.isArray(invList) || invList.length < 2) {
-      showNotif("⚠️ Pilih minimal 2 invoice untuk digabung");
-      return { ok: false, error: "min" };
-    }
-    if (invList.length > 5) {
-      showNotif("⚠️ Maksimal 5 invoice per gabungan");
-      return { ok: false, error: "max" };
-    }
-    const phone = invList[0]?.phone;
-    if (!phone) { showNotif("⚠️ No. HP customer tidak tersedia"); return { ok: false, error: "no_phone" }; }
-    const allSamePhone = invList.every(i => samePhone(i.phone, phone));
-    if (!allSamePhone) {
-      showNotif("⚠️ Semua invoice harus dari customer/nomor yang sama");
-      return { ok: false, error: "diff_customer" };
-    }
-    const sorted = [...invList].sort((a, b) =>
-      new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
-    );
-    const customer = sorted[0]?.customer || "";
-    showNotif(`⏳ Menggabungkan ${sorted.length} invoice...`);
-    const portalLink = await getPortalLink(phone, customer);
-    const uploaded = await uploadMergedInvoicePDFForWA(sorted, portalLink);
-    if (!uploaded) {
-      showNotif("⚠️ Gagal upload PDF gabungan — fallback teks saja");
-    }
-    const totalAll = sorted.reduce((s, i) => s + (Number(i.total) || 0), 0);
-    const sisaAll = sorted.reduce((s, i) => {
-      const sisa = (i.status === "PAID") ? 0
-        : (i.remaining_amount > 0 ? Number(i.remaining_amount) : Number(i.total) || 0);
-      return s + sisa;
-    }, 0);
-    const lines = sorted.map((i, idx) => {
-      const tgl = i.created_at ? new Date(i.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "—";
-      return `${idx + 1}. ${i.service || "Servis AC"} — 📅 ${tgl}`;
-    }).join("\n");
-    const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
-    const tagihanLine = sisaAll > 0
-      ? `💰 *Total Tagihan: ${fmt(sisaAll)}*${totalAll !== sisaAll ? ` _(dari ${fmt(totalAll)})_` : ""}`
-      : `✅ *Semua sudah lunas — total ${fmt(totalAll)}*`;
-    const msg = `Halo ${customer}, Terlampir tagihan gabungan untuk ${sorted.length} pekerjaan servis kami dalam 1 dokumen PDF:\n\n${lines}\n\n${tagihanLine}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nMohon kirimkan bukti transfer setelah pembayaran ya. Terima kasih! 🙏${portalLine}`;
-    const sent = await sendWA(phone, msg, uploaded ? { url: uploaded.url, filename: uploaded.filename } : {});
-    if (sent) {
-      showNotif(`✅ ${sorted.length} invoice terkirim digabung ke ${customer}${uploaded ? " 📎" : ""}`);
-      const ids = sorted.map(i => i.id);
-      addAgentLog("INVOICE_MERGED_SEND",
-        `${sorted.length} invoice digabung & dikirim ke ${customer} (${phone}) oleh ${currentUser?.name || "—"}: ${ids.join(", ")}`,
-        "SUCCESS"
-      );
-      // Audit DB per-invoice
-      await writeInvoiceSendAudit(ids, "merged", ids.join(","));
-      return { ok: true };
-    } else {
-      showNotif(`⚠️ Gagal kirim WA ke ${customer} — cek koneksi Fonnte`);
-      return { ok: false, error: "send_failed", retryContext: { invList: sorted } };
-    }
-  };
+  const mergedInvoiceWA = (invList) => mergedInvoiceWALib(invList, { addAgentLog, appSettings, currentUser, fmt, getPortalLink, samePhone, sendWA, showNotif, uploadMergedInvoicePDFForWA, writeInvoiceSendAudit });
 
   // ── Buat 1 invoice baru gabungan dari beberapa invoice (untuk 1 customer) ──
   // Wrapper (Fase 2, kalibrasi pola ctx stateful): createConsolidatedInvoice
@@ -3178,73 +2992,7 @@ Mohon segera submit laporan di aplikasi ${appSettings.app_name || "AClean"} ya! 
   // Wrapper (Fase 3, pola ctx): retroMatchPayment pindah ke lib/retroMatch.
   const retroMatchPayment = (inv) => retroMatchPaymentLib(inv, { addAgentLog, normalizePhone, sendWA, setInvoicesData, supabase, userAccounts });
 
-  const approveInvoiceCore = async (inv) => {
-    // Input validation
-    if (!inv.id || inv.id.trim().length === 0) {
-      showNotif("❌ Invoice ID tidak valid");
-      return null;
-    }
-    // Allow Rp 0 for repair_gratis (free repairs), but require positive for regular invoices
-    if (!inv.repair_gratis && !validatePositiveNumber(inv.total)) {
-      showNotif("❌ Invoice total harus lebih dari 0");
-      return null;
-    }
-    if (!inv.customer || inv.customer.trim().length === 0) {
-      showNotif("❌ Nama customer tidak valid");
-      return null;
-    }
-
-    const today = getLocalDate();
-    const due = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const approvedAt = getLocalISOString(); // Indonesia timezone (UTC+7)
-    const sentAt = getLocalISOString(); // When invoice sent/approved timestamp
-    setInvoicesData(prev => prev.map(i =>
-      i.id === inv.id ? { ...i, status: "UNPAID", sent: sentAt, due } : i
-    ));
-    setOrdersData(prev => prev.map(o =>
-      // Multi-hari: propagate ke parent + semua child multi-day
-      (o.id === inv.job_id || (o.parent_job_id === inv.job_id && o.is_multi_day))
-        ? { ...o, invoice_id: inv.id, status: "INVOICE_APPROVED" } : o
-    ));
-    // Sync ke DB untuk child multi-day juga
-    {
-      const childIds = (ordersData || [])
-        .filter(o => o.parent_job_id === inv.job_id && o.is_multi_day)
-        .map(o => o.id);
-      if (childIds.length > 0) {
-        supabase.from("orders").update({ invoice_id: inv.id, status: "INVOICE_APPROVED" }).in("id", childIds);
-      }
-    }
-    // GAP 4: simpan approved_by, trigger DB akan catat audit_log
-    await setAuditUser();
-    // Update invoice — try full, fallback minimal
-    {
-      const { error: apErr } = await updateInvoice(supabase, inv.id, {
-        status: "UNPAID", sent: true, due,
-        approved_by: currentUser?.name || null,
-        approved_at: approvedAt,
-      }, auditUserName());
-      if (apErr) {
-        console.warn("invoice approve full failed:", apErr.message);
-        const { error: apErr2 } = await updateInvoice(supabase, inv.id, { status: "UNPAID" }, auditUserName());
-        if (apErr2) reportError("invoice.approve.minimalFailed", apErr2, { invoiceId: inv.id });
-      }
-    }
-    // Update order status — with fallback
-    {
-      const { error: oErr } = await updateOrderStatus(supabase, inv.job_id, "INVOICE_APPROVED", auditUserName(), { invoice_id: inv.id });
-      if (oErr) {
-        console.warn("orders INVOICE_APPROVED failed:", oErr.message);
-        await updateOrderStatus(supabase, inv.job_id, "COMPLETED", auditUserName());
-      }
-    }
-    addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} approve oleh ${currentUser?.name || "—"} — ${inv.customer} ${fmt(inv.total)}`, "SUCCESS");
-
-    // Retro-match: cari bukti bayar yang sudah masuk sebelum invoice di-approve
-    retroMatchPayment(inv).catch(e => console.warn("[RETRO_MATCH] fire-and-forget error:", e.message));
-
-    return due; // kembalikan due date untuk dipakai caller
-  };
+  const approveInvoiceCore = (inv) => approveInvoiceCoreLib(inv, { addAgentLog, auditUserName, currentUser, fmt, getLocalDate, getLocalISOString, ordersData, reportError, retroMatchPayment, setAuditUser, setInvoicesData, setOrdersData, showNotif, supabase, updateInvoice, updateOrderStatus, validatePositiveNumber });
 
   // ── approveInvoice: buka popup pilihan (Kirim ke Customer / Simpan Dahulu) ──
   const approveInvoice = (inv) => {
