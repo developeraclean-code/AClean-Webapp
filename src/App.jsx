@@ -1179,10 +1179,21 @@ export default function ACleanWebApp() {
         jwt = refreshed?.data?.session?.access_token;
       }
       if (!jwt) return;
-      const r = await fetch("/api/get-api-token", {
+      const _postExchange = (bearer) => fetch("/api/get-api-token", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}` }
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${bearer}` }
       });
+      let r = await _postExchange(jwt);
+      // 401 = JWT ditolak Supabase (sesi basi walau tab masih "login"). Paksa refresh
+      // sesi lalu coba SEKALI lagi dgn JWT segar. Kalau refresh gagal -> sesi mati,
+      // biarkan silent (view yg butuh token akan tampil error, bukan loop tak henti).
+      if (r.status === 401) {
+        try {
+          const refreshed = await supabase.auth.refreshSession();
+          const freshJwt = refreshed?.data?.session?.access_token;
+          if (freshJwt && freshJwt !== jwt) r = await _postExchange(freshJwt);
+        } catch { /* refresh gagal -> sesi benar-benar mati, user perlu login ulang */ }
+      }
       if (r.ok) {
         const d = await r.json();
         if (d.token) {

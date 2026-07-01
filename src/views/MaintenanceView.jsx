@@ -123,7 +123,12 @@ export default function MaintenanceView({
     finally { setLoading(false); }
   }, [call, showNotif]);
 
-  useEffect(() => { loadClients(); }, [loadClients]);
+  // Load SEKALI saat mount. Sengaja deps kosong: `loadClients` bergantung pada
+  // `apiFetch` (dibuat ulang tiap render App) — kalau dijadikan dep, efek jalan
+  // tiap render → spam /api/maintenance (loop, terlihat saat token gagal 401).
+  // loadClients baca ref token saat call-time, jadi capture render pertama aman.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadClients(); }, []);
 
   const openClient = useCallback(async (c) => {
     setSel(c); setTab("unit"); setUnits([]); setLogs([]);
