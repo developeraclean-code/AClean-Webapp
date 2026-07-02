@@ -1207,6 +1207,9 @@ return (
       else if (archiveTabFilter === "diarsipkan") displayUnits = archivedUnits;
       else displayUnits = units; // "semua"
 
+      // Unit aktif tampil di atas, nonaktif di bawah
+      displayUnits = [...displayUnits].sort((a, b) => (b.is_active ? 1 : 0) - (a.is_active ? 1 : 0));
+
       // Skip card jika tidak ada unit yang match filter
       if (displayUnits.length === 0) return null;
 

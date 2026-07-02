@@ -1938,12 +1938,13 @@ async function taskPayrollWA() {
     const fullStr   = row.full_week_bonus ? `\nBonus Full Week : +Rp ${fmt(fullBonus)}` : "";
     const manStr    = row.manual_bonus > 0 ? `\nBonus Manual : +Rp ${fmt(row.manual_bonus)}${row.manual_bonus_note ? " (" + row.manual_bonus_note + ")" : ""}` : "";
 
-    // Ambil bonus PAID periode ini untuk orang ini
+    // Ambil bonus yang DIBAYAR minggu ini (filter by paid_at, BUKAN order_date —
+    // komisi cair 30–45 hari setelah order_date, jadi order_date pasti di luar rentang minggu ini).
     const { data: bonuses } = await sb.from("order_bonuses")
       .select("bonus_type,total_amount,amount_per_person,order_id")
       .eq("status", "PAID")
-      .gte("order_date", periodStart)
-      .lte("order_date", periodEnd)
+      .gte("paid_at", periodStart)
+      .lte("paid_at", periodEnd + "T23:59:59")
       .contains("team_members", [row.user_name]);
 
     const totalKomisi = (bonuses || []).reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
@@ -1960,19 +1961,29 @@ async function taskPayrollWA() {
     } else { failed++; }
   }
 
-  // Auto-update PENDING → ELIGIBLE bonuses yang sudah >30 hari
-  // PENTING: builder Supabase TIDAK punya .catch (cuma thenable) — pakai .catch langsung = crash
-  // "catch is not a function" (bug yang sama yang dulu bikin task backup gagal). Pakai await+try/catch.
-  try {
-    const { error: bonErr } = await sb.rpc("fn_auto_eligible_bonuses");
-    if (bonErr) throw new Error(bonErr.message);
-  } catch (e) {
-    try { Sentry.captureException(e, { tags: { op: "fn_auto_eligible_bonuses" } }); } catch (_) {}
-    console.error("[PAYROLL_WA] fn_auto_eligible_bonuses fail:", e.message);
-  }
+  // NB: flip PENDING → ELIGIBLE dipindah ke taskBonusEligible (harian, independen).
+  // Dulu di sini → tak jalan kalau tak ada payroll row minggu ini (early-return di atas).
 
   await log("PAYROLL_WA", `Sent=${sent} Failed=${failed} period=${periodStart}`, sent > 0 ? "SUCCESS" : "WARN");
   return { sent, failed, period: periodStart };
+}
+
+// ══════════════════════════════════════════════════
+// TASK: Bonus Eligible — flip komisi PENDING → ELIGIBLE setelah >30 hari (harian, independen)
+// Dipisah dari payroll-wa supaya status DB tetap akurat walau payroll belum digenerate / WA OFF.
+// PENTING: builder Supabase TIDAK punya .catch (cuma thenable) — pakai await+try/catch.
+// ══════════════════════════════════════════════════
+async function taskBonusEligible() {
+  try {
+    const { error } = await sb.rpc("fn_auto_eligible_bonuses");
+    if (error) throw new Error(error.message);
+    await log("BONUS_ELIGIBLE", "Komisi >30 hari di-flip ke ELIGIBLE", "SUCCESS");
+    return { ok: true };
+  } catch (e) {
+    try { Sentry.captureException(e, { tags: { op: "fn_auto_eligible_bonuses" } }); } catch (_) {}
+    await log("BONUS_ELIGIBLE", `fail: ${e.message}`, "ERROR");
+    return { ok: false, error: e.message };
+  }
 }
 
 // ══════════════════════════════════════════════════
@@ -2171,6 +2182,7 @@ async function taskTick() {
     { t: "maintenance-followup-alert", fn: taskMaintenanceFollowupAlert,   h: 10 },
     { t: "maintenance-contract-expiry", fn: taskMaintenanceContractExpiry, h: 10, dow: 1 },
     { t: "snapshot-cleanup",           fn: taskSnapshotCleanup,            h: 10 },
+    { t: "bonus-eligible",           fn: taskBonusEligible,          h: 7 },
     { t: "payroll-wa",               fn: taskPayrollWA,              h: 18, dow: 6 },
     { t: "wa-snapshot",              fn: taskWaSnapshot,             h: 20 },
     { t: "daily",                    fn: taskDaily,                  h: 21 },
@@ -2297,6 +2309,7 @@ export default async function handler(req, res) {
       "maintenance-contract-expiry": taskMaintenanceContractExpiry,
       "material-pulang-reminder":   taskMaterialPulangReminder,
       "payroll-wa":       taskPayrollWA,
+      "bonus-eligible":   taskBonusEligible,
       "log-cleanup":      taskLogCleanup,
       "auto-return-brought": taskAutoReturnBrought,
       "r2-cleanup-90d":   taskR2Cleanup90d,
