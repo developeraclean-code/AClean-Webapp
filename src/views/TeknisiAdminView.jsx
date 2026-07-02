@@ -521,7 +521,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const [ordersNoBonus, setOrdersNoBonus] = useState([]);
   const [periodInvMap, setPeriodInvMap] = useState({}); // { invoiceId: { id, total, materials_detail } }
   const [loadingBonus, setLoadingBonus] = useState(false);
-  const [bonusForm, setBonusForm]       = useState(null); // order sedang direview
+  const [openBonusIds, setOpenBonusIds] = useState(() => new Set()); // order2 yg panel input bonusnya terbuka (multi, inline)
   const [voidForm, setVoidForm]         = useState(null); // { id, reason }
   const [bonusFilter, setBonusFilter]   = useState("ALL"); // ALL|PENDING|ELIGIBLE|PAID|VOID
 
@@ -795,6 +795,14 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     showNotif?.("🗑 Gaji harian " + t.name + " direset ke 0");
   };
 
+  // Buka/tutup panel input bonus inline per kartu (boleh beberapa terbuka sekaligus)
+  const toggleBonusCard = (id) => setOpenBonusIds(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  const closeBonusCard = (id) => setOpenBonusIds(prev => {
+    const n = new Set(prev); n.delete(id); return n;
+  });
+
   // ── Simpan bonus order (multi-kategori) ──
   // entries: [{ bonus_type, total_amount, gross_revenue, material_cost, note }]
   // 1 order boleh punya beberapa bonus (Freon + Kapasitor, dst) — tapi tak boleh tipe sama dobel.
@@ -808,7 +816,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     const skipped  = entries.length - toInsert.length;
     if (toInsert.length === 0) {
       showNotif?.("⚠️ Semua kategori itu sudah ada untuk order ini. Void dulu bila ingin menggantinya.");
-      setBonusForm(null); loadBonuses(); return;
+      closeBonusCard(orderRow.id); loadBonuses(); return;
     }
     let ok = 0, fail = 0;
     for (const e of toInsert) {
@@ -825,7 +833,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
       }, currentUser?.name);
       if (error) fail++; else ok++;
     }
-    setBonusForm(null);
+    closeBonusCard(orderRow.id);
     loadBonuses();
     showNotif?.(`✅ ${ok} bonus disimpan${skipped ? `, ${skipped} dilewati (sudah ada)` : ""}${fail ? `, ${fail} gagal` : ""}. Status: PENDING`);
   };
@@ -1369,8 +1377,9 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     const isOmsetBesar = (o.service !== "Install" && invTotal >= 1000000) ||
                                          (o.service === "Install" && invTotal >= 1500000);
                     const isInstallMulti = o.service === "Install" && Number(o.units) >= 2;
+                    const isOpen = openBonusIds.has(o.id);
                     return (
-                      <div key={o.id} style={{ background: cs.card, borderRadius: 8, padding: "10px 12px", border: "1px solid " + (isComplain ? cs.red + "66" : cs.border) }}>
+                      <div key={o.id} style={{ background: cs.card, borderRadius: 8, padding: "10px 12px", border: "1px solid " + (isOpen ? cs.accent : (isComplain ? cs.red + "66" : cs.border)) }}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
@@ -1387,10 +1396,19 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                               {isInstallMulti && <span style={{ fontSize: 10, background: "#422006", color: "#fcd34d", borderRadius: 4, padding: "1px 6px" }}>🔩 Install {o.units} unit</span>}
                             </div>
                           </div>
-                          <button onClick={() => setBonusForm({ order: o, inv, team })} style={{ padding: "6px 14px", borderRadius: 7, background: isComplain ? "#6b7280" : cs.accent, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
-                            + Input Bonus
+                          <button onClick={() => toggleBonusCard(o.id)} style={{ padding: "6px 14px", borderRadius: 7, background: isOpen ? cs.surface : (isComplain ? "#6b7280" : cs.accent), border: isOpen ? "1px solid " + cs.border : "none", color: isOpen ? cs.muted : "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+                            {isOpen ? "✕ Tutup" : "+ Input Bonus"}
                           </button>
                         </div>
+                        {isOpen && (
+                          <div style={{ marginTop: 10 }}>
+                            <BonusInputForm
+                              orderRow={o} inv={inv} team={team} ordersData={ordersData}
+                              onSave={handleSaveBonus} onCancel={() => closeBonusCard(o.id)}
+                              bonusCategories={bonusCategories} BONUS_LABELS={BONUS_LABELS} BONUS_DEFAULTS={BONUS_DEFAULTS}
+                            />
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1417,19 +1435,6 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                 </div>
               </div>
             )}
-
-            {/* Input bonus form */}
-            {bonusForm && <BonusInputForm
-              orderRow={bonusForm.order}
-              inv={bonusForm.inv}
-              team={bonusForm.team}
-              ordersData={ordersData}
-              onSave={handleSaveBonus}
-              onCancel={() => setBonusForm(null)}
-              bonusCategories={bonusCategories}
-              BONUS_LABELS={BONUS_LABELS}
-              BONUS_DEFAULTS={BONUS_DEFAULTS}
-            />}
 
             {/* Daftar bonus */}
             {loadingBonus ? (
