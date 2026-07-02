@@ -136,7 +136,6 @@ const _todayLap = getLocalDate?.() || new Date().toISOString().slice(0, 10);
 const [lapViewMode, setLapViewMode] = useState("detail"); // "rekap" | "detail" — default detail
 const [rekapDate, setRekapDate]     = useState(_todayLap);
 const [surveyKirimModal, setSurveyKirimModal] = useState(null);
-const [expandedPekerjaanIds, setExpandedPekerjaanIds] = useState(new Set());
 
 // Terima event dari LaporanDetailModal yang minta buka SurveyKirimModal
 useEffect(() => {
@@ -1163,93 +1162,29 @@ return (
             })()}
           </div>
 
-          {/* ── Detail Pekerjaan per Unit — toggle oleh admin ── */}
-          {expandedPekerjaanIds.has(r.id) && (
-            <div style={{ background: cs.surface, border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: cs.accent, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>🔧 Detail Pekerjaan Teknisi</div>
-
-              {/* Per-unit detail */}
-              {(r.units || []).map((u, ui) => (
-                <div key={ui} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: ui < (r.units || []).length - 1 ? "1px solid " + cs.border : "none" }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 6 }}>
-                    Unit {u.unit_no || ui + 1}
-                    {u.label && <span style={{ color: cs.muted, fontWeight: 400 }}> · {u.label}</span>}
-                    {u.merk && <span style={{ color: cs.muted, fontWeight: 400 }}> · {u.merk}</span>}
-                    {u.pk && <span style={{ background: cs.accent + "22", color: cs.accent, fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 99, marginLeft: 4 }}>{u.pk}</span>}
-                  </div>
-
-                  {/* Pekerjaan */}
-                  {(u.pekerjaan || []).length > 0 && (
-                    <div style={{ marginBottom: 5 }}>
-                      <span style={{ fontSize: 10, color: cs.muted, fontWeight: 700 }}>Pekerjaan: </span>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 3 }}>
-                        {u.pekerjaan.map((p, pi) => (
-                          <span key={pi} style={{ fontSize: 10, background: cs.green + "18", color: cs.green, border: "1px solid " + cs.green + "33", borderRadius: 99, padding: "2px 8px" }}>✓ {p}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Kondisi sebelum/sesudah */}
-                  {((u.kondisi_sebelum || []).length > 0 || (u.kondisi_setelah || []).length > 0) && (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 5 }}>
-                      {(u.kondisi_sebelum || []).length > 0 && (
-                        <div>
-                          <div style={{ fontSize: 10, color: cs.red, fontWeight: 700, marginBottom: 2 }}>Kondisi Sebelum:</div>
-                          {u.kondisi_sebelum.map((k, ki) => <div key={ki} style={{ fontSize: 10, color: cs.muted }}>• {k}</div>)}
-                        </div>
-                      )}
-                      {(u.kondisi_setelah || []).length > 0 && (
-                        <div>
-                          <div style={{ fontSize: 10, color: cs.green, fontWeight: 700, marginBottom: 2 }}>Kondisi Sesudah:</div>
-                          {u.kondisi_setelah.map((k, ki) => <div key={ki} style={{ fontSize: 10, color: cs.muted }}>• {k}</div>)}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Freon & Ampere */}
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    {u.freon_ditambah && parseFloat(u.freon_ditambah) > 0 && (
-                      <span style={{ fontSize: 11, color: cs.accent }}>❄️ Freon: <b>{u.freon_ditambah} psi</b></span>
-                    )}
-                    {u.ampere_akhir && <span style={{ fontSize: 11, color: cs.text }}>⚡ Ampere: <b>{u.ampere_akhir} A</b></span>}
-                    {u.catatan_unit && <span style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>📝 {u.catatan_unit}</span>}
-                  </div>
-
-                  {(u.pekerjaan || []).length === 0 && (u.kondisi_sebelum || []).length === 0 && !u.freon_ditambah && !u.ampere_akhir && (
-                    <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Tidak ada detail pekerjaan diisi.</div>
-                  )}
+          {/* ── Jasa & Material Tambahan dari Teknisi — selalu tampil ── */}
+          {r.service !== "Survey" && (
+            <div style={{ marginBottom: 10, display: "flex", alignItems: "flex-start", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, color: cs.muted, fontWeight: 700, whiteSpace: "nowrap", paddingTop: 2 }}>➕ Jasa/Mat:</span>
+              {(r.materials || []).length === 0 ? (
+                <span style={{ fontSize: 10, color: cs.muted, fontStyle: "italic" }}>—</span>
+              ) : (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {(r.materials || []).map((m, mi) => {
+                    const isJasa = m.keterangan === "jasa";
+                    const isFreon = m.keterangan === "freon" || ["freon","r-22","r-32","r-410"].some(k => (m.nama||"").toLowerCase().includes(k));
+                    const col = isJasa ? cs.green : isFreon ? cs.accent : cs.text;
+                    const bg = isJasa ? cs.green + "18" : isFreon ? cs.accent + "18" : cs.surface;
+                    const border = isJasa ? cs.green + "44" : isFreon ? cs.accent + "44" : cs.border;
+                    return (
+                      <span key={mi} title={`${m.jumlah} ${m.satuan}${m.harga_satuan > 0 ? " · Rp " + (m.harga_satuan * m.jumlah).toLocaleString("id-ID") : ""}`}
+                        style={{ fontSize: 10, background: bg, color: col, border: "1px solid " + border, borderRadius: 99, padding: "2px 8px", display: "inline-flex", alignItems: "center", gap: 3, cursor: "default" }}>
+                        {isJasa ? "🔧" : isFreon ? "❄️" : "📦"} {m.nama}
+                        <span style={{ opacity: 0.65 }}>· {m.jumlah} {m.satuan}</span>
+                      </span>
+                    );
+                  })}
                 </div>
-              ))}
-
-              {/* Jasa & Material tagihan */}
-              {(r.materials || []).length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: cs.yellow, marginBottom: 6 }}>💰 Jasa & Material (dasar tagihan)</div>
-                  <div style={{ display: "grid", gap: 4 }}>
-                    {(r.materials || []).map((m, mi) => {
-                      const isJasa = m.keterangan === "jasa";
-                      const isFreon = m.keterangan === "freon" || ["freon","r-22","r-32","r-410"].some(k => (m.nama||"").toLowerCase().includes(k));
-                      const col = isJasa ? cs.green : isFreon ? cs.accent : cs.text;
-                      return (
-                        <div key={mi} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, padding: "4px 0", borderBottom: "1px solid " + cs.border + "66" }}>
-                          <span style={{ color: col }}>
-                            {isJasa ? "🔧" : isFreon ? "❄️" : "📦"} {m.nama}
-                          </span>
-                          <span style={{ color: cs.muted, whiteSpace: "nowrap", marginLeft: 8 }}>
-                            {m.jumlah} {m.satuan}
-                            {m.harga_satuan > 0 && <span style={{ color: cs.text, marginLeft: 6 }}>· Rp {(m.harga_satuan * m.jumlah).toLocaleString("id-ID")}</span>}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {(r.units || []).length === 0 && (r.materials || []).length === 0 && (
-                <div style={{ fontSize: 12, color: cs.muted, textAlign: "center", padding: "8px 0" }}>Tidak ada data detail pekerjaan.</div>
               )}
             </div>
           )}
@@ -1412,18 +1347,6 @@ return (
 
           {/* Actions */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {/* Toggle detail pekerjaan */}
-            {r.service !== "Survey" && (
-              <button
-                onClick={() => setExpandedPekerjaanIds(prev => {
-                  const next = new Set(prev);
-                  next.has(r.id) ? next.delete(r.id) : next.add(r.id);
-                  return next;
-                })}
-                style={{ fontSize: 11, padding: "6px 12px", borderRadius: 8, background: expandedPekerjaanIds.has(r.id) ? cs.accent + "33" : cs.surface, border: "1px solid " + (expandedPekerjaanIds.has(r.id) ? cs.accent : cs.border), color: expandedPekerjaanIds.has(r.id) ? cs.accent : cs.muted, cursor: "pointer", fontWeight: 600 }}>
-                {expandedPekerjaanIds.has(r.id) ? "▲ Sembunyikan Detail" : "🔍 Detail Pekerjaan"}
-              </button>
-            )}
             {r.status === "SUBMITTED" && (<>
               <button onClick={() => verifyLaporan(r)} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✅ Verifikasi</button>
               <button onClick={async () => {
