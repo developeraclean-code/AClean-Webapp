@@ -523,6 +523,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const [loadingBonus, setLoadingBonus] = useState(false);
   const [openBonusIds, setOpenBonusIds] = useState(() => new Set()); // order2 yg panel input bonusnya terbuka (multi, inline)
   const [voidForm, setVoidForm]         = useState(null); // { id, reason }
+  const [dismissForm, setDismissForm]   = useState(null); // { orderId, reason } — tandai order tidak dapat bonus
   const [bonusFilter, setBonusFilter]   = useState("ALL"); // ALL|PENDING|ELIGIBLE|PAID|VOID
 
   const isOwner = currentUser?.role === "Owner";
@@ -803,6 +804,41 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     const n = new Set(prev); n.delete(id); return n;
   });
 
+  // ── Tandai order TIDAK dapat bonus (pembatalan manual / hangus karena complain) ──
+  // Simpan baris sentinel order_bonuses (bonus_type='dismissed', status VOID, tim kosong) →
+  // order hilang permanen dari daftar "belum di-review", tapi bisa Dikembalikan (hapus baris).
+  const handleDismissOrder = async (order) => {
+    const reason = (dismissForm?.reason || "").trim();
+    const { error } = await insertOrderBonus(supabase, {
+      order_id:      order.id,
+      order_date:    order.date,
+      bonus_type:    "dismissed",
+      gross_revenue: null,
+      material_cost: null,
+      team_members:  [],                       // kosong → tak muncul di komisi teknisi mana pun
+      total_amount:  0,
+      note:          reason || "Ditandai tidak dapat bonus",
+      status:        "VOID",
+      void_reason:   reason || "Tidak dapat bonus (manual)",
+      voided_by:     currentUser?.name,
+      voided_at:     new Date().toISOString(),
+    }, currentUser?.name);
+    if (error) { showNotif?.("❌ " + error.message); return; }
+    addAgentLog?.("BONUS_DISMISS", `Order ${order.id} ditandai tidak dapat bonus oleh ${currentUser?.name}${reason ? " — " + reason : ""}`, "INFO");
+    setDismissForm(null);
+    closeBonusCard(order.id);
+    loadBonuses();
+    showNotif?.("🚫 Order ditandai tidak dapat bonus");
+  };
+
+  // ── Kembalikan order yang ter-dismiss → hapus baris sentinel, order muncul lagi di daftar ──
+  const handleRestoreDismissed = async (bonus) => {
+    await deleteOrderBonus(supabase, bonus.id);
+    addAgentLog?.("BONUS_UNDISMISS", `Order ${bonus.order_id} dikembalikan ke daftar review bonus oleh ${currentUser?.name}`, "INFO");
+    loadBonuses();
+    showNotif?.("↩️ Order dikembalikan ke daftar review bonus");
+  };
+
   // ── Simpan bonus order (multi-kategori) ──
   // entries: [{ bonus_type, total_amount, gross_revenue, material_cost, note }]
   // 1 order boleh punya beberapa bonus (Freon + Kapasitor, dst) — tapi tak boleh tipe sama dobel.
@@ -862,7 +898,11 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
 
   const fmt = n => Number(n || 0).toLocaleString("id-ID");
 
-  const filteredBonuses = bonusFilter === "ALL" ? bonuses : bonuses.filter(b => effBonusStatus(b) === bonusFilter);
+  // "dismissed" = order ditandai tak dapat bonus (sentinel VOID). Sembunyikan dari "Semua",
+  // tetap tampil di filter Void (untuk audit + tombol Kembalikan).
+  const filteredBonuses = bonusFilter === "ALL"
+    ? bonuses.filter(b => b.bonus_type !== "dismissed")
+    : bonuses.filter(b => effBonusStatus(b) === bonusFilter);
 
   // ── WA bubble renderer (shared) ──
   const renderWABubble = (msg, row) => {
@@ -1396,10 +1436,28 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                               {isInstallMulti && <span style={{ fontSize: 10, background: "#422006", color: "#fcd34d", borderRadius: 4, padding: "1px 6px" }}>🔩 Install {o.units} unit</span>}
                             </div>
                           </div>
-                          <button onClick={() => toggleBonusCard(o.id)} style={{ padding: "6px 14px", borderRadius: 7, background: isOpen ? cs.surface : (isComplain ? "#6b7280" : cs.accent), border: isOpen ? "1px solid " + cs.border : "none", color: isOpen ? cs.muted : "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
-                            {isOpen ? "✕ Tutup" : "+ Input Bonus"}
-                          </button>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <button onClick={() => toggleBonusCard(o.id)} style={{ padding: "6px 14px", borderRadius: 7, background: isOpen ? cs.surface : (isComplain ? "#6b7280" : cs.accent), border: isOpen ? "1px solid " + cs.border : "none", color: isOpen ? cs.muted : "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+                              {isOpen ? "✕ Tutup" : "+ Input Bonus"}
+                            </button>
+                            <button onClick={() => setDismissForm(dismissForm?.orderId === o.id ? null : { orderId: o.id, reason: "" })} style={{ padding: "5px 14px", borderRadius: 7, background: "transparent", border: "1px solid " + cs.red + "88", color: cs.red, cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                              🚫 Tidak Ada Bonus
+                            </button>
+                          </div>
                         </div>
+                        {dismissForm?.orderId === o.id && (
+                          <div style={{ marginTop: 10, background: "#3f1515", border: "1px solid " + cs.red, borderRadius: 8, padding: 12 }}>
+                            <div style={{ fontSize: 12, color: "#fca5a5", fontWeight: 700, marginBottom: 4 }}>🚫 Tandai order ini TIDAK dapat bonus?</div>
+                            <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8 }}>Order hilang dari daftar review. Bisa dikembalikan lewat filter <strong>Void</strong>.</div>
+                            <input value={dismissForm.reason} onChange={e => setDismissForm(f => ({ ...f, reason: e.target.value }))}
+                              placeholder="Alasan (opsional) — mis. Complain / salah kategori"
+                              style={{ width: "100%", padding: "7px 9px", borderRadius: 6, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12, boxSizing: "border-box", marginBottom: 8 }} />
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button onClick={() => handleDismissOrder(o)} style={{ padding: "6px 14px", borderRadius: 7, background: cs.red, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Ya, Tidak Ada Bonus</button>
+                              <button onClick={() => setDismissForm(null)} style={{ padding: "6px 14px", borderRadius: 7, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 12 }}>Batal</button>
+                            </div>
+                          </div>
+                        )}
                         {isOpen && (
                           <div style={{ marginTop: 10 }}>
                             <BonusInputForm
@@ -1450,7 +1508,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                       <span style={{ background: STATUS_COLORS[est], color: "#fff", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>{STATUS_LABELS[est]}</span>
-                      <span style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>{BONUS_LABELS[b.bonus_type] || b.bonus_type}</span>
+                      <span style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>{b.bonus_type === "dismissed" ? "🚫 Tidak Dapat Bonus" : (BONUS_LABELS[b.bonus_type] || b.bonus_type)}</span>
                     </div>
                     <div style={{ fontSize: 12, color: cs.muted }}>
                       [{b.order_id || "-"}] · {fmtDate(b.order_date)} · {(b.team_members || []).join(", ")}
@@ -1463,11 +1521,13 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     {b.note && <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic", marginTop: 2 }}>{b.note}</div>}
                     {b.void_reason && <div style={{ fontSize: 11, color: cs.red, marginTop: 2 }}>Void: {b.void_reason}</div>}
                   </div>
-                  <div style={{ textAlign: "right", minWidth: 120 }}>
-                    <div style={{ fontSize: 11, color: cs.muted }}>Total Tim</div>
-                    <div style={{ fontWeight: 800, fontSize: 16, color: cs.accent }}>{fmtRp(b.total_amount)}</div>
-                    <div style={{ fontSize: 11, color: cs.muted }}>÷{b.member_count || 1} = {fmtRp(b.amount_per_person)}/org</div>
-                  </div>
+                  {b.bonus_type !== "dismissed" && (
+                    <div style={{ textAlign: "right", minWidth: 120 }}>
+                      <div style={{ fontSize: 11, color: cs.muted }}>Total Tim</div>
+                      <div style={{ fontWeight: 800, fontSize: 16, color: cs.accent }}>{fmtRp(b.total_amount)}</div>
+                      <div style={{ fontSize: 11, color: cs.muted }}>÷{b.member_count || 1} = {fmtRp(b.amount_per_person)}/org</div>
+                    </div>
+                  )}
                 </div>
                 {/* Actions */}
                 {(est === "PENDING" || est === "ELIGIBLE") && (
@@ -1488,6 +1548,13 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     <div style={{ fontSize: 11, color: cs.muted }}>Dibayar oleh {b.paid_by} · {b.paid_at ? new Date(b.paid_at).toLocaleString("id-ID") : "-"}</div>
                     <button onClick={() => setVoidForm({ id: b.id, reason: "", wasPaid: true })} style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", border: "1px solid " + cs.red, color: cs.red, cursor: "pointer", fontSize: 11 }}>
                       🚫 Void (klaim balik)
+                    </button>
+                  </div>
+                )}
+                {est === "VOID" && b.bonus_type === "dismissed" && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", justifyContent: "flex-end" }}>
+                    <button onClick={() => handleRestoreDismissed(b)} style={{ padding: "5px 14px", borderRadius: 7, background: "transparent", border: "1px solid " + cs.accent, color: cs.accent, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                      ↩️ Kembalikan ke Daftar Review
                     </button>
                   </div>
                 )}
