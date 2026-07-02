@@ -283,7 +283,13 @@ const grandTotal = filtered.reduce((s, e) => s + Number(e.amount || 0), 0);
 
 // ── Navigasi per-hari (geser slide, seperti Dashboard) ──
 const dayMode = !!expenseDateFrom && expenseDateFrom === expenseDateTo;
-const shiftDay = (d, delta) => { const dt = new Date((d || TODAY) + "T00:00:00"); dt.setDate(dt.getDate() + delta); return dt.toISOString().slice(0, 10); };
+// Pakai jam 12 siang + komponen LOKAL (bukan toISOString/UTC) — kalau UTC, WIB (UTC+7)
+// mundur 7 jam ke hari sebelumnya → tombol ▶ tampak "tak jalan" (mentok tanggal sama).
+const shiftDay = (d, delta) => {
+  const dt = new Date((d || TODAY) + "T12:00:00");
+  dt.setDate(dt.getDate() + delta);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+};
 const goDay = (d) => { setExpenseDateFrom(d); setExpenseDateTo(d); setExpensePage(1); };
 const fmtDayLong = (d) => new Date(d + "T00:00:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
