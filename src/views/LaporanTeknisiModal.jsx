@@ -81,7 +81,7 @@ export default function LaporanTeknisiModal({
           <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
           <div style={{ fontWeight: 800, fontSize: 18, color: cs.text, marginBottom: 8 }}>Laporan Terkirim!</div>
           <div style={{ fontSize: 13, color: cs.muted, marginBottom: 6 }}>{laporanModal.id} · {laporanModal.customer}</div>
-          <div style={{ fontSize: 12, color: cs.green, marginBottom: 4 }}>{laporanUnits.length} unit AC · {laporanMaterials.length} material · {laporanFotos.length} foto</div>
+          <div style={{ fontSize: 12, color: cs.green, marginBottom: 4 }}>{laporanUnits.length} unit AC · {laporanMaterials.length} material · {laporanFotos.filter(f => f.url).length} foto</div>
           <div style={{ fontSize: 12, color: cs.muted, marginBottom: 20 }}>Laporan sedang diproses Admin/Owner untuk verifikasi.</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <button onClick={() => { setActiveMenu("myreport"); setLaporanModal(null); setLaporanSubmitted(false); }}
@@ -465,7 +465,13 @@ export default function LaporanTeknisiModal({
                 )}
               </div>
 
-              <button onClick={submitLaporan} disabled={!laporanSurveyHasil.trim()}
+              <button onClick={() => {
+                  const up = laporanFotos.filter(f => f.uploading).length;
+                  if (up > 0) { showNotif(`⏳ Tunggu ${up} foto selesai upload dulu`); return; }
+                  const fail = laporanFotos.filter(f => !f.uploading && !f.url && f.errMsg).length;
+                  if (fail > 0 && !window.confirm(`⚠️ ${fail} foto GAGAL upload dan tidak akan masuk laporan.\n\nLanjut submit? (Batal untuk retry / hapus dulu)`)) return;
+                  submitLaporan();
+                }} disabled={!laporanSurveyHasil.trim()}
                 style={{ background: laporanSurveyHasil.trim() ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface,
                   border: "none", color: laporanSurveyHasil.trim() ? "#fff" : cs.muted,
                   padding: "13px", borderRadius: 10, cursor: laporanSurveyHasil.trim() ? "pointer" : "not-allowed",
@@ -1634,7 +1640,11 @@ export default function LaporanTeknisiModal({
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
                     <button onClick={() => setLaporanStep(laporanModal?.service === "Install" ? 1 : 2)} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>← Kembali</button>
                     <button
-                      onClick={() => { if (canProceed) { flushManualText(); setLaporanStep(4); } }}
+                      onClick={() => {
+                        if (!canProceed) return;
+                        if (failedCount > 0 && !window.confirm(`⚠️ ${failedCount} foto GAGAL upload dan tidak akan masuk laporan.\n\nLanjut tanpa foto tersebut? (Batal untuk retry / hapus dulu)`)) return;
+                        flushManualText(); setLaporanStep(4);
+                      }}
                       disabled={!canProceed}
                       style={{
                         background: btnBg,
@@ -1664,7 +1674,7 @@ export default function LaporanTeknisiModal({
                     <span style={{ color: cs.muted }}>Total: </span>
                     <span style={{ fontWeight: 700, color: cs.text }}>{laporanUnits.length} unit AC</span>
                     {totalFreon > 0 && <span style={{ color: cs.muted }}> · Tekanan Freon: <span style={{ color: cs.yellow }}>{totalFreon.toFixed(0)} psi</span></span>}
-                    {laporanFotos.length > 0 && <span style={{ color: cs.muted }}> · <span style={{ color: cs.green }}>{laporanFotos.length} foto</span></span>}
+                    {laporanFotos.filter(f => f.url).length > 0 && <span style={{ color: cs.muted }}> · <span style={{ color: cs.green }}>{laporanFotos.filter(f => f.url).length} foto</span></span>}
                     {laporanMaterials.length > 0 && <span style={{ color: cs.muted }}> · <span style={{ color: cs.accent }}>{laporanMaterials.length} material</span></span>}
                   </div>
                 </div>
