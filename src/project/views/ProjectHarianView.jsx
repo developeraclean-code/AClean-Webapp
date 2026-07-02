@@ -175,7 +175,7 @@ export default function ProjectHarianView() {
       {activeTab === "harian" && (
         <>
           <div style={S.note}>
-            ℹ️ <b>Internal</b> — tidak tampil ke customer. Customer melihat <b>Berita Acara Harian</b>. Tab ini untuk lacak posisi alat (pagi dibawa → <b>di lokasi</b>, sore balik → <b>gudang</b>). 1 log / hari / project.
+            ℹ️ <b>Internal</b> — tidak tampil ke customer. Customer melihat <b>Berita Acara Harian</b>. Tab ini untuk lacak posisi alat (pagi dibawa → <b>di lokasi</b>, sore balik → <b>gudang</b>). 1 log / hari / project. <b>Catatan material di sini hanya informasi</b>; stok resmi dipotong lewat <b>Pemakaian Material</b>.
           </div>
           <div style={{ ...S.between, marginBottom: 14 }}>
             <div style={S.sectionTitle}><h2 style={S.sectionTitleH}>Laporan Harian</h2></div>

@@ -66,6 +66,19 @@ export default function ProjectDetailView() {
     },
   });
 
+  // Edit Nilai kontrak & RAB (Owner/finance). RAB wajib agar estimasi profit akurat.
+  const editBudget = () => openForm({
+    title: `Nilai & RAB — ${p.nama}`,
+    fields: [
+      { name: "nilai", label: "Nilai kontrak (Rp)", type: "number", val: p.nilai },
+      { name: "rab", label: "Estimasi biaya / RAB (Rp)", type: "number", val: p.rab },
+    ],
+    onSubmit: (d) => {
+      updateProject(p.id, { nilai: +d.nilai || 0, rab: +d.rab || 0 });
+      toast("Nilai & RAB diperbarui");
+    },
+  });
+
   // ── Siklus hidup project ──────────────────────────────────────────────────
   const toFinishing = () => {
     if (!window.confirm(`Tandai "${p.nama}" masuk tahap FINISHING?`)) return;
@@ -204,6 +217,7 @@ export default function ProjectDetailView() {
         {can.manage && p.status === "SELESAI" && (
           <button style={S.btnSm("ghost")} onClick={reopen}>↩ Buka Kembali</button>
         )}
+        {can.finance && <button style={S.btnSm("ghost")} onClick={editBudget}>💰 Nilai/RAB</button>}
         <button style={S.btnSm("ghost")} onClick={showWeekly}>📄 Ringkasan Mingguan</button>
         <button style={S.btnSm("ghost")} onClick={() => setAlatMode("bawa")}>🛠 Bawa Alat</button>
         <button style={S.btnSm("ghost")} onClick={() => setAlatMode("kembali")}>↩️ Kembali Alat</button>

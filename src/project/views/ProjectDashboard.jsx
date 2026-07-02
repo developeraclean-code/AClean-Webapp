@@ -25,6 +25,10 @@ export default function ProjectDashboard() {
   const ob = overBudgetProjects(db);
   const telat = db.projects.filter((p) => daysLate(p, today) > 0);
   const unver = db.harian.filter((h) => h.status === "SUBMITTED");
+  const rabKosong = active.filter((p) => !p.rab);
+  // Stok kritis: min>0 → gudang ≤ min; min 0 → hanya bila gudang habis.
+  const stokKritis = db.materials.filter((m) => (m.min > 0 ? m.gudang <= m.min : m.gudang <= 0));
+  const attnCount = telat.length + ob.length + unver.length + (can.finance ? rabKosong.length : 0) + stokKritis.length;
 
   const verify = (id) => { patchRow("harian", id, { status: "VERIFIED" }); toast("Diverifikasi 🔒 hari ini terkunci"); };
 
@@ -32,18 +36,25 @@ export default function ProjectDashboard() {
     <div style={{ padding: 22, maxWidth: 1200 }}>
       <div style={S.sectionTitle}><h2 style={S.sectionTitleH}>Dashboard Project</h2></div>
 
-      {(telat.length + ob.length + unver.length) > 0 && (
+      {attnCount > 0 && (
         <div style={{ ...S.card, marginBottom: 16 }}>
           <h3 style={{ fontSize: 12, color: cs.muted, fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: ".04em" }}>
-            ⚠️ Butuh Perhatian ({telat.length + ob.length + unver.length})
+            ⚠️ Butuh Perhatian ({attnCount})
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {telat.map((p) => (
               <Item key={"t" + p.id}>⏰ <b>{p.nama}</b> — telat {daysLate(p, today)} hari dari target</Item>
             ))}
+            {can.finance && rabKosong.map((p) => (
+              <Item key={"r" + p.id}>🧮 <b>{p.nama}</b> — RAB belum diisi, estimasi profit belum akurat (isi di Detail → 💰 Nilai/RAB)</Item>
+            ))}
             {can.finance && ob.map((p) => { const b = budget(db, p.id); return (
               <Item key={"o" + p.id}>💸 <b>{p.nama}</b> — {b.crit ? "OVER BUDGET" : "≥85% RAB"} ({Math.round(b.ratio * 100)}%) · alert WA ke Owner</Item>
             ); })}
+            {stokKritis.slice(0, 6).map((m) => (
+              <Item key={"s" + m.id}>📦 Stok <b>{m.nama}</b> menipis — gudang {m.gudang}{m.satuan ? ` ${m.satuan}` : ""} (min {m.min})</Item>
+            ))}
+            {stokKritis.length > 6 && <Item key="smore">📦 +{stokKritis.length - 6} material lain menipis — cek Stok Material</Item>}
             {unver.map((h) => (
               <Item key={"u" + h.id}>
                 📝 Laporan <b>{pName(db, h.projectId)}</b> ({h.oleh}, {h.tanggal.slice(5)}) belum diverifikasi
