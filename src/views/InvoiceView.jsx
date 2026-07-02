@@ -1668,7 +1668,10 @@ return (
                         : <span style={{ color: cs.muted }}>Tidak Ada Garansi</span>}
                   </div>
                   <div style={{ fontSize: 11, color: cs.muted }}>
-                    Override manual jika perlu: paksa Gratis atau paksa Berbayar sebelum approve.
+                    Mode tagihan saat ini:{" "}
+                    <b style={{ color: inv.repair_gratis ? cs.green : cs.yellow }}>
+                      {inv.repair_gratis ? "GRATIS" : "BERBAYAR"}
+                    </b>. Override manual jika perlu sebelum approve.
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button onClick={async () => {
@@ -1690,7 +1693,7 @@ return (
                     }} style={{ flex: 1, background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
                       Override: Gratis
                     </button>
-                    <button onClick={async () => {
+                    <button disabled={!inv.repair_gratis} onClick={async () => {
                       if (!await showConfirm({
                         icon: "💰", title: "Override → Berbayar?",
                         message: `Ubah invoice ${inv.id} menjadi BERBAYAR?\n\nJika total sekarang Rp 0, silakan edit nilai dulu via tombol Edit Nilai.`,
@@ -1703,8 +1706,8 @@ return (
                       if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
                       addAgentLog("COMPLAIN_OVERRIDE_PAID", `Invoice ${inv.id} di-override BERBAYAR oleh ${currentUser?.name}`, "INFO");
                       showNotif("✅ Invoice di-override menjadi BERBAYAR — edit nilai jika perlu sebelum approve");
-                    }} style={{ flex: 1, background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
-                      Override: Berbayar
+                    }} style={{ flex: 1, background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "7px 12px", borderRadius: 8, cursor: inv.repair_gratis ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 12, opacity: inv.repair_gratis ? 1 : 0.45 }}>
+                      {inv.repair_gratis ? "Override: Berbayar" : "✓ Sudah Berbayar"}
                     </button>
                   </div>
                 </div>
