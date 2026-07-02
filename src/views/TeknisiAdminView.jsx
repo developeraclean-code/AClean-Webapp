@@ -475,6 +475,7 @@ return (
       supabase={supabase}
       showNotif={showNotif}
       showConfirm={showConfirm}
+      addAgentLog={addAgentLog}
       openWA={openWA}
       TODAY={TODAY}
       bonusCategories={bonusCategories}
@@ -489,7 +490,7 @@ return (
 // ═══════════════════════════════════════════════════════════════
 // GAJI TAB — Payroll + Komisi Order
 // ═══════════════════════════════════════════════════════════════
-function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase, showNotif, showConfirm, openWA, TODAY, bonusCategories = [], setBonusCategories, BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
+function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase, showNotif, showConfirm, addAgentLog, openWA, TODAY, bonusCategories = [], setBonusCategories, BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
   const [subTab, setSubTab]         = useState("payroll"); // "payroll" | "komisi" | "setting"
   const [periodStart, setPeriodStart] = useState(() => getMondayOf(TODAY));
   const periodEnd = getSaturdayOf(periodStart);
