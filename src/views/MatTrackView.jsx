@@ -1142,7 +1142,7 @@ return (
       <div style={{ display: "flex", gap: 8, borderBottom: "1px solid " + cs.border, paddingBottom: 12 }}>
         {[
           { id: "aktif", label: "✅ Aktif" },
-          { id: "diarsipkan", label: "🗄️ Diarsipkan", count: invUnitsData.filter(u => u.archived).length },
+          { id: "diarsipkan", label: "🗄️ Diarsipkan", count: (invUnitsData || []).filter(u => u.archived).length },
           { id: "semua", label: "📋 Semua" },
         ].map(tab => (
           <button key={tab.id}
