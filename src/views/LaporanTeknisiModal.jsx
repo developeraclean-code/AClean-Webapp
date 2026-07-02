@@ -114,6 +114,20 @@ export default function LaporanTeknisiModal({
   const updateUnit = (idx, updated) => setLaporanUnits(prev => prev.map((u, i) => i === idx ? updated : u));
   const toggleArr = (arr, val) => arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val];
 
+  // Commit teks manual jasa/barang yang belum ter-blur ke item.nama. Dipanggil sebelum
+  // pindah ke Step 4 → cegah nama "__manual__" tak tersimpan (blur kadang tak jalan di
+  // macOS saat klik tombol / unmount) → item hilang senyap dari invoice (kurang tagih).
+  const flushManualText = () => {
+    setLaporanJasaItems(p => p.map(j => {
+      const t = (jasaManualText[j.id] || "").trim();
+      return (j._isManual && t) ? { ...j, nama: t } : j;
+    }));
+    setLaporanBarangItems(p => p.map(b => {
+      const t = (repairManualText[b.id] || "").trim();
+      return (b._isManual && t) ? { ...b, nama: t } : b;
+    }));
+  };
+
   const tagStyle = (active, color) => ({
     display: "flex", alignItems: "center", gap: 6, background: cs.card,
     border: `1px solid ${active ? color : cs.border}44`, borderRadius: 8,
@@ -648,6 +662,11 @@ export default function LaporanTeknisiModal({
                               if (f.unit_no > deletedNo) return { ...f, unit_no: f.unit_no - 1 };
                               return f;
                             }));
+                            // Cleaning-in-repair menyimpan unit_no → ikut remap saat unit dihapus,
+                            // agar centang cuci tak salah-unit / hilang senyap.
+                            setLaporanCleaningInRepair(prev => prev
+                              .filter(n => n !== deletedNo)
+                              .map(n => n > deletedNo ? n - 1 : n));
                           }}
                             style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 6, padding: "8px 10px", cursor: "pointer", fontSize: 12, fontWeight: 700, lineHeight: 1, alignSelf: "flex-end" }}>×</button>
                         )}
@@ -1615,7 +1634,7 @@ export default function LaporanTeknisiModal({
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
                     <button onClick={() => setLaporanStep(laporanModal?.service === "Install" ? 1 : 2)} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>← Kembali</button>
                     <button
-                      onClick={() => { if (canProceed) setLaporanStep(4); }}
+                      onClick={() => { if (canProceed) { flushManualText(); setLaporanStep(4); } }}
                       disabled={!canProceed}
                       style={{
                         background: btnBg,
