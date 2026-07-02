@@ -36,7 +36,7 @@ import { DEFAULT_BONUS_CATEGORIES } from "./constants/bonus.js";
 import {
   fetchOrders, fetchInvoices, fetchCustomers, fetchInventory,
   fetchServiceReports, fetchInventoryTransactions,
-  fetchInvoicesSince, fetchServiceReportsSince,
+  fetchInvoicesSince, fetchServiceReportsSince, fetchOrdersSince,
   searchInvoicesServer, searchOrdersServer, searchServiceReportsServer,
   fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
@@ -2591,19 +2591,25 @@ export default function ACleanWebApp() {
     const _shouldPoll = () =>
       isWorkingHours() && (typeof document === "undefined" || document.visibilityState === "visible");
 
-    const _pollOrders = setInterval(() => {
-      if (!_shouldPoll()) return;
-      fetchOrders(supabase).then(({ data, error }) => {
-        if (!error && data) setOrdersData(data);
-      }).catch(() => {});
-    }, POLL_MS);
-
     // Inkremental: hanya tarik baris yang BERUBAH sejak poll terakhir (updated_at > cursor),
-    // lalu merge by id ke state. Saat idle → 0 baris → egress ~nol (seefisien realtime dulu,
-    // tanpa WAL). Cursor mulai dari waktu efek (minus buffer 2 mnt utk toleransi skew jam),
-    // lalu mengunci ke updated_at server. DELETE ditutup oleh loadAll penuh tiap 30 mnt.
+    // lalu merge by id ke state. Saat idle → 0 baris → egress ~nol. Cursor mulai dari waktu
+    // efek (minus buffer 2 mnt utk toleransi skew jam). DELETE ditutup oleh loadAll penuh tiap 30 mnt.
+    let _orderCursor  = new Date(Date.now() - 2 * 60 * 1000).toISOString();
     let _invoiceCursor = new Date(Date.now() - 2 * 60 * 1000).toISOString();
     let _reportCursor = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+
+    const _pollOrders = setInterval(() => {
+      if (!_shouldPoll()) return;
+      fetchOrdersSince(supabase, _orderCursor).then(({ data, error }) => {
+        if (error || !data || data.length === 0) return;
+        _orderCursor = data[data.length - 1].updated_at || _orderCursor;
+        setOrdersData(prev => {
+          const map = new Map((prev || []).map(r => [r.id, r]));
+          data.forEach(r => map.set(r.id, r));
+          return Array.from(map.values()).sort((a, b) => (b.date || "") > (a.date || "") ? 1 : -1);
+        });
+      }).catch(() => {});
+    }, POLL_MS);
 
     const _pollInvoices = setInterval(() => {
       if (!_shouldPoll()) return;
@@ -4617,6 +4623,7 @@ export default function ACleanWebApp() {
             setLaporanModal={setLaporanModal}
             setLaporanSubmitted={setLaporanSubmitted}
             setActiveMenu={setActiveMenu}
+            materialConfirmDeductOn={appSettings?.material_confirm_deduct_enabled === "true"}
             laporanStep={laporanStep} setLaporanStep={setLaporanStep}
             laporanUnits={laporanUnits} setLaporanUnits={setLaporanUnits}
             laporanMaterials={laporanMaterials} setLaporanMaterials={setLaporanMaterials}

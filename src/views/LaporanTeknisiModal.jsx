@@ -30,6 +30,7 @@ export default function LaporanTeknisiModal({
   open, laporanSubmitted,
   laporanModal, setLaporanModal,
   setLaporanSubmitted, setActiveMenu,
+  materialConfirmDeductOn = false,
   // form state
   laporanStep, setLaporanStep,
   laporanUnits, setLaporanUnits,
@@ -1333,7 +1334,10 @@ export default function LaporanTeknisiModal({
                         </button>
                       </div>
                       <div style={{ fontSize: 11, color: cs.muted, background: cs.surface, borderRadius: 8, padding: "8px 10px", lineHeight: "1.4", marginBottom: 8 }}>
-                        ℹ️ <strong>Hanya tracking stok, TIDAK masuk invoice.</strong> Pilih material yang pakai (freon tabung, pipa roll, kabel). Harga otomatis terdebit dari stok internal.
+                        ℹ️ <strong>Hanya tracking stok, TIDAK masuk invoice.</strong>{" "}
+                        {materialConfirmDeductOn
+                          ? <>Stok <strong>pipa/kabel/freon dipotong lewat menu Material Harian</strong> (konfirmasi Owner) — di sini hanya catatan pemakaian, tidak memotong stok saat submit.</>
+                          : <>Pilih material yang dipakai (freon tabung, pipa roll, kabel). Harga otomatis terdebit dari stok internal saat submit.</>}
                       </div>
                     </div>
                     {showMatPreset && (
@@ -1441,6 +1445,13 @@ export default function LaporanTeknisiModal({
                             const isPipa = n.includes("pipa") || n.includes("hoda");
                             const isKabel = n.includes("kabel");
                             if (!isFreon && !isPipa && !isKabel) return null;
+                            // Opti A (Material Harian aktif): pemilihan tabung/roll di sini TIDAK dipakai
+                            // (stok dipotong via Material Harian). Tampilkan info, bukan picker mati.
+                            if (materialConfirmDeductOn) return (
+                              <div style={{ marginTop: 6, padding: "7px 10px", background: cs.muted + "10", border: "1px dashed " + cs.border, borderRadius: 8, fontSize: 10, color: cs.muted }}>
+                                ℹ️ Potong stok {isFreon ? "freon" : isPipa ? "pipa" : "kabel"} dilakukan di menu <strong>Material Harian</strong> (pilih tabung/roll + konfirmasi Owner). Di sini cukup catat pemakaian.
+                              </div>
+                            );
 
                             const matchedInvItem = inventoryData.find(item => {
                               const nm = (item.name || "").toLowerCase();
