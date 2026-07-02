@@ -1162,32 +1162,6 @@ return (
             })()}
           </div>
 
-          {/* ── Jasa & Material Tambahan dari Teknisi — selalu tampil ── */}
-          {r.service !== "Survey" && (
-            <div style={{ marginBottom: 10, display: "flex", alignItems: "flex-start", gap: 6, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 10, color: cs.muted, fontWeight: 700, whiteSpace: "nowrap", paddingTop: 2 }}>➕ Jasa/Mat:</span>
-              {(r.materials || []).length === 0 ? (
-                <span style={{ fontSize: 10, color: cs.muted, fontStyle: "italic" }}>—</span>
-              ) : (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  {(r.materials || []).map((m, mi) => {
-                    const isJasa = m.keterangan === "jasa";
-                    const isFreon = m.keterangan === "freon" || ["freon","r-22","r-32","r-410"].some(k => (m.nama||"").toLowerCase().includes(k));
-                    const col = isJasa ? cs.green : isFreon ? cs.accent : cs.text;
-                    const bg = isJasa ? cs.green + "18" : isFreon ? cs.accent + "18" : cs.surface;
-                    const border = isJasa ? cs.green + "44" : isFreon ? cs.accent + "44" : cs.border;
-                    return (
-                      <span key={mi} title={`${m.jumlah} ${m.satuan}${m.harga_satuan > 0 ? " · Rp " + (m.harga_satuan * m.jumlah).toLocaleString("id-ID") : ""}`}
-                        style={{ fontSize: 10, background: bg, color: col, border: "1px solid " + border, borderRadius: 99, padding: "2px 8px", display: "inline-flex", alignItems: "center", gap: 3, cursor: "default" }}>
-                        {isJasa ? "🔧" : isFreon ? "❄️" : "📦"} {m.nama}
-                        <span style={{ opacity: 0.65 }}>· {m.jumlah} {m.satuan}</span>
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
 
           {/* ── Survey hasil — ditampilkan khusus untuk laporan Survey ── */}
           {r.service === "Survey" && (r.hasil_survey || r.catatan_rekomendasi) && (
