@@ -126,6 +126,26 @@ export async function submitLaporan({
         keterangan: "barang" // marking barang dari price_list, bukan material stok
       }));
 
+    // ✨ Cleaning-in-Repair → baris jasa "[+Repair]" DIPERSIST ke materials laporan.
+    // Kalau tidak, saat invoice dibuat ulang di jalur VERIFY (LaporanTimView, yang baca
+    // r.materials) cleaning-in-repair hilang — verify tak punya logika checkbox ini.
+    // Tidak dobel di submit: invoice submit dibangun buildInvoiceDetail (param cleaningInRepair,
+    // bukan dari effectiveMaterials untuk non-install).
+    const cleaningInRepairRows = (laporanModal?.service === "Repair" && Array.isArray(laporanCleaningInRepair) && laporanCleaningInRepair.length > 0)
+      ? (laporanUnits || [])
+        .filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no))
+        .map(u => {
+          const hargaUnit = hargaPerUnitFromTipe("Cleaning", u.tipe, priceListData);
+          const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
+          return {
+            id: "cir_" + (u.unit_no || Math.random().toString(36).slice(2, 6)),
+            nama: "Cleaning " + u.tipe + " (" + unitLabel + ") [+Repair]",
+            jumlah: 1, satuan: "unit", harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa",
+          };
+        })
+        .filter(r => r.harga_satuan > 0)
+      : [];
+
     const effectiveMaterials = isInstall
       ? INSTALL_ITEMS
         .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
@@ -139,7 +159,7 @@ export async function submitLaporan({
             _useCode: INSTALL_INV_MAP[item.key] || null,
           };
         })
-      : [...jasaAsMaterials, ...barangAsMaterials, ...laporanMaterials];
+      : [...jasaAsMaterials, ...barangAsMaterials, ...laporanMaterials, ...cleaningInRepairRows];
 
     const now = new Date().toLocaleString("id-ID", {
       year: "numeric", month: "2-digit", day: "2-digit",
