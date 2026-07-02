@@ -281,6 +281,12 @@ const totalPage = Math.ceil(filtered.length / EXPENSE_PAGE_SIZE) || 1;
 const pageData = filtered.slice((expensePage - 1) * EXPENSE_PAGE_SIZE, expensePage * EXPENSE_PAGE_SIZE);
 const grandTotal = filtered.reduce((s, e) => s + Number(e.amount || 0), 0);
 
+// ── Navigasi per-hari (geser slide, seperti Dashboard) ──
+const dayMode = !!expenseDateFrom && expenseDateFrom === expenseDateTo;
+const shiftDay = (d, delta) => { const dt = new Date((d || TODAY) + "T00:00:00"); dt.setDate(dt.getDate() + delta); return dt.toISOString().slice(0, 10); };
+const goDay = (d) => { setExpenseDateFrom(d); setExpenseDateTo(d); setExpensePage(1); };
+const fmtDayLong = (d) => new Date(d + "T00:00:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
 const resetForm = () => {
   setNewExpenseForm({
     category: expenseTab === "material_purchase" ? "material_purchase" : "petty_cash",
@@ -579,6 +585,41 @@ return (
             </div>
           );
         })}
+      </div>
+    )}
+
+    {/* ── Navigasi per-hari (geser ◀ ▶) — ringkas, tak perlu pusing baris & paginasi ── */}
+    {!isPendingAi && (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "10px 14px" }}>
+        <button onClick={() => goDay(shiftDay(dayMode ? expenseDateFrom : TODAY, -1))}
+          title="Hari sebelumnya"
+          style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.text, borderRadius: 9, width: 38, height: 38, cursor: "pointer", fontSize: 15, fontWeight: 700 }}>◀</button>
+        <div style={{ minWidth: 210, textAlign: "center", flex: "0 1 auto" }}>
+          {dayMode ? (
+            <>
+              <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>
+                {fmtDayLong(expenseDateFrom)}{expenseDateFrom === TODAY && <span style={{ fontSize: 11, color: cs.accent, marginLeft: 6 }}>Hari Ini</span>}
+              </div>
+              <div style={{ fontSize: 11, color: cs.muted }}>{filtered.length} transaksi · Total Rp {grandTotal.toLocaleString("id-ID")}</div>
+            </>
+          ) : (
+            <div style={{ fontSize: 13, fontWeight: 700, color: cs.muted }}>
+              {(expenseDateFrom || expenseDateTo) ? `Rentang: ${expenseDateFrom || "…"} — ${expenseDateTo || "…"}` : "Semua tanggal"} · {filtered.length} transaksi
+            </div>
+          )}
+        </div>
+        <button onClick={() => goDay(shiftDay(dayMode ? expenseDateFrom : TODAY, +1))}
+          title="Hari berikutnya"
+          style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.text, borderRadius: 9, width: 38, height: 38, cursor: "pointer", fontSize: 15, fontWeight: 700 }}>▶</button>
+        <span style={{ flex: 1 }} />
+        {dayMode ? (
+          <>
+            <button onClick={() => goDay(TODAY)} style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 9, padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Hari ini</button>
+            <button onClick={() => { setExpenseDateFrom(""); setExpenseDateTo(""); setExpensePage(1); }} style={{ background: "transparent", border: "1px solid " + cs.border, color: cs.muted, borderRadius: 9, padding: "8px 12px", cursor: "pointer", fontSize: 12 }}>Semua tanggal</button>
+          </>
+        ) : (
+          <button onClick={() => goDay(TODAY)} style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 9, padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>📅 Mode per-hari</button>
+        )}
       </div>
     )}
 
