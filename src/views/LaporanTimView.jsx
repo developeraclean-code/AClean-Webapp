@@ -486,9 +486,15 @@ const verifyLaporan = async (r) => {
             return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket, category: categoryFromCatalog(m.nama, priceListData) };
           });
 
-        // Inject labor (Cleaning/Maintenance)
+        // Inject labor (Cleaning/Maintenance) — guard name-based (paritas submit path):
+        // baris jasa lain (freon/tambahan) tak boleh membatalkan biaya cleaning.
         const isCleanMaintD = r.service === "Cleaning" || r.service === "Maintenance";
-        if (isCleanMaintD && !vMDetailD.some(m => m.keterangan === "jasa")) {
+        const alreadyHasCleaningRowD = vMDetailD.some(m => {
+          if (m.keterangan !== "jasa") return false;
+          const n = (m.nama || "").toLowerCase();
+          return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
+        });
+        if (isCleanMaintD && !alreadyHasCleaningRowD) {
           const rUnitsD = Array.isArray(r.units) ? r.units : [];
           const withTipeD = rUnitsD.filter(u => u && u.tipe);
           if (withTipeD.length > 0) {
@@ -635,6 +641,14 @@ const verifyLaporan = async (r) => {
     const isRepairSvcV = r.service === "Repair";
     const isCleaningMaintV = r.service === "Cleaning" || r.service === "Maintenance";
     const card34Empty = !vMDetail.some(m => m.keterangan === "jasa" || m.keterangan === "repair");
+    // Biaya cleaning per-unit sudah ada? Cek HANYA baris jasa ber-nama cleaning/maintenance/cuci
+    // (paritas dgn submit path laporanInvoice.js). Baris jasa lain (mis. "Jasa Pengisian Freon",
+    // tambahan freon yang ter-tag jasa) TIDAK boleh membatalkan injeksi biaya cleaning.
+    const alreadyHasCleaningRowV = vMDetail.some(m => {
+      if (m.keterangan !== "jasa") return false;
+      const n = (m.nama || "").toLowerCase();
+      return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
+    });
 
     if (isRepairSvcV) {
       // Repair: inject Biaya Pengecekan hanya jika card 3/4 kosong (tidak ada jasa maupun repair item)
@@ -645,7 +659,7 @@ const verifyLaporan = async (r) => {
         vMDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: cekQty, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek * cekQty, keterangan: "jasa" });
       }
       // jika ada isi di card 3/4 → hitung apa adanya, tidak inject apapun
-    } else if (isCleaningMaintV && !vMDetail.some(m => m.keterangan === "jasa")) {
+    } else if (isCleaningMaintV && !alreadyHasCleaningRowV) {
       // Cleaning/Maintenance: inject per unit dari card 1/4 tipe PK
       const rUnits = Array.isArray(r.units) ? r.units : [];
       const unitsWithTipe = rUnits.filter(u => u && u.tipe);
