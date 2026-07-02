@@ -12,7 +12,7 @@ import {
 } from "../data/reads.js";
 import {
   updateUserDailyRate, upsertWeeklyPayroll, updateWeeklyPayroll,
-  markPayrollPaid, insertOrderBonus, updateOrderBonus, markBonusPaid, voidBonus, deleteOrderBonus,
+  markPayrollPaid, insertOrderBonus, updateOrderBonus, markBonusPaid, voidBonus,
 } from "../data/writes.js";
 
 // ── Payroll helpers ──
@@ -810,6 +810,14 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   // order hilang permanen dari daftar "belum di-review", tapi bisa Dikembalikan (hapus baris).
   const handleDismissOrder = async (order) => {
     const reason = (dismissForm?.reason || "").trim();
+    // Idempoten: jangan buat baris dismissed ganda (juga dijaga unique index DB).
+    const { data: exist } = await supabase.from("order_bonuses")
+      .select("id").eq("order_id", order.id).eq("bonus_type", "dismissed").limit(1);
+    if (exist && exist.length > 0) {
+      setDismissForm(null); closeBonusCard(order.id); loadBonuses();
+      showNotif?.("ℹ️ Order ini sudah ditandai tidak dapat bonus.");
+      return;
+    }
     const { error } = await insertOrderBonus(supabase, {
       order_id:      order.id,
       order_date:    order.date,
@@ -824,17 +832,18 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
       voided_by:     currentUser?.name,
       voided_at:     new Date().toISOString(),
     }, currentUser?.name);
-    if (error) { showNotif?.("❌ " + error.message); return; }
-    addAgentLog?.("BONUS_DISMISS", `Order ${order.id} ditandai tidak dapat bonus oleh ${currentUser?.name}${reason ? " — " + reason : ""}`, "INFO");
+    // Selalu tutup & refresh dulu (hindari klik-ulang bikin duplikat kalau ada error non-fatal).
     setDismissForm(null);
     closeBonusCard(order.id);
     loadBonuses();
+    if (error) { showNotif?.("⚠️ " + error.message); return; }
+    addAgentLog?.("BONUS_DISMISS", `Order ${order.id} ditandai tidak dapat bonus oleh ${currentUser?.name}${reason ? " — " + reason : ""}`, "INFO");
     showNotif?.("🚫 Order ditandai tidak dapat bonus");
   };
 
-  // ── Kembalikan order yang ter-dismiss → hapus baris sentinel, order muncul lagi di daftar ──
+  // ── Kembalikan order yang ter-dismiss → hapus SEMUA baris dismissed order itu (jaga2 sisa duplikat) ──
   const handleRestoreDismissed = async (bonus) => {
-    await deleteOrderBonus(supabase, bonus.id);
+    await supabase.from("order_bonuses").delete().eq("order_id", bonus.order_id).eq("bonus_type", "dismissed");
     addAgentLog?.("BONUS_UNDISMISS", `Order ${bonus.order_id} dikembalikan ke daftar review bonus oleh ${currentUser?.name}`, "INFO");
     loadBonuses();
     showNotif?.("↩️ Order dikembalikan ke daftar review bonus");
