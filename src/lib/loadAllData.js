@@ -119,6 +119,9 @@ export async function loadAllData({
               wa_payment_detect: sMap.wa_payment_detect ?? prev.wa_payment_detect ?? "true",
               wa_cleanup_enabled: sMap.wa_cleanup_enabled ?? prev.wa_cleanup_enabled ?? "true",
               wa_monitor_enabled: sMap.wa_monitor_enabled ?? prev.wa_monitor_enabled ?? "false",
+              // Opti A (Material Harian) — WAJIB dimuat: dipakai LaporanTeknisiModal untuk sembunyikan
+              // kotak "Stok Terpakai (Tracking)" & arahkan pemakaian material ke menu Material Harian.
+              material_confirm_deduct_enabled: sMap.material_confirm_deduct_enabled ?? prev.material_confirm_deduct_enabled ?? "false",
               ara_training_rules: sMap.ara_training_rules ?? prev.ara_training_rules,
               customer_portal_enabled: sMap.customer_portal_enabled ?? prev.customer_portal_enabled ?? "false",
               customer_portal_url: sMap.customer_portal_url ?? prev.customer_portal_url ?? "https://a-clean-webapp.vercel.app",
