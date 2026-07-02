@@ -3,11 +3,19 @@
 // LIMIT di-tune supaya page load cepat; reference tables tanpa limit.
 // Kolom di-seleksi eksplisit (bukan SELECT *) untuk hemat egress.
 
-const ORDER_COLS = "id,customer,customer_id,phone,address,area,service,type,units,teknisi,helper,date,time,time_end,status,notes,dispatch,dispatch_at,invoice_id,created_at,teknisi_id,helper_id,teknisi2,helper2,teknisi3,helper3,source,team_slot,on_site_at,parent_job_id,is_multi_day,day_number,maintenance_client_id,maintenance_unit_ids,job_group_id,is_team_split,project_id";
+const ORDER_COLS = "id,customer,customer_id,phone,address,area,service,type,units,teknisi,helper,date,time,time_end,status,notes,dispatch,dispatch_at,invoice_id,created_at,updated_at,teknisi_id,helper_id,teknisi2,helper2,teknisi3,helper3,source,team_slot,on_site_at,parent_job_id,is_multi_day,day_number,maintenance_client_id,maintenance_unit_ids,job_group_id,is_team_split,project_id";
 export const fetchOrders = (supabase) =>
   supabase.from("orders")
     .select(ORDER_COLS)
     .order("date", { ascending: false }).limit(500);
+
+// Incremental: hanya order yang berubah/baru sejak `since` (updated_at).
+// Polling live pakai ini agar egress minim — saat idle → 0 baris.
+export const fetchOrdersSince = (supabase, since) =>
+  supabase.from("orders")
+    .select(ORDER_COLS)
+    .gt("updated_at", since)
+    .order("updated_at", { ascending: true }).limit(200);
 
 // Server-side search order — ilike di kolom yang relevan, batas 100 hasil.
 export const searchOrdersServer = (supabase, query) => {
