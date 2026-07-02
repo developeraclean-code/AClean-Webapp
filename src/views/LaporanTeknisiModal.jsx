@@ -1321,8 +1321,14 @@ export default function LaporanTeknisiModal({
                   })}
                 </div>
               )}
-              {/* ══ NORMAL MATERIAL FORM (Service/Repair/Complain) ══ */}
-              {!isInstallJob && (
+              {/* ══ SATU PINTU: pipa/kabel/freon dipindah ke Material Harian (Opti A) ══ */}
+              {!isInstallJob && materialConfirmDeductOn && (
+                <div style={{ background: "#0ea5e908", border: "1px dashed #0ea5e944", borderRadius: 10, padding: "12px 14px", fontSize: 12, color: cs.muted, lineHeight: 1.5 }}>
+                  📦 <strong style={{ color: "#7dd3fc" }}>Pemakaian material (pipa/kabel/freon)</strong> dicatat di menu <strong>Material Harian</strong> — pilih tabung/roll + qty di sana, stok dipotong setelah konfirmasi Owner. Tak perlu input lagi di laporan ini (cegah dobel input).
+                </div>
+              )}
+              {/* ══ NORMAL MATERIAL FORM (Service/Repair/Complain) — hanya bila Opti A OFF ══ */}
+              {!isInstallJob && !materialConfirmDeductOn && (
                 <div style={{ display: "grid", gap: 10 }}>
                   <div>
                     <div>
