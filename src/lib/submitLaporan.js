@@ -248,6 +248,7 @@ export async function submitLaporan({
         const { error: e1 } = await supabase.from("service_reports").upsert({
           ...basePayload,
           materials_json: JSON.stringify(effectiveMaterials),
+          materials_used: effectiveMaterials,
           units_json: JSON.stringify(laporanUnits),
           units: laporanUnits,
           fotos: laporanFotos.filter(f => f.url).map(f => ({ url: f.url, label: f.label || "", unit_no: f.unit_no || null })),
@@ -262,6 +263,7 @@ export async function submitLaporan({
           ...basePayload,
           units_json: JSON.stringify(laporanUnits),
           materials_json: JSON.stringify(effectiveMaterials),
+          materials_used: effectiveMaterials,
         }, { onConflict: "id" });
         if (!e2) { savedOk = true; }
         else { lastError = e2; console.warn("❌ Attempt 2 failed:", e2.message); }
