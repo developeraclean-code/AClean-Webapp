@@ -1141,9 +1141,9 @@ return (
     {isOwnerAdmin && (
       <div style={{ display: "flex", gap: 8, borderBottom: "1px solid " + cs.border, paddingBottom: 12 }}>
         {[
-          { id: "aktif", label: "✅ Aktif", icon: "📦" },
-          { id: "diarsipkan", label: "🗄️ Diarsipkan", icon: "" },
-          { id: "semua", label: "📋 Semua", icon: "" },
+          { id: "aktif", label: "✅ Aktif" },
+          { id: "diarsipkan", label: "🗄️ Diarsipkan", count: invUnitsData.filter(u => u.archived).length },
+          { id: "semua", label: "📋 Semua" },
         ].map(tab => (
           <button key={tab.id}
             onClick={() => setArchiveTabFilter(tab.id)}
@@ -1159,6 +1159,11 @@ return (
               transition: "all 0.2s",
             }}>
             {tab.label}
+            {tab.count > 0 && (
+              <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 800, background: archiveTabFilter === tab.id ? "rgba(255,255,255,0.25)" : cs.yellow + "33", color: archiveTabFilter === tab.id ? "#fff" : cs.yellow, borderRadius: 99, padding: "1px 6px" }}>
+                {tab.count}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -1374,11 +1379,18 @@ return (
                           style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: unit.is_active ? cs.red + "18" : cs.green + "18", border: "1px solid " + (unit.is_active ? cs.red : cs.green) + "44", color: unit.is_active ? cs.red : cs.green, cursor: "pointer" }}>
                           {unit.is_active ? "Nonaktif" : "Aktifkan"}
                         </button>
-                        <button onClick={() => { setConfirmArchiveId(isConfirmingArchive ? null : unit.id); setArchiveReason(""); }}
-                          style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: isConfirmingArchive ? cs.red + "33" : "#64748b18", border: "1px solid " + (isConfirmingArchive ? cs.red : "#64748b") + "44", color: isConfirmingArchive ? cs.red : "#94a3b8", cursor: "pointer" }}
-                          title="Arsipkan — unit dibuang fisik, data tetap tersimpan">
-                          Arsip
-                        </button>
+                        {unit.archived ? (
+                          <button onClick={() => unarchiveUnit(unit.id)}
+                            style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: cs.green + "22", border: "1px solid " + cs.green + "55", color: cs.green, cursor: "pointer", fontWeight: 700 }}>
+                            ↩ Pulihkan
+                          </button>
+                        ) : (
+                          <button onClick={() => { setConfirmArchiveId(isConfirmingArchive ? null : unit.id); setArchiveReason(""); }}
+                            style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: isConfirmingArchive ? cs.red + "33" : "#64748b18", border: "1px solid " + (isConfirmingArchive ? cs.red : "#64748b") + "44", color: isConfirmingArchive ? cs.red : "#94a3b8", cursor: "pointer" }}
+                            title="Arsipkan — unit dibuang fisik, data tetap tersimpan">
+                            Arsip
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

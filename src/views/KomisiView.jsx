@@ -21,6 +21,16 @@ function maskAcct(no) {
   if (s.length <= 4) return "••••";
   return "•".repeat(Math.max(2, s.length - 4)) + s.slice(-4);
 }
+// Komisi PENDING → ELIGIBLE otomatis setelah 30 hari (derive di UI — samakan dgn view Admin,
+// tak tergantung flip DB via cron). Lihat effBonusStatus di TeknisiAdminView.jsx.
+function daysSinceDate(dateStr) {
+  if (!dateStr) return 0;
+  return Math.floor((Date.now() - new Date(dateStr + "T00:00:00").getTime()) / 86400000);
+}
+function effStatus(b) {
+  if (b.status === "PENDING" && daysSinceDate(b.order_date) >= 30) return "ELIGIBLE";
+  return b.status;
+}
 function fmtTenure(d) {
   if (!d) return null;
   const start = new Date(d + "T00:00:00");
@@ -76,12 +86,12 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
 
   const filteredBonuses = bonusFilter === "ALL"
     ? bonuses
-    : bonuses.filter(b => b.status === bonusFilter);
+    : bonuses.filter(b => effStatus(b) === bonusFilter);
 
-  // Summary counts
-  const totalEligible = bonuses.filter(b => b.status === "ELIGIBLE").reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
-  const totalPaid     = bonuses.filter(b => b.status === "PAID").reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
-  const totalPending  = bonuses.filter(b => b.status === "PENDING").reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
+  // Summary counts (pakai status turunan — komisi >30 hari otomatis dianggap Siap Cair)
+  const totalEligible = bonuses.filter(b => effStatus(b) === "ELIGIBLE").reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
+  const totalPaid     = bonuses.filter(b => effStatus(b) === "PAID").reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
+  const totalPending  = bonuses.filter(b => effStatus(b) === "PENDING").reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
 
   const latestPayroll = payrolls[0];
 
@@ -270,7 +280,7 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
                 color: bonusFilter === s ? "#fff" : cs.muted,
               }}>
                 {STATUS_ICONS[s] || "●"} {s === "ALL" ? "Semua" : STATUS_LABELS[s]}
-                {s !== "ALL" && ` (${bonuses.filter(b => b.status === s).length})`}
+                {s !== "ALL" && ` (${bonuses.filter(b => effStatus(b) === s).length})`}
               </button>
             ))}
           </div>
@@ -280,16 +290,16 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
               <div style={{ fontSize: 32, marginBottom: 8 }}>🎯</div>
               <div style={{ color: cs.muted, fontSize: 14 }}>Belum ada komisi.</div>
             </div>
-          ) : filteredBonuses.map(b => (
+          ) : filteredBonuses.map(b => { const est = effStatus(b); return (
             <div key={b.id} style={{
               background: cs.card, borderRadius: 10, padding: 14,
-              border: "1px solid " + STATUS_COLORS[b.status],
-              opacity: b.status === "VOID" ? 0.55 : 1,
+              border: "1px solid " + STATUS_COLORS[est],
+              opacity: est === "VOID" ? 0.55 : 1,
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                    <span style={{ fontSize: 16 }}>{STATUS_ICONS[b.status]}</span>
+                    <span style={{ fontSize: 16 }}>{STATUS_ICONS[est]}</span>
                     <span style={{ fontWeight: 700, fontSize: 14, color: cs.text }}>{BONUS_LABELS[b.bonus_type] || b.bonus_type}</span>
                   </div>
                   <div style={{ fontSize: 11, color: cs.muted }}>
@@ -301,19 +311,19 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
                   {b.note && <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic", marginTop: 2 }}>{b.note}</div>}
                   {b.void_reason && <div style={{ fontSize: 11, color: "#ef4444", marginTop: 2 }}>Void: {b.void_reason}</div>}
                   <div style={{ marginTop: 4 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 4, background: STATUS_COLORS[b.status] + "33", color: STATUS_COLORS[b.status] }}>
-                      {STATUS_LABELS[b.status]}
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 4, background: STATUS_COLORS[est] + "33", color: STATUS_COLORS[est] }}>
+                      {STATUS_LABELS[est]}
                     </span>
                   </div>
                 </div>
                 <div style={{ textAlign: "right", minWidth: 90 }}>
                   <div style={{ fontSize: 10, color: cs.muted }}>Bagian Saya</div>
-                  <div style={{ fontWeight: 800, fontSize: 16, color: b.status === "VOID" ? cs.muted : cs.accent }}>{fmtRp(b.amount_per_person)}</div>
+                  <div style={{ fontWeight: 800, fontSize: 16, color: est === "VOID" ? cs.muted : cs.accent }}>{fmtRp(b.amount_per_person)}</div>
                   <div style={{ fontSize: 10, color: cs.muted }}>dari {fmtRp(b.total_amount)}</div>
                 </div>
               </div>
             </div>
-          ))}
+          ); })}
         </div>
       )}
 

@@ -307,11 +307,13 @@ export const fetchMyBonuses = (supabase, userName, limit = 50) =>
     .order("order_date", { ascending: false })
     .limit(limit);
 
-// Orders minggu ini yang belum punya bonus entry (untuk admin review)
+// Orders minggu ini yang belum punya bonus entry (untuk admin review).
+// Status "selesai" mencakup pekerjaan yang sudah kelar tapi invoice belum PAID —
+// kalau cuma COMPLETED/PAID, order di INVOICE_APPROVED/REPORT_SUBMITTED hilang dari review komisi.
 export const fetchOrdersWithoutBonus = (supabase, periodStart, periodEnd) =>
   supabase.from("orders")
     .select("id,date,customer,service,units,teknisi,teknisi2,teknisi3,helper,helper2,helper3,invoice_id,status")
     .gte("date", periodStart)
     .lte("date", periodEnd)
-    .in("status", ["COMPLETED","PAID"])
+    .in("status", ["COMPLETED", "REPORT_SUBMITTED", "INVOICE_APPROVED", "INVOICE_CREATED", "PAID"])
     .order("date");

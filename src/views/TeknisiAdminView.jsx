@@ -609,7 +609,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     setPeriodInvMap(fetchedInvMap);
     setOrdersNoBonus(eligible);
     setLoadingBonus(false);
-  }, [supabase, bonusStart, bonusEnd]);
+  }, [supabase, bonusStart, bonusEnd, bonusCategories]);
 
   useEffect(() => { if (subTab === "payroll") loadPayroll(); }, [subTab, loadPayroll]);
   useEffect(() => { if (subTab === "komisi") loadBonuses(); }, [subTab, loadBonuses]);
@@ -762,10 +762,16 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const handleSendWA = async (row) => {
     const t = teknisiData.find(x => x.id === row.user_id);
     if (!t?.phone) { showNotif?.("❌ Nomor HP " + row.user_name + " tidak ditemukan"); return; }
-    const bonusMinggu = bonuses.filter(b =>
-      b.status === "PAID" && (b.team_members || []).includes(row.user_name) &&
-      b.order_date >= bonusStart && b.order_date <= bonusEnd
-    );
+    // Komisi yang DIBAYAR dalam rentang periode gaji ini — filter by paid_at, BUKAN order_date
+    // (komisi cair 30–45 hari setelah order_date, jadi order_date pasti di luar minggu ini).
+    // Fetch langsung dari DB agar tak bergantung state `bonuses` yang cuma terisi di tab Komisi.
+    const { data: paidBonuses } = await supabase.from("order_bonuses")
+      .select("bonus_type,total_amount,amount_per_person,order_id")
+      .eq("status", "PAID")
+      .gte("paid_at", row.period_start)
+      .lte("paid_at", row.period_end + "T23:59:59")
+      .contains("team_members", [row.user_name]);
+    const bonusMinggu = paidBonuses || [];
     const msg = buildSlipMsg(row, bonusMinggu);
     openWA?.(t.phone, msg);
     await updateWeeklyPayroll(supabase, row.id, { wa_sent_at: new Date().toISOString() });
@@ -791,6 +797,13 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
 
   // ── Simpan bonus order ──
   const handleSaveBonus = async (orderRow, bonusType, grossRevenue, materialCost, teamMembers, totalAmount, note) => {
+    // Guard duplikat: 1 order = 1 komisi aktif (non-void). Cegah double-submit / buka form ulang.
+    const { data: dup } = await supabase.from("order_bonuses")
+      .select("id").eq("order_id", orderRow.id).neq("status", "VOID").limit(1);
+    if (dup && dup.length > 0) {
+      showNotif?.("⚠️ Order ini sudah punya komisi aktif. Void dulu bila ingin menggantinya.");
+      setBonusForm(null); loadBonuses(); return;
+    }
     const { error } = await insertOrderBonus(supabase, {
       order_id:      orderRow.id,
       order_date:    orderRow.date,
@@ -1380,6 +1393,11 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
             {voidForm && (
               <div style={{ background: "#3f1515", border: "1px solid " + cs.red, borderRadius: 10, padding: 16 }}>
                 <div style={{ fontWeight: 700, color: cs.red, marginBottom: 10 }}>🚫 Void Bonus</div>
+                {voidForm.wasPaid && (
+                  <div style={{ fontSize: 11, color: "#fca5a5", marginBottom: 10, lineHeight: 1.5 }}>
+                    ⚠️ Komisi ini <strong>sudah DIBAYAR</strong>. Void hanya membatalkan catatan komisi — <strong>tidak</strong> menarik uang otomatis. Lakukan klaim balik / potong manual di gaji jika perlu.
+                  </div>
+                )}
                 <input value={voidForm.reason} onChange={e => setVoidForm(f => ({ ...f, reason: e.target.value }))}
                   placeholder="Alasan void (wajib) — contoh: Customer complain freon bocor lagi"
                   style={{ width: "100%", padding: "8px 10px", borderRadius: 7, border: "1px solid " + cs.red, background: cs.card, color: cs.text, fontSize: 13, boxSizing: "border-box" }}
@@ -1451,7 +1469,14 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     </button>
                   </div>
                 )}
-                {est === "PAID" && <div style={{ fontSize: 11, color: cs.muted, marginTop: 6 }}>Dibayar oleh {b.paid_by} · {b.paid_at ? new Date(b.paid_at).toLocaleString("id-ID") : "-"}</div>}
+                {est === "PAID" && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 11, color: cs.muted }}>Dibayar oleh {b.paid_by} · {b.paid_at ? new Date(b.paid_at).toLocaleString("id-ID") : "-"}</div>
+                    <button onClick={() => setVoidForm({ id: b.id, reason: "", wasPaid: true })} style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", border: "1px solid " + cs.red, color: cs.red, cursor: "pointer", fontSize: 11 }}>
+                      🚫 Void (klaim balik)
+                    </button>
+                  </div>
+                )}
               </div>
             ); })}
           </div>
@@ -1596,9 +1621,13 @@ function detectBonusFromInvoice(materialsDetail, orderService = "", bonusCategor
   return result;
 }
 
+// Status "pekerjaan selesai" — samakan dgn fetchOrdersWithoutBonus & set "selesai" di atas,
+// supaya kumulatif Install tak kurang hitung saat order masih INVOICE_APPROVED/REPORT_SUBMITTED.
+const DONE_STATUSES = ["COMPLETED", "REPORT_SUBMITTED", "INVOICE_APPROVED", "INVOICE_CREATED", "PAID"];
+
 function getInstallCumulative(ordersData, date, teamMembers) {
   const sameDay = (ordersData || []).filter(o =>
-    o.date === date && o.service === "Install" && ["COMPLETED","PAID"].includes(o.status)
+    o.date === date && o.service === "Install" && DONE_STATUSES.includes(o.status)
   );
   const relevant = sameDay.filter(o => {
     const ot = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean);
@@ -1662,6 +1691,11 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
   const totalAmount = getAutoAmount();
   const perPerson   = selectedTeam.length > 0 ? Math.round(totalAmount / selectedTeam.length) : 0;
   const fmt = n => Number(n || 0).toLocaleString("id-ID");
+
+  // Bonus margin hanya sah bila profit terhitung DAN ≥ Rp 1jt — cegah simpan bonus margin
+  // untuk job yang belum memenuhi syarat (isi omset & biaya material dulu).
+  const marginBelowThreshold = bonusType.startsWith("margin") && (profit === null || profit < 1000000);
+  const canSave = totalAmount > 0 && selectedTeam.length > 0 && !marginBelowThreshold;
 
   return (
     <div style={{ background: "#0f2d4a", border: "1px solid " + (isComplain ? "#ef4444" : "#3b82f6"), borderRadius: 12, padding: 16 }}>
@@ -1783,11 +1817,16 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
         </div>
       </div>
 
+      {marginBelowThreshold && (
+        <div style={{ background: "#3f1515", border: "1px solid #ef4444", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#fca5a5", marginBottom: 10 }}>
+          ⚠️ Bonus margin butuh <strong>profit ≥ Rp 1jt</strong>. {profit === null ? "Isi Omset & Biaya Material dulu untuk hitung profit." : "Profit saat ini belum mencapai Rp 1jt."}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8 }}>
         <button
-          onClick={() => totalAmount > 0 && selectedTeam.length > 0 && onSave(orderRow, bonusType, grossRevenue, materialCost, selectedTeam, totalAmount, note)}
-          disabled={totalAmount === 0 || selectedTeam.length === 0}
-          style={{ padding: "8px 18px", borderRadius: 7, background: (totalAmount === 0 || selectedTeam.length === 0) ? "#334155" : "#3b82f6", border: "none", color: "#fff", cursor: totalAmount > 0 ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 13 }}>
+          onClick={() => canSave && onSave(orderRow, bonusType, grossRevenue, materialCost, selectedTeam, totalAmount, note)}
+          disabled={!canSave}
+          style={{ padding: "8px 18px", borderRadius: 7, background: !canSave ? "#334155" : "#3b82f6", border: "none", color: "#fff", cursor: canSave ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 13 }}>
           💾 Simpan Bonus
         </button>
         <button onClick={onCancel} style={{ padding: "8px 16px", borderRadius: 7, background: "transparent", border: "1px solid #334155", color: "#64748b", cursor: "pointer", fontSize: 13 }}>
