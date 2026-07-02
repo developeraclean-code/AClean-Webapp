@@ -982,7 +982,6 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
     { id: "cron",         label: "⏰ Cron Jobs" },
     { id: "ai",           label: "🤖 AI Cost" },
     { id: "wa",           label: "📱 WA Delivery" },
-    { id: "snapshots",    label: "📸 WA Snapshots" },
     { id: "observations", label: "🧪 AI Observations" },
     { id: "recon",        label: "🧾 Rekonsiliasi Invoice" },
     { id: "maintlink",    label: "🏢 Link Maintenance" },
@@ -1019,7 +1018,6 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
       {activeTab === "cron"  && <TabCron supabase={supabase} />}
       {activeTab === "ai"    && <TabAiCost supabase={supabase} />}
       {activeTab === "wa"        && <TabWa supabase={supabase} />}
-      {activeTab === "snapshots"    && <TabWaSnapshots supabase={supabase} apiHeaders={_apiHeaders} />}
       {activeTab === "observations" && <TabWaObservations supabase={supabase} />}
       {activeTab === "recon"     && <TabInvoiceRecon supabase={supabase} />}
       {activeTab === "maintlink" && <TabMaintLink apiHeaders={_apiHeaders} />}
