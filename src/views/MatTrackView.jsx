@@ -1164,8 +1164,39 @@ return (
       </div>
     )}
 
-    {/* ── Daftar Material — satu card per item ── */}
-    {TRACK_ITEMS.map(item => {
+    {/* ── Filter grup (atas): kategori + cari — mengatur kartu stok & riwayat ── */}
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      {[["Semua", "📋"], ["Freon", "❄️"], ["Pipa", "🔧"], ["Kabel", "⚡"]].map(([f, ic]) => (
+        <button key={f} onClick={() => setMatTrackFilter(f)}
+          style={{ padding: "6px 14px", borderRadius: 99, fontSize: 12, cursor: "pointer", border: "1px solid " + (matTrackFilter === f ? cs.accent : cs.border), background: matTrackFilter === f ? cs.accent + "22" : cs.surface, color: matTrackFilter === f ? cs.accent : cs.muted, fontWeight: matTrackFilter === f ? 700 : 400 }}>
+          {ic} {f}
+        </button>
+      ))}
+      <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+        <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: cs.muted, fontSize: 13 }}>🔍</span>
+        <input value={matTrackSearch} onChange={e => setMatTrackSearch(e.target.value)}
+          placeholder="Cari item, kode, customer, teknisi, job..."
+          style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "8px 12px 8px 34px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+      </div>
+    </div>
+
+    {/* ── Daftar Material — satu card per item (ikut filter kategori + cari) ── */}
+    {(() => {
+      const q0 = matTrackSearch.trim().toLowerCase();
+      const shownItems = TRACK_ITEMS.filter(item => {
+        if (matTrackFilter === "Freon" && item.material_type !== "freon") return false;
+        if (matTrackFilter === "Pipa" && item.material_type !== "pipa") return false;
+        if (matTrackFilter === "Kabel" && item.material_type !== "kabel") return false;
+        if (!["Semua", "Freon", "Pipa", "Kabel"].includes(matTrackFilter) && item.code !== matTrackFilter) return false;
+        if (q0 && !(item.name || "").toLowerCase().includes(q0) && !(item.code || "").toLowerCase().includes(q0)) return false;
+        return true;
+      });
+      if (shownItems.length === 0) return (
+        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 28, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+          Tidak ada material untuk filter ini.
+        </div>
+      );
+      return shownItems.map(item => {
       const units = invUnitsData.filter(u => u.inventory_code === item.code);
       const activeUnits = units.filter(u => !u.archived);
       const archivedUnits = units.filter(u => u.archived);
@@ -1476,7 +1507,8 @@ return (
           )}
         </div>
       );
-    })}
+      });
+    })()}
 
     {/* ── Banner freon belum ditimbang ── */}
     {isOwnerAdmin && (() => {
@@ -1503,15 +1535,9 @@ return (
       );
     })()}
 
-    {/* Filter pills */}
+    {/* Filter tanggal — khusus Riwayat Pemakaian (kategori & cari sudah di atas) */}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-      {[["Semua", "📋"], ["Freon", "❄️"], ["Pipa", "🔧"], ["Kabel", "⚡"]].map(([f, ic]) => (
-        <button key={f} onClick={() => setMatTrackFilter(f)}
-          style={{ padding: "5px 12px", borderRadius: 99, fontSize: 12, cursor: "pointer", border: "1px solid " + (matTrackFilter === f ? cs.accent : cs.border), background: matTrackFilter === f ? cs.accent + "22" : cs.surface, color: matTrackFilter === f ? cs.accent : cs.muted, fontWeight: matTrackFilter === f ? 700 : 400 }}>
-          {ic} {f}
-        </button>
-      ))}
-      <span style={{ width: 1, height: 16, background: cs.border }} />
+      <span style={{ fontSize: 11, color: cs.muted, fontWeight: 600 }}>📅 Riwayat pemakaian:</span>
       <input type="date" value={matTrackDateFrom} onChange={e => setMatTrackDateFrom(e.target.value)}
         style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "4px 8px", fontSize: 12, color: cs.text, colorScheme: "dark" }} />
       <span style={{ color: cs.muted }}>–</span>
@@ -1521,14 +1547,6 @@ return (
         <button onClick={() => { setMatTrackDateFrom(""); setMatTrackDateTo(""); }}
           style={{ fontSize: 11, padding: "3px 10px", borderRadius: 99, background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red, cursor: "pointer" }}>✕ Reset</button>
       )}
-    </div>
-
-    {/* Search */}
-    <div style={{ position: "relative" }}>
-      <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: cs.muted }}>🔍</span>
-      <input value={matTrackSearch} onChange={e => setMatTrackSearch(e.target.value)}
-        placeholder="Cari item, customer, teknisi, job ID..."
-        style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px 10px 36px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
     </div>
 
     {/* Tabel pemakaian */}
