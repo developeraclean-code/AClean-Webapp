@@ -89,6 +89,8 @@ const filterOrderByPeriod = (o) => inRange(String(o.date || ""));
 const allInv = invoicesData;
 // paidInv: PAID di periode ini (by paid_at)
 const paidInv = allInv.filter(i => i.status === "PAID" && filterInvByPeriod(i));
+// billablePaidInv: exclude Complain gratis (total=0) agar tidak deflate avg
+const billablePaidInv = paidInv.filter(i => (i.total || 0) > 0);
 // AR: selalu semua outstanding (bukan filter periode)
 const unpaidInv = allInv.filter(i => i.status === "UNPAID");
 const overdueInv = allInv.filter(i => i.status === "OVERDUE");
@@ -116,7 +118,8 @@ const ordersPeriodUnique = ordersPeriod.filter(o => !(o.parent_job_id && o.is_mu
 const ordersDone = ordersPeriodUnique.filter(o => DONE_STATUSES.includes(o.status) || o.status === "CONTINUED").length;
 const ordersAll = ordersPeriodUnique.length;
 const completionRate = ordersAll > 0 ? Math.round(ordersDone / ordersAll * 100) : 0;
-const avgOrderVal = paidInv.length > 0 ? Math.round(totalRevenue / paidInv.length) : 0;
+// avgOrderVal pakai billable saja (exclude Complain gratis total=0)
+const avgOrderVal = billablePaidInv.length > 0 ? Math.round(totalRevenue / billablePaidInv.length) : 0;
 
 // ── Revenue per layanan (periode ini) ──
 // Untuk ac_unit_sale & quotation_converted: kurangi unit_ac_amount (passthrough) agar revenue Install hanya hitung paket+addon
@@ -144,9 +147,21 @@ const tekPerf = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map
       const totalDays = Math.max(linkedOrders.length, 1);
       return a + (effRevenue(b) * myShare / totalDays);
     }, 0);
-  return { name, done: myDone, total: myOrders.length, rev: Math.round(myRev) };
+  return { name, done: myDone, total: myOrders.length, rev: Math.round(myRev), isHelper: false };
 }).filter(t => t.total > 0).sort((a, b) => b.done - a.done);
-const maxDone = Math.max(...tekPerf.map(t => t.done), 1);
+
+// Helper murni (tidak pernah jadi teknisi di periode ini) — performa tersembunyi sebelumnya
+const teknisiNamesSet = new Set(tekPerf.map(t => t.name));
+const helperPerf = [...new Set(ordersPeriod.map(o => o.helper).filter(Boolean))]
+  .filter(h => !teknisiNamesSet.has(h))
+  .map(name => {
+    const myOrders = ordersPeriod.filter(o => o.helper === name);
+    const myDone = myOrders.filter(o => DONE_STATUSES.includes(o.status) || o.status === "CONTINUED").length;
+    return { name, done: myDone, total: myOrders.length, rev: 0, isHelper: true };
+  }).filter(t => t.total > 0).sort((a, b) => b.done - a.done);
+
+const allTeamPerf = [...tekPerf, ...helperPerf];
+const maxDone = Math.max(...allTeamPerf.map(t => t.done), 1);
 
 // ── Customer metrics ──
 const custTotal = customersData.length;
@@ -229,7 +244,7 @@ return (
         <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
           <div style={{ fontWeight: 800, color: cs.text, fontSize: 14, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span>💰 Profit & Loss — {periodLabel}</span>
-            <span style={{ fontSize: 11, color: cs.muted, fontWeight: 400 }}>Berdasarkan {paidInv.length} invoice PAID</span>
+            <span style={{ fontSize: 11, color: cs.muted, fontWeight: 400 }}>Berdasarkan {billablePaidInv.length} invoice berbayar{paidInv.length > billablePaidInv.length ? " (+" + (paidInv.length - billablePaidInv.length) + " gratis)" : ""}</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
             {[
@@ -266,7 +281,10 @@ return (
                     {/* Invoice Count & Average */}
                     <div style={{ fontSize: 9, color: cs.muted, paddingTop: 8, borderTop: "1px solid " + cs.border }}>
                       <div>{cnt} invoice</div>
-                      <div style={{ marginTop: 2, color: col, fontWeight: 600 }}>{(rev / Math.max(1, cnt)).toFixed(0)} rata²</div>
+                      {rev > 0
+                        ? <div style={{ marginTop: 2, color: col, fontWeight: 600 }}>{fmt(Math.round(rev / cnt))} rata²</div>
+                        : <div style={{ marginTop: 2, color: cs.muted, fontStyle: "italic" }}>Gratis / Garansi</div>
+                      }
                     </div>
                   </div>
                 );
@@ -292,8 +310,8 @@ return (
                 <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700 }}>Net Margin</div>
               </div>
               <div style={{ textAlign: "center", padding: "10px 16px", background: cs.accent + "12", borderRadius: 10, border: "1px solid " + cs.accent + "22" }}>
-                <div style={{ fontSize: 20, fontWeight: 800, color: cs.accent }}>{paidInv.length}</div>
-                <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700 }}>Invoice Lunas</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: cs.accent }}>{billablePaidInv.length}</div>
+                <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700 }}>Invoice Berbayar</div>
               </div>
             </div>
           );
@@ -306,7 +324,7 @@ return (
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: isMobile ? 10 : 12 }}>
       {[
         { label: "Completion Rate", val: completionRate + "%", sub: ordersDone + "/" + ordersAll + " order", color: cs.green, icon: "✅" },
-        ...((currentUser?.role === "Owner" || currentUser?.role === "Finance") ? [{ label: "Avg. Order Value", val: fmt(avgOrderVal), sub: "per transaksi PAID", color: cs.accent, icon: "📋" }] : []),
+        ...((currentUser?.role === "Owner" || currentUser?.role === "Finance") ? [{ label: "Avg. Order Value", val: fmt(avgOrderVal), sub: "per transaksi berbayar", color: cs.accent, icon: "📋" }] : []),
         { label: "Order " + periodLabel, val: ordersAll, sub: custBaru + " customer baru", color: cs.yellow, icon: "🗂️" },
       ].map(k => (
         <div key={k.label} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 16, textAlign: "center" }}>
@@ -323,15 +341,15 @@ return (
       <div style={{ fontWeight: 800, color: cs.text, fontSize: 14, marginBottom: 14 }}>📥 Accounts Receivable (Piutang)</div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: 10, marginBottom: 14 }}>
         {[
-          { label: "Piutang Aktif", val: fmt(totalAR), cnt: unpaidInv.length + overdueInv.length, color: cs.yellow },
-          { label: "Overdue 🚨", val: fmt(totalOverdue), cnt: overdueInv.length, color: cs.red },
-          { label: "Menunggu Approval", val: fmt(totalPending), cnt: pendingInv.length, color: cs.ara },
-          { label: "Customer Aktif", val: custTotal, cnt: custVip + " VIP", color: cs.accent },
+          { label: "Piutang Aktif", val: fmt(totalAR), sub: (unpaidInv.length + overdueInv.length) + " invoice belum bayar", color: cs.yellow },
+          { label: "Overdue 🚨", val: fmt(totalOverdue), sub: overdueInv.length + " invoice terlambat", color: cs.red },
+          { label: "Menunggu Approval", val: fmt(totalPending), sub: pendingInv.length + " invoice pending", color: cs.ara },
+          { label: "Total Customer", val: custTotal, sub: custVip + " VIP · " + custBaru + " baru periode ini", color: cs.accent },
         ].map(k => (
           <div key={k.label} style={{ background: cs.surface, borderRadius: 10, padding: "12px 14px", border: "1px solid " + k.color + "22" }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: k.color, fontFamily: "monospace" }}>{k.val}</div>
             <div style={{ fontSize: 11, color: cs.text, fontWeight: 600, marginTop: 3 }}>{k.label}</div>
-            <div style={{ fontSize: 10, color: cs.muted, marginTop: 1 }}>{k.cnt} invoice/akun</div>
+            <div style={{ fontSize: 10, color: cs.muted, marginTop: 1 }}>{k.sub}</div>
           </div>
         ))}
       </div>
@@ -359,21 +377,31 @@ return (
     <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
       <div style={{ fontWeight: 800, color: cs.text, fontSize: 14, marginBottom: 4 }}>👷 Performa Tim Teknisi</div>
       <div style={{ fontSize: 11, color: cs.muted, marginBottom: 14 }}>Berdasarkan order selesai — {periodLabel}</div>
-      {tekPerf.length === 0
+      {allTeamPerf.length === 0
         ? <div style={{ color: cs.muted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Belum ada data</div>
         : <div style={{ display: "grid", gap: 8 }}>
-          {tekPerf.map(t => {
-            const col = techColors[t.name] || cs.muted;
+          {allTeamPerf.map((t, ti) => {
+            const col = t.isHelper ? cs.muted : (techColors[t.name] || cs.muted);
             const rate = t.total > 0 ? Math.round(t.done / t.total * 100) : 0;
             return (
-              <div key={t.name} style={{ display: "grid", gridTemplateColumns: isMobile ? "80px 1fr 50px" : "120px 1fr 60px 80px", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
-                <div style={{ background: cs.border, borderRadius: 99, height: 8, overflow: "hidden" }}>
-                  <div style={{ height: "100%", background: col, width: (t.done / maxDone * 100) + "%", borderRadius: 99, transition: "width 0.4s" }} />
+              <>
+                {/* Separator sebelum baris helper pertama */}
+                {t.isHelper && ti > 0 && allTeamPerf[ti - 1] && !allTeamPerf[ti - 1].isHelper && (
+                  <div style={{ borderTop: "1px dashed " + cs.border, marginTop: 4, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 9, color: cs.muted, background: cs.surface, padding: "1px 6px", borderRadius: 99 }}>Helper</span>
+                  </div>
+                )}
+                <div key={t.name} style={{ display: "grid", gridTemplateColumns: isMobile ? "80px 1fr 50px" : "120px 1fr 60px 80px", alignItems: "center", gap: 10, opacity: t.isHelper ? 0.75 : 1 }}>
+                  <span style={{ fontSize: t.isHelper ? 11 : 13, fontWeight: 700, color: t.isHelper ? cs.muted : cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {t.name}{t.isHelper ? <span style={{ fontSize: 9, color: cs.muted, marginLeft: 3 }}>(H)</span> : ""}
+                  </span>
+                  <div style={{ background: cs.border, borderRadius: 99, height: 8, overflow: "hidden" }}>
+                    <div style={{ height: "100%", background: col, width: (t.done / maxDone * 100) + "%", borderRadius: 99, transition: "width 0.4s" }} />
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: col, fontFamily: "monospace", textAlign: "right" }}>{t.done}/{t.total}</span>
+                  <span style={{ fontSize: 10, color: rate >= 80 ? cs.green : rate >= 50 ? cs.yellow : cs.red, fontWeight: 700, textAlign: "right" }}>{rate}%</span>
                 </div>
-                <span style={{ fontSize: 11, fontWeight: 700, color: col, fontFamily: "monospace", textAlign: "right" }}>{t.done}/{t.total}</span>
-                <span style={{ fontSize: 10, color: rate >= 80 ? cs.green : rate >= 50 ? cs.yellow : cs.red, fontWeight: 700, textAlign: "right" }}>{rate}%</span>
-              </div>
+              </>
             );
           })}
         </div>
@@ -416,7 +444,10 @@ return (
     {/* ── SECTION 6: Rating & Customer Satisfaction (Owner/Admin) ── */}
     {isOwnerOrAdmin && (
       <div style={{ display: "grid", gap: 14 }}>
-        <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>⭐ Customer Satisfaction</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>⭐ Customer Satisfaction</div>
+          <span style={{ fontSize: 10, color: cs.muted, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 99, padding: "2px 8px" }}>Semua Waktu</span>
+        </div>
 
         {/* Overview stats */}
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)", gap: 10 }}>
