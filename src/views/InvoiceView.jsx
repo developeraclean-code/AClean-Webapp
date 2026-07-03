@@ -282,12 +282,19 @@ const openPayPanel = async (inv) => {
   setPayPanelInvId(inv.id);
   setPayForm({ amount: "", method: "transfer", notes: "", paid_at: getLocalDate() });
   setPayLoading(true);
-  const { data } = await supabase.from("invoice_payments")
-    .select("id,amount,method,notes,paid_at,recorded_by_name,created_at")
-    .eq("invoice_id", inv.id)
-    .order("paid_at", { ascending: true });
-  setPayHistory(data || []);
-  setPayLoading(false);
+  try {
+    const { data, error } = await supabase.from("invoice_payments")
+      .select("id,amount,method,notes,paid_at,recorded_by_name,created_at")
+      .eq("invoice_id", inv.id)
+      .order("paid_at", { ascending: true });
+    if (error) throw error;
+    setPayHistory(data || []);
+  } catch (err) {
+    showNotif("⚠️ Gagal muat riwayat bayar: " + err.message);
+    setPayPanelInvId(null);
+  } finally {
+    setPayLoading(false);
+  }
 };
 
 const savePayment = async (inv) => {
@@ -1158,7 +1165,7 @@ return (
             }
             showNotif("⏳ Mengambil data dari server...");
             let q = supabase.from("invoices")
-              .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent_at,created_at,teknisi,paid_method")
+              .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent_at,created_at,teknisi,paid_method,paid_amount,remaining_amount")
               .order("created_at", { ascending: false });
             if (invoiceDateFrom) q = q.gte("created_at", invoiceDateFrom + "T00:00:00");
             if (invoiceDateTo) q = q.lte("created_at", invoiceDateTo + "T23:59:59");
@@ -1619,21 +1626,20 @@ return (
                     })) return;
 
                     const paidAt = new Date().toISOString();
+                    const { error: upErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName());
+                    if (upErr) {
+                      showNotif("❌ Gagal approve repair gratis: " + upErr.message);
+                      return;
+                    }
                     setInvoicesData(prev => prev.map(i => i.id === inv.id
                       ? { ...i, status: "PAID", paid_at: paidAt } : i));
                     setOrdersData(prev => prev.map(o => o.id === inv.job_id
                       ? { ...o, status: "PAID" } : o));
-
-                    const { error: upErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName());
-                    if (!upErr) {
-                      await updateOrderStatus(supabase, inv.job_id, "PAID", auditUserName());
-                      addAgentLog("REPAIR_GRATIS_APPROVED",
-                        `Invoice ${inv.id} (${inv.repair_gratis}) APPROVED & PAID oleh ${currentUser?.name}. Tidak ada WA terkirim.`,
-                        "SUCCESS");
-                      showNotif(`✅ Repair gratis disetujui dan dicatat LUNAS. Tidak dikirim ke customer.`);
-                    } else {
-                      showNotif("⚠️ Persetujuan lokal berhasil, tapi DB update gagal: " + upErr.message);
-                    }
+                    await updateOrderStatus(supabase, inv.job_id, "PAID", auditUserName());
+                    addAgentLog("REPAIR_GRATIS_APPROVED",
+                      `Invoice ${inv.id} (${inv.repair_gratis}) APPROVED & PAID oleh ${currentUser?.name}. Tidak ada WA terkirim.`,
+                      "SUCCESS");
+                    showNotif(`✅ Repair gratis disetujui dan dicatat LUNAS. Tidak dikirim ke customer.`);
                   }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12, flex: 1 }}>✅ Setuju Gratis</button>
                   <button onClick={async () => {
                     if (!await showConfirm({
@@ -1641,8 +1647,9 @@ return (
                       message: `Tolak invoice ${inv.id} repair gratis?\n\nInvoice akan dihapus dan laporan perlu diedit ulang.`,
                       confirmText: "Tolak & Hapus"
                     })) return;
+                    const { error: delRgErr } = await deleteInvoice(supabase, inv.id, auditUserName(), "REPAIR_GRATIS_REJECTED");
+                    if (delRgErr) { showNotif("❌ Gagal hapus invoice: " + delRgErr.message); return; }
                     setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
-                    await deleteInvoice(supabase, inv.id, auditUserName(), "REPAIR_GRATIS_REJECTED");
                     if (inv.job_id) await updateOrderStatus(supabase, inv.job_id, "COMPLETED", auditUserName(), { invoice_id: null });
                     addAgentLog("REPAIR_GRATIS_REJECTED", `Invoice ${inv.id} repair gratis REJECTED oleh ${currentUser?.name}`, "WARNING");
                     showNotif(`❌ Repair gratis ditolak — laporan ${inv.job_id} kembali ke COMPLETED`);
@@ -1683,10 +1690,10 @@ return (
                       const paidAt = new Date().toISOString();
                       const upd = { total: 0, labor: 0, material: 0, discount: 0, trade_in: false, trade_in_amount: 0, garansi_status: "GARANSI_OVERRIDE_FREE", status: "PAID", paid_at: paidAt };
                       const { garansi_status: _gs1, ...updDB } = upd; // garansi_status tidak ada di DB
+                      const { error } = await updateInvoice(supabase, inv.id, updDB, auditUserName());
+                      if (error) { showNotif("❌ DB update gagal: " + error.message); return; }
                       setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
                       setOrdersData(prev => prev.map(o => o.id === inv.job_id ? { ...o, status: "PAID" } : o));
-                      const { error } = await updateInvoice(supabase, inv.id, updDB, auditUserName());
-                      if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
                       if (inv.job_id) await updateOrderStatus(supabase, inv.job_id, "PAID", auditUserName());
                       addAgentLog("COMPLAIN_OVERRIDE_FREE", `Invoice ${inv.id} override GRATIS & LUNAS oleh ${currentUser?.name}`, "SUCCESS");
                       showNotif("✅ Invoice di-override GRATIS dan dicatat LUNAS");
@@ -1701,9 +1708,9 @@ return (
                       })) return;
                       const upd = { garansi_status: "GARANSI_OVERRIDE_PAID", status: "PENDING_APPROVAL", repair_gratis: null };
                       const { garansi_status: _gs2, ...updDB2 } = upd; // garansi_status tidak ada di DB
-                      setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
                       const { error } = await updateInvoice(supabase, inv.id, updDB2, auditUserName());
-                      if (error) { showNotif("⚠️ DB update gagal: " + error.message); return; }
+                      if (error) { showNotif("❌ DB update gagal: " + error.message); return; }
+                      setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...upd } : i));
                       addAgentLog("COMPLAIN_OVERRIDE_PAID", `Invoice ${inv.id} di-override BERBAYAR oleh ${currentUser?.name}`, "INFO");
                       showNotif("✅ Invoice di-override menjadi BERBAYAR — edit nilai jika perlu sebelum approve");
                     }} style={{ flex: 1, background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "7px 12px", borderRadius: 8, cursor: inv.repair_gratis ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 12, opacity: inv.repair_gratis ? 1 : 0.45 }}>
@@ -1839,9 +1846,9 @@ return (
                   message: `Hapus invoice ${inv.id}?\n\nInvoice + invoice_items + payment history akan dihapus permanen.\nOrder install terkait tetap ada (linkage di-unset).${warnPaid}`,
                   confirmText: "Hapus Permanen"
                 })) return;
-                setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
                 const { error } = await deleteInvoice(supabase, inv.id, auditUserName(), "OWNER_HAPUS_MANUAL");
-                if (error) { showNotif("⚠️ Hapus lokal OK, DB gagal: " + error.message); return; }
+                if (error) { showNotif("❌ Gagal hapus invoice: " + error.message); return; }
+                setInvoicesData(prev => prev.filter(i => i.id !== inv.id));
                 if (inv.job_id) await updateOrderStatus(supabase, inv.job_id, "COMPLETED", auditUserName(), { invoice_id: null });
                 addAgentLog("INVOICE_DELETED", `Invoice ${inv.id} (${inv.customer}) dihapus oleh ${currentUser?.name}`, "WARNING");
                 showNotif("🗑️ Invoice " + inv.id + " berhasil dihapus");

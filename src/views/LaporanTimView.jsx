@@ -1046,7 +1046,7 @@ return (
               {todayReps
                 .sort((a, b) => (sMap[a.status] ? 0 : 1) - (sMap[b.status] ? 0 : 1))
                 .map(r => {
-                  const [col] = sMap[r.status] || [cs.muted];
+                  const [col] = sMap[(r.status || "").toUpperCase()] || [cs.muted];
                   const tcol = techColors?.[r.teknisi] || cs.accent;
                   return (
                     <div key={r.id} style={{
@@ -1341,7 +1341,7 @@ return (
               })()}
               <button onClick={() => verifyLaporan(r)} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✅ Verifikasi</button>
               <button onClick={async () => {
-                setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "REVISION" } : x));
+                if (currentUser?.role !== "Owner" && currentUser?.role !== "Admin") return showNotif("❌ Hanya Owner/Admin");
                 const { error: revErr } = await updateServiceReport(supabase, r.id, { status: "REVISION" }, auditUserName());
                 if (revErr) {
                   console.warn("❌ update REVISION failed:", revErr.message);
@@ -1349,6 +1349,7 @@ return (
                   showNotif("❌ Gagal update status — " + revErr.message.slice(0, 50));
                   return;
                 }
+                setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "REVISION" } : x));
                 addAgentLog("LAPORAN_REVISION", `Laporan ${r.job_id} diminta revisi oleh ${currentUser?.name}`, "WARNING");
                 showNotif("⚠️ Revisi diminta untuk laporan " + r.job_id);
                 // SIM-11: WA notif ke teknisi saat laporan REVISION
@@ -1359,7 +1360,7 @@ return (
                   + "\n\nAdmin meminta revisi. Silakan perbaiki. — AClean");
               }} style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Minta Revisi</button>
               <button onClick={async () => {
-                setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "REJECTED" } : x));
+                if (currentUser?.role !== "Owner" && currentUser?.role !== "Admin") return showNotif("❌ Hanya Owner/Admin");
                 const { error: rejErr } = await updateServiceReport(supabase, r.id, { status: "REJECTED" }, auditUserName());
                 if (rejErr) {
                   console.warn("❌ update REJECTED failed:", rejErr.message);
@@ -1367,6 +1368,7 @@ return (
                   showNotif("❌ Gagal update status — " + rejErr.message.slice(0, 50));
                   return;
                 }
+                setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "REJECTED" } : x));
                 addAgentLog("LAPORAN_REJECTED", `Laporan ${r.job_id} ditolak oleh ${currentUser?.name}`, "ERROR");
                 showNotif("❌ Laporan " + r.job_id + " ditolak");
               }} style={{ background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>Tolak</button>

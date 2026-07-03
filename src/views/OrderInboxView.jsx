@@ -1535,9 +1535,11 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     setSaving(true);
 
     // Auto-populate teknisi & helper dari team_slot
-    // Prioritas: slot harian → teamPresets → null
+    // Prioritas: slot harian → teamPresets → form fields langsung → null
     let autoTeknisi = form.teknisi || null;
-    let autoHelper = null, autoHelper2 = null, autoHelper3 = null;
+    let autoHelper = form.helper || null;
+    let autoHelper2 = form.helper2 || null;
+    let autoHelper3 = form.helper3 || null;
     if (form.team_slot) {
       const slot = getSlotData(form.date, form.team_slot);
       const members = slotMemberRoles(slot);
@@ -1545,9 +1547,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         const utama = members.find(m => (m.role || "").toLowerCase() === "teknisi") || members[0];
         const helpers = members.filter(m => m !== utama);
         autoTeknisi = autoTeknisi || utama?.name || null;
-        autoHelper = helpers[0]?.name || null;
-        autoHelper2 = helpers[1]?.name || null;
-        autoHelper3 = helpers[2]?.name || null;
+        autoHelper = helpers[0]?.name || autoHelper;
+        autoHelper2 = helpers[1]?.name || autoHelper2;
+        autoHelper3 = helpers[2]?.name || autoHelper3;
       } else if (teamPresets[form.team_slot]) {
         // Fallback ke preset bila slot harian belum diisi
         autoTeknisi = autoTeknisi || teamPresets[form.team_slot];
@@ -1696,6 +1698,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       time: order.time ? order.time.slice(0, 5) : "09:00",
       time_end: order.time_end ? order.time_end.slice(0, 5) : calcTimeEnd(order.time || "09:00", order.service || "Cleaning", order.units || 1),
       teknisi: order.teknisi || "",
+      helper: order.helper || "",
+      helper2: order.helper2 || "",
+      helper3: order.helper3 || "",
       notes: order.notes || "",
       status: order.status || "PENDING",
       units: order.units || 1,
@@ -2556,10 +2561,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                           +Lanjutan
                         </button>
                       )}
-                      <button onClick={() => handleDelete(o)}
-                        style={{ background: cs.red + "18", color: cs.red, border: "1px solid " + cs.red + "44", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
-                        Hapus
-                      </button>
+                      {currentUser?.role === "Owner" && (
+                        <button onClick={() => handleDelete(o)}
+                          style={{ background: cs.red + "18", color: cs.red, border: "1px solid " + cs.red + "44", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                          Hapus
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );

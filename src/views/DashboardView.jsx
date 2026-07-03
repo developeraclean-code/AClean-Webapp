@@ -60,7 +60,7 @@ if (role === "Teknisi" || role === "Helper") {
                 <div style={{ padding: "12px 14px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <span style={{ fontWeight: 800, color: myColor, fontSize: 16 }}>{o.time}</span>
-                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: (statusColor[o.status] || cs.muted) + "22", color: statusColor[o.status] || cs.muted, border: "1px solid " + (statusColor[o.status] || cs.muted) + "33", fontWeight: 700 }}>{statusLabel[o.status] || o.status.replace("_", " ")}</span>
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: (statusColor[o.status] || cs.muted) + "22", color: statusColor[o.status] || cs.muted, border: "1px solid " + (statusColor[o.status] || cs.muted) + "33", fontWeight: 700 }}>{statusLabel[o.status] || (o.status || "").replace(/_/g, " ")}</span>
                   </div>
                   <div style={{ fontWeight: 700, color: cs.text, fontSize: 13, marginBottom: 3 }}>{o.customer}</div>
                   <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>🔧 {o.service} · {o.units} unit</div>
@@ -672,7 +672,7 @@ return (
 
                 {/* Status */}
                 <div style={{ padding: "11px 12px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {badge(statusLabel[o.status] || o.status.replace(/_/g, " "), sc)}
+                  {badge(statusLabel[o.status] || (o.status || "").replace(/_/g, " "), sc)}
                 </div>
 
                 {/* Laporan */}
@@ -965,7 +965,7 @@ return (
                 sub: revGrowth !== null ? (revGrowth >= 0 ? "▲ " : "▼ ") + Math.abs(revGrowth) + "% vs bln lalu" : "Bulan pertama",
                 subColor: revGrowth === null ? cs.muted : revGrowth >= 0 ? cs.green : cs.red },
               { label: "Pengeluaran Bln Ini", value: fmt(expThisM), color: cs.yellow, icon: "🧾", sub: "Dari " + (expensesData || []).filter(e => (e.date || "").startsWith(thisMPrefix)).length + " transaksi", subColor: cs.muted },
-              { label: "Estimasi Profit", value: fmt(profitThisM), color: profitThisM >= 0 ? cs.green : cs.red, icon: "📈", sub: expThisM > 0 ? "Margin " + Math.round(profitThisM / revThisM * 100) + "%" : "Belum ada pengeluaran", subColor: cs.muted },
+              { label: "Estimasi Profit", value: fmt(profitThisM), color: profitThisM >= 0 ? cs.green : cs.red, icon: "📈", sub: expThisM > 0 && revThisM > 0 ? "Margin " + Math.round(profitThisM / revThisM * 100) + "%" : "Belum ada pengeluaran", subColor: cs.muted },
               { label: "Outstanding Unpaid", value: fmt(unpaidTotal), color: cs.yellow, icon: "⏳", sub: invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length + " invoice belum lunas", subColor: cs.muted },
             ].map(k => (
               <div key={k.label} style={{ background: cs.surface, border: "1px solid " + k.color + "33", borderRadius: 12, padding: "12px 14px" }}>

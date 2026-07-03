@@ -58,8 +58,8 @@ if (isTeknisiOrHelper) {
 
 const filtReps = myReps.filter(r =>
   !searchLaporan ||
-  r.customer.toLowerCase().includes(searchLaporan.toLowerCase()) ||
-  r.job_id.toLowerCase().includes(searchLaporan.toLowerCase())
+  (r.customer || "").toLowerCase().includes(searchLaporan.toLowerCase()) ||
+  (r.job_id || "").toLowerCase().includes(searchLaporan.toLowerCase())
 );
 
 const sMap = { SUBMITTED: [cs.accent, "Submitted"], VERIFIED: [cs.green, "Terverifikasi"], REVISION: [cs.yellow, "Perlu Revisi"], REJECTED: [cs.red, "Ditolak"], PENDING: [cs.muted, "Belum Dibuat"] };
@@ -210,7 +210,7 @@ return (
                     setLaporanBarangItems(barangFromMats);
                     setEditLaporanForm({ rekomendasi: r.rekomendasi || "", catatan_global: r.catatan_global || r.catatan || "", editUnits: JSON.parse(JSON.stringify(r.units || [])), editJasaItems: mats.filter(m => m.keterangan === "jasa"), editMatItems: mats.filter(m => m.keterangan !== "jasa" && m.keterangan !== "barang") });
                     // ✨ Load repair type from existing invoice
-                    const existInvForEdit = invoicesData.find(i => i.job_id === r.id);
+                    const existInvForEdit = invoicesData.find(i => i.job_id === r.job_id);
                     setEditRepairType(existInvForEdit?.repair_gratis || "berbayar");
                     setEditGratisAlasan("");
                     setActiveEditUnitIdx(0);

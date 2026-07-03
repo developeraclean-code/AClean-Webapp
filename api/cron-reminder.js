@@ -88,9 +88,8 @@ async function taskReminder() {
     .in("key", ["bank_name","bank_number","bank_holder","company_name","invoice_reminder_enabled","cron_jobs"]);
   const bankMap = Object.fromEntries((bankData||[]).map(s=>[s.key, s.value]));
 
-  // Cek toggle — AND-logic: cron_jobs JSON DAN standalone key harus aktif
-  const isEnabled = isCronJobEnabled(bankMap, "invoice_reminder_enabled") && bankMap["invoice_reminder_enabled"] !== "false";
-  if (!isEnabled) {
+  // Cek toggle — AND-logic canonical: cron_jobs JSON DAN standalone key === "true"
+  if (!isCronJobEnabled(bankMap, "invoice_reminder_enabled") || bankMap["invoice_reminder_enabled"] !== "true") {
     await log("CRON_REMINDER", "Dilewati — Payment Reminder dinonaktifkan via Settings", "INFO");
     return { skipped: true, reason: "Payment Reminder dinonaktifkan via Settings" };
   }
@@ -356,10 +355,9 @@ async function taskCleanup() {
 //   tetap tersimpan (metadata only) dengan r2_purged_at terisi.
 // ══════════════════════════════════════════════════
 async function taskR2Cleanup90d() {
-  // Toggle-gated (default ON kecuali eksplisit "false")
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["r2_cleanup_enabled"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["r2_cleanup_enabled", "cron_jobs"]);
   const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
-  if (togMap["r2_cleanup_enabled"] === "false") {
+  if (!isCronJobEnabled(togMap, "r2_cleanup_enabled") || togMap["r2_cleanup_enabled"] !== "true") {
     await log("R2_CLEANUP_90D", "Dilewati — toggle OFF", "INFO");
     return { skipped: true };
   }
@@ -413,10 +411,9 @@ async function taskR2Cleanup90d() {
 // hanya foto bukti yang di-purge agar R2 tidak numpuk. r2_url di-null setelah purge.
 // ══════════════════════════════════════════════════
 async function taskExpenseFotoCleanup30d() {
-  // Toggle-gated (default ON kecuali eksplisit "false")
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["expense_foto_cleanup_enabled"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["expense_foto_cleanup_enabled", "cron_jobs"]);
   const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
-  if (togMap["expense_foto_cleanup_enabled"] === "false") {
+  if (!isCronJobEnabled(togMap, "expense_foto_cleanup_enabled") || togMap["expense_foto_cleanup_enabled"] !== "true") {
     await log("EXPENSE_FOTO_CLEANUP", "Dilewati — toggle OFF", "INFO");
     return { skipped: true };
   }
@@ -459,10 +456,9 @@ async function taskExpenseFotoCleanup30d() {
 // Umur dihitung dari coalesce(paid_at, created_at).
 // ══════════════════════════════════════════════════
 async function taskPaymentProofCleanup90d() {
-  // Toggle-gated (default ON kecuali eksplisit "false")
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["payment_proof_cleanup_enabled"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["payment_proof_cleanup_enabled", "cron_jobs"]);
   const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
-  if (togMap["payment_proof_cleanup_enabled"] === "false") {
+  if (!isCronJobEnabled(togMap, "payment_proof_cleanup_enabled") || togMap["payment_proof_cleanup_enabled"] !== "true") {
     await log("PAYMENT_PROOF_CLEANUP", "Dilewati — toggle OFF", "INFO");
     return { skipped: true };
   }
@@ -696,7 +692,7 @@ async function taskWaBackfill(opts = {}) {
     .select("id,sender_phone,sender_name,group_id,group_name,type,content,parsed_ok,amount,created_at,metadata")
     .gte("created_at", startIso).lte("created_at", endIso)
     .order("created_at", { ascending: true })
-    .limit(2000);
+    .limit(1000); // PostgREST hard cap = 1000 — .limit(2000) silently returned 1000
 
   const counters = {
     logs_scanned: (logs || []).length,
@@ -888,10 +884,9 @@ async function taskProjectAlerts() {
 // memproses wa_group_logs → file snapshot orphan selamanya. Sekarang hapus R2 langsung.
 // ══════════════════════════════════════════════════
 async function taskSnapshotCleanup() {
-  // Toggle-gated (default ON kecuali eksplisit "false")
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["snapshot_cleanup_enabled"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["snapshot_cleanup_enabled", "cron_jobs"]);
   const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
-  if (togMap["snapshot_cleanup_enabled"] === "false") {
+  if (!isCronJobEnabled(togMap, "snapshot_cleanup_enabled") || togMap["snapshot_cleanup_enabled"] !== "true") {
     await log("SNAPSHOT_CLEANUP", "Dilewati — toggle OFF", "INFO");
     return { skipped: true };
   }
@@ -926,10 +921,9 @@ async function taskSnapshotCleanup() {
 // TASK 6: Cleanup WA chat lama (>14 hari)
 // ══════════════════════════════════════════════════
 async function taskWaCleanup() {
-  // Cek toggle — bisa dimatikan via Settings
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["wa_cleanup_enabled"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["wa_cleanup_enabled","cron_jobs"]);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
-  if (togMap.wa_cleanup_enabled === "false") {
+  if (!isCronJobEnabled(togMap, "wa_cleanup_enabled") || togMap["wa_cleanup_enabled"] !== "true") {
     await log("WA_CLEANUP", "Dilewati — WA Auto-Cleanup dinonaktifkan via Settings", "INFO");
     return { skipped: true };
   }
@@ -977,8 +971,15 @@ async function taskWaCleanup() {
   const { error: convErr, count: convsDeleted } = await convQ;
   if (convErr) console.error("[WA_CLEANUP_CONV]", convErr.message);
 
-  await log("WA_CLEANUP", `${msgsDeleted || 0} pesan & ${convsDeleted || 0} conversations dihapus (>14 hari). ${protectedPhones.length} phone dilindungi (payment pending <14h).`);
-  return { msgsDeleted: msgsDeleted || 0, convsDeleted: convsDeleted || 0, protectedPhones: protectedPhones.length };
+  // wa_webhook_raw: retensi 30 hari. Tabel firehose (130k+ insert/batch) — tanpa retensi jadi
+  // storage hog ~20 MB+. Tidak ada data sensitif di sini (hanya raw payload webhook Fonnte).
+  const rawCutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { error: rawErr, count: rawDeleted } = await sb
+    .from("wa_webhook_raw").delete({ count: "exact" }).lt("created_at", rawCutoff);
+  if (rawErr) console.error("[WA_CLEANUP_RAW]", rawErr.message);
+
+  await log("WA_CLEANUP", `${msgsDeleted || 0} pesan & ${convsDeleted || 0} conversations dihapus (>14 hari). ${protectedPhones.length} phone dilindungi. ${rawDeleted || 0} wa_webhook_raw dihapus (>30 hari).`);
+  return { msgsDeleted: msgsDeleted || 0, convsDeleted: convsDeleted || 0, protectedPhones: protectedPhones.length, rawDeleted: rawDeleted || 0 };
 }
 
 // ══════════════════════════════════════════════════
@@ -2041,6 +2042,13 @@ async function taskLogCleanup() {
 // Alert Owner 30 hari dan 7 hari sebelum kontrak maintenance expired.
 // ══════════════════════════════════════════════════
 async function taskMaintenanceContractExpiry() {
+  const { data: togData } = await sb.from("app_settings").select("key,value")
+    .in("key", ["maintenance_contract_expiry_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "maintenance_contract_expiry_enabled") || togMap["maintenance_contract_expiry_enabled"] !== "true") {
+    await log("MAINTENANCE_CONTRACT_EXPIRY", "Dilewati — maintenance_contract_expiry_enabled OFF", "INFO");
+    return { skipped: true };
+  }
   const ownerPhone = process.env.OWNER_PHONE;
   if (!ownerPhone) return { skipped: true, reason: "OWNER_PHONE not set" };
 

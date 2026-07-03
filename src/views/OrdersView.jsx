@@ -240,7 +240,7 @@ return (
                     <button onClick={() => { setEditOrderItem(o); setEditOrderForm({ customer: o.customer, phone: o.phone || "", address: o.address || "", area: o.area || "", service: o.service, type: o.type || "", units: o.units || 1, teknisi: o.teknisi, helper: o.helper || "", teknisi2: o.teknisi2 || "", helper2: o.helper2 || "", teknisi3: o.teknisi3 || "", helper3: o.helper3 || "", date: o.date, time: o.time || "09:00", status: o.status, notes: o.notes || "" }); setModalEditOrder(true); }}
                       style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>✏️ Edit</button>
                   )}
-                  {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                  {currentUser?.role === "Owner" && (
                     <button onClick={async () => {
                       // Multi-hari: cek apakah ini induk dari pekerjaan multi-day
                       const childOrders = (ordersData || []).filter(c => c.parent_job_id === o.id && c.is_multi_day);
@@ -267,11 +267,6 @@ return (
                       const childWithInvoice = childOrders.find(c => c.invoice_id);
                       if (childWithInvoice) {
                         showNotif(`❌ Tidak bisa hapus: order lanjutan ${childWithInvoice.id} sudah punya invoice ${childWithInvoice.invoice_id}`);
-                        return;
-                      }
-                      // Blok hapus jika status sudah COMPLETED (kecuali Owner)
-                      if (currentUser?.role === "Admin" && ["COMPLETED", "REPORT_SUBMITTED", "VERIFIED"].includes(o.status)) {
-                        showNotif("❌ Admin tidak bisa hapus order yang sudah selesai. Hubungi Owner.");
                         return;
                       }
                       // Simpan snapshot untuk undo
