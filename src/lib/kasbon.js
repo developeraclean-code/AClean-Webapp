@@ -94,14 +94,24 @@ export async function approveKasbon(req, reviewNotes = "", {
 
 export async function rejectKasbon(req, reviewNotes = "", {
   addAgentLog, appSettings, auditUserName, currentUser, sendWA, setKasbonRequests,
-  showNotif, supabase, updateKasbonRequest,
+  showNotif, supabase,
 } = {}) {
-    await updateKasbonRequest(supabase, req.id, {
-      status: "REJECTED",
-      reviewed_at: new Date().toISOString(),
-      reviewed_by: currentUser?.name || auditUserName(),
-      review_notes: reviewNotes || null,
-    });
+    // ATOMIC CLAIM: hanya tolak jika MASIH PENDING. Tanpa guard ini, menolak kasbon yang sudah
+    // di-APPROVE (mis. race 2 admin, atau klik telat) akan membalik status ke REJECTED sementara
+    // expense-nya sudah terlanjur tercatat → biaya orphan / status tak konsisten.
+    const { data: claimed, error: claimErr } = await supabase
+      .from("kasbon_requests")
+      .update({
+        status: "REJECTED",
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: currentUser?.name || auditUserName(),
+        review_notes: reviewNotes || null,
+      })
+      .eq("id", req.id)
+      .eq("status", "PENDING")
+      .select();
+    if (claimErr) { showNotif("❌ Gagal tolak kasbon: " + claimErr.message); return; }
+    if (!claimed || claimed.length === 0) { showNotif("⚠️ Kasbon ini sudah diproses sebelumnya"); return; }
     setKasbonRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "REJECTED", reviewed_by: currentUser?.name } : r));
     if (req.teknisi_phone) sendWA(req.teknisi_phone, `❌ *Kasbon Ditolak*\n\nHalo ${req.teknisi_name},\nRequest kasbon Rp ${Number(req.amount).toLocaleString("id-ID")} ditolak oleh ${currentUser?.name || "Admin"}.\n\nKeperluan: ${req.reason}\n${reviewNotes ? "Alasan: " + reviewNotes + "\n" : ""}\n— ${appSettings?.app_name || "AClean"}`);
     addAgentLog("KASBON_REJECTED", `Kasbon ${req.id} (${req.teknisi_name}) ditolak`, "INFO");

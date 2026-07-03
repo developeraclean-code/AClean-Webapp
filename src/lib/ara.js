@@ -131,7 +131,7 @@ export async function sendToARA(userMsg, {
         try {
           const act = JSON.parse(am[1].trim());
           // H-06: Role check — aksi sensitif hanya Owner/Admin
-          const ARA_SENSITIVE = ["UPDATE_INVOICE","MARK_PAID","APPROVE_INVOICE","CANCEL_ORDER","CREATE_EXPENSE","UPDATE_STOCK","MARK_INVOICE_OVERDUE"];
+          const ARA_SENSITIVE = ["UPDATE_INVOICE","MARK_PAID","APPROVE_INVOICE","CANCEL_ORDER","CREATE_EXPENSE","UPDATE_STOCK","MARK_INVOICE_OVERDUE","CREATE_INVOICE","SEND_WA","BULK_CREATE_ORDER","RESCHEDULE_ORDER","DISPATCH_WA"];
           const araCallerRole = currentUser?.role || "";
           if (ARA_SENSITIVE.includes(act.type) && !["Owner","Admin"].includes(araCallerRole)) {
             ar = `\n⚠️ *Aksi ${act.type} hanya bisa dilakukan Owner/Admin. Hubungi Owner untuk melanjutkan.*`;
@@ -240,7 +240,13 @@ export async function sendToARA(userMsg, {
             }
             setOrdersData(prev => prev.some(o => o.id === newOrd.id) ? prev : [...prev, newOrd]);
             const { error: oErr } = await insertOrder(supabase, newOrd);
-            if (oErr) console.warn("Create order DB:", oErr.message);
+            if (oErr) {
+              // SILENT-FIX: dulu cuma console.warn → UI klaim "order dibuat" padahal DB gagal
+              // (ghost order). Rollback optimistic add + laporkan gagal, JANGAN klaim sukses.
+              setOrdersData(prev => prev.filter(o => o.id !== newOrd.id));
+              addAgentLog("ARA_CREATE_ORDER_FAIL", "ARA gagal simpan order " + newId + ": " + oErr.message, "ERROR");
+              ar = "\n⚠️ *Gagal menyimpan order ke database: " + oErr.message + "* — order tidak dibuat.";
+            } else {
             addAgentLog("ARA_CREATE_ORDER", "ARA buat order " + newId + " untuk " + newOrd.customer, "SUCCESS");
 
             // ── Auto-upsert customer + link customer_id ke order ──
@@ -277,6 +283,7 @@ export async function sendToARA(userMsg, {
             }
 
             ar = "\n✅ *Order " + newId + " dibuat untuk " + newOrd.customer + " — " + newOrd.service + " " + newOrd.units + " unit, " + newOrd.date + " jam " + newOrd.time + "*" + ar;
+            } // end else (order tersimpan di DB)
           } else if (act.type === "CREATE_INVOICE") {
             // Buat invoice dari order yang sudah COMPLETED
             const ord = ordersData.find(o => o.id === act.order_id);
@@ -414,12 +421,19 @@ export async function sendToARA(userMsg, {
               invalidateCache("invoices", "orders");
               setInvoicesData(prev => prev.some(i => i.id === newInv.id) ? prev : [...prev, newInv]);
               const { error: invErr } = await insertInvoice(supabase, newInv);
-              if (invErr) console.warn("Create invoice DB:", invErr.message);
-              // Link invoice ke order
-              setOrdersData(prev => prev.map(o => o.id === ord.id ? { ...o, invoice_id: invId } : o));
-              await updateOrder(supabase, ord.id, { invoice_id: invId }, auditUserName());
-              addAgentLog("ARA_CREATE_INVOICE", "ARA buat invoice " + invId + " dari " + ord.id + " — " + newInv.customer, "SUCCESS");
-              ar = "\n✅ *Invoice " + invId + " dibuat untuk " + newInv.customer + " — Total: " + (newInv.total || 0).toLocaleString("id-ID") + "*";
+              if (invErr) {
+                // SILENT-FIX: dulu cuma console.warn → order di-link ke invoice_id yang tak ada di
+                // DB + UI klaim sukses (invoice hantu). Rollback + jangan link + laporkan gagal.
+                setInvoicesData(prev => prev.filter(i => i.id !== newInv.id));
+                addAgentLog("ARA_CREATE_INVOICE_FAIL", "ARA gagal simpan invoice " + invId + ": " + invErr.message, "ERROR");
+                ar = "\n⚠️ *Gagal menyimpan invoice ke database: " + invErr.message + "* — invoice tidak dibuat.";
+              } else {
+                // Link invoice ke order
+                setOrdersData(prev => prev.map(o => o.id === ord.id ? { ...o, invoice_id: invId } : o));
+                await updateOrder(supabase, ord.id, { invoice_id: invId }, auditUserName());
+                addAgentLog("ARA_CREATE_INVOICE", "ARA buat invoice " + invId + " dari " + ord.id + " — " + newInv.customer, "SUCCESS");
+                ar = "\n✅ *Invoice " + invId + " dibuat untuk " + newInv.customer + " — Total: " + (newInv.total || 0).toLocaleString("id-ID") + "*";
+              }
             }
           } else if (act.type === "CANCEL_ORDER") {
             setOrdersData(prev => prev.map(o => o.id === act.id ? { ...o, status: "CANCELLED" } : o));
@@ -631,7 +645,13 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
                 results.map((r, i) => `${i + 1}. \`${r.id}\` — ${r.customer} | ${r.service} | ${r.date} ${r.ok ? "✅" : "❌"}`).join("\n");
             }
           }
-        } catch (e) { console.warn("Action parse", e); }
+        } catch (e) {
+          // SILENT-FIX: dulu error eksekusi aksi ditelan diam-diam → user cuma lihat teks AI
+          // tanpa tahu aksinya gagal. Log + beri tahu user kalau belum ada konfirmasi (ar kosong).
+          console.warn("Action parse", e);
+          addAgentLog("ARA_ACTION_ERROR", "Aksi ARA gagal dieksekusi: " + (e?.message || e), "ERROR");
+          if (!ar) ar = "\n⚠️ *Aksi tidak dapat dieksekusi: " + (e?.message || "format tidak valid") + "*";
+        }
       }
 
       const clean = fullText.replace(/\[ACTION\].*?\[\/ACTION\]/s, "").trim() + ar;

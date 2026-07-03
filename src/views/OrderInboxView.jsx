@@ -47,7 +47,9 @@ function hasConflict(orders, teknisi, date, time, excludeId = null, service = "C
   const endMin = startMin + durMin;
   const conflicts = orders.filter(o => {
     if (o.id === excludeId) return false;
-    if (o.teknisi !== teknisi && o.teknisi2 !== teknisi) return false;
+    // P4: cek SEMUA peran (teknisi/2/3 + helper/2/3) lintas-slot — orang yang jadi helper di job
+    // lain pada jam bentrok juga dobel-booking. Konsisten dgn cekTeknisiAvailableDB (backend).
+    if (![o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].includes(teknisi)) return false;
     if (o.date !== date) return false;
     if (!hasValidTime(o.time)) return false;
     if (!["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS","ON_SITE"].includes(o.status)) return false;
@@ -261,7 +263,12 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                     const isDone = ["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED"].includes(o.status)
                       || (laporanJobSet && laporanJobSet.has(o.id));
 
-                    const isConflict = !isDone && slotOrders.some(o2 => {
+                    // P4: konflik = overlap waktu dgn (a) order lain di SLOT SAMA (tim sama tak bisa
+                    // 2 lokasi sekaligus) ATAU (b) order di slot LAIN yang berbagi orang yang sama
+                    // (mis. jadi teknisi di sini + helper di tim lain). Dulu cuma cek slot sama →
+                    // dobel-booking lintas-slot tak tertandai.
+                    const blockPeople = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean);
+                    const isConflict = !isDone && dayOrders.some(o2 => {
                       if (o2.id === o.id) return false;
                       if (["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED","CANCELLED"].includes(o2.status)
                         || (laporanJobSet && laporanJobSet.has(o2.id))) return false;
@@ -271,7 +278,10 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                       const e2 = (t2End !== null && t2End > s2)
                         ? t2End
                         : s2 + Math.round(hitungDurasi(o2.service, o2.units) * 60);
-                      return startMin < e2 && endMin > s2;
+                      if (!(startMin < e2 && endMin > s2)) return false;          // tak overlap waktu → aman
+                      if (o2.team_slot === slotName) return true;                 // slot sama → tim double-book
+                      const o2People = [o2.teknisi, o2.teknisi2, o2.teknisi3, o2.helper, o2.helper2, o2.helper3];
+                      return blockPeople.some(p => o2People.includes(p));         // beda slot → hanya kalau orang sama
                     });
 
                     const endH = Math.floor(endMin / 60);
@@ -1843,9 +1853,31 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       update = { ...update, teknisi: null, helper: null, helper2: null, helper3: null };
     }
 
+    // P2: cek konflik jadwal SEBELUM menulis assignment (parity dgn jalur buat-order yang sudah
+    // diblok cekTeknisiAvailableDB). Drag & quick-assign kadang memang disengaja → pakai KONFIRMASI,
+    // bukan blok keras. Reuse hasConflict (lokal, sudah cross-slot + semua peran setelah P4).
+    if (order.date && hasValidTime(order.time)) {
+      const assigned = (field === "team_slot")
+        ? [update.teknisi, update.helper, update.helper2, update.helper3]
+        : [value];
+      const seen = new Set();
+      const reasons = [];
+      for (const person of assigned) {
+        if (!person || seen.has(person)) continue;
+        seen.add(person);
+        const c = hasConflict(ordersData, person, order.date, order.time, order.id, order.service, order.units, order.time_end);
+        if (c && c.length) reasons.push(`• ${person} bentrok dgn ${c[0].customer || c[0].id} (${(c[0].time || "").slice(0, 5)})`);
+      }
+      if (reasons.length && typeof window !== "undefined" &&
+          !window.confirm(`⚠️ Jadwal bentrok:\n${reasons.join("\n")}\n\nTetap lanjutkan assign/pindah slot?`)) {
+        return false;
+      }
+    }
+
     const { error } = await supabase.from("orders").update(update).eq("id", order.id);
-    if (error) return showNotif("Gagal update " + field + ": " + error.message);
+    if (error) { showNotif("Gagal update " + field + ": " + error.message); return false; }
     setOrdersData(prev => prev.map(o => o.id === order.id ? { ...o, ...update } : o));
+    return true;
   }
 
   // ── Drag-and-drop: geser blok order ke baris slot lain di TimeGrid ──
@@ -1854,8 +1886,8 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   async function handleDragReassign(orderId, newSlot) {
     const order = ordersData.find(o => o.id === orderId);
     if (!order || order.team_slot === newSlot) return;
-    await handleQuickAssign(order, "team_slot", newSlot);
-    showNotif(`${order.customer} → ${newSlot}`);
+    const applied = await handleQuickAssign(order, "team_slot", newSlot);
+    if (applied) showNotif(`${order.customer} → ${newSlot}`);
   }
 
   // ── Inbox list — hanya today + ke depan; bila gridDate aktif, filter ke hari itu ──
