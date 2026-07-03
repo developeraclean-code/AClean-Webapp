@@ -109,6 +109,16 @@ export default function LaporanTeknisiModal({
   const isInstallJob = laporanModal?.service === "Install";
   // Teknisi/Helper: cukup pilih item + jumlah; harga & total urusan Owner (disembunyikan biar tak bingung).
   const isFieldStaff = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
+  // Pengingat per jenis servis — biaya UTAMA di-inject otomatis di invoice (bukan diketik di sini),
+  // jadi teknisi tak salah kategori / lupa. Lihat laporanInvoice.js (auto biaya cuci/pengecekan).
+  const _svc = laporanModal?.service;
+  const svcHint = (_svc === "Cleaning" || _svc === "Maintenance")
+    ? "Biaya cuci per unit dihitung OTOMATIS dari tipe AC. Di sini cukup tambah item TAMBAHAN (mis. freon / sparepart) bila ada."
+    : _svc === "Repair"
+      ? "Tambahkan jasa & part yang dikerjakan. Bila dikosongkan, otomatis kena Biaya Pengecekan."
+      : _svc === "Complain"
+        ? "Default tanpa biaya (garansi). Tambah baris hanya bila ada pekerjaan berbayar."
+        : null;
   const STEP_LABELS = ["", "Konfirmasi Unit",
     isInstallJob ? "(skip)" : "Detail Per Unit",
     isInstallJob ? "Form Instalasi" : "Material & Foto",
@@ -1100,6 +1110,11 @@ export default function LaporanTeknisiModal({
                       ? <>Pilih <strong>pekerjaan (Jasa)</strong> & <strong>barang (Material)</strong> yang dikerjakan beserta jumlahnya. <strong style={{ color: "#a78bfa" }}>Harga & total diatur Owner saat bikin invoice</strong> — kamu tak perlu isi harga.</>
                       : <>Dua bagian di bawah = isi invoice: <strong>Jasa</strong> (biaya layanan) + <strong>Barang</strong> (sparepart/material).</>}
                   </div>
+                  {svcHint && (
+                    <div style={{ fontSize: 11, color: "#7dd3fc", background: "#0ea5e910", border: "1px solid #0ea5e933", borderRadius: 7, padding: "6px 9px", marginTop: 7, lineHeight: 1.4 }}>
+                      ℹ️ {svcHint}
+                    </div>
+                  )}
                 </div>
               )}
               {/* ══ JASA SECTION ══ */}
@@ -1815,7 +1830,19 @@ export default function LaporanTeknisiModal({
               )}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
                 <button onClick={() => setLaporanStep(3)} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>← Kembali</button>
-                <button onClick={submitLaporan} style={{ background: "linear-gradient(135deg," + cs.green + ",#059669)", border: "none", color: "#fff", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>✓ Submit Laporan</button>
+                <button onClick={() => {
+                  // Guard sebelum submit — cegah laporan kosong / salah tanpa disadari (soft confirm).
+                  const nJasa = (laporanJasaItems || []).filter(j => j.nama && j.nama !== "__manual__").length;
+                  const nBarang = (laporanBarangItems || []).filter(b => b.nama && b.nama !== "__manual__").length;
+                  const nFoto = (laporanFotos || []).filter(f => f.url).length;
+                  const warns = [];
+                  if (!isInstallJob && (laporanUnits || []).length === 0) warns.push("Belum ada unit AC yang dilaporkan.");
+                  if (_svc === "Repair" && nJasa === 0 && nBarang === 0) warns.push("Job Repair tanpa jasa/barang — invoice hanya kena Biaya Pengecekan otomatis.");
+                  if (isInstallJob && !INSTALL_ITEMS.some(it => parseFloat(laporanInstallItems[it.key] || 0) > 0)) warns.push("Belum ada material/detail instalasi diisi.");
+                  if (nFoto === 0) warns.push("Belum ada foto dokumentasi.");
+                  if (warns.length > 0 && !window.confirm("⚠️ Perhatikan sebelum kirim:\n\n• " + warns.join("\n• ") + "\n\nTetap kirim laporan?")) return;
+                  submitLaporan();
+                }} style={{ background: "linear-gradient(135deg," + cs.green + ",#059669)", border: "none", color: "#fff", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>✓ Submit Laporan</button>
               </div>
             </div>
           )}
