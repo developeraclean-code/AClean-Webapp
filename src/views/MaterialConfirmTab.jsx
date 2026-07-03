@@ -51,9 +51,17 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     const row = entry.pulang;
     setBusy(row.id);
     try {
-      // re-baca status terkini (anti dobel)
-      const { data: fresh } = await supabase.from("teknisi_material_checkout").select("*").eq("id", row.id).single();
-      if (fresh?.confirm_status === "CONFIRMED") { showNotif("Sudah dikonfirmasi sebelumnya"); await load(); return; }
+      // ATOMIC CLAIM: PENDING → CONFIRMED (compare-and-set). Hanya proses PERTAMA yang menang →
+      // cegah dobel potong stok akibat race (2 Owner klik bareng) ATAU retry setelah gagal parsial.
+      const { data: claimed, error: claimErr } = await supabase
+        .from("teknisi_material_checkout")
+        .update({ confirm_status: "CONFIRMED", confirmed_by: currentUser?.name || null, confirmed_at: new Date().toISOString() })
+        .eq("id", row.id).eq("confirm_status", "PENDING")
+        .select("*");
+      if (claimErr) { showNotif("❌ Gagal confirm: " + claimErr.message); return; }
+      if (!claimed || claimed.length === 0) { showNotif("Sudah dikonfirmasi (oleh proses lain)"); await load(); return; }
+      const fresh = claimed[0];
+      // Sudah jadi pemilik proses → aman potong stok (status sudah bukan PENDING).
       const { data: pg } = await supabase.from("teknisi_material_checkout").select("items").eq("teknisi_name", row.teknisi_name).eq("checkout_date", row.checkout_date).eq("session_type", "pagi").maybeSingle();
       const lines = deductLines(pg?.items || [], fresh.items || []);
       const txIds = [];
@@ -74,14 +82,12 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
           if (u) await supabase.from("inventory_units").update({ stock: Math.max(0, Number(u.stock) - l.used), updated_at: new Date().toISOString() }).eq("id", l.unit_id);
         }
       }
-      await supabase.from("teknisi_material_checkout").update({
-        confirm_status: "CONFIRMED", confirmed_by: currentUser?.name || null,
-        confirmed_at: new Date().toISOString(), deduct_tx_ids: txIds,
-      }).eq("id", row.id);
+      // Simpan deduct_tx_ids (jejak; status CONFIRMED sudah di-set saat claim).
+      await supabase.from("teknisi_material_checkout").update({ deduct_tx_ids: txIds }).eq("id", row.id);
       showNotif(`✅ Dikonfirmasi — ${lines.length} unit dipotong dari stok`);
       await refreshStock();
       await load();
-    } catch (e) { showNotif("❌ Gagal confirm: " + (e?.message || e)); }
+    } catch (e) { showNotif("❌ Gagal potong stok (row sudah CONFIRMED — cek stok manual): " + (e?.message || e)); }
     finally { setBusy(""); }
   };
 
