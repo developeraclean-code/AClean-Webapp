@@ -275,23 +275,21 @@ return (
           </div>
         </div>
 
-        {/* ── SECTION 1b: Profit Estimasi (GAP 7) ── */}
+        {/* ── SECTION 1b: Estimasi Net Profit ── */}
         {totalRevenue > 0 && (() => {
-          const totalMaterialCost = inventoryData.reduce((acc, item) => {
-            // Estimasi biaya material dari laporan bulan ini
-            return acc;
-          }, 0);
-          const profitMargin = totalLabor > 0 ? Math.round(totalLabor / totalRevenue * 100) : 0;
+          const netProfit = totalLabor - totalExpenses;
+          const profitMargin = totalRevenue > 0 ? Math.round(netProfit / totalRevenue * 100) : 0;
+          const isProfit = netProfit >= 0;
           return (
-            <div style={{ background: "linear-gradient(135deg," + cs.green + "18," + cs.accent + "08)", border: "1px solid " + cs.green + "33", borderRadius: 14, padding: "16px 20px", display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ background: "linear-gradient(135deg," + (isProfit ? cs.green : cs.red) + "18," + cs.accent + "08)", border: "1px solid " + (isProfit ? cs.green : cs.red) + "33", borderRadius: 14, padding: "16px 20px", display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, color: cs.muted, fontWeight: 700, marginBottom: 4 }}>💹 ESTIMASI PROFIT — {periodLabel}</div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: cs.green, fontFamily: "monospace" }}>{fmt(totalLabor)}</div>
-                <div style={{ fontSize: 11, color: cs.muted }}>Pendapatan jasa bersih (setelah material)</div>
+                <div style={{ fontSize: 11, color: cs.muted, fontWeight: 700, marginBottom: 4 }}>💹 ESTIMASI NET PROFIT — {periodLabel}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: isProfit ? cs.green : cs.red, fontFamily: "monospace" }}>{fmt(netProfit)}</div>
+                <div style={{ fontSize: 10, color: cs.muted }}>Jasa ({fmt(totalLabor)}) − Pengeluaran ({fmt(totalExpenses)})</div>
               </div>
-              <div style={{ textAlign: "center", padding: "10px 16px", background: cs.green + "12", borderRadius: 10, border: "1px solid " + cs.green + "22" }}>
-                <div style={{ fontSize: 24, fontWeight: 800, color: cs.green }}>{profitMargin}%</div>
-                <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700 }}>Profit Margin</div>
+              <div style={{ textAlign: "center", padding: "10px 16px", background: (isProfit ? cs.green : cs.red) + "12", borderRadius: 10, border: "1px solid " + (isProfit ? cs.green : cs.red) + "22" }}>
+                <div style={{ fontSize: 24, fontWeight: 800, color: isProfit ? cs.green : cs.red }}>{profitMargin}%</div>
+                <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700 }}>Net Margin</div>
               </div>
               <div style={{ textAlign: "center", padding: "10px 16px", background: cs.accent + "12", borderRadius: 10, border: "1px solid " + cs.accent + "22" }}>
                 <div style={{ fontSize: 20, fontWeight: 800, color: cs.accent }}>{paidInv.length}</div>
@@ -360,7 +358,7 @@ return (
     {/* ── SECTION 4: Performa Teknisi ── */}
     <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
       <div style={{ fontWeight: 800, color: cs.text, fontSize: 14, marginBottom: 4 }}>👷 Performa Tim Teknisi</div>
-      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 14 }}>Berdasarkan order COMPLETED keseluruhan</div>
+      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 14 }}>Berdasarkan order selesai — {periodLabel}</div>
       {tekPerf.length === 0
         ? <div style={{ color: cs.muted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Belum ada data</div>
         : <div style={{ display: "grid", gap: 8 }}>
@@ -405,7 +403,7 @@ return (
       <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 18 }}>
         <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 13 }}>📝 Status Laporan Teknisi</div>
         {[["SUBMITTED", cs.accent, "Baru"], ["VERIFIED", cs.green, "Terverifikasi"], ["REVISION", cs.yellow, "Perlu Revisi"], ["REJECTED", cs.red, "Ditolak"]].map(([s, col, lbl]) => {
-          const cnt = laporanReports.filter(r => r.status === s).length;
+          const cnt = laporanReports.filter(r => r.status === s && inRange(r.date || r.submitted_at || "")).length;
           return cnt > 0 ? (
             <div key={s} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, paddingBottom: 8, borderBottom: "1px solid " + cs.border }}>
               <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: col + "22", color: col, border: "1px solid " + col + "44", fontWeight: 700 }}>{lbl}</span>
