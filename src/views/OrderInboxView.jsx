@@ -97,7 +97,7 @@ function minToPercent(minutes) {
 }
 
 // onDateChange: callback ke parent agar Planning Order ikut filter
-function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, weekOrders, teknisiData, dailySlots, expandedId, setExpandedId, TODAY, onDateChange, onDragReassign }) {
+function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, weekOrders, teknisiData, dailySlots, expandedId, setExpandedId, TODAY, onDateChange, onDragReassign, laporanJobSet }) {
   const [selectedDate, setSelectedDate] = useState(weekDays.find(d => d.date === TODAY)?.date || weekDays[0]?.date);
   const [dragOverSlot, setDragOverSlot] = useState(null); // nama slot yang sedang jadi drop target
 
@@ -258,11 +258,13 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                     const leftPct = minToPercent(startMin);
                     const widthPct = minToPercent(endMin) - leftPct;
 
-                    const isDone = ["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED"].includes(o.status);
+                    const isDone = ["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED"].includes(o.status)
+                      || (laporanJobSet && laporanJobSet.has(o.id));
 
                     const isConflict = !isDone && slotOrders.some(o2 => {
                       if (o2.id === o.id) return false;
-                      if (["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED","CANCELLED"].includes(o2.status)) return false;
+                      if (["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED","CANCELLED"].includes(o2.status)
+                        || (laporanJobSet && laporanJobSet.has(o2.id))) return false;
                       const s2 = toMinutes(o2.time);
                       if (s2 === null) return false;
                       const t2End = toMinutes(o2.time_end);
@@ -968,11 +970,15 @@ const EMPTY_FORM = {
   customer_id: null,
 };
 
-export default function OrderInboxView({ ordersData, setOrdersData, customersData, setCustomersData, teknisiData, sendWA, showUndoToast, insertOrder, apiHeaders }) {
+export default function OrderInboxView({ ordersData, setOrdersData, customersData, setCustomersData, teknisiData, sendWA, showUndoToast, insertOrder, apiHeaders, laporanReports }) {
   // Fase 1 refactor: primitif global (currentUser/supabase/showNotif/showConfirm/
   // auditUserName/TODAY) dibaca dari AppContext, bukan prop-drilling. View ini
   // selalu dirender di dalam <App> (Provider), aman pakai useAppContext.
   const { currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY } = useAppContext();
+  const laporanJobSet = useMemo(
+    () => new Set((laporanReports || []).map(r => r.job_id).filter(Boolean)),
+    [laporanReports]
+  );
   const [form, setForm] = useState({ ...EMPTY_FORM, date: TODAY });
   const [saving, setSaving] = useState(false);
   const [showQuickPaste, setShowQuickPaste] = useState(false);
@@ -2236,6 +2242,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         TODAY={TODAY}
         onDateChange={d => setGridDate(d)}
         onDragReassign={handleDragReassign}
+        laporanJobSet={laporanJobSet}
       />
 
       {/* ═══ DAFTAR ORDER INBOX (today + ke depan) ═══ */}
