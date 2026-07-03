@@ -107,6 +107,8 @@ export default function LaporanTeknisiModal({
   const totalFreon = laporanUnits.reduce((s, u) => s + (parseFloat(u.freon_ditambah) || 0), 0);
   const presets = MATERIAL_PRESET[laporanModal?.service] || MATERIAL_PRESET.Cleaning;
   const isInstallJob = laporanModal?.service === "Install";
+  // Teknisi/Helper: cukup pilih item + jumlah; harga & total urusan Owner (disembunyikan biar tak bingung).
+  const isFieldStaff = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
   const STEP_LABELS = ["", "Konfirmasi Unit",
     isInstallJob ? "(skip)" : "Detail Per Unit",
     isInstallJob ? "Form Instalasi" : "Material & Foto",
@@ -997,7 +999,7 @@ export default function LaporanTeknisiModal({
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 800, color: "#06b6d4" }}>🧽 Tambahan Cleaning (opsional)</div>
                     <div style={{ fontSize: 11, color: cs.muted, marginTop: 3, lineHeight: 1.4 }}>
-                      Centang unit yang juga dicuci. Harga otomatis dari PRICE_LIST berdasarkan PK unit.
+                      Centang unit yang juga dicuci.{!isFieldStaff && " Harga otomatis dari PRICE_LIST berdasarkan PK unit."}
                       <br /><strong style={{ color: "#06b6d4" }}>Isi hanya jika job Repair ini berubah / menambah pekerjaan Cleaning.</strong>
                     </div>
                   </div>
@@ -1023,14 +1025,16 @@ export default function LaporanTeknisiModal({
                             <div style={{ fontWeight: 700 }}>Unit {u.unit_no} — {unitLabel}</div>
                             <div style={{ fontSize: 10, color: cs.muted }}>{bracket} · {u.tipe}</div>
                           </div>
-                          <div style={{ fontSize: 12, fontWeight: 800, color: "#06b6d4", fontFamily: "monospace" }}>
-                            Rp {hargaUnit.toLocaleString("id-ID")}
-                          </div>
+                          {!isFieldStaff && (
+                            <div style={{ fontSize: 12, fontWeight: 800, color: "#06b6d4", fontFamily: "monospace" }}>
+                              Rp {hargaUnit.toLocaleString("id-ID")}
+                            </div>
+                          )}
                         </label>
                       );
                     })}
                   </div>
-                  {laporanCleaningInRepair.length > 0 && (
+                  {!isFieldStaff && laporanCleaningInRepair.length > 0 && (
                     <div style={{ fontSize: 11, color: "#06b6d4", fontWeight: 700, textAlign: "right" }}>
                       Total tambahan cleaning: Rp {((laporanUnits || [])
                         .filter(u => u && u.tipe && laporanCleaningInRepair.includes(u.unit_no))
@@ -1087,6 +1091,17 @@ export default function LaporanTeknisiModal({
                 );
               })()}
 
+              {/* ══ HEADER: YANG DITAGIH KE CUSTOMER ══ */}
+              {!isInstallJob && (
+                <div style={{ background: "#8b5cf610", border: "1px solid #8b5cf640", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: cs.text }}>💰 Yang Ditagih ke Customer</div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 3, lineHeight: 1.45 }}>
+                    {isFieldStaff
+                      ? <>Pilih <strong>pekerjaan (Jasa)</strong> & <strong>barang (Material)</strong> yang dikerjakan beserta jumlahnya. <strong style={{ color: "#a78bfa" }}>Harga & total diatur Owner saat bikin invoice</strong> — kamu tak perlu isi harga.</>
+                      : <>Dua bagian di bawah = isi invoice: <strong>Jasa</strong> (biaya layanan) + <strong>Barang</strong> (sparepart/material).</>}
+                  </div>
+                </div>
+              )}
               {/* ══ JASA SECTION ══ */}
               {!isInstallJob && (
                 <div style={{ display: "grid", gap: 8 }}>
