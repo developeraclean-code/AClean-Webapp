@@ -62,10 +62,8 @@ export default function RestockModal({
     if (qtyNum <= 0) { showNotif("❌ Qty harus lebih dari 0"); return; }
     setSaving(true);
 
-    const newStatus = computeStockStatus(stokBaru, item.reorder);
-    setInventoryData(prev => prev.map(i => i.code === item.code ? { ...i, stock: stokBaru, status: newStatus } : i));
-
-    await supabase.from("inventory_transactions").insert({
+    // Audit trail dulu (non-blocking jika gagal)
+    const { error: txErr } = await supabase.from("inventory_transactions").insert({
       inventory_code: item.code,
       inventory_name: item.name,
       qty: qtyNum,
@@ -73,15 +71,28 @@ export default function RestockModal({
       notes: form.keterangan || ("Restock manual oleh " + (currentUser?.name || "Owner")),
       created_by: currentUser?.id || null,
       created_by_name: currentUser?.name || "",
-    }).then(() => {});
+    });
+    if (txErr) console.error("[restock] inventory_transactions:", txErr.message);
 
+    // DB update dulu — UI hanya diupdate kalau berhasil
+    const newStatus = computeStockStatus(stokBaru, item.reorder);
     const { error: invErr } = await supabase.from("inventory")
       .update({ stock: stokBaru, updated_at: new Date().toISOString() })
       .eq("code", item.code);
 
-    if (invErr) showNotif("⚠️ Stok tersimpan lokal, sync DB gagal: " + invErr.message);
+    if (invErr) {
+      showNotif("⚠️ Restock gagal disimpan ke DB: " + invErr.message);
+      addAgentLog("STOCK_RESTOCK", `Restock ${item.name}: +${qtyNum} → ${stokBaru} ${item.unit} — GAGAL`, "ERROR");
+      setSaving(false);
+      return;
+    }
+
+    // Sukses: update UI baru setelah DB confirmed
+    setInventoryData(prev => prev.map(i => i.code === item.code ? { ...i, stock: stokBaru, status: newStatus } : i));
+    addAgentLog("STOCK_RESTOCK", `Restock ${item.name}: +${qtyNum} → ${stokBaru} ${item.unit}`, "SUCCESS");
 
     if (form.catetBiaya && hargaNum > 0 && totalBeli > 0) {
+      const nameLower = item.name.toLowerCase();
       const subcat = isFreonItem(item)
         ? "Freon"
         : item.material_type === "pipa" ? "Pipa AC"
@@ -95,7 +106,7 @@ export default function RestockModal({
         description: form.keterangan || `Restock ${item.name} ${qtyNum} ${item.unit}`,
         item_name: item.name + " " + qtyNum + " " + item.unit,
         freon_type: isFreonItem(item)
-          ? (item.name.includes("R22") ? "R22" : item.name.includes("R410") ? "R410A" : "R32")
+          ? (nameLower.includes("r22") ? "R22" : nameLower.includes("r410") ? "R410A" : "R32")
           : null,
         created_by: currentUser?.name || "Owner",
         last_changed_by: currentUser?.name || "Owner",
@@ -104,7 +115,6 @@ export default function RestockModal({
       else addAgentLog("RESTOCK_EXPENSE", `Restock ${item.name} +${qtyNum} ${item.unit} — Rp${totalBeli.toLocaleString("id-ID")} dicatat ke biaya`, "SUCCESS");
     }
 
-    addAgentLog("STOCK_RESTOCK", `Restock ${item.name}: +${qtyNum} → ${stokBaru} ${item.unit}`, "SUCCESS");
     showNotif("✅ Restock " + item.name + " +" + qtyNum + " " + item.unit + (form.catetBiaya && totalBeli > 0 ? " · biaya Rp" + totalBeli.toLocaleString("id-ID") + " dicatat" : ""));
     setSaving(false);
     handleClose();

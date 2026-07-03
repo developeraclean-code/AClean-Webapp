@@ -46,8 +46,8 @@ function InventoryView({
     (item.code || "").toLowerCase().includes(searchInventory.toLowerCase()) ||
     (item.unit || "").toLowerCase().includes(searchInventory.toLowerCase()) ||
     (item.status || "").toLowerCase().includes(searchInventory.toLowerCase()) ||
-    String(item.price || "").includes(searchInventory) ||
-    String(item.stock || "").includes(searchInventory)
+    String(item.price ?? "").includes(searchInventory) ||
+    String(item.stock ?? "").includes(searchInventory)
   );
   const totPgInv = Math.ceil(filteredInvt.length / INV_PAGE_SIZE) || 1;
   const curPgInv = Math.min(inventoryPage, totPgInv);
@@ -104,7 +104,7 @@ function InventoryView({
                           📥 Restock
                         </button>
                         <button onClick={() => { setEditStokItem({ ...item }); setModalEditStok(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>✏️</button>
-                        <button onClick={async () => {
+                        {currentUser?.role === "Owner" && <button onClick={async () => {
                           if (!await showConfirm({ icon: "🗑️", title: "Hapus Material?", danger: true, message: "Hapus material " + item.name + "? Tidak bisa dibatalkan.", confirmText: "Hapus" })) return;
                           const delQuery = item.id && !String(item.id).startsWith("INV")
                             ? supabase.from("inventory").delete().eq("id", item.id)
@@ -114,7 +114,7 @@ function InventoryView({
                             setInventoryData(prev => prev.filter(i => i.id ? i.id !== item.id : i.code !== item.code));
                             showNotif("🗑️ Material " + item.name + " dihapus");
                           } else showNotif("❌ Gagal hapus: " + error.message);
-                        }} style={{ background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>🗑️</button>
+                        }} style={{ background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>🗑️</button>}
                       </div>
                     ) : (
                       <span style={{ fontSize: 10, color: cs.muted, fontStyle: "italic" }}>—</span>

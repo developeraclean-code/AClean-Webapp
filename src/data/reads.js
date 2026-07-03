@@ -64,7 +64,7 @@ export const searchInvoicesServer = (supabase, query) => {
 
 export const fetchCustomers = (supabase) =>
   supabase.from("customers")
-    .select("id,name,phone,address,area,email,is_vip,notes,joined,total_orders,last_service,membership_tier,total_units_serviced")
+    .select("id,name,phone,address,area,email,is_vip,notes,joined_date,total_orders,last_service,membership_tier,total_units_serviced")
     .order("name").limit(5000);
 
 // Server-side lookup by phone (anti race condition & tidak terbatas limit fetchCustomers).

@@ -1205,7 +1205,7 @@ export default function ACleanWebApp() {
       }
     } catch { /* gagal silent — request tetap jalan tanpa token */ }
   };
-  const _apiHeaders = async () => {
+  const _apiHeaders = useCallback(async () => {
     if (!_internalTokenRef.current || Date.now() >= _internalTokenExpRef.current) {
       await _exchangeApiToken();
     }
@@ -1213,7 +1213,7 @@ export default function ACleanWebApp() {
       "Content-Type": "application/json",
       ...(_internalTokenRef.current ? { "X-Internal-Token": _internalTokenRef.current } : {})
     };
-  };
+  }, []); // deps kosong: hanya refs (stable) yang di-close
   // Fetch wrapper: kalau 401, force-refresh token sekali lalu retry.
   // Gunakan ini di tempat-tempat baru. Existing fetch() yang pakai _apiHeaders() tetap jalan.
   const _apiFetch = async (url, opts = {}) => {

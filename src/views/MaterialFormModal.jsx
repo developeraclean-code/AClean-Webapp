@@ -105,13 +105,19 @@ export default function MaterialFormModal({
       material_type: form.material_type || "other",
     };
     setSaving(true);
-    setInventoryData(prev => [...prev, newItem]);
     const insertPayload = { ...newItem };
     delete insertPayload.status;
     const { error: invErr } = await supabase.from("inventory").insert(insertPayload);
-    if (!invErr && stokAwal > 0) {
-      await supabase.from("inventory").update({ stock: stokAwal }).eq("code", newCode);
-      await supabase.from("inventory_transactions").insert({
+    if (invErr) {
+      showNotif("❌ Gagal menyimpan material: " + invErr.message);
+      setSaving(false);
+      return;
+    }
+    // Update UI hanya setelah DB berhasil (cegah phantom item)
+    setInventoryData(prev => [...prev, newItem]);
+    if (stokAwal > 0) {
+      // Insert sudah include stock; hanya perlu audit trail transaksi
+      const { error: txErr } = await supabase.from("inventory_transactions").insert({
         inventory_code: newCode,
         inventory_name: newItem.name,
         qty: stokAwal,
@@ -119,19 +125,18 @@ export default function MaterialFormModal({
         notes: "Stok awal (migrasi manual)",
         created_by: currentUser?.id || null,
         created_by_name: currentUser?.name || "",
-      }).then(() => {});
+      });
+      if (txErr) console.error("[addMaterial] inventory_transactions:", txErr.message);
     }
-    if (invErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal: " + invErr.message);
-    else {
-      addAgentLog("STOCK_ADDED", `Material baru: ${newItem.name} [${newCode}] stok: ${stokAwal} ${newItem.unit}`, "SUCCESS");
-      showNotif("✅ " + newItem.name + " ditambahkan [" + newCode + "]");
-    }
+    addAgentLog("STOCK_ADDED", `Material baru: ${newItem.name} [${newCode}] stok: ${stokAwal} ${newItem.unit}`, "SUCCESS");
+    showNotif("✅ " + newItem.name + " ditambahkan [" + newCode + "]");
     setSaving(false);
     handleClose();
   };
 
   const handleSaveEdit = async () => {
     if (!editItem) return;
+    if (stokFinal < 0) { showNotif("❌ Stok tidak boleh negatif"); return; }
     const hargaBaru = parseInt(form.price ?? editItem.price) || 0;
     const reorderBaru = parseInt(form.reorder ?? editItem.reorder) || 5;
     const updated = { ...editItem, stock: stokFinal, price: hargaBaru, reorder: reorderBaru, status: statusBaru };
@@ -259,7 +264,7 @@ export default function MaterialFormModal({
                 <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>
                   Stok Saat Ini {isF && <span style={{ color: cs.accent, fontSize: 10 }}>(decimal kg)</span>}
                 </div>
-                <input type="number" step={isF ? "0.1" : "1"} value={form.stock ?? editItem.stock}
+                <input type="number" min="0" step={isF ? "0.1" : "1"} value={form.stock ?? editItem.stock}
                   onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} style={inp} />
               </div>
               <div>

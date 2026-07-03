@@ -647,8 +647,6 @@ function TabWaObservations({ supabase }) {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [sourceFilter, confFilter, days]);
 
   const counts = useMemo(() => {
-    const c = { total: rows.length, gap1: 0, gap2: 0, gap3: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
-    for (const r of rows) { c[r.source.replace("_carrier","").replace("_laporan_team","").replace("_bon_ext","")] = (c[r.source.replace("_carrier","").replace("_laporan_team","").replace("_bon_ext","")] || 0) + 1; c[r.match_confidence] = (c[r.match_confidence] || 0) + 1; }
     return { total: rows.length, gap1: rows.filter(r=>r.source==="gap1_carrier").length, gap2: rows.filter(r=>r.source==="gap2_laporan_team").length, gap3: rows.filter(r=>r.source==="gap3_bon_ext").length, HIGH: rows.filter(r=>r.match_confidence==="HIGH").length, MEDIUM: rows.filter(r=>r.match_confidence==="MEDIUM").length, LOW: rows.filter(r=>r.match_confidence==="LOW").length };
   }, [rows]);
 
@@ -970,8 +968,12 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
     try {
       setMonitorLoading(true);
       const resp = await fetch("/api/monitor", { headers: _apiHeaders ? await _apiHeaders() : {} });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
       const data = await resp.json();
       setMonitorData(data);
+    } catch (err) {
+      console.error("[MonitoringView] refreshOverview:", err.message);
+      alert("❌ Gagal refresh monitoring: " + err.message);
     } finally {
       setMonitorLoading(false);
     }

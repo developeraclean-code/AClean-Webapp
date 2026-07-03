@@ -195,10 +195,9 @@ return (
                       {currentUser?.role === "Owner" && (
                         <button onClick={async () => {
                           if (!await showConfirm({ icon: "🗑️", title: "Hapus Customer?", danger: true, message: `Hapus "${cu.name}"?\nHistory order tetap ada.`, confirmText: "Hapus" })) return;
-                          setCustomersData(prev => prev.filter(c => c.id !== cu.id));
                           const { error } = await deleteCustomer(supabase, cu.id);
                           if (error) showNotif("❌ Gagal hapus customer: " + error.message);
-                          else { addAgentLog("CUSTOMER_DELETED", cu.name + " dihapus", "WARNING"); showNotif(`🗑️ Customer ${cu.name} berhasil dihapus`); }
+                          else { setCustomersData(prev => prev.filter(c => c.id !== cu.id)); addAgentLog("CUSTOMER_DELETED", cu.name + " dihapus", "WARNING"); showNotif(`🗑️ Customer ${cu.name} berhasil dihapus`); }
                         }} style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 11 }}>Hapus</button>
                       )}
                     </div>
@@ -261,10 +260,9 @@ return (
                           {currentUser?.role === "Owner" && (
                             <button onClick={async () => {
                               if (!await showConfirm({ icon: "🗑️", title: "Hapus Lokasi?", danger: true, message: `Hapus "${cu.name}"?\nHistory order tetap ada.`, confirmText: "Hapus" })) return;
-                              setCustomersData(prev => prev.filter(c => c.id !== cu.id));
                               const { error } = await deleteCustomer(supabase, cu.id);
                               if (error) showNotif("❌ Gagal hapus: " + error.message);
-                              else { addAgentLog("CUSTOMER_DELETED", cu.name + " dihapus", "WARNING"); showNotif(`🗑️ ${cu.name} berhasil dihapus`); }
+                              else { setCustomersData(prev => prev.filter(c => c.id !== cu.id)); addAgentLog("CUSTOMER_DELETED", cu.name + " dihapus", "WARNING"); showNotif(`🗑️ ${cu.name} berhasil dihapus`); }
                             }} style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 11 }}>Hapus</button>
                           )}
                         </div>
@@ -419,8 +417,14 @@ return (
                         if (!await showConfirm({ icon: "⭐", title: "Ubah Status VIP?", message: `Tandai ${selectedCustomer.name} sebagai ${newVip ? "VIP" : "Regular"}?`, confirmText: "Ya, Ubah" })) return;
                         setCustomersData(prev => prev.map(cu => cu.id === selectedCustomer.id ? { ...cu, is_vip: newVip } : cu));
                         setSelectedCustomer(prev => ({ ...prev, is_vip: newVip }));
-                        updateCustomer(supabase, selectedCustomer.id, { is_vip: newVip });
-                        showNotif(selectedCustomer.name + (newVip ? " dijadikan VIP ⭐" : " diturunkan ke Regular"));
+                        const { error: vipErr } = await updateCustomer(supabase, selectedCustomer.id, { is_vip: newVip });
+                        if (vipErr) {
+                          setCustomersData(prev => prev.map(cu => cu.id === selectedCustomer.id ? { ...cu, is_vip: !newVip } : cu));
+                          setSelectedCustomer(prev => ({ ...prev, is_vip: !newVip }));
+                          showNotif("❌ Gagal update VIP: " + vipErr.message);
+                        } else {
+                          showNotif(selectedCustomer.name + (newVip ? " dijadikan VIP ⭐" : " diturunkan ke Regular"));
+                        }
                       }} style={{ background: "#f59e0b18", border: "1px solid #f59e0b33", color: "#f59e0b", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>
                         {selectedCustomer.is_vip ? "Hapus VIP" : "Jadikan VIP"}
                       </button>
@@ -434,7 +438,7 @@ return (
                     { label: "Total Servis", val: history.length + "x", color: cs.accent },
                     ...(!isTekHelper ? [{ label: "Total Spend", val: totalSpend > 0 ? fmt(totalSpend) : "—", color: cs.green }] : []),
                     { label: "Terakhir Servis", val: history[0]?.date || selectedCustomer.last_service || "—", color: cs.yellow },
-                    { label: "Bergabung", val: selectedCustomer.joined ? selectedCustomer.joined.slice(0,10) : "—", color: cs.muted },
+                    { label: "Bergabung", val: selectedCustomer.joined_date ? selectedCustomer.joined_date.slice(0,10) : "—", color: cs.muted },
                   ].map(({ label, val, color }) => (
                     <div key={label} style={{ background: cs.surface, borderRadius: 10, padding: "10px 12px" }}>
                       <div style={{ fontSize: 10, color: cs.muted, fontWeight: 600, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
@@ -469,7 +473,7 @@ return (
                       {next && (
                         <>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: t.color, marginBottom: 3 }}>
-                            <span>{next.minUnits - totalUnits} unit lagi → {next.badge} {next.label}</span>
+                            <span>{Math.max(0, next.minUnits - totalUnits)} unit lagi → {next.badge} {next.label}</span>
                             <span>{pct}%</span>
                           </div>
                           <div style={{ height: 5, background: "#00000015", borderRadius: 99, overflow: "hidden" }}>
@@ -615,7 +619,7 @@ return (
                     {/* Tombol aksi */}
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       {isOwnerAdmin && svc.invoice_id && (
-                        <button onClick={() => { const inv = invoicesData.find(i => i.id === svc.invoice_id); if (inv) { setSelectedInvoice(inv); setModalPDF(true); } }}
+                        <button onClick={() => { const inv = invoicesData.find(i => i.id === svc.invoice_id); if (inv) { setSelectedInvoice(inv); setModalPDF(true); } else showNotif("Invoice tidak ada di cache. Buka tab Invoice untuk mencari."); }}
                           style={{ fontSize: 11, padding: "5px 12px", borderRadius: 7, cursor: "pointer", background: cs.green + "15", border: "1px solid " + cs.green + "33", color: cs.green }}>
                           Lihat Invoice
                         </button>
@@ -648,7 +652,7 @@ return (
               ["Email", selectedCustomer.email || "—"],
               ["Area", selectedCustomer.area],
               ["Alamat", selectedCustomer.address],
-              ["Bergabung", selectedCustomer.joined ? selectedCustomer.joined.slice(0,10) : "—"],
+              ["Bergabung", selectedCustomer.joined_date ? selectedCustomer.joined_date.slice(0,10) : "—"],
               ["Status", selectedCustomer.is_vip ? "VIP" : "Regular"],
             ].map(([k, v], idx, arr) => (
               <div key={k} style={{ display: "flex", gap: 16, padding: "12px 18px", borderBottom: idx < arr.length - 1 ? "1px solid " + cs.border : "none", alignItems: "flex-start" }}>
