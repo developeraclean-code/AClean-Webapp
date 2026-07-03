@@ -3089,15 +3089,27 @@ export default function ACleanWebApp() {
   // GAP 1.2 + GAP 3: Inventory via transaction table — audit trail + cegah negatif
   const deductInventory = async (materials, orderId, reportId, customerName, teknisiName, jobDate) => {
     for (const mat of materials) {
-      // Jika ada _useCode (freon tabung spesifik), match by code dulu
-      const item = mat._useCode
-        ? inventoryData.find(i => i.code === mat._useCode)
-        : inventoryData.find(i =>
-          i.name.toLowerCase().includes(mat.nama.toLowerCase()) ||
-          mat.nama.toLowerCase().includes(i.name.toLowerCase())
-        );
+      // Match by code (spesifik) dulu. Fallback nama: HANYA exact atau kandidat tunggal (unambiguous)
+      // — hindari fuzzy 2-arah lama (mis. "Pipa" nyangkut ke pipa 1PK padahal 2PK, atau salah item).
+      let item;
+      if (mat._useCode) {
+        item = inventoryData.find(i => i.code === mat._useCode);
+      } else {
+        const q = (mat.nama || "").toLowerCase().trim();
+        if (!q) continue;
+        const cands = inventoryData.filter(i => (i.name || "").toLowerCase().trim().includes(q));
+        item = inventoryData.find(i => (i.name || "").toLowerCase().trim() === q)
+          || (cands.length === 1 ? cands[0] : null);
+        if (!item) {
+          if (cands.length > 1) {
+            addAgentLog("STOCK_MATCH_AMBIGUOUS", `Job ${orderId||reportId||"?"} — "${mat.nama}" cocok ${cands.length} item, deduct di-skip (perlu kode spesifik).`, "WARNING");
+          }
+          continue;
+        }
+      }
       if (!item) continue;
       const qty = parseFloat(mat.jumlah) || 0;
+      if (qty <= 0) continue;
       // Cek stok cukup sebelum deduct — skip dengan notif + log jika kurang
       if (item.stock < qty) {
         const skipMsg = `⚠️ Stok ${item.name} kurang: butuh ${qty} ${item.unit}, tersisa ${item.stock} ${item.unit}. Deduct di-skip — laporan tersimpan.`;
@@ -3108,34 +3120,36 @@ export default function ACleanWebApp() {
         ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, `⚠️ *Stok Kurang*\nJob ${orderId||"?"} — ${item.name}: butuh ${qty} ${item.unit}, tersisa ${item.stock} ${item.unit}.\nDeduct di-skip, perlu koreksi manual.`); });
         continue;
       }
-      const newStock = item.stock - qty;
-      const newStatus = computeStockStatus(newStock, item.reorder);
-      // Update local state
-      setInventoryData(prev => prev.map(i => i.code === item.code ? { ...i, stock: newStock, status: newStatus } : i));
-      // Freon: qty_actual = null (belum ditimbang, admin perlu confirm aktual)
-      // Non-freon: qty_actual = qty (langsung confirmed)
+      // Freon: qty_actual = null (belum ditimbang, admin confirm aktual). Non-freon: qty_actual = -qty.
       const isFreon = item.material_type === "freon" ||
         ["r22","r32","r410","freon"].some(k => (item.name||"").toLowerCase().includes(k));
-      // Insert transaksi ke DB (trigger Supabase akan update stock otomatis)
-      try {
-        await supabase.from("inventory_transactions").insert({
-          inventory_code: item.code,
-          inventory_name: item.name,
-          order_id: orderId || null,
-          report_id: reportId || null,
-          qty: -qty,
-          type: "usage",
-          notes: mat.keterangan || "",
-          customer_name: customerName || null,
-          teknisi_name: (teknisiName || currentUser?.name || "").trim() || null,
-          job_date: jobDate || null,
-          created_by: currentUser?.id || null,
-          created_by_name: currentUser?.name || "",
-          unit_id: mat._unitId || null,
-          unit_label: mat._unitLabel || null,
-          qty_actual: isFreon ? null : -qty,
-        });
-      } catch (e) { console.warn("inv tx skip:", e?.message); }
+      // INSERT DULU → cek error. Trigger DB yang potong stok. State lokal HANYA diupdate kalau sukses
+      // (cegah stok "hilang" di UI tapi DB tak terpotong / drift saat insert gagal).
+      const { error: txErr } = await supabase.from("inventory_transactions").insert({
+        inventory_code: item.code,
+        inventory_name: item.name,
+        order_id: orderId || null,
+        report_id: reportId || null,
+        qty: -qty,
+        type: "usage",
+        notes: mat.keterangan || "",
+        customer_name: customerName || null,
+        teknisi_name: (teknisiName || currentUser?.name || "").trim() || null,
+        job_date: jobDate || null,
+        created_by: currentUser?.id || null,
+        created_by_name: currentUser?.name || "",
+        unit_id: mat._unitId || null,
+        unit_label: mat._unitLabel || null,
+        qty_actual: isFreon ? null : -qty,
+      });
+      if (txErr) {
+        showNotif(`⚠️ Gagal catat pemakaian ${item.name} — stok tidak dipotong.`);
+        addAgentLog("STOCK_DEDUCT_FAIL", `Job ${orderId||reportId||"?"} — ${item.name}: insert transaksi gagal (${txErr.message?.slice(0,60)}). Stok tidak dipotong.`, "WARNING");
+        continue;
+      }
+      const newStock = item.stock - qty;
+      const newStatus = computeStockStatus(newStock, item.reorder);
+      setInventoryData(prev => prev.map(i => i.code === item.code ? { ...i, stock: newStock, status: newStatus } : i));
       if (newStatus === "CRITICAL" || newStatus === "OUT") {
         addAgentLog("STOCK_ALERT", `${item.name}: ${newStatus} (sisa ${newStock} ${item.unit})`, "WARNING");
       }
