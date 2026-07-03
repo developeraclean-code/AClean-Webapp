@@ -3610,11 +3610,15 @@ export default function ACleanWebApp() {
       const startMin = startParts[0] * 60 + startParts[1];
       const endMin = startMin + durMenit;
 
-      // Query langsung ke Supabase — bukan state lokal
+      // Query langsung ke Supabase — bukan state lokal.
+      // Cek SEMUA peran (teknisi/teknisi2/3 + helper/helper2/3): orang yang jadi helper di job lain
+      // pada jam bentrok juga harus terdeteksi (cegah dobel-booking lintas-peran). '.or()' aman utk
+      // nama tanpa koma; sanitasi koma jaga-jaga.
+      const safeName = String(teknisiName || "").replace(/,/g, " ");
       const { data: dbOrders, error } = await supabase
         .from("orders")
         .select("id, time, time_end, service, units, status")
-        .eq("teknisi", teknisiName)
+        .or(["teknisi", "teknisi2", "teknisi3", "helper", "helper2", "helper3"].map(col => `${col}.eq.${safeName}`).join(","))
         .eq("date", date)
         .in("status", ["PENDING", "CONFIRMED", "DISPATCHED", "IN_PROGRESS", "ON_SITE"]);
 

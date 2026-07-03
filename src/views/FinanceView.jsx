@@ -28,6 +28,13 @@ const TABS = [
   { id: "payroll", label: "Pengelolaan Gaji", icon: "💵" },
 ];
 
+// Uang yang BENAR-BENAR diterima dari sebuah invoice (basis kas):
+// PAID → total penuh; PARTIAL_PAID → paid_amount (cicilan yang sudah masuk). Selain itu 0.
+const cashReceived = (i) =>
+  i?.status === "PAID" ? Number(i.total || 0)
+    : i?.status === "PARTIAL_PAID" ? Number(i.paid_amount || 0)
+      : 0;
+
 const fmtRp = (n) =>
   n == null || n === "" ? "—" : "Rp " + Number(n).toLocaleString("id-ID");
 
@@ -155,15 +162,18 @@ const DashboardTab = ({
     }),
     [ordersData, invoicesData]);
 
-  // Stat konteks: hari ini (rows) vs all-time (allInvoices)
-  const todayPaid = rows.filter(r => r.inv?.status === "PAID");
-  const todayPemasukan = todayPaid.reduce((s, r) => s + (r.inv?.total || 0), 0);
+  // Pemasukan hari ini = basis KAS (uang diterima hari ini by paid_at), termasuk cicilan
+  // PARTIAL_PAID — konsisten dgn PlanningTab. Bukan lagi by tanggal job.
+  const todayCashInv = (allInvoices || []).filter(i =>
+    (i.paid_at || "").slice(0, 10) === todayStr && (i.status === "PAID" || i.status === "PARTIAL_PAID"));
+  const todayPemasukan = todayCashInv.reduce((s, i) => s + cashReceived(i), 0);
+  const todayPaid = todayCashInv; // untuk label "n invoice dibayar hari ini"
   const todayBelumLunas = rows.filter(r => r.inv && (r.inv.status === "UNPAID" || r.inv.status === "OVERDUE")).length;
   const todayPendingAPV = rows.filter(r => r.inv && (r.inv.status || "").toUpperCase().includes("PENDING")).length;
   const belumMutasi = rows.filter(r => r.inv?.status === "PAID" && !mutasiChecked[r.order?.id]?.checked).length;
 
-  // All-time untuk referensi
-  const allTimePaid = (allInvoices || []).filter(i => i.status === "PAID").reduce((s, i) => s + (i.total || 0), 0);
+  // All-time untuk referensi (basis kas — termasuk cicilan partial)
+  const allTimePaid = (allInvoices || []).reduce((s, i) => s + cashReceived(i), 0);
   const allUnpaid = (allInvoices || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
 
   return (
@@ -174,7 +184,7 @@ const DashboardTab = ({
         <div style={{ textAlign: "center", flex: 1 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>📅 {currentDate}</div>
           <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
-            {rows.length} order · {todayPaid.length} lunas · {todayBelumLunas} belum lunas
+            {rows.length} order · {todayPaid.length} dibayar hari ini · {todayBelumLunas} belum lunas
           </div>
           {mutasiError && (
             <div style={{ fontSize: 11, color: cs.red, marginTop: 4 }}>⚠️ {mutasiError}</div>
@@ -189,7 +199,7 @@ const DashboardTab = ({
       {/* Stat Cards — konteks hari ini, responsive */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 14 }}>
         <StatCard value={rows.length} label="Order Hari Ini" color={cs.accent} />
-        <StatCard value={fmtRp(todayPemasukan)} label="Pemasukan Hari Ini" color={cs.green} sub={todayPaid.length + " invoice PAID"} />
+        <StatCard value={fmtRp(todayPemasukan)} label="Pemasukan Hari Ini" color={cs.green} sub={todayPaid.length + " invoice dibayar (incl. cicilan)"} />
         <StatCard value={todayBelumLunas} label="Belum Lunas" color={todayBelumLunas > 0 ? cs.yellow : cs.muted} sub={"Hari ini"} />
         <StatCard value={todayPendingAPV} label="Pending APV" color={todayPendingAPV > 0 ? cs.ara : cs.muted} sub={"Hari ini"} />
         <StatCard value={mutasiLoading ? "⟳" : belumMutasi} label="Belum Cek Mutasi" color={belumMutasi > 0 ? cs.red : cs.muted} sub={"Hari ini · PAID"} />
@@ -324,7 +334,7 @@ const DashboardTab = ({
       {/* Total footer */}
       {rows.length > 0 && (
         <div style={{ marginTop: 10, padding: "10px 16px", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
-          <span style={{ color: cs.muted }}>{rows.length} order · {todayPaid.length} PAID · {belumMutasi} belum mutasi</span>
+          <span style={{ color: cs.muted }}>{rows.length} order · {todayPaid.length} dibayar · {belumMutasi} belum mutasi</span>
           <span style={{ fontWeight: 700, color: cs.green }}>{fmtRp(todayPemasukan)}</span>
         </div>
       )}
@@ -352,11 +362,11 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
 
   const paidThisMonth = useMemo(() =>
     (allInvoices || []).filter(i =>
-      i.status === "PAID" && (i.paid_at || i.created_at || "").slice(0, 7) === bulanIni
+      (i.status === "PAID" || i.status === "PARTIAL_PAID") && (i.paid_at || i.created_at || "").slice(0, 7) === bulanIni
     ), [allInvoices, bulanIni]);
 
   const totalIn = useMemo(() =>
-    paidThisMonth.reduce((s, i) => s + (i.total || 0), 0),
+    paidThisMonth.reduce((s, i) => s + cashReceived(i), 0),
     [paidThisMonth]);
 
   const expensesBulanIni = useMemo(() =>
@@ -368,7 +378,7 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
     [expensesBulanIni]);
 
   const totalInAll = useMemo(() =>
-    (allInvoices || []).filter(i => i.status === "PAID").reduce((s, i) => s + (i.total || 0), 0),
+    (allInvoices || []).reduce((s, i) => s + cashReceived(i), 0),
     [allInvoices]);
 
   const totalOutAll = useMemo(() =>
