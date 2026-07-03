@@ -70,7 +70,7 @@ export default function UserFormModal({
   const validate = () => {
     const e = {};
     if (!newUserForm.name?.trim()) e.name = "Nama wajib diisi";
-    if (!newUserForm.email?.trim()) e.email = "Email wajib diisi";
+    if (!isEditMode && !newUserForm.email?.trim()) e.email = "Email wajib diisi";
     if (!isEditMode && !isAutoPass && !newUserForm.password?.trim()) e.password = "Password wajib diisi";
     return e;
   };
