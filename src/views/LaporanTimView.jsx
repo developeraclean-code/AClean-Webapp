@@ -368,6 +368,129 @@ const totPgL = Math.ceil(filtered.length / LAP_PAGE_SIZE) || 1;
 const curPgL = Math.min(laporanPage, totPgL);
 const pageLap = filtered.slice((curPgL - 1) * LAP_PAGE_SIZE, curPgL * LAP_PAGE_SIZE);
 
+// Pembangun detail invoice dari laporan (jalur VERIFY) — SATU sumber untuk approve (verifyLaporan)
+// DAN badge estimasi total di kartu laporan (hindari drift). Murni: hanya komputasi, tanpa efek samping.
+// Return: { vMDetail, labor, material, total, status, waiver }. (Diskon membership tetap di approve.)
+const buildVerifyInvoice = (r, ord) => {
+    const _rawMats = (() => {
+      if (r.materials_json) {
+        try { return JSON.parse(r.materials_json); } catch { /* materials_json rusak → pakai default */ }
+      }
+      return safeArr(r.materials);
+    })();
+    const vMats = _rawMats.filter(m => m.nama && parseFloat(m.jumlah || 0) > 0);
+    const vMDetail = vMats.map(m => {
+      const nama2 = (m.nama || "").toLowerCase();
+      const isF = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => nama2.includes(k));
+      const rawQ = parseFloat(m.jumlah) || 0;
+      const qty = isF ? Math.max(1, Math.ceil(rawQ)) : rawQ;
+      let hSat = parseFloat(m.harga_satuan) || 0;
+      if (!hSat) hSat = lookupHargaGlobal(m.nama, m.satuan);
+      // Deteksi keterangan dari nama jika tidak ada — item cleaning/jasa tanpa tag tetap masuk jasa
+      let ket = m.keterangan || "";
+      if (!ket) {
+        if (isF) ket = "freon";
+        else if (["repair", "perbaikan", "kapasitor", "kompresor", "sparepart", "pcb"].some(k => nama2.includes(k))) ket = "repair";
+        else if (["cleaning", "maintenance", "cuci", "jasa", "service", "servis", "pemasangan", "bongkar", "instalasi", "vacum", "kuras"].some(k => nama2.includes(k))) ket = "jasa";
+      }
+      return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket, category: categoryFromCatalog(m.nama, priceListData) };
+    });
+
+    const isRepairSvcV = r.service === "Repair";
+    const isCleaningMaintV = r.service === "Cleaning" || r.service === "Maintenance";
+    const card34Empty = !vMDetail.some(m => m.keterangan === "jasa" || m.keterangan === "repair");
+    // Biaya cleaning per-unit sudah ada? Cek HANYA baris jasa ber-nama cleaning/maintenance/cuci
+    // (paritas dgn submit path laporanInvoice.js). Baris jasa lain (mis. "Jasa Pengisian Freon",
+    // tambahan freon yang ter-tag jasa) TIDAK boleh membatalkan injeksi biaya cleaning.
+    const alreadyHasCleaningRowV = vMDetail.some(m => {
+      if (m.keterangan !== "jasa") return false;
+      const n = (m.nama || "").toLowerCase();
+      return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
+    });
+
+    if (isRepairSvcV) {
+      // Repair: inject Biaya Pengecekan hanya jika card 3/4 kosong (tidak ada jasa maupun repair item)
+      if (card34Empty) {
+        const biayaCekItem = priceListData.find(p => p.service === "Repair" && p.type === "Biaya Pengecekan AC");
+        const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 100000;
+        const cekQty = Math.max(1, (Array.isArray(r.units) ? r.units.length : Number(r.units)) || Number(ord?.units) || 1); // biaya pengecekan PER UNIT
+        vMDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: cekQty, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek * cekQty, keterangan: "jasa" });
+      }
+      // jika ada isi di card 3/4 → hitung apa adanya, tidak inject apapun
+    } else if (isCleaningMaintV && !alreadyHasCleaningRowV) {
+      // Cleaning/Maintenance: inject per unit dari card 1/4 tipe PK
+      const rUnits = Array.isArray(r.units) ? r.units : [];
+      const unitsWithTipe = rUnits.filter(u => u && u.tipe);
+      if (unitsWithTipe.length > 0) {
+        unitsWithTipe.forEach((u) => {
+          const hargaUnit = hargaPerUnitFromTipe(r.service, u.tipe, priceListData);
+          if (hargaUnit > 0) {
+            const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
+            const bracketLabel = getBracketKey(r.service, u.tipe) || u.tipe;
+            vMDetail.unshift({
+              nama: (r.service || "") + " " + bracketLabel + " (" + unitLabel + ")",
+              jumlah: 1, satuan: "unit",
+              harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
+            });
+          }
+        });
+      } else {
+        const svcFeeV = hitungLabor(r.service, ord?.type, (Array.isArray(r.units) ? r.units.length : r.units) || ord?.units || 1);
+        if (svcFeeV > 0) {
+          const uCount = Math.max(1, (Array.isArray(r.units) ? r.units.length : parseInt(r.units)) || parseInt(ord?.units) || 1);
+          vMDetail.unshift({ nama: (r.service || "") + (ord?.type ? " - " + ord.type : "") + " (Servis)", jumlah: uCount, satuan: "unit", harga_satuan: Math.round(svcFeeV / uCount), subtotal: svcFeeV, keterangan: "jasa" });
+        }
+      }
+    }
+
+    // Inject transport fee untuk Cleaning 1 unit (sama seperti logic di App.jsx)
+    // Guard: jangan inject kalau materials laporan sudah berisi item transport → cegah double tagih.
+    const sudahAdaTransport = vMDetail.some(m => (m.nama || "").toLowerCase().includes("transport"));
+    if (r.service === "Cleaning" && (Array.isArray(r.units) ? r.units.length : parseInt(r.units) || 1) === 1 && !sudahAdaTransport) {
+      const transportItem = priceListData.find(p => p.service === "Cleaning" && p.type === "Biaya Transport Bila 1 Unit" && p.is_active !== false);
+      if (transportItem && transportItem.price > 0) {
+        vMDetail.push({ nama: "Biaya Transport Bila 1 Unit", jumlah: 1, satuan: "unit", harga_satuan: transportItem.price, subtotal: transportItem.price, keterangan: "jasa" });
+      }
+    }
+
+    // Ringkasan diturunkan dari vMDetail (single source of truth via lib/invoicing).
+    // CATATAN: matV kini TERMASUK freon — dulu freon dikecualikan dari matV & total
+    // sehingga baris freon tampil di invoice tapi tidak ikut ditagih.
+    const _sumV = summarize(vMDetail);
+
+    const todayInv2 = new Date().toISOString().slice(0, 10);
+    const isComplainSvc2 = r.service === "Complain";
+    const prevGaransiActive2 = isComplainSvc2
+      ? invoicesData.filter(inv =>
+        (inv.customer || "").trim() === (r.customer || "").trim() && inv.service !== "Complain" &&
+        inv.garansi_expires && inv.garansi_expires >= todayInv2 &&
+        ["PAID", "UNPAID", "APPROVED", "PENDING_APPROVAL"].includes(inv.status)
+      ).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
+      : null;
+
+    // ── Penyesuaian khusus Complain DIMODELKAN SEBAGAI LINE ITEM (P3), bukan override ──
+    let finalStatus2 = "PENDING_APPROVAL";
+    if (isComplainSvc2 && prevGaransiActive2 && _sumV.labor > 0) {
+      // Jasa ditanggung garansi → baris DISKON negatif (transparan di invoice, total konsisten)
+      vMDetail.push(buildWarrantyDiscountLine(_sumV.labor, prevGaransiActive2.id));
+    } else if (isComplainSvc2 && _sumV.lineTotal === 0) {
+      const BIAYA_CEK2 = (() => {
+        const pl = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
+        return (pl && pl.price > 0) ? pl.price : 100000;
+      })();
+      vMDetail.push({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: BIAYA_CEK2, subtotal: BIAYA_CEK2, keterangan: "jasa" });
+    }
+
+    // ── Ringkasan FINAL = turunan vMDetail (termasuk baris diskon/biaya-cek di atas) ──
+    const _finalSum = summarize(vMDetail);
+    const finalLabor2 = _finalSum.labor;
+    const finalMat2 = _finalSum.material;
+    const totalInv = _finalSum.total;
+    const waiverV = 0; // waiver sudah jadi baris diskon → tidak perlu lagi
+    if (totalInv === 0) finalStatus2 = "PAID";
+    return { vMDetail, labor: finalLabor2, material: finalMat2, total: totalInv, status: finalStatus2, waiver: waiverV };
+};
+
 const verifyLaporan = async (r) => {
   if (currentUser?.role !== "Owner" && currentUser?.role !== "Admin") {
     showNotif("❌ Hanya Owner/Admin yang bisa verifikasi laporan");
@@ -608,122 +731,8 @@ const verifyLaporan = async (r) => {
     const ord = ordersData.find(o => o.id === r.job_id);
     const invId = "INV" + Date.now().toString().slice(-7) + Math.floor(Math.random() * 100).toString().padStart(2, "0");
 
-    const _rawMats = (() => {
-      if (r.materials_json) {
-        try { return JSON.parse(r.materials_json); } catch { /* materials_json rusak → pakai default */ }
-      }
-      return safeArr(r.materials);
-    })();
-    const vMats = _rawMats.filter(m => m.nama && parseFloat(m.jumlah || 0) > 0);
-    const vMDetail = vMats.map(m => {
-      const nama2 = (m.nama || "").toLowerCase();
-      const isF = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"].some(k => nama2.includes(k));
-      const rawQ = parseFloat(m.jumlah) || 0;
-      const qty = isF ? Math.max(1, Math.ceil(rawQ)) : rawQ;
-      let hSat = parseFloat(m.harga_satuan) || 0;
-      if (!hSat) hSat = lookupHargaGlobal(m.nama, m.satuan);
-      // Deteksi keterangan dari nama jika tidak ada — item cleaning/jasa tanpa tag tetap masuk jasa
-      let ket = m.keterangan || "";
-      if (!ket) {
-        if (isF) ket = "freon";
-        else if (["repair", "perbaikan", "kapasitor", "kompresor", "sparepart", "pcb"].some(k => nama2.includes(k))) ket = "repair";
-        else if (["cleaning", "maintenance", "cuci", "jasa", "service", "servis", "pemasangan", "bongkar", "instalasi", "vacum", "kuras"].some(k => nama2.includes(k))) ket = "jasa";
-      }
-      return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket, category: categoryFromCatalog(m.nama, priceListData) };
-    });
-
-    const isRepairSvcV = r.service === "Repair";
-    const isCleaningMaintV = r.service === "Cleaning" || r.service === "Maintenance";
-    const card34Empty = !vMDetail.some(m => m.keterangan === "jasa" || m.keterangan === "repair");
-    // Biaya cleaning per-unit sudah ada? Cek HANYA baris jasa ber-nama cleaning/maintenance/cuci
-    // (paritas dgn submit path laporanInvoice.js). Baris jasa lain (mis. "Jasa Pengisian Freon",
-    // tambahan freon yang ter-tag jasa) TIDAK boleh membatalkan injeksi biaya cleaning.
-    const alreadyHasCleaningRowV = vMDetail.some(m => {
-      if (m.keterangan !== "jasa") return false;
-      const n = (m.nama || "").toLowerCase();
-      return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
-    });
-
-    if (isRepairSvcV) {
-      // Repair: inject Biaya Pengecekan hanya jika card 3/4 kosong (tidak ada jasa maupun repair item)
-      if (card34Empty) {
-        const biayaCekItem = priceListData.find(p => p.service === "Repair" && p.type === "Biaya Pengecekan AC");
-        const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 100000;
-        const cekQty = Math.max(1, (Array.isArray(r.units) ? r.units.length : Number(r.units)) || Number(ord?.units) || 1); // biaya pengecekan PER UNIT
-        vMDetail.unshift({ nama: "Biaya Pengecekan AC", jumlah: cekQty, satuan: "unit", harga_satuan: biayaCek, subtotal: biayaCek * cekQty, keterangan: "jasa" });
-      }
-      // jika ada isi di card 3/4 → hitung apa adanya, tidak inject apapun
-    } else if (isCleaningMaintV && !alreadyHasCleaningRowV) {
-      // Cleaning/Maintenance: inject per unit dari card 1/4 tipe PK
-      const rUnits = Array.isArray(r.units) ? r.units : [];
-      const unitsWithTipe = rUnits.filter(u => u && u.tipe);
-      if (unitsWithTipe.length > 0) {
-        unitsWithTipe.forEach((u) => {
-          const hargaUnit = hargaPerUnitFromTipe(r.service, u.tipe, priceListData);
-          if (hargaUnit > 0) {
-            const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
-            const bracketLabel = getBracketKey(r.service, u.tipe) || u.tipe;
-            vMDetail.unshift({
-              nama: (r.service || "") + " " + bracketLabel + " (" + unitLabel + ")",
-              jumlah: 1, satuan: "unit",
-              harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
-            });
-          }
-        });
-      } else {
-        const svcFeeV = hitungLabor(r.service, ord?.type, (Array.isArray(r.units) ? r.units.length : r.units) || ord?.units || 1);
-        if (svcFeeV > 0) {
-          const uCount = Math.max(1, (Array.isArray(r.units) ? r.units.length : parseInt(r.units)) || parseInt(ord?.units) || 1);
-          vMDetail.unshift({ nama: (r.service || "") + (ord?.type ? " - " + ord.type : "") + " (Servis)", jumlah: uCount, satuan: "unit", harga_satuan: Math.round(svcFeeV / uCount), subtotal: svcFeeV, keterangan: "jasa" });
-        }
-      }
-    }
-
-    // Inject transport fee untuk Cleaning 1 unit (sama seperti logic di App.jsx)
-    // Guard: jangan inject kalau materials laporan sudah berisi item transport → cegah double tagih.
-    const sudahAdaTransport = vMDetail.some(m => (m.nama || "").toLowerCase().includes("transport"));
-    if (r.service === "Cleaning" && (Array.isArray(r.units) ? r.units.length : parseInt(r.units) || 1) === 1 && !sudahAdaTransport) {
-      const transportItem = priceListData.find(p => p.service === "Cleaning" && p.type === "Biaya Transport Bila 1 Unit" && p.is_active !== false);
-      if (transportItem && transportItem.price > 0) {
-        vMDetail.push({ nama: "Biaya Transport Bila 1 Unit", jumlah: 1, satuan: "unit", harga_satuan: transportItem.price, subtotal: transportItem.price, keterangan: "jasa" });
-      }
-    }
-
-    // Ringkasan diturunkan dari vMDetail (single source of truth via lib/invoicing).
-    // CATATAN: matV kini TERMASUK freon — dulu freon dikecualikan dari matV & total
-    // sehingga baris freon tampil di invoice tapi tidak ikut ditagih.
-    const _sumV = summarize(vMDetail);
-
-    const todayInv2 = new Date().toISOString().slice(0, 10);
-    const isComplainSvc2 = r.service === "Complain";
-    const prevGaransiActive2 = isComplainSvc2
-      ? invoicesData.filter(inv =>
-        (inv.customer || "").trim() === (r.customer || "").trim() && inv.service !== "Complain" &&
-        inv.garansi_expires && inv.garansi_expires >= todayInv2 &&
-        ["PAID", "UNPAID", "APPROVED", "PENDING_APPROVAL"].includes(inv.status)
-      ).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null
-      : null;
-
-    // ── Penyesuaian khusus Complain DIMODELKAN SEBAGAI LINE ITEM (P3), bukan override ──
-    let finalStatus2 = "PENDING_APPROVAL";
-    if (isComplainSvc2 && prevGaransiActive2 && _sumV.labor > 0) {
-      // Jasa ditanggung garansi → baris DISKON negatif (transparan di invoice, total konsisten)
-      vMDetail.push(buildWarrantyDiscountLine(_sumV.labor, prevGaransiActive2.id));
-    } else if (isComplainSvc2 && _sumV.lineTotal === 0) {
-      const BIAYA_CEK2 = (() => {
-        const pl = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
-        return (pl && pl.price > 0) ? pl.price : 100000;
-      })();
-      vMDetail.push({ nama: "Biaya Pengecekan AC", jumlah: 1, satuan: "unit", harga_satuan: BIAYA_CEK2, subtotal: BIAYA_CEK2, keterangan: "jasa" });
-    }
-
-    // ── Ringkasan FINAL = turunan vMDetail (termasuk baris diskon/biaya-cek di atas) ──
-    const _finalSum = summarize(vMDetail);
-    const finalLabor2 = _finalSum.labor;
-    const finalMat2 = _finalSum.material;
-    const totalInv = _finalSum.total;
-    const waiverV = 0; // waiver sudah jadi baris diskon → tidak perlu lagi
-    if (totalInv === 0) finalStatus2 = "PAID";
+    // Bangun detail invoice via fungsi bersama (satu sumber dgn badge estimasi di kartu).
+    const { vMDetail, labor: finalLabor2, material: finalMat2, total: totalInv, status: finalStatus2, waiver: waiverV } = buildVerifyInvoice(r, ord);
     const newInv = {
       id: invId, job_id: (_multiDayAnchor || r.job_id), laporan_id: r.id,
       customer: r.customer, phone: r.phone || ord?.phone || "",
@@ -1322,6 +1331,14 @@ return (
           {/* Actions */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             {r.status === "SUBMITTED" && (<>
+              {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && r.service !== "Survey" && (() => {
+                const est = buildVerifyInvoice(r, ordersData.find(o => o.id === r.job_id));
+                return (
+                  <span title="Perkiraan total invoice saat diverifikasi (sudah termasuk biaya cuci/pengecekan otomatis). Diskon membership belum dihitung." style={{ background: "#22c55e14", border: "1px solid #22c55e44", color: "#22c55e", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 800, fontFamily: "monospace", whiteSpace: "nowrap" }}>
+                    ≈ Invoice: Rp {Number(est.total || 0).toLocaleString("id-ID")}
+                  </span>
+                );
+              })()}
               <button onClick={() => verifyLaporan(r)} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✅ Verifikasi</button>
               <button onClick={async () => {
                 setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "REVISION" } : x));
