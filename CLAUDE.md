@@ -185,7 +185,14 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 036       # Applied — Gree price list seed
 037       # Applied — Daikin price list seed
 038       # Applied — normalize phone, sync customers dari orders, fix DEFAULT id (lpad bug)
+039–116   # Applied — fitur & fix berkelanjutan (lihat file di migrations/)
+117       # Applied — RLS helpers (get_my_role/get_my_name/is_my_job) + hardening fungsi SECURITY DEFINER
+118       # Applied — user_profiles lockdown (anti privilege-escalation via trigger guard) + weekly_payroll role-based
+119       # Applied — RLS role-tier tabel finansial (invoices*, payment*, quotations, order_bonuses, kasbon, price list)
+120       # Applied — DELETE guard server-side (orders/service_reports = Owner/Admin, customers = Owner)
 ```
+
+**RLS server-side (117–120, applied 2026-07-03):** pembatasan role kini di-enforce di DB, bukan hanya UI. Tabel finansial (invoices, invoice_items/payments, payment_logs, quotations, order_bonuses, kasbon_requests, weekly_payroll, price_list, ac_price_list) hanya bisa diakses Owner/Admin/Finance; teknisi hanya baris job miliknya via `is_my_job(job_id)` / match nama. Perubahan `user_profiles.role` hanya Owner (trigger `trg_guard_user_profiles`). Rollback: `migrations/_rollback_pre117_policies.sql`.
 
 ## Key Patterns
 
