@@ -8,6 +8,9 @@ import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage } from "./_ka
 import { parseCarrierFromCaption, matchCarrierName, parseLaporanTeam, matchLaporanToOrder, parseBiayaExtended } from "./_shadow-parsers.js";
 import { expenseDuplicateExists, buildExpenseDedupKey } from "./_expense-dedup.js";
 import * as Sentry from "@sentry/node";
+import { validateAndNormalizePhone, buildPhoneVariants, validateMessage, sanitizeName, sanitizeForPrompt } from "./_validate.js";
+import { customerVouchers, validateVoucher, claimVoucher, adminVouchers, cancelVoucher } from "./_handlers/voucher.js";
+import { monitor } from "./_handlers/monitor.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
 const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal", "project-portal"];
@@ -43,53 +46,16 @@ async function criticalFetch(op, url, opts, ctx = {}) {
   }
 }
 
-// ── VALIDATION HELPERS ──
-function validateAndNormalizePhone(phone) {
-  if (!phone) return null;
-  let normalized = String(phone).replace(/[^0-9+]/g, "");
-  if (normalized.startsWith("+62")) normalized = normalized.substring(1);
-  if (normalized.startsWith("0")) normalized = "62" + normalized.substring(1);
-  if (!normalized.startsWith("62")) normalized = "62" + normalized;
 
-  // Must be valid Indonesian phone: 62 + 9-12 digits (total 11-14 digits)
-  if (!/^62\d{9,12}$/.test(normalized)) return null;
-  return normalized;
-}
-
-// Semua format phone yang mungkin tersimpan di DB — untuk query OR matching
-function buildPhoneVariants(normalized) {
-  // normalized = "628xxx" (output dari validateAndNormalizePhone)
-  if (!normalized || !normalized.startsWith("62")) return [normalized];
-  const digits = normalized.slice(2); // hilangkan "62"
-  return [
-    normalized,            // 628xxx  (Fonnte format)
-    "0" + digits,          // 08xxx   (format lokal)
-    "+" + normalized,      // +628xxx (format internasional)
-  ];
-}
-
-function validateMessage(msg, maxLen = 4096) {
-  if (!msg || typeof msg !== "string") return null;
-  const trimmed = msg.trim();
-  if (trimmed.length === 0 || trimmed.length > maxLen) return null;
-  return trimmed;
-}
-
-function sanitizeName(s) {
-  return (s||"").replace(/[\r\n\t]/g, " ").slice(0, 100);
-}
-
-// M-05: bersihkan teks dari DB/user sebelum masuk prompt LLM.
-// Buang karakter yang sering dipakai prompt-injection (kurung/blok/bintang/backtick)
-// + newline, supaya tidak bisa "memecah" struktur prompt atau menyisipkan instruksi.
-function sanitizeForPrompt(s, max = 80) {
-  return (s || "")
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/[[\]{}*`<>]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max);
-}
+// ── HANDLER MAP: route → modul di api/_handlers/ (pemecahan router bertahap) ──
+const HANDLERS = {
+  "monitor": monitor,
+  "customer-vouchers": customerVouchers,
+  "validate-voucher": validateVoucher,
+  "claim-voucher": claimVoucher,
+  "admin-vouchers": adminVouchers,
+  "cancel-voucher": cancelVoucher,
+};
 
 export default async function handler(req, res) {
   const route = String(req.query.route || "");
@@ -102,6 +68,10 @@ export default async function handler(req, res) {
   }
 
   try {
+
+    // ── HANDLER MAP — modul pecahan router di api/_handlers/ (Batch 1: voucher, monitor).
+    // Bukan endpoint terpisah (prefix _ tidak dihitung serverless function Vercel).
+    if (HANDLERS[route]) return await HANDLERS[route](req, res);
 
     // ── SEND-WA ──
     if (route === "send-wa") {
@@ -2899,106 +2869,6 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
       });
     }
 
-        // ── MONITORING: Enhanced — agent_logs + cron_runs + ai_usage (24h) ──
-    if (route === "monitor") {
-      if (req.method !== "GET") return res.status(405).json({error: "Method not allowed"});
-      const SU=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL, SK=process.env.SUPABASE_SERVICE_KEY;
-      if (!SU||!SK) return res.status(200).json({ status: "limited", message: "Supabase not configured" });
-
-      try {
-        const since24h = new Date(Date.now() - 24*60*60*1000).toISOString();
-        const sinceParam = encodeURIComponent(since24h);
-        const sbHeaders = { apikey: SK, Authorization: "Bearer " + SK };
-
-        const [errResponse, countResponse, cronResponse, aiResponse] = await Promise.all([
-          fetch(SU+"/rest/v1/agent_logs?select=action,status,severity,category,detail,created_at&or=(status.eq.ERROR,status.eq.WARNING,severity.eq.error,severity.eq.warn,severity.eq.critical)&created_at=gte."+sinceParam+"&order=created_at.desc&limit=100", { headers: sbHeaders }),
-          fetch(SU+"/rest/v1/agent_logs?select=id&created_at=gte."+sinceParam+"&limit=1", { headers: { ...sbHeaders, Prefer: "count=exact" } }),
-          fetch(SU+"/rest/v1/cron_runs?select=task_name,status,duration_ms,error_message,items_processed,started_at,finished_at&started_at=gte."+sinceParam+"&order=started_at.desc&limit=100", { headers: sbHeaders }),
-          fetch(SU+"/rest/v1/ai_usage?select=provider,model,feature,input_tokens,output_tokens,cost_usd,duration_ms,error,created_at&created_at=gte."+sinceParam+"&order=created_at.desc&limit=200", { headers: sbHeaders }),
-        ]);
-        const logs = errResponse.ok ? await errResponse.json() : [];
-        const totalLogsIn24h = parseInt(countResponse.headers?.get?.("content-range")?.split("/")?.[1] || "0") || 0;
-        const crons = cronResponse.ok ? await cronResponse.json() : [];
-        const aiUsage = aiResponse.ok ? await aiResponse.json() : [];
-
-        const logsArray = Array.isArray(logs) ? logs : [];
-        const cronArray = Array.isArray(crons) ? crons : [];
-        const aiArray = Array.isArray(aiUsage) ? aiUsage : [];
-
-        const errorCount = logsArray.filter(l => l.status === "ERROR" || l.severity === "error" || l.severity === "critical").length;
-        const warningCount = logsArray.filter(l => l.status === "WARNING" || l.severity === "warn").length;
-
-        const cronFailed = cronArray.filter(c => c.status === "FAILED").length;
-        const cronSuccess = cronArray.filter(c => c.status === "SUCCESS").length;
-        const cronSkipped = cronArray.filter(c => c.status === "SKIPPED").length;
-        const cronRunning = cronArray.filter(c => c.status === "RUNNING").length;
-
-        const aiTotalCost = aiArray.reduce((s, a) => s + (Number(a.cost_usd) || 0), 0);
-        const aiByProvider = aiArray.reduce((m, a) => {
-          const p = a.provider || "unknown";
-          if (!m[p]) m[p] = { calls: 0, cost: 0, input_tokens: 0, output_tokens: 0 };
-          m[p].calls++;
-          m[p].cost += Number(a.cost_usd) || 0;
-          m[p].input_tokens += Number(a.input_tokens) || 0;
-          m[p].output_tokens += Number(a.output_tokens) || 0;
-          return m;
-        }, {});
-        Object.keys(aiByProvider).forEach(k => { aiByProvider[k].cost = Number(aiByProvider[k].cost.toFixed(4)); });
-
-        const metrics = {
-          totalErrors: errorCount,
-          totalWarnings: warningCount,
-          errorRate: totalLogsIn24h > 0 ? errorCount / totalLogsIn24h : 0,
-          totalLogsChecked: totalLogsIn24h,
-          recentErrors: logsArray.slice(0, 10).map(l => ({
-            action: l.action || "UNKNOWN",
-            status: l.status || (l.severity ? l.severity.toUpperCase() : "UNKNOWN"),
-            severity: l.severity || null,
-            category: l.category || null,
-            detail: (l.detail || "").slice(0, 200),
-            time: l.created_at || new Date().toISOString()
-          })),
-          cron: {
-            total: cronArray.length,
-            success: cronSuccess,
-            failed: cronFailed,
-            skipped: cronSkipped,
-            running: cronRunning,
-            recent: cronArray.slice(0, 20).map(c => ({
-              task: c.task_name,
-              status: c.status,
-              duration_ms: c.duration_ms,
-              items: c.items_processed,
-              error: c.error_message,
-              started_at: c.started_at,
-            })),
-          },
-          ai: {
-            totalCalls: aiArray.length,
-            totalCostUsd: Number(aiTotalCost.toFixed(4)),
-            errorCount: aiArray.filter(a => a.error).length,
-            byProvider: aiByProvider,
-          },
-        };
-
-        const health = (errorCount === 0 && cronFailed === 0)
-          ? "healthy"
-          : (metrics.errorRate < 0.1 && cronFailed < 3) ? "degraded" : "unhealthy";
-
-        return res.status(200).json({
-          status: "ok",
-          timestamp: new Date().toISOString(),
-          health,
-          metrics
-        });
-      } catch(err) {
-        return res.status(200).json({
-          status: "error",
-          message: err.message,
-          timestamp: new Date().toISOString()
-        });
-      }
-    }
 
     // ── GET-LLM-CONFIG (secure backend config endpoint) ──
     if (route === "get-llm-config") {
@@ -4766,39 +4636,6 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
       return res.status(200).json({ ok: true, message: "Rating berhasil disimpan. Terima kasih! 🙏" });
     }
 
-    // ── CUSTOMER-VOUCHERS (PUBLIC — dari portal customer) ──
-    if (route === "customer-vouchers") {
-      if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
-      if (!await checkRateLimit(req, res, 20, 60000)) return;
-      const token = String(req.query.token || "").trim();
-      if (!token) return res.status(400).json({ error: "Token diperlukan" });
-
-      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-      const SK = process.env.SUPABASE_SERVICE_KEY;
-      if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
-      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
-
-      // Validasi token, cek expired
-      const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,expires_at`, { headers });
-      const tokRows = tokRes.ok ? await tokRes.json() : [];
-      if (!tokRows.length) return res.status(404).json({ error: "Token tidak valid" });
-      if (new Date(tokRows[0].expires_at) < new Date()) return res.status(401).json({ error: "Link portal sudah expired", code: "TOKEN_EXPIRED" });
-      const { phone } = tokRows[0];
-
-      const variants = buildPhoneVariants(phone);
-      const phoneFilter = variants.map(v => `phone.eq.${encodeURIComponent(v)}`).join(",");
-
-      // Ambil voucher aktif (belum diklaim, belum expired)
-      const today = new Date().toISOString().slice(0, 10);
-      const vRes = await fetch(
-        `${SU}/rest/v1/customer_vouchers?or=(${phoneFilter})&claimed_at=is.null&order=created_at.desc&select=id,code,type,value,description,expires_at,created_at`,
-        { headers }
-      );
-      const vouchers = vRes.ok ? await vRes.json() : [];
-      const active = vouchers.filter(v => !v.expires_at || v.expires_at >= today);
-
-      return res.status(200).json({ vouchers: active });
-    }
 
     // ── GENERATE-CUSTOMER-TOKEN (PRIVATE — admin/owner) ──
     if (route === "generate-customer-token") {
@@ -4877,140 +4714,9 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
       return res.status(200).json({ ok: true, token, link, expires_at: expiresAt });
     }
 
-    // ─── validate-voucher (POST, private) ─────────────────────────────────────
-    if (route === "validate-voucher") {
-      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-      const b = req.body || {};
-      const { code, phone, invoice_id } = b;
-      if (!code || !phone) return res.status(400).json({ error: "code dan phone wajib diisi" });
 
-      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-      const SK = process.env.SUPABASE_SERVICE_KEY;
-      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
 
-      const vRes = await fetch(
-        `${SU}/rest/v1/customer_vouchers?code=eq.${encodeURIComponent(code)}&select=*&limit=1`,
-        { headers }
-      );
-      const vList = vRes.ok ? await vRes.json() : [];
-      const v = vList[0];
 
-      if (!v) return res.status(404).json({ error: "Kode voucher tidak ditemukan", code });
-      if (!v.is_valid) return res.status(400).json({ error: "Voucher sudah dibatalkan", code });
-      if (v.claimed_at) return res.status(400).json({ error: "Voucher sudah pernah digunakan", claimed_order_id: v.claimed_order_id });
-
-      const today = new Date().toISOString().slice(0, 10);
-      if (v.expires_at && v.expires_at < today) return res.status(400).json({ error: "Voucher sudah expired", expires_at: v.expires_at });
-
-      // Validasi phone match (semua variant)
-      const normalizedPhone = validateAndNormalizePhone(phone);
-      const variants = normalizedPhone ? buildPhoneVariants(normalizedPhone) : [phone];
-      const vPhone = validateAndNormalizePhone(v.phone) || v.phone;
-      const phoneMatch = variants.some(vt => {
-        const vtn = validateAndNormalizePhone(vt) || vt;
-        return vtn === vPhone;
-      });
-      if (!phoneMatch) return res.status(400).json({ error: "Voucher bukan milik customer ini", code });
-
-      const typeLabel = v.type === "discount_pct" ? `Diskon ${v.value}%`
-        : v.type === "free_unit" ? `${v.value} Unit Cuci Gratis`
-        : v.type === "free_service" ? "Servis Gratis"
-        : v.type;
-
-      return res.status(200).json({
-        ok: true, valid: true,
-        voucher: { id: v.id, code: v.code, type: v.type, value: v.value, type_label: typeLabel, description: v.description, customer_name: v.customer_name, expires_at: v.expires_at },
-      });
-    }
-
-    // ─── claim-voucher (POST, private) ────────────────────────────────────────
-    if (route === "claim-voucher") {
-      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-      const b = req.body || {};
-      const { code, invoice_id } = b;
-      if (!code || !invoice_id) return res.status(400).json({ error: "code dan invoice_id wajib diisi" });
-
-      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-      const SK = process.env.SUPABASE_SERVICE_KEY;
-      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json", "Prefer": "return=representation" };
-
-      // Pastikan belum diklaim
-      const chkRes = await fetch(`${SU}/rest/v1/customer_vouchers?code=eq.${encodeURIComponent(code)}&select=id,claimed_at,is_valid&limit=1`, { headers });
-      const chkList = chkRes.ok ? await chkRes.json() : [];
-      const chk = chkList[0];
-      if (!chk) return res.status(404).json({ error: "Kode voucher tidak ditemukan" });
-      if (chk.claimed_at) return res.status(400).json({ error: "Voucher sudah diklaim sebelumnya" });
-      if (!chk.is_valid) return res.status(400).json({ error: "Voucher sudah dibatalkan" });
-
-      const upRes = await fetch(
-        `${SU}/rest/v1/customer_vouchers?code=eq.${encodeURIComponent(code)}`,
-        { method: "PATCH", headers, body: JSON.stringify({ claimed_at: new Date().toISOString(), claimed_order_id: invoice_id }) }
-      );
-      if (!upRes.ok) return res.status(500).json({ error: "Gagal mengklaim voucher" });
-
-      return res.status(200).json({ ok: true, message: "Voucher berhasil diklaim", code, invoice_id });
-    }
-
-    // ─── admin-vouchers (GET, private) ────────────────────────────────────────
-    if (route === "admin-vouchers") {
-      if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
-
-      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-      const SK = process.env.SUPABASE_SERVICE_KEY;
-      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
-
-      const { status: filterStatus, search } = req.query;
-      const today = new Date().toISOString().slice(0, 10);
-
-      let url = `${SU}/rest/v1/customer_vouchers?select=*&order=created_at.desc&limit=200`;
-      if (filterStatus === "active") {
-        url += `&claimed_at=is.null&is_valid=eq.true&expires_at=gte.${today}`;
-      } else if (filterStatus === "claimed") {
-        url += `&claimed_at=not.is.null`;
-      } else if (filterStatus === "expired") {
-        url += `&claimed_at=is.null&expires_at=lt.${today}`;
-      }
-      if (search) {
-        const s = encodeURIComponent(search.trim());
-        url += `&or=(code.ilike.*${s}*,phone.ilike.*${s}*,customer_name.ilike.*${s}*)`;
-      }
-
-      const vRes = await fetch(url, { headers });
-      if (!vRes.ok) return res.status(500).json({ error: "Gagal mengambil data voucher" });
-      const vouchers = await vRes.json();
-
-      // Hitung stats ringkas
-      const allRes = await fetch(`${SU}/rest/v1/customer_vouchers?select=claimed_at,is_valid,expires_at`, { headers });
-      const all = allRes.ok ? await allRes.json() : [];
-      const stats = {
-        total: all.length,
-        active: all.filter(v => !v.claimed_at && v.is_valid && (!v.expires_at || v.expires_at >= today)).length,
-        claimed: all.filter(v => v.claimed_at).length,
-        expired: all.filter(v => !v.claimed_at && v.expires_at && v.expires_at < today).length,
-      };
-
-      return res.status(200).json({ ok: true, vouchers, stats });
-    }
-
-    // ─── cancel-voucher (POST, private) ───────────────────────────────────────
-    if (route === "cancel-voucher") {
-      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-      const b = req.body || {};
-      const { id } = b;
-      if (!id) return res.status(400).json({ error: "id wajib diisi" });
-
-      const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-      const SK = process.env.SUPABASE_SERVICE_KEY;
-      const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
-
-      const upRes = await fetch(
-        `${SU}/rest/v1/customer_vouchers?id=eq.${encodeURIComponent(id)}`,
-        { method: "PATCH", headers, body: JSON.stringify({ is_valid: false }) }
-      );
-      if (!upRes.ok) return res.status(500).json({ error: "Gagal membatalkan voucher" });
-
-      return res.status(200).json({ ok: true, message: "Voucher dibatalkan" });
-    }
 
     return res.status(404).json({ error: "Route tidak ditemukan: /api/" + route });
 
