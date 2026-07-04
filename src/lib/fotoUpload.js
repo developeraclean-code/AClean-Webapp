@@ -5,7 +5,6 @@ export async function handleFotoUpload(e, {
   fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif,
 } = {}) {
     const MAX_PHOTOS = 20;
-    const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
     // Foto baru di-tag ke unit hanya jika event berasal dari input per-unit (fotoUnitInputRef).
     // Upload dari uploader global (fotoInputRef) selalu unit_no=null (umum). Cara ini kebal
     // stale-ref: kalau picker per-unit dibatalkan, upload global berikutnya tidak salah tag.
@@ -13,12 +12,19 @@ export async function handleFotoUpload(e, {
     const targetUnitNo = fromUnitInput ? fotoTargetUnitRef.current : null;
     fotoTargetUnitRef.current = null;
 
-    // ── Validasi format file — reject video ──
+    // ── Validasi format — JANGAN andalkan f.type/ekstensi ──
+    // Di Android (mis. Oppo/Xiaomi dgn Motion/Live Photo, atau app kamera watermark spt Timemark)
+    // foto .jpg yang valid SERING salah-label: browser melapor f.type="video/mp4" dan/atau File.name
+    // disintesis jadi *.mp4 padahal isinya JPEG → validasi lama (reject by MIME) menolak foto asli
+    // (kasus teknisi Rey). MIME kosong ("") juga umum & dulu ikut ketolak. Gerbang SEBENARNYA =
+    // decode konten via compressImg (canvas): byte gambar valid → lolos & di-encode ulang ke JPEG;
+    // video/korup → gagal decode & dilewati dgn pesan jelas. Di sini cukup saring UKURAN (video
+    // umumnya jauh lebih besar dari foto HP).
     const rawFiles = Array.from(e.target.files || []);
-    const invalidFiles = rawFiles.filter(f => !ALLOWED_TYPES.includes(f.type));
-
-    if (invalidFiles.length > 0) {
-      showNotif(`❌ Format tidak didukung: ${invalidFiles.map(f => f.name.split(".").pop().toUpperCase()).join(", ")}. Hanya JPG, PNG, WEBP.`);
+    const MAX_IMG_BYTES = 15 * 1024 * 1024; // 15MB — di atas ini hampir pasti video, bukan foto
+    const tooBig = rawFiles.filter(f => f.size > MAX_IMG_BYTES);
+    if (tooBig.length > 0) {
+      showNotif(`❌ ${tooBig.length} file terlalu besar (>15MB) — sepertinya video. Kirim FOTO biasa (matikan Motion/Live Photo di kamera).`);
       e.target.value = "";
       return;
     }
@@ -70,15 +76,20 @@ export async function handleFotoUpload(e, {
     if (files.length === 0) { e.target.value = ""; return; }
 
     showNotif(`⏳ Mengkompresi & upload ${files.length} foto ke R2 (quality: ${Math.round(fotoQuality * 100)}%)...`);
-    let compressed = [];
-    try {
-      compressed = await Promise.all(files.map(f => compressImg(f, fotoQuality)));
-    } catch (compErr) {
-      console.error("[COMPRESS_ERROR]", compErr.message);
-      showNotif(`❌ Gagal kompresi foto: ${compErr.message}. Pastikan file adalah gambar valid.`);
-      e.target.value = "";
-      return;
+    // Decode per-file (allSettled) → 1 file gagal TIDAK menggagalkan seluruh batch (dulu Promise.all
+    // all-or-nothing). File yang gagal decode = bukan gambar valid (video/korup) → dilewati + dihitung.
+    const settled = await Promise.allSettled(files.map(f => compressImg(f, fotoQuality)));
+    const compressed = [];
+    const compressedHashes = [];
+    let decodeFail = 0;
+    settled.forEach((r, i) => {
+      if (r.status === "fulfilled" && r.value) { compressed.push(r.value); compressedHashes.push(hashes[i]); }
+      else { decodeFail++; console.warn("[COMPRESS_SKIP]", files[i]?.name, r.reason?.message || r.reason); }
+    });
+    if (decodeFail > 0) {
+      showNotif(`⚠️ ${decodeFail} file bukan gambar valid (mungkin video/Motion Photo) — dilewati.`);
     }
+    if (compressed.length === 0) { e.target.value = ""; return; }
 
     // ✨ FIX #1: Parallel upload dengan batch 3 (3-5x lebih cepat)
     //   - Foto placeholder langsung muncul dengan flag `uploading:true`
@@ -91,7 +102,7 @@ export async function handleFotoUpload(e, {
       data_url: dataUrl,
       url: null,
       errMsg: "",
-      hash: hashes[i],
+      hash: compressedHashes[i],
       uploading: true,
       unit_no: targetUnitNo || null,
     }));
