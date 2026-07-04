@@ -2192,7 +2192,10 @@ async function taskTick() {
     { t: "snapshot-cleanup",           fn: taskSnapshotCleanup,            h: 10 },
     { t: "bonus-eligible",           fn: taskBonusEligible,          h: 7 },
     { t: "payroll-wa",               fn: taskPayrollWA,              h: 18, dow: 6 },
-    { t: "wa-snapshot",              fn: taskWaSnapshot,             h: 20 },
+    // wa-snapshot DIMATIKAN dari jadwal (4 Jul 2026) — window review pattern WA
+    // selesai 12 Jun; dump harian percakapan grup tak lagi diperlukan. Fungsi
+    // taskWaSnapshot tetap ada utk manual: /api/cron-reminder?task=wa-snapshot.
+    // Data lama wa_daily_snapshots ter-purge otomatis oleh snapshot-cleanup (60h).
     { t: "daily",                    fn: taskDaily,                  h: 21 },
     { t: "auto-return-brought",      fn: taskAutoReturnBrought,      h: 22 },
     { t: "material-pulang-reminder", fn: taskMaterialPulangReminder, h: 22 },

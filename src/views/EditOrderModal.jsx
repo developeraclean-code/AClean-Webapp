@@ -82,6 +82,38 @@ export default function EditOrderModal({
         ? hitungJamSelesai(form.time || "09:00", form.service || "Cleaning", form.units || 1)
         : form.time_end;
 
+      // ── GERBANG ATOMIK (anti dobel-book saat edit) — klaim slot via RPC dulu ──
+      // Lepas klaim lama order ini, lalu try_claim_teknisi_slot (advisory lock +
+      // cek overlap + insert klaim dalam 1 transaksi, migrasi 070). Kalah race →
+      // kembalikan klaim lama (best-effort) dan batalkan simpan. Backstop DB:
+      // exclusion constraint ts_no_overlap_active (migrasi 121).
+      let slotClaimed = false;
+      if (form.teknisi && form.date && form.time && timeEnd) {
+        try { await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id); } catch { /* lepas klaim lama best-effort */ }
+        try {
+          const { data: claimOk, error: claimErr } = await supabase.rpc("try_claim_teknisi_slot", {
+            p_teknisi: form.teknisi, p_date: form.date, p_order_id: editOrderItem.id,
+            p_start: form.time, p_end: timeEnd,
+          });
+          if (!claimErr && claimOk === false) {
+            if (editOrderItem.teknisi && editOrderItem.date && editOrderItem.time) {
+              const oldTimeEnd = editOrderItem.time_end || (hitungJamSelesai
+                ? hitungJamSelesai(editOrderItem.time, editOrderItem.service || "Cleaning", editOrderItem.units || 1)
+                : timeEnd);
+              try {
+                await supabase.rpc("try_claim_teknisi_slot", {
+                  p_teknisi: editOrderItem.teknisi, p_date: editOrderItem.date, p_order_id: editOrderItem.id,
+                  p_start: editOrderItem.time, p_end: oldTimeEnd,
+                });
+              } catch { /* restore klaim lama best-effort */ }
+            }
+            showNotif("🚫 " + form.teknisi + " bentrok di jam tersebut (slot baru saja terisi)");
+            return;
+          }
+          slotClaimed = !claimErr && claimOk === true;
+        } catch { /* rpc gagal → fallback sync manual di bawah */ }
+      }
+
       const updated = { ...editOrderItem, ...form, time_end: timeEnd };
       setOrdersData(prev => prev.map(o => o.id === editOrderItem.id ? updated : o));
 
@@ -100,8 +132,9 @@ export default function EditOrderModal({
       const auditName = auditUserName ? auditUserName() : "Admin";
       const { error: eoErr } = await updateOrder(supabase, editOrderItem.id, dbUpd, auditName);
 
-      // Sync schedule
-      if (!eoErr) {
+      // Sync schedule — fallback manual HANYA kalau klaim RPC di atas tidak jalan
+      // (rpc error/param kosong). Kalau slotClaimed, baris klaim sudah dibuat atomik.
+      if (!eoErr && !slotClaimed) {
         try { await supabase.from("technician_schedule").delete().eq("order_id", editOrderItem.id); } catch { /* cleanup jadwal teknisi best-effort */ }
         if (form.teknisi && form.date) {
           try {
@@ -110,8 +143,10 @@ export default function EditOrderModal({
               date: form.date, time_start: form.time || "09:00", time_end: timeEnd, status: "ACTIVE",
             });
             if (addAgentLog) addAgentLog("SCHEDULE_SYNCED", `Schedule diupdate untuk ${editOrderItem.id}`, "SUCCESS");
-          } catch { /* sinkron jadwal best-effort */ }
+          } catch { /* sinkron jadwal best-effort — bentrok ditolak constraint 121 */ }
         }
+      } else if (!eoErr && slotClaimed) {
+        if (addAgentLog) addAgentLog("SCHEDULE_SYNCED", `Schedule diklaim atomik untuk ${editOrderItem.id}`, "SUCCESS");
       }
 
       if (eoErr) {
