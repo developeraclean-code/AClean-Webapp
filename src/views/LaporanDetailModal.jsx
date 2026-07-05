@@ -542,9 +542,23 @@ export default function LaporanDetailModal({ ctx }) {
                       return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: m.keterangan || "" };
                     });
 
-                    // Inject service fee jika tidak ada jasa row — per-unit dari Card 1/4 tipe
-                    // Install: semua item sudah include jasa dalam INSTALL_ITEMS → skip inject
-                    if (!isEditInstall && !vMDetail.some(m => m.keterangan === "jasa")) {
+                    // Inject service fee — per-unit dari Card 1/4 tipe.
+                    // FIX paritas (samakan dgn submit laporanInvoice.js & verify LaporanTimView):
+                    // guard cleaning WAJIB name-based. Dulu `!vMDetail.some(keterangan==="jasa")` →
+                    // begitu ada jasa lain (mis. Kapasitor) SELURUH cleaning per-unit ikut hilang dari
+                    // invoice (kasus IBU LISA RENATA: cleaning 3 unit 290k hilang, sisa kapasitor 400k).
+                    // Kini utk Cleaning/Maintenance cek khusus baris CLEANING; service lain pertahankan
+                    // guard lama. Install: semua item sudah include jasa dalam INSTALL_ITEMS → skip inject.
+                    const alreadyHasCleaningRow = vMDetail.some(m => {
+                      if (m.keterangan !== "jasa") return false;
+                      const n = (m.nama || "").toLowerCase();
+                      return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
+                    });
+                    const isCleaningOrMaintEdit = selectedLaporan.service === "Cleaning" || selectedLaporan.service === "Maintenance";
+                    const shouldInjectServiceFee = isCleaningOrMaintEdit
+                      ? !alreadyHasCleaningRow
+                      : !vMDetail.some(m => m.keterangan === "jasa");
+                    if (!isEditInstall && shouldInjectServiceFee) {
                       const editUnits = editLaporanForm.editUnits || [];
                       const unitsWithTipe = editUnits.filter(u => u && u.tipe);
                       if (unitsWithTipe.length > 0) {
