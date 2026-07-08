@@ -126,15 +126,28 @@ export default function LaporanDetailModal({ ctx }) {
             )}
 
             {/* UNIT TABS — disembunyikan untuk Survey */}
-            {(editLaporanForm.editService || selectedLaporan?.service) === "Survey" ? null :
-            (editLaporanForm.editUnits || []).length > 1 && (
-              <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, borderBottom: "1px solid " + cs.border }}>
+            {(editLaporanForm.editService || selectedLaporan?.service) !== "Survey" &&
+            ((editLaporanForm.editUnits || []).length > 1 || currentUser?.role === "Owner") && (
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, borderBottom: "1px solid " + cs.border, alignItems: "center" }}>
                 {(editLaporanForm.editUnits || []).map((_, idx) => (
                   <button key={idx} onClick={() => setActiveEditUnitIdx(idx)}
                     style={{ padding: "8px 12px", borderRadius: 7, background: activeEditUnitIdx === idx ? cs.accent : cs.card, color: activeEditUnitIdx === idx ? "#fff" : cs.text, border: "1px solid " + (activeEditUnitIdx === idx ? cs.accent : cs.border), cursor: "pointer", fontSize: 12, fontWeight: activeEditUnitIdx === idx ? 700 : 500, whiteSpace: "nowrap" }}>
                     Unit {idx + 1}
                   </button>
                 ))}
+                {/* Tambah Unit — Owner only */}
+                {currentUser?.role === "Owner" && (
+                  <button onClick={() => {
+                    const nextNo = (editLaporanForm.editUnits || []).length + 1;
+                    const newUnit = { unit_no: nextNo, tipe: "", merk: "", pk: "", kondisi_sebelum: [], pekerjaan: [], kondisi_setelah: [], freon_ditambah: "", ampere_akhir: "", catatan_unit: "", label: "" };
+                    const newIdx = (editLaporanForm.editUnits || []).length;
+                    setEditLaporanForm(f => ({ ...f, editUnits: [...(f.editUnits || []), newUnit] }));
+                    setActiveEditUnitIdx(newIdx);
+                  }}
+                    style={{ padding: "8px 14px", borderRadius: 7, background: cs.green + "18", color: cs.green, border: "1px dashed " + cs.green + "55", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 }}>
+                    + Tambah
+                  </button>
+                )}
               </div>
             )}
 
@@ -220,6 +233,39 @@ export default function LaporanDetailModal({ ctx }) {
                     <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 3 }}>Catatan Unit</div>
                     <textarea value={u.catatan_unit || ""} onChange={e => updateU("catatan_unit", e.target.value)} rows={2} style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box", fontFamily: "inherit", resize: "vertical" }} />
                   </div>
+
+                  {/* Hapus Unit — Owner only, min 1 unit */}
+                  {currentUser?.role === "Owner" && (editLaporanForm.editUnits || []).length > 1 && (() => {
+                    const hasFreon = u.freon_ditambah && String(u.freon_ditambah).trim() !== "" && String(u.freon_ditambah) !== "0";
+                    const hasMatFreon = (editLaporanForm.editMatItems || []).some(m => {
+                      const n = (m.nama || "").toLowerCase();
+                      return n.includes("freon") || n.includes("r-22") || n.includes("r-32") || n.includes("r-410") || n.includes("r22") || n.includes("r32") || n.includes("r410");
+                    });
+                    const hasStockFreon = (editStockMats || []).some(m => {
+                      const n = (m.nama || "").toLowerCase();
+                      return n.includes("freon") || n.includes("r-22") || n.includes("r-32") || n.includes("r-410");
+                    });
+                    const hasWarning = hasFreon || hasMatFreon || hasStockFreon;
+                    return (
+                      <div style={{ marginTop: 14, borderTop: "1px dashed " + cs.red + "33", paddingTop: 10 }}>
+                        {hasWarning && (
+                          <div style={{ fontSize: 11, color: cs.yellow, background: cs.yellow + "10", border: "1px solid " + cs.yellow + "33", borderRadius: 7, padding: "8px 10px", marginBottom: 8, lineHeight: 1.5 }}>
+                            ⚠️ Unit ini memiliki data freon atau material. Stok tidak otomatis dikembalikan saat unit dihapus — periksa Material Harian jika perlu koreksi stok.
+                          </div>
+                        )}
+                        <button onClick={() => {
+                          const newUnits = (editLaporanForm.editUnits || [])
+                            .filter((_, i) => i !== activeEditUnitIdx)
+                            .map((u, i) => ({ ...u, unit_no: i + 1 }));
+                          setEditLaporanForm(f => ({ ...f, editUnits: newUnits }));
+                          setActiveEditUnitIdx(Math.max(0, activeEditUnitIdx - 1));
+                        }}
+                          style={{ background: cs.red + "15", border: "1px solid " + cs.red + "44", color: cs.red, padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                          🗑️ Hapus Unit {activeEditUnitIdx + 1}
+                        </button>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
@@ -482,7 +528,7 @@ export default function LaporanDetailModal({ ctx }) {
                     ];
 
                 const isSurveyEdit = newService === "Survey";
-                const updatePayload = { status: newStatus, service: newService, catatan_global: editLaporanForm.catatan_global || "", rekomendasi: editLaporanForm.rekomendasi || "", units_json: JSON.stringify(editLaporanForm.editUnits || []), materials_json: JSON.stringify(combinedMats), edit_log: JSON.stringify(allLogs), ...(isSurveyEdit && { hasil_survey: editLaporanForm.hasil_survey || "", catatan_rekomendasi: editLaporanForm.catatan_rekomendasi || "" }) };
+                const updatePayload = { status: newStatus, service: newService, catatan_global: editLaporanForm.catatan_global || "", rekomendasi: editLaporanForm.rekomendasi || "", units_json: JSON.stringify(editLaporanForm.editUnits || []), total_units: (editLaporanForm.editUnits || []).length || selectedLaporan.total_units || 1, materials_json: JSON.stringify(combinedMats), edit_log: JSON.stringify(allLogs), ...(isSurveyEdit && { hasil_survey: editLaporanForm.hasil_survey || "", catatan_rekomendasi: editLaporanForm.catatan_rekomendasi || "" }) };
 
                 // ✨ NEW: Handle photo re-upload option
                 if (editPhotoMode && editLaporanFotos.length > 0) {
@@ -520,7 +566,7 @@ export default function LaporanDetailModal({ ctx }) {
                 if (elErr) { console.warn("❌ update service_reports failed:", elErr.message, "payload:", updatePayload); addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0, 100)}`, "WARNING"); }
 
                 // Update local state
-                setLaporanReports(prev => prev.map(r => r.id === selectedLaporan.id ? { ...r, service: newService, rekomendasi: editLaporanForm.rekomendasi, catatan_global: editLaporanForm.catatan_global, units: editLaporanForm.editUnits, materials: combinedMats, status: newStatus, editLog: allLogs } : r));
+                setLaporanReports(prev => prev.map(r => r.id === selectedLaporan.id ? { ...r, service: newService, rekomendasi: editLaporanForm.rekomendasi, catatan_global: editLaporanForm.catatan_global, units: editLaporanForm.editUnits, total_units: (editLaporanForm.editUnits || []).length || selectedLaporan.total_units || 1, materials: combinedMats, status: newStatus, editLog: allLogs } : r));
                 if (serviceChanged) selectedLaporan.service = newService;
 
                 if (!elErr) {
