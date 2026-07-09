@@ -566,7 +566,7 @@ export default function LaporanDetailModal({ ctx }) {
                 if (elErr) { console.warn("❌ update service_reports failed:", elErr.message, "payload:", updatePayload); addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0, 100)}`, "WARNING"); }
 
                 // Update local state
-                setLaporanReports(prev => prev.map(r => r.id === selectedLaporan.id ? { ...r, service: newService, rekomendasi: editLaporanForm.rekomendasi, catatan_global: editLaporanForm.catatan_global, units: editLaporanForm.editUnits, total_units: (editLaporanForm.editUnits || []).length || selectedLaporan.total_units || 1, materials: combinedMats, status: newStatus, editLog: allLogs } : r));
+                setLaporanReports(prev => prev.map(r => r.id === selectedLaporan.id ? { ...r, service: newService, rekomendasi: editLaporanForm.rekomendasi, catatan_global: editLaporanForm.catatan_global, units: editLaporanForm.editUnits, units_json: JSON.stringify(editLaporanForm.editUnits || []), total_units: (editLaporanForm.editUnits || []).length || selectedLaporan.total_units || 1, materials: combinedMats, materials_json: JSON.stringify(combinedMats), status: newStatus, editLog: allLogs } : r));
                 if (serviceChanged) selectedLaporan.service = newService;
 
                 if (!elErr) {
