@@ -35,6 +35,19 @@ export const fetchInvoices = (supabase) =>
     .select(INVOICE_COLS)
     .order("created_at", { ascending: false }).limit(300);
 
+// Satu baris segar by id — dipakai sebelum generate/download PDF agar tidak
+// memakai pdf_url/updated_at basi dari state lokal (cache PDF salah versi).
+export const fetchInvoiceById = (supabase, id) =>
+  supabase.from("invoices")
+    .select(INVOICE_COLS)
+    .eq("id", id).maybeSingle();
+
+// Batch segar by ids — jalur merged PDF (cache key & render dari updated_at terkini).
+export const fetchInvoicesByIds = (supabase, ids) =>
+  supabase.from("invoices")
+    .select(INVOICE_COLS)
+    .in("id", ids);
+
 // Incremental: hanya invoice yang berubah/baru sejak `since` (updated_at, set on insert & update).
 // Dipakai polling live agar egress minim — saat tak ada perubahan → 0 baris.
 export const fetchInvoicesSince = (supabase, since) =>

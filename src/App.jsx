@@ -41,7 +41,7 @@ import {
   fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
   fetchWaConversations, fetchPriceList, fetchAraBrain,
-  lookupCustomersByPhone, fetchKasbonRequests,
+  lookupCustomersByPhone, fetchKasbonRequests, fetchInvoiceById, fetchInvoicesByIds,
 } from "./data/reads.js";
 import {
   insertOrder, updateOrder, updateOrderStatus, deleteOrder,
@@ -1680,9 +1680,27 @@ export default function ACleanWebApp() {
   const downloadRekapHarian = (targetDate) => downloadRekapHarianLib(targetDate, { TODAY, ordersData, invoicesData, currentUser, showNotif, addAgentLog });
 
 
-  const downloadInvoicePDF = async (inv) => {
+  // Baris invoice dari state lokal bisa basi (pdf_url/updated_at lama belum
+  // ter-poll setelah edit/revisi) → cache PDF menyajikan versi lama. Refetch 1 baris
+  // segar sebelum generate; gagal fetch → fallback baris lokal (degraded, bukan blokir).
+  const freshInvoiceRow = async (inv) => {
+    try {
+      const { data, error } = await fetchInvoiceById(supabase, inv.id);
+      if (!error && data) {
+        // Sinkronkan state supaya jalur lain di sesi ini ikut pakai versi segar
+        setInvoicesData(prev => prev.map(i => i.id === data.id ? { ...i, ...data } : i));
+        return data;
+      }
+    } catch (err) {
+      console.warn("[freshInvoiceRow] refetch gagal:", err?.message || err);
+    }
+    return inv;
+  };
+
+  const downloadInvoicePDF = async (invStale) => {
     showNotif("⏳ Membuat PDF invoice...");
     try {
+      const inv = await freshInvoiceRow(invStale);
       const safeName = (inv.customer || "Customer").replace(/[^\w\s-]/g, "").replace(/\s+/g, "_");
       const filename = `Invoice_${inv.id}_${safeName}.pdf`;
       const pdfBlob = await generateInvoicePDFBlob(inv);
@@ -1746,7 +1764,7 @@ export default function ACleanWebApp() {
 
     // Async upload ke R2 + simpan ke DB (non-blocking) — hanya variant tanpa portalLink
     if (!portalLink && blob) {
-      cacheInvoicePDFToR2(inv.id, blob).catch(err =>
+      cacheInvoicePDFToR2(inv.id, blob, inv.updated_at || null).catch(err =>
         console.warn("[generateInvoicePDFBlob] background R2 cache failed:", err.message)
       );
     }
@@ -1754,7 +1772,9 @@ export default function ACleanWebApp() {
   };
 
   // Upload PDF blob ke R2 + update invoices.pdf_url di DB. Non-blocking.
-  const cacheInvoicePDFToR2 = async (invoiceId, blob) => {
+  // versionUpdatedAt: tulis pdf_url hanya bila baris belum berubah sejak generate —
+  // tanpa ini, edit di sela generate↔upload bisa tertimpa URL PDF versi lama.
+  const cacheInvoicePDFToR2 = async (invoiceId, blob, versionUpdatedAt = null) => {
     const base64 = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result.split(",")[1]);
@@ -1774,16 +1794,21 @@ export default function ACleanWebApp() {
     }
     const pdfUrl = `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
     // Simpan URL di DB — kalau gagal, cache memory tetap valid (degraded mode)
-    const { error: upErr } = await supabase
+    let q = supabase
       .from("invoices")
       .update({ pdf_url: pdfUrl, pdf_generated_at: new Date().toISOString() })
       .eq("id", invoiceId);
+    if (versionUpdatedAt) q = q.eq("updated_at", versionUpdatedAt);
+    const { error: upErr } = await q;
     if (upErr) console.warn("[cacheInvoicePDFToR2] DB update failed:", upErr.message);
     return pdfUrl;
   };
 
-  const uploadInvoicePDFForWA = async (inv, portalLink = null) => {
+  const uploadInvoicePDFForWA = async (invStale, portalLink = null) => {
     try {
+      // Refetch baris segar — fast path di bawah memakai inv.pdf_url; kalau dari state
+      // basi (belum ter-poll pasca edit), PDF LAMA bisa terkirim ke customer via WA.
+      const inv = await freshInvoiceRow(invStale);
       // Fast path: kalau sudah ada pdf_url di DB & tidak butuh portalLink → langsung pakai
       if (!portalLink && inv.pdf_url) return inv.pdf_url;
 
@@ -1806,12 +1831,14 @@ export default function ACleanWebApp() {
       const d = await res.json().catch(() => ({}));
       if (res.ok && d.success && d.key) {
         const pdfUrl = `${window.location.origin}/api/foto?key=${encodeURIComponent(d.key)}`;
-        // Simpan ke DB juga (kalau variant tanpa portalLink)
+        // Simpan ke DB juga (kalau variant tanpa portalLink) — bersyarat updated_at
+        // belum berubah, agar edit di sela proses tak tertimpa URL PDF lama.
         if (!portalLink) {
-          supabase.from("invoices")
+          let q = supabase.from("invoices")
             .update({ pdf_url: pdfUrl, pdf_generated_at: new Date().toISOString() })
-            .eq("id", inv.id)
-            .then(({ error }) => error && console.warn("[uploadInvoicePDFForWA] DB cache update failed:", error.message));
+            .eq("id", inv.id);
+          if (inv.updated_at) q = q.eq("updated_at", inv.updated_at);
+          q.then(({ error }) => error && console.warn("[uploadInvoicePDFForWA] DB cache update failed:", error.message));
         }
         return pdfUrl;
       }
@@ -1842,8 +1869,21 @@ export default function ACleanWebApp() {
 
   // ── Multi-invoice merged PDF (1 dokumen tagihan gabungan: section per pekerjaan, total agregat) ──
   // 3-layer cache: memory LRU → DB merged_pdf_cache (R2 fetch) → generate fresh + async cache
-  const generateMergedInvoicePDFBlob = async (invList, portalLink = null) => {
-    if (!Array.isArray(invList) || invList.length === 0) return null;
+  const generateMergedInvoicePDFBlob = async (invListStale, portalLink = null) => {
+    if (!Array.isArray(invListStale) || invListStale.length === 0) return null;
+    // Refetch batch segar — cache key & render memakai updated_at/isi baris; dari state
+    // basi (pasca edit, sebelum poll) hasilnya PDF versi lama. Gagal fetch → fallback lokal.
+    let invList = invListStale;
+    try {
+      const { data, error } = await fetchInvoicesByIds(supabase, invListStale.map(i => i.id));
+      if (!error && data?.length) {
+        const freshMap = new Map(data.map(r => [r.id, r]));
+        invList = invListStale.map(i => freshMap.get(i.id) || i);
+        setInvoicesData(prev => prev.map(i => freshMap.has(i.id) ? { ...i, ...freshMap.get(i.id) } : i));
+      }
+    } catch (err) {
+      console.warn("[generateMergedInvoicePDFBlob] refetch gagal:", err?.message || err);
+    }
     const { getCachedPDF, setCachedPDF } = await import("./lib/pdfCache.js");
     const { sortedIds, cacheKey, memVersion } = computeMergedCacheKey(invList, portalLink);
     const memId = sortedIds.join(",");

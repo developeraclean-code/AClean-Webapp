@@ -89,8 +89,10 @@ export default function EditInvoiceModal({
     const pph23Amt = pph23On ? computePph23(newTotalFinal, parseFloat(appSettings?.pph23_rate) || 0.025).amount : 0;
     const billingName = (editInvoiceForm.billing_name ?? editInvoiceData.customer) || editInvoiceData.customer;
     const billingAddress = editInvoiceForm.billing_address ?? (editInvoiceData.address || "");
+    // pdf_url/updated_at ikut di-reset di state lokal — mirror invalidasi updateInvoice()
+    // di DB. Tanpa ini, download sebelum poll berikutnya masih ambil PDF lama dari R2.
     setInvoicesData(prev => prev.map(i => i.id === editInvoiceData.id
-      ? { ...i, labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, pph23: pph23On, pph23_amount: pph23Amt, materials_detail: newMD, customer: billingName, address: billingAddress } : i));
+      ? { ...i, labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, pph23: pph23On, pph23_amount: pph23Amt, materials_detail: newMD, customer: billingName, address: billingAddress, pdf_url: null, pdf_generated_at: null, updated_at: new Date().toISOString() } : i));
     {
       const _chk = checkInvoiceConsistency({ ...editInvoiceData, lines: newMD, labor, material, discount: discountFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal });
       if (!_chk.ok) addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, editInvoiceData.id) + " (edit nilai)", "WARNING");
