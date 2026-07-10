@@ -111,6 +111,7 @@ const LaporanDetailModal = lazy(() => import("./views/LaporanDetailModal.jsx"));
 const ProjectApp = lazy(() => import("./project/ProjectApp.jsx"));
 const MaintenanceView = lazy(() => import("./views/MaintenanceView.jsx"));
 const MaterialCheckoutView   = lazy(() => import("./views/MaterialCheckoutView.jsx"));
+const WebsiteContentView = lazy(() => import("./views/WebsiteContentView.jsx"));
 const MyToolsView            = lazy(() => import("./views/MyToolsView.jsx"));
 const ProjectLaporanModal    = lazy(() => import("./views/ProjectLaporanModal.jsx"));
 const OrderFormModal         = lazy(() => import("./views/OrderFormModal.jsx"));
@@ -2233,7 +2234,7 @@ export default function ACleanWebApp() {
     // docs/SOP_ADMIN_ROLE.md: Admin = input & edit only, no delete, no price list, no settings
     // Statistik (reports), Deleted Audit (deletedaudit) → Owner only
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport", "matcheckout", "alatsaya", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit"];
+      const adminBlocked = ["settings", "myreport", "matcheckout", "alatsaya", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit", "website"];
       return !adminBlocked.includes(menu);
     }
     // Teknisi & Helper: dashboard, jadwal, laporan sendiri, material harian, + Komisi Saya (dilindungi PIN
@@ -3318,6 +3319,7 @@ export default function ACleanWebApp() {
     { id: "monitoring", icon: "🔍", label: "Monitoring" },
     { id: "wa_groups", icon: "📡", label: "Monitor WA" },
     { id: "settings", icon: "⚙️", label: "Pengaturan" },
+    { id: "website", icon: "🌐", label: "Konten Website" },
     { id: "mattrack", icon: "🧮", label: "Stok Material" },
     { id: "biaya", icon: "💸", label: "Biaya" },
     // Teknisi-only menu (not shown to Owner/Admin)
@@ -4029,6 +4031,15 @@ export default function ACleanWebApp() {
       case "monitoring": return renderMonitoring();
       case "wa_groups": return renderWaGroupMonitor();
       case "settings": return renderSettings();
+      case "website": return (
+        <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
+          <WebsiteContentView
+            currentUser={currentUser} supabase={supabase}
+            showNotif={showNotif} showConfirm={showConfirm}
+            _apiFetch={_apiFetch} _apiHeaders={_apiHeaders}
+          />
+        </Suspense>
+      );
       default: return renderDashboard();
     }
   };

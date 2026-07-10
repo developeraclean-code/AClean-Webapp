@@ -14,3 +14,6 @@ blob-report/
 playwright/.cache/
 
 .vercel
+
+# Claude Code local config
+.claude/
