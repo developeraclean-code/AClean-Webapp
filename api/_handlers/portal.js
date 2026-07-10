@@ -48,6 +48,26 @@ export async function projectDelete(req, res) {
       return res.status(200).json({ success: true });
 }
 
+    // Resolusi role pemanggil untuk gate role level-endpoint:
+    // - App Token → req.appClaims.role (diisi validateInternalToken).
+    // - Supabase Bearer → decode sub → user_profiles.role.
+    // - Tanpa keduanya → null = pemanggil lolos validateInternalToken lewat legacy
+    //   INTERNAL_API_SECRET (server-to-server) — dianggap sistem.
+async function resolveCallerRole(req, SU, SK) {
+  if (req.appClaims?.role) return req.appClaims.role;
+  const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  if (!bearer) return null;
+  try {
+    const parts = bearer.split(".");
+    if (parts.length !== 3) return "";
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    if (!payload.sub) return "";
+    const pr = await fetch(`${SU}/rest/v1/user_profiles?id=eq.${encodeURIComponent(payload.sub)}&select=role&limit=1`, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+    const pd = pr.ok ? await pr.json() : [];
+    return pd[0]?.role ? (pd[0].role.charAt(0).toUpperCase() + pd[0].role.slice(1).toLowerCase()) : "";
+  } catch { return ""; }
+}
+
     // ════════════════════════════════════════════════════════════
     // MAINTENANCE (INTERNAL — butuh X-Internal-Token, Owner/Admin)
     // Semua CRUD modul Maintenance lewat sini (tabel RLS-restrictive,
@@ -62,6 +82,18 @@ export async function maintenance(req, res) {
       const REST = (p) => `${SU}/rest/v1/${p}`;
       const body = req.body || {};
       const action = String(body.action || "");
+
+      // ── Role gate per-action: mutasi & data finansial = Owner/Admin saja ──
+      // Teknisi/Helper hanya boleh aksi read-only non-finansial yang dipakai
+      // prefill modal laporan (openLaporanModal & modal order: klien + unit registry).
+      const ROLE_EXEMPT = new Set(["list-clients", "list-units"]);
+      if (!ROLE_EXEMPT.has(action)) {
+        const callerRole = await resolveCallerRole(req, SU, SK);
+        // null = legacy INTERNAL_API_SECRET (server-to-server) → sistem, izinkan.
+        if (callerRole !== null && callerRole !== "Owner" && callerRole !== "Admin") {
+          return res.status(403).json({ error: "Forbidden: aksi maintenance ini butuh role Owner/Admin" });
+        }
+      }
 
       const genToken = () => "mtk_" + Array.from({ length: 40 }, () =>
         "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
@@ -1098,26 +1130,50 @@ export async function maintenance(req, res) {
         }
 
         // ── AUTO-INVOICE dari kontrak ────────────────────────────────────
+        // Skema mengikuti create-invoice B2B (kolom nyata tabel invoices: total/labor/
+        // units/invoice_type/notes — TIDAK ada kolom amount/type/description/contract_id).
+        // Referensi kontrak disimpan di notes. Status PENDING_APPROVAL → masuk alur
+        // approve Owner di menu Invoice (bukan langsung UNPAID).
         if (action === "generate-contract-invoice") {
           const { contract_id, client_id, period_label, unit_count, amount, notes: invNotes } = body;
           if (!client_id || !amount) return res.status(400).json({ error: "client_id dan amount wajib" });
           // Ambil data klien
-          const cRes = await fetch(REST(`maintenance_clients?id=eq.${client_id}&select=name,pic_name,pic_phone`), { headers });
+          const cRes = await fetch(REST(`maintenance_clients?id=eq.${encodeURIComponent(client_id)}&select=name,pic_name,pic_phone,address`), { headers });
           const cData = await cRes.json();
-          const client = cData[0] || {};
+          const client = cData[0];
+          if (!client) return res.status(404).json({ error: "Klien tidak ditemukan" });
+          // Nomor kontrak untuk catatan invoice (kolom contract_id tidak ada di invoices)
+          let contractNo = "";
+          if (contract_id) {
+            try {
+              const ctRes = await fetch(REST(`maintenance_contracts?id=eq.${encodeURIComponent(contract_id)}&select=contract_number&limit=1`), { headers });
+              const ct = ctRes.ok ? await ctRes.json() : [];
+              contractNo = ct[0]?.contract_number || "";
+            } catch (_) {}
+          }
           // Generate invoice number
           const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
           const inv_id = `INV-M-${today}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+          const totalRp = Math.round(Number(amount)) || 0;
           const inv = {
-            id: inv_id, type: "maintenance", maintenance_client_id: client_id,
-            customer: client.name, phone: client.pic_phone || "",
-            amount: Number(amount), status: "UNPAID",
-            description: `${period_label || "Maintenance"} — ${unit_count || 0} unit`,
-            notes: invNotes || null, contract_id: contract_id || null,
-            created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+            id: inv_id,
+            customer: client.name,
+            phone: client.pic_phone || null,
+            address: client.address || null,
+            service: `${period_label || "Maintenance kontrak"} — ${unit_count || 0} unit`,
+            job_id: null,
+            invoice_type: "service",
+            units: Number(unit_count) || 0,
+            labor: totalRp,
+            material: 0,
+            total: totalRp,
+            status: "PENDING_APPROVAL",
+            maintenance_client_id: client_id,
+            notes: [contractNo ? `Kontrak ${contractNo}` : null, invNotes || null].filter(Boolean).join(" — ") || null,
+            created_at: new Date().toISOString(),
           };
           const r = await fetch(REST("invoices"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(inv) });
-          if (!r.ok) return res.status(400).json({ error: await r.text() });
+          if (!r.ok) return res.status(400).json({ error: "Gagal buat invoice kontrak", detail: await r.text() });
           return res.status(200).json({ invoice: (await r.json())[0] || inv });
         }
 
