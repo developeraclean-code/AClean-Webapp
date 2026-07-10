@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
 import { resolveMultiDayInvoiceAction, mergeInvoiceDetail, tagDetailSource, recomputeInvoiceTotals } from "../lib/invoiceMultiDay.js";
 import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryFromCatalog } from "../lib/invoicing.js";
+import { clientCleaningUnitPrice } from "../lib/maintClientPrice.js";
 
 // ── Survey Kirim Modal ─────────────────────────────────────────────────────────
 function SurveyKirimModal({ r, onClose, sendWA, showNotif, addAgentLog, auditUserName, updateServiceReport, supabase, fotoSrc, downloadServiceReportPDF, invoicesData }) {
@@ -147,6 +148,42 @@ useEffect(() => {
 // Realtime/WAL dimatikan (hemat compute Supabase). Data laporan di-refresh terpusat oleh
 // App.jsx (polling service_reports tiap 90 dtk, jam kerja + tab aktif) — parsed + dedup by job_id.
 const [liveActive] = useState(true);
+
+// ── Harga deal per-klien maintenance (price book) — override biaya cleaning ──
+// per unit di builder verify & badge estimasi. Match STRICT tipe+PK (lihat
+// lib/maintClientPrice.js); tanpa baris cocok → harga global (perilaku lama).
+// Cache per client_id; undefined = belum di-fetch, [] = sudah (termasuk gagal).
+const [maintPricesByClient, setMaintPricesByClient] = useState({});
+const fetchMaintPrices = async (clientId) => {
+  try {
+    const resp = await apiFetch("/api/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "list-prices", client_id: clientId }) });
+    const j = resp.ok ? await resp.json().catch(() => ({})) : {};
+    return Array.isArray(j.prices) ? j.prices : [];
+  } catch { return []; }
+};
+// Prefetch untuk badge ≈ Invoice (dihitung sinkron saat render kartu)
+useEffect(() => {
+  if (!apiFetch) return;
+  const ids = [...new Set((ordersData || []).map(o => o?.maintenance_client_id).filter(Boolean))]
+    .filter(id => maintPricesByClient[id] === undefined);
+  if (!ids.length) return;
+  let alive = true;
+  (async () => {
+    const entries = await Promise.all(ids.map(async (id) => [id, await fetchMaintPrices(id)]));
+    if (alive) setMaintPricesByClient(prev => ({ ...prev, ...Object.fromEntries(entries) }));
+  })();
+  return () => { alive = false; };
+  // maintPricesByClient sengaja di luar deps — guard `undefined` di atas mencegah refetch loop.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [ordersData, apiFetch]);
+// Jaminan saat verify (kalau prefetch belum selesai / client baru muncul)
+const ensureMaintPrices = async (clientId) => {
+  if (!clientId || !apiFetch) return null;
+  if (maintPricesByClient[clientId] !== undefined) return maintPricesByClient[clientId];
+  const prices = await fetchMaintPrices(clientId);
+  setMaintPricesByClient(prev => ({ ...prev, [clientId]: prices }));
+  return prices;
+};
 
 // Toggle tampilan — dipakai di mode rekap & detail
 const _viewToggle = (
@@ -371,7 +408,12 @@ const pageLap = filtered.slice((curPgL - 1) * LAP_PAGE_SIZE, curPgL * LAP_PAGE_S
 // Pembangun detail invoice dari laporan (jalur VERIFY) — SATU sumber untuk approve (verifyLaporan)
 // DAN badge estimasi total di kartu laporan (hindari drift). Murni: hanya komputasi, tanpa efek samping.
 // Return: { vMDetail, labor, material, total, status, waiver }. (Diskon membership tetap di approve.)
-const buildVerifyInvoice = (r, ord) => {
+// dealPricesOverride: hasil ensureMaintPrices (jalur verify, dijamin ter-fetch).
+// Tanpa override → pakai cache prefetch (jalur badge; bisa undefined saat load awal).
+const buildVerifyInvoice = (r, ord, dealPricesOverride) => {
+    const dealPrices = dealPricesOverride !== undefined
+      ? dealPricesOverride
+      : (ord?.maintenance_client_id ? maintPricesByClient[ord.maintenance_client_id] : null);
     const _rawMats = (() => {
       if (r.materials_json) {
         try { return JSON.parse(r.materials_json); } catch { /* materials_json rusak → pakai default */ }
@@ -423,12 +465,14 @@ const buildVerifyInvoice = (r, ord) => {
       const unitsWithTipe = rUnits.filter(u => u && u.tipe);
       if (unitsWithTipe.length > 0) {
         unitsWithTipe.forEach((u) => {
-          const hargaUnit = hargaPerUnitFromTipe(r.service, u.tipe, priceListData);
+          // Harga deal per-klien maintenance menang bila match STRICT tipe+PK
+          const dealPrice = dealPrices ? clientCleaningUnitPrice(dealPrices, u) : null;
+          const hargaUnit = dealPrice != null ? dealPrice : hargaPerUnitFromTipe(r.service, u.tipe, priceListData);
           if (hargaUnit > 0) {
             const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
             const bracketLabel = getBracketKey(r.service, u.tipe) || u.tipe;
             vMDetail.unshift({
-              nama: (r.service || "") + " " + bracketLabel + " (" + unitLabel + ")",
+              nama: (r.service || "") + " " + bracketLabel + " (" + unitLabel + ")" + (dealPrice != null ? " — harga kontrak" : ""),
               jumlah: 1, satuan: "unit",
               harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
             });
@@ -496,6 +540,11 @@ const verifyLaporan = async (r) => {
     showNotif("❌ Hanya Owner/Admin yang bisa verifikasi laporan");
     return;
   }
+  // Harga deal per-klien maintenance — dijamin ter-fetch SEBELUM invoice dibangun
+  // (prefetch badge bisa belum selesai kalau admin verify cepat).
+  const _ordDeal = ordersData.find(o => o.id === r.job_id);
+  const dealPricesV = _ordDeal?.maintenance_client_id ? await ensureMaintPrices(_ordDeal.maintenance_client_id) : null;
+
   const { error: vErr } = await updateServiceReport(supabase, r.id, { status: "VERIFIED" }, auditUserName());
   if (vErr) {
     console.warn("❌ verify laporan failed:", vErr.message);
@@ -616,11 +665,13 @@ const verifyLaporan = async (r) => {
           const withTipeD = rUnitsD.filter(u => u && u.tipe);
           if (withTipeD.length > 0) {
             withTipeD.forEach(u => {
-              const hp = hargaPerUnitFromTipe(r.service, u.tipe, priceListData);
+              // Paritas dgn buildVerifyInvoice: harga deal klien maintenance menang bila match
+              const dpD = dealPricesV ? clientCleaningUnitPrice(dealPricesV, u) : null;
+              const hp = dpD != null ? dpD : hargaPerUnitFromTipe(r.service, u.tipe, priceListData);
               if (hp > 0) {
                 const lbl = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
                 const bk = getBracketKey(r.service, u.tipe) || u.tipe;
-                vMDetailD.unshift({ nama: r.service + " " + bk + " (" + lbl + ")", jumlah: 1, satuan: "unit", harga_satuan: hp, subtotal: hp, keterangan: "jasa" });
+                vMDetailD.unshift({ nama: r.service + " " + bk + " (" + lbl + ")" + (dpD != null ? " — harga kontrak" : ""), jumlah: 1, satuan: "unit", harga_satuan: hp, subtotal: hp, keterangan: "jasa" });
               }
             });
           } else {
@@ -732,7 +783,7 @@ const verifyLaporan = async (r) => {
     const invId = "INV" + Date.now().toString().slice(-7) + Math.floor(Math.random() * 100).toString().padStart(2, "0");
 
     // Bangun detail invoice via fungsi bersama (satu sumber dgn badge estimasi di kartu).
-    const { vMDetail, labor: finalLabor2, material: finalMat2, total: totalInv, status: finalStatus2, waiver: waiverV } = buildVerifyInvoice(r, ord);
+    const { vMDetail, labor: finalLabor2, material: finalMat2, total: totalInv, status: finalStatus2, waiver: waiverV } = buildVerifyInvoice(r, ord, dealPricesV);
     const newInv = {
       id: invId, job_id: (_multiDayAnchor || r.job_id), laporan_id: r.id,
       customer: r.customer, phone: r.phone || ord?.phone || "",

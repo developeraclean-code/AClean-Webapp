@@ -1,5 +1,6 @@
 import React from "react";
 import { cs } from "../theme/cs.js";
+import { clientCleaningUnitPrice } from "../lib/maintClientPrice.js";
 
 // Detail/Edit Laporan modal — diekstrak dari App.jsx (Tahap 2 refactor, lazy-loaded).
 // Semua dependensi level-komponen dilewatkan via satu prop `ctx` (lihat App.jsx).
@@ -574,6 +575,16 @@ export default function LaporanDetailModal({ ctx }) {
                   const existInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id);
                   if (existInv) {
                     const ord = ordersData.find(o => o.id === selectedLaporan.job_id);
+                    // Harga deal per-klien maintenance — paritas dgn builder verify LaporanTimView.
+                    // Match STRICT tipe+PK; gagal fetch / tanpa baris cocok → harga global.
+                    let dealPricesEdit = null;
+                    if (ord?.maintenance_client_id && _apiFetch) {
+                      try {
+                        const rp = await _apiFetch("/api/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "list-prices", client_id: ord.maintenance_client_id }) });
+                        const jp = rp.ok ? await rp.json().catch(() => ({})) : {};
+                        if (Array.isArray(jp.prices) && jp.prices.length) dealPricesEdit = jp.prices;
+                      } catch (_) { /* fallback harga global */ }
+                    }
                     const vMats = combinedMats.filter(m => m.nama && parseFloat(m.jumlah || 0) > 0);
                     const vMDetail = vMats.map(m => {
                       const nama2 = (m.nama || "").toLowerCase();
@@ -609,12 +620,14 @@ export default function LaporanDetailModal({ ctx }) {
                       const unitsWithTipe = editUnits.filter(u => u && u.tipe);
                       if (unitsWithTipe.length > 0) {
                         unitsWithTipe.forEach((u) => {
-                          const hargaUnit = hargaPerUnitFromTipe(selectedLaporan.service, u.tipe, priceListData);
+                          // Harga deal klien maintenance menang bila match STRICT tipe+PK
+                          const dealPrice = dealPricesEdit ? clientCleaningUnitPrice(dealPricesEdit, u) : null;
+                          const hargaUnit = dealPrice != null ? dealPrice : hargaPerUnitFromTipe(selectedLaporan.service, u.tipe, priceListData);
                           if (hargaUnit > 0) {
                             const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
                             const bracketLabel = getBracketKey(selectedLaporan.service, u.tipe) || u.tipe;
                             vMDetail.unshift({
-                              nama: selectedLaporan.service + " " + bracketLabel + " (" + unitLabel + ")",
+                              nama: selectedLaporan.service + " " + bracketLabel + " (" + unitLabel + ")" + (dealPrice != null ? " — harga kontrak" : ""),
                               jumlah: 1, satuan: "unit",
                               harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
                             });
