@@ -1862,10 +1862,12 @@ return (
                 ↩️ Revert
               </button>
             )}
-            {/* Kirim Report Card manual — hanya Owner/Admin, status sudah approved, ada laporan terkait */}
+            {/* Kirim Report Card manual — hanya Owner/Admin, laporan WAJIB sudah VERIFIED/APPROVED
+                (paritas gate ScheduleView: laporan SUBMITTED = belum direview admin, jangan sampai
+                terkirim ke customer sebelum kontrol/revisi) */}
             {inv.status !== "CANCELLED" &&
               (currentUser?.role === "Owner" || currentUser?.role === "Admin") &&
-              inv.phone && laporanReports?.find(r => r.job_id === inv.job_id) && (
+              inv.phone && ["VERIFIED", "APPROVED"].includes(laporanReports?.find(r => r.job_id === inv.job_id)?.status) && (
               <button onClick={async (e) => {
                 const btn = e.currentTarget;
                 btn.disabled = true;

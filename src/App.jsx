@@ -2079,7 +2079,25 @@ export default function ACleanWebApp() {
 
 
   // Preview / download Service Report Card di browser
-  const downloadServiceReportPDF = async (laporan, inv) => {
+  // Ambil baris laporan SEGAR dari DB sebelum render report card — anti data basi
+  // (edit admin lain belum ter-poll 90 dtk / foto_urls baru belum masuk state lokal).
+  // Pola sama freshInvoiceRow (83a8af9). Gagal refetch → fallback state lokal.
+  const freshReportRow = async (laporan) => {
+    try {
+      if (!laporan?.id) return laporan;
+      const { data, error } = await supabase.from("service_reports").select("*").eq("id", laporan.id).maybeSingle();
+      if (!error && data) {
+        const fresh = parseLaporanRow(data);
+        // Sinkronkan state supaya jalur lain sesi ini ikut versi segar
+        setLaporanReports(prev => prev.map(r => r.id === fresh.id ? { ...r, ...fresh } : r));
+        return fresh;
+      }
+    } catch (err) { console.warn("[freshReportRow] refetch gagal:", err?.message || err); }
+    return laporan;
+  };
+
+  const downloadServiceReportPDF = async (laporanStale, inv) => {
+    const laporan = await freshReportRow(laporanStale);
     const logoUrl = await fetchInvoiceLogoUrl();
     const origin = window.location.origin;
     // Pre-fetch semua foto sebagai base64 data URL agar embedded dalam HTML (tidak butuh network saat print)
@@ -2106,8 +2124,9 @@ export default function ACleanWebApp() {
   };
 
   // Upload Service Report sebagai HTML ke R2 (foto di-embed sebagai base64)
-  const uploadServiceReportForWA = async (laporan, inv) => {
+  const uploadServiceReportForWA = async (laporanStale, inv) => {
     try {
+      const laporan = await freshReportRow(laporanStale);
       const logoUrl = await fetchInvoiceLogoUrl();
       const origin = window.location.origin;
       const fotoUrls = (laporan.foto_urls || []).filter(Boolean);
@@ -2143,8 +2162,9 @@ export default function ACleanWebApp() {
   };
 
   // Upload service report sebagai PDF ke R2 menggunakan @react-pdf/renderer
-  const uploadServiceReportPDFForWA = async (laporan, inv) => {
+  const uploadServiceReportPDFForWA = async (laporanStale, inv) => {
     try {
+      const laporan = await freshReportRow(laporanStale);
       const { pdf } = await import("@react-pdf/renderer");
       const { default: ServiceReportPDF } = await import("./components/ServiceReportPDF.jsx");
       const logoUrl = await fetchInvoiceLogoUrl();
