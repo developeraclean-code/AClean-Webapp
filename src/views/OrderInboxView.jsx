@@ -2379,15 +2379,26 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                 // Hitung order & konflik untuk tim ini — pakai BASE (tanpa filter tim)
                 // supaya badge tiap chip tetap akurat walau satu tim sedang dipilih.
                 const teamOrders = inboxOrdersBase.filter(o => o.team_slot === s);
-                const hasConflict = teamOrders.some(o => {
-                  if (!o.time || !o.teknisi) return false;
-                  const same = teamOrders.filter(o2 => o2.teknisi === o.teknisi && o2.id !== o.id && o2.time);
-                  return same.some(o2 => {
-                    const [h1,m1] = o.time.split(":").map(Number);
-                    const s1 = h1*60+m1, e1 = s1 + Math.round(hitungDurasi(o.service,o.units)*60);
-                    const [h2,m2] = o2.time.split(":").map(Number);
-                    const s2 = h2*60+m2, e2 = s2 + Math.round(hitungDurasi(o2.service,o2.units)*60);
-                    return s1 < e2 && e1 > s2;
+                // Paritas dgn isConflict di TimeGrid: jam selesai pakai time_end AKTUAL
+                // (fallback estimasi), hanya bandingkan tanggal sama, dan order yang
+                // sudah selesai/batal tidak dihitung. Dulu chip pakai estimasi flat →
+                // ⚠️ palsu padahal grid bersih (time_end aktual tidak overlap).
+                const DONE_OR_CANCELLED = ["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED","CANCELLED"];
+                const activeOrders = teamOrders.filter(o => o.time && !DONE_OR_CANCELLED.includes(o.status));
+                const rangeOf = (o) => {
+                  const st = toMinutes(o.time);
+                  if (st === null) return null;
+                  const tEnd = toMinutes(o.time_end);
+                  const en = (tEnd !== null && tEnd > st) ? tEnd : st + Math.round(hitungDurasi(o.service, o.units) * 60);
+                  return [st, en];
+                };
+                const hasConflict = activeOrders.some(o => {
+                  const r1 = rangeOf(o);
+                  if (!r1) return false;
+                  return activeOrders.some(o2 => {
+                    if (o2.id === o.id || o2.date !== o.date) return false;
+                    const r2 = rangeOf(o2);
+                    return r2 && r1[0] < r2[1] && r1[1] > r2[0];
                   });
                 });
                 const isActive = filterTeam === s;
