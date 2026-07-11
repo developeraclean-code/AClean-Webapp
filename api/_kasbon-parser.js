@@ -114,3 +114,90 @@ export function isKasbonApprovalMessage(message) {
   if (text.length <= 80 && APPROVAL_RE_PHRASE.test(text)) return true;
   return false;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Cross-check panel & anti-dobel lintas-hari (fix dobel-input kasbon, 11 Jul 2026)
+// Kasus nyata 8-9 Jul: Santi kirim ulang list kasbon keesokan hari → dedup harian
+// (nama|tanggal|nominal) lolos → Hamdan & Boim tercatat 2×. Plus list "revisi"
+// tidak membatalkan item yang dicoret (Agung 200rb nyangkut 2 hari).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Deteksi pesan list REVISI: "Sudah direvisi untuk kasbon ...", "revisi kasbon ..."
+export function isKasbonRevisionMessage(message) {
+  if (!message || typeof message !== "string") return false;
+  return /kasbon/i.test(message) && /\b(revisi|direvisi|ralat|koreksi)\b/i.test(message);
+}
+
+// Tanggal WIB (YYYY-MM-DD) dari timestamp ISO.
+export const wibDateOf = (iso) =>
+  new Date(new Date(iso).getTime() + 7 * 3600_000).toISOString().slice(0, 10);
+
+// Cari request kasbon dari PANEL teknisi/helper (kasbon_requests) yang cocok
+// nama+nominal dalam `days` hari terakhir. Return:
+//   { req, linked }          — req = baris PENDING/APPROVED terbaru; linked = sudah punya expense_id
+//   { req: null, rejected }  — tidak ada request aktif; rejected = baris DITOLAK di window (jika ada)
+export async function findPanelKasbonRequest({ SU, SK, name, amount, days = 7 }) {
+  if (!SU || !SK || !name || !amount) return { req: null, linked: false, rejected: null };
+  const sinceIso = new Date(Date.now() - days * 86400_000).toISOString();
+  const url = SU + "/rest/v1/kasbon_requests?select=id,teknisi_name,amount,status,requested_at,created_at,expense_id"
+    + "&teknisi_name=ilike." + encodeURIComponent(name)
+    + "&amount=eq." + Number(amount)
+    + "&requested_at=gte." + encodeURIComponent(sinceIso)
+    + "&order=requested_at.desc&limit=5";
+  try {
+    const r = await fetch(url, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+    if (!r.ok) return { req: null, linked: false, rejected: null };
+    const rows = await r.json();
+    if (!Array.isArray(rows) || !rows.length) return { req: null, linked: false, rejected: null };
+    const active = rows.find(x => x.status === "PENDING" || x.status === "APPROVED");
+    if (active) return { req: active, linked: !!active.expense_id, rejected: null };
+    return { req: null, linked: false, rejected: rows.find(x => x.status === "REJECTED") || null };
+  } catch { return { req: null, linked: false, rejected: null }; }
+}
+
+// Expense kasbon nama+nominal yang SUDAH tercatat dalam `days` hari SEBELUM
+// `beforeDate` — indikasi dobel lintas-hari yang tak tertangkap dedup harian.
+export async function findRecentKasbonExpense({ SU, SK, name, amount, beforeDate, days = 3 }) {
+  if (!SU || !SK || !name || !amount || !beforeDate) return null;
+  const sinceDate = new Date(Date.parse(beforeDate + "T00:00:00Z") - days * 86400_000).toISOString().slice(0, 10);
+  const url = SU + "/rest/v1/expenses?select=id,date"
+    + "&subcategory=eq." + encodeURIComponent("Kasbon Karyawan")
+    + "&teknisi_name=ilike." + encodeURIComponent(name)
+    + "&amount=eq." + Number(amount)
+    + "&date=gte." + sinceDate
+    + "&date=lt." + beforeDate
+    + "&deleted_at=is.null"
+    + "&order=date.desc&limit=1";
+  try {
+    const r = await fetch(url, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+    if (!r.ok) return null;
+    const rows = await r.json();
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  } catch { return null; }
+}
+
+// Resolusi 1 item kasbon WA → keputusan insert (dipakai jalur live wa.js & backfill):
+//   { action: "skip_linked", req }             — sudah tercatat lewat request panel (expense ter-link)
+//   { action: "insert", date, suffix, alert }  — insert dgn tanggal ter-resolve;
+//                                                alert = null | teks utk WA Owner (tanpa request panel)
+// Kebijakan Owner (11 Jul 2026): approval telat TIDAK menggeser tanggal — biaya
+// tercatat dari TANGGAL REQUEST panel. Kasbon WA tanpa request panel tetap dicatat
+// (keputusan final di Owner) tapi di-flag ⚠️ + alert.
+export async function resolveKasbonEntry({ SU, SK, name, amount, today }) {
+  const panel = await findPanelKasbonRequest({ SU, SK, name, amount });
+  if (panel.req && panel.linked) return { action: "skip_linked", req: panel.req };
+  if (panel.req) {
+    const reqDate = wibDateOf(panel.req.requested_at || panel.req.created_at);
+    return { action: "insert", date: reqDate, suffix: ` [Req panel ${panel.req.id} ${reqDate}]`, alert: null };
+  }
+  const prev = await findRecentKasbonExpense({ SU, SK, name, amount, beforeDate: today });
+  const bits = ["TANPA REQUEST PANEL"];
+  if (panel.rejected) bits.push("request panel DITOLAK");
+  if (prev) bits.push(`juga tercatat ${prev.date}`);
+  return {
+    action: "insert",
+    date: today,
+    suffix: ` [⚠️ ${bits.join(" — ")}]`,
+    alert: `${name} Rp ${Number(amount).toLocaleString("id-ID")}${panel.rejected ? " (request panel DITOLAK)" : ""}${prev ? ` (juga tercatat ${prev.date})` : ""}`,
+  };
+}

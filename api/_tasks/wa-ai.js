@@ -3,7 +3,8 @@
 import { sb, sendWA, log, OWNER_PHONE } from "./_shared.js";
 import * as Sentry from "@sentry/node";
 import { uploadBufferToR2, hasR2Config } from "../_r2-upload.js";
-import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage } from "../_kasbon-parser.js";
+import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, resolveKasbonEntry } from "../_kasbon-parser.js";
+import { buildExpenseDedupKey } from "../_expense-dedup.js";
 
 // ══════════════════════════════════════════════════
 // TASK: WA Daily Snapshot — Phase 2 review window
@@ -228,42 +229,53 @@ export async function taskWaBackfill(opts = {}) {
     if (cfg.ai_kasbon_enabled) {
       const k = parseKasbonText(text);
       if (k) {
+        // Paritas jalur live (wa.js): resolusi via request panel — tanggal = tanggal
+        // request, request ter-link = sudah tercatat (cegah backfill re-create duplikat
+        // lintas-hari yang sudah dibersihkan). dedup_key ikut diisi (garis pertahanan DB).
         if (k.multi && Array.isArray(k.items)) {
           for (const it of k.items) {
             const mr = await matchKasbonName({ SU, SK, nameRaw: it.nameRaw });
             if (!mr.matched) { counters.skipped_no_match++; continue; }
-            const dup = await expenseAlreadyExists({ date, teknisi_name: mr.matched.name, amount: it.amount, created_by: "wa_group_kasbon" });
+            const resolved = await resolveKasbonEntry({ SU, SK, name: mr.matched.name, amount: it.amount, today: date });
+            if (resolved.action === "skip_linked") { counters.skipped_dup++; continue; }
+            const entryDate = resolved.date;
+            const dup = await expenseAlreadyExists({ date: entryDate, teknisi_name: mr.matched.name, amount: it.amount, created_by: "wa_group_kasbon" });
             if (dup) { counters.skipped_dup++; continue; }
             await fetch(SU + "/rest/v1/expenses", {
               method: "POST",
               headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
               body: JSON.stringify({
-                date, category: "petty_cash", subcategory: "Kasbon Karyawan",
+                date: entryDate, category: "petty_cash", subcategory: "Kasbon Karyawan",
                 teknisi_name: mr.matched.name, amount: it.amount,
-                description: `Kasbon ${mr.matched.name} (via WA Finance grup, dari ${profileName}) [BACKFILL]`,
+                description: `Kasbon ${mr.matched.name} (via WA Finance grup, dari ${profileName})${resolved.suffix} [BACKFILL]`,
                 created_by: "wa_group_kasbon", validation_status: "PENDING_AI",
+                dedup_key: buildExpenseDedupKey({ teknisiName: mr.matched.name, amount: it.amount, date: entryDate, subcategory: "Kasbon Karyawan" }),
               }),
             }).catch(e => {
-              try { Sentry.captureException(e, { tags: { op: "backfill_kasbon_multi_insert" }, extra: { teknisi: mr.matched.name, amount: it.amount, date } }); } catch (_) {}
+              try { Sentry.captureException(e, { tags: { op: "backfill_kasbon_multi_insert" }, extra: { teknisi: mr.matched.name, amount: it.amount, date: entryDate } }); } catch (_) {}
             });
             counters.kasbon_multi_inserted++;
           }
         } else if (k.nameRaw) {
           const mr = await matchKasbonName({ SU, SK, nameRaw: k.nameRaw });
           if (!mr.matched) { counters.skipped_no_match++; continue; }
-          const dup = await expenseAlreadyExists({ date, teknisi_name: mr.matched.name, amount: k.amount, created_by: "wa_group_kasbon" });
+          const resolved = await resolveKasbonEntry({ SU, SK, name: mr.matched.name, amount: k.amount, today: date });
+          if (resolved.action === "skip_linked") { counters.skipped_dup++; continue; }
+          const entryDate = resolved.date;
+          const dup = await expenseAlreadyExists({ date: entryDate, teknisi_name: mr.matched.name, amount: k.amount, created_by: "wa_group_kasbon" });
           if (dup) { counters.skipped_dup++; continue; }
           await fetch(SU + "/rest/v1/expenses", {
             method: "POST",
             headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
             body: JSON.stringify({
-              date, category: "petty_cash", subcategory: "Kasbon Karyawan",
+              date: entryDate, category: "petty_cash", subcategory: "Kasbon Karyawan",
               teknisi_name: mr.matched.name, amount: k.amount,
-              description: `Kasbon ${mr.matched.name} (via WA Finance grup, dari ${profileName}) [BACKFILL]`,
+              description: `Kasbon ${mr.matched.name} (via WA Finance grup, dari ${profileName})${resolved.suffix} [BACKFILL]`,
               created_by: "wa_group_kasbon", validation_status: "PENDING_AI",
+              dedup_key: buildExpenseDedupKey({ teknisiName: mr.matched.name, amount: k.amount, date: entryDate, subcategory: "Kasbon Karyawan" }),
             }),
           }).catch(e => {
-            try { Sentry.captureException(e, { tags: { op: "backfill_kasbon_single_insert" }, extra: { teknisi: mr.matched.name, amount: k.amount, date } }); } catch (_) {}
+            try { Sentry.captureException(e, { tags: { op: "backfill_kasbon_single_insert" }, extra: { teknisi: mr.matched.name, amount: k.amount, date: entryDate } }); } catch (_) {}
           });
           counters.kasbon_single_inserted++;
         }
