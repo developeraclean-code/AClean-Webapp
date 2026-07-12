@@ -102,7 +102,8 @@ export function buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataU
   th { background: #1e3a5f; color: #fff; font-size: 9px; font-weight: 700; padding: 5px 6px; text-align: left; }
   td { font-size: 9.5px; padding: 5px 6px; border-bottom: 1px solid #f1f5f9; vertical-align: top; color: #1e293b; }
   tr:nth-child(even) td { background: #f8fafc; }
-  .badge { display: inline-block; background: #eff6ff; color: #1d4ed8; font-size: 8px; padding: 1px 5px; border-radius: 99px; margin: 1px 1px 1px 0; }
+  /* display:table = tiap badge baris sendiri (menurun) tapi lebar pill tetap seukuran teks */
+  .badge { display: table; background: #eff6ff; color: #1d4ed8; font-size: 8px; padding: 1px 5px; border-radius: 99px; margin: 1px 1px 2px 0; }
   .badge.yellow { background: #fefce8; color: #854d0e; }
   .badge.green { background: #f0fdf4; color: #166534; }
 

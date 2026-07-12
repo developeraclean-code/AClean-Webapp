@@ -67,9 +67,11 @@ function InfoRow({ label, value, accent }) {
 }
 
 function BadgeList({ items, style }) {
-  if (!items || items.length === 0) return <Text style={[s.td, { color: "#94a3b8" }]}>—</Text>;
+  if (!items || items.length === 0) return <Text style={[s.td, { flex: 1, color: "#94a3b8" }]}>—</Text>;
+  // Menurun (1 item per baris), pill menyesuaikan lebar teks — bukan mendatar memanjang.
+  // flex: 1 = lebar sel mengikuti kolom header (th flex 1).
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", padding: "4 5" }}>
+    <View style={{ flex: 1, flexDirection: "column", alignItems: "flex-start", padding: "4 5" }}>
       {items.map((item, i) => <Text key={i} style={style}>{item}</Text>)}
     </View>
   );
