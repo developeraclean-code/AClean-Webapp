@@ -787,6 +787,8 @@ const verifyLaporan = async (r) => {
     const newInv = {
       id: invId, job_id: (_multiDayAnchor || r.job_id), laporan_id: r.id,
       customer: r.customer, phone: r.phone || ord?.phone || "",
+      // Alamat pekerjaan dari order — paritas dgn builder submit (laporanInvoice)
+      address: ord?.address ? ord.address + (ord?.area ? ", " + ord.area : "") : null,
       service: r.service + (ord?.type ? " - " + ord.type : ""),
       units: Array.isArray(r.units) ? r.units.length : (Number(r.units) || Number(ord?.units) || 1),
       teknisi: r.teknisi || "",

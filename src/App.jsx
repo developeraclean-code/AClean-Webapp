@@ -1732,7 +1732,29 @@ export default function ACleanWebApp() {
   // Generate Invoice PDF blob via @react-pdf/renderer (reliable, no rasterization)
   // 3-layer cache: memory (LRU) → DB pdf_url (R2) → fresh generation
   const generateInvoicePDFBlob = async (inv, portalLink = null) => {
-    const { getCachedPDF, setCachedPDF } = await import("./lib/pdfCache.js");
+    const { getCachedPDF, setCachedPDF, invalidateCachedPDF } = await import("./lib/pdfCache.js");
+
+    // Self-heal alamat: invoice lama (pra-fix) tidak menyalin address dari order,
+    // jadi blok "Tagihan Kepada" tampil tanpa alamat pekerjaan. Ambil dari order
+    // terkait, render dgn alamat, dan backfill ke DB — updateInvoice sekalian
+    // meng-NULL pdf_url lama sehingga cache PDF tanpa alamat tidak dipakai lagi.
+    if (!inv.address && inv.job_id) {
+      const ordSrc = ordersData.find(o => o.id === inv.job_id)
+        || ordersData.find(o => o.job_group_id === inv.job_id)
+        || ordersData.find(o => o.parent_job_id === inv.job_id);
+      const addr = ordSrc?.address ? ordSrc.address + (ordSrc.area ? ", " + ordSrc.area : "") : null;
+      if (addr) {
+        inv = { ...inv, address: addr, pdf_url: null };
+        invalidateCachedPDF("invoice", inv.id); // blob memori lama juga tanpa alamat
+        updateInvoice(supabase, inv.id, { address: addr }, "SYSTEM (backfill alamat)")
+          .then(({ error }) => {
+            if (!error) setInvoicesData(prev => prev.map(i =>
+              i.id === inv.id ? { ...i, address: addr, pdf_url: null, pdf_generated_at: null } : i));
+          })
+          .catch(() => {});
+      }
+    }
+
     const variant = portalLink ? "wpl" : "nopl";
     const version = `${inv.updated_at || inv.created_at || "v0"}:${variant}`;
 

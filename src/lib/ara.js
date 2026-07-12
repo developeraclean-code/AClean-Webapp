@@ -398,6 +398,8 @@ export async function sendToARA(userMsg, {
               const newInv = {
                 id: invId, job_id: ord.id,
                 customer: ord.customer, phone: ord.phone || "",
+                // Alamat pekerjaan — paritas dgn builder submit/verify laporan
+                address: ord.address ? ord.address + (ord.area ? ", " + ord.area : "") : null,
                 service: ord.service + (ord.type ? " - " + ord.type : ""),
                 units: ord.units || 1,
                 labor: _araSum.labor,

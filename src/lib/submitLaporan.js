@@ -701,6 +701,10 @@ export async function submitLaporan({
             : laporanModal.id,
         customer: laporanModal.customer,
         phone: laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
+        // Alamat pekerjaan dari order — tampil di blok "Tagihan Kepada" invoice PDF
+        address: laporanModal.address
+          ? laporanModal.address + (laporanModal.area ? ", " + laporanModal.area : "")
+          : null,
         service: laporanModal.service + (laporanModal.type ? " - " + laporanModal.type : ""),
         units: laporanUnits.length,
         labor: laborFromDetail,
