@@ -1,6 +1,6 @@
 // api/_tasks/wa-ai.js — Task cron grup wa-ai (dipindah APA ADANYA dari
 // api/cron-reminder.js, pemecahan _tasks/ Jul 2026). Entry & jadwal tetap di cron-reminder.js.
-import { sb, sendWA, log, OWNER_PHONE } from "./_shared.js";
+import { sb, sendWA, log, isCronJobEnabled, OWNER_PHONE } from "./_shared.js";
 import * as Sentry from "@sentry/node";
 import { uploadBufferToR2, hasR2Config } from "../_r2-upload.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, resolveKasbonEntry } from "../_kasbon-parser.js";
@@ -350,6 +350,15 @@ export async function taskWaBackfill(opts = {}) {
 // Jalan setiap jam 02:00-11:00 UTC (Mon-Sat) via vercel.json crons
 // ══════════════════════════════════════════════════
 export async function taskScanBuktiBayar() {
+  // Gate FAIL-OPEN (spt taskBackupData): task internal (tidak kirim WA ke customer),
+  // default JALAN; berhenti hanya kalau eksplisit dimatikan via toggle Settings.
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["bukti_bayar_scan_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "bukti_bayar_scan_enabled") || togMap["bukti_bayar_scan_enabled"] === "false") {
+    await log("SCAN_BUKTI_BAYAR", "Dilewati — toggle OFF", "INFO");
+    return { skipped: true };
+  }
+
   // Ambil invoice PAID tanpa bukti:
   // - Minimum: 2026-05-01 (fungsi baru, data sebelumnya tidak reliable)
   // - Maximum lookback: 90 hari dari sekarang (untuk future-proofing)

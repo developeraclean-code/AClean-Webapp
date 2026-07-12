@@ -976,15 +976,17 @@ const d = await r.json();
         {/* Auto-Cleanup & Retensi File R2 */}
         {isOwner && (
         <Card>
-          <CardHeader icon="🧹" title="Auto-Cleanup & Retensi File" subtitle="Hapus otomatis file lama dari storage (R2) agar tidak menumpuk. Record DB tetap utuh — hanya file gambar yang dihapus. Default semua AKTIF." />
+          <CardHeader icon="🧹" title="Auto-Cleanup & Retensi File" subtitle="Hapus otomatis file lama dari storage (R2) agar tidak menumpuk. Record DB tetap utuh — hanya file gambar yang dihapus." />
           {[
             { key: "expense_foto_cleanup_enabled", label: "Foto Pengeluaran Teknisi (30 hari)", desc: "Hapus foto bukti pengeluaran teknisi dari R2 setelah 30 hari. Data nominal & catatan pengeluaran tetap tersimpan.", icon: "🧾" },
             { key: "payment_proof_cleanup_enabled", label: "Bukti Bayar Customer (90 hari)", desc: "Hapus file foto bukti transfer dari R2 setelah 90 hari (umur file). Invoice & status lunas tetap utuh.", icon: "💳" },
             { key: "r2_cleanup_enabled", label: "Foto Grup WA (90 hari)", desc: "Hapus mirror foto dari grup WhatsApp di R2 setelah 90 hari. Metadata log tetap tersimpan.", icon: "🖼️" },
             { key: "snapshot_cleanup_enabled", label: "Snapshot Harian WA (60 hari)", desc: "Hapus file snapshot JSON percakapan WA harian dari R2 setelah 60 hari, beserta manifest-nya.", icon: "📸" },
           ].map(({ key, label, desc, icon }) => {
-            // Default ON: aktif kecuali eksplisit "false" — sinkron dengan backend cron toggle
-            const isOn = appSettings[key] !== "false";
+            // STRICT === "true" — WAJIB sama dgn aturan cron (AND-logic). Dulu UI pakai
+            // default-ON (!== "false") sementara cron strict → toggle tampil ON padahal
+            // task SKIPPED diam-diam (silent error Jul 2026, key tak pernah di-backfill).
+            const isOn = appSettings[key] === "true";
             return (
               <div key={key} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: "1px solid " + cs.border }}>
                 <span style={{ fontSize: 18, minWidth: 24 }}>{icon}</span>

@@ -101,9 +101,14 @@ export async function loadAllData({
             if (sMap.wa_provider && VALID_WA_PROVIDERS.includes(sMap.wa_provider)) {
               setWaProvider(sMap.wa_provider);
             }
-            // Load bank & phone settings dari DB
-            if (sMap.bank_number) setAppSettings(prev => ({
+            // Load SEMUA key settings dari DB — spread sMap dulu (tanpa whitelist).
+            // Whitelist manual = jebakan berulang: key yang tak terdaftar tidak pernah
+            // masuk state → UI baca undefined (bug material_confirm_deduct 6985043,
+            // toggle cleanup R2 Jul 2026). Baris eksplisit di bawah hanya utk default
+            // key yang mungkin belum ada di DB.
+            if (setRes.data.length > 0) setAppSettings(prev => ({
               ...prev,
+              ...sMap,
               bank_name: sMap.bank_name || prev.bank_name,
               bank_number: sMap.bank_number || prev.bank_number,
               bank_holder: sMap.bank_holder || prev.bank_holder,

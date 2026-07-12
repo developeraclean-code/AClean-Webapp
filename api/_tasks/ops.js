@@ -122,11 +122,21 @@ export async function taskAutoReturnBrought() {
 }
 
 // ══════════════════════════════════════════════════
-// TASK 7: Backup Data Bulanan ke R2
-// Jalan tiap tanggal 1 jam 09:00 WIB (02:00 UTC)
+// TASK 7: Backup Data Mingguan ke R2
+// Jalan tiap Senin 08:00 WIB (jadwal di taskTick dispatcher)
 // Export invoices, orders, customers, service_reports ke R2
 // ══════════════════════════════════════════════════
 export async function taskBackupData() {
+  // Gate FAIL-OPEN — sengaja BEDA dari SOP strict (=== "true") milik task WA-customer:
+  // backup wajib default JALAN; key hilang tidak boleh mematikan backup diam-diam.
+  // Berhenti hanya kalau eksplisit dimatikan (standalone "false" / cron_jobs active:false).
+  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["backup_data_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "backup_data_enabled") || togMap["backup_data_enabled"] === "false") {
+    await log("BACKUP_DATA", "Dilewati — toggle OFF", "INFO");
+    return { skipped: true };
+  }
+
   const r2Key    = process.env.R2_ACCESS_KEY;
   const r2Secret = process.env.R2_SECRET_KEY;
   const r2Account= process.env.R2_ACCOUNT_ID;
