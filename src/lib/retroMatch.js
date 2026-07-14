@@ -52,7 +52,7 @@ export async function retroMatchPayment(inv, {
       const toleransi = 10000; // Rp 10.000 toleransi pembulatan
 
       // Notif ke owner via WA
-      const ownerAccs = (userAccounts || []).filter(u => u.role === "Owner" && u.phone);
+      const ownerAccs = (userAccounts || []).filter(u => u.role === "Owner" && u.phone && u.active !== false);
       const tglBukti = best.transfer_date || best.created_at?.slice(0, 10) || "?";
       const tglInvoice = inv.date || inv.created_at?.slice(0, 10) || "?";
 

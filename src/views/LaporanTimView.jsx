@@ -892,7 +892,7 @@ const verifyLaporan = async (r) => {
         ? `✅ Invoice ${invId} GRATIS — langsung LUNAS`
         : `✅ Invoice ${invId} dibuat (${fmt(totalInv)}) — tunggu approval Owner/Admin`;
       showNotif(invMsg);
-      const owners = userAccounts.filter(u => u.role === "Owner" || u.role === "Admin");
+      const owners = userAccounts.filter(u => (u.role === "Owner" || u.role === "Admin") && u.active !== false);
       owners.forEach(o => { if (o?.phone) sendWA(o.phone, `⚡ *Invoice Auto-Generated*\n\nJob: *${r.job_id}*\nCustomer: ${r.customer}\nService: ${r.service}\nTotal: *${fmt(totalInv)}*\n\nMohon cek dan approve invoice di menu Invoice. — AClean`); });
     }
   }

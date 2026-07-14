@@ -1811,7 +1811,7 @@ export default function LaporanTeknisiModal({
                     if (!rErr) {
                       addAgentLog("COMPLAIN_UPGRADED", `Complain ${laporanModal.id} → Repair ${rId}`, "SUCCESS");
                       showNotif(`✅ Job Repair ${rId} dibuat! Admin dinotifikasi.`);
-                      const admR = userAccounts.filter(u => u.role === "Admin" || u.role === "Owner");
+                      const admR = userAccounts.filter(u => (u.role === "Admin" || u.role === "Owner") && u.active !== false);
                       admR.forEach(a => {
                         if (a?.phone) sendWA(a.phone,
                           "Upgrade Complain Repair\nComplain: " + laporanModal.id

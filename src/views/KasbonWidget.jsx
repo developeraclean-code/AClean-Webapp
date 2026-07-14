@@ -26,7 +26,7 @@ function KasbonRequestModal({ currentUser, kasbonRequests, setKasbonRequests, in
       const { data, error } = await insertKasbonRequest(supabase, payload);
       if (error) { showNotif("❌ Gagal kirim request: " + error.message); return; }
       setKasbonRequests(prev => [data || payload, ...prev]);
-      const owners = (userAccounts || []).filter(u => u.role === "Owner" || u.role === "Admin");
+      const owners = (userAccounts || []).filter(u => (u.role === "Owner" || u.role === "Admin") && u.active !== false);
       owners.forEach(u => { if (u.phone) sendWA(u.phone, `💰 *Request Kasbon*\n\nDari: ${currentUser?.name}\nNominal: Rp ${amt.toLocaleString("id-ID")}\nKeperluan: ${reason.trim()}\n\nSilakan approve/reject di menu Laporan Tim → Kasbon.\n— ${appSettings?.app_name || "AClean"}`); });
       showNotif("✅ Request kasbon terkirim — menunggu approval");
       onClose();

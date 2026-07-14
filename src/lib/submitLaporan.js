@@ -65,7 +65,7 @@ export async function submitLaporan({
       }, { onConflict: "id" });
       if (sErr) { showNotif("⚠️ Tersimpan lokal, sync gagal: " + sErr.message); }
       else { showNotif("✅ Laporan Survey terkirim!"); }
-      const admR2 = userAccounts.filter(u => u.role === "Admin" || u.role === "Owner");
+      const admR2 = userAccounts.filter(u => (u.role === "Admin" || u.role === "Owner") && u.active !== false);
       admR2.forEach(u => { if (u.phone) sendWA(u.phone, "Laporan Survey\nJob: " + laporanModal.id + "\nCustomer: " + laporanModal.customer + "\nTeknisi: " + laporanModal.teknisi + "\n\nHasil: " + laporanSurveyHasil.trim().slice(0, 200)); });
       setLaporanSubmitted(true);
       submitLaporanLock.current = false;
@@ -201,7 +201,7 @@ export async function submitLaporan({
     setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), newReport]);
 
     // ── 6. WA notif ke Admin/Owner ──
-    const adminUsers = userAccounts.filter(u => u.role === "Owner");
+    const adminUsers = userAccounts.filter(u => u.role === "Owner" && u.active !== false);
     const matCount = isInstall
       ? INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length
       : laporanMaterials.length;
@@ -412,7 +412,7 @@ export async function submitLaporan({
         if (kritisItems.length > 0) {
           const warnings = kritisItems.map(i => `${i.name} sisa ${i.stock} ${i.unit}`);
           showNotif("⚠️ Stok kritis: " + warnings.join(", "));
-          const ownerAccs = userAccounts.filter(u => u.role === "Owner");
+          const ownerAccs = userAccounts.filter(u => u.role === "Owner" && u.active !== false);
           const lowMsg = `⚠️ *Stok Material Kritis*\nSetelah job ${laporanModal.id}:\n` + warnings.map(w => "• " + w).join("\n");
           ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, lowMsg); });
         }
@@ -834,7 +834,7 @@ export async function submitLaporan({
       addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
 
       // WA notif ke Owner
-      const ownerAccounts = userAccounts.filter(u => u.role === "Owner");
+      const ownerAccounts = userAccounts.filter(u => u.role === "Owner" && u.active !== false);
       const ownerMsg =
         "Invoice Menunggu Approval\n"
         + "Job: " + laporanModal.id + "\n"

@@ -27,7 +27,10 @@ export async function checkStuckJobs({
           );
           showNotif(`⚠️ SLA: ${o.teknisi} belum di lokasi ${o.customer} (booking ${o.time})`, true);
           // Kirim WA Owner
-          const owners = [...(teknisiData || []), ...(userAccounts || [])].filter(u => u.role === "Owner" && u.phone);
+          const seenOwnerPhones = new Set();
+          const owners = [...(teknisiData || []), ...(userAccounts || [])]
+            .filter(u => u.role === "Owner" && u.phone && u.active !== false)
+            .filter(u => { if (seenOwnerPhones.has(u.phone)) return false; seenOwnerPhones.add(u.phone); return true; });
           const slaMsg = `⚠️ *SLA ALERT*\n📋 ${o.id}\n👤 ${o.customer}\n👷 ${o.teknisi || "-"}\n⏰ Booking: ${o.time} — belum konfirmasi tiba`;
           owners.forEach(ow => sendWA(ow.phone, slaMsg));
         }

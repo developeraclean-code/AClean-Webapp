@@ -3199,7 +3199,7 @@ export default function ACleanWebApp() {
         showNotif(skipMsg);
         addAgentLog("STOCK_INSUFFICIENT", `Job ${orderId||reportId||"?"} — ${item.name}: butuh ${qty}, tersedia ${item.stock} ${item.unit}. Deduct di-skip.`, "WARNING");
         // Notif ke Owner agar bisa koreksi manual
-        const ownerAccs = userAccounts?.filter(u => u.role === "Owner") || [];
+        const ownerAccs = userAccounts?.filter(u => u.role === "Owner" && u.active !== false) || [];
         ownerAccs.forEach(u => { if (u.phone) sendWA(u.phone, `⚠️ *Stok Kurang*\nJob ${orderId||"?"} — ${item.name}: butuh ${qty} ${item.unit}, tersisa ${item.stock} ${item.unit}.\nDeduct di-skip, perlu koreksi manual.`); });
         continue;
       }
@@ -4060,7 +4060,7 @@ export default function ACleanWebApp() {
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
           <MaterialCheckoutView supabase={supabase} currentUser={currentUser} showNotif={showNotif}
             fotoSrc={fotoSrc} _apiFetch={_apiFetch} _apiHeaders={_apiHeaders} appSettings={appSettings}
-            notifyOwnerWA={(msg) => userAccounts.filter(u => u.role === "Owner").forEach(u => u.phone && sendWA(u.phone, msg))} />
+            notifyOwnerWA={(msg) => userAccounts.filter(u => u.role === "Owner" && u.active !== false).forEach(u => u.phone && sendWA(u.phone, msg))} />
         </Suspense>
       );
       case "alatsaya": return (

@@ -90,7 +90,12 @@ const kirimReportCard = async (order) => {
     await sendWA(phone, msg, { url: pdfUrl, filename: `ServiceReport_${order.id}.pdf` });
     const sentAt = new Date().toISOString();
     const sentBy = currentUser?.name || "Owner";
-    await supabase.from("service_reports").update({ report_card_sent_at: sentAt, report_card_sent_by: sentBy }).eq("id", lap.id);
+    const { error: updErr } = await supabase.from("service_reports").update({ report_card_sent_at: sentAt, report_card_sent_by: sentBy }).eq("id", lap.id);
+    if (updErr) {
+      showNotif("⚠️ Card terkirim ke customer, tapi status gagal disimpan: " + updErr.message);
+      addAgentLog?.("REPORT_CARD_SENT", `Report card ${order.id} terkirim tapi update status GAGAL: ${updErr.message}`, "ERROR");
+      return;
+    }
     setLaporanReports(prev => prev.map(r => r.id === lap.id ? { ...r, report_card_sent_at: sentAt, report_card_sent_by: sentBy } : r));
     showNotif("✅ Report card berhasil dikirim ke " + order.customer);
     addAgentLog?.("REPORT_CARD_SENT", `Report card ${order.id} dikirim ke ${phone} oleh ${sentBy}`, "SUCCESS");
@@ -393,8 +398,10 @@ return (
                       await updateOrderStatus(supabase, o.id, "ON_SITE", auditUserName());
                       setOrdersData(prev => prev.map(ord => ord.id === o.id ? { ...ord, status: "ON_SITE" } : ord));
                       showNotif("✅ Status → On Site!");
-                      const admins = teknisiData.filter(u => u.role === "Admin" || u.role === "Owner")
-                        .concat((userAccounts || []).filter(u => u.role === "Admin" || u.role === "Owner"));
+                      const seenAdminPhones = new Set();
+                      const admins = teknisiData.filter(u => (u.role === "Admin" || u.role === "Owner") && u.active !== false)
+                        .concat((userAccounts || []).filter(u => (u.role === "Admin" || u.role === "Owner") && u.active !== false))
+                        .filter(u => { if (!u?.phone || seenAdminPhones.has(u.phone)) return false; seenAdminPhones.add(u.phone); return true; });
                       const msg =
                         "Teknisi di Lokasi\n"
                         + "Job: " + o.id + " - " + o.customer + "\n"
@@ -684,8 +691,10 @@ return (
                                 showNotif("✅ Status → Sudah di Lokasi!");
                                 addAgentLog("ON_SITE", `${currentUser?.name} tiba di lokasi — ${o.id}`, "SUCCESS");
                                 // Notif Owner via WA saat teknisi konfirmasi tiba
+                                const seenOwnerConfirmPhones = new Set();
                                 const ownerContacts = [...(teknisiData || []), ...(userAccounts || [])]
-                                  .filter(u => u.role === "Owner" && u.phone);
+                                  .filter(u => u.role === "Owner" && u.phone && u.active !== false)
+                                  .filter(u => { if (seenOwnerConfirmPhones.has(u.phone)) return false; seenOwnerConfirmPhones.add(u.phone); return true; });
                                 const konfMsg = `✅ *Teknisi di Lokasi*\n📋 ${o.id}\n👤 ${o.customer}\n📍 ${o.address || "-"}\n👷 ${currentUser?.name}\n⏰ ${new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`;
                                 ownerContacts.forEach(ow => sendWA(ow.phone, konfMsg));
                               }} style={{ background: "#22c55e22", border: "1px solid #22c55e44", color: "#22c55e", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
