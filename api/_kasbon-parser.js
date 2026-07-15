@@ -115,6 +115,12 @@ export function isKasbonApprovalMessage(message) {
   return false;
 }
 
+// Nomor yang boleh approve kasbon via reply "ok"/"baik"/dst di grup Finance — SATU sumber
+// kebenaran. Sebelumnya di-hardcode terpisah di wa.js (jalur webhook real-time) dan
+// wa-ai.js (jalur wa-backfill re-parse) — kalau nomor approver berubah dan cuma satu
+// file diupdate, kedua jalur diam-diam beda perilaku (temuan audit 15 Jul 2026).
+export const KASBON_APPROVER_PHONES = ["6281398989837", "6281289898937"];
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Cross-check panel & anti-dobel lintas-hari (fix dobel-input kasbon, 11 Jul 2026)
 // Kasus nyata 8-9 Jul: Santi kirim ulang list kasbon keesokan hari → dedup harian

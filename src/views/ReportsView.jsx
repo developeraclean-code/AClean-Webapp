@@ -1,6 +1,7 @@
 import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
+import { ORDER_DONE_STATUSES } from "../constants/status.js";
 
 function ReportsView({ ordersData, invoicesData, laporanReports, customersData, teknisiData, inventoryData, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, invoiceReminderWA, getTechColor, expensesData }) {
   // Fase 1: primitif global dari AppContext.
@@ -112,7 +113,10 @@ const totalOverdue = overdueInv.reduce((a, b) => a + (b.total || 0), 0);
 
 // ── Orders — filter sesuai periode ──
 // Multi-hari: parent + child dianggap 1 job (jangan double-count completion rate)
-const DONE_STATUSES = ["COMPLETED", "REPORT_SUBMITTED", "VERIFIED", "PAID", "INVOICE_APPROVED", "INVOICE_CREATED"];
+// ORDER_DONE_STATUSES bersama (constants/status.js) — sebelumnya array lokal di sini
+// menyertakan "VERIFIED" yang TIDAK PERNAH jadi nilai orders.status (verifikasi live DB
+// 15 Jul 2026), dead code yang membingungkan meski tidak salah hitung (OR-logic).
+const DONE_STATUSES = ORDER_DONE_STATUSES;
 const ordersPeriod = ordersData.filter(filterOrderByPeriod);  // orders di periode ini
 const ordersPeriodUnique = ordersPeriod.filter(o => !(o.parent_job_id && o.is_multi_day));  // hanya parent/standalone
 const ordersDone = ordersPeriodUnique.filter(o => DONE_STATUSES.includes(o.status) || o.status === "CONTINUED").length;

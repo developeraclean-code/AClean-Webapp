@@ -2,6 +2,8 @@
 // Deps di-thread lewat objek `deps` supaya lepas dari closure App.jsx. Ada
 // side-effect (buat file + download + log + notif) → bukan fungsi murni, tapi
 // self-contained utility. Body dipindah verbatim (whitespace CSV terjaga, mis. BOM).
+import { ORDER_DONE_STATUSES } from "../constants/status.js";
+
 export function downloadRekapHarian(targetDate, { TODAY, ordersData, invoicesData, currentUser, showNotif, addAgentLog }) {
     const tgl = targetDate || TODAY;
     const fmt2 = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
@@ -49,7 +51,7 @@ export function downloadRekapHarian(targetDate, { TODAY, ordersData, invoicesDat
 
     // ── Hitung summary ──
     const totalOrder = ordersHariIni.length;
-    const totalSelesai = ordersHariIni.filter(o => ["COMPLETED", "REPORT_SUBMITTED", "VERIFIED"].includes(o.status)).length;
+    const totalSelesai = ordersHariIni.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length;
     const totalOmset = invoicesHariIni.filter(i => i.status === "PAID").reduce((s, i) => s + (i.total || 0), 0);
     const totalInvBaru = invoicesHariIni.filter(i => i.created_at?.slice(0, 10) === tgl).length;
 
@@ -90,7 +92,7 @@ export function downloadRekapHarian(targetDate, { TODAY, ordersData, invoicesDat
       if (o.teknisi) {
         if (!perTek[o.teknisi]) perTek[o.teknisi] = { order: 0, selesai: 0, omset: 0 };
         perTek[o.teknisi].order++;
-        if (["COMPLETED", "REPORT_SUBMITTED", "VERIFIED"].includes(o.status))
+        if (ORDER_DONE_STATUSES.includes(o.status))
           perTek[o.teknisi].selesai++;
       }
     });

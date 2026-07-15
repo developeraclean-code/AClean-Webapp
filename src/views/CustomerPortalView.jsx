@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { INVOICE_UNPAID_STATUSES } from "../constants/status.js";
 
 const API_BASE = "/api";
 const GOOGLE_REVIEW_URL = "https://g.page/r/Ce7qdwu8xHxoEAI/review";
@@ -215,7 +216,7 @@ export default function CustomerPortalView({ token: tokenProp }) {
         )}
 
         {/* INVOICE AKTIF */}
-        {lastInvoice && ["UNPAID","PARTIAL_PAID","OVERDUE"].includes(lastInvoice.status) && (
+        {lastInvoice && INVOICE_UNPAID_STATUSES.includes(lastInvoice.status) && (
           <>
             <div style={s.sectionLabel}>Invoice</div>
             <InvoiceCard inv={lastInvoice} />

@@ -1,6 +1,6 @@
 import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
-import { statusColor } from "../constants/status.js";
+import { statusColor, INVOICE_UNPAID_STATUSES } from "../constants/status.js";
 import { smartSearchNormalize, samePhone } from "../lib/phone.js";
 import { useAppContext } from "../context/AppContext.js";
 import { categoryOf, LINE_CATEGORY } from "../lib/invoicing.js";
@@ -522,7 +522,7 @@ const findInvoiceCandidates = (sug) => {
   if (!target) return [];
   const phone = (sug.phone || "").replace(/\D/g, "");
   const unpaid = (invoicesData || []).filter(i =>
-    ["UNPAID", "OVERDUE", "PARTIAL_PAID"].includes(i.status) &&
+    INVOICE_UNPAID_STATUSES.includes(i.status) &&
     Math.abs(Number(i.total || 0) - target) < 1000  // toleransi Rp 1.000
   );
   // ranking: phone exact > nama partial > amount only
@@ -720,7 +720,7 @@ const handleDeleteAddon = async (item) => {
 const multiInvoiceCustomers = useMemo(() => {
   const phoneMap = {};
   invoicesData.forEach(inv => {
-    if (!inv.phone || !["UNPAID","OVERDUE","PARTIAL_PAID"].includes(inv.status)) return;
+    if (!inv.phone || !INVOICE_UNPAID_STATUSES.includes(inv.status)) return;
     if (!phoneMap[inv.phone]) phoneMap[inv.phone] = [];
     phoneMap[inv.phone].push(inv);
   });
@@ -734,7 +734,7 @@ const mergeCandidates = useMemo(() => {
   const groups = []; // [{ phone, customer, invoices: [...] }]
   invoicesData.forEach(inv => {
     if (!inv.phone) return;
-    if (!["UNPAID","OVERDUE","PARTIAL_PAID"].includes(inv.status)) return;
+    if (!INVOICE_UNPAID_STATUSES.includes(inv.status)) return;
     const found = groups.find(g => samePhone(g.phone, inv.phone));
     if (found) found.invoices.push(inv);
     else groups.push({ phone: inv.phone, customer: inv.customer || "(tanpa nama)", invoices: [inv] });
@@ -758,7 +758,7 @@ const mergeCandidates = useMemo(() => {
 const mergeFilteredInv = useMemo(() => {
   if (mergeStage !== "select" || !mergePhone) return null;
   return invoicesData
-    .filter(i => i.phone && samePhone(i.phone, mergePhone) && ["UNPAID","OVERDUE","PARTIAL_PAID"].includes(i.status))
+    .filter(i => i.phone && samePhone(i.phone, mergePhone) && INVOICE_UNPAID_STATUSES.includes(i.status))
     .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 }, [mergeStage, mergePhone, invoicesData]);
 
@@ -948,7 +948,7 @@ return (
                         const q = (manualPickerSearch[sug.id] || "").toLowerCase().trim();
                         if (!q) return <div style={{ fontSize: 11, color: cs.muted }}>Ketik nama/ID untuk cari.</div>;
                         const results = (invoicesData || [])
-                          .filter(i => ["UNPAID","OVERDUE","PARTIAL_PAID"].includes(i.status))
+                          .filter(i => INVOICE_UNPAID_STATUSES.includes(i.status))
                           .filter(i => {
                             const c = (customersData || []).find(x => x.id === i.customer_id) || {};
                             return (c.name || "").toLowerCase().includes(q) || String(i.id).toLowerCase().includes(q);
@@ -1822,7 +1822,7 @@ return (
                 </button>
                 {setGroupPaymentCtx && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                   <button onClick={() => {
-                    const sameCust = invoicesData.filter(i => i.phone === inv.phone && ["UNPAID","OVERDUE","PARTIAL_PAID"].includes(i.status));
+                    const sameCust = invoicesData.filter(i => i.phone === inv.phone && INVOICE_UNPAID_STATUSES.includes(i.status));
                     setGroupPaymentCtx({ phone: inv.phone, invoices: sameCust.length > 0 ? sameCust : [inv], suggestedAmount: 0, proofUrl: null, method: "transfer", suggId: null });
                   }} style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
                     💳 Group Payment
@@ -1997,7 +1997,7 @@ return (
                 </div>
               )}
               {/* Form tambah bayar baru */}
-              {["UNPAID","OVERDUE","PARTIAL_PAID"].includes(inv.status) && (
+              {INVOICE_UNPAID_STATUSES.includes(inv.status) && (
                 <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "12px 14px" }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 8 }}>+ Tambah Pembayaran</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>

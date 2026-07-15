@@ -2,6 +2,7 @@
 // Hanya SHAPING data (read-only) jadi objek konteks yang dikirim ke /api/ara-chat. TANPA efek samping.
 // Helper component-local (cariSlotKosong, araSchedulingSuggest) & PRICE_LIST dioper sebagai argumen.
 import { samePhone } from "./phone.js";
+import { INVOICE_UNPAID_STATUSES } from "../constants/status.js";
 
 /**
  * Bangun objek bizContext (data bisnis live) untuk dikirim ke ARA.
@@ -31,7 +32,7 @@ export function buildAraContext({
   const _recent = (arr, n) => [...arr].sort((a, b) => _dateOf(b).localeCompare(_dateOf(a))).slice(0, n);
   const CAP = { orders: 150, invoicesUnpaid: 150, invoicesOther: 50, laporan: 120, customers: 400 };
   const ordersSel = _recent(ordersData, CAP.orders);
-  const _unpaid = invoicesData.filter(i => ["UNPAID", "OVERDUE", "PARTIAL_PAID"].includes(i.status));
+  const _unpaid = invoicesData.filter(i => INVOICE_UNPAID_STATUSES.includes(i.status));
   const _unpaidIds = new Set(_unpaid.map(i => i.id));
   // Unpaid dibatasi ke terbaru juga (total nilai unpaid tetap akurat via revenueStats.totalUnpaid dari data penuh).
   const invoicesSel = [..._recent(_unpaid, CAP.invoicesUnpaid), ..._recent(invoicesData.filter(i => !_unpaidIds.has(i.id)), CAP.invoicesOther)];

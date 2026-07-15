@@ -3,7 +3,7 @@
 import { sb, sendWA, log, isCronJobEnabled, OWNER_PHONE } from "./_shared.js";
 import * as Sentry from "@sentry/node";
 import { uploadBufferToR2, hasR2Config } from "../_r2-upload.js";
-import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, resolveKasbonEntry } from "../_kasbon-parser.js";
+import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
 import { buildExpenseDedupKey } from "../_expense-dedup.js";
 
 // ══════════════════════════════════════════════════
@@ -284,8 +284,7 @@ export async function taskWaBackfill(opts = {}) {
 
     // ── KASBON APPROVAL (annotate) ──
     if (cfg.ai_kasbon_enabled && isKasbonApprovalMessage(text)) {
-      const APPROVERS = ["6281398989837", "6281289898937"];
-      if (APPROVERS.includes(lg.sender_phone)) {
+      if (KASBON_APPROVER_PHONES.includes(lg.sender_phone)) {
         const qUrl = SU + "/rest/v1/expenses?select=id,description"
           + "&validation_status=eq.PENDING_AI&subcategory=eq." + encodeURIComponent("Kasbon Karyawan")
           + "&date=eq." + date + "&created_by=eq.wa_group_kasbon"

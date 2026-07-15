@@ -2,6 +2,7 @@
 // Caller (App.jsx) yang tangani error handling + state setter.
 // LIMIT di-tune supaya page load cepat; reference tables tanpa limit.
 // Kolom di-seleksi eksplisit (bukan SELECT *) untuk hemat egress.
+import { ORDER_DONE_STATUSES } from "../constants/status.js";
 
 const ORDER_COLS = "id,customer,customer_id,phone,address,area,service,type,units,teknisi,helper,date,time,time_end,status,notes,dispatch,dispatch_at,invoice_id,created_at,updated_at,teknisi_id,helper_id,teknisi2,helper2,teknisi3,helper3,source,team_slot,on_site_at,parent_job_id,is_multi_day,day_number,maintenance_client_id,maintenance_unit_ids,job_group_id,is_team_split,project_id";
 export const fetchOrders = (supabase) =>
@@ -96,7 +97,7 @@ export const fetchInventory = (supabase) =>
 // Catatan perf: units_json & materials_json (TEXT) DIBUANG dari kolom ini — keduanya
 // duplikat dari units & materials_used (jsonb). Semua 1133 row sudah di-backfill jsonb-nya
 // (scripts/backfill-report-jsonb), jadi parseLaporan cukup pakai jsonb. Hemat ~0,9MB payload startup.
-const REPORT_COLS = "id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,fotos,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at,hasil_survey,catatan_rekomendasi,survey_sent_at";
+const REPORT_COLS = "id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,fotos,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at,hasil_survey,catatan_rekomendasi,survey_sent_at,report_card_sent_at,report_card_sent_by";
 export const fetchServiceReports = (supabase) =>
   supabase.from("service_reports")
     .select(REPORT_COLS)
@@ -339,5 +340,5 @@ export const fetchOrdersWithoutBonus = (supabase, periodStart, periodEnd) =>
     .select("id,date,customer,service,units,teknisi,teknisi2,teknisi3,helper,helper2,helper3,invoice_id,status")
     .gte("date", periodStart)
     .lte("date", periodEnd)
-    .in("status", ["COMPLETED", "REPORT_SUBMITTED", "INVOICE_APPROVED", "INVOICE_CREATED", "PAID"])
+    .in("status", ORDER_DONE_STATUSES)
     .order("date");

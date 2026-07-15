@@ -2,6 +2,7 @@ import { memo, useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { DEFAULT_BONUS_CATEGORIES } from "../constants/bonus.js";
+import { ORDER_DONE_STATUSES } from "../constants/status.js";
 import {
   localDateStr, getMondayOf, getSaturdayOf, addWeeks,
   fullWeekBonusAmt, computeGross, kasbonOwed, kasbonSisa,
@@ -1716,9 +1717,9 @@ function detectBonusFromInvoice(materialsDetail, orderService = "", bonusCategor
   return result;
 }
 
-// Status "pekerjaan selesai" — samakan dgn fetchOrdersWithoutBonus & set "selesai" di atas,
-// supaya kumulatif Install tak kurang hitung saat order masih INVOICE_APPROVED/REPORT_SUBMITTED.
-const DONE_STATUSES = ["COMPLETED", "REPORT_SUBMITTED", "INVOICE_APPROVED", "INVOICE_CREATED", "PAID"];
+// Status "pekerjaan selesai" — pakai ORDER_DONE_STATUSES bersama (constants/status.js)
+// supaya konsisten dgn ReportsView/reads.js/lib/reports.js, bukan didefinisikan ulang lokal.
+const DONE_STATUSES = ORDER_DONE_STATUSES;
 
 function getInstallCumulative(ordersData, date, teamMembers) {
   const sameDay = (ordersData || []).filter(o =>

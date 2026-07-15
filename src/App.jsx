@@ -2674,6 +2674,31 @@ export default function ACleanWebApp() {
     const _shouldPoll = () =>
       isWorkingHours() && (typeof document === "undefined" || document.visibilityState === "visible");
 
+    // ── Health-tracking polling (temuan audit 15 Jul 2026): .catch(() => {}) di semua
+    // poll di bawah membuat kegagalan berturut-turut 100% senyap — data bisa basi
+    // sepanjang sesi tanpa indikator apa pun. Bukan alert tiap gagal (network blip
+    // sesekali wajar), tapi setelah beberapa siklus berturut-turut (~4-5 menit).
+    const _pollFailStreak = {};
+    const _pollAlerted = {};
+    const POLL_FAIL_ALERT_AT = 3;
+    const _reportPollHealth = (name, ok) => {
+      if (ok) {
+        if (_pollAlerted[name]) {
+          addAgentLog("POLL_RECOVERED", `Polling ${name} pulih setelah sempat gagal`, "INFO");
+          showNotif(`✅ Koneksi data ${name} pulih`, true);
+        }
+        _pollFailStreak[name] = 0;
+        _pollAlerted[name] = false;
+        return;
+      }
+      _pollFailStreak[name] = (_pollFailStreak[name] || 0) + 1;
+      if (_pollFailStreak[name] >= POLL_FAIL_ALERT_AT && !_pollAlerted[name]) {
+        _pollAlerted[name] = true;
+        addAgentLog("POLL_STALE", `Polling ${name} gagal ${_pollFailStreak[name]}x berturut-turut — data mungkin basi`, "WARNING");
+        showNotif(`⚠️ Koneksi data ${name} bermasalah — coba refresh manual`, true);
+      }
+    };
+
     // Inkremental: hanya tarik baris yang BERUBAH sejak poll terakhir (updated_at > cursor),
     // lalu merge by id ke state. Saat idle → 0 baris → egress ~nol. Cursor mulai dari waktu
     // efek (minus buffer 2 mnt utk toleransi skew jam). DELETE ditutup oleh loadAll penuh tiap 30 mnt.
@@ -2684,20 +2709,24 @@ export default function ACleanWebApp() {
     const _pollOrders = setInterval(() => {
       if (!_shouldPoll()) return;
       fetchOrdersSince(supabase, _orderCursor).then(({ data, error }) => {
-        if (error || !data || data.length === 0) return;
+        if (error) { _reportPollHealth("orders", false); return; }
+        _reportPollHealth("orders", true);
+        if (!data || data.length === 0) return;
         _orderCursor = data[data.length - 1].updated_at || _orderCursor;
         setOrdersData(prev => {
           const map = new Map((prev || []).map(r => [r.id, r]));
           data.forEach(r => map.set(r.id, r));
           return Array.from(map.values()).sort((a, b) => (b.date || "") > (a.date || "") ? 1 : -1);
         });
-      }).catch(() => {});
+      }).catch(() => { _reportPollHealth("orders", false); });
     }, POLL_MS);
 
     const _pollInvoices = setInterval(() => {
       if (!_shouldPoll()) return;
       fetchInvoicesSince(supabase, _invoiceCursor).then(({ data, error }) => {
-        if (error || !data || data.length === 0) return;
+        if (error) { _reportPollHealth("invoices", false); return; }
+        _reportPollHealth("invoices", true);
+        if (!data || data.length === 0) return;
         // Query order updated_at ASC → baris terakhir = paling baru. Pakai langsung (format-agnostic).
         _invoiceCursor = data[data.length - 1].updated_at || _invoiceCursor;
         setInvoicesData(prev => {
@@ -2705,13 +2734,15 @@ export default function ACleanWebApp() {
           data.map(parseInvoiceRow).forEach(r => map.set(r.id, r));
           return Array.from(map.values()).sort((a, b) => (b.created_at || "") > (a.created_at || "") ? 1 : -1);
         });
-      }).catch(() => {});
+      }).catch(() => { _reportPollHealth("invoices", false); });
     }, POLL_MS);
 
     const _pollReports = setInterval(() => {
       if (!_shouldPoll()) return;
       fetchServiceReportsSince(supabase, _reportCursor).then(({ data, error }) => {
-        if (error || !data || data.length === 0) return;
+        if (error) { _reportPollHealth("laporan", false); return; }
+        _reportPollHealth("laporan", true);
+        if (!data || data.length === 0) return;
         // Query order updated_at ASC → baris terakhir = paling baru. Pakai langsung (format-agnostic).
         _reportCursor = data[data.length - 1].updated_at || _reportCursor;
         setLaporanReports(prev => {
@@ -2720,7 +2751,7 @@ export default function ACleanWebApp() {
           return dedupReportsByJob(Array.from(map.values()))
             .sort((a, b) => (b.submitted_at || "") > (a.submitted_at || "") ? 1 : -1);
         });
-      }).catch(() => {});
+      }).catch(() => { _reportPollHealth("laporan", false); });
     }, POLL_MS);
 
     // WA monitor: refresh daftar percakapan saat monitor aktif (gantikan ch7/ch8 postgres_changes
@@ -2729,8 +2760,10 @@ export default function ACleanWebApp() {
     const _pollWa = _waMonitorOn ? setInterval(() => {
       if (!_shouldPoll()) return;
       fetchWaConversations(supabase, 100).then(res => {
-        if (!res.error && res.data) setWaConversations(res.data);
-      }).catch(() => {});
+        if (res.error) { _reportPollHealth("wa", false); return; }
+        _reportPollHealth("wa", true);
+        if (res.data) setWaConversations(res.data);
+      }).catch(() => { _reportPollHealth("wa", false); });
     }, POLL_MS) : null;
 
     // Payment suggestions — HANYA Owner/Admin, hanya jam kerja, 5 menit polling (Opsi-C)
@@ -2739,7 +2772,9 @@ export default function ACleanWebApp() {
     const _payPoll = (_isFinanceRole && _payDetectOn && isWorkingHours()) ? setInterval(() => {
       supabase.from("payment_suggestions").select("*").eq("status", "PENDING")
         .order("created_at", { ascending: false }).limit(20)
-        .then(({ data }) => {
+        .then(({ data, error }) => {
+          if (error) { _reportPollHealth("bukti-bayar", false); return; }
+          _reportPollHealth("bukti-bayar", true);
           if (!data) return;
           setPaymentSuggestions(data);
           const newest = data[0];
@@ -2750,7 +2785,7 @@ export default function ACleanWebApp() {
               showNotif("💳 Bukti bayar masuk dari " + (newest.sender_name || newest.phone), true);
             }
           }
-        });
+        }).catch(() => { _reportPollHealth("bukti-bayar", false); });
     }, 5 * 60 * 1000) : null;
 
     return () => {

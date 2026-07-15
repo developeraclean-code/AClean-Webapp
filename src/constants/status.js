@@ -19,3 +19,15 @@ export const statusLabel = {
   CONTINUED: "Lanjut Besok",
   UNPAID: "Belum Bayar", OVERDUE: "Terlambat", PENDING_APPROVAL: "Menunggu Approve", PARTIAL: "Bayar Sebagian",
 };
+
+// Order dianggap "selesai" (dipakai rekap/stats) — SATU sumber kebenaran.
+// Verifikasi live DB (15 Jul 2026): orders.status TIDAK PERNAH bernilai "VERIFIED"
+// (itu status service_reports, tabel berbeda) — PAID mayoritas mutlak (~87% order).
+// Definisi lama yang tercecer di beberapa file kehilangan INVOICE_APPROVED/
+// INVOICE_CREATED/PAID → rekap harian undercount order selesai.
+export const ORDER_DONE_STATUSES = ["COMPLETED", "REPORT_SUBMITTED", "INVOICE_APPROVED", "INVOICE_CREATED", "PAID"];
+
+// Invoice yang masih perlu ditagih (belum lunas, termasuk cicilan berjalan) —
+// SATU sumber kebenaran untuk set 3-status ini (bukan varian 2-status "UNPAID/OVERDUE"
+// yang sengaja mengecualikan PARTIAL_PAID di beberapa perhitungan total sisa tagihan).
+export const INVOICE_UNPAID_STATUSES = ["UNPAID", "OVERDUE", "PARTIAL_PAID"];

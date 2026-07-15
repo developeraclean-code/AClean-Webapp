@@ -9,7 +9,7 @@ import { classifyImage, persistClassification } from "../_ai-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification } from "../_ai-text.js";
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "../_r2-upload.js";
 import { md5Buffer, checkImageDuplicate } from "../_image-dedup.js";
-import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry } from "../_kasbon-parser.js";
+import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
 import { parseCarrierFromCaption, matchCarrierName, parseLaporanTeam, matchLaporanToOrder, parseBiayaExtended } from "../_shadow-parsers.js";
 import { expenseDuplicateExists, buildExpenseDedupKey } from "../_expense-dedup.js";
 import * as Sentry from "@sentry/node";
@@ -741,8 +741,7 @@ export async function receiveWa(req, res) {
         // di grup Finance → annotate semua expenses PENDING_AI Kasbon hari ini (created_by=wa_group_kasbon)
         // dengan suffix "[ACK by <phone> at <HH:MM>]" → UI akan tampilkan badge "✅ Acked".
         if (parsedType === "general" && groupConfig.ai_kasbon_enabled && SU_g && SK_g && isKasbonApprovalMessage(message)) {
-          const APPROVER_PHONES = ["6281398989837", "6281289898937"];
-          if (APPROVER_PHONES.includes(participantNorm)) {
+          if (KASBON_APPROVER_PHONES.includes(participantNorm)) {
             try {
               const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
               // Ambil semua kasbon PENDING_AI yang DIBUAT hari ini (created_at WIB) dan belum
