@@ -9,6 +9,7 @@ import {
 import {
   fetchWeeklyPayroll, fetchDaysWorkedFromOrders, fetchKasbonByPeriod, fetchAllKasbonByPeriod,
   fetchOrderBonusesByPeriod, fetchOrdersWithoutBonus, fetchAvailabilityByUserPeriod,
+  fetchAssignedDaysFromSlots,
 } from "../data/reads.js";
 import {
   updateUserDailyRate, upsertWeeklyPayroll, updateWeeklyPayroll,
@@ -644,14 +645,17 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     const prevMap = Object.fromEntries((prevRows || []).map(r => [r.user_id, r]));
 
     const results = await Promise.all(aktif.map(async (t) => {
-      // Hari masuk dari orders + kasbon + availability override (paralel)
-      const [oRes, kRes, aRes] = await Promise.all([
+      // Hari masuk dari orders + kotak Team + kasbon + availability override (paralel)
+      const [oRes, sRes, kRes, aRes] = await Promise.all([
         fetchDaysWorkedFromOrders(supabase, t.name, periodStart, periodEnd),
+        fetchAssignedDaysFromSlots(supabase, t.name, periodStart, periodEnd),
         fetchKasbonByPeriod(supabase, t.name, periodStart, periodEnd),
         fetchAvailabilityByUserPeriod(supabase, t.name, periodStart, periodEnd),
       ]);
-      // Hybrid: auto dari orders, +STANDBY, −IJIN/SAKIT/ALPA
+      // Hybrid: auto dari orders + kotak Team (confirmed), +STANDBY, −IJIN/SAKIT/ALPA
+      // Terassign di kotak Team dihitung masuk walau job kosong (order bisa berubah).
       const orderDates = new Set((oRes.data || []).map(o => o.date));
+      for (const s of (sRes.data || [])) orderDates.add(s.date);
       for (const a of (aRes.data || [])) {
         if (a.status === "STANDBY") orderDates.add(a.date);
         else if (["IJIN","SAKIT","ALPA"].includes(a.status)) orderDates.delete(a.date);

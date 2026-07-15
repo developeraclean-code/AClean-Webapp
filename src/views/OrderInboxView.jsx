@@ -494,7 +494,7 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
           })}
         </div>
         <div style={{ fontSize: 10, color: cs.muted, marginTop: 5 }}>
-          ⚪ Auto (ikut order) · 🔵 Standby +1 hari · 🟡 Ijin / 🟠 Sakit / 🔴 Alpa = −1 hari payroll
+          ⚪ Auto (ikut order / terassign di kotak Team confirmed) · 🔵 Standby +1 hari · 🟡 Ijin / 🟠 Sakit / 🔴 Alpa = −1 hari payroll
         </div>
       </div>
 
@@ -518,7 +518,7 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
                     <span style={{ fontSize: 14 }}>{m.emoji}</span>
                     <span style={{ flex: 1 }}>{m.label}</span>
                     <span style={{ fontSize: 10, color: m.color }}>
-                      {s === "AUTO" ? "ikut count order" : s === "STANDBY" ? "+1 hari kerja" : "−1 hari kerja"}
+                      {s === "AUTO" ? "ikut order / kotak Team" : s === "STANDBY" ? "+1 hari kerja" : "−1 hari kerja"}
                     </span>
                   </button>
                 );
