@@ -293,7 +293,7 @@ Format output harga: Rp85.000 (titik pemisah ribuan, tanpa desimal).
 - Test Press Unit                   : Rp450.000
 - Jasa Pemasangan Kompresor         : Rp500.000
 - Pergantian Modul Indoor Inverter  : Rp500.000
-- Kuras Vacum + Isi Freon R32/R410  : Rp600.000
+- Kuras Vacum Freon R32/R410        : Rp600.000
 - Kuras Vacum Freon R22             : Rp600.000
 
 ### Freon (per kg)

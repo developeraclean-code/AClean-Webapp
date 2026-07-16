@@ -150,7 +150,7 @@ export async function submitLaporan({
       ? INSTALL_ITEMS
         .filter(item => parseFloat(laporanInstallItems[item.key] || 0) > 0)
         .map(item => {
-          const hargaSat = lookupHargaGlobal(item.label, item.satuan);
+          const hargaSat = lookupHargaGlobal(item.priceKey || item.label, item.satuan);
           const qty = parseFloat(laporanInstallItems[item.key] || 0);
           return {
             id: item.key, nama: item.label, jumlah: qty, satuan: item.satuan,

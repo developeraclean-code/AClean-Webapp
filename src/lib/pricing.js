@@ -83,7 +83,7 @@ export const PRICE_LIST_DEFAULT = {
     "Test Press Unit": 0,
     "Jasa Pemasangan Kompresor": 0,
     "Pergantian Modul Indoor Inverter": 0,
-    "Kuras Vacum + Isi Freon R32/R410": 0,
+    "Kuras Vacum Freon R32/R410": 0,
     "Kuras Vacum Freon R22": 0,
     "default": 0,
   },

@@ -995,6 +995,24 @@ export default function LaporanTeknisiModal({
                         style={{ width: 64, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 8px", color: cs.text, fontSize: 13, outline: "none", textAlign: "center" }} />
                     </div>
                   ))}
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#06b6d4", letterSpacing: 1, textTransform: "uppercase", marginTop: 6 }}>🧽 Cleaning (Sekalian Cuci)</div>
+                  {INSTALL_ITEMS.filter(it => ["cleaning_split_05_1pk", "cleaning_split_15_25pk"].includes(it.key)).map(item => (
+                    <div key={item.key} style={{
+                      display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center",
+                      background: parseFloat(laporanInstallItems[item.key] || 0) > 0 ? "#06b6d408" : cs.card,
+                      border: "1px solid " + (parseFloat(laporanInstallItems[item.key] || 0) > 0 ? "#06b6d444" : cs.border),
+                      borderRadius: 8, padding: "8px 10px"
+                    }}>
+                      <div style={{ fontSize: 12, color: cs.text, fontWeight: parseFloat(laporanInstallItems[item.key] || 0) > 0 ? 700 : 400 }}>
+                        {item.label}<span style={{ fontSize: 10, color: cs.muted, marginLeft: 4 }}>({item.satuan})</span>
+                      </div>
+                      <input type="number" min="0" step="1"
+                        value={laporanInstallItems[item.key] ?? ""}
+                        onChange={e => setLaporanInstallItems(prev => ({ ...prev, [item.key]: e.target.value }))}
+                        placeholder="0"
+                        style={{ width: 64, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 8px", color: cs.text, fontSize: 13, outline: "none", textAlign: "center" }} />
+                    </div>
+                  ))}
                   {Object.values(laporanInstallItems).some(v => parseFloat(v || 0) > 0) && (
                     <div style={{ background: cs.green + "10", border: "1px solid " + cs.green + "33", borderRadius: 9, padding: "8px 12px", fontSize: 11, color: cs.green, marginTop: 4 }}>
                       ✅ {INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length} item diisi

@@ -122,11 +122,15 @@ export const INSTALL_ITEMS = [
   { key: "breket_outdoor",          label: "Breket Outdoor Inc Dinabolt",         satuan: "Piece", default: 0 },
   { key: "paralon",                 label: "Paralon",                             satuan: "Meter", default: 0 },
   { key: "selang_flexibel_drain",   label: "Selang Flexibel Drain",               satuan: "Meter", default: 0 },
-  { key: "kuras_vacum_r32",         label: "Kuras Vacum + Isi Freon R32/R410",   satuan: "Unit",  default: 0 },
+  { key: "kuras_vacum_r32",         label: "Kuras Vacum Freon R32/R410",         satuan: "Unit",  default: 0 },
   { key: "kuras_vacum_r22",         label: "Kuras Vacum Freon R22",               satuan: "Unit",  default: 0 },
   { key: "freon_r22",               label: "Freon R-22",                          satuan: "KG",    default: 0 },
   { key: "freon_r32",               label: "Freon R-32",                          satuan: "KG",    default: 0 },
   { key: "freon_r410",              label: "Freon R-410A",                        satuan: "KG",    default: 0 },
+  // Cleaning sekalian saat Install/ganti instalasi. label = nama di invoice (deskriptif);
+  // priceKey = nama baris price list yang SUDAH ADA (hindari baris harga duplikat).
+  { key: "cleaning_split_05_1pk",   label: "Cleaning AC Split Wall 0,5PK - 1PK",   satuan: "Unit",  default: 0, priceKey: "AC Split 0.5-1PK" },
+  { key: "cleaning_split_15_25pk",  label: "Cleaning AC Split Wall 1,5PK - 2,5PK", satuan: "Unit",  default: 0, priceKey: "AC Split 1.5-2.5PK" },
 ];
 
 export const TIPE_AC_OPT = [
