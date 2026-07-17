@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback, lazy, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
+import { unitHealth, healthSummary } from "../lib/maintenanceHealth.js";
 
 // Pill styles — didefinisikan di atas karena dirujuk oleh const module-level
 // INV_STATUS_STYLE (TDZ: dev/esbuild eval source-order, beda dari Rollup build).
@@ -267,7 +268,7 @@ export default function MaintenanceView({
                 <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
               ))}
             </div>
-            {tab === "unit"     && <UnitsTab sel={sel} units={units} setUnits={setUnits} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
+            {tab === "unit"     && <UnitsTab sel={sel} units={units} setUnits={setUnits} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
             {tab === "history"  && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
             {tab === "followup" && <FollowupTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
             {tab === "manifest"  && <ManifestTab sel={sel} units={units} call={call} showNotif={showNotif} />}
@@ -436,9 +437,10 @@ function Kpi({ n, l, c }) {
 }
 
 // ─────────── UNITS TAB ───────────
-function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner, apiFetch, supabase, setOrdersData, getLocalDate, teknisiData, createOrderFn, createTeamSplitFn }) {
+function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfirm, isOwner, apiFetch, supabase, setOrdersData, getLocalDate, teknisiData, createOrderFn, createTeamSplitFn }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("");
+  const [healthFilter, setHealthFilter] = useState(""); // "" | SEHAT | PERHATIAN | BERMASALAH | NO_DATA
   const [edit, setEdit] = useState(null);
   const [qrUnit, setQrUnit] = useState(null);
   const [showCsv, setShowCsv] = useState(false);
@@ -452,9 +454,18 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
     return n;
   });
 
+  // Kartu Kesehatan Unit (Sprint 1) — dihitung dari riwayat logs, bukan status tersimpan.
+  const healthByUnit = useMemo(() => {
+    const map = {};
+    units.forEach(u => { map[u.id] = unitHealth(u, logs); });
+    return map;
+  }, [units, logs]);
+  const healthSum = useMemo(() => healthSummary(units, logs), [units, logs]);
+
   const filtered = units.filter(u =>
     (u.unit_code + (u.location || "") + (u.brand || "")).toLowerCase().includes(q.toLowerCase()) &&
-    (!filter || u.ac_type === filter));
+    (!filter || u.ac_type === filter) &&
+    (!healthFilter || healthByUnit[u.id]?.key === healthFilter));
   const highFreqUnits = units.filter(u => u.high_freq);
 
   const save = async (u) => {
@@ -580,6 +591,24 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
         <button onClick={() => setEdit({})} style={btn}>+ Unit Baru</button>
       </div>
 
+      {/* ── Kartu Kesehatan Unit — ringkasan klien, klik untuk filter ── */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+        <span style={{ fontSize: 11, color: cs.muted, fontWeight: 700 }}>Kesehatan:</span>
+        {[
+          ["SEHAT", "🟢 Sehat", "#22c55e"],
+          ["PERHATIAN", "🟡 Perlu Perhatian", "#f59e0b"],
+          ["BERMASALAH", "🔴 Bermasalah", "#ef4444"],
+          ["NO_DATA", "⚪ Belum ada riwayat", "#94a3b8"],
+        ].map(([k, lbl, col]) => (
+          <button key={k} onClick={() => setHealthFilter(f => f === k ? "" : k)}
+            title={k === "PERHATIAN" ? "Indikasi: kondisi perlu tindakan / tambah freon 2× dlm 6 bln / ampere naik >15% / jadwal terlewat" : k === "BERMASALAH" ? "Kondisi terakhir masih terkendala, atau tambah freon ≥3× dlm 6 bln (hampir pasti bocor)" : undefined}
+            style={{ background: healthFilter === k ? col + "33" : col + "12", border: "1px solid " + (healthFilter === k ? col : col + "44"), color: col, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+            {lbl} · {healthSum[k] || 0}
+          </button>
+        ))}
+        {healthFilter && <button onClick={() => setHealthFilter("")} style={{ ...miniBtn, fontSize: 11 }}>✕ reset</button>}
+      </div>
+
       {orderMode && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: cs.green + "12", border: "1px solid " + cs.green + "44", borderRadius: 10, padding: "10px 14px", marginBottom: 10 }}>
           <span style={{ fontSize: 13, color: cs.text }}>
@@ -627,6 +656,7 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
             const overdue = dueDays !== null && dueDays < 0;
             const dueSoon = dueDays !== null && dueDays >= 0 && dueDays <= 14;
             const isPicked = picked.has(u.id);
+            const health = healthByUnit[u.id];
             return (
               <div key={u.id}
                 onClick={orderMode ? () => togglePick(u.id) : undefined}
@@ -638,6 +668,12 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
                       {orderMode && <span style={{ fontSize: 14 }}>{isPicked ? "☑️" : "⬜"}</span>}
                       <b style={{ color: cs.text }}>{u.unit_code}</b>
                       {statusPill(u.status)}
+                      {health && health.key !== "NO_DATA" && (
+                        <span title={health.reasons.join(" · ")}
+                          style={{ background: health.color + "22", color: health.color, padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700, cursor: "help" }}>
+                          {health.emoji} {health.label}
+                        </span>
+                      )}
                       {u.high_freq && <span style={{ background: cs.yellow + "22", color: cs.yellow, padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }} title="Intensitas tinggi — tidak masuk PPM">⚡</span>}
                       {overdue && <span style={{ background: cs.red + "22", color: cs.red, padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>🔴 PM Terlambat</span>}
                       {dueSoon && !overdue && <span style={{ background: cs.yellow + "22", color: cs.yellow, padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>⚠️ Due {dueDays}h</span>}
@@ -647,6 +683,11 @@ function UnitsTab({ sel, units, setUnits, call, showNotif, showConfirm, isOwner,
                       <div>{u.brand || "—"} {u.capacity_pk ? u.capacity_pk + "PK" : ""} {u.ac_type ? "· " + (AC_TYPE_LABELS[u.ac_type] || u.ac_type) : ""} {u.refrigerant ? "· " + u.refrigerant : ""}</div>
                       {u.last_service_date && <div>Terakhir: {fmtDate(u.last_service_date)}</div>}
                       {u.next_service_date && <div style={{ color: overdue ? cs.red : dueSoon ? cs.yellow : cs.muted }}>PM Berikutnya: {fmtDate(u.next_service_date)}</div>}
+                      {health && (health.key === "BERMASALAH" || health.key === "PERHATIAN") && (
+                        <div style={{ color: health.color, fontSize: 11, marginTop: 3 }}>
+                          {health.reasons.slice(0, 2).map((r, i) => <div key={i}>• {r}</div>)}
+                        </div>
+                      )}
                     </div>
                   </div>
                   {!orderMode && (

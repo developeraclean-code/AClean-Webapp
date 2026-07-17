@@ -943,6 +943,22 @@ export async function maintenance(req, res) {
             if (i === 0 && repMatsNonFreon.length) {
               repMatsNonFreon.forEach(m => mats.push({ nama: m.nama || m.name || m.keterangan || "Material", qty: m.qty ?? m.jumlah ?? "", satuan: m.satuan || "" }));
             }
+            // Measurements terstruktur (migrasi 125) — data yang sama dgn desc di atas
+            // tapi query-able: tren ampere, frekuensi tambah freon, kondisi terakhir.
+            // description tetap diisi untuk tampilan history/portal.
+            let measurements = null;
+            if (lu) {
+              const m = {};
+              if (Array.isArray(lu.pekerjaan) && lu.pekerjaan.length) m.pekerjaan = lu.pekerjaan;
+              if (Array.isArray(lu.kondisi_sebelum) && lu.kondisi_sebelum.length) m.kondisi_sebelum = lu.kondisi_sebelum;
+              if (Array.isArray(lu.kondisi_setelah) && lu.kondisi_setelah.length) m.kondisi_setelah = lu.kondisi_setelah;
+              const amp = parseFloat(String(lu.ampere_akhir ?? "").replace(",", "."));
+              if (!isNaN(amp) && amp > 0) m.ampere = amp;
+              // freon_ditambah = TEKANAN psi (label form "Tekanan Freon (psi)"), bukan kg.
+              const frn = parseFloat(String(lu.freon_ditambah ?? "").replace(",", "."));
+              if (!isNaN(frn) && frn > 0) m.freon_psi = frn;
+              if (Object.keys(m).length) measurements = m;
+            }
             return {
               unit_id: uid,
               client_id: clientId,
@@ -952,6 +968,7 @@ export async function maintenance(req, res) {
               technician: order.teknisi || null,
               description: desc,
               materials: mats,
+              measurements,
               photos: repFotos,
               order_id: order.id,
               cost: null,
