@@ -221,12 +221,12 @@ export const fetchAppSettings = (supabase) =>
 
 export const fetchUserProfiles = (supabase) =>
   supabase.from("user_profiles")
-    .select("id,name,email,phone,role,status,active,color,avatar,skills,last_login,daily_rate")
+    .select("id,name,email,phone,role,status,active,color,avatar,skills,last_login,daily_rate,work_start_date")
     .order("name").limit(100);
 
 export const fetchUserAccounts = (supabase) =>
   supabase.from("user_profiles")
-    .select("id,name,email,phone,role,status,active,color,avatar,skills,last_login,daily_rate")
+    .select("id,name,email,phone,role,status,active,color,avatar,skills,last_login,daily_rate,work_start_date")
     .order("name").limit(200);
 
 export const fetchWaConversations = (supabase, limit = 50) => {

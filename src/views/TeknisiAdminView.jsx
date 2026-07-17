@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { DEFAULT_BONUS_CATEGORIES } from "../constants/bonus.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
+import { employmentStatus, fmtTenure } from "../lib/employment.js";
 import {
   localDateStr, getMondayOf, getSaturdayOf, addWeeks,
   fullWeekBonusAmt, computeGross, kasbonOwed, kasbonSisa,
@@ -348,6 +349,20 @@ return (
             </div>
             <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>
               <div>📱 {t.phone}</div>
+              {(() => {
+                const emp = employmentStatus(t.work_start_date);
+                const tenure = fmtTenure(t.work_start_date);
+                return (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: emp.color + "22", color: emp.color, border: "1px solid " + emp.color + "55" }}>
+                      🪪 {emp.label}
+                    </span>
+                    <span style={{ fontSize: 10, color: cs.muted }}>
+                      {tenure ? `${tenure} kerja` : "isi tgl mulai kerja di Edit"}
+                    </span>
+                  </div>
+                );
+              })()}
               <div>🔧 {ordersData.filter(o => o.teknisi === t.name && o.date === TODAY).length} job hari ini</div>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
                 {t.skills.map(s => <span key={s} style={{ background: cs.accent + "18", color: cs.accent, fontSize: 9, padding: "2px 6px", borderRadius: 4, fontWeight: 600 }}>{s}</span>)}

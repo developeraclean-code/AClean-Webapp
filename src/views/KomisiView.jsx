@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import { fetchWeeklyPayrollByUser, fetchMyBonuses } from "../data/reads.js";
 import { kasbonOwed, kasbonSisa } from "../lib/payroll.js";
+import { fmtTenure } from "../lib/employment.js";
 
 const STATUS_COLORS  = { PENDING: "#f59e0b", ELIGIBLE: "#3b82f6", PAID: "#22c55e", VOID: "#6b7280" };
 const STATUS_LABELS  = { PENDING: "Dalam Warranty", ELIGIBLE: "Siap Cair", PAID: "Sudah Dibayar", VOID: "Void" };
@@ -30,17 +31,6 @@ function daysSinceDate(dateStr) {
 function effStatus(b) {
   if (b.status === "PENDING" && daysSinceDate(b.order_date) >= 30) return "ELIGIBLE";
   return b.status;
-}
-function fmtTenure(d) {
-  if (!d) return null;
-  const start = new Date(d + "T00:00:00");
-  const now = new Date();
-  let months = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
-  if (now.getDate() < start.getDate()) months -= 1;
-  if (months < 0) months = 0;
-  const y = Math.floor(months / 12), m = months % 12;
-  if (y === 0 && m === 0) return "Baru bergabung";
-  return [y > 0 ? `${y} tahun` : "", m > 0 ? `${m} bulan` : ""].filter(Boolean).join(" ");
 }
 
 export default function KomisiView({ currentUser, supabase, bonusCategories = [], BONUS_LABELS = {} }) {
