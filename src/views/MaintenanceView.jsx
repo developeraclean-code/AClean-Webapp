@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
-import { unitHealth, healthSummary } from "../lib/maintenanceHealth.js";
+import { unitHealth, borosRanking, BOROS_LEVEL_GANTI, HEALTH_META } from "../lib/maintenanceHealth.js";
+import UnitTrendModal from "./UnitTrendModal.jsx";
 
 // Pill styles — didefinisikan di atas karena dirujuk oleh const module-level
 // INV_STATUS_STYLE (TDZ: dev/esbuild eval source-order, beda dari Rollup build).
@@ -11,6 +12,101 @@ const pillYellow = { background: (cs.yellow || "#eab308") + "22", color: cs.yell
 
 const QuotationModal = lazy(() => import("./QuotationModal.jsx"));
 const MaintenanceDocsView = lazy(() => import("./MaintenanceDocsView.jsx"));
+
+// ── Laporan Kesehatan Aset PDF — lazy (react-pdf berat, jangan masuk bundle utama) ──
+const AssetHealthPDFModule = lazy(() =>
+  Promise.all([
+    import("@react-pdf/renderer"),
+    import("../components/AssetHealthPDF.jsx"),
+    import("../lib/maintenanceHealth.js"),
+  ]).then(([renderer, pdf, mh]) => ({
+    default: ({ sel, units, logs, call, onClose }) => {
+      const { BlobProvider } = renderer;
+      const AssetHealthPDF = pdf.default;
+      // Follow-up ikut dimuat supaya kandidat di PDF = kandidat di tab Statistik.
+      // Tanpa ini, skor kehilangan komponen temuan (s/d +24) → dokumen ke klien
+      // bisa beda rekomendasi dgn layar internal (temuan review 18 Jul 2026).
+      const [fu, setFu] = useState(null); // null = masih dimuat
+      const [fuErr, setFuErr] = useState(false);
+      useEffect(() => {
+        let alive = true;
+        if (!call || !sel?.id) { setFu([]); return; }
+        call("list-followups", { client_id: sel.id })
+          .then(j => { if (alive) setFu(j.followups || []); })
+          .catch(() => { if (alive) { setFu([]); setFuErr(true); } });
+        return () => { alive = false; };
+        // Deps sel?.id saja — `call` tidak stabil antar render App (lihat loadClients)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [sel?.id]);
+
+      // Semua data PDF dihitung SEKALI per (units, logs, fu) — bukan tiap render:
+      // rows sudah memuat health per unit, summary DITALLY dari rows (tanpa pass ke-2).
+      const data = useMemo(() => {
+        if (fu === null) return null;
+        const rows = (units || []).map(u => {
+          const health = mh.unitHealth(u, logs);
+          const note = health.key === "SEHAT" || health.key === "NO_DATA" ? "" : health.reasons[0] || "";
+          return { unit: u, health, lastService: u.last_service_date ? fmtDate(u.last_service_date) : "", note };
+        }).sort((a, b) => {
+          const rank = { BERMASALAH: 0, PERHATIAN: 1, SEHAT: 2, NO_DATA: 3 };
+          return rank[a.health.key] - rank[b.health.key] || String(a.unit.unit_code).localeCompare(String(b.unit.unit_code));
+        });
+        const summary = { SEHAT: 0, PERHATIAN: 0, BERMASALAH: 0, NO_DATA: 0 };
+        rows.forEach(r => { summary[r.health.key]++; });
+        const kandidat = mh.borosRanking(units, logs, fu);
+        const dates = (logs || []).map(l => l.service_date).filter(Boolean).sort();
+        const periode = dates.length ? `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length - 1])}` : "-";
+        return { rows, summary, kandidat, periode };
+      }, [units, logs, fu]);
+
+      const generatedAt = fmtDate(new Date());
+      const fileName = `Kesehatan-Aset-${(sel?.name || "klien").replace(/[^a-zA-Z0-9]+/g, "-")}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      // Elemen document di-memo — BlobProvider regenerasi blob tiap identitas
+      // `document` berubah; tanpa memo, tiap render modal = render ulang PDF penuh.
+      const doc = useMemo(() => data
+        ? <AssetHealthPDF client={sel} rows={data.rows} summary={data.summary} kandidat={data.kandidat} periode={data.periode} generatedAt={generatedAt} />
+        : null,
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [data, sel]);
+
+      if (!data) {
+        return (
+          <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>
+            Memuat data temuan…
+          </div>
+        );
+      }
+      const { rows, summary, kandidat } = data;
+      return (
+        <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: cs.surface, borderRadius: 16, padding: 16, width: "100%", maxWidth: 540 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>📄 Laporan Kesehatan Aset — {sel?.name}</div>
+              <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+            </div>
+            <div style={{ fontSize: 12, color: cs.muted, marginBottom: 10 }}>
+              {rows.length} unit · 🟢 {summary.SEHAT} · 🟡 {summary.PERHATIAN} · 🔴 {summary.BERMASALAH} · ⚪ {summary.NO_DATA}
+              {kandidat.length > 0 && ` · ${kandidat.length} rekomendasi tindakan`}
+              {fuErr && <span style={{ color: cs.yellow || "#eab308" }}> · ⚠️ data temuan gagal dimuat — rekomendasi tanpa komponen follow-up</span>}
+            </div>
+            <BlobProvider document={doc}>
+              {({ url, loading, error }) => {
+                if (loading) return <div style={{ textAlign: "center", padding: 24, color: cs.muted }}>Membuat PDF…</div>;
+                if (error) return <div style={{ textAlign: "center", padding: 24, color: cs.red }}>Gagal buat PDF — coba lagi / laporkan bila berulang.</div>;
+                return (
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <a href={url} target="_blank" rel="noreferrer" style={{ flex: 1, padding: "12px 0", borderRadius: 10, background: cs.accent, color: "#04121f", fontWeight: 700, fontSize: 13, textAlign: "center", textDecoration: "none" }}>🔗 Buka PDF</a>
+                    <a href={url} download={fileName} style={{ flex: 1, padding: "12px 0", borderRadius: 10, background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, fontWeight: 700, fontSize: 13, textAlign: "center", textDecoration: "none" }}>⬇️ Download</a>
+                  </div>
+                );
+              }}
+            </BlobProvider>
+          </div>
+        </div>
+      );
+    },
+  }))
+);
 const QuotationPDFModule = lazy(() =>
   Promise.all([
     import("./QuotationModal.jsx"),
@@ -69,6 +165,12 @@ function intervalLabel(m) {
   return n + " bulan";
 }
 function fmtDate(d) { if (!d) return "—"; try { return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }); } catch { return d; } }
+
+// Generator id order PENDING — SATU sumber (sebelumnya literal yang sama dicopy di
+// 3 titik file ini + src/lib/createOrder.js; ubah skema id = ubah di sini saja).
+function newJobId() {
+  return "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+}
 
 function statusPill(s) {
   const map = {
@@ -270,12 +372,12 @@ export default function MaintenanceView({
             </div>
             {tab === "unit"     && <UnitsTab sel={sel} units={units} setUnits={setUnits} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
             {tab === "history"  && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
-            {tab === "followup" && <FollowupTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
+            {tab === "followup" && <FollowupTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} />}
             {tab === "manifest"  && <ManifestTab sel={sel} units={units} call={call} showNotif={showNotif} />}
             {tab === "contract"  && <ContractTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
             {tab === "workorder" && <WorkOrderTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
             {tab === "svchistory" && <HistoryServiceTab sel={sel} call={call} showNotif={showNotif} />}
-            {tab === "stats"    && <StatsTab units={units} logs={logs} sel={sel} />}
+            {tab === "stats"    && <StatsTab units={units} logs={logs} sel={sel} call={call} />}
             {tab === "quotation" && (
               <QuotasiTab
                 sel={sel} quotations={clientQuotations} call={call}
@@ -441,6 +543,8 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("");
   const [healthFilter, setHealthFilter] = useState(""); // "" | SEHAT | PERHATIAN | BERMASALAH | NO_DATA
+  const [trendUnit, setTrendUnit] = useState(null);     // unit yang dibuka grafik trennya
+  const [showHealthPdf, setShowHealthPdf] = useState(false);
   const [edit, setEdit] = useState(null);
   const [qrUnit, setQrUnit] = useState(null);
   const [showCsv, setShowCsv] = useState(false);
@@ -460,7 +564,13 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
     units.forEach(u => { map[u.id] = unitHealth(u, logs); });
     return map;
   }, [units, logs]);
-  const healthSum = useMemo(() => healthSummary(units, logs), [units, logs]);
+  // Ringkasan DITALLY dari healthByUnit — jangan panggil healthSummary (itu
+  // menghitung ulang unitHealth semua unit = pass kedua yang percuma tiap render).
+  const healthSum = useMemo(() => {
+    const s = { SEHAT: 0, PERHATIAN: 0, BERMASALAH: 0, NO_DATA: 0 };
+    Object.values(healthByUnit).forEach(h => { s[h.key]++; });
+    return s;
+  }, [healthByUnit]);
 
   const filtered = units.filter(u =>
     (u.unit_code + (u.location || "") + (u.brand || "")).toLowerCase().includes(q.toLowerCase()) &&
@@ -555,7 +665,7 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
     }
 
     // ── Opsi A: tanpa teknisi → order PENDING, assign di Planning Order. ──
-    const jobId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+    const jobId = newJobId();
     const orderPayload = {
       id: jobId, customer: sel.name, phone: sel.pic_phone || null,
       address: sel.address || "", area: sel.area || "",
@@ -584,6 +694,7 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
           {AC_TYPES.map(t => <option key={t} value={t}>{AC_TYPE_LABELS[t]}</option>)}
         </select>
         {isOwner && <button onClick={() => setShowCsv(true)} style={{ ...btnGhost, fontSize: 12 }}>📥 Import CSV</button>}
+        <button onClick={() => setShowHealthPdf(true)} style={{ ...btnGhost, fontSize: 12, color: cs.accent, borderColor: cs.accent + "55" }}>📄 Kesehatan PDF</button>
         <button onClick={() => { setOrderMode(m => !m); setPicked(new Set()); }}
           style={orderMode ? { ...btn, background: cs.green } : { ...btnGhost, fontSize: 12, color: cs.green, borderColor: cs.green + "55" }}>
           {orderMode ? "✕ Batal Pilih" : "🛠 Buat Order"}
@@ -594,18 +705,16 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
       {/* ── Kartu Kesehatan Unit — ringkasan klien, klik untuk filter ── */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
         <span style={{ fontSize: 11, color: cs.muted, fontWeight: 700 }}>Kesehatan:</span>
-        {[
-          ["SEHAT", "🟢 Sehat", "#22c55e"],
-          ["PERHATIAN", "🟡 Perlu Perhatian", "#f59e0b"],
-          ["BERMASALAH", "🔴 Bermasalah", "#ef4444"],
-          ["NO_DATA", "⚪ Belum ada riwayat", "#94a3b8"],
-        ].map(([k, lbl, col]) => (
+        {Object.entries(HEALTH_META).map(([k, meta]) => {
+          const lbl = `${meta.emoji} ${meta.label}`, col = meta.color;
+          return (
           <button key={k} onClick={() => setHealthFilter(f => f === k ? "" : k)}
             title={k === "PERHATIAN" ? "Indikasi: kondisi perlu tindakan / tambah freon 2× dlm 6 bln / ampere naik >15% / jadwal terlewat" : k === "BERMASALAH" ? "Kondisi terakhir masih terkendala, atau tambah freon ≥3× dlm 6 bln (hampir pasti bocor)" : undefined}
             style={{ background: healthFilter === k ? col + "33" : col + "12", border: "1px solid " + (healthFilter === k ? col : col + "44"), color: col, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
             {lbl} · {healthSum[k] || 0}
           </button>
-        ))}
+          );
+        })}
         {healthFilter && <button onClick={() => setHealthFilter("")} style={{ ...miniBtn, fontSize: 11 }}>✕ reset</button>}
       </div>
 
@@ -692,6 +801,7 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
                   </div>
                   {!orderMode && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <button onClick={() => setTrendUnit(u)} style={miniBtn} title="Tren ampere & tekanan">📈</button>
                       <button onClick={() => setQrUnit(u)} style={miniBtn} title="QR Unit">QR</button>
                       <button onClick={() => setEdit(u)} style={miniBtn} title="Edit">✏️</button>
                       {isOwner && <button onClick={() => del(u)} style={{ ...miniBtn, color: cs.red }}>🗑</button>}
@@ -704,6 +814,12 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
         </div>}
 
       {edit !== null && <UnitFormModal unit={edit} onClose={() => setEdit(null)} onSave={save} />}
+      {trendUnit && <UnitTrendModal unit={trendUnit} logs={logs} onClose={() => setTrendUnit(null)} />}
+      {showHealthPdf && (
+        <Suspense fallback={<div onClick={() => setShowHealthPdf(false)} style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>Memuat modul PDF…</div>}>
+          <AssetHealthPDFModule sel={sel} units={units} logs={logs} call={call} onClose={() => setShowHealthPdf(false)} />
+        </Suspense>
+      )}
       {qrUnit && <UnitQrModal unit={qrUnit} sel={sel} onClose={() => setQrUnit(null)} />}
       {showCsv && <CsvImportModal sel={sel} call={call} setUnits={setUnits} showNotif={showNotif} onClose={() => setShowCsv(false)} />}
       {showOrderModal && <CreateOrderModal sel={sel} pickedUnits={pickedUnits} today={today} teknisiData={teknisiData} onClose={() => setShowOrderModal(false)} onCreate={createOrder} />}
@@ -1352,7 +1468,25 @@ function HistoryServiceTab({ sel, call, showNotif }) {
 }
 
 // ─────────── STATS TAB ───────────
-function StatsTab({ units, logs, sel }) {
+function StatsTab({ units, logs, sel, call }) {
+  // ── Analisis "unit boros" — follow-up terbuka jadi salah satu sinyal skor ──
+  const [openFollowups, setOpenFollowups] = useState([]);
+  const [fuLoadErr, setFuLoadErr] = useState(false);
+  // Deps SENGAJA hanya sel?.id — `call` bergantung apiFetch yang dibuat ulang tiap
+  // render App (trap sama dgn loadClients di atas): kalau `call` jadi dep, efek
+  // re-fire tiap render App → spam POST list-followups selama tab Statistik terbuka.
+  useEffect(() => {
+    let alive = true;
+    if (!sel || !call) return;
+    setFuLoadErr(false);
+    call("list-followups", { client_id: sel.id })
+      .then(j => { if (alive) setOpenFollowups(j.followups || []); })
+      .catch(() => { if (alive) setFuLoadErr(true); }); // jangan senyap total — tampilkan note di section
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel?.id]);
+  const kandidat = useMemo(() => borosRanking(units, logs, openFollowups), [units, logs, openFollowups]);
+
   const totalServis = logs.length;
   const totalCost = logs.reduce((s, l) => s + (Number(l.cost) || 0), 0);
   const invoiced = logs.filter(l => l.invoiced).length;
@@ -1396,6 +1530,41 @@ function StatsTab({ units, logs, sel }) {
         <KpiCard label="Sudah Invoiced" value={invoiced} sub={`dari ${totalServis} log`} color={cs.green} />
         <KpiCard label="PM Terlambat" value={overdue.length} sub="unit" color={overdue.length ? cs.red : cs.green} />
         <KpiCard label="PM <14 Hari" value={dueSoon.length} sub="unit" color={dueSoon.length ? cs.yellow : cs.muted} />
+      </div>
+
+      {/* ── Kandidat ganti unit / test press — analisis "unit boros" ── */}
+      <div style={{ ...card, marginBottom: 14, borderLeft: "4px solid " + (kandidat.some(r => r.level === "GANTI") ? cs.red : kandidat.length ? (cs.yellow || "#eab308") : cs.green) }}>
+        <div style={{ fontWeight: 700, color: cs.text, fontSize: 13, marginBottom: 4 }}>
+          💸 Kandidat Ganti Unit / Test Press {kandidat.length > 0 && `(${kandidat.length})`}
+        </div>
+        <div style={{ fontSize: 11, color: cs.muted, marginBottom: kandidat.length ? 10 : 0 }}>
+          Skor dari frekuensi perbaikan, indikasi bocor freon, temuan terbuka, kesehatan terkini (+ umur & biaya bila terisi).
+          Skor ≥{BOROS_LEVEL_GANTI} = rekomendasi ganti/test press, di bawahnya = pantau ketat.
+          {fuLoadErr && <span style={{ color: cs.yellow || "#eab308" }}> ⚠️ Data temuan gagal dimuat — skor dihitung tanpa komponen follow-up.</span>}
+        </div>
+        {kandidat.length === 0 ? (
+          <div style={{ fontSize: 12, color: cs.green }}>✅ Tidak ada kandidat — belum ada unit dengan sinyal boros dari riwayat servis.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {kandidat.map(({ unit: u, score, level, reasons }) => {
+              const col = level === "GANTI" ? cs.red : (cs.yellow || "#eab308");
+              return (
+                <div key={u.id} style={{ background: cs.surface, border: "1px solid " + col + "44", borderRadius: 8, padding: "8px 12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <b style={{ color: cs.text, fontSize: 13 }}>{u.unit_code}</b>
+                    <span style={{ fontSize: 11, color: cs.muted }}>{u.location || ""} {u.brand ? "· " + u.brand : ""} {u.capacity_pk ? "· " + u.capacity_pk + "PK" : ""}</span>
+                    <span style={{ marginLeft: "auto", background: col + "22", color: col, padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800 }}>
+                      {level === "GANTI" ? "🔴 Rekomendasi Ganti" : "🟡 Pantau Ketat"} · skor {score}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>
+                    {reasons.map((r, i) => <span key={i}>• {r} </span>)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Monthly cost chart */}
@@ -1878,7 +2047,7 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
         return;
       }
       const orderDate = scheduledDate || today;
-      const jobId = "JOB-" + Date.now().toString(36).toUpperCase().slice(-6) + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+      const jobId = newJobId();
 
       const totalUnits = (quo.items || []).filter(i => i.item_type === "unit_ac").reduce((s, i) => s + (i.qty || 1), 0) || 1;
       const itemDescs = (quo.items || []).map(i => (i.description || "").toLowerCase()).join(" ");
@@ -2148,11 +2317,68 @@ const PRIORITY_COLORS = { critical: "#ef4444", high: "#f97316", normal: "#eab308
 const FU_STATUS_LABELS = { open: "Terbuka", scheduled: "Terjadwal", in_progress: "Dikerjakan", done: "Selesai", cancelled: "Dibatalkan" };
 const FU_STATUS_COLORS = { open: "#ef4444", scheduled: "#38bdf8", in_progress: "#eab308", done: "#22c55e", cancelled: "#6b7280" };
 
-function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, currentUser }) {
+function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, currentUser, supabase, setOrdersData, getLocalDate }) {
   const [followups, setFollowups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [catFilter, setCatFilter] = useState("open");
   const [addModal, setAddModal] = useState(false);
+  const [orderBusy, setOrderBusy] = useState(null); // followup id yang sedang dibuatkan order
+  // Temuan yang SUDAH dibuatkan order di sesi ini → tombol terkunci walau PATCH
+  // status gagal (tanpa ini: insert order sukses + patch gagal → baris tetap tampak
+  // "open" → klik lagi = order dobel untuk temuan yang sama).
+  const [orderedIds, setOrderedIds] = useState({}); // { [followupId]: jobId }
+
+  // ── 1-klik: temuan → order Repair PENDING di Planning Order ──
+  // Menutup siklus temuan → pekerjaan: tanpa ini temuan berhenti sebagai daftar
+  // dan harus manual bikin order (rawan terlupa = revenue hilang).
+  const buatOrderDariTemuan = async (f, unit) => {
+    if (!supabase) { showNotif("❌ Koneksi DB tidak tersedia"); return; }
+    const unitLabel = unit ? `${unit.unit_code}${unit.location ? " — " + unit.location : ""}` : "unit ?";
+    const ok = await showConfirm({
+      icon: "🛠", title: "Buat Order Perbaikan?",
+      message: `Order Repair untuk ${unitLabel} (${ISSUE_LABELS[f.issue_type] || f.issue_type}) akan masuk Planning Order sebagai PENDING — tanggal hari ini, geser & assign teknisi di sana. Status temuan otomatis jadi "Terjadwal".`,
+      confirmText: "Ya, Buat Order",
+    });
+    if (!ok) return;
+    setOrderBusy(f.id);
+    try {
+      const today = typeof getLocalDate === "function" ? getLocalDate() : new Date().toISOString().slice(0, 10);
+      const jobId = newJobId();
+      const notes = [
+        `Follow-up maintenance ${sel.name}: ${ISSUE_LABELS[f.issue_type] || f.issue_type}`,
+        unit ? `Unit ${unitLabel}` : "",
+        f.description || "",
+        f.estimated_cost > 0 ? `Est. biaya: ${fmtRp(f.estimated_cost)}` : "",
+      ].filter(Boolean).join(" · ");
+      const orderPayload = {
+        id: jobId, customer: sel.name, phone: sel.pic_phone || null,
+        address: sel.address || "", area: sel.area || "",
+        service: "Repair", type: "Repair", units: 1,
+        date: today, time: "09:00", time_end: "11:00",
+        status: "PENDING", dispatch: false, source: "maintenance",
+        maintenance_client_id: sel.id,
+        maintenance_unit_ids: f.unit_id ? [f.unit_id] : [],
+        notes,
+      };
+      const { error } = await supabase.from("orders").insert(orderPayload);
+      if (error) { showNotif("❌ Gagal buat order: " + error.message); return; }
+      setOrderedIds(p => ({ ...p, [f.id]: jobId })); // kunci tombol SEBELUM patch status
+      setOrdersData?.(prev => prev.some(o => o.id === jobId) ? prev : [orderPayload, ...prev]);
+      // Tandai temuan terjadwal — kalau gagal, order tetap ada (jangan senyap)
+      try {
+        await call("update-followup", { id: f.id, status: "scheduled" });
+        // Pola sama dgn updateStatus: filter aktif apa pun (selain "all") → baris
+        // yang berubah status keluar dari list filter tsb.
+        setFollowups(p => catFilter !== "all"
+          ? p.filter(x => x.id !== f.id)
+          : p.map(x => x.id === f.id ? { ...x, status: "scheduled" } : x));
+      } catch (e2) {
+        showNotif(`⚠️ Order ${jobId} dibuat, tapi status temuan gagal diubah: ${e2.message} — ubah manual.`);
+        return;
+      }
+      showNotif(`✅ Order ${jobId} masuk Planning Order (PENDING). Assign teknisi di sana.`);
+    } finally { setOrderBusy(null); }
+  };
 
   const load = useCallback(async () => {
     if (!sel) return;
@@ -2224,12 +2450,25 @@ function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, 
                     )}
                   </div>
                   {f.status !== "done" && f.status !== "cancelled" && (
-                    <select value={f.status} onChange={e => updateStatus(f.id, e.target.value)}
-                      style={{ ...inp, width: "auto", fontSize: 12, padding: "5px 8px", flexShrink: 0 }}>
-                      {["open","scheduled","in_progress","done","cancelled"].map(s => (
-                        <option key={s} value={s}>{FU_STATUS_LABELS[s]}</option>
-                      ))}
-                    </select>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0, alignItems: "stretch" }}>
+                      <select value={f.status} onChange={e => updateStatus(f.id, e.target.value)}
+                        style={{ ...inp, width: "auto", fontSize: 12, padding: "5px 8px" }}>
+                        {["open","scheduled","in_progress","done","cancelled"].map(s => (
+                          <option key={s} value={s}>{FU_STATUS_LABELS[s]}</option>
+                        ))}
+                      </select>
+                      {orderedIds[f.id] ? (
+                        <span title={`Order ${orderedIds[f.id]} sudah dibuat dari temuan ini`}
+                          style={{ fontSize: 11, padding: "5px 10px", color: cs.muted, textAlign: "center" }}>
+                          ✓ {orderedIds[f.id]}
+                        </span>
+                      ) : (
+                        <button onClick={() => buatOrderDariTemuan(f, unit)} disabled={orderBusy === f.id}
+                          style={{ ...btnGhost, fontSize: 11, padding: "5px 10px", color: cs.green, borderColor: cs.green + "55", cursor: orderBusy === f.id ? "wait" : "pointer", opacity: orderBusy === f.id ? 0.6 : 1 }}>
+                          {orderBusy === f.id ? "⏳ Membuat…" : "🛠 Buat Order"}
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>

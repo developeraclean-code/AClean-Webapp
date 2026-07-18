@@ -922,7 +922,10 @@ export async function maintenance(req, res) {
           }
           if (!unitPairs.length) return res.status(200).json({ skipped: true, reason: "tidak ada unit valid untuk dicatat" });
 
-          // Buat 1 log per unit yang benar-benar dikerjakan
+          // Buat 1 log per unit yang benar-benar dikerjakan.
+          // PENTING: format description di bawah ("Kondisi: …", "Freon +X", "Ampere Y")
+          // DIPARSE balik oleh logMeasurements (src/lib/maintenanceHealth.js) sebagai
+          // fallback log lama. Ubah format di sini → sinkronkan regex parser-nya.
           const rows = unitPairs.map(({ uid, lu }, i) => {
             // Deskripsi per-AC dari laporan
             let desc = `Servis via order ${order.id}`;
@@ -939,7 +942,12 @@ export async function maintenance(req, res) {
             // Harga TIDAK disertakan (biaya tidak ditampilkan di history/portal).
             // Shape WAJIB { nama, qty, satuan } agar terrender di MaintenanceView & portal (filter m.nama).
             const mats = [];
-            if (lu?.freon_ditambah) mats.push({ nama: "Freon" + (lu.tipe ? " " + lu.tipe : ""), qty: lu.freon_ditambah, satuan: "gr" });
+            // freon_ditambah = TEKANAN psi (bukan gram!) — label harus jujur, dan
+            // logMeasurements (src/lib/maintenanceHealth.js) MENGECUALIKAN baris
+            // "Tekanan"/psi dari deteksi freon_added (indikasi bocor). Salah label
+            // "Freon ... gr" membuat setiap catatan tekanan terhitung "tambah freon"
+            // → unit sehat ke-flag bocor. Jangan ganti nama/satuan tanpa sinkron parser.
+            if (lu?.freon_ditambah) mats.push({ nama: "Tekanan Freon" + (lu.tipe ? " " + lu.tipe : ""), qty: lu.freon_ditambah, satuan: "psi" });
             if (i === 0 && repMatsNonFreon.length) {
               repMatsNonFreon.forEach(m => mats.push({ nama: m.nama || m.name || m.keterangan || "Material", qty: m.qty ?? m.jumlah ?? "", satuan: m.satuan || "" }));
             }
