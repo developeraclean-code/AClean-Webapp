@@ -569,12 +569,13 @@ export async function maintenance(req, res) {
           return res.status(200).json({ followup: (await fRes.json())[0] });
         }
         if (action === "update-followup") {
-          const { id: fId, status: fStatus, resolved_by, resolution } = body;
+          const { id: fId, status: fStatus, resolved_by, resolution, order_id: fOrderId } = body;
           if (!fId) return res.status(400).json({ error: "id wajib" });
           const patch = {};
           if (fStatus) patch.status = fStatus;
           if (resolved_by) patch.resolved_by = resolved_by;
           if (resolution) patch.resolution = resolution;
+          if (fOrderId) patch.order_id = fOrderId; // link temuan→order (kolom migrasi 099)
           if (fStatus === "done" && !patch.resolved_date) patch.resolved_date = new Date().toISOString().slice(0, 10);
           const fRes = await fetch(REST("maintenance_followups?id=eq." + encodeURIComponent(fId)), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(patch) });
           if (!fRes.ok) return res.status(400).json({ error: "Gagal update followup", detail: await fRes.text() });

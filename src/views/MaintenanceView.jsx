@@ -2366,7 +2366,9 @@ function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, 
       setOrdersData?.(prev => prev.some(o => o.id === jobId) ? prev : [orderPayload, ...prev]);
       // Tandai temuan terjadwal — kalau gagal, order tetap ada (jangan senyap)
       try {
-        await call("update-followup", { id: f.id, status: "scheduled" });
+        // order_id ikut disimpan (kolom sudah ada sejak migrasi 099) — fondasi
+        // auto-close temuan saat laporan order ini nanti diverifikasi.
+        await call("update-followup", { id: f.id, status: "scheduled", order_id: jobId });
         // Pola sama dgn updateStatus: filter aktif apa pun (selain "all") → baris
         // yang berubah status keluar dari list filter tsb.
         setFollowups(p => catFilter !== "all"
